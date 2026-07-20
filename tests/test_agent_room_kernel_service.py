@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 from tests.runtime_capabilities import requires_loopback_bind
 
 from rag_ime.agent_room_kernel import RoomKernelFenceError
+from rag_ime.agent_blocks import normalize_trusted_agent_blocks
 from rag_ime.agent_room_capabilities import ToolAuthorizationError
 from rag_ime.agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
@@ -226,23 +227,180 @@ class RoomKernelServiceTests(unittest.TestCase):
             "createdAtMs": 20,
         }
 
-    def _room_tool_invocation(self, call_id: str, content: str) -> str:
+    def _room_tool_invocation(
+        self, call_id: str, content: str, *, blocks: list[dict[str, object]] | None = None
+    ) -> str:
+        binding = self.service.room_capabilities.runtime_binding(self.session_id)
+        assert binding is not None
         loaded = self.service.room_capability_tool_load(
             {
                 "sessionId": self.session_id,
-                "receiptId": f"load:{call_id}",
+                "receiptId": f"load:{binding['manifestId']}:room_post",
                 "toolName": "room_post",
                 "createdAtMs": 29,
             }
         )["result"]
+        arguments: dict[str, object] = {"content": content}
+        if blocks is not None:
+            arguments["blocks"] = blocks
         result = self.service.execute_room_capability_tool(
             self.session_id,
             "room_post",
-            {"content": content},
+            arguments,
             tool_call_id=call_id,
             load_receipt_id=str(loaded["receiptId"]),
         )
         return str(result["invocationReceipt"]["receiptId"])
+
+    def test_rich_post_crosses_real_settle_commit_snapshot_and_provider_journal(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        private = list(normalize_trusted_agent_blocks(
+            [{
+                "id": "table:delivery",
+                "type": "table",
+                "data": {
+                    "title": "交付矩阵",
+                    "columns": ["项目", "状态"],
+                    "rows": [["raw-row-secret-9f31", "完成"]],
+                },
+            }],
+            source_kind="pi_session_message",
+            source_ref="session:private:message:1",
+        ))
+        proposal = {
+            "schemaVersion": "wisdom-weasel.room-post.v2",
+            "postId": "post:rich",
+            "roomId": self.room_id,
+            "rootId": "root:service",
+            "generation": 0,
+            "dispatchId": "dispatch:service",
+            "authorActorRef": str(self.participant["id"]),
+            "kind": "result",
+            "visibility": "room",
+            "content": "结构化交付",
+            "idempotencyKey": "post:rich",
+            "publicationSource": {"kind": "room_commit", "ref": "commit:rich"},
+            "createdAtMs": 30,
+        }
+        commit = {
+            "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
+            "commitId": "commit:rich",
+            "dispatchId": "dispatch:service",
+            "action": "post",
+            "contentHash": "sha256:rich",
+            "postProposal": {**proposal, "blocks": private},
+            "evidenceRefs": [],
+            "requirementCoverage": [],
+            "createdAtMs": 30,
+        }
+        settle = {
+            "schemaVersion": ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
+            "settleReceiptId": "settle:rich",
+            "eventKind": "agent_settled",
+            "status": "settled",
+            "dispatchId": "dispatch:service",
+            "sessionId": self.session_id,
+            "generation": 0,
+            "capabilityEpoch": 7,
+            "createdAtMs": 30,
+        }
+        plain_invocation = self._room_tool_invocation("call:rich-private", "结构化交付")
+        with self.assertRaisesRegex(RoomKernelFenceError, "authorized structured tool"):
+            self.service.settle_room_kernel_dispatch(
+                self.room_id,
+                {"settleReceipt": settle, "commit": commit, "invocationReceiptId": plain_invocation},
+                caller_authorized=True,
+            )
+
+        tool_blocks = [{
+            "id": "table:delivery",
+            "type": "table",
+            "data": private[0]["data"],
+        }]
+        invocation = self._room_tool_invocation(
+            "call:rich-structured", "结构化交付", blocks=tool_blocks
+        )
+        commit["postProposal"] = proposal
+        result = self.service.settle_room_kernel_dispatch(
+            self.room_id,
+            {"settleReceipt": settle, "commit": commit, "invocationReceiptId": invocation},
+            caller_authorized=True,
+        )
+
+        published = result["post"]["blocks"][0]
+        self.assertEqual(published["source"], {"kind": "room_commit", "ref": "commit:rich"})
+        self.assertEqual(published["visibility"], "room_post")
+        self.assertEqual(published["generation"], 0)
+        self.assertTrue(str(published["ref"]).startswith("block:"))
+        self.assertEqual(published["digest"], private[0]["digest"])
+        snapshot_block = self.service.room_kernel_snapshot(self.room_id)["posts"][0]["blocks"][0]
+        self.assertEqual(snapshot_block["data"]["rows"][0][0], "raw-row-secret-9f31")
+        self.assertEqual(snapshot_block, published)
+
+        self.service.room_kernel.enqueue_dispatch(
+            self._dispatch("dispatch:after-rich", capability_epoch=8), now_ms=31
+        )
+        self.service.room_kernel_worker.run_once()
+        projection = self.service.room_projection_journals.projection(
+            "room-journal:dispatch:after-rich", expected_generation=0
+        )
+        provider_text = projection["projectionBytes"].decode("utf-8")
+        self.assertIn("表格：交付矩阵，1 行 2 列", provider_text)
+        self.assertIn(str(published["ref"]), provider_text)
+        self.assertNotIn("raw-row-secret-9f31", provider_text)
+        self.assertNotIn('"rows"', provider_text)
+
+    def test_provider_journal_bounds_fifty_public_posts_without_losing_current_task(self) -> None:
+        rich = list(normalize_trusted_agent_blocks(
+            [{
+                "id": "table:history",
+                "type": "table",
+                "data": {
+                    "title": "历史矩阵",
+                    "columns": ["键"],
+                    "rows": [["raw-history-secret-7ab2"]],
+                },
+            }],
+            source_kind="user",
+            source_ref="user:test",
+            visibility="room_post",
+            generation=0,
+        ))
+        for index in range(55):
+            post: dict[str, object] = {
+                "schemaVersion": "wisdom-weasel.room-post.v2",
+                "postId": f"post:history:{index}",
+                "roomId": self.room_id,
+                "rootId": "root:service",
+                "generation": 0,
+                "authorActorRef": "user:test",
+                "kind": "message",
+                "visibility": "room",
+                "content": f"公开历史 {index}",
+                "idempotencyKey": f"post:history:{index}",
+                "publicationSource": {"kind": "user", "ref": "user:test"},
+                "createdAtMs": 100 + index,
+            }
+            if index == 54:
+                post["blocks"] = rich
+            self.service.room_context_ledger.publish_post(post)
+
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=200)
+        self.service.room_kernel_worker.run_once()
+        projection = self.service.room_projection_journals.projection(
+            "room-journal:dispatch:service", expected_generation=0
+        )
+        provider_text = projection["projectionBytes"].decode("utf-8")
+
+        self.assertLessEqual(len(projection["pendingTail"]), 24)
+        self.assertLessEqual(len(projection["projectionBytes"]), 64 * 1024)
+        self.assertIn("Execute a bounded service test.", provider_text)
+        self.assertIn("requirement:service", provider_text)
+        self.assertIn("wisdom-weasel.room-context-omission.v1", provider_text)
+        self.assertIn("表格：历史矩阵，1 行 1 列", provider_text)
+        self.assertNotIn("raw-history-secret-7ab2", provider_text)
+        self.assertNotIn('"rows"', provider_text)
 
     def test_command_requires_server_authorization_and_current_room_generation(self) -> None:
         with self.assertRaises(PermissionError):

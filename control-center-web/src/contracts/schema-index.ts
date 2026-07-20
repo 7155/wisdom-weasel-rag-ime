@@ -2637,6 +2637,10 @@ export const contractSchemas = {
             "type": "string",
             "minLength": 1
           },
+          "schemaVersion": {
+            "type": "string",
+            "const": "rag-ime.agent-block.v1"
+          },
           "type": {
             "type": "string",
             "enum": [
@@ -2655,6 +2659,12 @@ export const contractSchemas = {
               "diff",
               "approval",
               "error",
+              "card",
+              "checklist",
+              "table",
+              "artifact",
+              "reference",
+              "status",
               "unknown"
             ]
           },
@@ -2674,6 +2684,48 @@ export const contractSchemas = {
           },
           "data": {
             "type": "object"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "kind",
+              "ref"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "maxLength": 80
+              },
+              "ref": {
+                "type": "string",
+                "maxLength": 240
+              }
+            },
+            "additionalProperties": false
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "private_session",
+              "room_post",
+              "root_post"
+            ]
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "ref": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }
@@ -14612,6 +14664,102 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1
       },
+      "blocks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "schemaVersion",
+            "id",
+            "type",
+            "status",
+            "presentationKind",
+            "data",
+            "summary",
+            "source",
+            "visibility",
+            "digest",
+            "ref",
+            "generation"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "rag-ime.agent-block.v1"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "type": {
+              "enum": [
+                "text",
+                "code",
+                "reasoning_summary",
+                "progress",
+                "tool_call",
+                "tool_result",
+                "citation",
+                "image",
+                "audio",
+                "file",
+                "sticker",
+                "task_plan",
+                "diff",
+                "approval",
+                "error",
+                "card",
+                "checklist",
+                "table",
+                "artifact",
+                "reference",
+                "status",
+                "unknown"
+              ]
+            },
+            "status": {
+              "enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed",
+                "aborted"
+              ]
+            },
+            "presentationKind": {
+              "type": "string",
+              "minLength": 1
+            },
+            "data": {
+              "type": "object"
+            },
+            "summary": {
+              "type": "string",
+              "maxLength": 240
+            },
+            "source": {
+              "type": "object"
+            },
+            "visibility": {
+              "enum": [
+                "room_post",
+                "root_post"
+              ]
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
       "idempotencyKey": {
         "type": "string",
         "minLength": 1
@@ -15947,6 +16095,14 @@ export const contractSchemas = {
               "type": "string",
               "maxLength": 300
             }
+          },
+          "originalRequirements": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "string",
+              "maxLength": 2000
+            }
           }
         }
       },
@@ -16058,6 +16214,184 @@ export const contractSchemas = {
           },
           "range": {
             "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "session-recall-effect-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.session-recall-effect-receipt.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "fixtureSha256",
+      "candidateWeights",
+      "selected"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.session-recall-effect-receipt.v1"
+      },
+      "fixtureSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "candidateWeights": {
+        "type": "array",
+        "minItems": 5,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "queryWeight",
+            "summaryWeight",
+            "score",
+            "metrics",
+            "selections"
+          ],
+          "properties": {
+            "queryWeight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "summaryWeight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.5
+            },
+            "score": {
+              "type": "integer"
+            },
+            "metrics": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "factHit",
+                "preferenceHit",
+                "projectHit",
+                "taskHit",
+                "irrelevantInjection",
+                "crossScopeLeak",
+                "duplicateBytes",
+                "tokenBytes",
+                "compactionForgettingRecovery",
+                "wrongOldTopic"
+              ],
+              "properties": {
+                "factHit": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "preferenceHit": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "projectHit": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "taskHit": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "irrelevantInjection": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "crossScopeLeak": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "duplicateBytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "tokenBytes": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "compactionForgettingRecovery": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "wrongOldTopic": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "selections": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "caseId",
+                  "selected",
+                  "fusion"
+                ],
+                "properties": {
+                  "caseId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "selected": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "fusion": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "applied",
+                      "queryWeight",
+                      "contextWeight"
+                    ],
+                    "properties": {
+                      "applied": {
+                        "type": "boolean"
+                      },
+                      "queryWeight": {
+                        "type": "number"
+                      },
+                      "contextWeight": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "selected": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "queryWeight",
+          "summaryWeight",
+          "reason"
+        ],
+        "properties": {
+          "queryWeight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "summaryWeight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 0.5
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }

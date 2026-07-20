@@ -26,6 +26,23 @@ LEGACY_ROOM_TOOL_ALIASES = {
 }
 _SURFACES = frozenset({"prompt", "runtime", "gateway", "ui"})
 
+_RICH_BLOCK_INPUT_SCHEMA = {
+    "type": "array",
+    "maxItems": 16,
+    "items": {
+        "type": "object",
+        "required": ["id", "type", "data"],
+        "properties": {
+            "id": {"type": "string", "minLength": 1, "maxLength": 160},
+            "type": {
+                "enum": ["card", "checklist", "table", "artifact", "reference", "status"]
+            },
+            "data": {"type": "object"},
+        },
+        "additionalProperties": False,
+    },
+}
+
 
 def room_runtime_registry() -> dict[str, dict[str, object]]:
     """Canonical Room-only Provider surface; legacy names never enter the catalog."""
@@ -44,7 +61,10 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "required": ["content"],
-                "properties": {"content": {"type": "string", "minLength": 1}},
+                "properties": {
+                    "content": {"type": "string", "minLength": 1},
+                    "blocks": _RICH_BLOCK_INPUT_SCHEMA,
+                },
                 "additionalProperties": False,
             },
         },
@@ -55,7 +75,10 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "inputSchema": {
                 "type": "object",
                 "required": ["result"],
-                "properties": {"result": {"type": "string", "minLength": 1}},
+                "properties": {
+                    "result": {"type": "string", "minLength": 1},
+                    "blocks": _RICH_BLOCK_INPUT_SCHEMA,
+                },
                 "additionalProperties": False,
             },
         },
@@ -496,6 +519,16 @@ class RoomCapabilityManifestStore:
         if not isinstance(payload, dict):
             raise RuntimeError("tool execution receipt is corrupt")
         return payload
+
+    def invocation_receipt(self, invocation_receipt_id: str) -> dict[str, object]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM room_v2_tool_invocation_receipts WHERE receipt_id = ?",
+                (_required(invocation_receipt_id, "invocation_receipt_id"),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(invocation_receipt_id)
+        return _invocation_payload(row)
 
     def runtime_tool_search(
         self, *, session_id: str, receipt_id: str, query: str, created_at_ms: int

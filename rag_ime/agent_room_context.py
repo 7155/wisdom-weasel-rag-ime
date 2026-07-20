@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
+from .agent_blocks import provider_block_projection, validate_persisted_blocks
 
 
 _CONTEXT_ENTRY_KINDS = frozenset(
@@ -60,8 +61,26 @@ class RoomContextLedgerStore:
             raise ValueError("Room Post requires explicit user or room_commit publication")
         if source_kind == "room_commit" and not source_ref:
             raise ValueError("Room Post from room_commit requires a commit ref")
+        blocks = validate_persisted_blocks(
+            normalized.get("blocks"),
+            allowed_visibility=frozenset({"room_post", "root_post"}),
+        )
+        expected_visibility = "room_post" if normalized.get("visibility") == "room" else "root_post"
+        expected_generation = int(normalized.get("generation") or 0)
+        for block in blocks:
+            source = block.get("source") if isinstance(block.get("source"), Mapping) else {}
+            if block.get("visibility") != expected_visibility:
+                raise ValueError("Room Post block visibility does not match Post visibility")
+            if int(block.get("generation") or 0) != expected_generation:
+                raise ValueError("Room Post block generation does not match Post generation")
+            if source.get("kind") != source_kind or source.get("ref") != source_ref:
+                raise ValueError("Room Post block source does not match publicationSource")
+        if blocks:
+            normalized["blocks"] = blocks
         validate_contract(normalized, "room-post.v2.json")
         content = _content(normalized.get("content"))
+        if blocks:
+            content = provider_block_projection(content, blocks, maximum_bytes=16_384)
         content_bytes = content.encode("utf-8")
         content_hash = _sha256(content_bytes)
         encoded_post = _canonical_json(normalized)

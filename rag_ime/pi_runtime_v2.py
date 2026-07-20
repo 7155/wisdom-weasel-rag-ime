@@ -1670,6 +1670,7 @@ class PiRuntimeHostManager:
                 turn_id=turn_id,
                 media_resolver=self._media_resolver,
                 message_id=f"{turn_id}:assistant" if role == "assistant" else None,
+                trusted_blocks=raw.get("agentBlocks"),
             )
             self.events.publish(
                 session_id,

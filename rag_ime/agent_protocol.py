@@ -52,6 +52,12 @@ AGENT_BLOCK_TYPES = frozenset(
         "diff",
         "approval",
         "error",
+        "card",
+        "checklist",
+        "table",
+        "artifact",
+        "reference",
+        "status",
         "unknown",
     }
 )
@@ -72,6 +78,12 @@ TRUSTED_PRESENTATIONS: dict[str, frozenset[str]] = {
     "diff": frozenset({"diff"}),
     "approval": frozenset({"approval"}),
     "error": frozenset({"error"}),
+    "card": frozenset({"card.v1"}),
+    "checklist": frozenset({"checklist.v1"}),
+    "table": frozenset({"table.v1"}),
+    "artifact": frozenset({"artifact.v1"}),
+    "reference": frozenset({"reference.v1"}),
+    "status": frozenset({"status.v1"}),
     "unknown": frozenset({"unsupported"}),
 }
 
@@ -146,6 +158,13 @@ class AgentBlock:
     status: str
     presentation_kind: str
     data: dict[str, object] = field(default_factory=dict)
+    schema_version: str = ""
+    summary: str = ""
+    source: dict[str, object] = field(default_factory=dict)
+    visibility: str = ""
+    digest: str = ""
+    ref: str = ""
+    generation: int = 0
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, object]) -> AgentBlock:
@@ -166,16 +185,36 @@ class AgentBlock:
             status=str(payload.get("status") or "completed"),
             presentation_kind=presentation,
             data=data,
+            schema_version=str(payload.get("schemaVersion") or ""),
+            summary=str(payload.get("summary") or ""),
+            source=dict(_mapping(payload.get("source"))),
+            visibility=str(payload.get("visibility") or ""),
+            digest=str(payload.get("digest") or ""),
+            ref=str(payload.get("ref") or ""),
+            generation=max(0, int(payload.get("generation") or 0)),
         )
 
     def to_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "id": self.block_id,
             "type": self.block_type,
             "status": self.status,
             "presentationKind": self.presentation_kind,
             "data": dict(self.data),
         }
+        if self.schema_version:
+            payload.update(
+                {
+                    "schemaVersion": self.schema_version,
+                    "summary": self.summary,
+                    "source": dict(self.source),
+                    "visibility": self.visibility,
+                    "digest": self.digest,
+                    "ref": self.ref,
+                    "generation": self.generation,
+                }
+            )
+        return payload
 
 
 @dataclass(frozen=True)
@@ -274,6 +313,13 @@ def normalize_agent_block(
         status=str(payload.get("status") or "completed"),
         presentation_kind=presentation,
         data=data,
+        schema_version=str(payload.get("schemaVersion") or ""),
+        summary=str(payload.get("summary") or ""),
+        source=dict(_mapping(payload.get("source"))),
+        visibility=str(payload.get("visibility") or ""),
+        digest=str(payload.get("digest") or ""),
+        ref=str(payload.get("ref") or ""),
+        generation=max(0, int(payload.get("generation") or 0)),
     )
     return AgentBlock.from_payload(normalized.to_payload())
 

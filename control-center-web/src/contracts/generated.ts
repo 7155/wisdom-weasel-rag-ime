@@ -137,6 +137,7 @@ import type { RoomToolDisclosureReceiptV1 } from './generated/room-tool-disclosu
 import type { RoomToolInvocationReceiptV1 } from './generated/room-tool-invocation-receipt.v1';
 import type { RunnerVerificationReceiptV2 } from './generated/runner-verification-receipt.v2';
 import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1';
+import type { SessionRecallEffectReceiptV1 } from './generated/session-recall-effect-receipt.v1';
 import type { TypedVerificationReceiptV1 } from './generated/typed-verification-receipt.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
 
@@ -274,6 +275,7 @@ export type {
   RoomToolInvocationReceiptV1,
   RunnerVerificationReceiptV2,
   SessionMemoryRecallV1,
+  SessionRecallEffectReceiptV1,
   TypedVerificationReceiptV1,
   UserMemoryDraftV1,
 };
@@ -412,6 +414,7 @@ export interface ContractTypeMap {
   'room-tool-invocation-receipt.v1': RoomToolInvocationReceiptV1;
   'runner-verification-receipt.v2': RunnerVerificationReceiptV2;
   'session-memory-recall.v1': SessionMemoryRecallV1;
+  'session-recall-effect-receipt.v1': SessionRecallEffectReceiptV1;
   'typed-verification-receipt.v1': TypedVerificationReceiptV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
 }

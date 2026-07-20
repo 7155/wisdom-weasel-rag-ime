@@ -29,6 +29,12 @@ from .agent_context_runtime import (
 )
 from .agent_command_receipts import AgentCommandReceiptStore
 from .agent_events import AgentEventHub
+from .agent_block_store import AgentBlockStore
+from .agent_blocks import (
+    bind_block_scope,
+    normalize_trusted_agent_blocks,
+    provider_block_projection,
+)
 from .agent_delegation import AgentDelegationCoordinator
 from .agent_media import AgentMediaStore
 from .agent_memory_sources import AgentMemorySourceStore
@@ -197,6 +203,8 @@ class AgentService:
         )
         self.media = AgentMediaStore(db_path)
         self.media.initialize()
+        self.agent_blocks = AgentBlockStore(db_path)
+        self.agent_blocks.initialize()
         self.memory_sources = AgentMemorySourceStore(db_path, project=project)
         self.memory_sources.initialize()
         self.memory_evidence = AgentMemoryEvidenceStore(db_path, project=self.project)
@@ -1742,30 +1750,47 @@ class AgentService:
             entry_kind="dispatch_state",
             source_ref=dispatch_id,
             dedupe_key=f"dispatch:{dispatch_id}:provider-context",
-            content=json.dumps(
-                {
-                    "task": task,
-                    "dispatch": {
-                        key: dispatch[key]
-                        for key in (
-                            "dispatchId", "taskId", "intentKind", "generation",
-                            "hopCount", "depth", "targetParticipantId",
-                        )
-                    },
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
+            content=_bounded_dispatch_context(task, dispatch),
             created_at_ms=prepared_at_ms,
         )
-        self.room_projection_journals.append_entry(
-            journal_id,
-            str(context_entry["entryId"]),
-            dedupe_key=f"dispatch:{dispatch_id}:provider-context",
-            expected_generation=generation,
-            appended_at_ms=prepared_at_ms,
+        replay = [
+            entry for entry in self.room_context_ledger.replay_root(str(dispatch["rootId"]))
+            if int(entry["generation"]) == generation
+        ]
+        selected, omitted = _bounded_provider_context_entries(
+            replay,
+            current_entry_id=str(context_entry["entryId"]),
         )
+        if omitted:
+            omission_entry, _ = self.room_context_ledger.append_entry(
+                root_id=str(dispatch["rootId"]),
+                room_id=room_id,
+                generation=generation,
+                entry_kind="recovery_packet",
+                source_ref=dispatch_id,
+                dedupe_key=f"dispatch:{dispatch_id}:context-omission",
+                content=json.dumps(
+                    {
+                        "schemaVersion": "wisdom-weasel.room-context-omission.v1",
+                        "policy": "anchors-current-and-recent-public-v1",
+                        "omittedEntryCount": omitted[0],
+                        "omittedContentBytes": omitted[1],
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                created_at_ms=prepared_at_ms,
+            )
+            selected.insert(-1, omission_entry)
+        for entry in selected:
+            self.room_projection_journals.append_entry(
+                journal_id,
+                str(entry["entryId"]),
+                dedupe_key=f"context-entry:{entry['entryId']}",
+                expected_generation=generation,
+                appended_at_ms=prepared_at_ms,
+            )
         profile_overlay = json.dumps(
             {
                 "profilePin": profile_pin,
@@ -2164,6 +2189,28 @@ class AgentService:
         if commit.get("action") == "post":
             if not isinstance(proposal, Mapping):
                 raise RoomKernelFenceError("post action requires an explicit RoomPost proposal")
+            proposal = dict(proposal)
+            invocation_blocks = None
+            if invocation_receipt_id:
+                invocation = self.room_capabilities.invocation_receipt(invocation_receipt_id)
+                command = invocation.get("canonicalCommand")
+                arguments = command.get("arguments") if isinstance(command, Mapping) else None
+                if isinstance(arguments, Mapping):
+                    invocation_blocks = arguments.get("blocks")
+            if proposal.get("blocks") is not None and invocation_blocks is None:
+                raise RoomKernelFenceError(
+                    "RoomPost blocks must originate from the authorized structured tool input"
+                )
+            if invocation_blocks is not None:
+                proposal["blocks"] = list(normalize_trusted_agent_blocks(
+                    invocation_blocks,
+                    source_kind="room_commit",
+                    source_ref=str(commit.get("commitId") or ""),
+                    visibility=(
+                        "room_post" if proposal.get("visibility") == "room" else "root_post"
+                    ),
+                    generation=int(root["generation"]),
+                ))
             validate_kernel_contract("roomPost", proposal)
             if (
                 proposal.get("roomId") != room_id
@@ -2190,6 +2237,8 @@ class AgentService:
         if receipt.get("details", {}).get("childDispatchId"):
             self.room_kernel_worker_loop.wake()
         post = dict(proposal) if isinstance(proposal, Mapping) else None
+        if post is not None and receipt.get("status") == "applied":
+            post, _ = self.room_context_ledger.publish_post(post)
         execution_receipt = (
             self.room_capabilities.execution_receipt(invocation_receipt_id)
             if invocation_receipt_id
@@ -6046,7 +6095,31 @@ class AgentService:
         if event.event_type == "message_completed":
             message = event.payload.get("message")
             if isinstance(message, Mapping):
+                binding = self.room_kernel.session_binding(event.session_id)
+                generation = int(binding.get("generation") or 0) if binding else 0
+                bound_message = dict(message)
+                bound_message["blocks"] = bind_block_scope(
+                    [block for block in message.get("blocks", []) if isinstance(block, Mapping)],
+                    session_id=event.session_id,
+                    message_id=str(message.get("id") or event.event_id),
+                    generation=generation,
+                )
+                event.payload["message"] = bound_message
+                message = bound_message
                 self._append_recent_recall_message(event.session_id, message)
+                if any(
+                    isinstance(block, Mapping)
+                    and block.get("schemaVersion") == "rag-ime.agent-block.v1"
+                    for block in message.get("blocks", [])
+                ):
+                    self.agent_blocks.persist_message(
+                        message,
+                        root_id=str(binding.get("rootId") or "") if binding else "",
+                        task_id=str(binding.get("taskId") or "") if binding else "",
+                        invocation_id=str(binding.get("dispatchId") or "") if binding else "",
+                        generation=generation,
+                        created_at_ms=event.created_at_ms,
+                    )
             # Evidence capture is a secondary, fail-closed journal write. It
             # never changes the user-visible event or promotes text to memory.
             self._record_assistant_evidence_safely(event)
@@ -6664,8 +6737,23 @@ def _public_room_message(value: object) -> dict[str, object] | None:
         "diff",
         "approval",
         "error",
+        "card",
+        "checklist",
+        "table",
+        "artifact",
+        "reference",
+        "status",
     }
-    blocks = [dict(item) for item in raw_blocks if isinstance(item, Mapping) and item.get("type") in allowed]
+    blocks = [
+        dict(item)
+        for item in raw_blocks
+        if isinstance(item, Mapping)
+        and item.get("type") in allowed
+        and (
+            item.get("schemaVersion") != "rag-ime.agent-block.v1"
+            or str(item.get("visibility") or "") in {"room_post", "root_post"}
+        )
+    ]
     if not blocks:
         return None
     public = dict(value)
@@ -6895,12 +6983,7 @@ def _room_context_line(
     blocks = message.get("blocks")
     if not isinstance(blocks, list):
         return ""
-    text = " ".join(
-        _bounded_text(block.get("text") or block.get("content"), maximum=300)
-        for block in blocks
-        if isinstance(block, Mapping)
-        and str(block.get("type") or "") in {"text", "code", "reasoning_summary"}
-    ).strip()
+    text = _agent_message_text(message).strip()
     if not text:
         return ""
     participant_id = str(event.get("participantId") or "")
@@ -6984,7 +7067,13 @@ def _agent_message_text(message: Mapping[str, object]) -> str:
         text = " ".join(str(value or "").split())
         if text:
             parts.append(text)
-    return "\n\n".join(parts)[:32_000]
+    structured = [
+        block for block in blocks
+        if isinstance(block, Mapping)
+        and str(block.get("type") or "") not in {"text", "code"}
+        and block.get("schemaVersion") == "rag-ime.agent-block.v1"
+    ]
+    return provider_block_projection("\n\n".join(parts), structured, maximum_bytes=32_000)
 
 
 def _memory_evidence_failure(
@@ -7220,7 +7309,13 @@ def _recall_message_body(message: Mapping[str, object]) -> str:
         )
         if text:
             parts.append(text)
-    return "\n".join(parts)[:1_200]
+    structured = [
+        block for block in content
+        if isinstance(block, Mapping)
+        and str(block.get("type") or "").lower() not in {"text", "output_text"}
+        and block.get("schemaVersion") == "rag-ime.agent-block.v1"
+    ]
+    return provider_block_projection("\n".join(parts), structured, maximum_bytes=1_200)
 
 
 def _recall_message_text(messages: Sequence[Mapping[str, object]]) -> str:
@@ -7397,6 +7492,100 @@ def _prompt_user_message_payload(
         payload["clientMessageId"] = client_message_id
     validate_contract(payload, "agent-message.v1.json")
     return payload
+
+
+def _bounded_dispatch_context(
+    task: Mapping[str, object], dispatch: Mapping[str, object]
+) -> str:
+    task_projection = {
+        key: task.get(key)
+        for key in (
+            "taskId", "rootId", "parentTaskId", "ownerParticipantId",
+            "assigneeParticipantId", "revision", "state",
+        )
+    }
+    task_projection.update(
+        objective=_bounded_text(task.get("objective"), maximum=4_000),
+        expectedOutput=_bounded_text(task.get("expectedOutput"), maximum=2_000),
+        requirementItemIds=[
+            _bounded_text(value, maximum=240)
+            for value in list(task.get("requirementItemIds") or ())[:128]
+        ],
+        acceptanceCriterionIds=[
+            _bounded_text(value, maximum=240)
+            for value in list(task.get("acceptanceCriterionIds") or ())[:128]
+        ],
+    )
+    return json.dumps(
+        {
+            "task": task_projection,
+            "dispatch": {
+                key: dispatch[key]
+                for key in (
+                    "dispatchId", "taskId", "intentKind", "generation",
+                    "hopCount", "depth", "targetParticipantId",
+                )
+            },
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _bounded_provider_context_entries(
+    entries: list[dict[str, object]], *, current_entry_id: str
+) -> tuple[list[dict[str, object]], tuple[int, int] | None]:
+    """Keep immutable anchors, recent public facts, and the current Dispatch bounded."""
+
+    maximum_entries = 24
+    maximum_bytes = 64 * 1024
+    checkpoint_reserve = 512
+    current = next(
+        (entry for entry in entries if entry.get("entryId") == current_entry_id), None
+    )
+    if current is None:
+        raise RoomKernelFenceError("current Dispatch context entry is missing")
+    current_bytes = len(str(current.get("content") or "").encode("utf-8"))
+    if current_bytes + checkpoint_reserve > maximum_bytes:
+        raise RoomKernelFenceError("current Dispatch context exceeds provider projection budget")
+    anchors = [
+        entry for entry in entries
+        if entry.get("entryId") != current_entry_id
+        and entry.get("entryKind") in {"requirement_anchor", "root_state"}
+    ]
+    recent = [
+        entry for entry in entries
+        if entry.get("entryId") != current_entry_id
+        and entry.get("entryKind") in {
+            "room_post", "room_commit", "evidence_receipt",
+            "knowledge_receipt", "skill_receipt",
+        }
+    ]
+    chosen: list[dict[str, object]] = []
+    used_bytes = current_bytes
+    for entry in [*anchors[:8], *reversed(recent)]:
+        if entry in chosen or len(chosen) >= maximum_entries - 2:
+            continue
+        size = len(str(entry.get("content") or "").encode("utf-8"))
+        if used_bytes + size + checkpoint_reserve > maximum_bytes:
+            continue
+        chosen.append(entry)
+        used_bytes += size
+    chosen.sort(key=lambda entry: int(entry.get("sequence") or 0))
+    chosen_ids = {str(entry.get("entryId") or "") for entry in chosen}
+    omitted_entries = [
+        entry for entry in entries
+        if entry.get("entryId") != current_entry_id
+        and str(entry.get("entryId") or "") not in chosen_ids
+    ]
+    omitted = None
+    if omitted_entries:
+        omitted = (
+            len(omitted_entries),
+            sum(len(str(entry.get("content") or "").encode("utf-8")) for entry in omitted_entries),
+        )
+    return [*chosen, current], omitted
 
 
 def _bounded_text(value: object, *, maximum: int) -> str:

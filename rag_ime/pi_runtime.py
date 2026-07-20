@@ -16,6 +16,7 @@ from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 
 from .agent_events import AgentEventHub
+from .agent_blocks import extract_completed_agent_blocks, normalize_trusted_agent_blocks
 from .agent_tool_ids import (
     ASSISTANT_CONTROL_TOOL_IDS,
     CONTROL_TOOL_IDS,
@@ -1710,6 +1711,7 @@ class PiRuntimeManager:
                 turn_id=turn_id,
                 media_resolver=self._media_resolver,
                 message_id=f"{turn_id}:assistant" if role == "assistant" else None,
+                trusted_blocks=raw.get("agentBlocks"),
             )
             event_payload: dict[str, object] = {
                 "message": message.to_payload(),
@@ -2155,43 +2157,79 @@ def _pi_message_payload(
     turn_id: str,
     media_resolver: Callable[[str, str, str], str] | None = None,
     message_id: str | None = None,
+    trusted_blocks: object = None,
 ) -> AgentMessage:
     role = str(raw.get("role") or "assistant")
     if role not in {"user", "assistant", "tool", "system"}:
         role = "tool" if role.lower().startswith("tool") else "assistant"
     content = raw.get("content")
+    resolved_message_id = message_id or _pi_message_id(raw, turn_id)
     blocks: list[AgentBlock] = []
+    blocks.extend(
+        AgentBlock.from_payload(item)
+        for item in normalize_trusted_agent_blocks(
+            trusted_blocks,
+            source_kind="pi_runtime_event",
+            source_ref=f"{session_id}:{resolved_message_id}",
+        )
+    )
     attachments: list[str] = []
     if isinstance(content, str):
         visible_content = _visible_message_text(role, content)
-        blocks.append(
-            normalize_agent_block(
-                {
-                    "id": f"{turn_id}:text:0",
-                    "type": "text",
-                    "status": "completed",
-                    "presentationKind": "markdown",
-                    "data": {"text": visible_content},
-                }
+        extracted = (
+            extract_completed_agent_blocks(
+                visible_content,
+                source_kind="pi_session_message",
+                source_ref=f"{session_id}:{resolved_message_id}",
             )
+            if role == "assistant"
+            else None
         )
+        if extracted is not None:
+            visible_content = extracted.text
+            blocks.extend(AgentBlock.from_payload(item) for item in extracted.blocks)
+        if visible_content:
+            blocks.append(
+                normalize_agent_block(
+                    {
+                        "id": f"{turn_id}:text:0",
+                        "type": "text",
+                        "status": "completed",
+                        "presentationKind": "markdown",
+                        "data": {"text": visible_content},
+                    }
+                )
+            )
     elif isinstance(content, list):
         for index, item in enumerate(content):
             value = _mapping(item)
             content_type = str(value.get("type") or "unknown")
             if content_type == "text":
                 visible_content = _visible_message_text(role, str(value.get("text") or ""))
-                blocks.append(
-                    normalize_agent_block(
-                        {
-                            "id": f"{turn_id}:text:{index}",
-                            "type": "text",
-                            "status": "completed",
-                            "presentationKind": "markdown",
-                            "data": {"text": visible_content},
-                        }
+                extracted = (
+                    extract_completed_agent_blocks(
+                        visible_content,
+                        source_kind="pi_session_message",
+                        source_ref=f"{session_id}:{resolved_message_id}",
                     )
+                    if role == "assistant"
+                    else None
                 )
+                if extracted is not None:
+                    visible_content = extracted.text
+                    blocks.extend(AgentBlock.from_payload(item) for item in extracted.blocks)
+                if visible_content:
+                    blocks.append(
+                        normalize_agent_block(
+                            {
+                                "id": f"{turn_id}:text:{index}",
+                                "type": "text",
+                                "status": "completed",
+                                "presentationKind": "markdown",
+                                "data": {"text": visible_content},
+                            }
+                        )
+                    )
             elif content_type == "image" and media_resolver is not None:
                 media_id = media_resolver(
                     session_id,
@@ -2261,7 +2299,7 @@ def _pi_message_payload(
         )
     created_at = _integer(raw.get("timestamp")) or int(time.time() * 1000)
     return AgentMessage(
-        message_id=message_id or _pi_message_id(raw, turn_id),
+        message_id=resolved_message_id,
         session_id=session_id,
         turn_id=turn_id,
         role=role,

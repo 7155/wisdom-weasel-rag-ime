@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rag_ime.agent_blocks import normalize_trusted_agent_blocks
+
 from rag_ime.agent_room_context import (
     ProjectionGenerationMismatch,
     ProviderProjectionJournalStore,
@@ -68,6 +70,27 @@ class RoomContextJournalTests(unittest.TestCase):
                     "publicationSource": {"kind": "room_commit", "ref": ""},
                 }
             )
+
+    def test_room_post_persists_blocks_but_context_journal_gets_only_digest_refs(self) -> None:
+        blocks = normalize_trusted_agent_blocks(
+            [{"id": "table:1", "type": "table", "data": {"title": "结果", "columns": ["项"], "rows": [["完整原始数据"]]}}],
+            source_kind="room_commit",
+            source_ref="commit:1",
+            visibility="room_post",
+            generation=3,
+        )
+        post = {**self._post(), "publicationSource": {"kind": "room_commit", "ref": "commit:1"}, "blocks": list(blocks)}
+        stored, created = self.context.publish_post(post)
+        self.assertTrue(created)
+        self.assertEqual(stored["blocks"][0]["data"]["rows"], [["完整原始数据"]])
+        context_content = stored["contextEntry"]["content"]
+        self.assertIn("type=table", context_content)
+        self.assertIn("表格：结果，1 行 1 列", context_content)
+        self.assertNotIn("完整原始数据", context_content)
+
+        private = [{**blocks[0], "visibility": "private_session"}]
+        with self.assertRaisesRegex(ValueError, "visibility"):
+            self.context.publish_post({**post, "postId": "post:private", "idempotencyKey": "post:private", "blocks": private})
 
     def test_post_and_context_entry_are_idempotent_but_immutable(self) -> None:
         first, created = self.context.publish_post(self._post())

@@ -37,10 +37,25 @@
       "required": ["id", "type", "status", "presentationKind", "data"],
       "properties": {
         "id": {"type": "string", "minLength": 1},
-        "type": {"type": "string", "enum": ["text", "code", "reasoning_summary", "progress", "tool_call", "tool_result", "citation", "image", "audio", "file", "sticker", "task_plan", "diff", "approval", "error", "unknown"]},
+        "schemaVersion": {"type": "string", "const": "rag-ime.agent-block.v1"},
+        "type": {"type": "string", "enum": ["text", "code", "reasoning_summary", "progress", "tool_call", "tool_result", "citation", "image", "audio", "file", "sticker", "task_plan", "diff", "approval", "error", "card", "checklist", "table", "artifact", "reference", "status", "unknown"]},
         "status": {"type": "string", "enum": ["queued", "running", "completed", "failed", "aborted"]},
         "presentationKind": {"type": "string", "minLength": 1},
-        "data": {"type": "object"}
+        "data": {"type": "object"},
+        "summary": {"type": "string", "maxLength": 240},
+        "source": {
+          "type": "object",
+          "required": ["kind", "ref"],
+          "properties": {
+            "kind": {"type": "string", "maxLength": 80},
+            "ref": {"type": "string", "maxLength": 240}
+          },
+          "additionalProperties": false
+        },
+        "visibility": {"type": "string", "enum": ["private_session", "room_post", "root_post"]},
+        "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "ref": {"type": "string", "maxLength": 240},
+        "generation": {"type": "integer", "minimum": 0}
       }
     }
   }

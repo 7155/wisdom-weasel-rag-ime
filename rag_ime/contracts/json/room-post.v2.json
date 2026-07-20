@@ -29,6 +29,27 @@
     "kind": {"type": "string", "minLength": 1},
     "visibility": {"enum": ["room", "root"]},
     "content": {"type": "string", "minLength": 1},
+    "blocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["schemaVersion", "id", "type", "status", "presentationKind", "data", "summary", "source", "visibility", "digest", "ref", "generation"],
+        "properties": {
+          "schemaVersion": {"const": "rag-ime.agent-block.v1"},
+          "id": {"type": "string", "minLength": 1},
+          "type": {"enum": ["text", "code", "reasoning_summary", "progress", "tool_call", "tool_result", "citation", "image", "audio", "file", "sticker", "task_plan", "diff", "approval", "error", "card", "checklist", "table", "artifact", "reference", "status", "unknown"]},
+          "status": {"enum": ["queued", "running", "completed", "failed", "aborted"]},
+          "presentationKind": {"type": "string", "minLength": 1},
+          "data": {"type": "object"},
+          "summary": {"type": "string", "maxLength": 240},
+          "source": {"type": "object"},
+          "visibility": {"enum": ["room_post", "root_post"]},
+          "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "ref": {"type": "string", "minLength": 1},
+          "generation": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
     "idempotencyKey": {"type": "string", "minLength": 1},
     "publicationSource": {
       "type": "object",

@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+import time
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator, Mapping, Sequence
+
+from .agent_blocks import bind_block_scope, provider_block_projection
+from .db import apply_database_migrations
+
+
+MAX_ROOT_BLOCK_BYTES = 8 * 1024 * 1024
+
+
+class AgentBlockConflict(RuntimeError):
+    """A stable block identity was rebound to different content."""
+
+
+class AgentBlockStore:
+    def __init__(self, db_path: str | Path) -> None:
+        self.db_path = Path(db_path)
+
+    def initialize(self) -> int:
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as conn:
+            return apply_database_migrations(conn).current_version
+
+    def persist_message(
+        self,
+        message: Mapping[str, object],
+        *,
+        root_id: str = "",
+        task_id: str = "",
+        invocation_id: str = "",
+        generation: int = 0,
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        session_id = _required(message.get("sessionId"), "sessionId")
+        message_id = _required(message.get("id"), "message id")
+        turn_id = str(message.get("turnId") or "")[:240]
+        root = str(root_id).strip() or f"session:{session_id}"
+        now = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
+        blocks = bind_block_scope(
+            [dict(item) for item in message.get("blocks", []) if isinstance(item, Mapping) and item.get("schemaVersion") == "rag-ime.agent-block.v1"],
+            session_id=session_id,
+            message_id=message_id,
+            generation=generation,
+        )
+        projection = provider_block_projection("", blocks)
+        before_bytes = sum(len(_canonical_json(block).encode("utf-8")) for block in blocks)
+        after_bytes = len(projection.encode("utf-8"))
+        with self._connect(immediate=True) as conn:
+            used = int(conn.execute(
+                "SELECT COALESCE(SUM(raw_bytes),0) FROM agent_message_block_sidecars WHERE root_id=? AND generation=? AND lifecycle_status='active'",
+                (root, max(0, int(generation))),
+            ).fetchone()[0])
+            if used + before_bytes > MAX_ROOT_BLOCK_BYTES:
+                raise ValueError("Agent block Root byte budget exceeded")
+            for block in blocks:
+                self._persist_block(
+                    conn, block, message_id=message_id, session_id=session_id,
+                    turn_id=turn_id, root_id=root, task_id=task_id,
+                    invocation_id=invocation_id, generation=generation,
+                    created_at_ms=now,
+                )
+            receipt_id = f"block-projection:{uuid.uuid4()}"
+            projection_hash = hashlib.sha256(projection.encode("utf-8")).hexdigest()
+            conn.execute(
+                """
+                INSERT INTO agent_block_projection_receipts(
+                    receipt_id,session_id,message_id,root_id,generation,
+                    before_bytes,after_bytes,estimated_tokens_before,
+                    estimated_tokens_after,block_count,projection_hash,created_at_ms
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(session_id,message_id,generation) DO NOTHING
+                """,
+                (
+                    receipt_id, session_id, message_id, root, max(0, int(generation)),
+                    before_bytes, after_bytes, (before_bytes + 3) // 4,
+                    (after_bytes + 3) // 4, len(blocks), projection_hash, now,
+                ),
+            )
+            persisted_receipt = conn.execute(
+                "SELECT before_bytes,after_bytes,estimated_tokens_before,estimated_tokens_after,block_count,projection_hash FROM agent_block_projection_receipts WHERE session_id=? AND message_id=? AND generation=?",
+                (session_id, message_id, max(0, int(generation))),
+            ).fetchone()
+            if persisted_receipt is None:
+                raise RuntimeError("Agent block projection receipt was not persisted")
+            before_bytes, after_bytes, tokens_before, tokens_after, block_count, projection_hash = persisted_receipt
+        return {
+            "schemaVersion": "rag-ime.agent-block-persistence-receipt.v1",
+            "sessionId": session_id,
+            "messageId": message_id,
+            "rootId": root,
+            "generation": max(0, int(generation)),
+            "blockCount": int(block_count),
+            "beforeBytes": int(before_bytes),
+            "afterBytes": int(after_bytes),
+            "estimatedTokensBefore": int(tokens_before),
+            "estimatedTokensAfter": int(tokens_after),
+            "projectionHash": str(projection_hash),
+        }
+
+    def blocks_for_message(self, session_id: str, message_id: str, *, generation: int | None = None) -> list[dict[str, object]]:
+        clauses = ["session_id=?", "message_id=?", "lifecycle_status='active'"]
+        params: list[object] = [session_id, message_id]
+        if generation is not None:
+            clauses.append("generation=?")
+            params.append(max(0, int(generation)))
+        else:
+            clauses.append("generation=(SELECT MAX(generation) FROM agent_message_block_sidecars WHERE session_id=? AND message_id=? AND lifecycle_status='active')")
+            params.extend([session_id, message_id])
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT raw_json FROM agent_message_block_sidecars WHERE {' AND '.join(clauses)} ORDER BY created_at_ms,block_ref",
+                params,
+            ).fetchall()
+        return [json.loads(str(row[0])) for row in rows]
+
+    def cancel_generation(self, root_id: str, generation: int, *, now_ms: int | None = None) -> int:
+        with self._connect(immediate=True) as conn:
+            cursor = conn.execute(
+                "UPDATE agent_message_block_sidecars SET lifecycle_status='cancelled',updated_at_ms=? WHERE root_id=? AND generation<=? AND lifecycle_status='active'",
+                (int(now_ms if now_ms is not None else time.time() * 1000), root_id, max(0, int(generation))),
+            )
+            return max(0, int(cursor.rowcount))
+
+    def revoke(self, block_ref: str, *, root_id: str, session_id: str, now_ms: int | None = None) -> bool:
+        with self._connect(immediate=True) as conn:
+            cursor = conn.execute(
+                "UPDATE agent_message_block_sidecars SET lifecycle_status='revoked',updated_at_ms=? WHERE block_ref=? AND root_id=? AND session_id=? AND lifecycle_status='active'",
+                (int(now_ms if now_ms is not None else time.time() * 1000), block_ref, root_id, session_id),
+            )
+            return cursor.rowcount == 1
+
+    def _persist_block(self, conn: sqlite3.Connection, block: Mapping[str, object], **scope: object) -> None:
+        raw = _canonical_json(block)
+        digest = _required(block.get("digest"), "digest")
+        block_ref = _required(block.get("ref"), "block ref")
+        identity = conn.execute(
+            "SELECT block_ref,digest,raw_json FROM agent_message_block_sidecars WHERE session_id=? AND message_id=? AND block_id=? AND generation=?",
+            (scope["session_id"], scope["message_id"], _required(block.get("id"), "block id"), max(0, int(scope["generation"]))),
+        ).fetchone()
+        if identity is not None:
+            if str(identity[0]) != block_ref or str(identity[1]) != digest or str(identity[2]) != raw:
+                raise AgentBlockConflict("Agent block identity was rebound to different content")
+            return
+        existing = conn.execute("SELECT digest,raw_json FROM agent_message_block_sidecars WHERE block_ref=?", (block_ref,)).fetchone()
+        if existing is not None:
+            if str(existing[0]) != digest or str(existing[1]) != raw:
+                raise AgentBlockConflict("Agent block ref was rebound to different content")
+            return
+        conn.execute(
+            """
+            INSERT INTO agent_message_block_sidecars(
+                block_ref,block_id,message_id,session_id,turn_id,root_id,
+                task_id,invocation_id,generation,block_type,visibility,
+                lifecycle_status,digest,summary,raw_json,raw_bytes,
+                created_at_ms,updated_at_ms
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                block_ref, _required(block.get("id"), "block id"), scope["message_id"],
+                scope["session_id"], scope["turn_id"], scope["root_id"], scope["task_id"],
+                scope["invocation_id"], max(0, int(scope["generation"])),
+                _required(block.get("type"), "block type"),
+                str(block.get("visibility") or "private_session"), "active", digest,
+                str(block.get("summary") or "")[:240], raw, len(raw.encode("utf-8")),
+                scope["created_at_ms"], scope["created_at_ms"],
+            ),
+        )
+
+    @contextmanager
+    def _connect(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path)
+        try:
+            if immediate:
+                conn.execute("BEGIN IMMEDIATE")
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _required(value: object, label: str) -> str:
+    result = str(value or "").strip()
+    if not result:
+        raise ValueError(f"{label} is required")
+    return result
