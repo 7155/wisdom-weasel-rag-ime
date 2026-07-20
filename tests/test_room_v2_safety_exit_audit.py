@@ -1,0 +1,222 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from rag_ime.agent_room_kernel import RoomKernelStore
+from rag_ime.agent_room_kernel_worker import RoomKernelWorker
+from rag_ime.agent_routes import agent_room_kernel_route
+
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+class _AcceptedRuntime:
+    def __init__(self) -> None:
+        self.active_dispatches: list[str] = []
+        self.cancel_calls: list[tuple[str, str, int]] = []
+
+    def dispatch_room(self, payload, *, message: str, lease_token: str):
+        self.active_dispatches.append(str(payload["dispatchId"]))
+        return {
+            "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+            "receiptKind": "dispatch_accepted",
+            "status": "accepted",
+            "rootId": payload["rootId"],
+            "dispatchId": payload["dispatchId"],
+            "generation": payload["generation"],
+        }
+
+    def cancel_room(self, *, session_id: str, root_id: str, generation: int):
+        self.cancel_calls.append((session_id, root_id, generation))
+        return {
+            "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+            "receiptKind": "cancel_applied",
+            "status": "applied",
+            "rootId": root_id,
+            "generation": generation,
+        }
+
+
+class RoomV2SafetyExitAuditTests(unittest.TestCase):
+    """Executable characterization of safety-exit blockers, not readiness claims."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="room-v2-safety-audit-")
+        self.clock = 10
+        self.store = RoomKernelStore(Path(self.tmp.name) / "room.sqlite", mode="test")
+        self.store.initialize()
+        self.runtime = _AcceptedRuntime()
+        self.revoked: list[str] = []
+        self.worker = RoomKernelWorker(
+            self.store,
+            self.runtime,
+            clock_ms=lambda: self.clock,
+            revoke_session=lambda session_id, _now_ms: self.revoked.append(session_id),
+        )
+        self._seed_dispatch()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_reproducer_runtime_accept_then_kernel_ack_crash_becomes_uncancellable_unknown(self) -> None:
+        original = self.store.accept_runtime_receipt
+
+        def crash_after_runtime_effect(**_kwargs):
+            raise RuntimeError("simulated process crash after Pi accepted the Dispatch")
+
+        self.store.accept_runtime_receipt = crash_after_runtime_effect  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "after Pi accepted"):
+            self.worker.run_once(lease_ttl_ms=5)
+        self.store.accept_runtime_receipt = original  # type: ignore[method-assign]
+
+        self.clock = 20
+        self.worker.reconcile()
+        self.assertEqual(self.store.dispatch("dispatch:1")["state"], "unknown")
+        self.assertEqual(self.runtime.cancel_calls, [])
+        self.assertEqual(self.revoked, ["session:b"])
+
+        result = self.worker.apply_control_command(self._panic_command())
+        self.assertEqual(result["kernelReceipt"]["details"]["unknownDispatches"], 1)
+        self.assertEqual(self.runtime.cancel_calls, [])
+        self.assertEqual(self.store.dispatch("dispatch:1")["state"], "unknown")
+
+    def test_reproducer_direct_store_cancel_commits_without_runtime_propagation(self) -> None:
+        self.worker.run_once()
+        self.assertEqual(self.store.dispatch("dispatch:1")["state"], "running")
+
+        self.store.cancel_root("root:1", now_ms=20)
+
+        self.assertEqual(self.store.dispatch("dispatch:1")["state"], "cancelled")
+        self.assertEqual(self.runtime.cancel_calls, [])
+
+    def test_source_census_records_non_cutover_execution_and_context_paths(self) -> None:
+        service = (REPO / "rag_ime/agent_service.py").read_text(encoding="utf-8")
+        kernel = (REPO / "rag_ime/agent_room_kernel.py").read_text(encoding="utf-8")
+        prompt = (REPO / "rag_ime/agent_prompt_plans.py").read_text(encoding="utf-8")
+        integrations = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (REPO / "integrations/pi").rglob("*.ts")
+        )
+
+        # There is no product root/task/dispatch creation call site yet; tests seed it directly.
+        self.assertNotIn(".create_root(", service)
+        self.assertNotIn(".create_task(", service)
+        self.assertNotIn(".enqueue_dispatch(", service)
+        self.assertIn("Non-cutover Room state machine", kernel)
+
+        # PromptPlan and native Room Skill governance are durable audit models, not live Pi inputs.
+        self.assertIn("Shadow-only six-layer PromptPlan", prompt)
+        self.assertIn('"mode": "shadow_compare_only"', prompt)
+        self.assertNotIn("RoomSkillPolicyStore", service)
+        self.assertIn("profile=None", service)
+
+        # Python calls typed Room RPC, but this repository contains no Pi host handler for it.
+        self.assertNotIn("room.dispatch", integrations)
+        self.assertNotIn("room.cancel", integrations)
+
+        # The legacy default still projects completed private Session text to the Room timeline.
+        self.assertIn('return "participant_message", {"message": message}', service)
+
+        recognized = {
+            action
+            for action in ("snapshot", "events", "commands", "settle", "create", "dispatch", "finalize")
+            if agent_room_kernel_route(f"/api/agent/rooms/room:1/kernel/{action}")[1]
+        }
+        self.assertEqual(recognized, {"snapshot", "events", "commands", "settle"})
+
+    def test_finality_query_proves_cancelled_root_has_no_terminal_receipt_and_open_task(self) -> None:
+        self.worker.run_once()
+        self.worker.cancel_root("root:1")
+        root = self.store.root("root:1")
+        rejected = self.store.finalize_root("root:1", now_ms=30)
+
+        self.assertEqual(root["state"], "cancelled")
+        self.assertIsNone(root["terminalReceiptId"])
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(rejected["details"]["openTasks"], 1)
+
+    def _seed_dispatch(self) -> None:
+        self.store.create_root(
+            {
+                "schemaVersion": "wisdom-weasel.room-root-execution.v2",
+                "rootId": "root:1",
+                "roomId": "room:1",
+                "generation": 0,
+                "state": "running",
+                "owner": "user:1",
+                "requirementAnchorRef": "requirement:1",
+                "createdByActorRef": "user:1",
+                "terminalReceiptId": None,
+                "activeProfileRef": None,
+                "budgetPolicyRef": "budget:1",
+                "createdAtMs": 1,
+            },
+            budget=10,
+            max_hops=4,
+            max_depth=4,
+            now_ms=1,
+        )
+        self.store.create_task(
+            {
+                "schemaVersion": "wisdom-weasel.room-task.v2",
+                "taskId": "task:1",
+                "rootId": "root:1",
+                "parentTaskId": None,
+                "ownerParticipantId": "participant:b",
+                "assigneeParticipantId": "participant:b",
+                "objective": "audit",
+                "expectedOutput": "a safe terminal receipt",
+                "requirementItemIds": ["requirement:1"],
+                "acceptanceCriterionIds": ["ac:1"],
+                "revision": 1,
+                "state": "active",
+            },
+            now_ms=1,
+        )
+        self.store.enqueue_dispatch(
+            {
+                "schemaVersion": "wisdom-weasel.room-dispatch-envelope.v2",
+                "dispatchId": "dispatch:1",
+                "rootId": "root:1",
+                "taskId": "task:1",
+                "parentDispatchId": None,
+                "generation": 0,
+                "hopCount": 0,
+                "depth": 0,
+                "budgetCost": 1,
+                "targetSessionId": "session:b",
+                "targetParticipantId": "participant:b",
+                "triggerId": "trigger:1",
+                "intentKind": "execute",
+                "idempotencyKey": "root:1:task:1:participant:b",
+                "attempt": 0,
+                "capabilityEpoch": 0,
+                "runtimeProfileRevision": "profile:1",
+                "state": "pending",
+            },
+            now_ms=1,
+        )
+
+    @staticmethod
+    def _panic_command() -> dict[str, object]:
+        return {
+            "schemaVersion": "wisdom-weasel.room-kernel-command.v1",
+            "commandId": "panic:1",
+            "rootId": None,
+            "roomId": "room:1",
+            "commandKind": "panic",
+            "targetKind": None,
+            "targetId": None,
+            "sourceKind": "admin",
+            "sourceId": "audit",
+            "idempotencyKey": "panic:1",
+            "generation": 0,
+            "payload": {},
+            "createdAtMs": 21,
+        }
+
+
+if __name__ == "__main__":
+    unittest.main()
