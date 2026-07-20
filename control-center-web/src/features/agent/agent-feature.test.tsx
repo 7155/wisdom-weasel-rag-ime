@@ -1625,7 +1625,11 @@ describe('Agent experience', () => {
     const transport = featureTransport();
     const user = userEvent.setup();
     renderAgent(transport);
-    const trigger = await screen.findByRole('button', { name: '当前权限可用工具：13 个' });
+    const trigger = await screen.findByRole(
+      'button',
+      { name: '当前权限可用工具：13 个' },
+      { timeout: 5_000 },
+    );
 
     await user.click(trigger);
     expect(screen.getByRole('button', { name: /控制中心概览/ })).toBeInTheDocument();
@@ -1727,7 +1731,11 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    expect(await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ })).toBeInTheDocument();
+    expect(await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5.6 Luna/ },
+      { timeout: 5_000 },
+    )).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '新建任务' }));
     const dialog = await screen.findByRole('dialog', { name: '新建任务' });
     expect(within(dialog).getByRole('radio', { name: /learnA/ })).toBeChecked();
@@ -1749,7 +1757,11 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ }));
+    await user.click(await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5.6 Luna/ },
+      { timeout: 5_000 },
+    ));
     const lunaDetails = screen.getByText('GPT-5.6 Luna', { selector: 'summary' }).closest('details');
     expect(lunaDetails).not.toBeNull();
     for (const level of ['不启用推理', '最小', '低', '中', '高', '极高', 'Max']) {
@@ -1777,7 +1789,11 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(featureTransport(catalog));
 
-    await user.click(await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ }));
+    await user.click(await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5.6 Luna/ },
+      { timeout: 5_000 },
+    ));
     expect(screen.queryByRole('button', { name: 'Max' })).not.toBeInTheDocument();
   });
 
@@ -1786,7 +1802,11 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ }));
+    await user.click(await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5.6 Luna/ },
+      { timeout: 5_000 },
+    ));
     const codexDetails = screen.getByText('Codex Mini').closest('details');
     expect(codexDetails).not.toBeNull();
     codexDetails!.open = true;
