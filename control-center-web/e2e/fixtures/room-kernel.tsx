@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { createRoomKernelProjection } from '../../src/contracts/room-kernel-reducer';
 import { RoomKernelControlPlane } from '../../src/features/rooms/kernel/RoomKernelControlPlane';
 import { createFixtureRoomKernelCommandTransport } from '../../src/features/rooms/kernel/room-kernel-command-transport';
+import { parseRoomRequirementsReadProjection } from '../../src/features/rooms/requirements/room-requirements-read-model';
 import '../../src/design/tokens.css';
 import '../../src/design/typography.css';
 import '../../src/components/primitives/primitives.css';
@@ -54,6 +55,42 @@ projection.sessionsById['session-private-implementation'] = {
   generation: 1, state: 'running', updatedAtMs: 218,
 };
 
+const requirementRootId = 'root-research-2026-07-19-with-a-deliberately-long-identifier';
+const requirementProjection = parseRoomRequirementsReadProjection({
+  projectionSource: 'canonical_fixture', rootId: requirementRootId,
+  anchors: [{
+    anchor: {
+      schemaVersion: 'wisdom-weasel.requirement-anchor.v1', anchorId: 'anchor-research', rootId: requirementRootId,
+      rootSequence: 1, originalContentSha256: 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+      originalByteLength: 3, createdBy: 'user:fixture', authenticity: 'original_user_bytes',
+      provenance: { requestId: 'fixture-request' }, createdAtMs: 1,
+    },
+    originalText: 'abc',
+  }],
+  catalog: {
+    schemaVersion: 'wisdom-weasel.requirement-catalog-revision.v1', catalogRevisionId: 'catalog-research-r2',
+    rootId: requirementRootId, revision: 2, supersedesRevisionId: 'catalog-research-r1', anchorRefs: ['anchor-research'],
+    items: [{ itemId: 'requirement-original', statement: '原始需求永久保留', kind: 'explicit_user_requirement', state: 'active' }],
+    acceptanceCriteria: [{ criterionId: 'criterion-original', itemId: 'requirement-original', acceptanceCriterionFullNameZh: '原始需求永久保留验收标准', criterionKind: 'user_journey', expectedReceiptTypes: ['test'], statement: '原始字节哈希一致且界面只读' }],
+    changeReason: '补充用户旅程验收', provenance: { source: 'canonical-fixture' }, payloadHash: 'c'.repeat(64),
+    createdBy: 'requirements-governor', createdAtMs: 2,
+  },
+  receipts: [{
+    schemaVersion: 'wisdom-weasel.typed-verification-receipt.v1', receiptId: 'receipt-research-test', rootId: requirementRootId,
+    catalogRevisionId: 'catalog-research-r2', receiptType: 'test', sourceCommit: 'commit-current', environment: 'managed-ci',
+    commandOrAction: 'pnpm test', exitStatus: 0, outputHash: 'd'.repeat(64), artifactHash: 'e'.repeat(64),
+    verifier: 'managed-test-runner', createdAtMs: 3,
+  }],
+  deliveryGate: {
+    schemaVersion: 'wisdom-weasel.delivery-gate-observation.v1', gateReceiptId: 'gate-research', rootId: requirementRootId,
+    catalogRevisionId: 'catalog-research-r2', targetCommit: 'commit-current', mode: 'observe_warn', gateStatus: 'warn_blocked',
+    enforcementApplied: false, blindReviewStatus: 'pending', reasons: ['unresolved_unknown', 'blind_review_not_passed'],
+    proofMatrix: [{ criterionId: 'criterion-original', criterionKind: 'user_journey', passed: true, receiptIds: ['receipt-research-test'] }], createdAtMs: 4,
+  },
+  conflicts: [{ conflictId: 'conflict-research', leftItemId: 'requirement-original', rightItemId: 'requirement-derived', conflictKind: 'unknown', status: 'open', resolution: '' }],
+  peerReviewRounds: [{ roundId: 'peer-round-research', reviewerActorRef: 'peer-reviewer', status: 'pending', receiptRef: null }],
+});
+
 createRoot(document.getElementById('root')!).render(<RoomKernelControlPlane
   projection={projection}
   budgetsByRootId={{
@@ -76,6 +113,7 @@ createRoot(document.getElementById('root')!).render(<RoomKernelControlPlane
       revision: 'capability-revision-9', status: 'sealed', contentHash: `sha256:${'b'.repeat(64)}`,
     },
   }}
+  requirementsByRootId={{ [requirementRootId]: requirementProjection }}
   commandTransport={createFixtureRoomKernelCommandTransport((command) => {
     document.body.dataset.lastStop = JSON.stringify(command);
     return {

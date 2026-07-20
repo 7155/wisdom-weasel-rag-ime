@@ -7,6 +7,16 @@ test('Room control plane stays readable and target Stop remains reachable', asyn
   await expect(plane).toBeVisible();
   await expect(page.getByRole('region', { name: /公开 Posts/ }).first()).toContainText('显式提交');
   await expect(page.getByRole('region', { name: /私有 Sessions/ }).first()).toContainText('过程不进入 Room');
+  const requirements = page.getByRole('region', { name: /需求、证明与审查/ });
+  await expect(requirements).toContainText('永久保留，不可修改');
+  await expect(requirements).toContainText('验收标准（Acceptance Criterion）');
+  await expect(requirements).toContainText('Agent 自述不算证据');
+  await expect(requirements.locator('[data-gate-status="warn_blocked"] [data-status="observed_pass"]')).toHaveCount(0);
+  await expect(requirements.getByText('预览：enforce')).toBeVisible();
+  await expect(requirements.getByRole('textbox')).toHaveCount(0);
+  const original = requirements.getByLabel('anchor-research 原始需求只读文本');
+  await original.focus();
+  await expect(original).toBeFocused();
 
   const overflow = await page.evaluate(() => ({
     document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
