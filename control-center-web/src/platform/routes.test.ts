@@ -58,6 +58,8 @@ const canonicalPathIds = [
   'agent.session.contextTrace.get',
   'agent.session.debugContext.get',
   'agent.artifact.get',
+  'agent.collaborationProfile.get',
+  'agent.collaborationProfile.command',
   'agent.media.list',
   'agent.deep-search',
   'agent.rooms.list',

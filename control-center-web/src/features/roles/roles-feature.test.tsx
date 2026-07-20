@@ -39,7 +39,7 @@ describe('Roles experience', () => {
     await waitFor(() => expect(transport.requests.map((call) => call.request.pathId)).toEqual(expect.arrayContaining(['agent.roles.list', 'agent.subagents.templates'])));
   });
 
-  it('separates the four Agent Definition layers and keeps new catalogs read only', async () => {
+  it('separates the four Agent Definition layers and fails closed without a canonical Profile route', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
@@ -60,9 +60,9 @@ describe('Roles experience', () => {
 
     await user.click(screen.getByRole('radio', { name: '角色书' }));
     expect(screen.getAllByText('证据研究与独立复核')).toHaveLength(2);
-    expect(screen.getByText('研究员 · 审查员')).toBeInTheDocument();
-    expect(screen.getByText('只能收窄已授权能力')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /启用角色书/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/角色书 · canonical runtime/)).toBeInTheDocument();
+    expect(await screen.findByText(/CollaborationProfile read route is unavailable or changed/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '启用' })).not.toBeInTheDocument();
   });
 
   it('creates a Session with the selected Persona and navigates to it', async () => {
