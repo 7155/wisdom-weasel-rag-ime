@@ -9,6 +9,7 @@ from rag_ime.context_inspection import inspect_context_sequence, replay_context_
 
 FIXTURE = Path(__file__).parent / "fixtures" / "room_context_inspection" / "replay.jsonl"
 REAL_CANARY = FIXTURE.parent / "real-provider-canary-failed.v1.json"
+REAL_GPT_CANARY = FIXTURE.parent / "real-gpt-luna-canary-failed.v1.json"
 
 
 def snapshot(
@@ -102,6 +103,12 @@ class ContextInspectionTests(unittest.TestCase):
         self.assertFalse(evidence["providerCacheFieldsReported"])
         self.assertFalse(evidence["stableHitProven"])
         self.assertEqual(evidence["verdict"], "inconclusive_provider_unreachable")
+
+        gpt = json.loads(REAL_GPT_CANARY.read_text(encoding="utf-8"))
+        self.assertEqual(gpt["failureCode"], "PROMPT_REJECTED")
+        self.assertFalse(gpt["providerUsageReported"])
+        self.assertFalse(gpt["stableHitProven"])
+        self.assertEqual(gpt["verdict"], "inconclusive_provider_credentials_unavailable")
 
 
 if __name__ == "__main__":

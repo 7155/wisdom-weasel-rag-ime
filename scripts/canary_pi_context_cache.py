@@ -361,6 +361,9 @@ def main() -> int:
             }
             evidence_state.update(report)
             emit_evidence(report)
+        except Exception as error:
+            checkpoint("failed", failure=str(error)[:800])
+            raise
         finally:
             if evidence_state.get("lastCompletedStage") != "complete" and "failure" not in evidence_state:
                 checkpoint("shutdown_requested")
