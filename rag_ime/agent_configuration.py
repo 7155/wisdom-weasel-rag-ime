@@ -45,7 +45,7 @@ def default_agent_configuration(
     *,
     enabled: bool = False,
     idle_timeout_seconds: int = 900,
-    role_id: str = "vcp-v1",
+    role_id: str = "companion-future-v1",
     role_version: str = "1",
     model_profile: str = "gpt/gpt-5.6-sol",
     tool_profile_version: str = "control-center-v1",

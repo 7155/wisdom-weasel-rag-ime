@@ -412,6 +412,13 @@ export const CONTROL_ROUTES = {
     body: ['message', 'clientMessageId', 'participantIds', 'workItemId'],
     requiredBody: ['message'],
   },
+  'agent.room.abort': {
+    method: 'POST',
+    path: '/api/agent/rooms/:roomId/abort',
+    params: { roomId: null },
+    body: ['roomTurnId', 'clientRequestId'],
+    requiredBody: ['roomTurnId', 'clientRequestId'],
+  },
   'agent.room.events': {
     method: 'GET',
     path: '/api/agent/rooms/:roomId/events',

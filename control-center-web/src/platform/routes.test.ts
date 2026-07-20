@@ -75,6 +75,7 @@ const canonicalPathIds = [
   'agent.room.participant.remove',
   'agent.room.delete',
   'agent.room.message',
+  'agent.room.abort',
   'agent.room.events',
   'agent.room.kernel.snapshot',
   'agent.room.kernel.events',
@@ -379,7 +380,7 @@ describe('control route policy', () => {
 
   it('allowlists all four reviewed Role Book proposal selections', () => {
     const selection = {
-      roleId: 'zhiyou-v1',
+      roleId: 'companion-present-v1',
       roleVersion: '1',
       revisionId: '',
       draftId: 'role-book-draft:1',

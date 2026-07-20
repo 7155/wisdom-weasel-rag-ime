@@ -243,7 +243,7 @@ class ReviewedMemoryCleanupTests(unittest.TestCase):
                    id, title, session_mode, role_id, role_version, model_profile,
                    tool_profile_version, created_at_ms, updated_at_ms,
                    last_opened_at_ms, status
-               ) VALUES ('session:test', 'test', 'assistant', 'zhiyou-v1', 'v1',
+               ) VALUES ('session:test', 'test', 'assistant', 'companion-present-v1', 'v1',
                          'test', 'test', ?, ?, ?, 'idle')""",
             (now, now, now),
         )
@@ -255,7 +255,7 @@ class ReviewedMemoryCleanupTests(unittest.TestCase):
                        source_role, canonical_text_sha256, created_at_ms,
                        role_id, role_version, disposition, metadata_json
                    ) VALUES (?, 'session:test', ?, ?, 'user', ?, ?,
-                             'zhiyou-v1', 'v1', ?, '{}')""",
+                             'companion-present-v1', 'v1', ?, '{}')""",
                 (f"source:{index}", f"entry:{index}", index, digest, now + index, disposition),
             )
         digest = hashlib.sha256(texts[0].encode("utf-8")).hexdigest()
@@ -265,7 +265,7 @@ class ReviewedMemoryCleanupTests(unittest.TestCase):
                    source_id, idempotency_key, content_text, content_sha256,
                    provenance_json, metadata_json, privacy_class, status,
                    occurred_at_ms, recorded_at_ms
-               ) VALUES ('evidence:1', ?, 'zhiyou-v1', 'session:test',
+               ) VALUES ('evidence:1', ?, 'companion-present-v1', 'session:test',
                          'user_message', 'entry:1', 'evidence:1', ?, ?,
                          '{"inputEventId":1}', '{}', 'local', 'active', ?, ?)""",
             (PROJECT, texts[0], digest, now, now),
@@ -329,7 +329,7 @@ class ReviewedMemoryCleanupTests(unittest.TestCase):
             """INSERT INTO agent_role_books(
                    role_id, role_version, display_name, mission,
                    base_persona_version, created_at_ms, updated_at_ms
-               ) VALUES ('zhiyou-v1', 'v1', '智鼬', '协助用户工作', 'base-v1', ?, ?)""",
+               ) VALUES ('companion-present-v1', 'v1', '智鼬', '协助用户工作', 'base-v1', ?, ?)""",
             (now, now),
         )
         conn.execute(
@@ -337,7 +337,7 @@ class ReviewedMemoryCleanupTests(unittest.TestCase):
                    revision_id, role_id, role_version, revision_number, status,
                    content_json, change_summary, proposed_by, created_at_ms,
                    activated_at_ms
-               ) VALUES ('role-revision:1', 'zhiyou-v1', 'v1', 1, 'active',
+               ) VALUES ('role-revision:1', 'companion-present-v1', 'v1', 1, 'active',
                          '{"mission":"协助用户工作"}', 'initial', 'user', ?, ?)""",
             (now, now),
         )

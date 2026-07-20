@@ -14,6 +14,7 @@ from typing import Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .agent_protocol import AgentEventEnvelope
+from .agent_role_identity import canonical_agent_role_id
 from .db import apply_database_migrations
 
 
@@ -47,7 +48,9 @@ class AgentWakeScheduleStore:
         if target_type not in {"session", "role"}:
             raise ValueError("wake targetType must be session or role")
         target_session_id = _text(payload.get("targetSessionId"), maximum=240)
-        target_role_id = _text(payload.get("targetRoleId"), maximum=120)
+        target_role_id = canonical_agent_role_id(
+            _text(payload.get("targetRoleId"), maximum=120)
+        )
         target_role_version = _text(payload.get("targetRoleVersion"), maximum=40) or "1"
         if target_type == "session" and not target_session_id:
             raise ValueError("targetSessionId is required for a session wake")
@@ -269,6 +272,65 @@ class AgentWakeScheduleStore:
                 WHERE schedule_id = ?
                 """,
                 (next_status, next_at, timestamp, identifier),
+            )
+        return self.get(identifier)
+
+    def cancel_for_root(
+        self,
+        schedule_id: str,
+        *,
+        reason: str,
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Durably fence a wake even after its Agent turn has started."""
+
+        identifier = _required_id(schedule_id)
+        timestamp = _now_ms(now_ms)
+        message = _text(reason, maximum=500)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM agent_wake_schedules WHERE schedule_id = ?",
+                (identifier,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(identifier)
+            current = str(row["status"])
+            if current in {"completed", "failed", "cancelled"}:
+                return _schedule_payload(row, self._latest_run_locked(conn, identifier))
+            run_id = str(row["last_run_id"] or "")
+            if current == "running" and run_id:
+                conn.execute(
+                    """
+                    UPDATE agent_wake_runs
+                    SET state = 'failed', finished_at_ms = ?, error = ?,
+                        result_json = ?
+                    WHERE run_id = ? AND state IN ('claimed', 'accepted')
+                    """,
+                    (
+                        timestamp,
+                        message,
+                        json.dumps(
+                            {
+                                "status": "aborted",
+                                "reason": message,
+                                "source": "room_root_cancel",
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        run_id,
+                    ),
+                )
+            conn.execute(
+                """
+                UPDATE agent_wake_schedules
+                SET status = 'cancelled', next_wake_at_ms = NULL,
+                    last_error = ?, lease_token = '',
+                    lease_expires_at_ms = NULL, updated_at_ms = ?
+                WHERE schedule_id = ?
+                """,
+                (message, timestamp, identifier),
             )
         return self.get(identifier)
 
@@ -540,6 +602,20 @@ class AgentWakeScheduleStore:
             raise ValueError("wake run is no longer active")
         return row
 
+    @staticmethod
+    def _latest_run_locked(
+        conn: sqlite3.Connection,
+        schedule_id: str,
+    ) -> sqlite3.Row | None:
+        return conn.execute(
+            """
+            SELECT * FROM agent_wake_runs
+            WHERE schedule_id = ?
+            ORDER BY started_at_ms DESC LIMIT 1
+            """,
+            (schedule_id,),
+        ).fetchone()
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path, timeout=30)
@@ -697,7 +773,7 @@ def _schedule_payload(
         "instruction": str(row["instruction"]),
         "targetType": str(row["target_type"]),
         "targetSessionId": str(row["target_session_id"]),
-        "targetRoleId": str(row["target_role_id"]),
+        "targetRoleId": canonical_agent_role_id(row["target_role_id"]),
         "targetRoleVersion": str(row["target_role_version"]),
         "createdBySessionId": str(row["created_by_session_id"]),
         "planningTaskId": str(row["planning_task_id"]),

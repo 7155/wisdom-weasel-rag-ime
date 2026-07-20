@@ -113,6 +113,18 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
 
     def test_source_census_records_live_context_and_governed_cutover_paths(self) -> None:
         service = (REPO / "rag_ime/agent_service.py").read_text(encoding="utf-8")
+        room_application = (
+            REPO / "rag_ime/agent_room_application.py"
+        ).read_text(encoding="utf-8")
+        kernel_application = (
+            REPO / "rag_ime/agent_room_kernel_application.py"
+        ).read_text(encoding="utf-8")
+        runtime_coordinator = (
+            REPO / "rag_ime/agent_room_runtime_coordinator.py"
+        ).read_text(encoding="utf-8")
+        event_projection = (
+            REPO / "rag_ime/agent_event_projection.py"
+        ).read_text(encoding="utf-8")
         kernel = (REPO / "rag_ime/agent_room_kernel.py").read_text(encoding="utf-8")
         prompt = (REPO / "rag_ime/agent_prompt_plans.py").read_text(encoding="utf-8")
         integrations = "\n".join(
@@ -121,9 +133,9 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
 
         # Product routes converge on one command bus; store methods are persistence internals.
-        self.assertIn("room_kernel_commands.create_root_task(", service)
-        self.assertIn("room_kernel_commands.dispatch(", service)
-        self.assertIn("room_kernel_commands.finalize(", service)
+        self.assertIn("self.commands.create_root_task(", room_application)
+        self.assertIn("self.commands.dispatch_many(", room_application)
+        self.assertIn("self.commands.finalize(", kernel_application)
         self.assertIn("Canonical durable Room state machine", kernel)
 
         # Bound Room Sessions consume the compiled provider payload and one governed Skill.
@@ -135,15 +147,16 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
 
         # A Root pins one immutable CollaborationProfile; dispatch compilation consumes it.
         self.assertIn("_resolve_room_collaboration_profile", service)
-        self.assertIn("profile=active_profile", service)
-        self.assertNotIn("profile=None", service)
+        self.assertIn("profile=active_profile", runtime_coordinator)
+        self.assertNotIn("profile=None", runtime_coordinator)
 
         # Product integration pins the reviewed Pi runtime handlers and typed methods.
         self.assertIn("room.dispatch", integrations)
         self.assertIn("room.cancel", integrations)
 
         # Legacy projection still exists for ordinary rooms, but managed Room bindings suppress it.
-        self.assertIn('return "participant_message", {"message": message}', service)
+        self.assertIn('return "participant_message", {', event_projection)
+        self.assertIn('"message": message', event_projection)
         self.assertIn('self.room_kernel.mode in {"cohort", "kernel_only"}', service)
 
         recognized = {

@@ -1501,7 +1501,7 @@ class DebugImeService:
                 maximum=86_400,
             ),
             "sessionDefaults.resumeLastSession": bool(pi.get("resumeLastSession")),
-            "sessionDefaults.roleId": _string(pi.get("defaultRoleId")) or "vcp-v1",
+            "sessionDefaults.roleId": _string(pi.get("defaultRoleId")) or "companion-future-v1",
             "sessionDefaults.toolProfileVersion": (
                 _string(pi.get("toolProfile")) or "control-center-v1"
             ),
@@ -7526,6 +7526,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(
                     HTTPStatus.ACCEPTED,
                     self.service.agent.post_room_message(agent_room_id, payload),
+                )
+            elif agent_room_id and room_action == "abort":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.abort_room_turn(agent_room_id, payload),
                 )
             elif agent_room_id and room_action == "participants":
                 self._write_json(

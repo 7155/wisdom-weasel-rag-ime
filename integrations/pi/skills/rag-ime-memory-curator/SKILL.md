@@ -6,6 +6,8 @@ when:
   - 用户询问 ime_memory 草案审批流程
   - 项目、功能、修复或迁移已完成，需要判断是否形成可复用记忆或角色能力记录
 does: 先过持久信息门，再用 ime_memory 或 agent_role_book 生成受控草案。
+input: 用户持久化意图、经授权 Evidence 或草案、当前 Session 固定角色版本。
+output: 待审记忆或角色书草案、证据引用和审批或回滚状态。
 notFor:
   - 普通聊天、进度播报、失败回执或未完成工作
   - 直接读写 SQLite
@@ -91,7 +93,7 @@ Classify every source before proposing any semantic artifact:
 ## When To Run This Skill
 
 Do not run memory curation merely because the Agent is chatting, a turn ended,
-or the role is `zhiyou-v1`. Ordinary user and assistant messages remain
+or the role is `companion-present-v1`. Ordinary user and assistant messages remain
 Evidence/audit records and do not by themselves trigger a Tool call.
 
 Run one compact curation check only at one of these boundaries:

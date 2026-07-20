@@ -424,7 +424,7 @@ function targetLabel(
 ): string {
   if (stringValue(schedule.targetType) === 'role') {
     const roleId = stringValue(schedule.targetRoleId);
-    return `角色：${roles.find((item) => item.roleId === roleId)?.displayName ?? roleId}`;
+    return `角色：${roles.find((item) => item.roleId === roleId)?.displayName ?? '未命名角色'}`;
   }
   const sessionId = stringValue(schedule.targetSessionId);
   return `线程：${sessions.find((item) => item.id === sessionId)?.title ?? sessionId}`;

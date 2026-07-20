@@ -2198,7 +2198,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("result.reviewRequired === true", extension)
         self.assertIn("resolvedReviewRunIds.has(runId)", extension)
 
-    def test_room_tool_uses_trusted_session_identity_and_drops_forged_source_fields(self) -> None:
+    def test_retired_room_operations_cannot_reenter_through_ime_agents(self) -> None:
         calls: list[tuple[str, dict[str, object]]] = []
 
         class _Collaboration:
@@ -2221,39 +2221,20 @@ class ControlToolGatewayTests(unittest.TestCase):
             facade=self.facade,
             collaboration=_Collaboration(),
         )
-        response = gateway.execute(
-            self._tool_call(
-                "ime_agents",
-                "room_send",
-                targetParticipantId="participant:reviewer",
-                clientMessageId="turn-7-message-1",
-                content="请复核这条结论",
-                sourceSessionId="forged-session",
-                sourceParticipantId="forged-participant",
-            )
-        )
-
-        self.assertTrue(response["result"]["ok"])
-        self.assertEqual(calls[0][0], self.session["id"])
-        self.assertNotIn("sourceSessionId", calls[0][1])
-        self.assertNotIn("sourceParticipantId", calls[0][1])
-        self.assertEqual(calls[0][1]["kind"], "send")
-
-        assignment = gateway.execute(
-            self._tool_call(
-                "ime_agents",
-                "room_assign",
-                targetParticipantId="participant:reviewer",
-                clientMessageId="turn-7-work-1",
-                objective="复核网关边界",
-                expectedOutput="证据与结论",
-                acceptanceCriteria=["包含测试回执"],
-                sourceSessionId="forged-session",
-            )
-        )
-        self.assertTrue(assignment["result"]["ok"])
-        self.assertEqual(calls[1][0], self.session["id"])
-        self.assertNotIn("sourceSessionId", calls[1][1])
+        for operation in ("room_send", "room_assign"):
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "unsupported ime_agents operation",
+                ):
+                    gateway.execute(
+                        self._tool_call(
+                            "ime_agents",
+                            operation,
+                            content="retired",
+                        )
+                    )
+        self.assertEqual(calls, [])
 
     def test_agent_can_create_validate_and_propose_but_cannot_apply_a_plugin(self) -> None:
         calls: list[tuple[str, object]] = []

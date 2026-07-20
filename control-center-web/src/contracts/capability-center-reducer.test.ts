@@ -71,7 +71,7 @@ function binding(sessionId: string, generation: number) {
   return {
     bindingId: `binding-${sessionId}`, sessionId, participantId: `participant-${sessionId}`, generation,
     roomBindingRef: { schemaVersion: 'wisdom-weasel.room-binding.v2', bindingId: 'room-binding-a' },
-    personaRef: ref('persona', 'zhiyou-v1'), collaborationRoleRef: ref('collaboration-role', 'researcher'),
+    personaRef: ref('persona', 'companion-present-v1'), collaborationRoleRef: ref('collaboration-role', 'researcher'),
     agentTemplateRef: ref('agent-template', 'researcher'), collaborationProfileRef: ref('collaboration-profile', 'evidence-review'),
     compiledRuntimeProfileRef: { profileId: 'compiled:binding-a', revision: 'compiler-v1', contentHash: `sha256:${'1'.repeat(64)}` },
     capabilityRevision: 'capability-r4', capabilityEpoch: 4,

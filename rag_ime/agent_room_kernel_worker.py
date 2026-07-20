@@ -184,6 +184,14 @@ class KernelCommandBus:
     def dispatch(self, payload: Mapping[str, object], *, now_ms: int) -> tuple[dict[str, object], bool]:
         return self.store.enqueue_dispatch(payload, now_ms=now_ms)
 
+    def dispatch_many(
+        self,
+        payloads: list[Mapping[str, object]] | tuple[Mapping[str, object], ...],
+        *,
+        now_ms: int,
+    ) -> list[tuple[dict[str, object], bool]]:
+        return self.store.enqueue_dispatches(payloads, now_ms=now_ms)
+
     def control(self, command: Mapping[str, object]) -> dict[str, object]:
         return self.worker.apply_control_command(command)
 

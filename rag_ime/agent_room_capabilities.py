@@ -12,18 +12,6 @@ from .db import apply_database_migrations
 
 
 ROOM_PUBLIC_TOOLS = ("room_state", "room_post", "room_commit")
-LEGACY_ROOM_TOOL_ALIASES = {
-    "send": "room_post",
-    "ask": "room_post",
-    "reply": "room_post",
-    "assign": "room_commit",
-    "submit": "room_commit",
-    "room_send": "room_post",
-    "room_ask": "room_post",
-    "room_reply": "room_post",
-    "room_assign": "room_commit",
-    "room_submit": "room_commit",
-}
 _SURFACES = frozenset({"prompt", "runtime", "gateway", "ui"})
 
 _RICH_BLOCK_INPUT_SCHEMA = {
@@ -50,12 +38,22 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
     return {
         "room_state": {
             "description": "Read the current canonical Root, Task and Dispatch state.",
+            "when": ("需要确认当前责任、任务、Dispatch 或可提交状态",),
+            "notFor": ("只需发布公开消息或已有最新状态回执",),
+            "input": "无参数",
+            "output": "当前 Root、Task、Dispatch、责任和状态",
+            "does": "读取当前 Room 任务真相。",
             "risk": "R0",
             "operation": "room.state",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
         "room_post": {
             "description": "Publish one explicit RoomPost bound to the active Dispatch.",
+            "when": ("需要向 Room 公开事实、进度、问题、答复或证据",),
+            "notFor": ("私有推理、自言自语或提交责任与完成提议",),
+            "input": "公开内容与可选结构化块",
+            "output": "绑定当前 Dispatch 的 RoomPost 回执",
+            "does": "发布一条明确的公开 Room 消息。",
             "risk": "R1",
             "operation": "room.post",
             "inputSchema": {
@@ -70,6 +68,11 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         },
         "room_commit": {
             "description": "Submit a governed continuation or completion proposal for the active Dispatch.",
+            "when": ("需要提交继续、交接、阻塞或完成提议",),
+            "notFor": ("普通公开发言、私有进度或没有证据的完成声明",),
+            "input": "结果摘要、公开证据与可选结构化块",
+            "output": "受管 continuation 或 completion 提议回执",
+            "does": "提交当前 Dispatch 的受管状态提议。",
             "risk": "R1",
             "operation": "room.commit",
             "inputSchema": {
@@ -138,10 +141,12 @@ class RoomCapabilityManifestStore:
         if room_binding.get("access") == "read":
             gates["rootTaskState"] &= {"room_state"}
         tools: list[dict[str, object]] = []
+        canonical_registry = room_runtime_registry()
         for name in ROOM_PUBLIC_TOOLS:
             source = runtime_registry.get(name)
             if not isinstance(source, Mapping):
                 continue
+            routing_source = canonical_registry[name]
             schema = source.get("inputSchema")
             if not isinstance(schema, Mapping):
                 raise ValueError(f"runtime tool {name} requires inputSchema")
@@ -150,6 +155,20 @@ class RoomCapabilityManifestStore:
                 {
                     "name": name,
                     "description": _required(source.get("description"), f"{name}.description"),
+                    "when": list(source.get("when") or routing_source["when"]),
+                    "notFor": list(source.get("notFor") or routing_source["notFor"]),
+                    "input": _required(
+                        source.get("input") or routing_source["input"],
+                        f"{name}.input",
+                    ),
+                    "output": _required(
+                        source.get("output") or routing_source["output"],
+                        f"{name}.output",
+                    ),
+                    "does": _required(
+                        source.get("does") or routing_source["does"],
+                        f"{name}.does",
+                    ),
                     "risk": _required(source.get("risk") or "controlled", f"{name}.risk"),
                     "operation": _required(source.get("operation") or name, f"{name}.operation"),
                     "schemaHash": _hash_json(dict(schema)),
@@ -209,6 +228,8 @@ class RoomCapabilityManifestStore:
         items = [
             {
                 "name": tool["name"], "description": tool["description"],
+                "when": tool["when"], "notFor": tool["notFor"],
+                "input": tool["input"], "output": tool["output"], "does": tool["does"],
                 "risk": tool["risk"], "schemaHash": tool["schemaHash"],
                 "available": tool["available"], "authorized": tool["authorized"],
             }
@@ -216,6 +237,15 @@ class RoomCapabilityManifestStore:
             if not needle
             or needle in str(tool["name"]).casefold()
             or needle in str(tool["description"]).casefold()
+            or needle in " ".join(
+                [
+                    *[str(item) for item in tool["when"]],
+                    *[str(item) for item in tool["notFor"]],
+                    str(tool["input"]),
+                    str(tool["output"]),
+                    str(tool["does"]),
+                ]
+            ).casefold()
         ]
         # Search deliberately never discloses inputSchema.
         return self._record_disclosure(
@@ -258,6 +288,8 @@ class RoomCapabilityManifestStore:
             items=[
                 {
                     "name": canonical, "description": tool["description"],
+                    "when": tool["when"], "notFor": tool["notFor"],
+                    "input": tool["input"], "output": tool["output"], "does": tool["does"],
                     "risk": tool["risk"], "authorized": tool["authorized"],
                     "inputSchema": schema,
                 }
@@ -309,7 +341,7 @@ class RoomCapabilityManifestStore:
         if not isinstance(loaded_schema, Mapping):
             raise CapabilityManifestConflict("tool load receipt has no exact input schema")
         validate_contract(dict(arguments), loaded_schema)
-        normalized = normalize_room_tool_command(tool_name, arguments)
+        normalized = validate_room_tool_command(tool_name, arguments)
         command_material = {
             "tool": normalized["canonicalTool"],
             "arguments": normalized["arguments"],
@@ -357,7 +389,7 @@ class RoomCapabilityManifestStore:
                 """,
                 (
                     payload["receiptId"], manifest_id, manifest_hash, load_receipt_id,
-                    key, canonical, str(tool_name).strip(), command_hash,
+                    key, canonical, canonical, command_hash,
                     _json(command), payload["createdAtMs"],
                 ),
             )
@@ -697,23 +729,17 @@ class RoomCapabilityManifestStore:
             conn.close()
 
 
-def normalize_room_tool_command(
+def validate_room_tool_command(
     tool_name: str,
     arguments: Mapping[str, object],
 ) -> dict[str, object]:
-    """Normalize compatibility names without executing or sending anything."""
+    """Build a canonical command without executing or sending anything."""
 
-    original = _required(tool_name, "tool_name")
-    canonical = _canonical_tool(original)
+    canonical = _canonical_tool(tool_name)
     return {
         "schemaVersion": "wisdom-weasel.room-tool-command-normalized.v1",
         "canonicalTool": canonical,
         "arguments": dict(arguments),
-        "compatibility": (
-            {"normalized": True, "originalTool": original}
-            if original != canonical
-            else {"normalized": False, "originalTool": original}
-        ),
         "executionPerformed": False,
     }
 
@@ -758,8 +784,7 @@ def _assert_manifest_context(
 
 
 def _canonical_tool(name: str) -> str:
-    normalized = _required(name, "tool_name")
-    canonical = LEGACY_ROOM_TOOL_ALIASES.get(normalized, normalized)
+    canonical = _required(name, "tool_name")
     if canonical not in ROOM_PUBLIC_TOOLS:
         raise ValueError("Room public tool surface only supports room_state/room_post/room_commit")
     return canonical

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from .agent_role_identity import canonical_agent_role_id
 from .contracts.json_schema import validate_contract
 
 
@@ -162,8 +163,8 @@ _FLASH_DEFAULTS = PersonaDefaults(
     thinking_level="off",
 )
 
-_ZHIYOU_V1 = PersonaManifest(
-    role_id="zhiyou-v1",
+_PRESENT_COMPANION = PersonaManifest(
+    role_id="companion-present-v1",
     version="1",
     display_name="智鼬·此刻",
     tagline="此刻陪你输入，也陪你把事情想清楚",
@@ -190,8 +191,8 @@ _ZHIYOU_V1 = PersonaManifest(
     selectable_modes=("assistant", "coordinator"),
 )
 
-_HERMES_V1 = PersonaManifest(
-    role_id="hermes-v1",
+_FIRSTLIGHT_COMPANION = PersonaManifest(
+    role_id="companion-firstlight-v1",
     version="1",
     display_name="智鼬·初识",
     tagline="从第一笔记录开始，认真认识你的世界",
@@ -218,8 +219,8 @@ _HERMES_V1 = PersonaManifest(
     selectable_modes=("assistant", "coordinator"),
 )
 
-_VCP_V1 = PersonaManifest(
-    role_id="vcp-v1",
+_FUTURE_COMPANION = PersonaManifest(
+    role_id="companion-future-v1",
     version="1",
     display_name="智鼬·未来",
     tagline="把记忆、工具与协作构筑成下一步",
@@ -247,8 +248,8 @@ _VCP_V1 = PersonaManifest(
     selectable_modes=("assistant", "coordinator"),
 )
 
-_FLASH_V1 = PersonaManifest(
-    role_id="flash-v1",
+_FLASH_COMPANION = PersonaManifest(
+    role_id="companion-flash-v1",
     version="1",
     display_name="智鼬·闪念",
     tagline="高速掠过漫长档案，只带回最有用的线索",
@@ -275,12 +276,98 @@ _FLASH_V1 = PersonaManifest(
     selectable_modes=("assistant", "coordinator"),
 )
 
-_PERSONAS = (_VCP_V1, _ZHIYOU_V1, _HERMES_V1, _FLASH_V1)
+_PERSONAS = (
+    _FUTURE_COMPANION,
+    _PRESENT_COMPANION,
+    _FIRSTLIGHT_COMPANION,
+    _FLASH_COMPANION,
+)
 _ROLES = {(persona.role_id, persona.version): persona for persona in _PERSONAS}
+
+_BUILTIN_ROLE_BOOK_SEEDS: dict[
+    tuple[str, str],
+    dict[str, tuple[str, ...]],
+] = {
+    ("companion-present-v1", "1"): {
+        "personality": (
+            "守在用户当前光标旁边，先把此刻真正要解决的事说清楚，再往历史里找证据。",
+            "温暖但不糊弄：结论、依据、下一步和仍然缺少什么都说清楚。",
+        ),
+        "capabilities": (
+            "能把用户正在输入的想法、当前项目状态和少量历史证据整理成可执行的下一步。",
+            "能判断当前任务应该直接完成、交给专门角色、等待用户，还是带证据报告阻塞。",
+        ),
+        "recentWork": (),
+        "lessonsAndLimits": (
+            "懂用户不等于倾倒全部历史；每次只带回对当前任务有用的记忆、偏好和原始要求。",
+            "没有召回到证据时不假装记得；Room 私有草稿也不能冒充公共结论。",
+        ),
+        "activeCommitments": (
+            "收工前确认结果已经交付，或形成了接收者、输入、产物和验收条件完整的交接。",
+        ),
+    },
+    ("companion-firstlight-v1", "1"): {
+        "personality": (
+            "把每次初识都当成认真认识用户世界的第一笔记录，好奇、轻快，也尊重未知。",
+            "喜欢先找到最小的关键线索，不用一连串问题拖慢用户。",
+        ),
+        "capabilities": (
+            "能从漫长输入历史和项目记录中快速定位最相关的时间、主题、偏好与原始要求。",
+            "能把发现整理成短证据包，交给此刻、未来或审查角色继续完成。",
+        ),
+        "recentWork": (),
+        "lessonsAndLimits": (
+            "匹配到关键词不等于事实成立；线索必须保留来源，重要结论还要继续核对。",
+            "速度不能替代深度实现和独立验收，超出侦察范围时应及时交接。",
+        ),
+        "activeCommitments": (
+            "每次侦察都交付发现、来源、缺口、建议下一步和接收角色，而不是只说已经看过。",
+        ),
+    },
+    ("companion-future-v1", "1"): {
+        "personality": (
+            "站在用户长期时间线上思考，把原始需求当作不能被摘要改写的北极星。",
+            "沉稳地主持复杂任务，也欢迎研究、实现和审查角色用证据挑战自己的判断。",
+        ),
+        "capabilities": (
+            "能把记忆、工具、技能、多个 Agent 和验收证据编排成一条可停止、可恢复的交付链。",
+            "能从用户确认的历史输入与偏好中只召回当前任务真正需要的部分，并保持来源可追溯。",
+        ),
+        "recentWork": (),
+        "lessonsAndLimits": (
+            "深度不等于无限扩张；任务必须有边界、预算、完成条件和下一棒。",
+            "Agent 的自报完成不是验收，工具回执、测试、安装状态和用户可见结果才是证据。",
+        ),
+        "activeCommitments": (
+            "负责把分工后的结果重新收拢，核对原始要求、实现、测试和真实使用路径后再宣布完成。",
+        ),
+    },
+    ("companion-flash-v1", "1"): {
+        "personality": (
+            "像一道闪念掠过长档案，兴奋于找到关键线索，但不把速度表演成结论。",
+            "输出短、清楚、有来源，让下一位角色可以立即接着做。",
+        ),
+        "capabilities": (
+            "能高速扫读、聚类、去重和格式化大量输入，只保留与当前问题有关的线索。",
+            "能生成紧凑证据包，标明发现、来源、冲突、缺口和推荐接收角色。",
+        ),
+        "recentWork": (),
+        "lessonsAndLimits": (
+            "不输出相关度、置信分数和内部检索编号来制造专业感。",
+            "不独自承担复杂实现、高风险判断或最终验收；长上下文也不意味着已经读懂全部历史。",
+        ),
+        "activeCommitments": (
+            "侦察完成后立即交付或交接，不用重复扫描同一批材料制造忙碌。",
+        ),
+    },
+}
 
 
 def agent_role(role_id: object, version: object) -> PersonaManifest:
-    key = (str(role_id or "").strip(), str(version or "").strip())
+    key = (
+        canonical_agent_role_id(role_id),
+        str(version or "").strip(),
+    )
     try:
         return _ROLES[key]
     except KeyError as exc:
@@ -289,6 +376,23 @@ def agent_role(role_id: object, version: object) -> PersonaManifest:
 
 def agent_role_catalog() -> list[dict[str, object]]:
     return [persona.to_payload() for persona in _PERSONAS]
+
+
+def builtin_role_book_seed(
+    role_id: object,
+    version: object,
+) -> dict[str, tuple[str, ...]] | None:
+    """Return the immutable built-in Role Book baseline for one Persona."""
+
+    seed = _BUILTIN_ROLE_BOOK_SEEDS.get(
+        (
+            canonical_agent_role_id(role_id),
+            str(version or "").strip(),
+        )
+    )
+    if seed is None:
+        return None
+    return {section: tuple(items) for section, items in seed.items()}
 
 
 def persona_model_profile(persona: PersonaManifest) -> str:

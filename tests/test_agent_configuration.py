@@ -30,7 +30,7 @@ class AgentConfigurationTests(unittest.TestCase):
 
     def test_product_default_starts_new_work_with_future_sol_max_profile(self) -> None:
         configuration = default_agent_configuration()
-        self.assertEqual(configuration["sessionDefaults"]["roleId"], "vcp-v1")
+        self.assertEqual(configuration["sessionDefaults"]["roleId"], "companion-future-v1")
         self.assertEqual(
             configuration["sessionDefaults"]["modelProfile"],
             "gpt/gpt-5.6-sol",
@@ -41,7 +41,7 @@ class AgentConfigurationTests(unittest.TestCase):
         update = self.store.update(
             {
                 "runtime.enabled": True,
-                "sessionDefaults.roleId": "hermes-v1",
+                "sessionDefaults.roleId": "companion-firstlight-v1",
             },
             expected_revision=initial["revision"],
             updated_by="mac-control",

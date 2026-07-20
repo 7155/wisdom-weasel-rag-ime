@@ -423,7 +423,7 @@ function ContextResourcesPicker({
   onPiSkillsChange: (enabled: boolean) => void;
   onCodexSkillsChange: (enabled: boolean) => void;
 }) {
-  const projectContextEnabled = session?.projectContextEnabled !== false;
+  const projectContextEnabled = session?.projectContextEnabled === true;
   const piSkillsEnabled = session?.piSkillsEnabled === true;
   const codexSkillsEnabled = session?.codexSkillsEnabled === true;
   return (

@@ -207,7 +207,7 @@ describe('MemoryFeature relations', () => {
             status: 'active',
             source: { kind: 'agent_memory_evidence', id: 'evidence:workflow-noise' },
             ownerKind: 'agent',
-            ownerId: 'zhiyou-v1',
+            ownerId: 'companion-present-v1',
           }] : [],
           nextCursor: '',
           limit: 50,

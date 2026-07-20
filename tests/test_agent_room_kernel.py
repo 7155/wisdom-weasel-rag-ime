@@ -20,7 +20,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-room-kernel-")
         self.db_path = Path(self.tmp.name) / "rag-ime.sqlite"
         self.store = RoomKernelStore(self.db_path, mode="test")
-        self.assertEqual(self.store.initialize(), 94)
+        self.assertEqual(self.store.initialize(), 95)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -93,6 +93,48 @@ class RoomKernelCoreTests(unittest.TestCase):
             )
         with self.assertRaises(KeyError):
             self.store.root("root:rollback")
+
+    def test_multi_participant_dispatch_batch_is_atomic(self) -> None:
+        self.seed(budget=2)
+        first = dispatch(
+            "dispatch:batch:a",
+            key="batch:a",
+            target="participant:a",
+        )
+        second = dispatch(
+            "dispatch:batch:b",
+            key="batch:b",
+            target="participant:b",
+        )
+
+        queued = self.store.enqueue_dispatches((first, second), now_ms=10)
+
+        self.assertEqual(
+            [item["dispatchId"] for item, _created in queued],
+            ["dispatch:batch:a", "dispatch:batch:b"],
+        )
+        self.assertTrue(all(created for _item, created in queued))
+        self.assertEqual(self.store.counts("root:1")["dispatches"], 2)
+
+    def test_invalid_member_rolls_back_complete_dispatch_batch(self) -> None:
+        self.seed(budget=1)
+        first = dispatch(
+            "dispatch:batch:rollback:a",
+            key="batch:rollback:a",
+            target="participant:a",
+        )
+        second = dispatch(
+            "dispatch:batch:rollback:b",
+            key="batch:rollback:b",
+            target="participant:b",
+        )
+
+        with self.assertRaisesRegex(RoomKernelFenceError, "budget exhausted"):
+            self.store.enqueue_dispatches((first, second), now_ms=10)
+
+        self.assertEqual(self.store.counts("root:1")["dispatches"], 0)
+        with self.assertRaises(KeyError):
+            self.store.dispatch("dispatch:batch:rollback:a")
 
     def test_a_to_b_to_a_is_bounded_by_hop_and_depth_fences(self) -> None:
         self.seed(max_hops=2, max_depth=1)

@@ -201,7 +201,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
 
     def test_role_book_review_allows_all_four_governed_proposal_groups(self) -> None:
         selection = {
-            "roleId": "zhiyou-v1",
+            "roleId": "companion-present-v1",
             "roleVersion": "1",
             "revisionId": "",
             "draftId": "role-book-draft:1",
@@ -890,6 +890,45 @@ class ControlRoutePolicyTests(unittest.TestCase):
             ),
         )
 
+    def test_room_root_abort_requires_a_root_and_idempotency_identity(self) -> None:
+        request = ControlRequest(
+            request_id="request-room-root-abort",
+            path_id=ControlPathId.AGENT_ROOM_ABORT.value,
+            params={"roomId": "room-1"},
+            body={
+                "roomTurnId": "room-turn:1",
+                "clientRequestId": "root-abort:1",
+            },
+        )
+
+        self.policy.authorize(request, ControlAccessContext.native())
+        self.policy.authorize(
+            request,
+            ControlAccessContext.remote(
+                device_id="phone-1",
+                scopes={ControlScope.AGENT_WRITE.value},
+            ),
+        )
+        for body in (
+            {"roomTurnId": "room-turn:1"},
+            {"clientRequestId": "root-abort:1"},
+            {
+                "roomTurnId": "room-turn:1",
+                "clientRequestId": "root-abort:1",
+                "sessionId": "must-not-be-client-selected",
+            },
+        ):
+            with self.subTest(body=body), self.assertRaises(ControlApiError):
+                self.policy.authorize(
+                    ControlRequest(
+                        request_id="request-room-root-abort-invalid",
+                        path_id=ControlPathId.AGENT_ROOM_ABORT.value,
+                        params={"roomId": "room-1"},
+                        body=body,
+                    ),
+                    ControlAccessContext.native(),
+                )
+
     def test_room_work_item_actor_mutations_remain_local_only(self) -> None:
         requests = (
             ControlRequest(
@@ -1023,8 +1062,8 @@ class ControlRoutePolicyTests(unittest.TestCase):
             body={
                 "title": "workspace room",
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
                 "workspaceRoots": ["/Users/undo/project"],
             },

@@ -337,6 +337,54 @@ class RoomKernelStore:
                 now_ms=now_ms,
             )
 
+    def enqueue_dispatches(
+        self,
+        payloads: list[Mapping[str, object]] | tuple[Mapping[str, object], ...],
+        *,
+        now_ms: int,
+    ) -> list[tuple[dict[str, object], bool]]:
+        """Atomically enqueue one user-triggered fan-out.
+
+        A multi-mention is one semantic command. Publishing each Dispatch in a
+        separate transaction lets the worker observe a partial fan-out and
+        makes retry/cancel accounting ambiguous. Validate the complete batch
+        first, then insert every Dispatch and reservation under one lock.
+        """
+
+        values = tuple(payloads)
+        if not values:
+            raise ValueError("dispatch batch must not be empty")
+        for payload in values:
+            validate_kernel_contract("dispatchEnvelope", payload)
+        identities = [
+            (
+                str(payload["rootId"]),
+                str(payload["dispatchId"]),
+                str(payload["idempotencyKey"]),
+                str(payload["targetSessionId"]),
+            )
+            for payload in values
+        ]
+        if len(identities) != len(set(identities)):
+            raise RoomKernelFenceError("dispatch batch contains duplicate identities")
+        root_ids = {identity[0] for identity in identities}
+        if len(root_ids) != 1:
+            raise RoomKernelFenceError("dispatch batch must belong to one Root")
+        session_ids = [identity[3] for identity in identities]
+        if len(session_ids) != len(set(session_ids)):
+            raise RoomKernelFenceError("dispatch batch targets one Session more than once")
+
+        with self._connect(immediate=True) as conn:
+            return [
+                self._enqueue_dispatch(
+                    conn,
+                    payload,
+                    shadow_only=self.mode not in {"cohort", "test", "kernel_only"},
+                    now_ms=now_ms,
+                )
+                for payload in values
+            ]
+
     def _enqueue_dispatch(
         self,
         conn: sqlite3.Connection,

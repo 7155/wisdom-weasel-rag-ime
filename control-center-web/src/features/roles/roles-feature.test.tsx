@@ -88,7 +88,7 @@ describe('Roles experience', () => {
     expect(create?.request.body).toEqual({
       title: '智鼬·初识 对话',
       mode: 'assistant',
-      roleId: 'hermes-v1',
+      roleId: 'companion-firstlight-v1',
       roleVersion: '1',
       workspaceRoots: [],
     });

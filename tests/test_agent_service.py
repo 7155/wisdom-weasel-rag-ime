@@ -150,7 +150,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(roles["items"][0]["displayName"], "智鼬·未来")
         self.assertEqual(
             [item["roleId"] for item in roles["items"]],
-            ["vcp-v1", "zhiyou-v1", "hermes-v1", "flash-v1"],
+            ["companion-future-v1", "companion-present-v1", "companion-firstlight-v1", "companion-flash-v1"],
         )
         self.assertNotIn("systemPrompt", roles["items"][0])
 
@@ -158,7 +158,7 @@ class AgentServiceTests(unittest.TestCase):
         session = created["session"]
         session_id = str(session["id"])
         self.assertEqual(session["title"], "连续 对话")
-        self.assertTrue(session["projectContextEnabled"])
+        self.assertFalse(session["projectContextEnabled"])
         self.assertFalse(session["piSkillsEnabled"])
         self.assertFalse(session["codexSkillsEnabled"])
 
@@ -542,7 +542,7 @@ class AgentServiceTests(unittest.TestCase):
                 owner_id=str(session["roleId"]),
             ),
             [],
-            "ordinary zhiyou-v1 assistant turns must not create an automatic curation source",
+            "ordinary companion-present-v1 assistant turns must not create an automatic curation source",
         )
 
     def test_context_trace_explains_why_timeline_recall_was_enabled(self) -> None:
@@ -732,8 +732,8 @@ class AgentServiceTests(unittest.TestCase):
                 "title": "记忆联调",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -1030,7 +1030,7 @@ class AgentServiceTests(unittest.TestCase):
             {
                 "title": "原对话",
                 "mode": "assistant",
-                "roleId": "hermes-v1",
+                "roleId": "companion-firstlight-v1",
                 "roleVersion": "1",
                 "modelProfile": "gpt/gpt-5.6-luna",
                 "toolProfileVersion": "subagent-readonly-v1",
@@ -1195,14 +1195,14 @@ class AgentServiceTests(unittest.TestCase):
             {
                 "expectedRevision": initial["revision"],
                 "changes": {
-                    "sessionDefaults.roleId": "hermes-v1",
+                    "sessionDefaults.roleId": "companion-firstlight-v1",
                     "sessionDefaults.modelProfile": "deepseek/deepseek-chat",
                 },
                 "updatedBy": "mac-control",
             }
         )
         session = self.service.create_session({"title": "默认角色"})["session"]
-        self.assertEqual(session["roleId"], "hermes-v1")
+        self.assertEqual(session["roleId"], "companion-firstlight-v1")
         self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-luna")
 
         runtime = self.service.update_configuration(
@@ -1243,24 +1243,24 @@ class AgentServiceTests(unittest.TestCase):
             {
                 "title": "Hermes 任务",
                 "mode": "assistant",
-                "roleId": "hermes-v1",
+                "roleId": "companion-firstlight-v1",
                 "roleVersion": "1",
             }
         )["session"]
 
-        self.assertEqual(created["roleId"], "hermes-v1")
+        self.assertEqual(created["roleId"], "companion-firstlight-v1")
         self.assertEqual(created["roleVersion"], "1")
         self.assertEqual(created["modelProfile"], "gpt/gpt-5.6-luna")
         self.assertEqual(created["toolProfileVersion"], "control-center-v1")
         renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
-        self.assertEqual(renamed["roleId"], "hermes-v1")
+        self.assertEqual(renamed["roleId"], "companion-firstlight-v1")
         self.assertEqual(renamed["roleVersion"], "1")
 
         coordinator = self.service.create_session(
             {
                 "title": "未来协调",
                 "mode": "coordinator",
-                "roleId": "vcp-v1",
+                "roleId": "companion-future-v1",
                 "roleVersion": "1",
                 "workspaceRoots": [self.root.as_posix()],
             }
@@ -1318,7 +1318,7 @@ class AgentServiceTests(unittest.TestCase):
                 "title": "研究任务",
                 "instruction": "核对今天的研究结论",
                 "targetType": "role",
-                "targetRoleId": "hermes-v1",
+                "targetRoleId": "companion-firstlight-v1",
                 "targetRoleVersion": "1",
                 "wakeAtMs": wake_at_ms,
                 "confirmText": "schedule",
@@ -1336,7 +1336,7 @@ class AgentServiceTests(unittest.TestCase):
         created_session_id = prompt.call_args.args[0]
         created = self.service.sessions.get(created_session_id)
         self.assertEqual(created["title"], "预约 · 研究任务")
-        self.assertEqual(created["roleId"], "hermes-v1")
+        self.assertEqual(created["roleId"], "companion-firstlight-v1")
         running = self.service.get_wake_schedule(str(schedule["id"]))
         self.assertEqual(running["latestRun"]["sessionId"], created_session_id)
 
@@ -1425,7 +1425,7 @@ class AgentServiceTests(unittest.TestCase):
                 "workspaceRoots": [str(self.root)],
                 "participants": [
                     {"roleId": created_role["roleId"], "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -1447,8 +1447,8 @@ class AgentServiceTests(unittest.TestCase):
                 "title": "边界讨论",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -1484,7 +1484,8 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(accepted["turnId"], "turn:intercom")
         self.assertIn("房间协作消息", prompt.call_args.args[1])
-        self.assertIn("ime_agents.room_reply", prompt.call_args.args[1])
+        self.assertIn("room_post", prompt.call_args.args[1])
+        self.assertNotIn("ime_agents.room_reply", prompt.call_args.args[1])
         checkpoint.assert_not_called()
 
     def test_message_snapshot_returns_event_resume_cursor(self) -> None:
@@ -1799,7 +1800,7 @@ class AgentServiceTests(unittest.TestCase):
                 item["roleId"]: item["defaults"] for item in service.list_roles()["items"]
             }
         self.assertEqual(
-            initial_roles["hermes-v1"],
+            initial_roles["companion-firstlight-v1"],
             {
                 "modelPolicy": "fixed",
                 "memoryPolicy": "personal-evidence-v1",
@@ -1808,30 +1809,30 @@ class AgentServiceTests(unittest.TestCase):
                 "thinkingLevel": "max",
             },
         )
-        self.assertEqual(initial_roles["zhiyou-v1"]["modelProfile"], "gpt/gpt-5.6-terra")
-        self.assertEqual(initial_roles["zhiyou-v1"]["thinkingLevel"], "max")
-        self.assertEqual(initial_roles["vcp-v1"]["modelProfile"], "gpt/gpt-5.6-sol")
-        self.assertEqual(initial_roles["vcp-v1"]["thinkingLevel"], "max")
-        self.assertEqual(initial_roles["flash-v1"]["modelProfile"], "deepseek/deepseek-v4-flash")
+        self.assertEqual(initial_roles["companion-present-v1"]["modelProfile"], "gpt/gpt-5.6-terra")
+        self.assertEqual(initial_roles["companion-present-v1"]["thinkingLevel"], "max")
+        self.assertEqual(initial_roles["companion-future-v1"]["modelProfile"], "gpt/gpt-5.6-sol")
+        self.assertEqual(initial_roles["companion-future-v1"]["thinkingLevel"], "max")
+        self.assertEqual(initial_roles["companion-flash-v1"]["modelProfile"], "deepseek/deepseek-v4-flash")
         with patch.object(service.runtime, "available_models", return_value=available_models):
             catalog = service.role_model_catalog()
         self.assertEqual(catalog["providers"][0]["models"][0]["name"], "GPT-5.6 Luna")
         with patch.object(service.runtime, "available_models", return_value=available_models):
             with self.assertRaisesRegex(ValueError, "fixed"):
                 service.update_role_runtime_defaults(
-                    {"roleId": "zhiyou-v1", "roleVersion": "1", "provider": "gpt",
+                    {"roleId": "companion-present-v1", "roleVersion": "1", "provider": "gpt",
                      "modelId": "gpt-5.6-terra", "thinkingLevel": "max"}
                 )
         with patch.object(service.runtime, "set_thinking_level") as set_thinking:
             session = service.create_session(
-                {"title": "继承角色默认", "roleId": "zhiyou-v1", "roleVersion": "1"}
+                {"title": "继承角色默认", "roleId": "companion-present-v1", "roleVersion": "1"}
             )["session"]
         self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-terra")
         self.assertEqual(session["thinkingLevel"], "max")
         set_thinking.assert_not_called()
 
         with self.assertRaisesRegex(ValueError, "cannot be overridden"):
-            service.create_session({"title": "本轮显式模型", "roleId": "zhiyou-v1",
+            service.create_session({"title": "本轮显式模型", "roleId": "companion-present-v1",
                                     "roleVersion": "1", "modelProfile": "gpt/gpt-5.6-sol"})
 
     def test_command_catalog_exposes_only_pi_prompt_commands_and_degrades_cleanly(self) -> None:

@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
+from rag_ime.activity_timeline import TIMELINE_SEGMENTATION_MODE
 from rag_ime.db.migration_runner import DEFAULT_MIGRATIONS_DIR, apply_database_migrations
 from rag_ime.embeddings import HashingEmbeddingProvider
 from rag_ime.memory_projection import (
@@ -358,7 +359,7 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
 
         self.assertEqual(input_after, input_before)
         self.assertTrue(report["verification"]["ok"])
-        self.assertEqual(report["migration"]["currentVersion"], 94)
+        self.assertEqual(report["migration"]["currentVersion"], 95)
         self.assertEqual(report["legacyItems"]["promoted"], 1)
         self.assertEqual(report["legacyItems"]["quarantined"], 1)
         self.assertFalse(report["verification"]["vectorGateRequired"])
@@ -384,7 +385,7 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
         self.assertEqual(str(timeline["status"]), "draft")
         self.assertEqual(
             json.loads(str(timeline["metadata_json"]))["segmentationMode"],
-            "semantic_task_v2",
+            TIMELINE_SEGMENTATION_MODE,
         )
         self.assertLess(int(timeline["segment_count"]), 99)
         self.assertNotIn("item", doc_types)
@@ -459,7 +460,7 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
             current = int(conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0])
         with closing(sqlite3.connect(rollback)) as conn:
             previous = int(conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0])
-        self.assertEqual(current, 94)
+        self.assertEqual(current, 95)
         self.assertEqual(previous, 58)
 
     def test_copy_cli_accepts_sidecars_materialized_by_read_only_wal_backup(self) -> None:

@@ -87,7 +87,7 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
     def test_transient_subagent_input_and_compaction_never_become_role_memory(self) -> None:
         child = self.sessions.create(
             title="临时研究子 Agent",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             session_kind="subagent_runtime",
             created_at_ms=250,
         )

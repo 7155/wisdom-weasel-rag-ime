@@ -120,6 +120,7 @@ for line in sys.stdin:
         result(request, {"level": params["level"]})
     elif method == "session.prompt":
         turn_id = "turn-" + session_id
+        sessions[session_id]["activeTurnId"] = turn_id
         client_message_id = params.get("clientMessageId", "")
         user_entry_id = "entry-user-" + str(len(sessions[session_id].get("forkItems", [])) + 1)
         assistant_entry_id = "entry-assistant-" + str(len(sessions[session_id].get("forkItems", [])) + 1)
@@ -187,6 +188,31 @@ for line in sys.stdin:
             "coverageEndEntryId": "entry-assistant-1",
             "tokensBefore": 1200,
             "estimatedTokensAfter": 320,
+        })
+    elif method == "session.abort":
+        turn_id = sessions[session_id].get("activeTurnId", "turn-" + session_id)
+        result(request, {
+            "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "cancelledDecisionIds": [],
+            "cancelledUIRequestIds": [],
+            "lifecycle": {
+                "schemaVersion": "pi.agent-abort-receipt.v1",
+                "scopeId": session_id,
+                "generation": 1,
+                "reason": "user_abort",
+                "cancelledContinuationIds": [],
+                "cancelledOperationIds": ["provider-" + session_id],
+                "failedOperationIds": [],
+                "operations": [{
+                    "operationId": "provider-" + session_id,
+                    "kind": "provider",
+                }],
+                "pendingOperations": [],
+                "drained": True,
+                "idle": True,
+            },
         })
     elif method == "session.close":
         result(request, {"closed": sessions.pop(session_id, None) is not None})
@@ -848,7 +874,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
     def test_abort_settled_error_is_terminal_aborted_not_faulted(self) -> None:
         session_id = str(self.first["id"])
         self.runtime.ensure(session_id)
-        turn_id = "turn-abort-settled-error"
+        turn_id = f"turn-{session_id}"
         with self.runtime._lock:
             self.runtime._states[session_id].turn_id = turn_id
         self.store.set_status(session_id, "busy")

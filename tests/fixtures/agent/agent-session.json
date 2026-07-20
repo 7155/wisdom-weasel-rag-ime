@@ -6,7 +6,7 @@
   "title": "输入助手 2026-07-13",
   "mode": "assistant",
   "status": "idle",
-  "roleId": "zhiyou-v1",
+  "roleId": "companion-present-v1",
   "roleVersion": "1",
   "roleBookRevisionId": "",
   "modelProfile": "deepseek-v4",
@@ -18,7 +18,7 @@
   "messageCount": 0,
   "lastMessagePreview": "",
   "workspaceRoots": [],
-  "projectContextEnabled": true,
+  "projectContextEnabled": false,
   "piSkillsEnabled": false,
   "codexSkillsEnabled": false,
   "shellPolicyVersion": "assistant-no-shell-v1"

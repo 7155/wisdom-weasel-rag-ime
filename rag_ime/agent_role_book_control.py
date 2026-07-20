@@ -1049,6 +1049,26 @@ def _validated_revision_evidence(
                     "stored_contract_invalid",
                     f"Role Book section {section} has an item without evidence.",
                 )
+            provenance = item.get("provenance")
+            if (
+                isinstance(provenance, Mapping)
+                and str(provenance.get("sourceType") or "")
+                == "builtin_persona_manifest"
+            ):
+                source_id = _text(
+                    provenance.get("sourceId"),
+                    field="sourceId",
+                    maximum=240,
+                )
+                if (
+                    item_ids != {source_id}
+                    or not source_id.startswith(f"builtin-persona:{role}@")
+                ):
+                    raise ManagementWorkError(
+                        "stored_contract_invalid",
+                        "Built-in Role Book evidence does not match its Persona manifest.",
+                    )
+                continue
             evidence_ids.update(item_ids)
     if not evidence_ids:
         return []

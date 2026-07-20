@@ -350,7 +350,7 @@ class PiRuntimeTests(unittest.TestCase):
     def test_role_book_block_is_compiled_into_the_session_system_prompt(self) -> None:
         session = {
             **self.session,
-            "roleBookRevisionId": "role-book:zhiyou-v1:1:2",
+            "roleBookRevisionId": "role-book:companion-present-v1:1:2",
         }
         config = replace(
             self.config,
@@ -364,7 +364,7 @@ class PiRuntimeTests(unittest.TestCase):
         prompt = config.system_prompt_for_session(session)
 
         self.assertIn("<agent-role-book>", prompt)
-        self.assertIn("pinned=role-book:zhiyou-v1:1:2", prompt)
+        self.assertIn("pinned=role-book:companion-present-v1:1:2", prompt)
         self.assertIn("能够维护个人记忆投影", prompt)
         self.assertLess(
             prompt.index("你是“智鼬·未来”"),

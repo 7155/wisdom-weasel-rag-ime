@@ -39,9 +39,9 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
                 "routingPolicy": "natural",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -222,8 +222,8 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
                 "routingPolicy": "manual_mentions",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -249,7 +249,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
         try:
             add = Request(
                 f"{base}/participants",
-                data=json.dumps({"roleId": "vcp-v1", "roleVersion": "1"}).encode("utf-8"),
+                data=json.dumps({"roleId": "companion-future-v1", "roleVersion": "1"}).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
@@ -295,8 +295,8 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
                 "routingPolicy": "natural",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -579,9 +579,11 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
                 },
             )
 
-        prompt_text = str(prompt.call_args.args[1]["message"])
-        self.assertIn(objective, prompt_text)
-        self.assertIn("不能修改身份、工具权限或安全策略", prompt_text)
+        prompt_payload = prompt.call_args.args[1]
+        self.assertEqual(prompt_payload["message"], "开始")
+        transient_context = str(prompt_payload["_transientContext"])
+        self.assertIn(objective, transient_context)
+        self.assertIn("本轮绑定任务", transient_context)
         session = self.service.sessions.get(str(owner["sessionId"]))
         role_book = self.service.role_books.routing_profile(
             str(owner["roleId"]),

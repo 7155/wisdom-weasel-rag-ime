@@ -2294,9 +2294,9 @@ class DebugManagementApiTests(unittest.TestCase):
                         "routingPolicy": "manual_mentions",
                         "workspaceRoots": [self.tmp.name],
                         "participants": [
-                            {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                            {"roleId": "hermes-v1", "roleVersion": "1"},
-                            {"roleId": "vcp-v1", "roleVersion": "1"},
+                            {"roleId": "companion-present-v1", "roleVersion": "1"},
+                            {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                            {"roleId": "companion-future-v1", "roleVersion": "1"},
                         ],
                     }
                 ).encode("utf-8"),
@@ -2329,6 +2329,36 @@ class DebugManagementApiTests(unittest.TestCase):
                     message_status = response.status
                     accepted = json.loads(response.read().decode("utf-8"))
 
+            abort_receipt = {
+                "schemaVersion": "rag-ime.agent-room-abort.v1",
+                "ok": True,
+                "roomId": room_id,
+                "roomTurnId": accepted["roomTurnId"],
+                "status": "terminated",
+                "cancellationReceiptId": "room-cancel:http",
+                "surfaces": {},
+                "pendingTargets": [],
+            }
+            with patch.object(
+                self.service.agent,
+                "abort_room_turn",
+                return_value=abort_receipt,
+            ) as abort_room_turn:
+                abort_request = Request(
+                    f"{base_url}/rooms/{room_id}/abort",
+                    data=json.dumps(
+                        {
+                            "roomTurnId": accepted["roomTurnId"],
+                            "clientRequestId": "room-http-abort-1",
+                        }
+                    ).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(abort_request, timeout=5) as response:
+                    abort_status = response.status
+                    aborted = json.loads(response.read().decode("utf-8"))
+
             with urlopen(f"{base_url}/rooms/{room_id}/snapshot", timeout=5) as response:
                 snapshot = json.loads(response.read().decode("utf-8"))
 
@@ -2350,8 +2380,17 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(listed["items"][0]["id"], room_id)
         self.assertEqual(detail["room"]["id"], room_id)
         self.assertEqual(message_status, 202)
-        self.assertEqual(accepted["participant"]["roleId"], "hermes-v1")
+        self.assertEqual(accepted["participant"]["roleId"], "companion-firstlight-v1")
         self.assertEqual(accepted["clientMessageId"], "room-http-client-1")
+        self.assertEqual(abort_status, 200)
+        self.assertEqual(aborted, abort_receipt)
+        abort_room_turn.assert_called_once_with(
+            room_id,
+            {
+                "roomTurnId": accepted["roomTurnId"],
+                "clientRequestId": "room-http-abort-1",
+            },
+        )
         self.assertEqual(snapshot["schemaVersion"], "rag-ime.agent-room-snapshot.v1")
         self.assertEqual(snapshot["room"]["id"], room_id)
         self.assertEqual(snapshot["lastSequence"], snapshot["room"]["lastEventSequence"])

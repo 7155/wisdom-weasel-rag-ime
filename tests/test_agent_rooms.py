@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_rooms import AgentRoomEventHub, AgentRoomStore
 from rag_ime.agent_service import AgentService
 from rag_ime.agent_sessions import AgentSessionStore
@@ -32,9 +33,9 @@ class AgentRoomTests(unittest.TestCase):
             title="  方案   讨论  ",
             routing_policy="manual_mentions",
             participants=[
-                self._participant("zhiyou-v1", "智鼬"),
-                self._participant("hermes-v1", "Hermes"),
-                self._participant("vcp-v1", "VCP"),
+                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-firstlight-v1", "Hermes"),
+                self._participant("companion-future-v1", "VCP"),
             ],
             created_at_ms=10,
         )
@@ -44,11 +45,23 @@ class AgentRoomTests(unittest.TestCase):
         self.assertEqual(len(room["participants"]), 3)
         self.assertEqual(len({item["sessionId"] for item in room["participants"]}), 3)
         target = self.store.route_target(str(room["id"]), "@Hermes 先检查当前状态")
-        self.assertEqual(target["roleId"], "hermes-v1")
-        with self.assertRaisesRegex(ValueError, "must mention"):
-            self.store.route_target(str(room["id"]), "先检查当前状态")
-        with self.assertRaisesRegex(ValueError, "exactly one"):
-            self.store.route_target(str(room["id"]), "@智鼬 和 @VCP 一起回答")
+        self.assertEqual(target["roleId"], "companion-firstlight-v1")
+        fallback = self.store.route_target(str(room["id"]), "先检查当前状态")
+        self.assertEqual(fallback["roleId"], "companion-present-v1")
+        fan_out = self.store.plan_routes(
+            str(room["id"]), "@智鼬 和 @VCP 一起回答"
+        )
+        self.assertEqual(
+            [decision["targetDisplayName"] for decision in fan_out],
+            ["智鼬", "VCP"],
+        )
+        self.assertTrue(
+            all(
+                decision["selectedParticipantIds"]
+                == [room["participants"][0]["id"], room["participants"][2]["id"]]
+                for decision in fan_out
+            )
+        )
 
         event = self.store.append_event(
             room_id=str(room["id"]),
@@ -67,13 +80,47 @@ class AgentRoomTests(unittest.TestCase):
         self.assertEqual(stored["eventId"], event["eventId"])
         self.assertEqual(stat.S_IMODE(room_files[0].stat().st_mode), 0o600)
 
+    def test_room_never_persists_or_projects_retired_builtin_role_ids(
+        self,
+    ) -> None:
+        room = self.store.create(
+            title="身份迁移",
+            routing_policy="natural",
+            participants=[
+                self._participant("vcp-v1", "未来"),
+                self._participant("zhiyou-v1", "此刻"),
+            ],
+        )
+
+        self.assertEqual(
+            [item["roleId"] for item in room["participants"]],
+            ["companion-future-v1", "companion-present-v1"],
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            stored = conn.execute(
+                """
+                SELECT role_id
+                FROM agent_room_participants
+                WHERE room_id = ?
+                ORDER BY ordinal
+                """,
+                (room["id"],),
+            ).fetchall()
+        self.assertEqual(
+            stored,
+            [
+                ("companion-future-v1",),
+                ("companion-present-v1",),
+            ],
+        )
+
     def test_moderator_routes_unaddressed_message_and_sse_replays_once(self) -> None:
         room = self.store.create(
             title="主持讨论",
             routing_policy="moderator",
             participants=[
-                self._participant("zhiyou-v1", "智鼬"),
-                self._participant("vcp-v1", "VCP"),
+                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-future-v1", "VCP"),
             ],
             moderator_ordinal=1,
             created_at_ms=100,
@@ -116,7 +163,7 @@ class AgentRoomTests(unittest.TestCase):
             title="时间线讨论",
             routing_policy="manual_mentions",
             participants=[
-                self._participant("zhiyou-v1", "智鼬"),
+                self._participant("companion-present-v1", "智鼬"),
                 self._participant("zhiyou-sol-v1", "智鼬·未来"),
             ],
         )
@@ -125,7 +172,7 @@ class AgentRoomTests(unittest.TestCase):
         current = self.store.route_target(room_id, "@智鼬 检查当前状态")
         future = self.store.route_target(room_id, "@智鼬·未来 做长期规划")
 
-        self.assertEqual(current["roleId"], "zhiyou-v1")
+        self.assertEqual(current["roleId"], "companion-present-v1")
         self.assertEqual(future["roleId"], "zhiyou-sol-v1")
 
         ambiguous = self.store.create(
@@ -144,8 +191,8 @@ class AgentRoomTests(unittest.TestCase):
             title="快照房间",
             routing_policy="moderator",
             participants=[
-                self._participant("zhiyou-v1", "智鼬"),
-                self._participant("hermes-v1", "Hermes"),
+                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-firstlight-v1", "Hermes"),
             ],
             created_at_ms=1,
         )
@@ -178,8 +225,8 @@ class AgentRoomTests(unittest.TestCase):
             title="游标房间",
             routing_policy="moderator",
             participants=[
-                self._participant("zhiyou-v1", "智鼬"),
-                self._participant("hermes-v1", "Hermes"),
+                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-firstlight-v1", "Hermes"),
             ],
         )
         participant_id = str(room["participants"][1]["id"])
@@ -234,8 +281,8 @@ class AgentRoomTests(unittest.TestCase):
             title="长期协作",
             routing_policy="manual_mentions",
             participants=[
-                self._participant("zhiyou-v1", "智鼬·此刻"),
-                self._participant("hermes-v1", "智鼬·初识"),
+                self._participant("companion-present-v1", "智鼬·此刻"),
+                self._participant("companion-firstlight-v1", "智鼬·初识"),
             ],
         )
         room_id = str(room["id"])
@@ -250,14 +297,14 @@ class AgentRoomTests(unittest.TestCase):
             )
         session = self.sessions.create(
             title="智鼬·未来 room session",
-            role_id="vcp-v1",
+            role_id="companion-future-v1",
             role_version="1",
         )
 
         participant = self.store.add_participant(
             room_id,
             session_id=str(session["id"]),
-            role_id="vcp-v1",
+            role_id="companion-future-v1",
             role_version="1",
             display_name="智鼬·未来",
         )
@@ -291,8 +338,8 @@ class AgentRoomTests(unittest.TestCase):
             title="空房间",
             routing_policy="manual_mentions",
             participants=[
-                self._participant("zhiyou-v1", "智鼬"),
-                self._participant("hermes-v1", "Hermes"),
+                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-firstlight-v1", "Hermes"),
             ],
         )
 
@@ -306,8 +353,8 @@ class AgentRoomTests(unittest.TestCase):
 
     def test_room_limits_and_participant_session_ownership_fail_closed(self) -> None:
         participants = [
-            self._participant("zhiyou-v1", "智鼬"),
-            self._participant("hermes-v1", "Hermes"),
+            self._participant("companion-present-v1", "智鼬"),
+            self._participant("companion-firstlight-v1", "Hermes"),
         ]
         self.store.create(
             title="第一个房间",
@@ -324,7 +371,7 @@ class AgentRoomTests(unittest.TestCase):
             self.store.create(
                 title="人数过少",
                 routing_policy="manual_mentions",
-                participants=[self._participant("vcp-v1", "VCP")],
+                participants=[self._participant("companion-future-v1", "VCP")],
             )
 
     def test_sequential_and_natural_routing_are_structured_and_deterministic(self) -> None:
@@ -333,9 +380,9 @@ class AgentRoomTests(unittest.TestCase):
             room_kind="roleplay",
             routing_policy="sequential",
             participants=[
-                self._participant("zhiyou-v1", "此刻"),
-                self._participant("hermes-v1", "初识"),
-                self._participant("vcp-v1", "未来"),
+                self._participant("companion-present-v1", "此刻"),
+                self._participant("companion-firstlight-v1", "初识"),
+                self._participant("companion-future-v1", "未来"),
             ],
         )
         room_id = str(room["id"])
@@ -369,8 +416,8 @@ class AgentRoomTests(unittest.TestCase):
             routing_policy="moderator",
             workspace_roots=[str(self.root)],
             participants=[
-                self._participant("zhiyou-v1", "此刻"),
-                self._participant("vcp-v1", "未来"),
+                self._participant("companion-present-v1", "此刻"),
+                self._participant("companion-future-v1", "未来"),
             ],
         )
         room_id = str(room["id"])
@@ -442,8 +489,8 @@ class AgentRoomServiceTests(unittest.TestCase):
                     "title": "没有项目的协作",
                     "workspaceRoots": [],
                     "participants": [
-                        {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                        {"roleId": "vcp-v1", "roleVersion": "1"},
+                        {"roleId": "companion-present-v1", "roleVersion": "1"},
+                        {"roleId": "companion-future-v1", "roleVersion": "1"},
                     ],
                 }
             )
@@ -456,8 +503,8 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "routingPolicy": "manual_mentions",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -472,7 +519,7 @@ class AgentRoomServiceTests(unittest.TestCase):
 
         added = self.service.add_room_participant(
             str(room["id"]),
-            {"roleId": "vcp-v1", "roleVersion": "1"},
+            {"roleId": "companion-future-v1", "roleVersion": "1"},
         )
         future = added["participant"]
         self.assertEqual(future["displayName"], "智鼬·未来")
@@ -491,8 +538,12 @@ class AgentRoomServiceTests(unittest.TestCase):
                 },
             )
 
-        rendered = prompt.call_args.args[1]["message"]
-        self.assertIn("请从现在开始接手规划", rendered)
+        prompt_payload = prompt.call_args.args[1]
+        self.assertEqual(
+            prompt_payload["message"],
+            "@智鼬·未来 请从现在开始接手规划",
+        )
+        rendered = prompt_payload["_transientContext"]
         self.assertNotIn("不可重放的旧消息", rendered)
         self.assertLessEqual(len(rendered), 24_000)
 
@@ -503,8 +554,8 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "routingPolicy": "manual_mentions",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -531,7 +582,9 @@ class AgentRoomServiceTests(unittest.TestCase):
                 },
             )
 
-        rendered = prompt.call_args.args[1]["message"]
+        prompt_payload = prompt.call_args.args[1]
+        self.assertEqual(prompt_payload["message"], "@智鼬·此刻 继续当前任务")
+        rendered = prompt_payload["_transientContext"]
         self.assertLessEqual(len(rendered), 24_000)
         self.assertIn("历史编号-29", rendered)
         self.assertNotIn("历史编号-00", rendered)
@@ -544,8 +597,8 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "routingPolicy": "manual_mentions",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -570,8 +623,8 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "routingPolicy": "manual_mentions",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -600,8 +653,8 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "routingPolicy": "manual_mentions",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -619,13 +672,13 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "routingPolicy": "manual_mentions",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
-        future = next(value for value in room["participants"] if value["roleId"] == "vcp-v1")
+        future = next(value for value in room["participants"] if value["roleId"] == "companion-future-v1")
 
         removed = self.service.remove_room_participant(
             str(room["id"]),
@@ -638,7 +691,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(self.service.sessions.get(str(future["sessionId"]))["status"], "archived")
         self.assertEqual(
             [value["roleId"] for value in snapshot["room"]["participants"] if value["status"] == "active"],
-            ["zhiyou-v1", "hermes-v1"],
+            ["companion-present-v1", "companion-firstlight-v1"],
         )
 
     def test_removing_member_clears_inactive_routing_pointers(self) -> None:
@@ -646,16 +699,16 @@ class AgentRoomServiceTests(unittest.TestCase):
             {
                 "title": "路由指针生命周期",
                 "routingPolicy": "moderator",
-                "moderatorRoleId": "vcp-v1",
+                "moderatorRoleId": "companion-future-v1",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
-        future = next(value for value in room["participants"] if value["roleId"] == "vcp-v1")
+        future = next(value for value in room["participants"] if value["roleId"] == "companion-future-v1")
         self.service.update_room(
             str(room["id"]),
             {
@@ -686,8 +739,8 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "title": "可永久删除 Room",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -711,8 +764,8 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "title": "缺失 Session 的旧 Room",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -743,7 +796,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         )
 
     def test_natural_room_uses_pinned_role_book_as_advisory_profile(self) -> None:
-        role = self.service.personas.resolve("hermes-v1", "1")
+        role = self.service.personas.resolve("companion-firstlight-v1", "1")
         self.service.role_books.ensure_seeded(
             role.role_id,
             role.version,
@@ -752,7 +805,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             role.version,
         )
         draft = self.service.role_books.propose_revision(
-            "hermes-v1",
+            "companion-firstlight-v1",
             "1",
             {
                 "capabilities": [
@@ -777,13 +830,13 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "routingConfig": {"naturalJitter": 0},
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
         hermes = next(
-            item for item in room["participants"] if item["roleId"] == "hermes-v1"
+            item for item in room["participants"] if item["roleId"] == "companion-firstlight-v1"
         )
         self.assertEqual(
             self.service.sessions.get(str(hermes["sessionId"]))[
@@ -805,14 +858,14 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
         self.assertEqual(accepted["routeDecision"]["reason"], "descriptor_match")
         evidence = self.service.memory_evidence.list(
-            role_id="hermes-v1",
+            role_id="companion-firstlight-v1",
             session_id=str(hermes["sessionId"]),
         )
         self.assertEqual(evidence[0]["sourceKind"], "room_event")
         self.assertFalse(evidence[0]["metadata"]["accepted"])
 
     def test_active_work_item_owner_overrides_role_book_and_explicit_conflicts(self) -> None:
-        role = self.service.personas.resolve("hermes-v1", "1")
+        role = self.service.personas.resolve("companion-firstlight-v1", "1")
         self.service.role_books.ensure_seeded(
             role.role_id,
             role.version,
@@ -821,7 +874,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             role.version,
         )
         draft = self.service.role_books.propose_revision(
-            "hermes-v1",
+            "companion-firstlight-v1",
             "1",
             {
                 "capabilities": [
@@ -846,16 +899,16 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "routingConfig": {"naturalJitter": 0},
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
         hermes = next(
-            item for item in room["participants"] if item["roleId"] == "hermes-v1"
+            item for item in room["participants"] if item["roleId"] == "companion-firstlight-v1"
         )
         vcp = next(
-            item for item in room["participants"] if item["roleId"] == "vcp-v1"
+            item for item in room["participants"] if item["roleId"] == "companion-future-v1"
         )
         work_item = self.service.room_work.create(
             room_id=str(room["id"]),
@@ -946,9 +999,9 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "routingPolicy": "manual_mentions",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )
@@ -956,12 +1009,12 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(room["workspaceRoots"], [str(self.root.resolve())])
         self.assertEqual(room["lastEventSequence"], 1)
         self.assertEqual(len(room["participants"]), 3)
-        hermes = next(item for item in room["participants"] if item["roleId"] == "hermes-v1")
-        current = next(item for item in room["participants"] if item["roleId"] == "zhiyou-v1")
-        future = next(item for item in room["participants"] if item["roleId"] == "vcp-v1")
+        hermes = next(item for item in room["participants"] if item["roleId"] == "companion-firstlight-v1")
+        current = next(item for item in room["participants"] if item["roleId"] == "companion-present-v1")
+        future = next(item for item in room["participants"] if item["roleId"] == "companion-future-v1")
         self.assertEqual(hermes["collaborationRole"], "researcher")
         self.assertEqual(current["collaborationRole"], "executor")
-        self.assertEqual(future["collaborationRole"], "executor")
+        self.assertEqual(future["collaborationRole"], "coordinator")
         hermes_session = self.service.sessions.get(str(hermes["sessionId"]))
         current_session = self.service.sessions.get(str(current["sessionId"]))
         future_session = self.service.sessions.get(str(future["sessionId"]))
@@ -989,12 +1042,13 @@ class AgentRoomServiceTests(unittest.TestCase):
             )
         prompt.assert_called_once()
         self.assertEqual(prompt.call_args.args[0], str(hermes["sessionId"]))
-        room_prompt = prompt.call_args.args[1]["message"]
-        self.assertIn("你是调研者", room_prompt)
-        self.assertIn("以当前 Session 的工具策略", room_prompt)
-        self.assertNotIn("不得写文件或运行 Shell", room_prompt)
-        self.assertIn(str(self.root.resolve()), room_prompt)
-        self.assertIn("@智鼬·初识 请先诊断状态", room_prompt)
+        prompt_payload = prompt.call_args.args[1]
+        self.assertEqual(prompt_payload["message"], "@智鼬·初识 请先诊断状态")
+        room_context = prompt_payload["_transientContext"]
+        self.assertIn('visibility="provider-only"', room_context)
+        self.assertIn("当前岗位：researcher", room_context)
+        self.assertNotIn(str(self.root.resolve()), room_context)
+        self.assertNotIn("@智鼬·初识 请先诊断状态", room_context)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
         self.assertEqual(accepted["clientMessageId"], "room-client-1")
         self.assertTrue(replay["idempotentReplay"])
@@ -1054,14 +1108,399 @@ class AgentRoomServiceTests(unittest.TestCase):
             self.service.delete_session(str(hermes["sessionId"]))
         self.assertEqual(len(self.service.list_rooms()["items"]), 1)
 
+    def test_multi_mentions_share_one_root_but_keep_independent_dispatches(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "双 Agent 核对",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        current, firstlight, _future = room["participants"]
+        turns = {
+            str(current["sessionId"]): "turn:multi:current",
+            str(firstlight["sessionId"]): "turn:multi:firstlight",
+        }
+
+        def accept(session_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            return {"turnId": turns[session_id]}
+
+        with patch.object(self.service, "prompt", side_effect=accept) as prompt:
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": (
+                        f"@{current['displayName']} @{firstlight['displayName']} "
+                        "分别核对实现和证据"
+                    ),
+                    "clientMessageId": "room-multi-1",
+                },
+            )
+
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual(prompt.call_count, 2)
+        self.assertEqual(
+            {item["participantId"] for item in accepted["dispatches"]},
+            {current["id"], firstlight["id"]},
+        )
+        self.assertEqual(
+            len({item["dispatchId"] for item in accepted["dispatches"]}),
+            2,
+        )
+        root_id = str(accepted["roomTurnId"])
+        initial_events = self.service.rooms.list_events(str(room["id"]))
+        self.assertEqual(
+            [event["eventType"] for event in initial_events],
+            ["participant_status", "user_message", "route_decision", "route_decision"],
+        )
+        self.assertEqual(
+            initial_events[1]["payload"]["targetParticipantIds"],
+            [current["id"], firstlight["id"]],
+        )
+        self.assertEqual(
+            {event["turnId"] for event in initial_events[1:]},
+            {root_id},
+        )
+        route_dispatches = {
+            event["participantId"]: event["payload"]["dispatchId"]
+            for event in initial_events
+            if event["eventType"] == "route_decision"
+        }
+        self.assertEqual(len(set(route_dispatches.values())), 2)
+
+        self.service.events.publish(
+            str(current["sessionId"]),
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=turns[str(current["sessionId"])],
+            created_at_ms=200,
+        )
+        self.assertEqual(
+            self.service._room_topic_for_turn(root_id),
+            room["activeTopicId"],
+        )
+        self.service.events.publish(
+            str(firstlight["sessionId"]),
+            "text_delta",
+            {"delta": "证据已核对"},
+            turn_id=turns[str(firstlight["sessionId"])],
+            created_at_ms=205,
+        )
+        self.service.events.publish(
+            str(firstlight["sessionId"]),
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=turns[str(firstlight["sessionId"])],
+            created_at_ms=210,
+        )
+
+        mirrored = self.service.rooms.list_events(str(room["id"]))[-3:]
+        self.assertEqual(
+            [event["eventType"] for event in mirrored],
+            ["turn_completed", "participant_delta", "turn_completed"],
+        )
+        for event in mirrored:
+            data = event["payload"]["data"]
+            self.assertEqual(data["rootId"], root_id)
+            self.assertEqual(
+                data["dispatchId"],
+                route_dispatches[event["participantId"]],
+            )
+        self.assertEqual(self.service._room_topic_for_turn(root_id), "")
+
+    def test_root_abort_cancels_all_participants_and_fences_late_room_events(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "整轮停止",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        first, second = room["participants"]
+        turns = {
+            str(first["sessionId"]): "turn:abort:first",
+            str(second["sessionId"]): "turn:abort:second",
+        }
+
+        with patch.object(
+            self.service,
+            "prompt",
+            side_effect=lambda session_id, _payload: {"turnId": turns[session_id]},
+        ):
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": (
+                        f"@{first['displayName']} @{second['displayName']} "
+                        "并行检查后统一交付"
+                    ),
+                    "clientMessageId": "room-root-abort-message",
+                },
+            )
+
+        def typed_abort(session_id: str) -> dict[str, object]:
+            return {
+                "schemaVersion": "rag-ime.agent-abort.v1",
+                "ok": True,
+                "sessionId": session_id,
+                "runtimeReceipt": {
+                    "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                    "sessionId": session_id,
+                    "turnId": turns[session_id],
+                    "cancelledDecisionIds": [],
+                    "cancelledUIRequestIds": [],
+                    "lifecycle": {
+                        "schemaVersion": "pi.agent-abort-receipt.v1",
+                        "scopeId": session_id,
+                        "generation": 1,
+                        "reason": "user_abort",
+                        "cancelledContinuationIds": [
+                            f"continuation:{session_id}"
+                        ],
+                        "cancelledOperationIds": [
+                            f"provider:{session_id}",
+                            f"tool:{session_id}",
+                        ],
+                        "failedOperationIds": [],
+                        "operations": [
+                            {
+                                "operationId": f"provider:{session_id}",
+                                "kind": "provider",
+                            },
+                            {
+                                "operationId": f"tool:{session_id}",
+                                "kind": "tool",
+                            },
+                        ],
+                        "pendingOperations": [],
+                        "drained": True,
+                        "idle": True,
+                    },
+                },
+            }
+
+        with patch.object(self.service, "abort", side_effect=typed_abort) as abort:
+            receipt = self.service.abort_room_turn(
+                str(room["id"]),
+                {
+                    "roomTurnId": accepted["roomTurnId"],
+                    "clientRequestId": "room-root-abort-1",
+                },
+            )
+            replay = self.service.abort_room_turn(
+                str(room["id"]),
+                {
+                    "roomTurnId": accepted["roomTurnId"],
+                    "clientRequestId": "room-root-abort-1",
+                },
+            )
+
+        self.assertEqual(
+            {call.args[0] for call in abort.call_args_list},
+            {str(first["sessionId"]), str(second["sessionId"])},
+        )
+        self.assertEqual(receipt["status"], "terminated")
+        self.assertEqual(receipt["pendingTargets"], [])
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(
+            replay["cancellationReceiptId"],
+            receipt["cancellationReceiptId"],
+        )
+
+        events_before_late = self.service.rooms.list_events(str(room["id"]))
+        terminal = [
+            event
+            for event in events_before_late
+            if event["eventType"] == "turn_completed"
+        ]
+        self.assertEqual(
+            {event["participantId"] for event in terminal},
+            {first["id"], second["id"]},
+        )
+        self.assertTrue(
+            all(event["payload"]["status"] == "aborted" for event in terminal)
+        )
+
+        self.service.events.publish(
+            str(first["sessionId"]),
+            "text_delta",
+            {"delta": "不应重新出现在 Room"},
+            turn_id=turns[str(first["sessionId"])],
+            created_at_ms=999,
+        )
+        self.service.events.publish(
+            str(first["sessionId"]),
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=turns[str(first["sessionId"])],
+            created_at_ms=1000,
+        )
+        self.assertEqual(
+            self.service.rooms.list_events(str(room["id"])),
+            events_before_late,
+        )
+
+    def test_root_abort_never_marks_final_while_a_runtime_surface_is_unverified(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "停止未确认",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        participant = room["participants"][0]
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:abort:pending"},
+        ):
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": f"@{participant['displayName']} 执行长任务",
+                    "clientMessageId": "room-root-abort-pending-message",
+                },
+            )
+        unverified = {
+            "schemaVersion": "rag-ime.agent-abort.v1",
+            "ok": True,
+            "sessionId": str(participant["sessionId"]),
+            "runtimeReceipt": {
+                "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                "sessionId": str(participant["sessionId"]),
+                "turnId": "turn:abort:pending",
+                "lifecycle": {
+                    "schemaVersion": "pi.agent-abort-receipt.v1",
+                    "scopeId": str(participant["sessionId"]),
+                    "generation": 1,
+                    "reason": "user_abort",
+                    "cancelledContinuationIds": [],
+                    "cancelledOperationIds": [],
+                    "failedOperationIds": [],
+                    "operations": [
+                        {"operationId": "provider:pending", "kind": "provider"},
+                    ],
+                    "pendingOperations": [
+                        {"operationId": "provider:pending", "kind": "provider"},
+                    ],
+                    "drained": False,
+                    "idle": False,
+                },
+            },
+        }
+
+        with patch.object(self.service, "abort", return_value=unverified):
+            receipt = self.service.abort_room_turn(
+                str(room["id"]),
+                {
+                    "roomTurnId": accepted["roomTurnId"],
+                    "clientRequestId": "room-root-abort-pending-1",
+                },
+            )
+
+        self.assertFalse(receipt["ok"])
+        self.assertEqual(receipt["status"], "cancellation_pending")
+        self.assertIn("provider", receipt["pendingTargets"])
+        self.assertIn("session", receipt["pendingTargets"])
+        turn_events = [
+            event
+            for event in self.service.rooms.list_events(str(room["id"]))
+            if event["turnId"] == accepted["roomTurnId"]
+        ]
+        self.assertFalse(
+            any(event["eventType"] == "turn_completed" for event in turn_events)
+        )
+        self.assertEqual(
+            turn_events[-1]["payload"]["status"],
+            "cancellation_pending",
+        )
+
+    def test_room_input_stays_a_user_message_and_room_delta_is_provider_only(self) -> None:
+        created = self.service.create_room(
+            {
+                "title": "Provider-only Room",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        target = created["participants"][0]
+        first_text = "@智鼬·此刻 检查增量上下文"
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            return_value={
+                "accepted": True,
+                "turnId": "turn:provider-only:1",
+                "piEntryId": "entry:provider-only:1",
+                "response": {"success": True},
+            },
+        ) as runtime_prompt:
+            accepted = self.service.post_room_message(
+                str(created["id"]),
+                {
+                    "message": first_text,
+                    "participantIds": [str(target["id"])],
+                },
+            )
+
+        runtime_message = runtime_prompt.call_args.args[1]
+        envelope = json.loads(
+            runtime_message.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
+        )
+        self.assertEqual(envelope["message"], first_text)
+        self.assertIn("<room-turn-context", envelope["transientContext"])
+        self.assertIn('mode="incremental"', envelope["transientContext"])
+        self.assertNotIn(first_text, envelope["transientContext"])
+        self.assertNotIn("受管 Room 上下文", runtime_message)
+
+        session_events, _ = self.service.events.replay(str(target["sessionId"]))
+        user_messages = [
+            event.payload["message"]
+            for event in session_events
+            if event.event_type == "message_completed"
+            and isinstance(event.payload.get("message"), dict)
+            and event.payload["message"].get("role") == "user"
+        ]
+        self.assertEqual(len(user_messages), 1)
+        self.assertEqual(
+            user_messages[0]["blocks"][0]["data"]["text"],
+            first_text,
+        )
+        self.assertNotIn(
+            "room-turn-context",
+            json.dumps(user_messages[0], ensure_ascii=False),
+        )
+
+        self.service.events.publish(
+            str(target["sessionId"]),
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=str(accepted["sessionTurnId"]),
+        )
+
     def test_room_user_priority_is_released_when_turn_preparation_fails(self) -> None:
         created = self.service.create_room(
             {
                 "title": "异常恢复",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )
@@ -1092,8 +1531,8 @@ class AgentRoomServiceTests(unittest.TestCase):
                     "title": "重复角色",
                     "workspaceRoots": [str(self.root)],
                     "participants": [
-                        {"roleId": "vcp-v1", "roleVersion": "1"},
-                        {"roleId": "vcp-v1", "roleVersion": "1"},
+                        {"roleId": "companion-future-v1", "roleVersion": "1"},
+                        {"roleId": "companion-future-v1", "roleVersion": "1"},
                     ],
                 }
             )
@@ -1103,17 +1542,17 @@ class AgentRoomServiceTests(unittest.TestCase):
             {
                 "title": "主持房间",
                 "routingPolicy": "moderator",
-                "moderatorRoleId": "vcp-v1",
+                "moderatorRoleId": "companion-future-v1",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )
         future = next(
-            item for item in created["room"]["participants"] if item["roleId"] == "vcp-v1"
+            item for item in created["room"]["participants"] if item["roleId"] == "companion-future-v1"
         )
         self.assertEqual(future["collaborationRole"], "coordinator")
         room_id = str(created["room"]["id"])
@@ -1123,11 +1562,13 @@ class AgentRoomServiceTests(unittest.TestCase):
                 {"message": "请协调大家检查当前项目"},
             )
         self.assertEqual(accepted["participant"]["id"], future["id"])
-        moderator_prompt = prompt.call_args.args[1]["message"]
-        self.assertIn("你是本轮调控者", moderator_prompt)
-        self.assertIn("ime_agents.room_ask", moderator_prompt)
-        self.assertIn("role=researcher", moderator_prompt)
-        self.assertIn("role=executor", moderator_prompt)
+        prompt_payload = prompt.call_args.args[1]
+        self.assertEqual(prompt_payload["message"], "请协调大家检查当前项目")
+        moderator_context = prompt_payload["_transientContext"]
+        self.assertIn("当前岗位：coordinator", moderator_context)
+        self.assertNotIn("ime_agents.room_ask", moderator_context)
+        self.assertNotIn("role=researcher", moderator_context)
+        self.assertNotIn("role=executor", moderator_context)
 
         updated = self.service.update_room(room_id, {"archived": True})
         self.assertEqual(updated["room"]["status"], "archived")
@@ -1144,12 +1585,12 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "title": "安全投影",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
-        hermes = next(item for item in room["participants"] if item["roleId"] == "hermes-v1")
+        hermes = next(item for item in room["participants"] if item["roleId"] == "companion-firstlight-v1")
         session_id = str(hermes["sessionId"])
 
         self.service.events.publish(
@@ -1269,8 +1710,8 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "routingPolicy": "invite_only",
                 "workspaceRoots": [],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "vcp-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
                 ],
             }
         )
@@ -1319,11 +1760,13 @@ class AgentRoomServiceTests(unittest.TestCase):
                 },
             )
         self.assertEqual(second["participant"]["id"], future["id"])
-        materialized = prompt.call_args.args[1]["message"]
+        prompt_payload = prompt.call_args.args[1]
+        self.assertEqual(prompt_payload["message"], "你怎么看？")
+        materialized = prompt_payload["_transientContext"]
         self.assertIn("安静的茶室", materialized)
         self.assertIn("今天有点累", materialized)
         self.assertIn("先坐一会儿，慢慢说", materialized)
-        self.assertIn("不要输出或模仿", materialized)
+        self.assertNotIn("受管 Room 上下文", materialized)
         self.assertNotIn("[此刻的发言]", materialized)
 
 

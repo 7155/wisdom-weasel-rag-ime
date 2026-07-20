@@ -326,7 +326,7 @@ function AgentWorkspace() {
 
   const session = sessions.find((item) => item.id === selectedId);
   const defaultPersona = personas.find((item) => item.runtimeCharacteristics.isDefault)
-    ?? personas.find((item) => item.roleId === 'vcp-v1')
+    ?? personas.find((item) => item.roleId === 'companion-future-v1')
     ?? personas[0];
   const persona = personas.find((item) => item.roleId === session?.roleId) ?? defaultPersona;
   const busy = Boolean(activeTurnId);

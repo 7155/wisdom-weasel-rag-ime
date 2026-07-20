@@ -41,16 +41,47 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get(session_id)["modelProfile"], "pi/default")
         self.assertEqual(self.store.list()[0]["modelProfile"], "pi/default")
 
+    def test_retired_builtin_role_ids_are_read_only_compatibility_aliases(
+        self,
+    ) -> None:
+        session = self.store.create(
+            title="canonical identity",
+            role_id="vcp-v1",
+            role_book_revision_id="role-book:vcp-v1:1:test",
+        )
+
+        self.assertEqual(session["roleId"], "companion-future-v1")
+        self.assertEqual(
+            session["roleBookRevisionId"],
+            "role-book:companion-future-v1:1:test",
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            stored = conn.execute(
+                """
+                SELECT role_id, role_book_revision_id
+                FROM agent_sessions
+                WHERE id = ?
+                """,
+                (session["id"],),
+            ).fetchone()
+        self.assertEqual(
+            stored,
+            (
+                "companion-future-v1",
+                "role-book:companion-future-v1:1:test",
+            ),
+        )
+
     def test_create_list_bind_archive_restore_and_delete(self) -> None:
         session = self.store.create(title=" 输入助手   今天 ", created_at_ms=100)
         session_id = str(session["id"])
 
         self.assertEqual(session["title"], "输入助手 今天")
         self.assertEqual(session["mode"], "assistant")
-        self.assertEqual(session["roleId"], "vcp-v1")
+        self.assertEqual(session["roleId"], "companion-future-v1")
         self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-sol")
         self.assertEqual(session["thinkingLevel"], "max")
-        self.assertTrue(session["projectContextEnabled"])
+        self.assertFalse(session["projectContextEnabled"])
         self.assertFalse(session["piSkillsEnabled"])
         self.assertFalse(session["codexSkillsEnabled"])
         self.assertEqual(session["workspaceRoots"], [])

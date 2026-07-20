@@ -83,6 +83,26 @@ class AgentWakeScheduleStoreTests(unittest.TestCase):
         self.assertEqual(final["status"], "completed")
         self.assertEqual(final["runCount"], 2)
 
+    def test_role_wake_persists_only_the_canonical_builtin_role_id(
+        self,
+    ) -> None:
+        schedule = self.store.create(
+            {
+                "title": "唤醒未来",
+                "instruction": "继续长期任务",
+                "targetType": "role",
+                "targetRoleId": "vcp-v1",
+                "targetRoleVersion": "1",
+                "wakeAtMs": self.now + 1_000,
+            },
+            now_ms=self.now,
+        )
+
+        self.assertEqual(
+            schedule["targetRoleId"],
+            "companion-future-v1",
+        )
+
     def test_busy_target_defer_does_not_consume_run_budget(self) -> None:
         schedule = self._create(recurrence_kind="daily", max_runs=3)
         claim = self.store.claim_due(now_ms=self.now + 1_000)[0]
@@ -143,6 +163,33 @@ class AgentWakeScheduleStoreTests(unittest.TestCase):
         self.assertEqual(recovered["status"], "failed")
         self.assertEqual(recovered["latestRun"]["state"], "failed")
         self.assertIn("restarted", recovered["lastError"])
+
+    def test_root_cancel_fences_a_running_wake_and_ignores_late_terminal_event(self) -> None:
+        schedule = self._create(recurrence_kind="daily", max_runs=3)
+        claim = self.store.claim_due(now_ms=self.now + 1_000)[0]
+        self.store.accept(
+            str(claim["runId"]),
+            session_id="session:target",
+            turn_id="turn:scheduled",
+            now_ms=self.now + 1_100,
+        )
+
+        cancelled = self.store.cancel_for_root(
+            str(schedule["id"]),
+            reason="Room root stopped",
+            now_ms=self.now + 1_200,
+        )
+
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertEqual(cancelled["latestRun"]["state"], "failed")
+        self.assertEqual(cancelled["nextWakeAtMs"], 0)
+        self.assertIn("Room root stopped", cancelled["lastError"])
+        self.assertFalse(
+            self.store.finish_event(
+                self._event("turn_completed", created_at_ms=self.now + 1_300)
+            )
+        )
+        self.assertEqual(self.store.get(str(schedule["id"]))["status"], "cancelled")
 
     def test_validation_rejects_invalid_horizon_and_target(self) -> None:
         with self.assertRaisesRegex(ValueError, "targetType"):

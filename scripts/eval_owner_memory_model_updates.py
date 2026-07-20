@@ -750,7 +750,7 @@ def run(profile: str, model_env_path: Path) -> dict[str, object]:
         sessions.initialize()
         session = sessions.create(
             title="真实模型记忆更新评测",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             role_version="1",
             created_at_ms=1,
         )

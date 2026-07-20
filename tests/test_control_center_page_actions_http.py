@@ -205,8 +205,8 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
                 "routingPolicy": "manual_mentions",
                 "workspaceRoots": [self.tmp.name],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             },
         )

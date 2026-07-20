@@ -70,8 +70,8 @@ function createPreviewTransport(): MockControlTransport {
   const previewTimelineStatuses = new Map<string, string>();
   const previewMemorySelections = new Map<number, boolean>([[1, true], [2, false], [3, true]]);
   const sessions: Record<string, unknown>[] = [
-    previewSession('session-preview', '控制中心迁移', 'zhiyou-v1', Date.now()),
-    previewSession('session-memory', '记忆整理', 'zhiyou-v1', Date.now() - 360_000),
+    previewSession('session-preview', '控制中心迁移', 'companion-present-v1', Date.now()),
+    previewSession('session-memory', '记忆整理', 'companion-present-v1', Date.now() - 360_000),
   ];
   const wakeSchedules: Record<string, unknown>[] = [];
   const routes = Object.fromEntries(
@@ -282,7 +282,7 @@ function createPreviewTransport(): MockControlTransport {
     const session = previewSession(
       `session-persona-${nextSessionId++}`,
       stringValue(body.title) || '新对话',
-      stringValue(body.roleId) || 'vcp-v1',
+      stringValue(body.roleId) || 'companion-future-v1',
       Date.now(),
       stringValue(body.roleVersion) || '1',
     );
@@ -333,7 +333,7 @@ function createPreviewTransport(): MockControlTransport {
       ...previewSession(
         `session-fork-${nextSessionId++}`,
         stringValue(body.title) || '对话分支',
-        'zhiyou-v1',
+        'companion-present-v1',
         now,
       ),
       schemaVersion: 'rag-ime.agent-session.v1',
@@ -545,7 +545,7 @@ function previewResponse(pathId: ControlPathId): unknown {
         needsReviewSourceCount: 4,
         owners: [
           { ownerKind: 'user', ownerId: 'default', itemCount: 292 },
-          { ownerKind: 'agent', ownerId: 'zhiyou-v1', itemCount: 34 },
+          { ownerKind: 'agent', ownerId: 'companion-present-v1', itemCount: 34 },
         ],
       };
     case 'memory.pages':
@@ -757,7 +757,7 @@ function previewMemoryPage(
           }],
           type: 'session_compaction',
           ownerKind: 'agent',
-          ownerId: 'zhiyou-v1',
+          ownerId: 'companion-present-v1',
           updatedAtMs: Date.now() - 3_600_000,
         },
       ],
@@ -853,7 +853,7 @@ function previewMemoryReference(kind: string, referenceId: string): Record<strin
         detail: '桌面上下文默认读取 Accessibility Tree，截图仅在语义不足时兜底。',
         status: 'remember',
         ownerKind: 'agent',
-        ownerId: 'zhiyou-v1',
+        ownerId: 'companion-present-v1',
         updatedAtMs: now - 2_400_000,
       },
       evidenceRefs: [{ kind: 'event', referenceId: 'event:10002', title: '原始对话输入' }],
@@ -934,7 +934,7 @@ function previewMemoryReference(kind: string, referenceId: string): Record<strin
       detail: '维护角色使命、能力画像、协作习惯与已验证教训。',
       status: 'active',
       ownerKind: 'agent',
-      ownerId: 'zhiyou-v1',
+      ownerId: 'companion-present-v1',
       updatedAtMs: now - 60_000,
     },
     evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: '最近角色整理证据' }],
@@ -1160,7 +1160,7 @@ function previewMemorySummary(timelineStatuses = new Map<string, string>()): Rec
     },
     owners: [
       { ownerKind: 'user', ownerId: 'default', itemCount: 124 },
-      { ownerKind: 'agent', ownerId: 'zhiyou-v1', itemCount: 16 },
+      { ownerKind: 'agent', ownerId: 'companion-present-v1', itemCount: 16 },
     ],
   };
 }
@@ -2396,7 +2396,7 @@ function previewSession(
     status: 'ready',
     roleId,
     roleVersion,
-    projectContextEnabled: true,
+    projectContextEnabled: false,
     piSkillsEnabled: false,
     codexSkillsEnabled: false,
     updatedAtMs,
@@ -2445,8 +2445,8 @@ function record(value: unknown): Record<string, unknown> {
 function previewRoomSnapshot(roomId: string) {
   const now = Date.now() - 60_000;
   const participants = [
-    previewParticipant(roomId, 'participant-zhiyou', 'session-preview', 'zhiyou-v1', '智鼬·此刻', 0),
-    previewParticipant(roomId, 'participant-hermes', 'session-runtime', 'hermes-v1', '智鼬·初识', 1),
+    previewParticipant(roomId, 'participant-zhiyou', 'session-preview', 'companion-present-v1', '智鼬·此刻', 0),
+    previewParticipant(roomId, 'participant-hermes', 'session-runtime', 'companion-firstlight-v1', '智鼬·初识', 1),
   ];
   const event = (
     sequence: number,

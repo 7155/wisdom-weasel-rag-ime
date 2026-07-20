@@ -25,16 +25,9 @@ ROOM_ROUTE_OWNER_CENSUS = (
     RoomRouteOwner("work_item.block", "block_room_work", "work_item", "kernel", "reject_legacy"),
     RoomRouteOwner("work_item.escalate", "escalate_room_work", "work_item", "kernel", "reject_legacy"),
     RoomRouteOwner("wake.dispatch", "_dispatch_scheduled_wake", "wake_scheduler", "kernel", "reject_legacy"),
-    RoomRouteOwner("tool.send", "execute_room_capability_tool", "agent_tool", "kernel", "canonical_room_post"),
-    RoomRouteOwner("tool.ask", "execute_room_capability_tool", "agent_tool", "kernel", "canonical_room_post"),
-    RoomRouteOwner("tool.reply", "execute_room_capability_tool", "agent_tool", "kernel", "canonical_room_post"),
-    RoomRouteOwner("tool.room_send", "execute_room_capability_tool", "agent_tool", "kernel", "canonical_room_post"),
-    RoomRouteOwner("tool.room_ask", "execute_room_capability_tool", "agent_tool", "kernel", "canonical_room_post"),
-    RoomRouteOwner("tool.room_reply", "execute_room_capability_tool", "agent_tool", "kernel", "canonical_room_post"),
-    RoomRouteOwner("tool.assign", "execute_room_capability_tool", "agent_tool", "kernel", "canonical_room_commit"),
-    RoomRouteOwner("tool.submit", "execute_room_capability_tool", "agent_tool", "kernel", "canonical_room_commit"),
-    RoomRouteOwner("tool.room_assign", "execute_room_capability_tool", "agent_tool", "kernel", "canonical_room_commit"),
-    RoomRouteOwner("tool.room_submit", "execute_room_capability_tool", "agent_tool", "kernel", "canonical_room_commit"),
+    RoomRouteOwner("tool.room_state", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
+    RoomRouteOwner("tool.room_post", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
+    RoomRouteOwner("tool.room_commit", "execute_room_capability_tool", "reject", "kernel", "canonical_only"),
 )
 
 

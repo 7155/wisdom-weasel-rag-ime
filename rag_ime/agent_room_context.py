@@ -17,6 +17,7 @@ _CONTEXT_ENTRY_KINDS = frozenset(
         "room_post",
         "root_state",
         "task_state",
+        "work_item",
         "dispatch_state",
         "room_commit",
         "control_receipt",

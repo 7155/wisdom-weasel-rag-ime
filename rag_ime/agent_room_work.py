@@ -476,7 +476,7 @@ class AgentRoomWorkStore:
         )
         if not artifact_refs and not evidence_refs:
             raise ValueError(
-                "room_submit requires at least one artifactRefs or evidenceRefs entry"
+                "work submission requires at least one artifactRefs or evidenceRefs entry"
             )
         with self._connect(immediate=True) as conn:
             actor = _participant_for_session(conn, session_id)
@@ -1030,11 +1030,11 @@ class AgentRoomWorkStore:
                 event_type = "completed"
             else:
                 if not feedback:
-                    raise ValueError("room_return requires a concrete reason")
+                    raise ValueError("revision return requires a concrete reason")
                 revision = int(row["revision"]) + 1
                 if revision > MAX_REVISIONS:
                     raise ValueError(
-                        "Room revision limit is 2; use room_escalate instead"
+                        "Room revision limit is 2; escalate to the accountable participant"
                     )
                 conn.execute(
                     """

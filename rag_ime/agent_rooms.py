@@ -12,11 +12,13 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+from .agent_role_identity import canonical_agent_role_id
 from .agent_room_routing import (
     normalize_room_kind,
     normalize_routing_config,
     normalize_routing_policy,
     plan_room_route,
+    plan_room_routes,
 )
 from .agent_room_work import work_item_payload
 from .contracts.json_schema import validate_contract
@@ -134,7 +136,9 @@ class AgentRoomStore:
             )
             for ordinal, (participant_id, value) in enumerate(zip(participant_ids, values, strict=True)):
                 session_id = _required_text(value, "sessionId")
-                role_id = _required_text(value, "roleId")
+                role_id = canonical_agent_role_id(
+                    _required_text(value, "roleId")
+                )
                 role_version = _required_text(value, "roleVersion")
                 display_name = " ".join(_required_text(value, "displayName").split())[:40]
                 collaboration_role = str(value.get("collaborationRole") or "executor").strip()
@@ -260,7 +264,9 @@ class AgentRoomStore:
         ]
         if len(active) >= 4:
             raise ValueError("agent room accepts at most four active participants")
-        normalized_role_id = _required_text_value(role_id, "role_id", 63)
+        normalized_role_id = canonical_agent_role_id(
+            _required_text_value(role_id, "role_id", 63)
+        )
         normalized_role_version = _required_text_value(
             role_version,
             "role_version",
@@ -689,6 +695,26 @@ class AgentRoomStore:
         if room["status"] != "active":
             raise ValueError("agent room is archived")
         return plan_room_route(
+            room,
+            text,
+            requested_participant_ids=requested_participant_ids,
+            profiles=profiles,
+            authoritative_participant_id=authoritative_participant_id,
+        )
+
+    def plan_routes(
+        self,
+        room_id: str,
+        text: str,
+        *,
+        requested_participant_ids: Sequence[str] = (),
+        profiles: Mapping[str, Mapping[str, object]] | None = None,
+        authoritative_participant_id: str = "",
+    ) -> list[dict[str, object]]:
+        room = self.get(room_id)
+        if room["status"] != "active":
+            raise ValueError("agent room is archived")
+        return plan_room_routes(
             room,
             text,
             requested_participant_ids=requested_participant_ids,
@@ -1574,7 +1600,7 @@ def _participant_payload(row: sqlite3.Row) -> dict[str, object]:
         "id": str(row["id"]),
         "roomId": str(row["room_id"]),
         "sessionId": str(row["session_id"]),
-        "roleId": str(row["role_id"]),
+        "roleId": canonical_agent_role_id(row["role_id"]),
         "roleVersion": str(row["role_version"]),
         "displayName": str(row["display_name"]),
         "collaborationRole": str(row["collaboration_role"] or "executor"),

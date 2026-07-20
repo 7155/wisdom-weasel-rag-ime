@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import errno
+import os
 import socket
+import subprocess
 import unittest
 from functools import lru_cache
 
@@ -22,6 +24,30 @@ def loopback_bind_available() -> tuple[bool, str]:
 
 def requires_loopback_bind(test):
     available, reason = loopback_bind_available()
+    return unittest.skipUnless(available, reason)(test)
+
+
+@lru_cache(maxsize=1)
+def process_identity_available() -> tuple[bool, str]:
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(os.getpid())],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as error:
+        if error.errno in {errno.EACCES, errno.EPERM}:
+            return False, f"sandbox denies process identity inspection: {error}"
+        raise
+    if result.returncode != 0 or not result.stdout.strip():
+        detail = result.stderr.strip() or f"ps exited {result.returncode}"
+        return False, f"process identity inspection is unavailable: {detail}"
+    return True, ""
+
+
+def requires_process_identity(test):
+    available, reason = process_identity_available()
     return unittest.skipUnless(available, reason)(test)
 
 

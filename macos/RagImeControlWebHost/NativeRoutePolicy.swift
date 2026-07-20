@@ -156,6 +156,7 @@ final class NativeRoutePolicy {
             "agent.room.participant.remove": route("PATCH", "/api/agent/rooms/{roomId}/participants", "/control/v1/agent/rooms/{roomId}/participants", remoteSafe: true, bodyKeys: ["participantId"], requiredBodyKeys: ["participantId"]),
             "agent.room.delete": route("DELETE", "/api/agent/rooms/{roomId}", nil, bodyKeys: ["confirmTitle"], requiredBodyKeys: ["confirmTitle"]),
             "agent.room.message": route("POST", "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", remoteSafe: true, bodyKeys: ["message", "clientMessageId", "participantIds", "workItemId"], requiredBodyKeys: ["message"]),
+            "agent.room.abort": route("POST", "/api/agent/rooms/{roomId}/abort", "/control/v1/agent/rooms/{roomId}/abort", remoteSafe: true, bodyKeys: ["roomTurnId", "clientRequestId"], requiredBodyKeys: ["roomTurnId", "clientRequestId"]),
             "agent.room.events": route("GET", "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", remoteSafe: true, subscription: true),
             "agent.room.kernel.snapshot": route("GET", "/api/agent/rooms/{roomId}/kernel/snapshot", "/control/v1/agent/rooms/{roomId}/kernel/snapshot", remoteSafe: true),
             "agent.room.kernel.events": route("GET", "/api/agent/rooms/{roomId}/kernel/events", "/control/v1/agent/rooms/{roomId}/kernel/events", remoteSafe: true, subscription: true),

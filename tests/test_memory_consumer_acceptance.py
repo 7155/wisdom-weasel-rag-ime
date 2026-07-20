@@ -121,7 +121,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         created = self.service.create_session(
             {
                 "title": "记忆首次注入验收",
-                "roleId": "zhiyou-v1",
+                "roleId": "companion-present-v1",
                 "roleVersion": "1",
             }
         )
@@ -276,7 +276,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         self.assertNotIn(OLD_ATOM_ID, atom_doc_ids)
 
         active_role_revision_id = str(
-            self.service.role_books.active("zhiyou-v1", "1")["revisionId"]
+            self.service.role_books.active("companion-present-v1", "1")["revisionId"]
         )
         role_proposal = self._execute_tool(
             governed_session_id,
@@ -303,7 +303,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         self.assertTrue(role_proposal["result"]["reviewRequired"])
         self.assertFalse(role_proposal["result"]["activationAvailableInTool"])
         self.assertEqual(
-            self.service.role_books.active("zhiyou-v1", "1")["revisionId"],
+            self.service.role_books.active("companion-present-v1", "1")["revisionId"],
             active_role_revision_id,
         )
 
@@ -336,7 +336,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         self.assertNotIn(OLD_FACT, transient_context)
 
     def _activate_role_book_marker(self) -> dict[str, object]:
-        role = self.service.personas.resolve("zhiyou-v1", "1")
+        role = self.service.personas.resolve("companion-present-v1", "1")
         self.service.role_books.ensure_seeded(
             role.role_id,
             role.version,

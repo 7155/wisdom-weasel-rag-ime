@@ -104,7 +104,7 @@ function participantBinding(
   return {
     bindingId: `binding-${sessionId}`, sessionId, participantId: `participant-${sessionId}`, generation,
     roomBindingRef,
-    personaRef: definitionRef('persona', 'zhiyou-v1'),
+    personaRef: definitionRef('persona', 'companion-present-v1'),
     collaborationRoleRef: definitionRef('collaboration-role', roomBindingRef ? 'researcher' : 'specialist'),
     agentTemplateRef: definitionRef('agent-template', roomBindingRef ? 'researcher' : 'assistant'),
     collaborationProfileRef: roomBindingRef ? definitionRef('collaboration-profile', 'evidence-review') : null,

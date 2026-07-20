@@ -33,7 +33,7 @@ class PersonalContextObservabilityTests(unittest.TestCase):
 
     def test_snapshot_survives_restart_and_exposes_counts_without_raw_text(self) -> None:
         active = self.roles.ensure_seeded(
-            "zhiyou-v1",
+            "companion-present-v1",
             "1",
             "智鼬",
             "陪用户完成项目",
@@ -42,7 +42,7 @@ class PersonalContextObservabilityTests(unittest.TestCase):
         )
         session = self.sessions.create(
             title="可观测测试",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             role_version="1",
             role_book_revision_id=str(active["revisionId"]),
             created_at_ms=110,
@@ -51,7 +51,7 @@ class PersonalContextObservabilityTests(unittest.TestCase):
         self.evidence.record_user_message(
             session_id=session_id,
             pi_entry_id="message:user:1",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             turn_id="turn:1",
             text="用户原始私密句子不得出现在可观测接口",
             occurred_at_ms=120,
@@ -80,7 +80,7 @@ class PersonalContextObservabilityTests(unittest.TestCase):
                     source_evidence_ids_json, output_json, created_at_ms,
                     completed_at_ms, updated_at_ms
                 ) VALUES (
-                    'run:1', 'rag-ime', 'zhiyou-v1', '1', 'daily:1',
+                    'run:1', 'rag-ime', 'companion-present-v1', '1', 'daily:1',
                     'succeeded', 100, 200, '[]', ?, 200, 200, 200
                 )
                 """,
@@ -140,7 +140,7 @@ class PersonalContextObservabilityTests(unittest.TestCase):
             draft_kind="role_book",
             draft_id="role-draft:1",
             run_id="run:1",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             role_version="1",
             decision="accepted",
             reason="里面含有不能从接口读回的审核备注",
@@ -150,7 +150,7 @@ class PersonalContextObservabilityTests(unittest.TestCase):
             draft_kind="role_book",
             draft_id="role-draft:1",
             run_id="run:1",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             role_version="1",
             decision="accepted",
             reason="另一段备注也不能改变同一决定的幂等键",
@@ -187,25 +187,25 @@ class PersonalContextObservabilityTests(unittest.TestCase):
             draft_kind="user_memory",
             draft_id="draft:deferred-then-accepted",
             decision="deferred",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             created_at_ms=100,
         )
         self.observability.record_draft_decision(
             draft_kind="user_memory",
             draft_id="draft:deferred-then-accepted",
             decision="accepted",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             created_at_ms=200,
         )
         self.observability.record_draft_decision(
             draft_kind="user_memory",
             draft_id="draft:rejected",
             decision="rejected",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             created_at_ms=300,
         )
 
-        snapshot = self.observability.snapshot(role_id="zhiyou-v1")
+        snapshot = self.observability.snapshot(role_id="companion-present-v1")
         self.assertEqual(
             snapshot["drafts"]["latestDecisionByOutcome"],
             {"accepted": 1, "rejected": 1},

@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, AtSign, BriefcaseBusiness, ExternalLink, FilePlus2, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, MessagesSquare, PanelLeftOpen, PanelRightOpen, Plus, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserMinus, UserPlus, UsersRound, X } from 'lucide-react';
+import { Archive, ArchiveRestore, AtSign, BriefcaseBusiness, CheckCircle2, CircleStop, Clock3, ExternalLink, FilePlus2, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, MessagesSquare, PanelLeftOpen, PanelRightOpen, Plus, Route, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserMinus, UserPlus, UsersRound, Wrench, X } from 'lucide-react';
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
@@ -17,11 +17,14 @@ import {
 } from '@/components/primitives';
 import { createRoomDeltaBatcher } from '@/contracts/batching';
 import {
+  abortRoomTurn,
+  abortRoomParticipantTurn,
   appendOptimisticRoomMessage,
   createRoomProjection,
   parseRoomEventSnapshot,
   reduceRoomEvent,
   replayRoomEventSnapshot,
+  roomActivityLaneIdentity,
   type RoomActivityProjection,
   type RoomProjectionState,
 } from '@/contracts/room-reducer';
@@ -124,15 +127,14 @@ export function RoomsFeature() {
   const [workspaceRoots, setWorkspaceRoots] = useState<string[]>([]);
   const [workspacePicking, setWorkspacePicking] = useState(false);
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
-  const [routingPolicy, setRoutingPolicy] = useState<RoomRoutingPolicy>('moderator');
+  const [routingPolicy, setRoutingPolicy] = useState<RoomRoutingPolicy>('natural');
   const [moderatorRoleId, setModeratorRoleId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTitle, setSettingsTitle] = useState('');
   const [settingsAvatar, setSettingsAvatar] = useState('members');
   const [settingsDescription, setSettingsDescription] = useState('');
   const [settingsScenarioPrompt, setSettingsScenarioPrompt] = useState('');
-  const [settingsRoutingPolicy, setSettingsRoutingPolicy] = useState<RoomRoutingPolicy>('moderator');
-  const [settingsModeratorParticipantId, setSettingsModeratorParticipantId] = useState('');
+  const [settingsRoutingPolicy, setSettingsRoutingPolicy] = useState<RoomRoutingPolicy>('natural');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState('');
   const [memberSavingRoleId, setMemberSavingRoleId] = useState('');
@@ -158,6 +160,8 @@ export function RoomsFeature() {
   const [policyLoading, setPolicyLoading] = useState(false);
   const [policySaving, setPolicySaving] = useState(false);
   const [policyError, setPolicyError] = useState('');
+  const [abortingSessionIds, setAbortingSessionIds] = useState<Set<string>>(() => new Set());
+  const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
 
   function closeRoomRail(restoreFocus = true): void {
     if (!roomRailOpen) return;
@@ -342,24 +346,14 @@ export function RoomsFeature() {
   const visibleTurnOrder = projection.roomId === selectedId ? projection.turnOrder : [];
   const roomCanSend = room?.status === 'active';
   const activeWork = room?.workItems?.find((work) => ['blocked', 'review', 'active', 'queued'].includes(work.state));
-  const addressedParticipant = roomMentionedParticipant(activeParticipants, draft);
-  const requiresAddress = room?.routingPolicy === 'manual_mentions' || room?.routingPolicy === 'invite_only';
+  const addressedParticipants = roomMentionedParticipants(activeParticipants, draft);
   const canSend = Boolean(
     roomCanSend
-    && draft.trim()
-    && (!requiresAddress || addressedParticipant),
+    && draft.trim(),
   );
   async function send(): Promise<void> {
     const message = draft.trim();
     if (!room || room.status !== 'active' || !message) return;
-    if (room.routingPolicy === 'manual_mentions' && !addressedParticipant) {
-      setError('请先选择一位参与角色。');
-      return;
-    }
-    if (room.routingPolicy === 'invite_only' && !addressedParticipant) {
-      setError('请先邀请一位角色发言。');
-      return;
-    }
     const clientMessageId = `room-web-${crypto.randomUUID()}`;
     setProjection((current) => {
       const next = appendOptimisticRoomMessage(current, { clientMessageId, text: message, nowMs: Date.now() });
@@ -375,7 +369,9 @@ export function RoomsFeature() {
         body: {
           message,
           clientMessageId,
-          ...(addressedParticipant ? { participantIds: [addressedParticipant.id] } : {}),
+          ...(addressedParticipants.length
+            ? { participantIds: addressedParticipants.map((participant) => participant.id) }
+            : {}),
         },
       });
     }
@@ -389,6 +385,77 @@ export function RoomsFeature() {
       setError(publicErrorText(requestError, '消息暂时未发送，请稍后重试。'));
     }
   }
+  async function abortParticipantTurn(sessionId: string, turnId: string): Promise<void> {
+    if (!sessionId || abortingSessionIds.has(sessionId)) return;
+    setAbortingSessionIds((current) => new Set(current).add(sessionId));
+    setError('');
+    try {
+      await transport.request({
+        pathId: 'agent.session.abort',
+        params: { sessionId },
+      });
+      setProjection((current) => {
+        const participantId = room?.participants.find(
+          (participant) => participant.sessionId === sessionId,
+        )?.id ?? '';
+        const next = abortRoomParticipantTurn(
+          current,
+          turnId,
+          participantId,
+          Date.now(),
+        );
+        projectionRef.current = next;
+        return next;
+      });
+    } catch (requestError) {
+      setError(publicErrorText(requestError, '暂时无法停止这个 Agent，请稍后重试。'));
+    } finally {
+      setAbortingSessionIds((current) => {
+        const next = new Set(current);
+        next.delete(sessionId);
+        return next;
+      });
+    }
+  }
+  async function abortRootTurn(turnId: string): Promise<void> {
+    if (!room || !turnId || abortingTurnIds.has(turnId)) return;
+    setAbortingTurnIds((current) => new Set(current).add(turnId));
+    setError('');
+    try {
+      const receipt = await transport.request<Record<string, unknown>>({
+        pathId: 'agent.room.abort',
+        params: { roomId: room.id },
+        body: {
+          roomTurnId: turnId,
+          clientRequestId: `room-abort-${crypto.randomUUID()}`,
+        },
+      });
+      if (receipt.ok !== true || receipt.status === 'cancellation_pending') {
+        const pending = Array.isArray(receipt.pendingTargets)
+          ? receipt.pendingTargets.filter((item): item is string => typeof item === 'string')
+          : [];
+        setError(
+          pending.length > 0
+            ? `停止信号已送达，但仍在确认：${pending.join('、')}。可再次停止，界面不会把它误报为已结束。`
+            : '停止信号已送达，但后台尚未返回完整终止凭据。可再次停止。',
+        );
+        return;
+      }
+      setProjection((current) => {
+        const next = abortRoomTurn(current, turnId, Date.now());
+        projectionRef.current = next;
+        return next;
+      });
+    } catch (requestError) {
+      setError(publicErrorText(requestError, '暂时无法停止整条 Room 任务，请稍后重试。'));
+    } finally {
+      setAbortingTurnIds((current) => {
+        const next = new Set(current);
+        next.delete(turnId);
+        return next;
+      });
+    }
+  }
   function beginCreateRoom(): void {
     const eligiblePersonas = personas.filter((persona) => persona.selectableModes.includes('coordinator'));
     if (
@@ -398,7 +465,7 @@ export function RoomsFeature() {
       setError('真实角色目录至少需要两个角色才能创建 Room。');
       return;
     }
-    const timelineDefaults = ['vcp-v1', 'zhiyou-v1', 'hermes-v1']
+    const timelineDefaults = ['companion-future-v1', 'companion-present-v1', 'companion-firstlight-v1']
       .map((roleId) => eligiblePersonas.find((persona) => persona.roleId === roleId)?.roleId)
       .filter((roleId): roleId is string => Boolean(roleId));
     const defaults = timelineDefaults.length >= 2
@@ -413,14 +480,14 @@ export function RoomsFeature() {
     setCreateScenarioPrompt('');
     setWorkspaceRoots(projectPaths.slice(0, 1));
     setSelectedRoleIds(defaults);
-    setModeratorRoleId(defaults.includes('vcp-v1') ? 'vcp-v1' : defaults[0] ?? '');
-    setRoutingPolicy('moderator');
+    setModeratorRoleId(defaults.includes('companion-future-v1') ? 'companion-future-v1' : defaults[0] ?? '');
+    setRoutingPolicy('natural');
     setCreateOpen(true);
   }
   function updateCreateRoomKind(kind: RoomKind): void {
     const requiredMode = kind === 'collaboration' ? 'coordinator' : 'assistant';
     const eligible = personas.filter((persona) => persona.selectableModes.includes(requiredMode));
-    const timelineDefaults = ['vcp-v1', 'zhiyou-v1', 'hermes-v1']
+    const timelineDefaults = ['companion-future-v1', 'companion-present-v1', 'companion-firstlight-v1']
       .map((roleId) => eligible.find((persona) => persona.roleId === roleId)?.roleId)
       .filter((roleId): roleId is string => Boolean(roleId));
     const defaults = timelineDefaults.length >= 2
@@ -429,8 +496,8 @@ export function RoomsFeature() {
     setCreateRoomKind(kind);
     setCreateAvatar(kind === 'roleplay' ? 'sparkles' : 'briefcase');
     setSelectedRoleIds(defaults);
-    setModeratorRoleId(defaults.includes('vcp-v1') ? 'vcp-v1' : defaults[0] ?? '');
-    setRoutingPolicy(kind === 'roleplay' ? 'natural' : 'moderator');
+    setModeratorRoleId(defaults.includes('companion-future-v1') ? 'companion-future-v1' : defaults[0] ?? '');
+    setRoutingPolicy('natural');
     setCreateError('');
   }
   async function pickWorkspaceRoot(): Promise<void> {
@@ -485,10 +552,6 @@ export function RoomsFeature() {
     }
     const title = createTitle.trim();
     if (!title) return;
-    if (routingPolicy === 'moderator' && !selectedRoleIds.includes(moderatorRoleId)) {
-      setCreateError('请选择一位已加入 Room 的主持人。');
-      return;
-    }
     setCreating(true);
     setCreateError('');
     try {
@@ -504,7 +567,6 @@ export function RoomsFeature() {
           routingPolicy,
           workspaceRoots: createRoomKind === 'collaboration' ? workspaceRoots : [],
           routingConfig: { maxResponders: 1, naturalJitter: createRoomKind === 'roleplay' ? 0.04 : 0, fallbackParticipantId: '' },
-          ...(routingPolicy === 'moderator' ? { moderatorRoleId } : {}),
         },
       });
       const created = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
@@ -543,17 +605,12 @@ export function RoomsFeature() {
     setSettingsAvatar(room.avatar ?? (room.roomKind === 'roleplay' ? 'sparkles' : 'briefcase'));
     setSettingsDescription(room.description ?? '');
     setSettingsScenarioPrompt(room.scenarioPrompt ?? '');
-    setSettingsRoutingPolicy(room.routingPolicy);
-    setSettingsModeratorParticipantId(room.moderatorParticipantId);
+    setSettingsRoutingPolicy('natural');
     setSettingsError('');
     setSettingsOpen(true);
   }
   async function saveRoomSettings(): Promise<void> {
     if (!room || settingsSaving || !settingsTitle.trim()) return;
-    if (settingsRoutingPolicy === 'moderator' && !settingsModeratorParticipantId) {
-      setSettingsError('请选择一位主持人。');
-      return;
-    }
     setSettingsSaving(true);
     setSettingsError('');
     try {
@@ -567,9 +624,6 @@ export function RoomsFeature() {
           scenarioPrompt: settingsScenarioPrompt.trim(),
           routingPolicy: settingsRoutingPolicy,
           routingConfig: room.routingConfig ?? { maxResponders: 1, naturalJitter: room.roomKind === 'roleplay' ? 0.04 : 0, fallbackParticipantId: '' },
-          ...(settingsRoutingPolicy === 'moderator'
-            ? { moderatorParticipantId: settingsModeratorParticipantId }
-            : {}),
         },
       });
       const updated = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
@@ -593,7 +647,7 @@ export function RoomsFeature() {
         body: {
           roleId: persona.roleId,
           roleVersion: persona.version,
-          collaborationRole: persona.roleId === 'hermes-v1' ? 'researcher' : 'executor',
+          collaborationRole: persona.roleId === 'companion-firstlight-v1' ? 'researcher' : 'executor',
         },
       });
       const updated = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
@@ -618,7 +672,6 @@ export function RoomsFeature() {
       const updated = isRoom(record(response).room) ? record(response).room as unknown as RoomSummary : undefined;
       if (!updated) throw new Error('服务端没有返回移除成员后的 Room。');
       setRooms((current) => current.map((item) => item.id === updated.id ? updated : item));
-      setSettingsModeratorParticipantId(updated.moderatorParticipantId);
     } catch (requestError) {
       setSettingsError(publicErrorText(requestError, '角色暂时无法移出 Room；请先完成或转交她名下的工作。'));
     } finally {
@@ -814,7 +867,7 @@ export function RoomsFeature() {
       </aside>
       <button className="rooms-rail-backdrop" aria-label="关闭 Rooms 列表" disabled={!roomRailOpen} onClick={() => closeRoomRail()} type="button" />
       <section className="room-workspace">
-        <header><IconButton ref={roomRailTriggerRef} className="rooms-rail-trigger" label="打开 Rooms 列表" icon={<PanelLeftOpen size={17} />} aria-controls="rooms-list-drawer" aria-expanded={roomRailOpen} onClick={() => setRoomRailOpen(true)} tooltip /><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建群聊' : room.status === 'archived' ? '已归档' : `${room.roomKind === 'roleplay' ? '角色群聊' : roomPathName(room)} · ${routingPolicyLabel(room.routingPolicy)}`}</small></span><SegmentedControl aria-label="Room 工作区" items={[{ value: 'posts', label: 'Posts' }, { value: 'execution', label: '执行' }, { value: 'sessions', label: 'Sessions' }]} onValueChange={(value) => setWorkspaceView(value as typeof workspaceView)} value={workspaceView} /><div className="room-header-actions">{room ? <IconButton label="Room 设置" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 证据栏' : '展开 Room 证据'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
+        <header><IconButton ref={roomRailTriggerRef} className="rooms-rail-trigger" label="打开 Rooms 列表" icon={<PanelLeftOpen size={17} />} aria-controls="rooms-list-drawer" aria-expanded={roomRailOpen} onClick={() => setRoomRailOpen(true)} tooltip /><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建群聊' : room.status === 'archived' ? '已归档' : `${room.roomKind === 'roleplay' ? '角色群聊' : roomPathName(room)} · 自由对话与 @ 协作`}</small></span><SegmentedControl aria-label="Room 工作区" items={[{ value: 'posts', label: 'Posts' }, { value: 'execution', label: '执行' }, { value: 'sessions', label: 'Sessions' }]} onValueChange={(value) => setWorkspaceView(value as typeof workspaceView)} value={workspaceView} /><div className="room-header-actions">{room ? <IconButton label="Room 设置" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 证据栏' : '展开 Room 证据'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
         {room ? <div className="room-context-bar">
           <div className="room-topic-tabs" aria-label="Room 话题">
             <MessagesSquare size={14} />
@@ -832,12 +885,12 @@ export function RoomsFeature() {
           {!error && !roomCatalogError && roleCatalogError ? <p className="room-catalog-warning" role="status">{roleCatalogError}</p> : null}
         </div>
         {workspaceView === 'posts' ? <><div className="room-timeline" aria-label="Room Posts 时间线">
-          {room ? visibleTurnOrder.length ? <Virtuoso data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} personas={personas} />} /> : snapshotLoading ? <p className="room-empty">正在读取 Room Posts…</p> : <ProjectSceneEmptyState sceneId="room-duoagent-handoff" title="还没有公开 Post" description="发一条消息开始协作。" /> : catalogLoading ? <p className="room-empty">正在读取 Rooms…</p> : <ProjectSceneEmptyState sceneId="room-duoagent-handoff" title="选择一个 Room" description="从 Rooms 列表选择，或新建协作 Room。" />}
+          {room ? visibleTurnOrder.length ? <Virtuoso data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} personas={personas} abortingSessionIds={abortingSessionIds} abortingTurnIds={abortingTurnIds} onAbortTurn={() => void abortRootTurn(turnId)} onAbortSession={(sessionId) => void abortParticipantTurn(sessionId, turnId)} />} /> : snapshotLoading ? <p className="room-empty">正在读取 Room Posts…</p> : <ProjectSceneEmptyState sceneId="room-agent-handoff" title="还没有公开 Post" description="发一条消息开始协作。" /> : catalogLoading ? <p className="room-empty">正在读取 Rooms…</p> : <ProjectSceneEmptyState sceneId="room-agent-handoff" title="选择一个 Room" description="从 Rooms 列表选择，或新建协作 Room。" />}
         </div><RoomComposer
           room={room}
           personas={personas}
           draft={draft}
-          addressedParticipantId={addressedParticipant?.id ?? ''}
+          addressedParticipantId={addressedParticipants[0]?.id ?? ''}
           canSend={canSend}
           onDraftChange={(value) => { setDraft(value); setError(''); }}
           onSend={() => void send()}
@@ -854,7 +907,7 @@ export function RoomsFeature() {
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
       <DialogContent className="room-create-dialog">
-        <DialogHeader><DialogTitle>新建 Room</DialogTitle><DialogDescription>协作 Room 围绕项目执行；角色群聊围绕设定自然交流。两者使用同一条结构化事件链。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>新建 Room</DialogTitle><DialogDescription>直接说话，或随时用 @ 点名角色；任务需要分工时，Agent 会通过结构化交接继续协作。</DialogDescription></DialogHeader>
         <form id="room-create-form" className="room-create-form" onSubmit={(event) => { event.preventDefault(); void createRoom(); }}>
           {createError ? <p className="room-dialog-error" role="alert">{createError}</p> : null}
           <fieldset><legend>用途</legend><div className="room-kind-options">
@@ -873,8 +926,6 @@ export function RoomsFeature() {
           </div>
           <label className="room-create-field"><span>简介</span><input maxLength={500} value={createDescription} onChange={(event) => setCreateDescription(event.target.value)} placeholder="一句话说明这个 Room 的用途" aria-label="Room 简介" /></label>
           <fieldset><legend>参与角色 <small>{selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes(createRoomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}<em>{createRoomKind === 'roleplay' ? '群聊角色' : roomRoleLabel(persona.roleId, moderatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
-          <fieldset><legend>发言方式</legend><div className="room-routing-options">{routingPolicyOptions(createRoomKind).map((option) => <label key={option.value}><input type="radio" name="room-routing" checked={routingPolicy === option.value} onChange={() => { setRoutingPolicy(option.value); setCreateError(''); }} /><span><strong>{option.label}</strong><small>{option.detail}</small></span></label>)}</div></fieldset>
-          {routingPolicy === 'moderator' ? <label className="room-create-field"><span>主持人</span><Select aria-label="Room 主持人" onValueChange={(value) => { setModeratorRoleId(value); setCreateError(''); }} options={selectedRoleIds.flatMap((roleId) => { const persona = personas.find((item) => item.roleId === roleId); return persona ? [{ value: roleId, label: persona.displayName }] : []; })} value={moderatorRoleId} /></label> : null}
           <label className="room-create-field"><span>共同设定</span><textarea maxLength={8000} rows={3} value={createScenarioPrompt} onChange={(event) => setCreateScenarioPrompt(event.target.value)} placeholder={createRoomKind === 'roleplay' ? '共同背景、关系和交流边界。它不会覆盖安全策略。' : '团队共同遵守的项目背景与交付约束。'} aria-label="Room 共同设定" /></label>
         </form>
         <DialogFooter><Button variant="quiet" disabled={creating || workspacePicking} onClick={() => setCreateOpen(false)}>取消</Button><Button type="submit" form="room-create-form" variant="primary" loading={creating} disabled={(createRoomKind === 'collaboration' && !workspaceRoots.length) || !createTitle.trim() || selectedRoleIds.length < 2 || workspacePicking}>创建 Room</Button></DialogFooter>
@@ -882,7 +933,7 @@ export function RoomsFeature() {
     </Dialog>
     <Dialog open={settingsOpen} onOpenChange={(open) => { if (!settingsSaving && !memberSavingRoleId && !memberRemovingId && !deleting) { setSettingsOpen(open); if (!open) setSettingsError(''); } }}>
       <DialogContent className="room-settings-dialog">
-        <DialogHeader><DialogTitle>Room 设置</DialogTitle><DialogDescription>共同设定、发言路由和角色权限彼此独立；修改后只影响后续回合。</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Room 设置</DialogTitle><DialogDescription>共同设定和角色权限彼此独立；普通消息与 @ 点名始终可用，修改只影响后续回合。</DialogDescription></DialogHeader>
         <form id="room-settings-form" className="room-create-form" onSubmit={(event) => { event.preventDefault(); void saveRoomSettings(); }}>
           {settingsError ? <p className="room-dialog-error" role="alert">{settingsError}</p> : null}
           <div className="room-create-pair">
@@ -890,8 +941,6 @@ export function RoomsFeature() {
             <label className="room-create-field"><span>头像</span><Select aria-label="Room 设置头像" onValueChange={setSettingsAvatar} options={roomAvatarOptions()} value={settingsAvatar} /></label>
           </div>
           <label className="room-create-field"><span>简介</span><input maxLength={500} value={settingsDescription} onChange={(event) => setSettingsDescription(event.target.value)} aria-label="Room 设置简介" /></label>
-          <fieldset><legend>发言方式</legend><div className="room-routing-options">{routingPolicyOptions(room?.roomKind ?? 'collaboration').map((option) => <label key={option.value}><input type="radio" name="room-settings-routing" checked={settingsRoutingPolicy === option.value} onChange={() => setSettingsRoutingPolicy(option.value)} /><span><strong>{option.label}</strong><small>{option.detail}</small></span></label>)}</div></fieldset>
-          {settingsRoutingPolicy === 'moderator' ? <label className="room-create-field"><span>主持人</span><Select aria-label="Room 设置主持人" onValueChange={setSettingsModeratorParticipantId} options={activeParticipants.map((participant) => ({ value: participant.id, label: participant.displayName }))} value={settingsModeratorParticipantId} /></label> : null}
           <fieldset className="room-member-manager"><legend>参与角色 <small>{activeParticipants.length}/4</small></legend><p>新角色从加入时刻开始接收消息，不会重放此前完整聊天；历史只通过话题摘要、共享产物和责任账本按需进入上下文。</p><div>{personas.filter((persona) => persona.selectableModes.includes(room?.roomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => { const participant = activeParticipants.find((item) => item.roleId === persona.roleId && item.roleVersion === persona.version); const isRequiredModerator = room?.routingPolicy === 'moderator' && participant?.id === room.moderatorParticipantId; const removeDisabled = !participant || room?.status !== 'active' || activeParticipants.length <= 2 || isRequiredModerator || Boolean(memberRemovingId) || Boolean(memberSavingRoleId); return <article key={`${persona.roleId}:${persona.version}`} data-active={Boolean(participant)}><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}</strong><small>{participant ? `${roomParticipantRoleLabel(participant)} · 已加入` : persona.tagline}</small></span>{participant ? <IconButton label={`将 ${persona.displayName} 移出 Room`} icon={memberRemovingId === participant.id ? <LoaderCircle className="ui-spin" size={15} /> : <UserMinus size={15} />} disabled={removeDisabled} onClick={() => void removeRoomParticipant(participant)} tooltip /> : <IconButton label={`邀请 ${persona.displayName} 加入 Room`} icon={memberSavingRoleId === persona.roleId ? <LoaderCircle className="ui-spin" size={15} /> : <UserPlus size={15} />} disabled={room?.status !== 'active' || activeParticipants.length >= 4 || Boolean(memberRemovingId) || Boolean(memberSavingRoleId)} onClick={() => void addRoomParticipant(persona)} tooltip />}</article>; })}</div></fieldset>
           <label className="room-create-field"><span>共同设定</span><textarea maxLength={8000} rows={5} value={settingsScenarioPrompt} onChange={(event) => setSettingsScenarioPrompt(event.target.value)} aria-label="Room 设置共同设定" /></label>
         </form>
@@ -999,21 +1048,20 @@ function RoomComposer({
     });
   }
 
+  function openMentionMenu(): void {
+    const spacer = draft && !/\s$/u.test(draft) ? ' ' : '';
+    const next = `${draft}${spacer}@`;
+    const start = next.length - 1;
+    onDraftChange(next);
+    setMention({ start, end: next.length, query: '' });
+    setActiveIndex(0);
+    queueMicrotask(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(next.length, next.length);
+    });
+  }
+
   return <div className="room-composer-shell">
-    {roomCanSend && participants.length ? <div className="room-mention-bar" aria-label="点名 Room 角色">
-      <span className="room-mention-bar__label"><AtSign size={14} />点名</span>
-      <div className="room-mention-chips">{participants.map((participant) => <button
-          type="button"
-          key={participant.id}
-          aria-label={participant.displayName}
-          aria-pressed={addressedParticipantId === participant.id}
-          onClick={() => chooseParticipant(participant, undefined)}
-        >
-          <PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId && item.version === participant.roleVersion)} size="small" />
-          <span>{participant.displayName}</span>
-        </button>)}</div>
-      <small>输入 @ 也可选择</small>
-    </div> : null}
     <div className="room-composer-wrap">
       {mention && mentionCandidates.length ? <div id="room-mention-menu" className="room-mention-menu" role="listbox" aria-label="选择 Room 角色">
         <header><AtSign size={14} /><span><strong>点名角色</strong><small>继续输入可筛选</small></span></header>
@@ -1031,6 +1079,13 @@ function RoomComposer({
         </button>)}
       </div> : null}
       <div className="room-composer">
+        {roomCanSend && participants.length ? <IconButton
+          label="点名 Room 角色"
+          icon={<AtSign size={16} />}
+          aria-pressed={Boolean(addressedParticipantId)}
+          onClick={openMentionMenu}
+          tooltip
+        /> : null}
         <textarea
           ref={textareaRef}
           rows={2}
@@ -1086,10 +1141,90 @@ function RoomComposer({
   </div>;
 }
 
-export function RoomTurn({ turnId, room, projection, personas }: { turnId: string; room?: RoomSummary; projection: RoomProjectionState; personas: AgentPersonaV1[] }) {
+interface RoomTurnProps {
+  turnId: string;
+  room?: RoomSummary;
+  projection: RoomProjectionState;
+  personas: AgentPersonaV1[];
+  abortingSessionIds?: ReadonlySet<string>;
+  abortingTurnIds?: ReadonlySet<string>;
+  onAbortTurn?: () => void;
+  onAbortSession?: (sessionId: string) => void;
+}
+
+interface RoomExecutionLane {
+  key: string;
+  participantId: string | null;
+  sourceSessionId: string;
+  activities: RoomActivityProjection[];
+  messageIds: string[];
+}
+
+export function RoomTurn({
+  turnId,
+  room,
+  projection,
+  personas,
+  abortingSessionIds = new Set(),
+  abortingTurnIds = new Set(),
+  onAbortTurn,
+  onAbortSession,
+}: RoomTurnProps) {
   const turn = projection.turnsById[turnId];
   if (!turn) return null;
-  const activities = turn.activityIds.map((id) => projection.activitiesById[id]).filter(Boolean);
+  const activities = turn.activityIds
+    .map((id) => projection.activitiesById[id])
+    .filter((activity): activity is RoomActivityProjection => Boolean(activity))
+    .filter(isUsefulRoomActivity);
+  const lanes = new Map<string, RoomExecutionLane>();
+  const participantLaneKeys = new Map<string, string[]>();
+  for (const activity of activities) {
+    const identity = roomActivityLaneIdentity(activity);
+    const lane = lanes.get(identity.key) ?? {
+      key: identity.key,
+      participantId: activity.participantId,
+      sourceSessionId: activity.sourceSessionId,
+      activities: [],
+      messageIds: [],
+    };
+    lane.activities.push(activity);
+    lanes.set(identity.key, lane);
+    const participantKey = `${activity.participantId ?? ''}\u001f${activity.sourceSessionId}`;
+    const keys = participantLaneKeys.get(participantKey) ?? [];
+    if (!keys.includes(identity.key)) keys.push(identity.key);
+    participantLaneKeys.set(participantKey, keys);
+  }
+  const userMessageIds: string[] = [];
+  for (const messageId of turn.messageIds) {
+    const message = projection.messagesById[messageId];
+    if (!message) continue;
+    if (message.role === 'user') {
+      userMessageIds.push(messageId);
+      continue;
+    }
+    const participantKey = `${message.participantId ?? ''}\u001f${message.sourceSessionId}`;
+    const existingKey = participantLaneKeys.get(participantKey)?.at(-1);
+    const laneKey = existingKey
+      ?? `${turnId}\u001f${message.participantId ?? 'participant'}\u001f${message.sourceSessionId || message.id}`;
+    const lane = lanes.get(laneKey) ?? {
+      key: laneKey,
+      participantId: message.participantId,
+      sourceSessionId: message.sourceSessionId,
+      activities: [],
+      messageIds: [],
+    };
+    lane.messageIds.push(messageId);
+    lanes.set(laneKey, lane);
+  }
+  if (lanes.size === 0 && ['queued', 'running'].includes(turn.status)) {
+    lanes.set(`${turnId}\u001frouter\u001fpending`, {
+      key: `${turnId}\u001frouter\u001fpending`,
+      participantId: null,
+      sourceSessionId: '',
+      activities: [],
+      messageIds: [],
+    });
+  }
   const reviewActivity = [...activities].reverse().find((activity) => {
     const requestKind = textValue(activity.payload.requestKind);
     const approvalId = textValue(activity.payload.approvalId);
@@ -1100,30 +1235,141 @@ export function RoomTurn({ turnId, room, projection, personas }: { turnId: strin
   const reviewSessionId = reviewActivity?.sourceSessionId
     || room?.participants.find((item) => item.id === reviewActivity?.participantId)?.sessionId
     || '';
+  const rootActive = turnId.startsWith('room-turn:')
+    && ['queued', 'running'].includes(turn.status);
+  const rootStopping = abortingTurnIds.has(turnId);
   return <article className="room-turn">
-    {turn.messageIds.map((id) => {
+    {userMessageIds.map((id) => {
       const message = projection.messagesById[id];
       if (!message) return null;
-      if (message.role === 'user') return <div key={id} className="room-user-message"><MarkdownBody text={message.text} /></div>;
-      const participant = room?.participants.find((item) => item.id === message.participantId);
-      const visibleBlocks = message.message?.blocks.filter((block) => (
-        block.type !== 'reasoning_summary'
-        && block.type !== 'tool_call'
-        && block.type !== 'tool_result'
-        && block.visibility !== 'private_session'
-      ));
-      const needsReview = visibleBlocks?.some((block) => block.type === 'approval' && !['approved', 'rejected', 'applied'].includes(textValue(block.data.state)));
-      return <div key={id} className="room-participant-message"><PersonaAvatar persona={personas.find((item) => item.roleId === participant?.roleId)} size="small" presence={message.status === 'streaming' ? 'thinking' : 'done'} /><div><header><strong>{participant?.displayName ?? 'Agent'}</strong><small>{message.status === 'streaming' ? '正在响应' : '已完成'}</small></header>{visibleBlocks?.length ? <AgentBlocks blocks={visibleBlocks} /> : message.text ? <MarkdownBody text={message.text} /> : null}{needsReview && participant?.sessionId ? <a className="room-review-link" href={agentSessionHref(participant.sessionId)}><span><strong>需要在 Agent 对话中审阅</strong><small>打开对应参与者，批准或拒绝这项操作。</small></span><span>前往审阅 <ExternalLink size={13} /></span></a> : null}</div></div>;
+      return <div key={id} className="room-user-message" data-status={message.status}><MarkdownBody text={message.text} />{message.status === 'queued' ? <small>正在发送</small> : null}</div>;
+    })}
+    {rootActive && onAbortTurn ? <div className="room-turn__root-control" role="status">
+      <span><CircleStop size={14} /><small>{rootStopping ? '正在停止所有 Agent 与后续任务' : '停止会覆盖本轮所有 Agent、工具与后续任务'}</small></span>
+      <Button
+        variant="danger"
+        size="small"
+        leadingIcon={rootStopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
+        disabled={rootStopping}
+        onClick={onAbortTurn}
+      >{rootStopping ? '停止中' : '停止全部'}</Button>
+    </div> : null}
+    {[...lanes.values()].map((lane) => {
+      const participant = room?.participants.find((item) => item.id === lane.participantId);
+      const persona = personas.find((item) => item.roleId === participant?.roleId && item.version === participant.roleVersion);
+      const messages = lane.messageIds.map((id) => projection.messagesById[id]).filter(Boolean);
+      const participantId = lane.participantId ?? '';
+      const laneFailed = participantId
+        ? (turn.failedParticipantIds ?? []).includes(participantId)
+          || lane.activities.some((activity) => roomActivityDisplayStatus(activity) === 'failed')
+        : turn.status === 'failed';
+      const laneAborted = participantId
+        ? (turn.abortedParticipantIds ?? []).includes(participantId)
+        : turn.status === 'aborted';
+      const laneTerminal = participantId
+        ? (turn.terminalParticipantIds ?? []).includes(participantId)
+        : ['completed', 'failed', 'aborted'].includes(turn.status);
+      const laneActive = !laneTerminal && !laneFailed && !laneAborted;
+      const laneComplete = laneTerminal && !laneFailed && !laneAborted
+        && messages.every((message) => message.status === 'completed');
+      const statusLabel = laneFailed
+        ? '未完成'
+        : laneComplete
+          ? '已完成'
+          : laneAborted
+            ? '已停止'
+            : participant
+              ? '执行中'
+              : '正在发送';
+      const sessionId = lane.sourceSessionId || participant?.sessionId || '';
+      const stopping = abortingSessionIds.has(sessionId);
+      const laneState = laneFailed
+        ? 'failed'
+        : laneAborted
+          ? 'aborted'
+          : laneActive
+            ? 'running'
+            : 'completed';
+      return <section className="room-agent-lane" data-state={laneState} key={lane.key}>
+        <header>
+          {participant
+            ? <PersonaAvatar persona={persona} size="small" presence={laneActive ? 'thinking' : 'done'} />
+            : <span className="room-agent-lane__route"><Route size={15} /></span>}
+          <span className="room-agent-lane__identity">
+            <strong>{participant?.displayName ?? 'Room 路由'}</strong>
+            <small>{statusLabel}</small>
+          </span>
+          <RoomElapsed startedAtMs={turn.createdAtMs} endedAtMs={laneActive ? undefined : turn.updatedAtMs} />
+          {laneActive && sessionId && onAbortSession ? <Button
+            variant="quiet"
+            size="small"
+            leadingIcon={stopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
+            disabled={stopping}
+            onClick={() => onAbortSession(sessionId)}
+          >{stopping ? '停止中' : '停止'}</Button> : null}
+        </header>
+        {lane.activities.length ? <details className="room-agent-lane__activity" open={laneActive}>
+          <summary><Wrench size={14} /><span>{laneActive ? '实时执行' : '执行记录'}</span><small>{lane.activities.length} 项</small></summary>
+          <div>{lane.activities.map((activity) => {
+            const displayStatus = roomActivityDisplayStatus(activity);
+            const description = describeRoomActivity(activity, participant?.displayName);
+            return <div className="room-agent-activity" data-state={displayStatus} key={activity.id}>
+              {displayStatus === 'running'
+                ? <LoaderCircle className="ui-spin" size={14} />
+                : displayStatus === 'failed'
+                  ? <X size={14} />
+                  : <CheckCircle2 size={14} />}
+              <span><strong>{description.title}</strong><small>{description.detail}</small></span>
+            </div>;
+          })}</div>
+        </details> : null}
+        {!lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting"><LoaderCircle className="ui-spin" size={14} /><span>{participant ? `${participant.displayName} 已接手，正在准备` : '消息已进入 Room，正在选择负责角色'}</span></div> : null}
+        {messages.map((message) => {
+          const visibleBlocks = message.message?.blocks.filter((block) => (
+            block.type !== 'reasoning_summary'
+            && block.type !== 'tool_call'
+            && block.type !== 'tool_result'
+            && block.visibility !== 'private_session'
+          ));
+          const needsReview = visibleBlocks?.some((block) => block.type === 'approval' && !['approved', 'rejected', 'applied'].includes(textValue(block.data.state)));
+          return <div className="room-agent-lane__post" data-status={message.status} key={message.id}>
+            {visibleBlocks?.length ? <AgentBlocks blocks={visibleBlocks} /> : message.text ? <MarkdownBody text={message.text} /> : null}
+            {message.status === 'streaming' ? <span className="room-stream-caret" aria-label="仍在生成" /> : null}
+            {needsReview && sessionId ? <a className="room-review-link" href={agentSessionHref(sessionId)}><span><strong>需要在 Agent 对话中审阅</strong><small>打开对应参与者，批准或拒绝这项操作。</small></span><span>前往审阅 <ExternalLink size={13} /></span></a> : null}
+          </div>;
+        })}
+        {laneFailed && !messages.length ? <p className="room-agent-lane__failure">{turn.failure || '这轮协作没有完成，可以调整后重试。'}</p> : null}
+      </section>;
     })}
     {reviewSessionId ? <a className="room-review-link room-review-link--turn" href={agentSessionHref(reviewSessionId)}><span><strong>这轮协作正在等待审阅</strong><small>Agent 已暂停；打开对应会话处理后会自动继续。</small></span><span>立即审阅 <ExternalLink size={13} /></span></a> : null}
   </article>;
 }
 
+function RoomElapsed({ startedAtMs, endedAtMs }: { startedAtMs: number; endedAtMs?: number }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (endedAtMs != null) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [endedAtMs]);
+  const elapsedMs = Math.max(0, (endedAtMs ?? nowMs) - startedAtMs);
+  return <time className="room-agent-lane__elapsed" dateTime={`PT${Math.round(elapsedMs / 1_000)}S`}><Clock3 size={12} />{formatElapsed(elapsedMs)}</time>;
+}
+
+function formatElapsed(elapsedMs: number): string {
+  const seconds = Math.floor(elapsedMs / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
+}
+
 function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {
   if (activity.kind !== 'participant_activity') return true;
-  if (activity.status !== 'completed') return true;
-  if (textValue(activity.payload.activityKind) === 'intercom') return true;
-  return Boolean(publicActivitySummary(activity.summary, activity.kind));
+  const sourceEventType = textValue(activity.payload.sourceEventType);
+  if (['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) return true;
+  if (['intercom', 'work'].includes(textValue(activity.payload.activityKind))) return true;
+  if (textValue(activity.payload.requestKind) === 'memory_review') return true;
+  return Boolean(textValue(activity.payload.approvalId));
 }
 
 function roomActivityDisplayStatus(activity: RoomActivityProjection): RoomActivityProjection['status'] {
@@ -1140,6 +1386,26 @@ function roomActivityDisplayStatus(activity: RoomActivityProjection): RoomActivi
 function describeRoomActivity(activity: RoomActivityProjection, participantName = '协作成员'): { title: string; detail: string } {
   const payload = activity.payload;
   const status = textValue(payload.status);
+  const sourceEventType = textValue(payload.sourceEventType);
+  const toolName = textValue(payload.displayName) || textValue(payload.toolName) || '工具';
+  if (sourceEventType === 'tool_started') {
+    return {
+      title: `${participantName} 正在使用 ${toolName}`,
+      detail: publicActivitySummary(activity.summary, activity.kind) || '工具已开始执行',
+    };
+  }
+  if (sourceEventType === 'tool_progress') {
+    return {
+      title: `${toolName} 正在执行`,
+      detail: publicActivitySummary(activity.summary, activity.kind) || '正在等待新的工具进度',
+    };
+  }
+  if (sourceEventType === 'tool_finished') {
+    return {
+      title: activity.status === 'failed' ? `${toolName} 执行失败` : `${toolName} 已返回`,
+      detail: publicActivitySummary(activity.summary, activity.kind) || (activity.status === 'failed' ? '工具没有完成' : '工具结果已交给 Agent'),
+    };
+  }
   if (activity.kind === 'route_decision') {
     const target = textValue(payload.targetDisplayName) || participantName;
     const reason = textValue(payload.reason);
@@ -1223,7 +1489,11 @@ function roomMentionMatches(participant: RoomParticipant, query: string): boolea
   return participant.displayName.toLocaleLowerCase().includes(needle)
     || participant.roleId.toLocaleLowerCase().includes(needle);
 }
-function roomMentionedParticipant(participants: RoomParticipant[], value: string): RoomParticipant | undefined {
+function roomMentionedParticipants(
+  participants: RoomParticipant[],
+  value: string,
+): RoomParticipant[] {
+  const matched: RoomParticipant[] = [];
   for (const participant of participants) {
     const token = `@${participant.displayName}`;
     let offset = value.indexOf(token);
@@ -1232,11 +1502,14 @@ function roomMentionedParticipant(participants: RoomParticipant[], value: string
       const next = value[offset + token.length] ?? '';
       const startsAtBoundary = !previous || /[\s([{（【「『，。！？、,:：；;]/u.test(previous);
       const endsAtBoundary = !next || /[\s)\]}）】」』，。！？、,.!?:：；;]/u.test(next);
-      if (startsAtBoundary && endsAtBoundary) return participant;
+      if (startsAtBoundary && endsAtBoundary) {
+        matched.push(participant);
+        break;
+      }
       offset = value.indexOf(token, offset + token.length);
     }
   }
-  return undefined;
+  return matched;
 }
 function stripLeadingRoomMention(value: string, participants: RoomParticipant[]): string {
   const body = value.trimStart();
@@ -1250,13 +1523,11 @@ function roomParticipantRoleLabel(participant: RoomParticipant): string {
   if (participant.collaborationRole === 'coordinator') return '主持协调';
   if (participant.collaborationRole === 'researcher') return '调研与核对';
   if (participant.collaborationRole === 'executor') return '执行与交付';
-  return participant.roleId;
+  return '协作角色';
 }
 function roomComposerPlaceholder(room?: RoomSummary): string {
   if (!room) return '先选择或新建 Room';
   if (room.status === 'archived') return '恢复 Room 后继续交流';
-  if (room.routingPolicy === 'manual_mentions') return '输入 @ 点名一位角色，再描述任务…';
-  if (room.routingPolicy === 'invite_only') return '输入 @ 邀请一位角色发言…';
   return room.roomKind === 'roleplay' ? '向群聊发送消息，输入 @ 可点名…' : '向 Room 发消息，输入 @ 可点名…';
 }
 function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
@@ -1265,8 +1536,8 @@ function pathName(path: string): string { return path.split('/').filter(Boolean)
 function roomPathName(room: RoomSummary): string { return room.workspaceRoots?.[0] ? pathName(room.workspaceRoots[0]) : '未绑定项目'; }
 function roomRoleLabel(roleId: string, moderatorRoleId: string): string {
   if (roleId === moderatorRoleId) return '调控者';
-  if (roleId === 'hermes-v1') return '调研者';
-  if (roleId === 'zhiyou-v1') return '执行者';
+  if (roleId === 'companion-firstlight-v1') return '调研者';
+  if (roleId === 'companion-present-v1') return '执行者';
   return '协作角色';
 }
 
@@ -1300,24 +1571,6 @@ function roomAvatarIcon(room: RoomSummary) {
   if (room.avatar === 'briefcase') return <BriefcaseBusiness size={16} />;
   if (room.avatar === 'messages') return <MessagesSquare size={16} />;
   return <UsersRound size={16} />;
-}
-
-function routingPolicyOptions(kind: RoomKind): { value: RoomRoutingPolicy; label: string; detail: string }[] {
-  const shared: { value: RoomRoutingPolicy; label: string; detail: string }[] = [
-    { value: 'sequential', label: '顺序轮流', detail: '每轮切换到下一位成员' },
-    { value: 'invite_only', label: '点名邀请', detail: '由你点击决定谁发言' },
-    { value: 'manual_mentions', label: '@ 指派', detail: '消息中明确提及一位成员' },
-  ];
-  return kind === 'roleplay'
-    ? [
-        { value: 'natural', label: '自然发言', detail: '依据角色标签与内容选择' },
-        ...shared,
-      ]
-    : [
-        { value: 'moderator', label: '主持协调', detail: '由主持人判断是否分工' },
-        { value: 'natural', label: '语义分派', detail: '依据职责与消息内容选择' },
-        ...shared,
-      ];
 }
 
 function routingPolicyLabel(policy: RoomRoutingPolicy): string {

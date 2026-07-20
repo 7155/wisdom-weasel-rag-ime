@@ -34,7 +34,7 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         compiled = self.compiler.compile(
             binding_id="binding-room-001",
             session_id="session-researcher-001",
-            persona=agent_role("zhiyou-v1", "1"),
+            persona=agent_role("companion-present-v1", "1"),
             collaboration_role=collaboration_role("researcher", "1"),
             template=agent_template("researcher", "1"),
             profile=collaboration_profile("evidence-review", "1"),
@@ -72,7 +72,7 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         compiled = self.compiler.compile(
             binding_id="binding-ordinary-001",
             session_id="session-ordinary-001",
-            persona=agent_role("zhiyou-v1", "1"),
+            persona=agent_role("companion-present-v1", "1"),
             collaboration_role=collaboration_role("reviewer", "1"),
             template=agent_template("reviewer", "1"),
             profile=collaboration_profile("evidence-review", "1"),
@@ -97,7 +97,7 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         kwargs = dict(
             binding_id="binding-stable-001",
             session_id="session-stable-001",
-            persona=agent_role("hermes-v1", "1"),
+            persona=agent_role("companion-firstlight-v1", "1"),
             collaboration_role=collaboration_role("researcher", "1"),
             template=agent_template("researcher", "1"),
             profile=None,
@@ -121,7 +121,7 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         compiled = self.compiler.compile(
             binding_id="binding-contract-001",
             session_id="session-contract-001",
-            persona=agent_role("zhiyou-v1", "1"),
+            persona=agent_role("companion-present-v1", "1"),
             collaboration_role=collaboration_role("researcher", "1"),
             template=agent_template("researcher", "1"),
             profile=None,

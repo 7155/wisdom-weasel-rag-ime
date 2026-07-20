@@ -5,7 +5,7 @@ import { PersonaAvatar, stickerAsset } from './PersonaAvatar';
 import { personaAssetManifest, resolvePersonaAsset } from './persona-assets';
 
 describe('Persona timeline assets', () => {
-  it('maps all four fixed roles onto distinct Wisdom Weasel portraits', () => {
+  it('maps all four fixed roles onto distinct portraits', () => {
     expect(personaAssetManifest.schemaVersion).toBe('rag-ime.persona-assets.v4');
     expect(personaAssetManifest.assets['rag-ime-timeline-past-v1'].timeline).toBe('past');
     expect(personaAssetManifest.assets['rag-ime-timeline-present-v1'].timeline).toBe('present');
@@ -26,7 +26,7 @@ describe('Persona timeline assets', () => {
     ]).size).toBe(4);
   });
 
-  it('fails soft to Zhiyou at the present timeline while preserving legacy stickers', () => {
+  it('fails soft to the present timeline while preserving legacy stickers', () => {
     expect(resolvePersonaAsset('future-persona-v9', 'warning')).toBe('/companions/personas/wisdom-weasel-terra-v1.webp');
     expect(stickerAsset('rag-ime-companion-warning')).toBe('/companions/RagImeCompanionWarning.png');
   });

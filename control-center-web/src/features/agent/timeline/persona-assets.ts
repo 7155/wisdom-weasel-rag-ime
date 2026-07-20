@@ -29,11 +29,11 @@ export const personaAssetManifest = {
   schemaVersion: 'rag-ime.persona-assets.v4',
   fallbackAssetId: 'rag-ime-timeline-present-v1',
   assets: {
-    'rag-ime-companion-v1': assetRecord('zhiyou-v1', 'legacy-state', '经典形象', legacyCompanionStates),
-    'rag-ime-timeline-past-v1': assetRecord('hermes-v1', 'past', '初识阶段', singlePortrait(portraitAssets.luna)),
-    'rag-ime-timeline-present-v1': assetRecord('zhiyou-v1', 'present', '此刻阶段', singlePortrait(portraitAssets.terra)),
-    'rag-ime-timeline-future-v1': assetRecord('vcp-v1', 'future', '构筑阶段', singlePortrait(portraitAssets.sol)),
-    'rag-ime-timeline-flash-v1': assetRecord('flash-v1', 'flash', '闪念阶段', singlePortrait(portraitAssets.flash)),
+    'rag-ime-companion-v1': assetRecord('companion-present-v1', 'legacy-state', '经典形象', legacyCompanionStates),
+    'rag-ime-timeline-past-v1': assetRecord('companion-firstlight-v1', 'past', '初识阶段', singlePortrait(portraitAssets.luna)),
+    'rag-ime-timeline-present-v1': assetRecord('companion-present-v1', 'present', '此刻阶段', singlePortrait(portraitAssets.terra)),
+    'rag-ime-timeline-future-v1': assetRecord('companion-future-v1', 'future', '构筑阶段', singlePortrait(portraitAssets.sol)),
+    'rag-ime-timeline-flash-v1': assetRecord('companion-flash-v1', 'flash', '闪念阶段', singlePortrait(portraitAssets.flash)),
   },
 } as const;
 

@@ -13,7 +13,10 @@ from types import SimpleNamespace
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from tests.runtime_capabilities import requires_loopback_bind
+from tests.runtime_capabilities import (
+    requires_loopback_bind,
+    requires_process_identity,
+)
 
 from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_blocks import normalize_trusted_agent_blocks
@@ -128,8 +131,8 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "title": "Kernel cohort",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]
@@ -180,6 +183,124 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "state": "active",
             },
             now_ms=2,
+        )
+
+    def test_product_message_uses_one_async_kernel_fanout_path(self) -> None:
+        room = self.service.room(self.room_id)["room"]
+        participant_ids = [
+            str(participant["id"])
+            for participant in room["participants"]
+            if participant["status"] == "active"
+        ]
+        client_message_id = "client:kernel-fanout"
+        message = "请两位分别检查实现与测试，再汇总可验证结论。"
+
+        with patch.object(
+            self.service,
+            "prompt",
+            side_effect=AssertionError("legacy synchronous prompt path must not run"),
+        ):
+            accepted = self.service.post_room_message(
+                self.room_id,
+                {
+                    "message": message,
+                    "clientMessageId": client_message_id,
+                    "participantIds": participant_ids,
+                },
+            )
+
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual(accepted["status"], "queued")
+        self.assertEqual(accepted["executionOwner"], "kernel")
+        self.assertEqual(len(accepted["dispatches"]), len(participant_ids))
+        self.assertEqual(self.factory.runtime.dispatched, [])
+        self.assertEqual(
+            {
+                self.service.room_kernel.outbox(str(item["dispatchId"]))["state"]
+                for item in accepted["dispatches"]
+            },
+            {"pending"},
+        )
+        self.assertEqual(
+            self.service.room_requirements.original_bytes(
+                str(accepted["requirementAnchor"]["anchorId"])
+            ),
+            message.encode("utf-8"),
+        )
+        snapshot = self.service.room_kernel_snapshot(self.room_id)
+        user_posts = [
+            post
+            for post in snapshot["posts"]
+            if post["publicationSource"]["kind"] == "user"
+        ]
+        self.assertEqual([post["content"] for post in user_posts], [message])
+
+        replay = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": message,
+                "clientMessageId": client_message_id,
+                "participantIds": participant_ids,
+            },
+        )
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(replay["rootId"], accepted["rootId"])
+        self.assertEqual(
+            len(self.service.room_kernel_snapshot(self.room_id)["posts"]),
+            len(snapshot["posts"]),
+        )
+
+    def test_product_work_item_becomes_provider_only_kernel_task_context(self) -> None:
+        objective = "检查 Room 增量上下文是否保持稳定前缀"
+        expected_output = "给出前缀哈希与连续两轮缓存证据"
+        criteria = ["旧前缀不得删除或重排", "不得把内部相关度注入模型"]
+        work_item = self.service.create_room_work_item(
+            self.room_id,
+            {
+                "objective": objective,
+                "expectedOutput": expected_output,
+                "acceptanceCriteria": criteria,
+                "currentOwnerParticipantId": self.participant["id"],
+                "clientMessageId": "work:kernel-context",
+            },
+        )["workItem"]
+
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "开始",
+                "clientMessageId": "client:kernel-work-context",
+                "workItemId": work_item["id"],
+            },
+        )
+
+        self.assertEqual(accepted["task"]["objective"], objective)
+        self.assertEqual(accepted["task"]["expectedOutput"], expected_output)
+        criterion_ids = accepted["task"]["acceptanceCriterionIds"]
+        self.assertEqual(len(criterion_ids), len(criteria))
+        self.assertTrue(all(str(value).startswith("acceptance:") for value in criterion_ids))
+        entries = self.service.room_context_ledger.replay_root(
+            str(accepted["rootId"])
+        )
+        work_entries = [
+            entry for entry in entries if entry["entryKind"] == "work_item"
+        ]
+        self.assertEqual(len(work_entries), 1)
+        work_context = json.loads(str(work_entries[0]["content"]))
+        self.assertEqual(work_context["authority"], "task-only")
+        self.assertEqual(work_context["objective"], objective)
+        self.assertEqual(
+            [
+                value["statement"]
+                for value in work_context["acceptanceCriteria"]
+            ],
+            criteria,
+        )
+        self.assertEqual(
+            self.service.room_requirements.original_bytes(
+                str(accepted["requirementAnchor"]["anchorId"])
+            ),
+            "开始".encode("utf-8"),
         )
 
     def _dispatch(
@@ -613,8 +734,12 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertIsNone(ordinary["bindingId"])
 
-        self.service._last_recall_query_by_session[self.session_id] = "stale query"
-        self.service._recent_recall_messages_by_session[self.session_id] = [{"role": "user", "content": "stale"}]
+        memory_context = self.service.memory_context_application
+        memory_context.remember_query(self.session_id, "stale query")
+        memory_context.replace_recent_messages(
+            self.session_id,
+            [{"role": "user", "content": "stale"}],
+        )
         with sqlite3.connect(self.service.db_path) as conn:
             conn.execute(
                 """INSERT INTO room_v2_knowledge_cache_tombstones(
@@ -623,8 +748,8 @@ class RoomKernelServiceTests(unittest.TestCase):
                 (self.session_id,),
             )
         self.assertEqual(self.service._consume_room_knowledge_cache_tombstones(), 1)
-        self.assertNotIn(self.session_id, self.service._last_recall_query_by_session)
-        self.assertNotIn(self.session_id, self.service._recent_recall_messages_by_session)
+        self.assertEqual(memory_context.recall_query(self.session_id), "")
+        self.assertEqual(memory_context.recent_messages(self.session_id), [])
         with sqlite3.connect(self.service.db_path) as conn:
             self.assertGreater(conn.execute("SELECT consumed_at_ms FROM room_v2_knowledge_cache_tombstones WHERE tombstone_id='cache:test'").fetchone()[0], 0)
 
@@ -802,7 +927,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.service.room_kernel_worker_loop.close()
         self.assertFalse(self.service.room_kernel_worker_loop.running)
 
-    def test_capability_manifest_cuts_legacy_room_tool_to_one_kernel_path(self) -> None:
+    def test_capability_manifest_exposes_only_one_canonical_kernel_path(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
         self.service.room_kernel_worker.run_once()
         tools = ("room_state", "room_post", "room_commit")
@@ -817,16 +942,22 @@ class RoomKernelServiceTests(unittest.TestCase):
         loaded = self.service.room_capability_tool_load(
             {"sessionId": self.session_id, "receiptId": "load:service", "toolName": "room_post", "createdAtMs": 5}
         )["result"]
-        legacy = self.service.execute_room_capability_tool(
-            self.session_id, "room_send", {"content": "deliver", "targetParticipantId": "ignored"},
-            tool_call_id="call:service", load_receipt_id=str(loaded["receiptId"]),
-        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "room_state/room_post/room_commit",
+        ):
+            self.service.execute_room_capability_tool(
+                self.session_id,
+                "room_send",
+                {"content": "deliver"},
+                tool_call_id="call:legacy-service",
+                load_receipt_id=str(loaded["receiptId"]),
+            )
         canonical = self.service.execute_room_capability_tool(
             self.session_id, "room_post", {"content": "deliver"},
             tool_call_id="call:service", load_receipt_id=str(loaded["receiptId"]),
         )
-        self.assertEqual(legacy["invocationReceipt"], canonical["invocationReceipt"])
-        self.assertFalse(legacy["result"]["executionPerformed"])
+        self.assertFalse(canonical["result"]["executionPerformed"])
         commit = {
             "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
             "commitId": "commit:capability-service",
@@ -881,7 +1012,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertEqual(first_settle["executionReceipt"], replayed_settle["executionReceipt"])
         self.assertIsNone(self.service.execute_room_capability_tool(
-            "ordinary-session", "room_send", {"content": "ordinary"}, tool_call_id="call:ordinary", load_receipt_id=""
+            "ordinary-session", "room_post", {"content": "ordinary"}, tool_call_id="call:ordinary", load_receipt_id=""
         ))
         self.service.apply_room_kernel_command(
             self.room_id,
@@ -1187,6 +1318,7 @@ class RoomKernelServiceTests(unittest.TestCase):
     def test_requirement_proof_observation_reaches_terminal_without_enforcement(self) -> None:
         self._exercise_requirement_proof_observation_to_terminal()
 
+    @requires_process_identity
     def test_named_cohort_crosses_process_boundary_through_the_full_managed_chain(self) -> None:
         self.service.close()
         host = self.root / "room-v2-process-host"
@@ -1228,8 +1360,8 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "title": "room-v2-test process cohort",
                 "workspaceRoots": [str(self.root)],
                 "participants": [
-                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
-                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
                 ],
             }
         )["room"]

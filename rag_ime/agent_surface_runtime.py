@@ -352,7 +352,7 @@ class AgentSurfaceRuntime:
             session = self.agent.sessions.create(
                 title=title,
                 mode="assistant",
-                role_id="zhiyou-v1",
+                role_id="companion-present-v1",
                 role_version="1",
                 model_profile=self.agent.runtime_factory.default_model_profile,
                 thinking_level="off" if tool_profile == VOICE_REFINEMENT_TOOL_PROFILE else "minimal",

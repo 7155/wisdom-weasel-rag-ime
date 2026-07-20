@@ -75,6 +75,7 @@ class ControlPathId(str, Enum):
     AGENT_ROOM_PARTICIPANT_REMOVE = "agent.room.participant.remove"
     AGENT_ROOM_DELETE = "agent.room.delete"
     AGENT_ROOM_MESSAGE = "agent.room.message"
+    AGENT_ROOM_ABORT = "agent.room.abort"
     AGENT_ROOM_EVENTS = "agent.room.events"
     AGENT_ROOM_TOPICS = "agent.room.topics"
     AGENT_ROOM_TOPIC_CREATE = "agent.room.topic.create"
@@ -733,6 +734,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_ROOM_PARTICIPANT_REMOVE, ControlMethod.PATCH, "/api/agent/rooms/{roomId}/participants", "/control/v1/agent/rooms/{roomId}/participants", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"participantId"}, required_body={"participantId"}, remote_body={"participantId"}, remote_required_body={"participantId"}),
         _route(ControlPathId.AGENT_ROOM_DELETE, ControlMethod.DELETE, "/api/agent/rooms/{roomId}", None, params=_ROOM, body={"confirmTitle"}, required_body={"confirmTitle"}),
         _route(ControlPathId.AGENT_ROOM_MESSAGE, ControlMethod.POST, "/api/agent/rooms/{roomId}/messages", "/control/v1/agent/rooms/{roomId}/messages", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"message", "clientMessageId", "participantIds", "workItemId"}, required_body={"message"}, remote_body={"message", "clientMessageId", "participantIds", "workItemId"}, remote_required_body={"message", "clientMessageId"}),
+        _route(ControlPathId.AGENT_ROOM_ABORT, ControlMethod.POST, "/api/agent/rooms/{roomId}/abort", "/control/v1/agent/rooms/{roomId}/abort", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"roomTurnId", "clientRequestId"}, required_body={"roomTurnId", "clientRequestId"}, remote_body={"roomTurnId", "clientRequestId"}, remote_required_body={"roomTurnId", "clientRequestId"}),
         _route(ControlPathId.AGENT_ROOM_EVENTS, ControlMethod.GET, "/api/agent/rooms/{roomId}/events", "/control/v1/agent/rooms/{roomId}/events", scopes=[ControlScope.AGENT_READ], remote_safe=True, subscription=True, params=_ROOM, query=_LAST_EVENT_QUERY, required_query=_LAST_EVENT_QUERY),
         _route(ControlPathId.AGENT_ROOM_TOPICS, ControlMethod.GET, "/api/agent/rooms/{roomId}/topics", "/control/v1/agent/rooms/{roomId}/topics", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ROOM, query={"includeArchived"}),
         _route(ControlPathId.AGENT_ROOM_TOPIC_CREATE, ControlMethod.POST, "/api/agent/rooms/{roomId}/topics", "/control/v1/agent/rooms/{roomId}/topics", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_ROOM, body={"title", "summary"}, required_body={"title"}, remote_body={"title", "summary"}),

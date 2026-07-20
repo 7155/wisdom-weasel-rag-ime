@@ -8,10 +8,10 @@ from rag_ime.agent_roles import agent_role, agent_role_catalog, persona_model_pr
 class AgentRoleTests(unittest.TestCase):
     def test_personas_are_versioned_and_share_control_boundaries(self) -> None:
         roles = [
-            agent_role("vcp-v1", "1"),
-            agent_role("zhiyou-v1", "1"),
-            agent_role("hermes-v1", "1"),
-            agent_role("flash-v1", "1"),
+            agent_role("companion-future-v1", "1"),
+            agent_role("companion-present-v1", "1"),
+            agent_role("companion-firstlight-v1", "1"),
+            agent_role("companion-flash-v1", "1"),
         ]
         role = roles[1]
 
@@ -28,7 +28,7 @@ class AgentRoleTests(unittest.TestCase):
                 self.assertNotIn("DEEPSEEK_API_KEY", item.system_prompt)
 
         catalog = agent_role_catalog()
-        self.assertEqual([item["roleId"] for item in catalog], ["vcp-v1", "zhiyou-v1", "hermes-v1", "flash-v1"])
+        self.assertEqual([item["roleId"] for item in catalog], ["companion-future-v1", "companion-present-v1", "companion-firstlight-v1", "companion-flash-v1"])
         self.assertTrue(all(item["schemaVersion"] == "rag-ime.agent-persona.v1" for item in catalog))
         self.assertTrue(all(item["safetyPolicyVersion"] == "control-center-safe-v1" for item in catalog))
         self.assertNotIn("systemPrompt", catalog[0])
@@ -52,6 +52,20 @@ class AgentRoleTests(unittest.TestCase):
     def test_unknown_role_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported agent role"):
             agent_role("model-selected-role", "1")
+
+    def test_legacy_role_ids_are_read_only_aliases_and_never_enter_the_catalog(self) -> None:
+        aliases = {
+            "vcp-v1": "companion-future-v1",
+            "zhiyou-v1": "companion-present-v1",
+            "hermes-v1": "companion-firstlight-v1",
+            "flash-v1": "companion-flash-v1",
+        }
+        for legacy_id, canonical_id in aliases.items():
+            with self.subTest(legacy_id=legacy_id):
+                self.assertEqual(agent_role(legacy_id, "1").role_id, canonical_id)
+        serialized = repr(agent_role_catalog())
+        for legacy_id in aliases:
+            self.assertNotIn(f"'roleId': '{legacy_id}'", serialized)
 
 
 if __name__ == "__main__":

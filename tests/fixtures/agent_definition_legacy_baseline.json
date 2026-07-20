@@ -7,7 +7,7 @@
         "toolProfileVersion": "control-center-v1"
       },
       "displayName": "智鼬·此刻",
-      "roleId": "zhiyou-v1",
+      "roleId": "companion-present-v1",
       "safetyPolicyVersion": "control-center-safe-v1",
       "schemaVersion": "rag-ime.agent-persona.v1",
       "selectableModes": [
@@ -34,7 +34,7 @@
         "toolProfileVersion": "control-center-v1"
       },
       "displayName": "智鼬·初识",
-      "roleId": "hermes-v1",
+      "roleId": "companion-firstlight-v1",
       "safetyPolicyVersion": "control-center-safe-v1",
       "schemaVersion": "rag-ime.agent-persona.v1",
       "selectableModes": [
@@ -61,7 +61,7 @@
         "toolProfileVersion": "control-center-v1"
       },
       "displayName": "智鼬·未来",
-      "roleId": "vcp-v1",
+      "roleId": "companion-future-v1",
       "safetyPolicyVersion": "control-center-safe-v1",
       "schemaVersion": "rag-ime.agent-persona.v1",
       "selectableModes": [

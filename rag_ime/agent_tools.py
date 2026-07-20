@@ -31,6 +31,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "overview",
         "displayName": "控制中心概览",
         "description": "查看输入法、模型、记忆和最近活动的整体状态",
+        "when": ("用户询问智鼬整体状态、能力或最近活动",),
+        "notFor": ("已明确要检查某一个具体子系统",),
+        "input": "可选查询与返回条数",
+        "output": "输入法、模型、记忆和最近活动概览",
+        "does": "汇总控制中心整体状态。",
         "operations": ("status", "capabilities", "recent_activity"),
         "resultPresentation": "status",
     },
@@ -39,6 +44,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "input",
         "displayName": "输入法",
         "description": "查看输入设置、方案、候选解释，并在原生批准后调整设置或词表",
+        "when": ("用户询问或要求调整输入法设置、候选或词表",),
+        "notFor": ("语音 Provider、模型或普通文本生成",),
+        "input": "操作名及设置变更、候选查询或审批引用",
+        "output": "输入设置、候选解释、预览或带回执的变更结果",
+        "does": "读取并受控调整输入法能力。",
         "operations": (
             "get_settings",
             "preview_settings",
@@ -63,6 +73,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "voice",
         "displayName": "语音输入",
         "description": "查看语音状态，并在原生批准后切换已配置的语音 Provider",
+        "when": ("用户询问语音输入状态、隐私或要求切换语音 Provider",),
+        "notFor": ("让 Agent 或 Room 朗读、配音或持续输出音频",),
+        "input": "操作名、Provider 与可选审批引用",
+        "output": "语音输入状态、隐私策略、预览或变更回执",
+        "does": "读取并受控配置语音输入。",
         "operations": (
             "status",
             "privacy_policy",
@@ -79,6 +94,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "planning",
         "displayName": "规划与任务",
         "description": "查看每日计划，并在原生确认后更新任务状态",
+        "when": ("用户要查看每日计划或更新真实任务状态",),
+        "notFor": ("维护 Agent 自己的执行清单",),
+        "input": "操作名、真实 taskId、日期与动作",
+        "output": "计划面板、审批预览或任务变更回执",
+        "does": "读取并受控更新用户每日规划。",
         "operations": ("dashboard", "task_action", "undo_task_event"),
         "operationRisks": {"dashboard": "R0", "task_action": "R1", "undo_task_event": "R1"},
         "resultPresentation": "tool_result",
@@ -88,6 +108,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "planning",
         "displayName": "Agent 预约唤醒",
         "description": "查看预约，并在原生批准后安排自己、其他线程或角色于指定时间执行任务",
+        "when": ("用户要求定时、延期或重复唤醒某个 Agent 任务",),
+        "notFor": ("当前回合立即执行或仅口头提醒",),
+        "input": "目标、指令、唤醒时间、时区和重复规则",
+        "output": "预约、运行记录或带回执的状态变更",
+        "does": "管理可取消、可审计的 Agent 预约。",
         "operations": ("list", "runs", "schedule", "pause", "resume", "cancel", "retry"),
         "operationRisks": {
             "schedule": "R2",
@@ -106,6 +131,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "查询用户 Evidence、Atom、Book 与已批准 Timeline；"
             "Role Book 请用 agent_role_book。写操作只能经持久提议和原生审批。"
         ),
+        "when": ("任务需要查找历史输入、用户事实、偏好或治理记忆变更",),
+        "notFor": ("当前对话已经足够或只是流程噪声、失败回执和临时指令",),
+        "input": "检索问题、范围、证据引用或待审变更",
+        "output": "带证据的记忆结果、草案、审批或回滚状态",
+        "does": "检索并治理用户长期上下文记忆。",
         "operations": (
             "catalog",
             "read",
@@ -149,6 +179,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "原始聊天只审计，不直接写入；"
             "不能激活草案或修改身份、权限、安全策略与工具白名单"
         ),
+        "when": ("任务需要读取固定角色版本或提议可复用的角色变化",),
+        "notFor": ("用户长期记忆、权限扩张或把普通聊天写入角色书",),
+        "input": "固定 revision、证据与受限角色字段更新",
+        "output": "角色书、历史或待审 revision 草案",
+        "does": "读取并受控提议 Agent 角色书变化。",
         "operations": ("get", "history", "propose_revision", "review"),
         "resultPresentation": "tool_result",
     },
@@ -157,6 +192,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "knowledge",
         "displayName": "文档知识库",
         "description": "渐进检索用户明确加载并授权给 Agent 的文档知识库",
+        "when": ("问题需要查找用户已授权文档中的事实或原文",),
+        "notFor": ("个人历史输入、当前会话内容或未授权文件",),
+        "input": "知识库、查询、定位线索或文档引用",
+        "output": "带来源的搜索、定位、原文或索引状态",
+        "does": "渐进检索已授权文档知识。",
         "operations": ("list_bases", "search", "find", "open", "status"),
         "resultPresentation": "citation",
     },
@@ -165,6 +205,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "models",
         "displayName": "模型",
         "description": "查看模型与 Provider，并在原生批准后调整不含密钥的 Provider 配置",
+        "when": ("用户询问模型、Provider、缓存或要求调整模型配置",),
+        "notFor": ("执行普通模型对话或处理 API 密钥",),
+        "input": "操作名、模型槽位、Provider、端点或审批引用",
+        "output": "模型状态、探测、缓存统计、预览或变更回执",
+        "does": "读取并受控配置模型与 Provider。",
         "operations": (
             "status",
             "profiles",
@@ -182,6 +227,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "runtime",
         "displayName": "诊断与运行时",
         "description": "查看运行组件，并在原生批准后暂停 AI、重启 Sidecar 或预测器、重新部署 Rime",
+        "when": ("用户要诊断运行组件或执行受控恢复操作",),
+        "notFor": ("一般代码调试或无证据地重启服务",),
+        "input": "诊断或恢复操作及可选组件参数",
+        "output": "健康状态、诊断证据或带回执的恢复结果",
+        "does": "诊断并受控恢复智鼬运行组件。",
         "operations": (
             "health",
             "components",
@@ -206,6 +256,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "configuration",
         "displayName": "历史与配置",
         "description": "查看隐私化历史与审计，并通过原生审批导出或恢复不含密钥的便携备份",
+        "when": ("用户询问审计历史、导出或恢复便携配置",),
+        "notFor": ("查看个人语义记忆或导出密钥",),
+        "input": "查询、条数、导出或恢复动作与审批引用",
+        "output": "隐私化历史、审计、备份预览或恢复回执",
+        "does": "读取审计并受控迁移无密钥配置。",
         "operations": (
             "history",
             "audit",
@@ -221,24 +276,18 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "ime_agents",
         "domain": "agents",
         "displayName": "多 Agent 协作",
-        "description": "管理有界任务委派，并在同一 Room 内进行可审计的 Agent 通信",
+        "description": "管理当前 Session 的有界子 Agent 委派",
+        "when": ("任务需要并行研究、实现、复核或停止子 Agent",),
+        "notFor": ("单 Agent 可直接完成且无需协作记录",),
+        "input": "操作名、受管 Agent、任务、上下文方式或运行 ID",
+        "output": "子 Agent 目录、运行状态、产物或取消回执",
+        "does": "执行有界、可审计、可取消的子 Agent 委派。",
         "operations": (
             "catalog",
             "delegate",
             "status",
             "artifact",
             "abort",
-            "room_send",
-            "room_ask",
-            "room_reply",
-            "room_mailbox",
-            "room_assign",
-            "room_submit",
-            "room_accept",
-            "room_return",
-            "room_block",
-            "room_escalate",
-            "room_work",
         ),
         "resultPresentation": "tool_result",
     },
@@ -247,6 +296,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "browser",
         "displayName": "浏览器共驾",
         "description": "按需读取已配对浏览器的页面快照，并在用户批准后执行可追踪的网页操作",
+        "when": ("任务需要读取或操作已配对浏览器的真实页面",),
+        "notFor": ("已有 API 或连接器，或只需一般网页知识",),
+        "input": "标签页、快照 ref、URL、文本或滚动参数",
+        "output": "页面快照、截图、轨迹或带回执的操作结果",
+        "does": "观察并受控操作已配对浏览器。",
         "operations": (
             "status",
             "tabs",
@@ -275,6 +329,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "planning",
         "displayName": "任务执行清单",
         "description": "维护跨回合与压缩保留的 Session 执行清单；它不修改用户的每日规划",
+        "when": ("复杂任务需要跨回合维护执行步骤、复核或完成状态",),
+        "notFor": ("修改用户每日计划或简单单步任务",),
+        "input": "清单项、状态、证据、复核或取消动作",
+        "output": "跨回合保留的 Agent 执行清单与状态",
+        "does": "维护 Session 内可恢复的任务执行清单。",
         "operations": ("list", "update", "submit_review", "complete", "cancel"),
         "resultPresentation": "tool_result",
     },
@@ -283,6 +342,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "agents",
         "displayName": "插件制作与安装",
         "description": "制作、校验并提交插件安装提议；最终应用必须由用户在控制中心批准",
+        "when": ("用户要求制作、校验或提议安装智鼬插件",),
+        "notFor": ("直接安装、启停、回滚或写入密钥",),
+        "input": "插件 manifest、文件、来源路径或验证 token",
+        "output": "插件草案、校验结果或待审安装提议",
+        "does": "制作并受控提交智鼬插件。",
         "operations": ("list", "create_draft", "validate", "propose_install"),
         "resultPresentation": "tool_result",
     },
@@ -291,6 +355,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "desktop",
         "displayName": "桌面语义操作",
         "description": "通过 macOS Accessibility 读取目标窗口语义树和差分，并在原生批准后按语义节点操作；不截屏、不做 OCR",
+        "when": ("任务必须读取或操作本机 Mac 应用的可访问性语义树",),
+        "notFor": ("浏览器有专用工具、需要截图 OCR 或存在直接 API",),
+        "input": "应用或窗口目标、语义节点与动作",
+        "output": "可访问性树、差分、状态或操作回执",
+        "does": "通过可访问性语义读取并受控操作桌面应用。",
         "operations": ("status", "list", "inspect", "act"),
         "operationRisks": {"act": "R2"},
         "resultPresentation": "tool_result",
@@ -300,6 +369,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "workspace",
         "displayName": "工作区浏览",
         "description": "浏览当前运行协调 Session 明确授权的工作区",
+        "when": ("协调 Session 需要查看授权工作区目录结构",),
+        "notFor": ("读取文件内容、搜索文本或访问未授权路径",),
+        "input": "相对路径、深度与条数上限",
+        "output": "有界目录和文件条目",
+        "does": "列出授权工作区结构。",
         "operations": ("list",),
         "sessionModes": ("coordinator",),
         "resultPresentation": "table",
@@ -309,6 +383,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "workspace",
         "displayName": "工作区读取",
         "description": "读取授权工作区内的非敏感 UTF-8 文本",
+        "when": ("协调 Session 需要读取已知授权文本文件",),
+        "notFor": ("二进制、敏感文件、未知位置搜索或未授权路径",),
+        "input": "相对文件路径、偏移与字符上限",
+        "output": "有界 UTF-8 文本及文件元数据",
+        "does": "读取授权工作区文本。",
         "operations": ("read",),
         "sessionModes": ("coordinator",),
         "resultPresentation": "tool_result",
@@ -318,6 +397,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "workspace",
         "displayName": "工作区搜索",
         "description": "在授权工作区内有界搜索非敏感文件名与 UTF-8 文本内容",
+        "when": ("协调 Session 需要定位文件、符号或文本位置",),
+        "notFor": ("已知文件直接读取、互联网搜索或未授权路径",),
+        "input": "查询、相对路径、模式、大小写与条数上限",
+        "output": "带路径和位置的有界匹配结果",
+        "does": "搜索授权工作区文件与文本。",
         "operations": ("search",),
         "sessionModes": ("coordinator",),
         "resultPresentation": "table",
@@ -327,6 +411,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "workspace",
         "displayName": "精确文件修改",
         "description": "预览精确文本替换，并在原生批准和文件哈希复验后原子写入",
+        "when": ("协调 Session 需要对授权文本做精确可复验修改",),
+        "notFor": ("模糊重写、二进制编辑、未授权路径或无需修改",),
+        "input": "路径、旧文本、新文本与预期匹配次数",
+        "output": "修改预览、审批状态和原子写入回执",
+        "does": "受控执行精确文本替换。",
         "operations": ("apply",),
         "operationRisks": {"apply": "R2"},
         "sessionModes": ("coordinator",),
@@ -337,6 +426,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "workspace",
         "displayName": "受控命令",
         "description": "经原生批准后，在授权工作区的 macOS 沙箱中运行有界命令",
+        "when": ("协调 Session 必须运行构建、测试或诊断命令",),
+        "notFor": ("可由读取或精确修改工具完成，或命令越过授权边界",),
+        "input": "命令、工作目录、超时和网络开关",
+        "output": "退出状态、标准输出、错误输出和执行回执",
+        "does": "在授权工作区受控运行命令。",
         "operations": ("run",),
         "operationRisks": {"run": "R2"},
         "sessionModes": ("coordinator",),
@@ -789,46 +883,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "wait": {"type": "boolean"},
     "batchId": {"type": "string", "minLength": 1, "maxLength": 240},
     "artifactId": {"type": "string", "minLength": 1, "maxLength": 240},
-    "targetParticipantId": {"type": "string", "minLength": 1, "maxLength": 240},
-    "clientMessageId": {"type": "string", "minLength": 1, "maxLength": 200},
-    "replyTo": {"type": "string", "minLength": 1, "maxLength": 240},
-    "content": {"type": "string", "minLength": 1, "maxLength": 4_000},
-    "workId": {"type": "string", "minLength": 1, "maxLength": 240},
-    "parentWorkId": {"type": "string", "minLength": 1, "maxLength": 240},
-    "objective": {"type": "string", "minLength": 1, "maxLength": 4_000},
-    "expectedOutput": {"type": "string", "minLength": 1, "maxLength": 2_000},
-    "acceptanceCriteria": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 8,
-        "items": {"type": "string", "minLength": 1, "maxLength": 500},
-    },
-    "resultSummary": {"type": "string", "minLength": 1, "maxLength": 4_000},
-    "artifactRefs": {
-        "type": "array",
-        "maxItems": 16,
-        "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
-    },
-    "evidenceRefs": {
-        "type": "array",
-        "maxItems": 24,
-        "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
-    },
     "reason": {"type": "string", "minLength": 1, "maxLength": 2_000},
-    "nextStep": {"type": "string", "minLength": 1, "maxLength": 2_000},
-    "wakeCondition": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "kind": {
-                "type": "string",
-                "enum": ["manual", "message", "artifact", "time", "external"],
-            },
-            "sourceId": {"type": "string", "maxLength": 240},
-            "description": {"type": "string", "maxLength": 500},
-        },
-    },
-    "deadlineAtMs": {"type": "integer", "minimum": 1},
     "draftId": {"type": "string", "minLength": 1, "maxLength": 160},
     "manifest": {"type": "object"},
     "files": {"type": "object"},
@@ -901,10 +956,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "ime_configuration": ("query", "limit", "action", "sourceApprovalId"),
     "ime_agents": (
         "agent", "version", "task", "tasks", "contextMode", "wait", "runId", "batchId",
-        "artifactId", "targetParticipantId", "clientMessageId", "replyTo", "content",
-        "workId", "parentWorkId", "objective", "expectedOutput",
-        "acceptanceCriteria", "resultSummary", "artifactRefs", "evidenceRefs",
-        "reason", "nextStep", "wakeCondition", "deadlineAtMs", "status", "limit",
+        "artifactId", "limit",
     ),
     "ime_plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
     "ime_browser": (
@@ -957,21 +1009,6 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("ime_configuration", "restore_preview"): ("sourceApprovalId",),
     ("ime_configuration", "restore_apply"): ("sourceApprovalId",),
     ("ime_agents", "artifact"): ("artifactId",),
-    ("ime_agents", "room_send"): ("targetParticipantId", "clientMessageId", "content"),
-    ("ime_agents", "room_ask"): ("targetParticipantId", "clientMessageId", "content"),
-    ("ime_agents", "room_reply"): ("replyTo", "clientMessageId", "content"),
-    ("ime_agents", "room_assign"): (
-        "targetParticipantId",
-        "clientMessageId",
-        "objective",
-        "expectedOutput",
-        "acceptanceCriteria",
-    ),
-    ("ime_agents", "room_submit"): ("workId", "resultSummary"),
-    ("ime_agents", "room_accept"): ("workId",),
-    ("ime_agents", "room_return"): ("workId", "reason"),
-    ("ime_agents", "room_block"): ("workId", "reason", "nextStep"),
-    ("ime_agents", "room_escalate"): ("workId", "reason", "nextStep"),
     ("ime_plugins", "create_draft"): ("draftId", "manifest", "files"),
     ("ime_plugins", "validate"): ("sourcePath",),
     ("ime_plugins", "propose_install"): ("validationToken",),
@@ -991,7 +1028,6 @@ _RUNTIME_TOOL_REQUIRED_ALTERNATIVES: dict[
     ("ime_models", "profile_apply"): (("provider",), ("endpoint",), ("model",)),
     ("ime_agents", "delegate"): (("tasks",), ("agent", "task")),
     ("ime_agents", "abort"): (("runId",), ("batchId",)),
-    ("ime_agents", "room_submit"): (("artifactRefs",), ("evidenceRefs",)),
     ("agent_role_book", "review"): (("revisionId",), ("draftId",)),
     ("ime_memory", "get"): (("targetId",), ("draftId",)),
 }
@@ -1004,7 +1040,7 @@ _RUNTIME_TOOL_USAGE: dict[str, str] = {
     "ime_memory": (
         "Session 启动快照只在首轮注入一次。Timeline 不能单独证明稳定事实。"
         "无事实问题/流程噪声/失败回执/重复问句/临时指令 not_for_memory；禁止原样复制长输入。"
-        "普通 zhiyou-v1 聊天禁整理；task_completion/explicit_request/idle_batch 且有事实时才调用；"
+        "普通 companion-present-v1 聊天禁整理；task_completion/explicit_request/idle_batch 且有事实时才调用；"
     ),
     "ime_browser": (
         "先用 tabs 或 snapshot 获取真实 tabId、snapshotId 与 refId。"
@@ -1162,6 +1198,7 @@ class ControlToolGateway:
         for manifest in self._manifest_items(session):
             if manifest.get("enabled") is not True:
                 continue
+            spec = _TOOL_SPEC_BY_ID[str(manifest["id"])]
             operations = list(manifest.get("effectiveOperations") or [])
             parameter_schema = _runtime_tool_parameter_schema(
                 str(manifest["id"]),
@@ -1173,6 +1210,11 @@ class ControlToolGateway:
                     "name": manifest["id"],
                     "description": f"{manifest['description']}。{usage}" if usage else manifest["description"],
                     "parameters": parameter_schema,
+                    "when": list(spec["when"]),
+                    "notFor": list(spec["notFor"]),
+                    "input": spec["input"],
+                    "output": spec["output"],
+                    "does": spec["does"],
                     "profile": session.get("toolProfileVersion") or "control-center-v1",
                     "risk": manifest.get("riskLevel") or "R0",
                 }
@@ -1437,7 +1479,7 @@ class ControlToolGateway:
         raise ValueError("unsupported desktop_semantic operation")
 
     def _agents(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
-        if operation in {"catalog", "delegate", "status", "artifact", "abort"} and self.delegation is None:
+        if self.delegation is None:
             raise ValueError("managed delegation is unavailable")
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
         if not session_id:
@@ -1458,149 +1500,6 @@ class ControlToolGateway:
             )
         if operation == "abort":
             return dict(self.delegation.abort(session_id, args))  # type: ignore[attr-defined]
-        if (
-            operation in {"room_send", "room_ask", "room_reply", "room_assign", "room_submit"}
-            and callable(getattr(self.collaboration, "execute_room_capability_tool", None))
-        ):
-            if self.collaboration is None:
-                raise ValueError("managed room collaboration is unavailable")
-            canonical = self.collaboration.execute_room_capability_tool(  # type: ignore[attr-defined]
-                session_id,
-                operation,
-                {key: value for key, value in args.items() if not key.startswith("_")},
-                tool_call_id=_bounded_text(args.get("_toolCallId"), maximum=240),
-                load_receipt_id=_bounded_text(args.get("_loadReceiptId"), maximum=240),
-            )
-            if canonical is not None:
-                return dict(canonical)
-        if operation in {"room_send", "room_ask", "room_reply"}:
-            if self.collaboration is None:
-                raise ValueError("managed room collaboration is unavailable")
-            kind = operation.removeprefix("room_")
-            request = {
-                "kind": kind,
-                "content": args.get("content"),
-                "clientMessageId": args.get("clientMessageId"),
-            }
-            if kind == "reply":
-                request["replyTo"] = args.get("replyTo")
-            else:
-                request["targetParticipantId"] = args.get("targetParticipantId")
-            return dict(
-                self.collaboration.send_room_intercom(  # type: ignore[attr-defined]
-                    session_id,
-                    request,
-                )
-            )
-        if operation == "room_mailbox":
-            if self.collaboration is None:
-                raise ValueError("managed room collaboration is unavailable")
-            return dict(
-                self.collaboration.list_room_intercom(  # type: ignore[attr-defined]
-                    session_id,
-                    {
-                        "status": args.get("status"),
-                        "limit": args.get("limit"),
-                    },
-                )
-            )
-        room_work_fields: dict[str, tuple[str, ...]] = {
-            "room_assign": (
-                "targetParticipantId",
-                "clientMessageId",
-                "parentWorkId",
-                "objective",
-                "expectedOutput",
-                "acceptanceCriteria",
-            ),
-            "room_submit": (
-                "workId",
-                "resultSummary",
-                "artifactRefs",
-                "evidenceRefs",
-            ),
-            "room_accept": ("workId",),
-            "room_return": ("workId", "reason"),
-            "room_block": (
-                "workId",
-                "reason",
-                "nextStep",
-                "wakeCondition",
-                "deadlineAtMs",
-            ),
-            "room_escalate": ("workId", "reason", "nextStep"),
-        }
-        room_work_args = {
-            key: args[key]
-            for key in room_work_fields.get(operation, ())
-            if key in args
-        }
-        if operation == "room_assign":
-            if self.collaboration is None:
-                raise ValueError("managed room collaboration is unavailable")
-            return dict(
-                self.collaboration.assign_room_work(  # type: ignore[attr-defined]
-                    session_id,
-                    room_work_args,
-                )
-            )
-        if operation == "room_submit":
-            if self.collaboration is None:
-                raise ValueError("managed room collaboration is unavailable")
-            return dict(
-                self.collaboration.submit_room_work(  # type: ignore[attr-defined]
-                    session_id,
-                    room_work_args,
-                )
-            )
-        if operation == "room_accept":
-            if self.collaboration is None:
-                raise ValueError("managed room collaboration is unavailable")
-            return dict(
-                self.collaboration.accept_room_work(  # type: ignore[attr-defined]
-                    session_id,
-                    room_work_args,
-                )
-            )
-        if operation == "room_return":
-            if self.collaboration is None:
-                raise ValueError("managed room collaboration is unavailable")
-            return dict(
-                self.collaboration.return_room_work(  # type: ignore[attr-defined]
-                    session_id,
-                    room_work_args,
-                )
-            )
-        if operation == "room_block":
-            if self.collaboration is None:
-                raise ValueError("managed room collaboration is unavailable")
-            return dict(
-                self.collaboration.block_room_work(  # type: ignore[attr-defined]
-                    session_id,
-                    room_work_args,
-                )
-            )
-        if operation == "room_escalate":
-            if self.collaboration is None:
-                raise ValueError("managed room collaboration is unavailable")
-            return dict(
-                self.collaboration.escalate_room_work(  # type: ignore[attr-defined]
-                    session_id,
-                    room_work_args,
-                )
-            )
-        if operation == "room_work":
-            if self.collaboration is None:
-                raise ValueError("managed room collaboration is unavailable")
-            return dict(
-                self.collaboration.list_room_work(  # type: ignore[attr-defined]
-                    session_id,
-                    {
-                        "status": args.get("status"),
-                        "limit": args.get("limit"),
-                    },
-                )
-            )
         raise ValueError("unsupported ime_agents operation")
 
     def _agent_plan(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
@@ -6096,17 +5995,6 @@ def _tool_profile_allows(
                 "status",
                 "artifact",
                 "abort",
-                "room_send",
-                "room_ask",
-                "room_reply",
-                "room_mailbox",
-                "room_assign",
-                "room_submit",
-                "room_accept",
-                "room_return",
-                "room_block",
-                "room_escalate",
-                "room_work",
             }
         ),
         "agent_schedule": frozenset({"list", "runs"}),

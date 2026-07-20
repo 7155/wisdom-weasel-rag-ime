@@ -13,7 +13,7 @@
   },
   "assets": {
     "rag-ime-companion-v1": {
-      "personaId": "zhiyou-v1",
+      "personaId": "companion-present-v1",
       "timeline": "legacy-state",
       "modelAffinity": "session-selected",
       "states": {
@@ -25,7 +25,7 @@
       }
     },
     "rag-ime-timeline-past-v1": {
-      "personaId": "hermes-v1",
+      "personaId": "companion-firstlight-v1",
       "timeline": "past",
       "modelAffinity": "gpt-5.6-luna",
       "source": "/companions/personas/wisdom-weasel-luna-v1.webp",
@@ -35,7 +35,7 @@
       "sha256": "1ecff3b890ccb4171c9c61290b5268b3a42ab3ab85fdeac391c0670f409ad4e7"
     },
     "rag-ime-timeline-present-v1": {
-      "personaId": "zhiyou-v1",
+      "personaId": "companion-present-v1",
       "timeline": "present",
       "modelAffinity": "gpt-5.6-terra",
       "source": "/companions/personas/wisdom-weasel-terra-v1.webp",
@@ -45,7 +45,7 @@
       "sha256": "03ae115e9acbb9d5d812fa8cfbf3cad0f79d8cd193eeff74a564f932142ee853"
     },
     "rag-ime-timeline-future-v1": {
-      "personaId": "vcp-v1",
+      "personaId": "companion-future-v1",
       "timeline": "future",
       "modelAffinity": "gpt-5.6-sol",
       "source": "/companions/personas/wisdom-weasel-sol-v1.webp",
@@ -55,7 +55,7 @@
       "sha256": "79e1e29cb2a7499ac7dd30abe67a559b64544e75bbeb22d7cb71f6c972798f3b"
     },
     "rag-ime-timeline-flash-v1": {
-      "personaId": "flash-v1",
+      "personaId": "companion-flash-v1",
       "timeline": "flash",
       "modelAffinity": "deepseek-v4-flash",
       "source": "/companions/personas/wisdom-weasel-flash-v1.webp",
@@ -74,7 +74,7 @@
       "sha256": "aecd38532da39c66f651ac4cd42ee7f5b18ebb0c46f5ffd0139e46721e313f80",
       "intendedSlots": ["memory-overview", "memory-empty-state"]
     },
-    "room-duoagent-handoff": {
+    "room-agent-handoff": {
       "source": "/companions/scenes/room-duoagent-handoff-v1.webp",
       "width": 960,
       "height": 720,

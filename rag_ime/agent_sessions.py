@@ -9,6 +9,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from .agent_role_identity import (
+    canonical_agent_role_id,
+    canonical_role_book_revision_id,
+)
 from .agent_tool_ids import SUPPORTED_AGENT_TOOL_PROFILES
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
@@ -52,13 +56,13 @@ class AgentSessionStore:
         *,
         title: str,
         mode: str = "assistant",
-        role_id: str = "vcp-v1",
+        role_id: str = "companion-future-v1",
         role_version: str = "1",
         role_book_revision_id: str = "",
         model_profile: str = "gpt/gpt-5.6-sol",
         thinking_level: str = "max",
         tool_profile_version: str = "control-center-v1",
-        project_context_enabled: bool = True,
+        project_context_enabled: bool = False,
         pi_skills_enabled: bool = False,
         codex_skills_enabled: bool = False,
         workspace_roots: Iterable[str] = (),
@@ -96,7 +100,10 @@ class AgentSessionStore:
             raise ValueError("unsupported Agent tool profile")
         timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
         session_id = f"agent:{uuid.uuid4()}"
-        normalized_role_book_revision_id = str(role_book_revision_id or "").strip()
+        normalized_role_id = canonical_agent_role_id(role_id)
+        normalized_role_book_revision_id = canonical_role_book_revision_id(
+            role_book_revision_id
+        )
         if len(normalized_role_book_revision_id) > 240:
             raise ValueError("agent role book revision id is too long")
         shell_policy = shell_policy_version or (
@@ -118,7 +125,7 @@ class AgentSessionStore:
                     session_id,
                     normalized_title,
                     mode,
-                    role_id,
+                    normalized_role_id,
                     role_version,
                     normalized_role_book_revision_id,
                     normalized_model_profile,
@@ -144,7 +151,7 @@ class AgentSessionStore:
         *,
         updated_at_ms: int | None = None,
     ) -> dict[str, object]:
-        normalized = str(revision_id or "").strip()
+        normalized = canonical_role_book_revision_id(revision_id)
         if not normalized:
             raise ValueError("agent role book revision id must not be empty")
         if len(normalized) > 240:
@@ -475,7 +482,7 @@ class AgentSessionStore:
             roots = []
         normalized_tools = _allowed_tools(allowed_tools)
         context_enabled = (
-            bool(current.get("projectContextEnabled", True))
+            bool(current.get("projectContextEnabled", False))
             if project_context_enabled is None
             else bool(project_context_enabled)
         )
@@ -1579,9 +1586,11 @@ def _session_payload(
         "mode": str(row["session_mode"]),
         "status": str(row["status"]),
         "sessionKind": str(row["session_kind"]),
-        "roleId": str(row["role_id"]),
+        "roleId": canonical_agent_role_id(row["role_id"]),
         "roleVersion": str(row["role_version"]),
-        "roleBookRevisionId": str(row["role_book_revision_id"] or ""),
+        "roleBookRevisionId": canonical_role_book_revision_id(
+            row["role_book_revision_id"]
+        ),
         "modelProfile": model_profile,
         "thinkingLevel": str(row["thinking_level"] or ""),
         "toolProfileVersion": str(row["tool_profile_version"]),

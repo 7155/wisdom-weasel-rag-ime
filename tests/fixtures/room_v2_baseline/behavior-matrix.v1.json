@@ -69,7 +69,7 @@
     "rag_ime/agent_sessions.py:AgentSessionStore.create",
     "rag_ime/agent_service.py:AgentService.create_room",
     "rag_ime/agent_service.py:AgentService._mirror_event_to_room",
-    "rag_ime/agent_service.py:_room_event_projection",
+    "rag_ime/agent_event_projection.py:room_event_projection",
     "rag_ime/agent_service.py:_room_participant_prompt",
     "rag_ime/agent_room_routing.py:parse_mentions",
     "tests/test_agent_rooms.py:test_roleplay_room_uses_invites_scenario_and_topic_scoped_recent_context"

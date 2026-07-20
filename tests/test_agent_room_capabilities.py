@@ -8,7 +8,7 @@ from rag_ime.agent_room_capabilities import (
     CapabilityManifestConflict,
     RoomCapabilityManifestStore,
     ToolAuthorizationError,
-    normalize_room_tool_command,
+    validate_room_tool_command,
     room_runtime_registry,
 )
 
@@ -79,28 +79,36 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         with self.assertRaises(ToolAuthorizationError):
             self._invoke(manifest, tool="room_commit", load="load:commit")
 
-    def test_legacy_and_canonical_entry_share_one_authorization_receipt(self) -> None:
+    def test_retired_tool_names_are_rejected_before_authorization(self) -> None:
         manifest = self._compile()
         self.store.tool_load(
             receipt_id="load:post", manifest_id=manifest["manifestId"],
             manifest_hash=manifest["manifestHash"], tool_name="room_post",
             runtime_registry=self._registry(), created_at_ms=3,
         )
-        legacy, created = self._invoke(
-            manifest, tool="room_send", load="load:post", receipt="invoke:legacy",
-            invocation_key="same-command",
-        )
-        canonical, canonical_created = self._invoke(
+        with self.assertRaisesRegex(
+            ValueError,
+            "room_state/room_post/room_commit",
+        ):
+            self._invoke(
+                manifest,
+                tool="room_send",
+                load="load:post",
+                receipt="invoke:legacy",
+                invocation_key="legacy-command",
+            )
+        canonical, created = self._invoke(
             manifest, tool="room_post", load="load:post", receipt="invoke:canonical",
             invocation_key="same-command",
         )
         self.assertTrue(created)
-        self.assertFalse(canonical_created)
-        self.assertEqual(canonical, legacy)
-        self.assertEqual(legacy["canonicalCommand"]["tool"], "room_post")
-        normalized = normalize_room_tool_command("room_assign", {"taskId": "task:2"})
-        self.assertEqual(normalized["canonicalTool"], "room_commit")
-        self.assertFalse(normalized["executionPerformed"])
+        self.assertEqual(canonical["canonicalCommand"]["tool"], "room_post")
+        validated = validate_room_tool_command(
+            "room_commit",
+            {"result": "done"},
+        )
+        self.assertEqual(validated["canonicalTool"], "room_commit")
+        self.assertFalse(validated["executionPerformed"])
 
     def test_revocation_invalidates_old_epoch_and_load_receipt(self) -> None:
         old = self._compile()

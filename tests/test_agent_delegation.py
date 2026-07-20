@@ -256,7 +256,7 @@ class AgentDelegationTests(unittest.TestCase):
         )
         self.parent = self.sessions.create(
             title="主持会话",
-            role_id="hermes-v1",
+            role_id="companion-firstlight-v1",
             role_version="1",
             model_profile="gpt/test-model",
         )
@@ -769,11 +769,13 @@ class AgentDelegationTests(unittest.TestCase):
                 str(self.parent["id"]),
                 {"agent": "planner", "task": "第三个并行任务", "wait": False},
             )
-        coordinator.abort(str(self.parent["id"]), {"batchId": batch["id"]})
-        _wait_until(
-            lambda: coordinator.store.get_batch(str(batch["id"]))["state"] == "aborted"
+        receipt = coordinator.abort(
+            str(self.parent["id"]),
+            {"batchId": batch["id"]},
         )
-        final = coordinator.store.get_batch(str(batch["id"]))
+        self.assertEqual(receipt["cancellation"]["state"], "terminated")
+        self.assertEqual(receipt["cancellation"]["pendingRunIds"], [])
+        final = receipt["batch"]
         self.assertTrue(final["abortRequested"])
         self.assertEqual({run["state"] for run in final["runs"]}, {"aborted"})
         _wait_until(lambda: coordinator.store.active_run_count() == 0)
@@ -843,7 +845,7 @@ class AgentDelegationTests(unittest.TestCase):
         store.initialize()
         child = self.sessions.create(
             title="待恢复子任务",
-            role_id="hermes-v1",
+            role_id="companion-firstlight-v1",
             role_version="1",
             model_profile="gpt/test-model",
             session_kind="subagent_runtime",

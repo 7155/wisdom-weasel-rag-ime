@@ -18,7 +18,7 @@ class _Agent:
                     "runtime": {"enabled": True, "startup": "lazy", "idleTimeoutSeconds": 900},
                     "sessionDefaults": {
                         "resumeLastSession": True,
-                        "roleId": "zhiyou-v1",
+                        "roleId": "companion-present-v1",
                         "roleVersion": "1",
                         "modelProfile": "deepseek/deepseek-chat",
                         "toolProfileVersion": "control-center-v1",

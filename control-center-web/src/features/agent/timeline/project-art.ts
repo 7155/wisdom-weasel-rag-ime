@@ -1,4 +1,4 @@
-export type ProjectSceneId = 'memory-evidence-timeline' | 'room-duoagent-handoff';
+export type ProjectSceneId = 'memory-evidence-timeline' | 'room-agent-handoff';
 
 export type ProjectSceneAsset = Readonly<{
   id: ProjectSceneId;
@@ -18,12 +18,12 @@ export const projectSceneAssets = {
     alt: '从封存的历史证据中选出当前任务所需内容，形成小型上下文并回到光标',
     intendedSlots: ['memory-overview', 'memory-empty-state'],
   },
-  'room-duoagent-handoff': {
-    id: 'room-duoagent-handoff',
+  'room-agent-handoff': {
+    id: 'room-agent-handoff',
     source: '/companions/scenes/room-duoagent-handoff-v1.webp',
     width: 960,
     height: 720,
-    alt: '两位智鼬在私有工作区之间显式交接，并将公开交付送回光标',
+    alt: '此刻与未来两种任务角色核对结构化产物，并完成可追踪的责任交接',
     intendedSlots: ['room-empty-state', 'room-onboarding'],
   },
 } as const satisfies Record<ProjectSceneId, ProjectSceneAsset>;

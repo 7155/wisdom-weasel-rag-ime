@@ -334,7 +334,7 @@ class PiRuntimeConfig:
         if tool_profile == "voice-refinement-v1":
             return _VOICE_REFINEMENT_SYSTEM_PROMPT
         role = self.role_resolver(
-            session.get("roleId") or "zhiyou-v1",
+            session.get("roleId") or "companion-present-v1",
             session.get("roleVersion") or "1",
         )
         system_prompt = role.system_prompt
@@ -1560,13 +1560,13 @@ class PiRuntimeManager:
             with self._lock:
                 self._schedule_idle_locked()
 
-    def abort(self, session_id: str) -> None:
+    def abort(self, session_id: str) -> dict[str, object]:
         with self._lock:
             client = self._require_client_locked(session_id)
             turn_id = self._active_turn_id
         client.send({"type": "abort"})
         if not turn_id:
-            return
+            return _legacy_abort_receipt(session_id, "", idle=True)
         with self._lock:
             # Pi may settle while the abort ACK is in flight. Never append an
             # "aborting" event after the real terminal event in that case.
@@ -1575,9 +1575,10 @@ class PiRuntimeManager:
                 or self._active_session_id != session_id
                 or self._active_turn_id != turn_id
             ):
-                return
+                return _legacy_abort_receipt(session_id, turn_id, idle=True)
             self.events.publish(session_id, "status_changed", {"status": "aborting"}, turn_id=turn_id)
             self._schedule_abort_fallback_locked(session_id, turn_id)
+        return _legacy_abort_receipt(session_id, turn_id, idle=False)
 
     def compact(self, session_id: str, instructions: str = "") -> dict[str, object]:
         self.ensure(session_id)
@@ -2826,6 +2827,41 @@ def _ui_confirmation_value(value: object) -> bool:
     if any(normalized == item or normalized.startswith(f"{item}，") or normalized.startswith(f"{item},") for item in negative):
         return False
     raise PiRuntimeError("confirm UI response must explicitly approve or reject the request")
+
+
+def _legacy_abort_receipt(
+    session_id: str,
+    turn_id: str,
+    *,
+    idle: bool,
+) -> dict[str, object]:
+    """Expose the old JSONL driver's weaker cancellation proof honestly."""
+
+    pending = (
+        []
+        if idle or not turn_id
+        else [{"operationId": turn_id, "kind": "legacy_session"}]
+    )
+    return {
+        "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+        "sessionId": session_id,
+        "turnId": turn_id,
+        "cancelledDecisionIds": [],
+        "cancelledUIRequestIds": [],
+        "lifecycle": {
+            "schemaVersion": "pi.agent-abort-receipt.v1",
+            "scopeId": session_id,
+            "generation": 0,
+            "reason": "user_abort",
+            "cancelledContinuationIds": [],
+            "cancelledOperationIds": [],
+            "failedOperationIds": [],
+            "operations": pending,
+            "pendingOperations": pending,
+            "drained": idle,
+            "idle": idle,
+        },
+    }
 
 
 def _env_bool(name: str, default: bool) -> bool:

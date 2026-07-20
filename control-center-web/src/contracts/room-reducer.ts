@@ -28,6 +28,14 @@ export interface RoomActivityProjection {
   summary: string;
   payload: Record<string, unknown>;
   createdAtMs: number;
+  updatedAtMs?: number;
+}
+
+export interface RoomActivityLaneIdentity {
+  rootId: string;
+  participantId: string;
+  dispatchId: string;
+  key: string;
 }
 
 export interface RoomTurnProjection {
@@ -36,6 +44,9 @@ export interface RoomTurnProjection {
   messageIds: string[];
   activityIds: string[];
   participantIds: string[];
+  terminalParticipantIds?: string[];
+  failedParticipantIds?: string[];
+  abortedParticipantIds?: string[];
   createdAtMs: number;
   updatedAtMs: number;
   failure?: string;
@@ -145,10 +156,23 @@ export function reduceRoomEvent(
       upsertActivity(next, event, payload);
       break;
     case 'turn_completed':
-      completeTurn(next, event.turnId, 'completed', event.createdAtMs);
+      completeParticipantTurn(
+        next,
+        event,
+        text(payload.status) === 'aborted' || payload.aborted === true
+          ? 'aborted'
+          : 'completed',
+        event.createdAtMs,
+      );
       break;
     case 'turn_failed':
-      completeTurn(next, event.turnId, 'failed', event.createdAtMs, text(payload.error));
+      completeParticipantTurn(
+        next,
+        event,
+        'failed',
+        event.createdAtMs,
+        text(payload.error),
+      );
       upsertActivity(next, event, payload, 'failed');
       break;
     case 'room_config_changed':
@@ -221,7 +245,30 @@ export function appendOptimisticRoomMessage(
   next.messageOrder.push(id);
   next.optimisticByClientMessageId[input.clientMessageId] = id;
   attachMessage(next, message);
+  next.turnsById[turnId].status = 'queued';
   return next;
+}
+
+export function roomActivityLaneIdentity(
+  activity: RoomActivityProjection,
+): RoomActivityLaneIdentity {
+  const rootId = text(activity.payload.rootId) || activity.turnId;
+  const participantId =
+    text(activity.payload.targetParticipantId)
+    || activity.participantId
+    || activity.sourceSessionId
+    || 'router';
+  const dispatchId =
+    text(activity.payload.dispatchId)
+    || activity.sourceSessionId
+    || text(activity.payload.sourceEventId)
+    || activity.id;
+  return {
+    rootId,
+    participantId,
+    dispatchId,
+    key: `${rootId}\u001f${participantId}\u001f${dispatchId}`,
+  };
 }
 
 export function applyRoomSnapshot(
@@ -337,6 +384,26 @@ export function abortRoomTurn(
   return next;
 }
 
+export function abortRoomParticipantTurn(
+  state: RoomProjectionState,
+  turnId: string,
+  participantId: string,
+  nowMs: number,
+): RoomProjectionState {
+  if (!state.turnsById[turnId] || !participantId) return state;
+  const next = cloneState(state);
+  completeParticipantTurn(
+    next,
+    {
+      turnId,
+      participantId,
+    },
+    'aborted',
+    nowMs,
+  );
+  return next;
+}
+
 function applyUserMessage(
   state: RoomProjectionState,
   event: UiRoomEvent,
@@ -421,7 +488,54 @@ function applyParticipantMessage(
       ? {}
       : { completedAtMs: parsed.value.completedAtMs }),
   };
+  const provisionalId =
+    `${event.turnId}:${event.participantId ?? 'participant'}:assistant`;
+  if (
+    provisionalId !== message.id &&
+    state.messagesById[provisionalId]?.status === 'streaming'
+  ) {
+    replaceProvisionalMessage(state, provisionalId, message);
+    return;
+  }
   upsertMessage(state, message, clientMessageId);
+}
+
+function replaceProvisionalMessage(
+  state: RoomProjectionState,
+  provisionalId: string,
+  message: RoomMessageProjection,
+): void {
+  const provisional = state.messagesById[provisionalId];
+  if (!provisional) {
+    upsertMessage(state, message);
+    return;
+  }
+
+  const orderIndex = state.messageOrder.indexOf(provisionalId);
+  const finalAlreadyProjected = Boolean(state.messagesById[message.id]);
+  if (orderIndex >= 0) {
+    if (finalAlreadyProjected) {
+      state.messageOrder.splice(orderIndex, 1);
+    } else {
+      state.messageOrder[orderIndex] = message.id;
+    }
+  }
+  delete state.messagesById[provisionalId];
+  state.messagesById[message.id] = message;
+
+  const turn = state.turnsById[provisional.turnId];
+  if (turn) {
+    turn.messageIds = turn.messageIds.filter(
+      (id) => id !== provisionalId && id !== message.id,
+    );
+    turn.messageIds.push(message.id);
+    turn.updatedAtMs = Math.max(
+      turn.updatedAtMs,
+      message.completedAtMs ?? message.createdAtMs,
+    );
+  } else {
+    attachMessage(state, message);
+  }
 }
 
 function upsertMessage(
@@ -456,21 +570,33 @@ function upsertActivity(
   forcedStatus?: RoomActivityProjection['status'],
 ): void {
   const participantStatus = text(payload.status);
+  const sourceEventType = text(payload.sourceEventType);
   const isCompletedRoomLifecycle =
     event.eventType === 'participant_status' &&
-    ['room_created', 'room_archived', 'room_restored', 'completed'].includes(
+    ['room_created', 'room_archived', 'room_restored'].includes(
       participantStatus,
     );
-  const id =
-    text(payload.toolCallId ?? payload.approvalId ?? payload.requestId) ||
-    `${event.eventId}:activity`;
-  const status =
-    forcedStatus ??
-    (payload.isError === true || text(payload.status) === 'failed'
+  const lifecycleId = text(
+    payload.toolCallId ?? payload.approvalId ?? payload.requestId,
+  );
+  const executionScope =
+    text(payload.dispatchId)
+    || event.sourceSessionId
+    || event.participantId
+    || 'room';
+  const id = lifecycleId
+    ? `${event.turnId}:${event.participantId ?? 'participant'}:${executionScope}:${lifecycleId}`
+    : `${event.eventId}:activity`;
+  const status = forcedStatus ?? (
+    payload.isError === true || participantStatus === 'failed'
       ? 'failed'
-      : event.eventType === 'participant_status' && !isCompletedRoomLifecycle
+      : sourceEventType === 'tool_started' || sourceEventType === 'tool_progress'
         ? 'running'
-        : 'completed');
+        : event.eventType === 'participant_status' && !isCompletedRoomLifecycle
+          ? 'running'
+          : 'completed'
+  );
+  const existing = state.activitiesById[id];
   const activity: RoomActivityProjection = {
     id,
     turnId: event.turnId,
@@ -478,9 +604,13 @@ function upsertActivity(
     sourceSessionId: event.sourceSessionId,
     kind: event.eventType,
     status,
-    summary: text(payload.summary ?? payload.message ?? payload.label) || event.eventType,
+    summary:
+      text(payload.summary ?? payload.message ?? payload.label ?? payload.toolName)
+      || sourceEventType
+      || event.eventType,
     payload,
-    createdAtMs: event.createdAtMs,
+    createdAtMs: existing?.createdAtMs ?? event.createdAtMs,
+    updatedAtMs: event.createdAtMs,
   };
   if (!state.activitiesById[id]) state.activityOrder.push(id);
   state.activitiesById[id] = activity;
@@ -527,6 +657,9 @@ function ensureTurn(
       messageIds: [],
       activityIds: [],
       participantIds: [],
+      terminalParticipantIds: [],
+      failedParticipantIds: [],
+      abortedParticipantIds: [],
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
     };
@@ -534,6 +667,68 @@ function ensureTurn(
     state.turnOrder.push(turnId);
   }
   return turn;
+}
+
+function completeParticipantTurn(
+  state: RoomProjectionState,
+  event: Pick<UiRoomEvent, 'turnId' | 'participantId'>,
+  status: Extract<RoomTurnProjection['status'], 'completed' | 'failed' | 'aborted'>,
+  nowMs: number,
+  failure = '',
+): void {
+  const participantId = event.participantId ?? '';
+  if (!participantId) {
+    completeTurn(state, event.turnId, status, nowMs, failure);
+    return;
+  }
+  const turn = ensureTurn(state, event.turnId, nowMs);
+  if (!turn.participantIds.includes(participantId)) {
+    turn.participantIds.push(participantId);
+  }
+  turn.terminalParticipantIds ??= [];
+  turn.failedParticipantIds ??= [];
+  turn.abortedParticipantIds ??= [];
+  if (
+    turn.abortedParticipantIds.includes(participantId)
+    || (
+      status === 'completed'
+      && turn.failedParticipantIds.includes(participantId)
+    )
+  ) {
+    return;
+  }
+  if (!turn.terminalParticipantIds.includes(participantId)) {
+    turn.terminalParticipantIds.push(participantId);
+  }
+  if (status === 'failed' && !turn.failedParticipantIds.includes(participantId)) {
+    turn.failedParticipantIds.push(participantId);
+  }
+  if (status === 'aborted' && !turn.abortedParticipantIds.includes(participantId)) {
+    turn.abortedParticipantIds.push(participantId);
+  }
+  turn.updatedAtMs = Math.max(turn.updatedAtMs, nowMs);
+  if (failure) turn.failure = failure;
+  for (const messageId of turn.messageIds) {
+    const message = state.messagesById[messageId];
+    if (!message || message.participantId !== participantId) continue;
+    state.messagesById[messageId] = {
+      ...message,
+      status: status === 'completed' ? 'completed' : status,
+      completedAtMs: nowMs,
+    };
+  }
+  if (
+    turn.participantIds.length > 0
+    && turn.participantIds.every((id) => turn.terminalParticipantIds?.includes(id))
+  ) {
+    turn.status = turn.failedParticipantIds.length > 0
+      ? 'failed'
+      : turn.abortedParticipantIds.length > 0
+        ? 'aborted'
+        : 'completed';
+  } else {
+    turn.status = 'running';
+  }
 }
 
 function completeTurn(
@@ -546,6 +741,9 @@ function completeTurn(
   const turn = ensureTurn(state, turnId, nowMs);
   turn.status = status;
   turn.updatedAtMs = nowMs;
+  turn.terminalParticipantIds = [...turn.participantIds];
+  turn.failedParticipantIds = status === 'failed' ? [...turn.participantIds] : [];
+  turn.abortedParticipantIds = status === 'aborted' ? [...turn.participantIds] : [];
   if (failure) turn.failure = failure;
   for (const messageId of turn.messageIds) {
     const message = state.messagesById[messageId];
@@ -588,6 +786,9 @@ function cloneState(state: RoomProjectionState): RoomProjectionState {
           messageIds: [...turn.messageIds],
           activityIds: [...turn.activityIds],
           participantIds: [...turn.participantIds],
+          terminalParticipantIds: [...(turn.terminalParticipantIds ?? [])],
+          failedParticipantIds: [...(turn.failedParticipantIds ?? [])],
+          abortedParticipantIds: [...(turn.abortedParticipantIds ?? [])],
         },
       ]),
     ),
@@ -613,7 +814,11 @@ function publicRoomPayload(value: unknown): Record<string, unknown> {
     envelope.data !== null &&
     !Array.isArray(envelope.data)
   ) {
-    return record(envelope.data);
+    return {
+      ...record(envelope.data),
+      sourceEventId: envelope.sourceEventId,
+      sourceEventType: envelope.sourceEventType,
+    };
   }
   return envelope;
 }

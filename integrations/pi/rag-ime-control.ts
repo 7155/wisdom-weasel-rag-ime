@@ -95,10 +95,7 @@ type ToolParams = {
   batchId?: string;
   itemId?: string;
   title?: string;
-  status?:
-    | "pending" | "in_progress" | "completed"
-    | "queued" | "delivering" | "delivered" | "replied"
-    | "failed" | "stale" | "cancelled";
+  status?: string;
 };
 
 type ToolSpec = {
@@ -623,7 +620,7 @@ const toolSpecs: ToolSpec[] = [
       "增加、更正、遗忘必须先调用对应 preview，再把返回的真实 proposalId 交给对应 apply；没有原生审批回执不得声称已修改。targetId 只能使用 search/get 返回的稳定 ID。",
       "Evidence 处于 sensitive、not_for_memory、expired、显式遗忘或 tombstoned 状态时必须失败关闭；不得引用、重建或通过 Timeline 绕过来源治理。审核后隐藏的原始输入不等于显式遗忘：可以使用已批准的派生 Atom，但不得重新打开或引用隐藏原文。",
       "长期记忆只接收可跨会话复用的事实、稳定偏好、明确决定、长期约束和持续计划。无事实问题、失败/拒绝/超时回执、整理流程状态、重复问句和当轮临时指令必须进入 not_for_memory，仅保留 Evidence 与审计记录。",
-      "zhiyou-v1 的普通聊天、回合结束、进度播报和助手自述不得触发记忆整理。仅在项目/功能/阶段实际完成且有可复用信息、用户明确要求，或低频空闲批处理时调用；完成边界先本地过 Durable Information Gate，无内容则不调用。",
+      "companion-present-v1 的普通聊天、回合结束、进度播报和助手自述不得触发记忆整理。仅在项目/功能/阶段实际完成且有可复用信息、用户明确要求，或低频空闲批处理时调用；完成边界先本地过 Durable Information Gate，无内容则不调用。",
       "问题中若包含稳定陈述，只抽取陈述部分；Atom、Book 与 Timeline 必须综合成规范事实或任务摘要，禁止原封不动复制长输入、问句、工具回执、runId 或草案提示。instruction 只能收窄范围，不能放宽这些门禁。",
       "需要整理时只调用一次 curation_prepare，并明确传 trigger=task_completion、explicit_request 或 idle_batch；不要在主对话逐条生成或复述 Atom、Group、Tag、Book 和词库操作。maintenance_preview 仅为旧客户端别名。",
       "curation_prepare 和 maintenance_review 会立即暂停当前回合并打开控制中心审阅；恢复后只简要说明审阅结果并结束本轮，不要再次调用记忆维护工具。maintenance_apply 和 maintenance_rollback 必须等待控制中心原生批准。",
@@ -753,29 +750,21 @@ const toolSpecs: ToolSpec[] = [
   {
     name: "ime_agents",
     label: "多 Agent 协作",
-    description: "管理有界任务委派，并在同一 Room 内进行可审计的 Agent 通信。",
-    operations: [
-      "catalog", "delegate", "status", "artifact", "abort",
-      "room_send", "room_ask", "room_reply", "room_mailbox",
-    ],
+    description: "管理当前 Session 的有界子 Agent 委派；Room 使用独立的受管工具目录。",
+    operations: ["catalog", "delegate", "status", "artifact", "abort"],
     progress: {
       catalog: "正在读取可用协作角色",
       delegate: "正在启动受限子 Agent",
       status: "正在检查协作进度",
       artifact: "正在读取有界协作记录",
       abort: "正在停止协作任务",
-      room_send: "正在向房间成员发送协作信息",
-      room_ask: "正在向房间成员提出关联问题",
-      room_reply: "正在发送关联回复",
-      room_mailbox: "正在读取房间协作信箱",
     },
     guidelines: [
       "只能使用 catalog 返回的固定 Agent；单批最多两个任务、最大深度 2，不得请求加载市场自定义代码。",
       "fresh 只携带任务，fork 继承当前会话上下文；涉及当前讨论的复核或规划时才使用 fork。",
       "用户明确要求先规划再执行时，优先委派只读 planner：它只返回带依赖、风险、产物和验收证据的方案；用户确认后再把可执行步骤写入 agent_plan，不能把规划结果当作已经执行。",
       "子 Agent 是临时执行单元，结果交回当前会话，不要把它描述成长期群聊成员。",
-      "Room 通信前先调用 room_mailbox 获取受信的 participantId；send 是通知，ask 要求对方随后用 room_reply 关联回复。",
-      "clientMessageId 必须由当前回合稳定生成，重试时保持不变；不要在参数里伪造 sourceSessionId 或 sourceParticipantId。",
+      "Room 中只使用当前 Dispatch 披露的 room_state、room_post、room_commit；不要通过 ime_agents 模拟 Room 发言或责任流转。",
       "worker 仍没有任意文件或 Shell 权限；所有控制中心写操作继续经过原生审批。",
     ],
   },
@@ -1074,14 +1063,7 @@ function parametersFor(spec: ToolSpec) {
       wait: { type: "boolean" },
       batchId: { type: "string", maxLength: 240 },
       artifactId: { type: "string", maxLength: 240 },
-      targetParticipantId: { type: "string", maxLength: 240 },
-      clientMessageId: { type: "string", minLength: 1, maxLength: 200 },
-      replyTo: { type: "string", maxLength: 240 },
-      content: { type: "string", minLength: 1, maxLength: 4000 },
-      status: {
-        type: "string",
-        enum: ["queued", "delivering", "delivered", "replied", "failed", "stale", "cancelled"],
-      },
+      status: { type: "string", maxLength: 40 },
     },
   };
 }

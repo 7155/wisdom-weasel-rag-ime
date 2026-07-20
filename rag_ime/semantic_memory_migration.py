@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Mapping
 
-from .activity_timeline import DailyActivityTimelineStore
+from .activity_timeline import DailyActivityTimelineStore, TIMELINE_SEGMENTATION_MODE
 from .db import apply_database_migrations, migration_status
 from .embeddings import EmbeddingProvider
 from .memory_ingest import normalize_text
@@ -21,7 +21,7 @@ from .text_utils import compact_whitespace, now_ms
 
 
 SEMANTIC_MEMORY_MIGRATION_SCHEMA_VERSION = "rag-ime.semantic-memory-migration.v1"
-_SEMANTIC_TIMELINE_MODE = "semantic_task_v2"
+_SEMANTIC_TIMELINE_MODE = TIMELINE_SEGMENTATION_MODE
 _LEGACY_TIMELINE_MODE = "legacy_app_interval_v1"
 _MIN_PROMOTABLE_CONFIDENCE = 0.8
 _MIN_PROMOTABLE_TEXT_LENGTH = 12

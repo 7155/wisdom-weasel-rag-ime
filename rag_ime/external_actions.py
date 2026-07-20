@@ -289,7 +289,7 @@ def _preserve_control_records(
                 str(session.get("sessionFile") or ""),
                 str(session.get("title") or "恢复后的 Agent 会话")[:120],
                 str(session.get("mode") or "assistant"),
-                str(session.get("roleId") or "zhiyou-v1"),
+                str(session.get("roleId") or "companion-present-v1"),
                 str(session.get("roleVersion") or "1"),
                 str(session.get("modelProfile") or "deepseek-v4"),
                 str(session.get("toolProfileVersion") or "control-center-v1"),

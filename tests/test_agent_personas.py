@@ -45,7 +45,8 @@ class AgentPersonaStoreTests(unittest.TestCase):
         with sqlite3.connect(self.db_path) as conn:
             self.assertEqual(
                 conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0],
-                94,            )
+                95,
+            )
             private = conn.execute(
                 """
                 SELECT persona_prompt, safety_policy_prompt, tool_policy_json
@@ -80,12 +81,12 @@ class AgentPersonaStoreTests(unittest.TestCase):
 
     def test_builtin_defaults_are_fixed_while_user_defaults_are_persistent(self) -> None:
         self.assertEqual(
-            self.store.runtime_defaults("zhiyou-v1", "1"),
+            self.store.runtime_defaults("companion-present-v1", "1"),
             {"modelProfile": "gpt/gpt-5.6-terra", "thinkingLevel": "max"},
         )
         with self.assertRaisesRegex(ValueError, "fixed"):
             self.store.set_runtime_defaults(
-                "zhiyou-v1",
+                "companion-present-v1",
                 "1",
                 model_profile="gpt/gpt-5.6-terra",
                 thinking_level="high",

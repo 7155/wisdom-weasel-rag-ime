@@ -6,7 +6,9 @@ import {
   parseRoomEventSnapshot,
   reduceRoomEvent,
   replayRoomEventSnapshot,
+  roomActivityLaneIdentity,
 } from './room-reducer';
+import { parseRoomEvent } from './validators';
 import { roomEventFixture as roomEvent } from '@/test/fixtures/events';
 
 describe('RoomEventReducer', () => {
@@ -63,6 +65,33 @@ describe('RoomEventReducer', () => {
     });
   });
 
+  it('replaces a provisional streaming reply when the final event has a real message id', () => {
+    const streaming = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      parseRoomEvent({
+        ...wireRoomEvent(1, 'participant_delta', { delta: '先流式' }),
+      }),
+    ).state;
+    const completed = reduceRoomEvent(
+      streaming,
+      parseRoomEvent({
+        ...wireRoomEvent(2, 'participant_message', {
+          message: roomServerMessage('room-final-1', '最终回复'),
+        }),
+      }),
+    ).state;
+
+    expect(completed.messageOrder).toEqual(['room-final-1']);
+    expect(completed.turnsById['room-turn-1'].messageIds).toEqual(['room-final-1']);
+    expect(completed.messagesById['room-final-1']).toMatchObject({
+      status: 'completed',
+      text: '最终回复',
+    });
+    expect(
+      completed.messagesById['room-turn-1:participant-1:assistant'],
+    ).toBeUndefined();
+  });
+
   it('merges optimistic room input by clientMessageId and keeps unknown events', () => {
     const optimistic = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
       clientMessageId: 'room-client-1',
@@ -84,6 +113,19 @@ describe('RoomEventReducer', () => {
 
     expect(merged.messageOrder).toEqual(['room-user-1']);
     expect(unknown.diagnostics[0]).toMatchObject({ eventType: 'future_room_vote' });
+  });
+
+  it('shows an optimistic turn as queued before the router accepts it', () => {
+    const optimistic = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
+      clientMessageId: 'room-client-pending',
+      text: '立即显示发送状态',
+      nowMs: 12,
+    });
+
+    expect(optimistic.turnsById['local-room-turn:room-client-pending']).toMatchObject({
+      status: 'queued',
+      createdAtMs: 12,
+    });
   });
 
   it('unwraps the public data envelope used by real participant runtime events', () => {
@@ -108,6 +150,173 @@ describe('RoomEventReducer', () => {
     expect(activity.activitiesById['room-1:2:activity']).toMatchObject({
       summary: '已整理相关资料',
       status: 'completed',
+    });
+  });
+
+  it('keeps one live tool activity from start through its final public summary', () => {
+    const started = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_activity', {
+        sourceEventId: 'agent-session:tool:1',
+        sourceEventType: 'tool_started',
+        data: {
+          toolCallId: 'tool-call-1',
+          toolName: 'ime_memory',
+        },
+      }),
+    ).state;
+    const finished = reduceRoomEvent(
+      started,
+      roomEvent(2, 'participant_activity', {
+        sourceEventId: 'agent-session:tool:2',
+        sourceEventType: 'tool_finished',
+        data: {
+          toolCallId: 'tool-call-1',
+          toolName: 'ime_memory',
+          summary: '找到了两条可用历史输入',
+          isError: false,
+        },
+      }),
+    ).state;
+
+    const activityId = 'room-turn-1:participant-1:session-room-1:tool-call-1';
+    expect(started.activitiesById[activityId]).toMatchObject({
+      status: 'running',
+      summary: 'ime_memory',
+      createdAtMs: 10,
+      payload: { sourceEventType: 'tool_started' },
+    });
+    expect(finished.activityOrder).toEqual([activityId]);
+    expect(finished.turnsById['room-turn-1'].activityIds).toEqual([activityId]);
+    expect(finished.activitiesById[activityId]).toMatchObject({
+      status: 'completed',
+      summary: '找到了两条可用历史输入',
+      createdAtMs: 10,
+      updatedAtMs: 20,
+      payload: { sourceEventType: 'tool_finished' },
+    });
+  });
+
+  it('isolates parallel activities by root, participant, and dispatch', () => {
+    const first = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_activity', {
+        dispatchId: 'dispatch-a',
+        rootId: 'root-a',
+        toolCallId: 'call-1',
+        sourceEventType: 'tool_started',
+        toolName: 'ime_memory',
+      }),
+    ).state;
+    const secondEvent = roomEvent(2, 'participant_activity', {
+      dispatchId: 'dispatch-b',
+      rootId: 'root-a',
+      toolCallId: 'call-1',
+      sourceEventType: 'tool_started',
+      toolName: 'ime_memory',
+    });
+    secondEvent.participantId = 'participant-2';
+    secondEvent.sourceSessionId = 'session-room-2';
+    const second = reduceRoomEvent(first, secondEvent).state;
+    const activities = second.activityOrder.map((id) => second.activitiesById[id]);
+
+    expect(second.activityOrder).toHaveLength(2);
+    expect(activities.map(roomActivityLaneIdentity).map((identity) => identity.key)).toEqual([
+      'root-a\u001fparticipant-1\u001fdispatch-a',
+      'root-a\u001fparticipant-2\u001fdispatch-b',
+    ]);
+  });
+
+  it('waits for every routed Agent before closing a multi-Agent root', () => {
+    const routeOne = roomEvent(1, 'route_decision', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+      targetParticipantId: 'participant-1',
+    });
+    const routeTwo = roomEvent(2, 'route_decision', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-2',
+      targetParticipantId: 'participant-2',
+    });
+    routeTwo.participantId = 'participant-2';
+    routeTwo.sourceSessionId = 'session-room-2';
+    const firstDone = roomEvent(3, 'turn_completed', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+    });
+    const secondFailed = roomEvent(4, 'turn_failed', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-2',
+      error: '证据源暂时不可用',
+    });
+    secondFailed.participantId = 'participant-2';
+    secondFailed.sourceSessionId = 'session-room-2';
+
+    const routedOne = reduceRoomEvent(createRoomProjection('room-1'), routeOne).state;
+    const routedBoth = reduceRoomEvent(routedOne, routeTwo).state;
+    const oneTerminal = reduceRoomEvent(routedBoth, firstDone).state;
+    const allTerminal = reduceRoomEvent(oneTerminal, secondFailed).state;
+
+    expect(oneTerminal.turnsById['room-turn-1']).toMatchObject({
+      status: 'running',
+      participantIds: ['participant-1', 'participant-2'],
+      terminalParticipantIds: ['participant-1'],
+    });
+    expect(allTerminal.turnsById['room-turn-1']).toMatchObject({
+      status: 'failed',
+      terminalParticipantIds: ['participant-1', 'participant-2'],
+      failedParticipantIds: ['participant-2'],
+    });
+  });
+
+  it('closes a root as aborted and never lets a late completed event resurrect it', () => {
+    const routeOne = roomEvent(1, 'route_decision', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+      targetParticipantId: 'participant-1',
+    });
+    const routeTwo = roomEvent(2, 'route_decision', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-2',
+      targetParticipantId: 'participant-2',
+    });
+    routeTwo.participantId = 'participant-2';
+    routeTwo.sourceSessionId = 'session-room-2';
+    const firstAborted = roomEvent(3, 'turn_completed', {
+      status: 'aborted',
+      aborted: true,
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+    });
+    const secondAborted = roomEvent(4, 'turn_completed', {
+      status: 'aborted',
+      aborted: true,
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-2',
+    });
+    secondAborted.participantId = 'participant-2';
+    secondAborted.sourceSessionId = 'session-room-2';
+    const lateCompleted = roomEvent(5, 'turn_completed', {
+      status: 'completed',
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+    });
+
+    const routedOne = reduceRoomEvent(createRoomProjection('room-1'), routeOne).state;
+    const routedBoth = reduceRoomEvent(routedOne, routeTwo).state;
+    const oneStopped = reduceRoomEvent(routedBoth, firstAborted).state;
+    const allStopped = reduceRoomEvent(oneStopped, secondAborted).state;
+    const afterLate = reduceRoomEvent(allStopped, lateCompleted).state;
+
+    expect(oneStopped.turnsById['room-turn-1'].status).toBe('running');
+    expect(allStopped.turnsById['room-turn-1']).toMatchObject({
+      status: 'aborted',
+      terminalParticipantIds: ['participant-1', 'participant-2'],
+      abortedParticipantIds: ['participant-1', 'participant-2'],
+    });
+    expect(afterLate.turnsById['room-turn-1']).toMatchObject({
+      status: 'aborted',
+      abortedParticipantIds: ['participant-1', 'participant-2'],
     });
   });
 
@@ -216,13 +425,37 @@ function roomSnapshotFixture(
   };
 }
 
+function roomServerMessage(id: string, text: string) {
+  return {
+    schemaVersion: 'rag-ime.agent-message.v1',
+    id,
+    sessionId: 'session-room-1',
+    turnId: 'room-turn-1',
+    role: 'assistant',
+    status: 'completed',
+    blocks: [
+      {
+        id: `${id}:text`,
+        type: 'text',
+        status: 'completed',
+        presentationKind: 'markdown',
+        data: { text },
+      },
+    ],
+    attachments: [],
+    citations: [],
+    createdAtMs: 10,
+    completedAtMs: 20,
+  };
+}
+
 function roomParticipant(id: string, sessionId: string, ordinal: number) {
   return {
     schemaVersion: 'rag-ime.agent-participant.v1',
     id,
     roomId: 'room-1',
     sessionId,
-    roleId: ordinal === 0 ? 'zhiyou-v1' : 'hermes-v1',
+    roleId: ordinal === 0 ? 'companion-present-v1' : 'companion-firstlight-v1',
     roleVersion: '1',
     displayName: ordinal === 0 ? '智鼬·此刻' : '智鼬·初识',
     collaborationRole: ordinal === 0 ? 'coordinator' : 'researcher',

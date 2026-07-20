@@ -171,6 +171,62 @@ class AgentRoomIntercomStore:
                 ).fetchall()
         return [_intercom_payload(row) for row in rows]
 
+    def cancel_for_sessions(
+        self,
+        session_ids: list[str] | tuple[str, ...] | set[str],
+        *,
+        reason: str,
+    ) -> list[dict[str, object]]:
+        """Cancel queued/delivering intercom work touching one execution chain."""
+
+        normalized = sorted(
+            {
+                str(session_id or "").strip()
+                for session_id in session_ids
+                if str(session_id or "").strip()
+            }
+        )
+        if not normalized:
+            return []
+        placeholders = ",".join("?" for _ in normalized)
+        now = _now_ms()
+        error = _bounded_error(reason or "Cancelled with Room root")
+        with self._connect(immediate=True) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT id FROM agent_room_intercom_messages
+                WHERE status IN ('queued', 'delivering')
+                  AND (
+                    source_session_id IN ({placeholders})
+                    OR target_session_id IN ({placeholders})
+                  )
+                ORDER BY created_at_ms ASC, id ASC
+                """,  # noqa: S608 - placeholders are generated from the bounded ID list.
+                tuple(normalized) + tuple(normalized),
+            ).fetchall()
+            identifiers = [str(row["id"]) for row in rows]
+            if not identifiers:
+                return []
+            message_placeholders = ",".join("?" for _ in identifiers)
+            conn.execute(
+                f"""
+                UPDATE agent_room_intercom_messages
+                SET status = 'cancelled', error = ?, updated_at_ms = ?
+                WHERE id IN ({message_placeholders})
+                  AND status IN ('queued', 'delivering')
+                """,  # noqa: S608 - placeholders are generated from selected durable IDs.
+                (error, now, *identifiers),
+            )
+            cancelled = conn.execute(
+                f"""
+                SELECT * FROM agent_room_intercom_messages
+                WHERE id IN ({message_placeholders}) AND status = 'cancelled'
+                ORDER BY created_at_ms ASC, id ASC
+                """,  # noqa: S608 - placeholders are generated from selected durable IDs.
+                tuple(identifiers),
+            ).fetchall()
+        return [_intercom_payload(row) for row in cancelled]
+
     def next_queued(self) -> dict[str, object] | None:
         candidates = self.queued_candidates(limit=1)
         return candidates[0] if candidates else None
@@ -561,23 +617,44 @@ class AgentRoomIntercomRouter:
             try:
                 accepted = self.delivery_handler(claimed)
             except AgentRoomTargetBusy as exc:
-                queued = self.store.requeue(str(claimed["id"]), error=str(exc))
-                self._audit(queued, "queued")
+                try:
+                    queued = self.store.requeue(str(claimed["id"]), error=str(exc))
+                except ValueError:
+                    current = self.store.get(str(claimed["id"]))
+                    if str(current.get("status") or "") != "cancelled":
+                        raise
+                    self._audit(current, "cancelled")
+                else:
+                    self._audit(queued, "queued")
                 self._wake.wait(timeout=0.25)
                 self._wake.clear()
             except Exception as exc:
-                failed = self.store.mark_failed(
-                    str(claimed["id"]),
-                    error=str(exc),
-                    expected="delivering",
-                )
-                self._audit(failed, "failed")
+                try:
+                    failed = self.store.mark_failed(
+                        str(claimed["id"]),
+                        error=str(exc),
+                        expected="delivering",
+                    )
+                except ValueError:
+                    current = self.store.get(str(claimed["id"]))
+                    if str(current.get("status") or "") != "cancelled":
+                        raise
+                    self._audit(current, "cancelled")
+                else:
+                    self._audit(failed, "failed")
             else:
-                delivered = self.store.mark_delivered(
-                    str(claimed["id"]),
-                    accepted_turn_id=str(accepted.get("turnId") or ""),
-                )
-                self._audit(delivered, "delivered")
+                try:
+                    delivered = self.store.mark_delivered(
+                        str(claimed["id"]),
+                        accepted_turn_id=str(accepted.get("turnId") or ""),
+                    )
+                except ValueError:
+                    current = self.store.get(str(claimed["id"]))
+                    if str(current.get("status") or "") != "cancelled":
+                        raise
+                    self._audit(current, "cancelled")
+                else:
+                    self._audit(delivered, "delivered")
 
     def _generation_matches(self, item: Mapping[str, object]) -> bool:
         try:

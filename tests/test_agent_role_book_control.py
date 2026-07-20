@@ -38,7 +38,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
         )
         self.sessions = AgentSessionStore(self.db_path)
         self.seed = self.roles.ensure_seeded(
-            "zhiyou-v1",
+            "companion-present-v1",
             "1",
             "智鼬",
             "陪用户完成项目",
@@ -47,7 +47,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
         )
         self.old_session = self.sessions.create(
             title="旧会话",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             role_version="1",
             role_book_revision_id=str(self.seed["revisionId"]),
             created_at_ms=110,
@@ -59,7 +59,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
 
     def test_daily_proposals_require_r1_preview_and_keep_old_session_pinned(self) -> None:
         catalog = self.control.catalog(
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             role_version="1",
         )
         self.assertFalse(catalog["activationPolicy"]["agentCanActivate"])
@@ -90,7 +90,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
         )
 
         selection = {
-            "roleId": "zhiyou-v1",
+            "roleId": "companion-present-v1",
             "roleVersion": "1",
             "revisionId": "",
             "draftId": self.daily_draft["draftId"],
@@ -116,22 +116,17 @@ class AgentRoleBookControlTests(unittest.TestCase):
         self.assertTrue(applied["ok"])
         revision = applied["result"]["revision"]
         self.assertEqual(revision["status"], "active")
-        self.assertEqual(
-            revision["sections"]["personality"][0]["text"],
-            "沟通时先给出具体例子",
-        )
-        self.assertEqual(
-            revision["sections"]["capabilities"][0]["text"],
-            "能修复 SQLite 事务恢复问题",
-        )
-        self.assertEqual(
-            revision["sections"]["lessonsAndLimits"][0]["text"],
-            "不要把未经验证的推断写成事实",
-        )
-        self.assertEqual(
-            revision["sections"]["activeCommitments"][0]["text"],
-            "下一轮先运行聚焦回归测试",
-        )
+        expected_text = {
+            "personality": "沟通时先给出具体例子",
+            "capabilities": "能修复 SQLite 事务恢复问题",
+            "lessonsAndLimits": "不要把未经验证的推断写成事实",
+            "activeCommitments": "下一轮先运行聚焦回归测试",
+        }
+        for section, text in expected_text.items():
+            self.assertIn(
+                text,
+                [item["text"] for item in revision["sections"][section]],
+            )
 
         old_after = self.sessions.get(str(self.old_session["id"]))
         self.assertEqual(
@@ -140,7 +135,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
         )
         new_session = self.sessions.create(
             title="新会话",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             role_version="1",
             role_book_revision_id=str(revision["revisionId"]),
             created_at_ms=200,
@@ -150,7 +145,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
             revision["revisionId"],
         )
 
-        snapshot = self.observability.snapshot(role_id="zhiyou-v1")
+        snapshot = self.observability.snapshot(role_id="companion-present-v1")
         self.assertEqual(
             snapshot["drafts"]["latestDecisionByOutcome"],
             {"accepted": 1},
@@ -181,7 +176,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
     def test_permissions_and_unselected_daily_text_cannot_enter_revision(self) -> None:
         rejected = self.control.activation_preview(
             {
-                "roleId": "zhiyou-v1",
+                "roleId": "companion-present-v1",
                 "roleVersion": "1",
                 "draftId": self.daily_draft["draftId"],
                 "traitIndexes": [0],
@@ -195,7 +190,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
         self.assertEqual(rejected["errorCode"], "invalid_request")
 
         selection = {
-            "roleId": "zhiyou-v1",
+            "roleId": "companion-present-v1",
             "roleVersion": "1",
             "revisionId": "",
             "draftId": self.daily_draft["draftId"],
@@ -215,10 +210,24 @@ class AgentRoleBookControlTests(unittest.TestCase):
         )
         self.assertTrue(applied["ok"])
         sections = applied["result"]["revision"]["sections"]
-        self.assertEqual(sections["personality"], [])
-        self.assertEqual(len(sections["capabilities"]), 1)
-        self.assertEqual(sections["lessonsAndLimits"], [])
-        self.assertEqual(sections["activeCommitments"], [])
+        seed_sections = self.seed["sections"]
+        self.assertEqual(sections["personality"], seed_sections["personality"])
+        self.assertEqual(
+            sections["lessonsAndLimits"],
+            seed_sections["lessonsAndLimits"],
+        )
+        self.assertEqual(
+            sections["activeCommitments"],
+            seed_sections["activeCommitments"],
+        )
+        self.assertEqual(
+            len(sections["capabilities"]),
+            len(seed_sections["capabilities"]) + 1,
+        )
+        self.assertIn(
+            "能修复 SQLite 事务恢复问题",
+            [item["text"] for item in sections["capabilities"]],
+        )
         encoded = json.dumps(applied, ensure_ascii=False)
         self.assertNotIn("不应被采用的另一条特征", encoded)
         self.assertNotIn("不要把未经验证的推断写成事实", encoded)
@@ -228,7 +237,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
         for field in ("lessonIndexes", "commitmentIndexes"):
             with self.subTest(field=field):
                 selection = {
-                    "roleId": "zhiyou-v1",
+                    "roleId": "companion-present-v1",
                     "roleVersion": "1",
                     "revisionId": "",
                     "draftId": self.daily_draft["draftId"],
@@ -246,7 +255,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
     def test_daily_draft_can_be_deferred_without_changing_active_revision(self) -> None:
         result = self.control.decide_daily_draft(
             {
-                "roleId": "zhiyou-v1",
+                "roleId": "companion-present-v1",
                 "roleVersion": "1",
                 "draftId": self.daily_draft["draftId"],
                 "decision": "deferred",
@@ -255,7 +264,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["decision"]["decision"], "deferred")
         self.assertEqual(
-            self.roles.active("zhiyou-v1", "1")["revisionId"],
+            self.roles.active("companion-present-v1", "1")["revisionId"],
             self.seed["revisionId"],
         )
 
@@ -264,7 +273,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
     ) -> None:
         evidence_id = str(self.daily_draft["sourceEvidenceIds"][0])
         first = self.roles.propose_revision(
-            "zhiyou-v1",
+            "companion-present-v1",
             "1",
             {
                 "capabilities": [
@@ -280,7 +289,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
             created_at_ms=150,
         )
         selection = {
-            "roleId": "zhiyou-v1",
+            "roleId": "companion-present-v1",
             "roleVersion": "1",
             "revisionId": first["revisionId"],
             "draftId": "",
@@ -290,13 +299,18 @@ class AgentRoleBookControlTests(unittest.TestCase):
         preview = self.control.activation_preview(selection)
         self.assertTrue(preview["ok"])
         self.assertEqual(preview["summary"]["evidenceCount"], 1)
+        capabilities_diff = next(
+            item
+            for item in preview["summary"]["diff"]["sections"]
+            if item["section"] == "capabilities"
+        )
         self.assertEqual(
-            preview["summary"]["diff"]["sections"][0]["added"][0]["text"],
+            capabilities_diff["added"][0]["text"],
             "能完成可恢复的角色书迁移",
         )
 
         newer = self.roles.propose_revision(
-            "zhiyou-v1",
+            "companion-present-v1",
             "1",
             {
                 "personality": [
@@ -322,7 +336,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
         self,
     ) -> None:
         fake = self.roles.propose_revision(
-            "zhiyou-v1",
+            "companion-present-v1",
             "1",
             {
                 "recentWork": [
@@ -338,7 +352,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
         )
         fake_preview = self.control.activation_preview(
             {
-                "roleId": "zhiyou-v1",
+                "roleId": "companion-present-v1",
                 "roleVersion": "1",
                 "revisionId": fake["revisionId"],
                 "draftId": "",
@@ -351,7 +365,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
 
         evidence_id = str(self.daily_draft["sourceEvidenceIds"][0])
         real = self.roles.propose_revision(
-            "zhiyou-v1",
+            "companion-present-v1",
             "1",
             {
                 "recentWork": [
@@ -376,7 +390,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
             )
         tampered = self.control.activation_preview(
             {
-                "roleId": "zhiyou-v1",
+                "roleId": "companion-present-v1",
                 "roleVersion": "1",
                 "revisionId": real["revisionId"],
                 "draftId": "",
@@ -410,13 +424,13 @@ class AgentRoleBookControlTests(unittest.TestCase):
             source_id="work:role-book-review",
             idempotency_key="work:role-book-review",
             text="完成角色书事务恢复验证",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             metadata={"accepted": True},
             provenance={
                 "sourceType": "work_receipt",
                 "sourceId": "work:role-book-review",
                 "project": "rag-ime",
-                "roleId": "zhiyou-v1",
+                "roleId": "companion-present-v1",
             },
             occurred_at_ms=120,
         )["evidence"]
@@ -426,7 +440,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
             "draftId": "role-book-draft:test-control",
             "status": "draft",
             "project": "rag-ime",
-            "roleId": "zhiyou-v1",
+            "roleId": "companion-present-v1",
             "baseRoleVersion": "1",
             "sourceDigestId": "digest:test-control",
             "sourceEvidenceIds": [evidence_id],
@@ -499,7 +513,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
                     source_evidence_ids_json, output_json, created_at_ms,
                     completed_at_ms, updated_at_ms
                 ) VALUES (
-                    'run:test-control', 'rag-ime', 'zhiyou-v1', '1',
+                    'run:test-control', 'rag-ime', 'companion-present-v1', '1',
                     'daily:test-control', 'succeeded', 100, 140, ?, ?, 140, 140, 140
                 )
                 """,

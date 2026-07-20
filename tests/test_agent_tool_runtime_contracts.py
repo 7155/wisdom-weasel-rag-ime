@@ -89,6 +89,15 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertEqual(len(manifests), 21)
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):
+                self.assertEqual(
+                    set(manifest) & {"name", "when", "notFor", "input", "output", "does"},
+                    {"name", "when", "notFor", "input", "output", "does"},
+                )
+                self.assertTrue(manifest["when"])
+                self.assertTrue(manifest["notFor"])
+                self.assertTrue(manifest["input"])
+                self.assertTrue(manifest["output"])
+                self.assertTrue(manifest["does"])
                 schema = manifest["parameters"]
                 self.assertEqual(schema["type"], "object")
                 branches = schema["oneOf"]
@@ -109,15 +118,30 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                     )
                     self.assertIn("op", branch["required"])
 
-    def test_runtime_manifest_keeps_full_catalog_schema_bounded(self) -> None:
+    def test_runtime_manifest_keeps_internal_catalog_and_public_cards_bounded(self) -> None:
         _catalog, manifests = self._runtime_contracts(mode="coordinator")
         encoded = json.dumps(
             manifests,
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
+        cards = [
+            {
+                key: manifest[key]
+                for key in ("name", "when", "notFor", "input", "output", "does")
+            }
+            for manifest in manifests
+        ]
+        public_encoded = json.dumps(
+            cards,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
 
-        self.assertLess(len(encoded), 32_000)
+        # The full registry is an internal Product -> Pi handshake and includes
+        # every deferred JSON Schema. Only the compact cards enter the prompt.
+        self.assertLess(len(encoded), 40_000)
+        self.assertLess(len(public_encoded), 12_000)
 
     def test_runtime_contracts_require_tool_specific_identifiers_and_payloads(self) -> None:
         _catalog, manifests = self._runtime_contracts(mode="coordinator")
@@ -215,22 +239,9 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertEqual(effective["workspace_list"], {"list"})
         self.assertEqual(effective["workspace_read"], {"read"})
         self.assertEqual(effective["workspace_search"], {"search"})
-        self.assertTrue(
-            {
-                "room_send",
-                "room_ask",
-                "room_reply",
-                "room_mailbox",
-                "room_assign",
-                "room_submit",
-                "room_accept",
-                "room_return",
-                "room_block",
-                "room_escalate",
-                "room_work",
-            }.issubset(
-                effective["ime_agents"]
-            )
+        self.assertEqual(
+            effective["ime_agents"],
+            {"catalog", "delegate", "status", "artifact", "abort"},
         )
         self.assertNotIn("workspace_patch", effective)
         self.assertNotIn("workspace_shell", effective)

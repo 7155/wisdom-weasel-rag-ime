@@ -218,7 +218,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn("failed receipts", agent_prompt)
         self.assertIn("workflow noise", agent_prompt)
         self.assertIn("duplicate questions", agent_prompt)
-        self.assertIn("Do not curate ordinary zhiyou-v1 chat turns", agent_prompt)
+        self.assertIn("Do not curate ordinary companion-present-v1 chat turns", agent_prompt)
         self.assertIn("trigger=task_completion", agent_prompt)
         self.assertIn("never activate it", agent_prompt)
 

@@ -28,7 +28,7 @@ describe('preview control transport', () => {
 
     expect(summary.owners).toEqual(expect.arrayContaining([
       expect.objectContaining({ ownerKind: 'user', ownerId: 'default' }),
-      expect.objectContaining({ ownerKind: 'agent', ownerId: 'zhiyou-v1' }),
+      expect.objectContaining({ ownerKind: 'agent', ownerId: 'companion-present-v1' }),
     ]));
     expect(before.items.find((item) => item.id === 'event:10001')).toMatchObject({
       id: 'event:10001',

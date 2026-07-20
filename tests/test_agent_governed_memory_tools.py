@@ -29,14 +29,14 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self.sessions.initialize()
         self.session = self.sessions.create(
             title="governed tools",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             role_version="1",
             created_at_ms=1,
         )
         self.role_books = AgentRoleBookStore(self.db_path)
         self.role_books.initialize()
         self.seed = self.role_books.ensure_seeded(
-            "zhiyou-v1",
+            "companion-present-v1",
             "1",
             "智鼬·此刻",
             "陪用户持续完成项目",
@@ -45,7 +45,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         )
         self.role_books.pin_session(
             str(self.session["id"]),
-            "zhiyou-v1",
+            "companion-present-v1",
             "1",
             pinned_at_ms=3,
         )
@@ -853,7 +853,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self.assertFalse(proposed["result"]["activationAvailableInTool"])
         self.assertFalse(proposed["activeRevisionChanged"])
         self.assertEqual(
-            self.role_books.active("zhiyou-v1", "1")["revisionId"],
+            self.role_books.active("companion-present-v1", "1")["revisionId"],
             self.seed["revisionId"],
         )
         review = self._execute(
@@ -945,13 +945,13 @@ class GovernedMemoryToolTests(unittest.TestCase):
             self.assertNotIn("text", item)
             self.assertNotIn("contentText", item)
         self.assertEqual(
-            self.role_books.active("zhiyou-v1", "1")["revisionId"],
+            self.role_books.active("companion-present-v1", "1")["revisionId"],
             self.seed["revisionId"],
         )
 
         other_role = self.sessions.create(
             title="other role",
-            role_id="hermes-v1",
+            role_id="companion-firstlight-v1",
             role_version="1",
             created_at_ms=2_000,
         )
@@ -1020,7 +1020,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
                 )
 
         safe_draft = self.role_books.propose_revision(
-            "zhiyou-v1",
+            "companion-present-v1",
             "1",
             {
                 "recentWork": [

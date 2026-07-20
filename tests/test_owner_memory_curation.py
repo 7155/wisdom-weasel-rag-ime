@@ -641,7 +641,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         self.sessions.initialize()
         self.user_session = self.sessions.create(
             title="知游",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             role_version="1",
             created_at_ms=1,
         )
@@ -1010,7 +1010,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             session_id=str(self.user_session["id"]),
             pi_entry_id="evidence:user:joint-context",
             turn_id="turn:joint-context",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             text="继续整理输入法个人记忆",
             occurred_at_ms=timestamp,
         )
@@ -1018,7 +1018,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             session_id=str(self.user_session["id"]),
             pi_entry_id="evidence:assistant:joint-context",
             turn_id="turn:joint-context",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             text="我会先验证联合上下文，再生成待审草案。",
             occurred_at_ms=timestamp + 1_000,
         )
@@ -1099,7 +1099,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             session_id=session_id,
             pi_entry_id="evidence:user:before-digest",
             turn_id="turn:before-digest",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             text="摘要前的原始用户对话不应重复发送",
             occurred_at_ms=timestamp + 1_000,
         )
@@ -1107,21 +1107,21 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             session_id=session_id,
             pi_entry_id="evidence:assistant:before-digest",
             turn_id="turn:before-digest",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             text="摘要前的原始助手回答不应重复发送",
             occurred_at_ms=timestamp + 2_000,
         )
         evidence.record_session_digest(
             session_id=session_id,
             digest_id="digest:old",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             text="已经过期的旧摘要",
             occurred_at_ms=timestamp + 3_000,
         )
         evidence.record_session_digest(
             session_id=session_id,
             digest_id="digest:latest",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             text="最新压缩摘要：用户要求对话整理省 token，并保留可追溯索引。",
             occurred_at_ms=timestamp + 4_000,
         )
@@ -1129,7 +1129,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             session_id=session_id,
             pi_entry_id="evidence:user:after-digest",
             turn_id="turn:after-digest",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             text="摘要之后新增的用户要求",
             occurred_at_ms=timestamp + 5_000,
         )
@@ -1137,7 +1137,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             session_id=session_id,
             pi_entry_id="evidence:assistant:after-digest",
             turn_id="turn:after-digest",
-            role_id="zhiyou-v1",
+            role_id="companion-present-v1",
             text="摘要之后新增的助手回答" * 80,
             occurred_at_ms=timestamp + 6_000,
         )

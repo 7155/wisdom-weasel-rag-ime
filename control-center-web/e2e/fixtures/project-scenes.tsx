@@ -9,7 +9,7 @@ import '../../src/features/memory/memory.css';
 
 createRoot(document.getElementById('root')!).render(<>
   <section className="scene-fixture-band" aria-label="Room 空态槽位">
-    <ProjectSceneEmptyState sceneId="room-duoagent-handoff" title="还没有公开 Post" description="发一条消息开始协作。" />
+    <ProjectSceneEmptyState sceneId="room-agent-handoff" title="还没有公开 Post" description="发一条消息开始协作。" />
   </section>
   <section className="scene-fixture-band" aria-label="记忆空态槽位">
     <KnowledgeEvidenceExplorer items={[]} />

@@ -1283,7 +1283,7 @@ class AgentDelegationCoordinator:
                     child = self.sessions.create(
                         title=f"{template.display_name} · {_bounded_text(task['task'], maximum=72)}",
                         mode="assistant",
-                        role_id=str(parent.get("roleId") or "zhiyou-v1"),
+                        role_id=str(parent.get("roleId") or "companion-present-v1"),
                         role_version=str(parent.get("roleVersion") or "1"),
                         role_book_revision_id=str(
                             parent.get("roleBookRevisionId") or ""
@@ -1666,11 +1666,37 @@ class AgentDelegationCoordinator:
         active = self.store.request_abort(identifier)
         for run_id in active:
             self._request_cancel(run_id, state="aborted", reason="Stopped by user")
+        deadline = (
+            time.monotonic()
+            + self._cancellation_grace_ms / 1000.0
+            + 1.0
+        )
+        current = self.store.get_batch(str(batch["id"]))
+        while (
+            any(
+                str(run.get("state") or "") in _ACTIVE_STATES
+                for run in current["runs"]
+            )
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+            current = self.store.get_batch(str(batch["id"]))
         self.collect_expired_sessions(force=False)
+        pending_run_ids = [
+            str(run.get("id") or "")
+            for run in current["runs"]
+            if str(run.get("state") or "") in _ACTIVE_STATES
+        ]
         return {
             "schemaVersion": "rag-ime.agent-delegation-abort.v1",
             "ok": True,
-            "batch": self.store.get_batch(str(batch["id"])),
+            "batch": current,
+            "cancellation": {
+                "schemaVersion": "rag-ime.agent-delegation-cancellation.v1",
+                "state": "requested" if pending_run_ids else "terminated",
+                "pendingRunIds": pending_run_ids,
+                "graceMs": self._cancellation_grace_ms,
+            },
         }
 
     def wait(self, batch_id: str) -> dict[str, object]:

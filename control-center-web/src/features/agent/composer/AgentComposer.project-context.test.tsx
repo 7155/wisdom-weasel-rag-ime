@@ -22,7 +22,7 @@ describe('AgentComposer context resources', () => {
             title: '测试',
             mode: 'coordinator',
             status: 'idle',
-            roleId: 'zhiyou-v1',
+            roleId: 'companion-present-v1',
             roleVersion: '1',
             roleBookRevisionId: 'role-book-revision-1',
             updatedAtMs: 1,

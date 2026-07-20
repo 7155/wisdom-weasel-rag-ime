@@ -15,6 +15,7 @@ ROOM_ROUTING_POLICIES = frozenset(
         "invite_only",
     }
 )
+MAX_ROOM_RESPONDERS = 4
 
 _WORD_PATTERN = re.compile(r"[a-z0-9_+#.-]+|[\u3400-\u9fff]+", re.IGNORECASE)
 _RESEARCH_TERMS = frozenset({"查", "搜索", "检索", "调研", "核对", "证据", "资料", "分析", "研究"})
@@ -30,7 +31,7 @@ def normalize_room_kind(value: object) -> str:
 
 
 def normalize_routing_policy(value: object) -> str:
-    policy = str(value or "moderator").strip().lower()
+    policy = str(value or "natural").strip().lower()
     if policy not in ROOM_ROUTING_POLICIES:
         supported = ", ".join(sorted(ROOM_ROUTING_POLICIES))
         raise ValueError(f"unsupported agent room routing policy; expected one of {supported}")
@@ -42,10 +43,94 @@ def normalize_routing_config(value: object) -> dict[str, object]:
     jitter = _float(source.get("naturalJitter"), default=0.04, minimum=0.0, maximum=0.15)
     fallback = str(source.get("fallbackParticipantId") or "").strip()
     return {
+        # Natural routing still chooses exactly one responder. Explicit
+        # multi-@ fan-out is governed by MAX_ROOM_RESPONDERS separately.
         "maxResponders": 1,
         "naturalJitter": jitter,
         "fallbackParticipantId": fallback,
     }
+
+
+def plan_room_routes(
+    room: Mapping[str, object],
+    text: str,
+    *,
+    requested_participant_ids: Sequence[str] = (),
+    profiles: Mapping[str, Mapping[str, object]] | None = None,
+    authoritative_participant_id: str = "",
+) -> list[dict[str, object]]:
+    """Return one deterministic route per explicitly addressed participant.
+
+    Unaddressed messages retain the existing single-responder policy. A bound
+    WorkItem also remains single-owner: fan-out cannot duplicate responsibility.
+    """
+
+    participants = [
+        dict(item)
+        for item in room.get("participants", [])
+        if isinstance(item, Mapping) and item.get("status") == "active"
+    ]
+    if not participants:
+        raise ValueError("agent room has no active participants")
+    by_id = {str(item["id"]): item for item in participants}
+    policy = normalize_routing_policy(room.get("routingPolicy"))
+
+    requested = list(
+        dict.fromkeys(str(value or "").strip() for value in requested_participant_ids)
+    )
+    requested = [value for value in requested if value]
+    selected = [by_id[value] for value in requested if value in by_id]
+    if len(selected) != len(requested):
+        raise ValueError("invited room participant is unavailable")
+    reason = "explicit_invite"
+    if not selected:
+        selected = _mentioned_participants(text, participants)
+        reason = "mention"
+
+    authority_id = str(authoritative_participant_id or "").strip()
+    authority = by_id.get(authority_id) if authority_id else None
+    if authority_id and authority is None:
+        raise ValueError("authoritative room participant is unavailable")
+    if authority is not None:
+        if selected and (
+            len(selected) != 1 or str(selected[0]["id"]) != str(authority["id"])
+        ):
+            raise ValueError(
+                "Room participant selection conflicts with the WorkItem current owner"
+            )
+        decision = _decision(
+            room,
+            policy,
+            authority,
+            "work_item_owner",
+            participants,
+            (),
+        )
+        return [decision]
+
+    if not selected:
+        return [
+            plan_room_route(
+                room,
+                text,
+                requested_participant_ids=(),
+                profiles=profiles,
+                authoritative_participant_id="",
+            )
+        ]
+    if len(selected) > MAX_ROOM_RESPONDERS:
+        raise ValueError(
+            f"room messages can address at most {MAX_ROOM_RESPONDERS} participants"
+        )
+
+    selected_ids = [str(item["id"]) for item in selected]
+    decisions: list[dict[str, object]] = []
+    for target in selected:
+        decision = _decision(room, policy, target, reason, participants, ())
+        decision["selectedParticipantIds"] = selected_ids
+        decision["dispatchCount"] = len(selected_ids)
+        decisions.append(decision)
+    return decisions
 
 
 def plan_room_route(
@@ -70,7 +155,7 @@ def plan_room_route(
     requested = list(dict.fromkeys(str(value or "").strip() for value in requested_participant_ids))
     requested = [value for value in requested if value]
     if len(requested) > 1:
-        raise ValueError("room routing requires exactly one explicitly invited participant")
+        raise ValueError("plan_room_route accepts one participant; use plan_room_routes for fan-out")
     authority_id = str(authoritative_participant_id or "").strip()
     authority = by_id.get(authority_id) if authority_id else None
     if authority_id and authority is None:
@@ -96,7 +181,7 @@ def plan_room_route(
 
     mentioned = _mentioned_participants(text, participants)
     if len(mentioned) > 1:
-        raise ValueError("room routing requires exactly one addressed participant")
+        raise ValueError("plan_room_route accepts one participant; use plan_room_routes for fan-out")
     if mentioned:
         if authority is not None and mentioned[0]["id"] != authority["id"]:
             raise ValueError(
@@ -122,10 +207,6 @@ def plan_room_route(
             participants,
             (),
         )
-
-    if policy in {"manual_mentions", "invite_only"}:
-        hint = "select one room participant" if policy == "invite_only" else "mention one room participant"
-        raise ValueError(f"message must {hint}")
 
     if policy == "moderator":
         moderator_id = str(room.get("moderatorParticipantId") or "")

@@ -264,6 +264,43 @@ class AgentRoomIntercomTests(unittest.TestCase):
         finally:
             router.close()
 
+    def test_root_cancel_fences_queued_and_delivering_messages_for_chain_sessions(self) -> None:
+        queued, _ = self._enqueue(
+            str(self.first["id"]),
+            {
+                "kind": "send",
+                "targetParticipantId": self.second_participant["id"],
+                "clientMessageId": "cancel-queued",
+                "content": "还没有开始投递",
+            },
+        )
+        delivering, _ = self._enqueue(
+            str(self.second["id"]),
+            {
+                "kind": "send",
+                "targetParticipantId": self.third_participant["id"],
+                "clientMessageId": "cancel-delivering",
+                "content": "正在投递",
+            },
+        )
+        self.store.claim(str(delivering["id"]))
+
+        cancelled = self.store.cancel_for_sessions(
+            {str(self.first["id"]), str(self.second["id"])},
+            reason="root stopped",
+        )
+
+        self.assertEqual(
+            {item["id"] for item in cancelled},
+            {queued["id"], delivering["id"]},
+        )
+        self.assertTrue(all(item["status"] == "cancelled" for item in cancelled))
+        with self.assertRaisesRegex(ValueError, "no longer delivering"):
+            self.store.mark_delivered(
+                str(delivering["id"]),
+                accepted_turn_id="turn:late",
+            )
+
     def _enqueue(self, source_session_id: str, payload: dict[str, object]):
         route = self.store.resolve_route(source_session_id, payload)
         return self.store.enqueue(

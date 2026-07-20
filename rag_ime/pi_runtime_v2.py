@@ -598,7 +598,7 @@ class PiRuntimeHostManager:
                 "noContextFiles": (
                     str(session.get("toolProfileVersion") or "")
                     in {"ime-surface-v1", "voice-refinement-v1"}
-                    or not bool(session.get("projectContextEnabled", True))
+                    or not bool(session.get("projectContextEnabled", False))
                 ),
                 "piSkillsEnabled": bool(session.get("piSkillsEnabled", False)),
                 "codexSkillsEnabled": bool(session.get("codexSkillsEnabled", False)),
@@ -1222,38 +1222,80 @@ class PiRuntimeHostManager:
             return []
         return [dict(item) for item in self._tool_manifest_provider(session)]
 
-    def abort(self, session_id: str) -> None:
+    def abort(self, session_id: str) -> dict[str, object]:
         client = self._require_client()
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
             turn_id = state.turn_id
             if not turn_id:
                 self.sessions.set_status(session_id, "idle")
-                return
+                return {
+                    "schemaVersion": "rag-ime.pi-session-abort-receipt.v1",
+                    "sessionId": session_id,
+                    "turnId": "",
+                    "cancelledDecisionIds": [],
+                    "cancelledUIRequestIds": [],
+                    "lifecycle": {
+                        "schemaVersion": "pi.agent-abort-receipt.v1",
+                        "scopeId": "",
+                        "generation": 0,
+                        "reason": "user_abort",
+                        "cancelledContinuationIds": [],
+                        "cancelledOperationIds": [],
+                        "failedOperationIds": [],
+                        "operations": [],
+                        "pendingOperations": [],
+                        "drained": True,
+                        "idle": True,
+                    },
+                }
             # Mark the exact turn before sending the RPC. The host is allowed
             # to emit agent_settled before the abort ACK reaches this thread.
             state.abort_requested_turn_id = turn_id
+            if state.abort_timer is not None:
+                state.abort_timer.cancel()
+            timer = threading.Timer(
+                1.0,
+                self._abort_fallback_expired,
+                args=(session_id, turn_id),
+            )
+            timer.daemon = True
+            state.abort_timer = timer
+            timer.start()
         try:
-            client.send("session.abort", {"sessionId": session_id})
+            result = client.send(
+                "session.abort",
+                {"sessionId": session_id},
+                timeout=1.0,
+            )
         except Exception:
             with self._lock:
                 state = self._states.get(session_id)
                 if state is not None and state.abort_requested_turn_id == turn_id:
-                    state.abort_requested_turn_id = ""
+                    # Keep the exact-turn fence and let the already armed
+                    # fallback retire the turn and request a governed host kill.
+                    self.events.publish(
+                        session_id,
+                        "status_changed",
+                        {"status": "aborting", "escalated": True},
+                        turn_id=turn_id,
+                    )
             raise
+        if (
+            result.get("schemaVersion") != "rag-ime.pi-session-abort-receipt.v1"
+            or result.get("sessionId") != session_id
+            or result.get("turnId") != turn_id
+            or not isinstance(result.get("lifecycle"), Mapping)
+        ):
+            raise PiRuntimeError("Pi Runtime Host returned an invalid Session abort receipt")
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
             # The host can emit agent_settled before the abort ACK arrives.
             # Do not regress an already terminal turn back to "aborting".
             if state.turn_id != turn_id:
-                return
-            if state.abort_timer is not None:
-                state.abort_timer.cancel()
+                return dict(result)
             self.events.publish(session_id, "status_changed", {"status": "aborting"}, turn_id=turn_id)
-            timer = threading.Timer(1.0, self._abort_fallback_expired, args=(session_id, turn_id))
-            timer.daemon = True
-            state.abort_timer = timer
-            timer.start()
+        return dict(result)
 
     def dispatch_room(
         self,

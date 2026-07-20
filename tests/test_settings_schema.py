@@ -62,7 +62,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["context"]["reservedOutputTokens"], 1024)
         self.assertFalse(defaults["agent"]["pi"]["enabled"])
         self.assertEqual(defaults["agent"]["pi"]["idleTimeoutSeconds"], 900)
-        self.assertEqual(defaults["agent"]["pi"]["defaultRoleId"], "vcp-v1")
+        self.assertEqual(defaults["agent"]["pi"]["defaultRoleId"], "companion-future-v1")
         self.assertTrue(defaults["memory"]["automaticOrganization"]["enabled"])
         self.assertEqual(
             defaults["memory"]["automaticOrganization"]["model"],
@@ -84,7 +84,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(fields["interaction.postCommit.panelTtlMs"]["default"], 5000)
         self.assertEqual(fields["models.hot"]["default"], "minimind_ime_v2")
         self.assertEqual(fields["context.tokenBudget"]["default"], 4096)
-        self.assertEqual(fields["agent.pi.defaultRoleId"]["default"], "vcp-v1")
+        self.assertEqual(fields["agent.pi.defaultRoleId"]["default"], "companion-future-v1")
         self.assertEqual(fields["activeRag.quickModel"]["type"], "pi-model")
         self.assertEqual(
             fields["activeRag.quickThinkingLevel"]["options"],
@@ -117,17 +117,17 @@ class SettingsSchemaTests(unittest.TestCase):
             )
             legacy_service = agent_service_from_settings(
                 Path(temporary) / "legacy.sqlite",
-                {"agent": {"pi": {"defaultRoleId": "zhiyou-v1"}}},
+                {"agent": {"pi": {"defaultRoleId": "companion-present-v1"}}},
                 wake_scheduler_enabled=False,
             )
 
             self.assertEqual(
                 default_service.configuration()["configuration"]["configuration"]["sessionDefaults"]["roleId"],
-                "vcp-v1",
+                "companion-future-v1",
             )
             self.assertEqual(
                 legacy_service.configuration()["configuration"]["configuration"]["sessionDefaults"]["roleId"],
-                "zhiyou-v1",
+                "companion-present-v1",
             )
 
     def test_every_field_declares_runtime_application_metadata(self) -> None:

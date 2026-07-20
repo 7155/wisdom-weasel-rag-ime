@@ -1309,8 +1309,9 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    const contextButton = await screen.findByRole('button', { name: '项目指令：已加载' });
+    const contextButton = await screen.findByRole('button', { name: '项目指令：未加载' });
     await user.click(contextButton);
+    expect(screen.getByRole('switch', { name: '加载 AGENTS.md / CLAUDE.md' })).not.toBeChecked();
     await user.click(screen.getByRole('switch', { name: '加载 Pi Skills' }));
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
@@ -1743,7 +1744,7 @@ describe('Agent experience', () => {
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.sessions.create')).toBe(true));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
     expect(create?.request.body).toMatchObject({
-      roleId: 'vcp-v1',
+      roleId: 'companion-future-v1',
       roleVersion: '1',
       mode: 'coordinator',
       workspaceRoots: ['/Volumes/undo 4t/git/learnA'],

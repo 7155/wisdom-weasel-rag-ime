@@ -22,7 +22,7 @@ describe('ContextDebugFeature', () => {
             title: 'Debug 会话',
             mode: 'assistant',
             status: 'idle',
-            roleId: 'zhiyou-v1',
+            roleId: 'companion-present-v1',
             roleVersion: '1',
             updatedAtMs: 100,
             workspaceRoots: ['/Volumes/work'],
@@ -89,7 +89,7 @@ describe('ContextDebugFeature', () => {
     }, cacheEvidence: [{ requestIndex: 2, prefixSha256: 'abc', prefixBytes: 1024, deltaBytes: 64, duplicateBytes: 1024, inputTokens: 1400, outputTokens: 20, cacheReadTokens: 1200, cacheWriteTokens: 80, capability: 'reported' }] });
     payload.telemetry = { cumulativeUsage: { cacheRead: 1200, cacheWrite: 80 } };
     const transport = new MockControlTransport({ routes: {
-      'agent.sessions.list': { ok: true, sessions: [{ id: 'session-a', title: 'Long prompt', mode: 'assistant', status: 'idle', roleId: 'vcp-v1', roleVersion: '1', updatedAtMs: 1, workspaceRoots: [] }] },
+      'agent.sessions.list': { ok: true, sessions: [{ id: 'session-a', title: 'Long prompt', mode: 'assistant', status: 'idle', roleId: 'companion-future-v1', roleVersion: '1', updatedAtMs: 1, workspaceRoots: [] }] },
       'agent.session.debugContext.get': payload,
     } });
     renderFeature(transport, '/context-debug?sessionId=session-a');
