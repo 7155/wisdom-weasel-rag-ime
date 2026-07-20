@@ -1029,7 +1029,10 @@ class RoomKernelServiceTests(unittest.TestCase):
         opened = next(request for request in requests if request["method"] == "session.open")
         self.assertIn("<room-prompt-plan", opened["params"]["systemPrompt"])
         self.assertNotIn("运行时工具渐进披露规则", opened["params"]["systemPrompt"])
-        self.assertIn('"dispatchId":"dispatch:service"', opened["params"]["sessionContext"])
+        session_context = opened["params"]["sessionContext"]
+        self.assertIn('"objective":"Execute a bounded service test."', session_context)
+        for internal_label in ('"dispatchId"', '"taskId"', '"rootId"', '"receiptId"'):
+            self.assertNotIn(internal_label, session_context)
         self.assertEqual(
             opened["params"]["roomSkillPolicy"]["skillId"],
             "room-test-driven-implementation",
