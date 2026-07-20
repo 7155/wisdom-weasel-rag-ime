@@ -64,7 +64,7 @@ A -> B -> A 不再由自由文本 `@` 直接开火。Agent 只能在 `RoomCommit
 | Profile | ✅ 代码闭环 | Root 固定 profile/version/bundle/definition/pointer/epoch；revoke 生成 durable managed cancel；需要多 Root 滚动与撤销演练。 |
 | Session/Post | ✅ 安全 | Session 的模型正文、reasoning、progress、audio 不自动公开；只有显式 `room_post` 进入公共 Room。 |
 | Voice | ✅ 不在链内 | 仅用户确认后的语音输入 Final Text 复用文字入口；没有 Agent/Room TTS、音频队列或自动播放。 |
-| Pi 来源 | ✅ 已固定源码 | build 要求 Pi HEAD 包含 `f842dfbd0cd14e80618371b888a3149c320905c5` 且 handler 提供 `room.dispatch/room.cancel`；本轮没有验证已安装运行时。 |
+| Pi 来源 | ✅ 已固定源码 | build 要求 Pi HEAD 包含 `692bb0e878772129766b9eb837a8caa57f48e0e7` 且 handler 提供 `room.dispatch/room.cancel`；本轮只验证 `/tmp` staged runtime，没有验证已安装运行时。 |
 
 ### 绕过路径复核
 
