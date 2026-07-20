@@ -87,8 +87,14 @@ CREATE TABLE room_v2_knowledge_index_outbox (
     outbox_id TEXT PRIMARY KEY,
     claim_version_id TEXT NOT NULL REFERENCES room_v2_knowledge_claim_versions(claim_version_id),
     operation TEXT NOT NULL CHECK(operation IN ('index','invalidate','archive','unbind','delete','quarantine_purge')),
-    state TEXT NOT NULL CHECK(state IN ('pending','applied','failed')),
+    state TEXT NOT NULL CHECK(state IN ('pending','leased','retry_wait','applied','dead_letter')),
     payload_hash TEXT NOT NULL CHECK(length(payload_hash)=64),
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5 CHECK(max_attempts BETWEEN 1 AND 8),
+    available_at_ms INTEGER NOT NULL DEFAULT 0,
+    lease_until_ms INTEGER NOT NULL DEFAULT 0,
+    projection_receipts_json TEXT NOT NULL DEFAULT '[]',
+    last_error TEXT NOT NULL DEFAULT '',
     created_at_ms INTEGER NOT NULL,
     UNIQUE(claim_version_id,operation,payload_hash)
 );
@@ -142,6 +148,21 @@ CREATE TABLE room_v2_knowledge_lifecycle_receipts (
     payload_hash TEXT NOT NULL CHECK(length(payload_hash)=64),
     created_at_ms INTEGER NOT NULL
 );
+
+CREATE TABLE room_v2_knowledge_cache_tombstones (
+    tombstone_id TEXT PRIMARY KEY,
+    scope_key TEXT NOT NULL,
+    knowledge_epoch INTEGER NOT NULL,
+    journal_id TEXT,
+    session_id TEXT,
+    reason TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    consumed_at_ms INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(scope_key,knowledge_epoch,journal_id,session_id)
+);
+
+CREATE INDEX idx_room_v2_knowledge_outbox_ready
+ON room_v2_knowledge_index_outbox(state,available_at_ms,created_at_ms);
 
 CREATE TRIGGER room_v2_promotion_candidate_no_update BEFORE UPDATE ON room_v2_promotion_candidates BEGIN SELECT RAISE(ABORT,'PromotionCandidate is immutable'); END;
 CREATE TRIGGER room_v2_promotion_candidate_no_delete BEFORE DELETE ON room_v2_promotion_candidates BEGIN SELECT RAISE(ABORT,'PromotionCandidate is permanent'); END;

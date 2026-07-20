@@ -198,6 +198,52 @@ def session_knowledge_caller(
     )
 
 
+def bound_session_knowledge_caller(
+    conn: sqlite3.Connection,
+    authenticated_session_id: str,
+) -> KnowledgeCallerContext | None:
+    """Build a caller only from a live ParticipantBinding owned by the authenticated Session."""
+
+    session = compact_whitespace(authenticated_session_id)
+    row = conn.execute(
+        """SELECT binding.participant_binding_json,binding.room_binding_json,
+                  binding.manifest_hash,binding.capability_epoch,
+                  participant.id AS participant_id,participant.room_id,
+                  participant.participant_status
+           FROM room_v2_capability_runtime_bindings binding
+           JOIN agent_room_participants participant ON participant.session_id=binding.session_id
+           WHERE binding.session_id=? AND binding.state='active'
+           ORDER BY binding.updated_at_ms DESC LIMIT 1""",
+        (session,),
+    ).fetchone()
+    if row is None or str(row["participant_status"]) not in {"active", "muted"}:
+        return None
+    participant_binding = json.loads(str(row["participant_binding_json"]))
+    room_binding = json.loads(str(row["room_binding_json"]))
+    participant_id = str(row["participant_id"])
+    room_id = str(row["room_id"])
+    if (
+        participant_binding.get("sessionId") != session
+        or room_binding.get("participantId") != participant_id
+        or room_binding.get("roomId") != room_id
+        or participant_binding.get("roomBindingRef", {}).get("bindingId") != room_binding.get("bindingId")
+    ):
+        raise ValueError("live ParticipantBinding identity is inconsistent")
+    binding_id = str(participant_binding.get("bindingId") or "")
+    revision = "sha256:" + hashlib.sha256(
+        f"{row['manifest_hash']}\0{row['capability_epoch']}\0{binding_id}".encode()
+    ).hexdigest()
+    return KnowledgeCallerContext(
+        session_id=session,
+        participant_id=participant_id,
+        room_id=room_id,
+        binding_id=binding_id,
+        authorization_revision=revision,
+        allowed_domains=("room_public", "participant_private", "document_library", "transient_session"),
+        allowed_scopes=(("room", room_id), ("participant", participant_id), ("session", session)),
+    )
+
+
 def room_public_scope(
     conn: sqlite3.Connection,
     *,

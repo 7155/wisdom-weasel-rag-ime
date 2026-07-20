@@ -5,7 +5,7 @@ import hmac
 import json
 import re
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -25,13 +25,28 @@ _SECRET_PATTERNS = (
     ("phone_pii", re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")),
 )
 
+KNOWLEDGE_ROUTE_DESCRIPTOR = {
+    "search": {"method": "POST", "path": "/api/agent/sessions/{sessionId}/knowledge-search", "scopes": ["agent.read"]},
+    "read": {"method": "POST", "path": "/api/agent/sessions/{sessionId}/knowledge-read", "scopes": ["agent.read"]},
+}
+KNOWLEDGE_ROUTE_HASH = "sha256:" + hashlib.sha256(
+    json.dumps(KNOWLEDGE_ROUTE_DESCRIPTOR, sort_keys=True, separators=(",", ":")).encode()
+).hexdigest()
+
 
 class KnowledgePromotionStore:
     """One-way evidence promotion plus epoch-fenced two-stage resolution."""
 
-    def __init__(self, db_path: str | Path, *, authority_secrets: Mapping[str, bytes | str] | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        authority_secrets: Mapping[str, bytes | str] | None = None,
+        index_adapter: Callable[[Mapping[str, object]], Sequence[Mapping[str, object]]] | None = None,
+    ) -> None:
         self.db_path = Path(db_path)
         self._authority_secrets = {str(key): value if isinstance(value, bytes) else str(value).encode() for key, value in (authority_secrets or {}).items()}
+        self._index_adapter = index_adapter
 
     def initialize(self) -> int:
         with self._connect() as conn:
@@ -56,6 +71,7 @@ class KnowledgePromotionStore:
                     conn.execute("UPDATE room_v2_knowledge_claim_pointers SET lifecycle_status='revoked',knowledge_epoch=?,updated_at_ms=? WHERE claim_identity=?", (epoch, created_at_ms, row["claim_identity"]))
                     conn.execute("DELETE FROM room_v2_knowledge_search_projections WHERE claim_version_id=?", (row["claim_version_id"],))
                     self._outbox(conn, "purge:" + import_id + ":" + row["claim_version_id"], row["claim_version_id"], "quarantine_purge", created_at_ms)
+                    self._cache_tombstones(conn, scope_key, epoch, str(row["scope_kind"]), str(row["scope_id"]), "quarantine_purge", created_at_ms)
                     purged.append(str(row["claim_version_id"]))
         return {"importId": import_id, "contentHash": content_hash, "scanStatus": status, "findingCodes": findings, "dataOnly": True, "rawBytesStored": False, "purgedProjectionRefs": purged}
 
@@ -122,16 +138,99 @@ class KnowledgePromotionStore:
             self._outbox(conn, outbox_id, claim_version_id, "index", created_at_ms)
         return material
 
-    def apply_index_outbox(self, outbox_id: str, *, applied_at_ms: int) -> None:
+    def apply_index_outbox(
+        self,
+        outbox_id: str,
+        *,
+        applied_at_ms: int,
+        fail_after_adapter: bool = False,
+    ) -> None:
+        leased = self._lease_index_outbox(outbox_id=outbox_id, now_ms=applied_at_ms)
+        payload = dict(leased["payload"])
+        try:
+            receipts = [dict(item) for item in (self._index_adapter(payload) if self._index_adapter else ())]
+            if fail_after_adapter:
+                raise RuntimeError("injected knowledge index crash")
+            with self._connect(immediate=True) as conn:
+                current = conn.execute(
+                    "SELECT state FROM room_v2_knowledge_index_outbox WHERE outbox_id=?",
+                    (outbox_id,),
+                ).fetchone()
+                if current is None or current[0] != "leased":
+                    raise KnowledgePromotionError("knowledge index lease was lost")
+                version = conn.execute("SELECT * FROM room_v2_knowledge_claim_versions WHERE claim_version_id=?", (payload["claimVersionId"],)).fetchone()
+                if payload["operation"] == "index":
+                    conn.execute("INSERT OR REPLACE INTO room_v2_knowledge_search_projections VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (version["claim_version_id"], version["claim_text"], version["claim_hash"], version["knowledge_domain"], version["owner_kind"], version["owner_id"], version["scope_kind"], version["scope_id"], version["visibility"], version["provenance_json"], version["contradiction_refs_json"], applied_at_ms))
+                else:
+                    conn.execute("DELETE FROM room_v2_knowledge_search_projections WHERE claim_version_id=?", (version["claim_version_id"],))
+                conn.execute(
+                    """UPDATE room_v2_knowledge_index_outbox SET state='applied',lease_until_ms=0,
+                       projection_receipts_json=?,last_error='' WHERE outbox_id=?""",
+                    (_json(receipts), outbox_id),
+                )
+        except Exception as exc:
+            with self._connect(immediate=True) as conn:
+                row = conn.execute("SELECT attempt_count,max_attempts FROM room_v2_knowledge_index_outbox WHERE outbox_id=?", (outbox_id,)).fetchone()
+                dead = row is not None and int(row[0]) >= int(row[1])
+                conn.execute(
+                    """UPDATE room_v2_knowledge_index_outbox SET state=?,lease_until_ms=0,
+                       available_at_ms=?,last_error=? WHERE outbox_id=?""",
+                    ("dead_letter" if dead else "retry_wait", applied_at_ms + min(60_000, 1000 * (2 ** int(row[0] if row else 1))), f"{type(exc).__name__}: {exc}"[:500], outbox_id),
+                )
+            raise
+
+    def run_index_outbox_once(self, *, now_ms: int) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT outbox_id FROM room_v2_knowledge_index_outbox
+                   WHERE (state IN ('pending','retry_wait') AND available_at_ms<=?)
+                      OR (state='leased' AND lease_until_ms<=?)
+                   ORDER BY created_at_ms,outbox_id LIMIT 1""",
+                (now_ms, now_ms),
+            ).fetchone()
+        if row is None:
+            return None
+        outbox_id = str(row[0])
+        try:
+            self.apply_index_outbox(outbox_id, applied_at_ms=now_ms)
+        except Exception as exc:
+            with self._connect() as conn:
+                state = conn.execute("SELECT state FROM room_v2_knowledge_index_outbox WHERE outbox_id=?", (outbox_id,)).fetchone()[0]
+            return {"outboxId": outbox_id, "state": str(state), "error": str(exc)}
+        return {"outboxId": outbox_id, "state": "applied"}
+
+    def _lease_index_outbox(self, *, outbox_id: str, now_ms: int) -> dict[str, object]:
         with self._connect(immediate=True) as conn:
-            outbox = conn.execute("SELECT * FROM room_v2_knowledge_index_outbox WHERE outbox_id=? AND state='pending'", (outbox_id,)).fetchone()
-            if outbox is None: raise KnowledgePromotionError("index outbox is missing or already consumed")
+            outbox = conn.execute(
+                """SELECT * FROM room_v2_knowledge_index_outbox WHERE outbox_id=? AND
+                   ((state IN ('pending','retry_wait') AND available_at_ms<=?) OR
+                    (state='leased' AND lease_until_ms<=?))""",
+                (outbox_id, now_ms, now_ms),
+            ).fetchone()
+            if outbox is None:
+                raise KnowledgePromotionError("index outbox is missing, busy, or already consumed")
             version = conn.execute("SELECT * FROM room_v2_knowledge_claim_versions WHERE claim_version_id=?", (outbox["claim_version_id"],)).fetchone()
-            if outbox["operation"] == "index":
-                conn.execute("INSERT OR REPLACE INTO room_v2_knowledge_search_projections VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (version["claim_version_id"], version["claim_text"], version["claim_hash"], version["knowledge_domain"], version["owner_kind"], version["owner_id"], version["scope_kind"], version["scope_id"], version["visibility"], version["provenance_json"], version["contradiction_refs_json"], applied_at_ms))
-            else:
-                conn.execute("DELETE FROM room_v2_knowledge_search_projections WHERE claim_version_id=?", (version["claim_version_id"],))
-            conn.execute("UPDATE room_v2_knowledge_index_outbox SET state='applied' WHERE outbox_id=?", (outbox_id,))
+            conn.execute(
+                """UPDATE room_v2_knowledge_index_outbox SET state='leased',attempt_count=attempt_count+1,
+                   lease_until_ms=? WHERE outbox_id=?""",
+                (now_ms + 30_000, outbox_id),
+            )
+        return {
+            "outboxId": outbox_id,
+            "payload": {
+                "outboxId": outbox_id,
+                "claimVersionId": str(version["claim_version_id"]),
+                "operation": str(outbox["operation"]),
+                "claimHash": str(version["claim_hash"]),
+                "text": str(version["claim_text"]),
+                "knowledgeDomain": str(version["knowledge_domain"]),
+                "ownerKind": str(version["owner_kind"]),
+                "ownerId": str(version["owner_id"]),
+                "scopeKind": str(version["scope_kind"]),
+                "scopeId": str(version["scope_id"]),
+                "targets": ["fts", "vector", "graph", "notion", "document_projection"],
+            },
+        }
 
     def lifecycle(self, *, lifecycle_receipt_id: str, claim_identity: str, operation: str, authority_ref: str, authority_secret: bytes | str, outbox_id: str, created_at_ms: int) -> dict[str, object]:
         status_map = {"revoke": "revoked", "archive": "archived", "unbind": "unbound", "delete": "deleted"}
@@ -144,6 +243,8 @@ class KnowledgePromotionStore:
             conn.execute("UPDATE room_v2_knowledge_claim_pointers SET lifecycle_status=?,knowledge_epoch=?,updated_at_ms=? WHERE claim_identity=?", (status_map[operation], epoch, created_at_ms, claim_identity))
             conn.execute("DELETE FROM room_v2_knowledge_search_projections WHERE claim_version_id=?", (version_id,))
             self._outbox(conn, outbox_id, version_id, operation if operation != "revoke" else "invalidate", created_at_ms)
+            version = conn.execute("SELECT scope_kind,scope_id FROM room_v2_knowledge_claim_versions WHERE claim_version_id=?", (version_id,)).fetchone()
+            self._cache_tombstones(conn, str(pointer["scope_key"]), epoch, str(version[0]), str(version[1]), operation, created_at_ms)
             material = {"lifecycleReceiptId": lifecycle_receipt_id, "claimIdentity": claim_identity, "operation": operation, "fromClaimVersionId": version_id, "toClaimVersionId": None, "scopeKey": pointer["scope_key"], "knowledgeEpoch": epoch, "authorityRef": authority_ref, "createdAtMs": created_at_ms}
             conn.execute("INSERT INTO room_v2_knowledge_lifecycle_receipts VALUES (?,?,?,?,?,?,?,?,?,?)", (lifecycle_receipt_id, claim_identity, operation, version_id, None, pointer["scope_key"], epoch, authority_ref, _hash_json(material), created_at_ms))
         return material
@@ -158,6 +259,10 @@ class KnowledgePromotionStore:
             conn.execute("UPDATE room_v2_knowledge_claim_pointers SET knowledge_epoch=?,updated_at_ms=? WHERE claim_identity=?", (new_epoch, created_at_ms, new_claim_identity))
             conn.execute("DELETE FROM room_v2_knowledge_search_projections WHERE claim_version_id=?", (old["current_claim_version_id"],))
             self._outbox(conn, outbox_id, old["current_claim_version_id"], "unbind", created_at_ms)
+            old_version = conn.execute("SELECT scope_kind,scope_id FROM room_v2_knowledge_claim_versions WHERE claim_version_id=?", (old["current_claim_version_id"],)).fetchone()
+            new_version = conn.execute("SELECT scope_kind,scope_id FROM room_v2_knowledge_claim_versions WHERE claim_version_id=?", (new["current_claim_version_id"],)).fetchone()
+            self._cache_tombstones(conn, str(old["scope_key"]), old_epoch, str(old_version[0]), str(old_version[1]), "owner_change_from", created_at_ms)
+            self._cache_tombstones(conn, str(new["scope_key"]), new_epoch, str(new_version[0]), str(new_version[1]), "owner_change_to", created_at_ms)
             material = {"lifecycleReceiptId": lifecycle_receipt_id, "claimIdentity": old_claim_identity, "operation": "owner_change", "fromClaimVersionId": old["current_claim_version_id"], "toClaimVersionId": new["current_claim_version_id"], "scopeKey": old["scope_key"], "knowledgeEpoch": old_epoch, "authorityRef": authority_ref, "createdAtMs": created_at_ms}
             conn.execute("INSERT INTO room_v2_knowledge_lifecycle_receipts VALUES (?,?,?,?,?,?,?,?,?,?)", (lifecycle_receipt_id, old_claim_identity, "owner_change", old["current_claim_version_id"], new["current_claim_version_id"], old["scope_key"], old_epoch, authority_ref, _hash_json(material), created_at_ms))
         return material
@@ -234,7 +339,31 @@ class KnowledgePromotionStore:
     @staticmethod
     def _outbox(conn: sqlite3.Connection, outbox_id: str, claim_version_id: str, operation: str, at_ms: int) -> None:
         material = {"outboxId": outbox_id, "claimVersionId": claim_version_id, "operation": operation}
-        conn.execute("INSERT INTO room_v2_knowledge_index_outbox VALUES (?,?,?,'pending',?,?)", (outbox_id, claim_version_id, operation, _hash_json(material), at_ms))
+        conn.execute(
+            """INSERT INTO room_v2_knowledge_index_outbox(
+               outbox_id,claim_version_id,operation,state,payload_hash,available_at_ms,created_at_ms)
+               VALUES (?,?,?,'pending',?,?,?)""",
+            (outbox_id, claim_version_id, operation, _hash_json(material), at_ms, at_ms),
+        )
+
+    @staticmethod
+    def _cache_tombstones(conn: sqlite3.Connection, scope_key: str, epoch: int, scope_kind: str, scope_id: str, reason: str, at_ms: int) -> None:
+        if scope_kind == "room":
+            rows = conn.execute("SELECT journal_id,session_id FROM room_v2_provider_projection_journals WHERE room_id=?", (scope_id,)).fetchall()
+        elif scope_kind == "session":
+            rows = conn.execute("SELECT journal_id,session_id FROM room_v2_provider_projection_journals WHERE session_id=?", (scope_id,)).fetchall()
+        else:
+            rows = []
+        if not rows:
+            rows = [(None, scope_id if scope_kind == "session" else None)]
+        for journal_id, session_id in rows:
+            tombstone_id = "knowledge-cache:" + hashlib.sha256(f"{scope_key}\0{epoch}\0{journal_id}\0{session_id}".encode()).hexdigest()[:24]
+            conn.execute(
+                """INSERT OR IGNORE INTO room_v2_knowledge_cache_tombstones
+                   (tombstone_id,scope_key,knowledge_epoch,journal_id,session_id,reason,created_at_ms)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (tombstone_id, scope_key, epoch, journal_id, session_id, reason, at_ms),
+            )
 
     @contextmanager
     def _connect(self, *, immediate: bool = False):

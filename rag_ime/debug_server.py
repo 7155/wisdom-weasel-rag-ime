@@ -378,7 +378,8 @@ class DebugImeService:
         self.knowledge_worker = None
         if config.knowledge_client is None:
             self.knowledge_worker = KnowledgeWorkerSupervisor(
-                settings_provider=lambda: self.settings_store.get_settings(include_sensitive=True)
+                settings_provider=lambda: self.settings_store.get_settings(include_sensitive=True),
+                intake_db_path=config.db_path,
             )
             self.knowledge_client = self.knowledge_worker
         else:
@@ -7332,6 +7333,17 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             approval_id, approval_action = agent_approval_route(path)
             if path == "/api/agent/runtime/ensure":
                 self._write_json(HTTPStatus.OK, self.service.agent.ensure_runtime(payload))
+            elif agent_session_id and agent_action in {"knowledge-search", "knowledge-read"}:
+                response = (
+                    self.service.agent.room_knowledge_search(
+                        payload, authenticated_session_id=agent_session_id
+                    )
+                    if agent_action == "knowledge-search"
+                    else self.service.agent.room_knowledge_read(
+                        payload, authenticated_session_id=agent_session_id
+                    )
+                )
+                self._write_json(HTTPStatus.OK, response)
             elif path == "/api/agent/collaboration-profiles/commands":
                 self._write_json(
                     HTTPStatus.OK,

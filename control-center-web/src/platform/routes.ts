@@ -462,6 +462,20 @@ export const CONTROL_ROUTES = {
     requiredBody: ['schemaVersion', 'commandId', 'action', 'idempotencyKey', 'actorRef', 'payload', 'createdAtMs'],
     responseContract: 'collaboration-profile-command-receipt.v1',
   },
+  'agent.knowledge.search': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/knowledge-search',
+    params: { sessionId: null },
+    body: ['query', 'limit', 'retrievalReceiptId', 'createdAtMs'],
+    requiredBody: ['query'],
+  },
+  'agent.knowledge.read': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/knowledge-read',
+    params: { sessionId: null },
+    body: ['retrievalReceiptId', 'claimRef', 'expectedHash'],
+    requiredBody: ['retrievalReceiptId', 'claimRef', 'expectedHash'],
+  },
   'agent.room.topics': {
     method: 'GET',
     path: '/api/agent/rooms/:roomId/topics',

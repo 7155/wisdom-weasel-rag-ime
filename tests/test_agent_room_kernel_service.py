@@ -317,6 +317,49 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.service._run_room_learning_maintenance()
         self.assertEqual(len(self.factory.runtime.cancelled), 1)
 
+    def test_knowledge_caller_is_built_from_authenticated_live_participant_binding(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        captured = {}
+
+        def search(**kwargs):
+            captured.update(kwargs)
+            caller = kwargs["caller"]
+            return {"retrievalReceiptId": kwargs["retrieval_receipt_id"], "groups": [], "bindingId": caller.binding_id if caller else None}
+
+        self.service.knowledge_promotion.search = search
+        result = self.service.room_knowledge_search(
+            {"query": "bounded fact", "retrievalReceiptId": "retrieval:service"},
+            authenticated_session_id=self.session_id,
+        )
+        self.assertEqual(result["bindingId"], "participant-binding:dispatch:service")
+        self.assertEqual(captured["caller"].room_id, self.room_id)
+        with self.assertRaisesRegex(PermissionError, "server-derived"):
+            self.service.room_knowledge_search(
+                {"query": "bounded fact", "scopeId": self.room_id},
+                authenticated_session_id=self.session_id,
+            )
+        ordinary = self.service.room_knowledge_search(
+            {"query": "bounded fact", "retrievalReceiptId": "retrieval:ordinary"},
+            authenticated_session_id="ordinary-session-with-no-room",
+        )
+        self.assertIsNone(ordinary["bindingId"])
+
+        self.service._last_recall_query_by_session[self.session_id] = "stale query"
+        self.service._recent_recall_messages_by_session[self.session_id] = [{"role": "user", "content": "stale"}]
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                """INSERT INTO room_v2_knowledge_cache_tombstones(
+                   tombstone_id,scope_key,knowledge_epoch,session_id,reason,created_at_ms)
+                   VALUES ('cache:test','room_public:room:1',2,?,'revoke',10)""",
+                (self.session_id,),
+            )
+        self.assertEqual(self.service._consume_room_knowledge_cache_tombstones(), 1)
+        self.assertNotIn(self.session_id, self.service._last_recall_query_by_session)
+        self.assertNotIn(self.session_id, self.service._recent_recall_messages_by_session)
+        with sqlite3.connect(self.service.db_path) as conn:
+            self.assertGreater(conn.execute("SELECT consumed_at_ms FROM room_v2_knowledge_cache_tombstones WHERE tombstone_id='cache:test'").fetchone()[0], 0)
+
     def test_settle_bridge_requires_matching_settle_and_explicit_post(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
         self.service.room_kernel_worker.run_once()

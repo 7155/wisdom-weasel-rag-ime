@@ -60,6 +60,8 @@ from .agent_room_kernel_projection import RoomKernelProjection
 from .agent_room_kernel_worker import RoomKernelWorker, RoomKernelWorkerLoop
 from .agent_room_learning_governance import RoomLearningGovernanceStore
 from .agent_room_learning_runtime import ReflectionProvider, RoomLearningRuntime
+from .agent_knowledge_promotion import KNOWLEDGE_ROUTE_HASH, KnowledgePromotionStore
+from .knowledge_scope import bound_session_knowledge_caller
 from .agent_runtime_driver import (
     AgentRuntimeError,
     AgentRuntimePolicy,
@@ -244,6 +246,8 @@ class AgentService:
             self.room_learning,
             reflection_provider=room_reflection_provider,
         )
+        self.knowledge_promotion = KnowledgePromotionStore(db_path)
+        self.knowledge_promotion.initialize()
         self._room_artifact_hash_provider = room_artifact_hash_provider
         self.agent_definition_compiler = AgentDefinitionCompiler()
         self._collaboration_profile_signers = {
@@ -1424,6 +1428,65 @@ class AgentService:
             )
         self._run_room_learning_maintenance()
         return result
+
+    def room_knowledge_search(
+        self,
+        payload: Mapping[str, object],
+        *,
+        authenticated_session_id: str,
+    ) -> dict[str, object]:
+        self._consume_room_knowledge_cache_tombstones()
+        forbidden = {"owner", "ownerId", "ownerKind", "scope", "scopeId", "scopeKind", "allowedScopes", "allowedDomains", "sessionId"}
+        if forbidden.intersection(payload):
+            raise PermissionError("knowledge owner/scope/session are server-derived")
+        query = str(payload.get("query") or "").strip()
+        if not query:
+            raise ValueError("knowledge search query is required")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            caller = bound_session_knowledge_caller(conn, authenticated_session_id)
+        receipt_id = str(payload.get("retrievalReceiptId") or f"knowledge-retrieval:{uuid.uuid4().hex}")
+        result = self.knowledge_promotion.search(
+            retrieval_receipt_id=receipt_id,
+            query=query,
+            caller=caller,
+            limit=int(payload.get("limit") or 10),
+            created_at_ms=int(payload.get("createdAtMs") or int(time.time() * 1000)),
+        )
+        return {
+            "schemaVersion": "wisdom-weasel.room-knowledge-search-result.v1",
+            "routeHash": KNOWLEDGE_ROUTE_HASH,
+            "requiredScopes": ["agent.read"],
+            **result,
+        }
+
+    def room_knowledge_read(
+        self,
+        payload: Mapping[str, object],
+        *,
+        authenticated_session_id: str,
+    ) -> dict[str, object]:
+        self._consume_room_knowledge_cache_tombstones()
+        forbidden = {"owner", "ownerId", "ownerKind", "scope", "scopeId", "scopeKind", "allowedScopes", "allowedDomains", "sessionId", "query"}
+        if forbidden.intersection(payload):
+            raise PermissionError("knowledge read uses only its prior retrieval receipt")
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            caller = bound_session_knowledge_caller(conn, authenticated_session_id)
+        if caller is None:
+            raise PermissionError("knowledge read requires an active Room ParticipantBinding")
+        result = self.knowledge_promotion.read(
+            claim_ref=_required_text(payload, "claimRef"),
+            retrieval_receipt_id=_required_text(payload, "retrievalReceiptId"),
+            expected_hash=_required_text(payload, "expectedHash"),
+            caller=caller,
+        )
+        return {
+            "schemaVersion": "wisdom-weasel.room-knowledge-read-result.v1",
+            "routeHash": KNOWLEDGE_ROUTE_HASH,
+            "requiredScopes": ["agent.read"],
+            **result,
+        }
 
     def _collaboration_profile_control(
         self,
@@ -5423,6 +5486,30 @@ class AgentService:
         for room_id in self.room_kernel.room_ids():
             self.room_kernel_projection.sync_room(room_id)
         self._run_room_learning_maintenance()
+        self._consume_room_knowledge_cache_tombstones()
+
+    def _consume_room_knowledge_cache_tombstones(self) -> int:
+        """Clear process-local recall state after durable knowledge invalidation."""
+        consumed_at_ms = int(time.time() * 1000)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """SELECT tombstone_id,session_id FROM room_v2_knowledge_cache_tombstones
+                   WHERE consumed_at_ms=0 ORDER BY created_at_ms,tombstone_id"""
+            ).fetchall()
+            session_ids = {str(row["session_id"]) for row in rows if row["session_id"]}
+            if rows:
+                conn.executemany(
+                    "UPDATE room_v2_knowledge_cache_tombstones SET consumed_at_ms=? WHERE tombstone_id=?",
+                    [(consumed_at_ms, str(row["tombstone_id"])) for row in rows],
+                )
+            conn.commit()
+        with self._recall_state_lock:
+            for session_id in session_ids:
+                self._last_recall_query_by_session.pop(session_id, None)
+                self._recent_recall_messages_by_session.pop(session_id, None)
+        return len(rows)
 
     def _record_room_learning_signal(self, signal: Mapping[str, object]) -> None:
         now_ms = int(signal.get("createdAtMs") or int(time.time() * 1000))

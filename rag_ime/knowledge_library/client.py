@@ -365,6 +365,8 @@ class HttpKnowledgeClient:
         file_name: str,
         mime_type: str = "application/octet-stream",
         parser_mode: str = "",
+        intake_receipt_id: str = "",
+        intake_content_hash: str = "",
     ) -> dict[str, Any]:
         query = {"kbId": kb_id, "fileName": file_name}
         if parser_mode:
@@ -378,6 +380,9 @@ class HttpKnowledgeClient:
                 "Accept": "application/json",
                 "X-Knowledge-Base-Id": kb_id,
                 "X-Knowledge-File-Name": urllib.parse.quote(file_name, safe=""),
+                "X-Knowledge-Intake-Receipt": intake_receipt_id,
+                "X-Knowledge-Intake-Hash": intake_content_hash,
+                "X-Knowledge-Intake-Status": "allowed" if intake_receipt_id else "legacy_adapter",
             },
             method="POST",
         )

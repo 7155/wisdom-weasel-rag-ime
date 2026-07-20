@@ -34,6 +34,8 @@ def agent_session_route(path: str) -> tuple[str, str]:
         "workflow",
         "plan",
         "goal",
+        "knowledge-search",
+        "knowledge-read",
     }:
         return "", ""
     return session_id, action
