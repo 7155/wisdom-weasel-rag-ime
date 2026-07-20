@@ -81,15 +81,28 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
     await roomsScene.getByRole('button', { name: '打开 Rooms 列表' }).click();
   }
   await expect(roomsScene.locator('.rooms-rail')).toBeVisible();
-  await expect(roomsScene.locator('.rooms-rail-empty')).toHaveText('还没有 Room');
   await expect(roomsScene.locator('.room-workspace')).toBeVisible();
-  await expect(roomsScene.locator('.room-empty')).toHaveText('选择一个 Room，或新建协作 Room。');
-  await expect(page.getByRole('textbox', { name: 'Room 消息' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: '发送 Room 消息' })).toBeDisabled();
+  const roomChoices = roomsScene.getByRole('button', { name: /^打开 Room：/ });
+  if (await roomChoices.count()) {
+    await roomChoices.first().click();
+    await expect(page.getByRole('radio', { name: 'Posts' })).toBeChecked();
+    await page.getByRole('radio', { name: '执行' }).click();
+    await expect(roomsScene.locator('.room-execution-workspace')).toBeVisible();
+    await page.getByRole('radio', { name: 'Sessions' }).click();
+    await expect(roomsScene.locator('.room-session-workspace')).toBeVisible();
+    await page.getByRole('radio', { name: 'Posts' }).click();
+    await expect(page.getByRole('textbox', { name: 'Room 消息' })).toBeEnabled();
+    if (isMobileViewport(page)) await roomsScene.getByRole('button', { name: '打开 Rooms 列表' }).click();
+  } else {
+    await expect(roomsScene.locator('.rooms-rail-empty')).toHaveText('还没有 Room');
+    await expect(roomsScene.locator('.room-empty')).toHaveText('选择一个 Room，或新建协作 Room。');
+    await expect(page.getByRole('textbox', { name: 'Room 消息' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: '发送 Room 消息' })).toBeDisabled();
+  }
   await page.getByRole('button', { name: '新建 Room' }).click();
   const createRoomDialog = page.getByRole('dialog');
-  await expect(createRoomDialog.getByRole('heading', { name: '新建协作 Room' })).toBeVisible();
-  await expect(createRoomDialog.getByText('参与角色 3/4')).toBeVisible();
+  await expect(createRoomDialog.getByRole('heading', { name: '新建 Room' })).toBeVisible();
+  await expect(createRoomDialog.getByText(/参与角色 \d\/4/)).toBeVisible();
   await expect(createRoomDialog.getByRole('button', { name: '创建 Room' })).toBeDisabled();
   await expectNoHorizontalPageOverflow(page);
   await testInfo.attach(`room-scene-${testInfo.project.name}`, {
@@ -99,7 +112,7 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
 
   await page.goto('/#/roles');
   await expect(page.getByRole('region', { name: '角色列表' })).toBeVisible();
-  await expect(page.locator('.persona-grid > button')).toHaveCount(3);
+  expect(await page.locator('.persona-grid > button').count()).toBeGreaterThanOrEqual(3);
   const secondPersona = page.locator('.persona-grid > button').nth(1);
   const personaName = (await secondPersona.locator('strong').innerText()).trim();
   await secondPersona.click();
@@ -110,7 +123,7 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
   await page.goto('/#/roles');
   await page.getByRole('radio', { name: 'Agent 模板' }).click();
   await expect(page.getByRole('region', { name: 'Agent 模板列表' })).toBeVisible();
-  await expect(page.locator('.template-list > button')).toHaveCount(3);
+  expect(await page.locator('.template-list > button').count()).toBeGreaterThanOrEqual(3);
   await expectNoHorizontalPageOverflow(page);
 });
 

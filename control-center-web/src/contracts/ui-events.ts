@@ -47,7 +47,13 @@ export const knownRoomEventTypes = [
 
 export const knownAgentBlockTypes = [
   'text',
+  'card',
+  'checklist',
+  'table',
   'code',
+  'artifact',
+  'reference',
+  'status',
   'reasoning_summary',
   'progress',
   'tool_call',
@@ -62,7 +68,7 @@ export const knownAgentBlockTypes = [
   'approval',
   'error',
   'unknown',
-] as const satisfies readonly AgentMessageV1['blocks'][number]['type'][];
+] as const;
 
 export type KnownAgentEventType = (typeof knownAgentEventTypes)[number];
 export type KnownRoomEventType = (typeof knownRoomEventTypes)[number];
@@ -103,14 +109,44 @@ export type UiObservationEvent = ObservationEventV1 & {
   streamKind: 'observation';
 };
 
-export interface UiAgentBlock {
+interface UiAgentBlockDataByType {
+  card: {
+    title?: unknown;
+    bodyMarkdown?: unknown;
+    tone?: unknown;
+    fields?: unknown;
+  };
+  checklist: { title?: unknown; items?: unknown };
+  table: { title?: unknown; columns?: unknown; rows?: unknown; caption?: unknown };
+  artifact: {
+    title?: unknown;
+    name?: unknown;
+    fileName?: unknown;
+    artifactId?: unknown;
+    mediaType?: unknown;
+    byteSize?: unknown;
+    receiptUrl?: unknown;
+    href?: unknown;
+    summary?: unknown;
+  };
+  reference: { title?: unknown; label?: unknown; href?: unknown; url?: unknown; source?: unknown; excerpt?: unknown };
+  status: { title?: unknown; state?: unknown; detail?: unknown; fields?: unknown };
+}
+
+type UiAgentBlockForType<T extends KnownAgentBlockType> = {
   id: string;
-  type: KnownAgentBlockType;
+  type: T;
   status: AgentMessageV1['blocks'][number]['status'];
   presentationKind: string;
-  data: Record<string, unknown>;
+  data: T extends keyof UiAgentBlockDataByType
+    ? UiAgentBlockDataByType[T] & Record<string, unknown>
+    : Record<string, unknown>;
   rawType?: string;
-}
+};
+
+export type UiAgentBlock = {
+  [T in KnownAgentBlockType]: UiAgentBlockForType<T>
+}[KnownAgentBlockType];
 
 export interface UiAgentMessage {
   schemaVersion: AgentMessageV1['schemaVersion'];
@@ -234,5 +270,5 @@ function normalizeAgentBlock(value: Record<string, unknown>): UiAgentBlock {
     presentationKind: String(value.presentationKind),
     data: value.data as Record<string, unknown>,
     ...(known ? {} : { rawType }),
-  };
+  } as UiAgentBlock;
 }
