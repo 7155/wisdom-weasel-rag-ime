@@ -5463,11 +5463,11 @@ class AgentService:
         prior = getattr(self, "room_kernel_worker_loop", None)
         if prior is not None:
             prior.close()
-        if self.room_kernel.mode == "cohort" and (
+        if self.room_kernel.mode in {"cohort", "kernel_only"} and (
             not callable(getattr(self.runtime, "dispatch_room", None))
             or not callable(getattr(self.runtime, "cancel_room", None))
         ):
-            raise RuntimeError("Room Kernel cohort requires typed Pi Room RPC")
+            raise RuntimeError("managed Room Kernel requires typed Pi Room RPC")
         self.room_kernel_worker = RoomKernelWorker(
             self.room_kernel,
             self.runtime,  # type: ignore[arg-type]
@@ -5702,7 +5702,7 @@ class AgentService:
         if participant is None:
             return
         kernel_binding = self.room_kernel.session_binding(event.session_id)
-        if self.room_kernel.mode == "cohort" and kernel_binding is not None:
+        if self.room_kernel.mode in {"cohort", "kernel_only"} and kernel_binding is not None:
             # Canonical Room Sessions publish status metadata only. Text,
             # reasoning, tool traces, and audio remain private until a fenced
             # RoomCommit explicitly proposes a RoomPost.

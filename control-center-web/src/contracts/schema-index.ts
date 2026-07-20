@@ -14538,6 +14538,132 @@ export const contractSchemas = {
     },
     "additionalProperties": false
   },
+  "room-rollout-policy.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-rollout-policy.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "policyId",
+      "stage",
+      "cohortId",
+      "readinessHash",
+      "rollbackTarget",
+      "adminRef",
+      "approvalSignature",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-rollout-policy.v1"
+      },
+      "policyId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "previousPolicyId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "stage": {
+        "enum": [
+          "off",
+          "shadow",
+          "named_canary",
+          "production_cohort",
+          "kernel_only"
+        ]
+      },
+      "cohortId": {
+        "type": "string"
+      },
+      "readinessHash": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "rollbackTarget": {
+        "enum": [
+          "off",
+          "shadow",
+          "named_canary",
+          "production_cohort",
+          "kernel_only"
+        ]
+      },
+      "adminRef": {
+        "type": "string",
+        "pattern": "^admin:"
+      },
+      "approvalSignature": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "room-rollout-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-rollout-receipt.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "policyId",
+      "action",
+      "fromStage",
+      "toStage",
+      "affectedRootIds",
+      "ledgerHash",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.room-rollout-receipt.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "policyId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "action": {
+        "enum": [
+          "promote",
+          "rollback"
+        ]
+      },
+      "fromStage": {
+        "type": "string"
+      },
+      "toStage": {
+        "type": "string"
+      },
+      "affectedRootIds": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "uniqueItems": true
+      },
+      "ledgerHash": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "room-root-execution.v2": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/room-root-execution.v2.json",

@@ -19,7 +19,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-room-kernel-")
         self.db_path = Path(self.tmp.name) / "rag-ime.sqlite"
         self.store = RoomKernelStore(self.db_path, mode="test")
-        self.assertEqual(self.store.initialize(), 87)
+        self.assertEqual(self.store.initialize(), 88)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

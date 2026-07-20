@@ -50,7 +50,7 @@ class RoomKernelWorker:
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
 
     def run_once(self, *, lease_ttl_ms: int = 30_000) -> dict[str, object] | None:
-        if self.store.mode not in {"cohort", "test"}:
+        if self.store.mode not in {"cohort", "test", "kernel_only"}:
             return None
         now_ms = self.clock_ms()
         pending = self.store.pending_dispatch(now_ms=now_ms)
@@ -209,7 +209,7 @@ class RoomKernelWorkerLoop:
         return self._thread is not None and self._thread.is_alive()
 
     def start(self) -> bool:
-        if self.worker.store.mode != "cohort" or self.running:
+        if self.worker.store.mode not in {"cohort", "kernel_only"} or self.running:
             return False
         self._stop.clear()
         self._wake.clear()

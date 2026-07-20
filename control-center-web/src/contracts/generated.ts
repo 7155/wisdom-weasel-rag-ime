@@ -122,6 +122,8 @@ import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
 import type { RoomLegacyRefV1 } from './generated/room-legacy-ref.v1';
 import type { RoomParticipantBindingV2 } from './generated/room-participant-binding.v2';
 import type { RoomPostV2 } from './generated/room-post.v2';
+import type { RoomRolloutPolicyV1 } from './generated/room-rollout-policy.v1';
+import type { RoomRolloutReceiptV1 } from './generated/room-rollout-receipt.v1';
 import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
 import type { RoomSettleReceiptV1 } from './generated/room-settle-receipt.v1';
 import type { RoomSettleResultV1 } from './generated/room-settle-result.v1';
@@ -257,6 +259,8 @@ export type {
   RoomLegacyRefV1,
   RoomParticipantBindingV2,
   RoomPostV2,
+  RoomRolloutPolicyV1,
+  RoomRolloutReceiptV1,
   RoomRootExecutionV2,
   RoomSettleReceiptV1,
   RoomSettleResultV1,
@@ -393,6 +397,8 @@ export interface ContractTypeMap {
   'room-legacy-ref.v1': RoomLegacyRefV1;
   'room-participant-binding.v2': RoomParticipantBindingV2;
   'room-post.v2': RoomPostV2;
+  'room-rollout-policy.v1': RoomRolloutPolicyV1;
+  'room-rollout-receipt.v1': RoomRolloutReceiptV1;
   'room-root-execution.v2': RoomRootExecutionV2;
   'room-settle-receipt.v1': RoomSettleReceiptV1;
   'room-settle-result.v1': RoomSettleResultV1;

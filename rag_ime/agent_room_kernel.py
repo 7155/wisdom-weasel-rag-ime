@@ -16,7 +16,7 @@ from .agent_room_kernel_contracts import (
 from .db import apply_database_migrations
 
 
-KernelMode = Literal["off", "shadow", "cohort", "test"]
+KernelMode = Literal["off", "shadow", "cohort", "test", "kernel_only"]
 _ACTIVE_DISPATCH_STATES = ("pending", "leased", "running", "retry_wait", "timer_wait")
 _TERMINAL_TASK_STATES = ("completed", "failed", "cancelled")
 
@@ -34,8 +34,8 @@ class RoomKernelStore:
     """
 
     def __init__(self, db_path: str | Path, *, mode: KernelMode = "shadow", enforce_test_delivery_gate: bool = False) -> None:
-        if mode not in {"off", "shadow", "cohort", "test"}:
-            raise ValueError("Room Kernel mode must be off, shadow, cohort, or test")
+        if mode not in {"off", "shadow", "cohort", "test", "kernel_only"}:
+            raise ValueError("Room Kernel mode must be off, shadow, cohort, test, or kernel_only")
         self.db_path = Path(db_path)
         self.mode = mode
         self.enforce_test_delivery_gate = bool(enforce_test_delivery_gate)
@@ -169,7 +169,7 @@ class RoomKernelStore:
                 self._enqueue_dispatch(
                     conn,
                     dispatch,
-                    shadow_only=self.mode not in {"cohort", "test"},
+                    shadow_only=self.mode not in {"cohort", "test", "kernel_only"},
                     now_ms=now_ms,
                 )
             conn.execute(
@@ -188,7 +188,7 @@ class RoomKernelStore:
         dispatch: Mapping[str, object],
         *,
         room_binding_ref: Mapping[str, object] | None,
-        source_kind: Literal["intercom", "work_item", "mention", "wake"],
+        source_kind: Literal["intercom", "work_item", "mention", "wake", "tool_executor"],
         source_id: str,
         now_ms: int,
     ) -> tuple[dict[str, object] | None, bool]:
@@ -196,6 +196,8 @@ class RoomKernelStore:
 
         if room_binding_ref is None:
             return None, False
+        if self.mode == "kernel_only":
+            raise RoomKernelFenceError("legacy Room execution is forbidden in kernel_only mode")
         if str(room_binding_ref.get("schemaVersion") or "") != "wisdom-weasel.room-binding.v2":
             raise RoomKernelFenceError("compatibility entry requires canonical RoomBinding")
         return self.normalize_legacy_dispatch(
@@ -218,7 +220,7 @@ class RoomKernelStore:
             return self._enqueue_dispatch(
                 conn,
                 payload,
-                shadow_only=self.mode not in {"cohort", "test"},
+                shadow_only=self.mode not in {"cohort", "test", "kernel_only"},
                 now_ms=now_ms,
             )
 
@@ -314,7 +316,7 @@ class RoomKernelStore:
             )
 
     def pending_dispatch(self, *, now_ms: int) -> dict[str, object] | None:
-        if self.mode not in {"cohort", "test"}:
+        if self.mode not in {"cohort", "test", "kernel_only"}:
             return None
         with self._connect() as conn:
             row = conn.execute(
@@ -346,7 +348,7 @@ class RoomKernelStore:
         prepared_session_id: str = "",
         prepared_manifest_hash: str = "",
     ) -> dict[str, object] | None:
-        if self.mode not in {"cohort", "test"}:
+        if self.mode not in {"cohort", "test", "kernel_only"}:
             return None
         with self._connect(immediate=True) as conn:
             row = conn.execute(
