@@ -1,6 +1,100 @@
 # Room V2 安全退出审计
 
-审计基线：`feea050`。审计日期：2026-07-20。
+审计基线：`399d6a2`（历史原始审计基线为 `feea050`）。审计日期：2026-07-20。
+
+## 2026-07-20 独立复审结论
+
+本轮从产品路由、`AgentService`、`KernelCommandBus`、持久化状态机、worker、正式 Pi handler 合同和前端终态语义重新走了一遍真实入口。旧的三个危险复现已经改成了正向安全不变量：accepted-before-ACK 会进入 durable cancel；直接 Store cancel 也会留下可重放 runtime effect；cancel 会关闭 Task 并生成同代 terminal receipt。历史章节保留原结论，不能再把那些旧复现当成当前行为。
+
+生产仍不能放行。当前不是发现新的双开火 P0，而是确认还有四个必须在真实生产演练前补齐的硬 Gate：管理员 process-group kill、未确认 cancel target 清单、墙钟/Token/单 Root Dispatch 总数硬上限、真实 installed Pi + Provider + 前端 E2E。
+
+| 检查项 | 当前结论 | 复审原因 |
+|---|---|---|
+| 1. 路径唯一性 | ⚠️ 需关注 | managed 产品 create/dispatch/commit/finalize/control 已收敛到 `KernelCommandBus`，`AgentService` 没有再直调状态迁移；但 Store 的迁移方法仍是公开 Python API，普通 legacy Room 也仍存在。模块边界靠约定而非 capability token 强制。 |
+| 2. 深度限制 | ⚠️ 需关注 | `MAX_HOPS=12`、`MAX_DEPTH=4`、`MAX_BUDGET=1000` 不能被请求放大，A -> B -> A 和第 15 次互相触发会被 hop ceiling 截断；仍没有独立墙钟、Token 和单 Root Dispatch 总数上限。 |
+| 3. 取消传播 | ⚠️ 需关注 | queued/running/provider/tool/process/retry/compaction/timer/continuation 均登记 AbortScope；unknown、panic、profile revoke 和 DB/RPC 崩溃窗都走 durable cancel outbox。连续 5 次 cancel 失败会 dead-letter，Root 正确停在 `cancelling` 且不伪造终态，但尚无进程级兜底和明确的未确认目标清单。 |
+| 4. 去重 | ✅ 安全（managed） | Dispatch、Commit、Continuation、RoomPost、Kernel command 和 cancel intent 都有 durable idempotency fence；unknown effect 不会重放。这个结论只覆盖 managed Root，不替 legacy Room 背书。 |
+| 5. isFinal 语义 | ✅ 安全（managed） | complete/cancel 只有 Root 终态、同 generation terminal receipt、quiescence 同时成立才 final；取消 dead-letter 时 Root 保持 `cancelling`，前端不会假解锁。 |
+| 6. 失控恢复 | ⚠️ 需关注 | panic 会推进 generation fence 并为 unknown/running effect 建 durable cancel；但 Host 卡死时仍缺 PID/process-group kill，worker `close()` 超时后也会丢弃 thread 引用，管理员最终仍可能需要人工停进程。 |
+
+### 真实链路复审
+
+```text
+POST kernel/create
+  -> AgentService.create_room_kernel_root
+  -> KernelCommandBus.create_root_task
+  -> Root + Task 同事务
+
+POST kernel/dispatch
+  -> KernelCommandBus.dispatch
+  -> Dispatch + outbox + AbortScope 同事务
+  -> worker lease
+  -> record runtime_effect=intent
+  -> Pi room.dispatch
+  -> matching dispatch_accepted receipt
+
+Pi agent_settled + RoomCommit
+  -> settle fence (Root/Dispatch/Session/generation/capability epoch)
+  -> KernelCommandBus.commit
+  -> RoomPost 或 child Dispatch 同事务
+  -> quiescence + acceptance
+  -> terminal receipt
+```
+
+accepted-before-ACK 的崩溃路径现在是：
+
+```text
+Pi 已 accepted -> Kernel 在 ACK 入库前崩溃
+  -> lease 到期 -> Dispatch unknown（不重放）
+  -> Root generation + 1 / cancelling
+  -> durable cancel intent
+  -> Pi room.cancel matching receipt
+  -> Dispatch/AbortScope cancelled
+  -> Task closed + Root terminal receipt
+```
+
+A -> B -> A 不再由自由文本 `@` 直接开火。Agent 只能在 `RoomCommit.continuation` 提交结构化 child Dispatch；Kernel 原子校验 parent、generation、hop/depth/budget 后才入队。第 13 hop 被拒绝，因此 15 个 Agent 连续互相 `@` 不会无限执行。缺失 Commit 会重试三次，然后 block，不会静默断链。
+
+### Prompt、Skill、Profile 与上下文
+
+| 面 | 当前结论 | 证据边界 |
+|---|---|---|
+| Prompt | ✅ 代码闭环 | managed Dispatch 固定六层稳定前缀，动态上下文只走 ProjectionJournal；需要真实 Provider cache/overflow 指标。 |
+| Skill | ✅ 代码闭环 | 每阶段最多一个 native `SKILL.md`，load/restore receipt 与正文 hash 有 fence；需要真实目录升级和 compaction 中断演练。 |
+| Profile | ✅ 代码闭环 | Root 固定 profile/version/bundle/definition/pointer/epoch；revoke 生成 durable managed cancel；需要多 Root 滚动与撤销演练。 |
+| Session/Post | ✅ 安全 | Session 的模型正文、reasoning、progress、audio 不自动公开；只有显式 `room_post` 进入公共 Room。 |
+| Voice | ✅ 不在链内 | 仅用户确认后的语音输入 Final Text 复用文字入口；没有 Agent/Room TTS、音频队列或自动播放。 |
+| Pi 来源 | ✅ 已固定源码 | build 要求 Pi HEAD 包含 `f842dfbd0cd14e80618371b888a3149c320905c5` 且 handler 提供 `room.dispatch/room.cancel`；本轮没有验证已安装运行时。 |
+
+### 绕过路径复核
+
+| 尝试绕过 | 结果 | 判定 |
+|---|---|---|
+| 直接调用 Store cancel | 仍会在同一事务写 runtime effect/cancel outbox；重启可继续投递，不再出现“DB cancelled、Pi 继续跑”。但公开方法没有 capability token，仍可能绕过 command audit record。 | ⚠️ |
+| managed Session 走 legacy HTTP/intercom/mention/wake | canonical RoomBinding 会在进入 prompt 前拒绝；普通 Room 保留 legacy 行为，两种 owner 不能绑定同一 Root。 | ✅ |
+| retry/timer/queued/running 时停止 | 都在 active state 与 AbortScope 内，target/root/panic 会取消并释放预算；cancel intent 幂等。 | ✅ |
+| outbox delivery 崩溃 | runtime effect intent 先于 Pi RPC；ACK 丢失变 unknown 并 cancel，不重放 Dispatch。 | ✅ |
+| unknown 后 panic | unknown effect 保留 session/root/generation target，panic/cancel 会补发 durable cancel；连续失败则 dead-letter 且保持非 final。 | ⚠️ |
+| Profile revoke | revoke 先写 durable managed cancel outbox，maintenance 经 command bus 到 Kernel/Pi，重复 maintenance 不双发。 | ✅ |
+| compaction 恢复 | 恢复精确 Skill load receipt 与 context epoch；catalog/body/epoch 改变时 fail closed，不重新猜 Skill。 | ✅ |
+| continuation 重启/重复 settle | Commit 与 child Dispatch 同事务，重复 Commit 返回同 receipt；缺 Commit 仅重试三次再 block。 | ✅ |
+| Provider/tool/process 卡死 | logical AbortScope 已登记，但没有每个 surface 的独立 runtime termination receipt，也没有 Host process-group kill。 | ⚠️ |
+
+这里的“✅”表示当前 managed 代码路径的不变量成立，不代表 production release。任何 `⚠️` 都必须继续阻止 production receipt。
+
+### 剩余 Gate 的可执行证据
+
+`tests/test_room_v2_safety_exit_audit.py` 当前包含七项复审：三个旧危险复现对应的正向修复、不可放大的系统 ceiling、Pi handler commit/method pin，以及 cancel 连续失败进入 dead-letter 后保持非终态的 fail-closed 证明。最后一项同时说明为什么管理员 kill 仍不能删掉。
+
+尚未有代码级硬限制的三个维度必须明确实现为 Kernel 自有字段，不能依赖 Prompt 或调用者：
+
+1. `rootDeadlineAtMs`：入队、lease、settle、timer/continuation 恢复时都检查。
+2. `tokenBudgetTotal/tokenUsed`：Provider receipt 原子累加，超限进入 cancel/block。
+3. `maxDispatchesTotal/dispatchesCreated`：每次 continuation 入队原子占位，防止零成本或极小成本 Dispatch 放大。
+
+管理员恢复还需：Host PID/process-group ownership、kill receipt、每个 Abort surface 的独立终止回执、`unconfirmedTargets[]` 管理接口，以及 worker close 后仍 alive 的 unhealthy 状态。完成这些之前，release receipt 必须继续是 `staged_not_installed`，production rollout 保持关闭。
+
+本轮验证：Kernel/worker/audit 25 项、service 16 项通过且 1 项因沙箱禁止 loopback bind 跳过、Profile/Prompt 17 项、Skill 12 项，合计 70 项通过、1 项环境跳过。真实 HTTP loopback、installed runtime 和网络 Provider 不在本轮证据范围内。
 
 ## 2026-07-20 第三批强制 Gate 整改（生产仍关闭）
 

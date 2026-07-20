@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
+import sqlite3
 from pathlib import Path
 
-from rag_ime.agent_room_kernel import RoomKernelStore
+from rag_ime.agent_room_kernel import (
+    SYSTEM_MAX_BUDGET,
+    SYSTEM_MAX_DEPTH,
+    SYSTEM_MAX_HOPS,
+    RoomKernelFenceError,
+    RoomKernelStore,
+)
 from rag_ime.agent_room_kernel_worker import RoomKernelWorker
 from rag_ime.agent_routes import agent_room_kernel_route
 
@@ -47,8 +55,14 @@ class _AcceptedRuntime:
         }
 
 
+class _CancelUnavailableRuntime(_AcceptedRuntime):
+    def cancel_room(self, *, session_id: str, root_id: str, generation: int):
+        self.cancel_calls.append((session_id, root_id, generation))
+        raise ConnectionError("Pi Host is unavailable")
+
+
 class RoomV2SafetyExitAuditTests(unittest.TestCase):
-    """Executable characterization of safety-exit blockers, not readiness claims."""
+    """Safety invariants plus explicit characterization of remaining release gates."""
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="room-v2-safety-audit-")
@@ -152,6 +166,71 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         self.assertIsNotNone(root["terminalReceiptId"])
         self.assertEqual(rejected["status"], "applied")
         self.assertEqual(rejected["receiptKind"], "terminal")
+
+    def test_system_ceilings_cannot_be_relaxed_by_a_root_request(self) -> None:
+        root = {
+            "schemaVersion": "wisdom-weasel.room-root-execution.v2",
+            "rootId": "root:over-limit",
+            "roomId": "room:1",
+            "generation": 0,
+            "state": "running",
+            "owner": "user:1",
+            "requirementAnchorRef": "requirement:limits",
+            "createdByActorRef": "user:1",
+            "terminalReceiptId": None,
+            "activeProfileRef": None,
+            "budgetPolicyRef": "budget:limits",
+            "createdAtMs": 1,
+        }
+        for overrides in (
+            {"budget": SYSTEM_MAX_BUDGET + 1, "max_hops": 1, "max_depth": 1},
+            {"budget": 1, "max_hops": SYSTEM_MAX_HOPS + 1, "max_depth": 1},
+            {"budget": 1, "max_hops": 1, "max_depth": SYSTEM_MAX_DEPTH + 1},
+        ):
+            with self.subTest(overrides=overrides):
+                with self.assertRaisesRegex(RoomKernelFenceError, "system safety ceiling"):
+                    self.store.create_root(root, **overrides, now_ms=1)
+
+    def test_reviewed_pi_handler_source_and_methods_are_pinned(self) -> None:
+        contract = json.loads(
+            (REPO / "integrations/pi/room-runtime-host-contract.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            contract["minimumHandlersCommit"],
+            "f842dfbd0cd14e80618371b888a3149c320905c5",
+        )
+        self.assertEqual(set(contract["requiredMethods"]), {"room.dispatch", "room.cancel"})
+        build = (REPO / "scripts/build_managed_pi_runtime_v2.py").read_text(encoding="utf-8")
+        self.assertIn('"git", "merge-base", "--is-ancestor"', build)
+        self.assertIn("Pi source does not contain the reviewed Room runtime handler commit", build)
+
+    def test_residual_gate_cancel_dead_letter_blocks_false_terminal_state(self) -> None:
+        """Fail closed today, while proving why administrator kill remains a gate."""
+
+        runtime = _CancelUnavailableRuntime()
+        worker = RoomKernelWorker(
+            self.store,
+            runtime,
+            clock_ms=lambda: self.clock,
+            revoke_session=lambda _session_id, _now_ms: None,
+        )
+        worker.run_once()
+        worker.cancel_root("root:1")
+        for attempt in range(1, 5):
+            self.clock = attempt * 100_000
+            worker.drain_cancel_outbox()
+
+        with sqlite3.connect(self.store.db_path) as conn:
+            state, attempts = conn.execute(
+                "SELECT state,attempt_count FROM room_kernel_cancel_outbox"
+            ).fetchone()
+        root = self.store.root("root:1")
+        self.assertEqual((state, attempts), ("dead_letter", 5))
+        self.assertEqual(root["state"], "cancelling")
+        self.assertIsNone(root["terminalReceiptId"])
+        self.assertEqual(self.store.abort_scope("dispatch:1")["state"], "cancelling")
 
     def _seed_dispatch(self) -> None:
         self.store.create_root(
