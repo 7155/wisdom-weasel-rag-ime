@@ -8964,6 +8964,380 @@ export const contractSchemas = {
       }
     }
   },
+  "guard-activation-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.guard-activation-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "activationReceiptId",
+      "scopeKey",
+      "guardCandidateId",
+      "guardEpoch",
+      "appliesToNewRootsAfterMs",
+      "evalRunIds",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.guard-activation-projection.v1"
+      },
+      "activationReceiptId": {
+        "type": "string"
+      },
+      "scopeKey": {
+        "type": "string"
+      },
+      "guardCandidateId": {
+        "type": "string"
+      },
+      "guardEpoch": {
+        "type": "integer"
+      },
+      "appliesToNewRootsAfterMs": {
+        "type": "integer"
+      },
+      "evalRunIds": {
+        "type": "array"
+      },
+      "createdAtMs": {
+        "type": "integer"
+      }
+    }
+  },
+  "guard-active-pointer-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.guard-active-pointer-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "scopeKey",
+      "guardEpoch",
+      "activeGuardCandidateId",
+      "activationReceiptId",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.guard-active-pointer-projection.v1"
+      },
+      "scopeKey": {
+        "type": "string"
+      },
+      "guardEpoch": {
+        "type": "integer"
+      },
+      "activeGuardCandidateId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "activationReceiptId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "updatedAtMs": {
+        "type": "integer"
+      }
+    }
+  },
+  "guard-approval-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.guard-approval-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "approvalReceiptId",
+      "guardCandidateId",
+      "authorityRef",
+      "decision",
+      "candidateHash",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.guard-approval-projection.v1"
+      },
+      "approvalReceiptId": {
+        "type": "string"
+      },
+      "guardCandidateId": {
+        "type": "string"
+      },
+      "authorityRef": {
+        "type": "string"
+      },
+      "decision": {
+        "type": "string"
+      },
+      "candidateHash": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer"
+      }
+    }
+  },
+  "guard-candidate-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.guard-candidate-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "guardCandidateId",
+      "lessonCandidateId",
+      "version",
+      "condition",
+      "action",
+      "scope",
+      "risk",
+      "thresholds",
+      "owner",
+      "sunsetAtMs",
+      "candidateHash",
+      "state",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.guard-candidate-projection.v1"
+      },
+      "guardCandidateId": {
+        "type": "string"
+      },
+      "lessonCandidateId": {
+        "type": "string"
+      },
+      "version": {
+        "type": "integer"
+      },
+      "condition": {
+        "type": "object"
+      },
+      "action": {
+        "type": "object"
+      },
+      "scope": {
+        "type": "object"
+      },
+      "risk": {
+        "type": "string"
+      },
+      "thresholds": {
+        "type": "object"
+      },
+      "owner": {
+        "type": "string"
+      },
+      "sunsetAtMs": {
+        "type": "integer"
+      },
+      "candidateHash": {
+        "type": "string"
+      },
+      "state": {
+        "const": "candidate_only"
+      },
+      "createdAtMs": {
+        "type": "integer"
+      }
+    }
+  },
+  "guard-eval-run-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.guard-eval-run-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "evalRunId",
+      "guardCandidateId",
+      "mode",
+      "datasetHash",
+      "metrics",
+      "status",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.guard-eval-run-projection.v1"
+      },
+      "evalRunId": {
+        "type": "string"
+      },
+      "guardCandidateId": {
+        "type": "string"
+      },
+      "mode": {
+        "type": "string"
+      },
+      "datasetHash": {
+        "type": "string"
+      },
+      "metrics": {
+        "type": "object"
+      },
+      "status": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer"
+      }
+    }
+  },
+  "guard-materialization-status-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.guard-materialization-status-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "materializationReceiptId",
+      "guardCandidateId",
+      "guardEpoch",
+      "artifactKind",
+      "status",
+      "artifactHash",
+      "projectionRef",
+      "errorCode",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.guard-materialization-status-projection.v1"
+      },
+      "materializationReceiptId": {
+        "type": "string"
+      },
+      "guardCandidateId": {
+        "type": "string"
+      },
+      "guardEpoch": {
+        "type": "integer"
+      },
+      "artifactKind": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string"
+      },
+      "artifactHash": {
+        "type": "string"
+      },
+      "projectionRef": {
+        "type": "string"
+      },
+      "errorCode": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer"
+      }
+    }
+  },
+  "guard-rollback-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.guard-rollback-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "rollbackReceiptId",
+      "scopeKey",
+      "fromGuardCandidateId",
+      "restoredGuardCandidateId",
+      "guardEpoch",
+      "cancelledDispatchIds",
+      "authorityRef",
+      "reason",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.guard-rollback-projection.v1"
+      },
+      "rollbackReceiptId": {
+        "type": "string"
+      },
+      "scopeKey": {
+        "type": "string"
+      },
+      "fromGuardCandidateId": {
+        "type": "string"
+      },
+      "restoredGuardCandidateId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "guardEpoch": {
+        "type": "integer"
+      },
+      "cancelledDispatchIds": {
+        "type": "array"
+      },
+      "authorityRef": {
+        "type": "string"
+      },
+      "reason": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer"
+      }
+    }
+  },
+  "incident-occurrence-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.incident-occurrence-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "incidentId",
+      "taxonomy",
+      "failureSignature",
+      "evidenceRefs",
+      "occurrenceCount",
+      "lastObservedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.incident-occurrence-projection.v1"
+      },
+      "incidentId": {
+        "type": "string"
+      },
+      "taxonomy": {
+        "type": "string"
+      },
+      "failureSignature": {
+        "type": "string"
+      },
+      "evidenceRefs": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "occurrenceCount": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "lastObservedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "knowledge-document-detail.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://rag-ime.local/contracts/knowledge-document-detail.v1.json",
@@ -9750,6 +10124,133 @@ export const contractSchemas = {
       }
     },
     "additionalProperties": true
+  },
+  "knowledge-search-use-eval-run.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.knowledge-search-use-eval-run.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "evalRunId",
+      "datasetId",
+      "datasetContentHash",
+      "roomBindingId",
+      "traceCount",
+      "metrics",
+      "strataMetrics",
+      "status",
+      "failureReasons",
+      "reportOnly",
+      "evaluatorId",
+      "contentHash",
+      "evaluatorSignature",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.knowledge-search-use-eval-run.v1"
+      },
+      "evalRunId": {
+        "type": "string"
+      },
+      "datasetId": {
+        "type": "string"
+      },
+      "datasetContentHash": {
+        "type": "string"
+      },
+      "roomBindingId": {
+        "type": "string"
+      },
+      "traceCount": {
+        "type": "integer"
+      },
+      "metrics": {
+        "type": "object"
+      },
+      "strataMetrics": {
+        "type": "object"
+      },
+      "status": {
+        "enum": [
+          "passed",
+          "failed"
+        ]
+      },
+      "failureReasons": {
+        "type": "array"
+      },
+      "reportOnly": {
+        "const": true
+      },
+      "evaluatorId": {
+        "type": "string"
+      },
+      "contentHash": {
+        "type": "string"
+      },
+      "evaluatorSignature": {
+        "type": "string"
+      },
+      "createdAtMs": {
+        "type": "integer"
+      }
+    }
+  },
+  "lesson-candidate-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.lesson-candidate-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "lessonCandidateId",
+      "incidentId",
+      "facts",
+      "causes",
+      "applicabilityBoundary",
+      "counterexamples",
+      "provenance",
+      "candidateHash",
+      "state",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.lesson-candidate-projection.v1"
+      },
+      "lessonCandidateId": {
+        "type": "string"
+      },
+      "incidentId": {
+        "type": "string"
+      },
+      "facts": {
+        "type": "array"
+      },
+      "causes": {
+        "type": "array"
+      },
+      "applicabilityBoundary": {
+        "type": "object"
+      },
+      "counterexamples": {
+        "type": "array"
+      },
+      "provenance": {
+        "type": "array"
+      },
+      "candidateHash": {
+        "type": "string"
+      },
+      "state": {
+        "const": "candidate_only"
+      },
+      "createdAtMs": {
+        "type": "integer"
+      }
+    }
   },
   "management-work-error.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -12297,6 +12798,52 @@ export const contractSchemas = {
       }
     },
     "additionalProperties": false
+  },
+  "reflection-dead-letter-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.reflection-dead-letter-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "deadLetterId",
+      "incidentId",
+      "ownerRef",
+      "reasonCode",
+      "lastEvidenceRefs",
+      "nextAction",
+      "attemptCount",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.reflection-dead-letter-projection.v1"
+      },
+      "deadLetterId": {
+        "type": "string"
+      },
+      "incidentId": {
+        "type": "string"
+      },
+      "ownerRef": {
+        "type": "string"
+      },
+      "reasonCode": {
+        "type": "string"
+      },
+      "lastEvidenceRefs": {
+        "type": "array"
+      },
+      "nextAction": {
+        "type": "string"
+      },
+      "attemptCount": {
+        "type": "integer"
+      },
+      "createdAtMs": {
+        "type": "integer"
+      }
+    }
   },
   "requirement-anchor.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",

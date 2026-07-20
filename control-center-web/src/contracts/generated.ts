@@ -70,10 +70,20 @@ import type { FrontendSelectionResponseV1 } from './generated/frontend-selection
 import type { FrontendSelectionV1 } from './generated/frontend-selection.v1';
 import type { FrontendSuggestRequestV1 } from './generated/frontend-suggest-request.v1';
 import type { FrontendSuggestResponseV1 } from './generated/frontend-suggest-response.v1';
+import type { GuardActivationProjectionV1 } from './generated/guard-activation-projection.v1';
+import type { GuardActivePointerProjectionV1 } from './generated/guard-active-pointer-projection.v1';
+import type { GuardApprovalProjectionV1 } from './generated/guard-approval-projection.v1';
+import type { GuardCandidateProjectionV1 } from './generated/guard-candidate-projection.v1';
+import type { GuardEvalRunProjectionV1 } from './generated/guard-eval-run-projection.v1';
+import type { GuardMaterializationStatusProjectionV1 } from './generated/guard-materialization-status-projection.v1';
+import type { GuardRollbackProjectionV1 } from './generated/guard-rollback-projection.v1';
+import type { IncidentOccurrenceProjectionV1 } from './generated/incident-occurrence-projection.v1';
 import type { KnowledgeDocumentDetailV1 } from './generated/knowledge-document-detail.v1';
 import type { KnowledgeDocumentImportV1 } from './generated/knowledge-document-import.v1';
 import type { KnowledgeGraphV1 } from './generated/knowledge-graph.v1';
 import type { KnowledgeLibraryV1 } from './generated/knowledge-library.v1';
+import type { KnowledgeSearchUseEvalRunV1 } from './generated/knowledge-search-use-eval-run.v1';
+import type { LessonCandidateProjectionV1 } from './generated/lesson-candidate-projection.v1';
 import type { ManagementWorkErrorV1 } from './generated/management-work-error.v1';
 import type { ManagementWorkPreviewV1 } from './generated/management-work-preview.v1';
 import type { ManagementWorkReceiptV1 } from './generated/management-work-receipt.v1';
@@ -92,6 +102,7 @@ import type { PromptCompileReceiptV1 } from './generated/prompt-compile-receipt.
 import type { PromptPlanV1 } from './generated/prompt-plan.v1';
 import type { ProviderProjectionJournalV1 } from './generated/provider-projection-journal.v1';
 import type { ProviderProjectionReceiptV1 } from './generated/provider-projection-receipt.v1';
+import type { ReflectionDeadLetterProjectionV1 } from './generated/reflection-dead-letter-projection.v1';
 import type { RequirementAnchorV1 } from './generated/requirement-anchor.v1';
 import type { RequirementCatalogRevisionV1 } from './generated/requirement-catalog-revision.v1';
 import type { RimeRankSelectionV1 } from './generated/rime-rank-selection.v1';
@@ -194,10 +205,20 @@ export type {
   FrontendSelectionV1,
   FrontendSuggestRequestV1,
   FrontendSuggestResponseV1,
+  GuardActivationProjectionV1,
+  GuardActivePointerProjectionV1,
+  GuardApprovalProjectionV1,
+  GuardCandidateProjectionV1,
+  GuardEvalRunProjectionV1,
+  GuardMaterializationStatusProjectionV1,
+  GuardRollbackProjectionV1,
+  IncidentOccurrenceProjectionV1,
   KnowledgeDocumentDetailV1,
   KnowledgeDocumentImportV1,
   KnowledgeGraphV1,
   KnowledgeLibraryV1,
+  KnowledgeSearchUseEvalRunV1,
+  LessonCandidateProjectionV1,
   ManagementWorkErrorV1,
   ManagementWorkPreviewV1,
   ManagementWorkReceiptV1,
@@ -216,6 +237,7 @@ export type {
   PromptPlanV1,
   ProviderProjectionJournalV1,
   ProviderProjectionReceiptV1,
+  ReflectionDeadLetterProjectionV1,
   RequirementAnchorV1,
   RequirementCatalogRevisionV1,
   RimeRankSelectionV1,
@@ -319,10 +341,20 @@ export interface ContractTypeMap {
   'frontend-selection.v1': FrontendSelectionV1;
   'frontend-suggest-request.v1': FrontendSuggestRequestV1;
   'frontend-suggest-response.v1': FrontendSuggestResponseV1;
+  'guard-activation-projection.v1': GuardActivationProjectionV1;
+  'guard-active-pointer-projection.v1': GuardActivePointerProjectionV1;
+  'guard-approval-projection.v1': GuardApprovalProjectionV1;
+  'guard-candidate-projection.v1': GuardCandidateProjectionV1;
+  'guard-eval-run-projection.v1': GuardEvalRunProjectionV1;
+  'guard-materialization-status-projection.v1': GuardMaterializationStatusProjectionV1;
+  'guard-rollback-projection.v1': GuardRollbackProjectionV1;
+  'incident-occurrence-projection.v1': IncidentOccurrenceProjectionV1;
   'knowledge-document-detail.v1': KnowledgeDocumentDetailV1;
   'knowledge-document-import.v1': KnowledgeDocumentImportV1;
   'knowledge-graph.v1': KnowledgeGraphV1;
   'knowledge-library.v1': KnowledgeLibraryV1;
+  'knowledge-search-use-eval-run.v1': KnowledgeSearchUseEvalRunV1;
+  'lesson-candidate-projection.v1': LessonCandidateProjectionV1;
   'management-work-error.v1': ManagementWorkErrorV1;
   'management-work-preview.v1': ManagementWorkPreviewV1;
   'management-work-receipt.v1': ManagementWorkReceiptV1;
@@ -341,6 +373,7 @@ export interface ContractTypeMap {
   'prompt-plan.v1': PromptPlanV1;
   'provider-projection-journal.v1': ProviderProjectionJournalV1;
   'provider-projection-receipt.v1': ProviderProjectionReceiptV1;
+  'reflection-dead-letter-projection.v1': ReflectionDeadLetterProjectionV1;
   'requirement-anchor.v1': RequirementAnchorV1;
   'requirement-catalog-revision.v1': RequirementCatalogRevisionV1;
   'rime-rank-selection.v1': RimeRankSelectionV1;
