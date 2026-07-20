@@ -1364,7 +1364,7 @@ class PiRuntimeHostManager:
             typed_surfaces[surface] = proof
         derived_pending = [
             surface for surface in _CANCELLATION_SURFACES
-            if typed_surfaces[surface]["state"] in {"requested", "acknowledged"}
+            if typed_surfaces[surface]["state"] in {"requested", "acknowledged", "unknown"}
         ]
         declared_pending = [
             str(value) for value in result.get("pendingTargets") or [] if str(value).strip()

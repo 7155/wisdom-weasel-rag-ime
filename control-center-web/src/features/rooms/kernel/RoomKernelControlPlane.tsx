@@ -131,6 +131,9 @@ function RootControlSection({
     .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
   const receipt = projection.terminalReceiptByRootId[root.rootId];
   const cancelReceipt = projection.cancelReceiptByRootId[root.rootId];
+  const unresolvedSurfaces = projection.cancellationSurfaces.filter((item) => (
+    item.rootId === root.rootId && item.state !== 'terminated'
+  ));
   const [pending, setPending] = useState(false);
   const [commandReceipt, setCommandReceipt] = useState<RoomKernelReceiptV1 | null>(null);
   const [commandError, setCommandError] = useState('');
@@ -158,6 +161,11 @@ function RootControlSection({
       <span><small>Root · generation {root.generation}</small><strong>{root.rootId}</strong><i data-state={root.state}>{rootStateLabel(root, receipt)}</i></span>
       {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? commandAwaitingProjection ? '等待 canonical Root 投影更新' : '提交带 generation 的取消命令' : commandDisabledReason || '后端 command route 尚未接入'} onClick={() => void requestStop()}>{pending ? '正在提交' : commandAwaitingProjection ? '已提交' : '停止'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />终态已确认</span>}
     </header>
+    {unresolvedSurfaces.length ? <section className="room-kernel-root__unresolved" role="alert">
+      <TriangleAlert size={16} />
+      <span><strong>仍有后台执行未确认终止</strong><small>输入保持锁定。请继续停止重试，或由管理员执行紧急停止并等待 Runtime Host reconcile。</small></span>
+      <ul>{unresolvedSurfaces.map((item) => <li key={`${item.cancelId}:${item.surface}`}><code>{item.surface}</code><b>{item.state}</b><small>{surfaceTargets(item.detail)}</small></li>)}</ul>
+    </section> : null}
     <div className="room-kernel-root__summary">
       <span><ShieldCheck size={14} /><small>当前负责人</small><strong>{root.owner || '等待分派'}</strong></span>
       <BudgetMetric icon={<Gauge size={14} />} label="Dispatch" used={budget?.usedDispatches} maximum={budget?.maxDispatches} />
@@ -204,6 +212,11 @@ function ReceiptSummary({ icon, label, receipt }: { icon: ReactNode; label: stri
 function rootStateLabel(root: RootProjection, receipt?: RoomKernelReceiptV1): string {
   if (root.isFinal) return deliveryGatePassed(receipt) ? '已完成，交付观察通过' : '已结束，交付观察有警告';
   return ({ pending: '排队中', running: '执行中', waiting: '等待中', blocked: '已阻塞', cancelling: '取消中', completed: '已完成，等待终态回执', failed: '失败，等待终态回执', cancelled: '已取消，等待终态回执', cancelled_with_unknowns: '已取消，仍有未知执行' } as Record<RootProjection['state'], string>)[root.state];
+}
+
+function surfaceTargets(detail: Record<string, unknown>): string {
+  const targetIds = Array.isArray(detail.targetIds) ? detail.targetIds.filter((item): item is string => typeof item === 'string') : [];
+  return targetIds.length ? targetIds.join(', ') : 'pendingTargets 未确认';
 }
 
 function deliveryGatePassed(receipt?: RoomKernelReceiptV1): boolean {

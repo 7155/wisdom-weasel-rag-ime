@@ -68,6 +68,17 @@ describe('generated-contract Room Kernel projection', () => {
     expect(state.rootsById['root-a']?.isFinal).toBe(true);
   });
 
+  it('never treats cancelled_with_unknowns as final even with a stale terminal receipt', () => {
+    let state = createRoomKernelProjection('room-a');
+    state = apply(state, envelope(1, 'root', 'root-a', 'upserted', {
+      root: root({ state: 'cancelled_with_unknowns', terminalReceiptId: 'terminal-a' }),
+    }));
+    state = apply(state, envelope(2, 'root', 'root-a', 'kernel_receipt', {
+      receipt: receipt({ receiptId: 'terminal-a', receiptKind: 'terminal' }),
+    }));
+    expect(state.rootsById['root-a']?.isFinal).toBe(false);
+  });
+
   it('rejects stale generation for receipt dispatch session and post', () => {
     let state = createRoomKernelProjection('room-a');
     state = apply(state, envelope(1, 'root', 'root-a', 'upserted', { root: root() }));
@@ -119,6 +130,7 @@ describe('generated-contract Room Kernel projection', () => {
         },
       }],
       receipts: [],
+      cancellationSurfaces: [],
     };
     const state = applyRoomKernelSnapshot(createRoomKernelProjection('room-a'), snapshot);
     expect(Object.keys(state.rootsById)).toEqual(['root-a', 'root-b']);

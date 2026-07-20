@@ -2,6 +2,10 @@
 
 审计基线：`399d6a2`（历史原始审计基线为 `feea050`）。审计日期：2026-07-20。
 
+## 2026-07-20 unknown finality P0 修正
+
+`unknown` 只表示“尚不能证明后台执行已停止”，绝不是一种可解锁输入的完成态。Kernel 现在把 unknown surface 保留在 durable cancel retry 与 `pendingTargets` 中，Root 可显示为 `cancelled_with_unknowns`，但不生成 terminal receipt；前端即使重连时读到历史 terminal receipt，也强制 `isFinal=false`，继续显示停止入口和红色管理员 kill/reconcile 提示。只有后续 reconcile 把全部 surface 更新为 `terminated`、`pendingTargets=0` 并生成同 generation terminal receipt，Root 才能进入真正 `cancelled` 和 final。
+
 ## 2026-07-20 独立复审结论
 
 本轮从产品路由、`AgentService`、`KernelCommandBus`、持久化状态机、worker、正式 Pi handler 合同和前端终态语义重新走了一遍真实入口。旧的三个危险复现已经改成了正向安全不变量：accepted-before-ACK 会进入 durable cancel；直接 Store cancel 也会留下可重放 runtime effect；cancel 会关闭 Task 并生成同代 terminal receipt。历史章节保留原结论，不能再把那些旧复现当成当前行为。

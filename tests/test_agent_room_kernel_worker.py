@@ -48,7 +48,7 @@ class FakeRoomRuntime:
             "pendingTargets": ([
                 "provider", "tool", "exec", "retry", "compaction",
                 "branch_summary", "timer", "continuation", "session"
-            ] if self.surface_state in {"requested", "acknowledged"} else []),
+            ] if self.surface_state in {"requested", "acknowledged", "unknown"} else []),
         }
         self.cancellations.append(receipt)
         return receipt
@@ -166,10 +166,27 @@ class RoomKernelWorkerTests(unittest.TestCase):
         worker.cancel_root("root:1")
 
         root_projection = self.store.root("root:1")
-        terminal = self.store.receipt(str(root_projection["terminalReceiptId"]))
-        self.assertEqual(terminal["details"]["terminalState"], "cancelled_with_unknowns")
+        self.assertEqual(root_projection["state"], "cancelled_with_unknowns")
+        self.assertIsNone(root_projection["terminalReceiptId"])
         surfaces = self.store.cancellation_surface_projection("room:1")
         self.assertEqual({item["state"] for item in surfaces}, {"unknown"})
+        self.assertEqual(self.store.lease_cancel(now_ms=510)["rootId"], "root:1")
+
+    def test_unknown_cancel_only_finalizes_after_reconcile_proves_every_surface_terminated(self) -> None:
+        self.store.enqueue_dispatch(dispatch("dispatch:reconcile", key="worker:reconcile"), now_ms=3)
+        runtime = FakeRoomRuntime(surface_state="unknown")
+        worker = RoomKernelWorker(self.store, runtime, clock_ms=self.clock)
+        worker.run_once()
+        worker.cancel_root("root:1")
+        self.assertIsNone(self.store.root("root:1")["terminalReceiptId"])
+
+        runtime.surface_state = "terminated"
+        self.now_ms = 510
+        worker.drain_cancel_outbox()
+        root_projection = self.store.root("root:1")
+        self.assertEqual(root_projection["state"], "cancelled")
+        self.assertIsNotNone(root_projection["terminalReceiptId"])
+        self.assertEqual({item["state"] for item in self.store.cancellation_surface_projection("room:1")}, {"terminated"})
 
     def test_shadow_worker_never_leases_or_calls_runtime(self) -> None:
         shadow = RoomKernelStore(self.db_path, mode="shadow")

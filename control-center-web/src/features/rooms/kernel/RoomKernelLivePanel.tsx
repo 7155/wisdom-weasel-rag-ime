@@ -6,6 +6,7 @@ import {
   reduceRoomKernelEvent,
   type RoomKernelProjection,
   type RoomKernelSnapshot,
+  type CancellationSurfaceProjection,
 } from '@/contracts/room-kernel-reducer';
 import { parseContract } from '@/contracts/validators';
 import { useOptionalControlTransport } from '@/app/control-transport';
@@ -225,6 +226,26 @@ export function parseSnapshot(value: unknown, roomId: string): RoomKernelSnapsho
     posts: array(item.posts).map((entry) => parseContract('room-post.v2', entry)),
     sessions: array(item.sessions) as RoomKernelSnapshot['sessions'],
     receipts: array(item.receipts).map((entry) => parseContract('room-kernel-receipt.v1', entry)),
+    cancellationSurfaces: array(item.cancellationSurfaces).map(parseCancellationSurface),
+  };
+}
+
+function parseCancellationSurface(value: unknown): CancellationSurfaceProjection {
+  const item = record(value);
+  const surfaces = new Set(['provider', 'tool', 'exec', 'retry', 'compaction', 'branch_summary', 'timer', 'continuation', 'session']);
+  const states = new Set(['requested', 'acknowledged', 'terminated', 'unknown']);
+  if (!surfaces.has(String(item.surface)) || !states.has(String(item.state))) {
+    throw new TypeError('Room cancellation surface is invalid');
+  }
+  return {
+    cancelId: requiredText(item.cancelId, 'cancelId'),
+    rootId: requiredText(item.rootId, 'rootId'),
+    dispatchId: requiredText(item.dispatchId, 'dispatchId'),
+    surface: item.surface as CancellationSurfaceProjection['surface'],
+    state: item.state as CancellationSurfaceProjection['state'],
+    targetRef: typeof item.targetRef === 'string' ? item.targetRef : '',
+    detail: record(item.detail),
+    updatedAtMs: nonNegativeInteger(item.updatedAtMs, 'updatedAtMs'),
   };
 }
 
@@ -250,6 +271,15 @@ function isAbort(error: unknown): boolean {
 }
 
 function array(value: unknown): unknown[] { return Array.isArray(value) ? value : []; }
+function requiredText(value: unknown, field: string): string {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) throw new TypeError(`${field} is required`);
+  return text;
+}
+function nonNegativeInteger(value: unknown, field: string): number {
+  if (!Number.isInteger(value) || Number(value) < 0) throw new TypeError(`${field} is invalid`);
+  return Number(value);
+}
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
