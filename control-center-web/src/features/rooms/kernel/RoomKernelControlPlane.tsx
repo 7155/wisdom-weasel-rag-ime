@@ -14,6 +14,8 @@ import { useState } from 'react';
 import { Button } from '@/components/primitives';
 import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
+import { RoomRequirementsControlPlane } from '../requirements/RoomRequirementsControlPlane';
+import type { RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
 import {
   buildCancelRootCommand,
   buildPanicCommand,
@@ -44,6 +46,7 @@ export function RoomKernelControlPlane({
   commandDisabledReason,
   panicEnabled = false,
   projection,
+  requirementsByRootId = {},
 }: {
   projection: RoomKernelProjection;
   budgetsByRootId: Record<string, RootBudgetSummary>;
@@ -52,6 +55,7 @@ export function RoomKernelControlPlane({
   commandTransport?: RoomKernelCommandTransport;
   commandDisabledReason?: string;
   panicEnabled?: boolean;
+  requirementsByRootId?: Record<string, RoomRequirementsReadProjection>;
 }) {
   const roots = Object.values(projection.rootsById).sort((left, right) => (
     left.updatedAtMs === right.updatedAtMs
@@ -93,6 +97,7 @@ export function RoomKernelControlPlane({
         capabilityReceipt={capabilityReceiptsByRootId[root.rootId]}
         commandTransport={commandTransport}
         commandDisabledReason={commandDisabledReason}
+        requirements={requirementsByRootId[root.rootId]}
       />)}
       {!roots.length ? <p className="room-kernel-control__empty">当前没有根任务。</p> : null}
     </div>
@@ -107,6 +112,7 @@ function RootControlSection({
   commandDisabledReason,
   projection,
   root,
+  requirements,
 }: {
   root: RootProjection;
   projection: RoomKernelProjection;
@@ -115,6 +121,7 @@ function RootControlSection({
   capabilityReceipt?: RuntimeReceiptSummary;
   commandTransport?: RoomKernelCommandTransport;
   commandDisabledReason?: string;
+  requirements?: RoomRequirementsReadProjection;
 }) {
   const posts = projection.postOrder
     .map((postId) => projection.postsById[postId])
@@ -168,6 +175,7 @@ function RootControlSection({
       <section className="room-kernel-posts" aria-label={`${root.rootId} 公开 Posts`}><header><strong>公开 Posts</strong><small>仅显式提交</small></header>{posts.length ? posts.map((post) => <article key={post!.postId}><span><b>{postKindLabel(post!.kind)}</b><small>{post!.authorActorRef}</small></span><p>{post!.content}</p></article>) : <p className="room-kernel-control__empty">还没有公开提交。</p>}</section>
       <section className="room-kernel-sessions" aria-label={`${root.rootId} 私有 Sessions`}><header><strong>私有 Session Inspector</strong><small>过程不进入 Room</small></header>{sessions.length ? sessions.map((session) => <details key={session.sessionId}><summary><LockKeyhole size={13} /><span><strong>{session.sessionId}</strong><small>{sessionStateLabel(session.state)} · generation {session.generation}</small></span></summary><dl><div><dt>公开状态</dt><dd>仅状态元数据</dd></div><div><dt>Transcript</dt><dd>私有，不投影到 Room</dd></div>{session.capabilityManifest ? <><div><dt>Capability</dt><dd>{session.capabilityManifest.status} · epoch {session.capabilityManifest.capabilityEpoch}</dd></div><div><dt>Manifest</dt><dd title={session.capabilityManifest.manifestHash}>{session.capabilityManifest.manifestId} · {shortHash(session.capabilityManifest.manifestHash)}</dd></div><div><dt>Profile</dt><dd title={session.capabilityManifest.compiledRuntimeProfileRef.contentHash}>{session.capabilityManifest.compiledRuntimeProfileRef.profileId} · {session.capabilityManifest.compiledRuntimeProfileRef.revision}</dd></div></> : null}{session.requirementObservation ? <><div><dt>Requirement</dt><dd>{session.requirementObservation.catalogRevisionId || '目录缺失'} · {session.requirementObservation.state}</dd></div><div><dt>Proof</dt><dd>{session.requirementObservation.warnings.length ? `观察警告 ${session.requirementObservation.warnings.length} 项` : `${session.requirementObservation.proofReceiptRefs.length} 个回执`}</dd></div></> : null}</dl></details>) : <p className="room-kernel-control__empty">当前没有绑定 Session。</p>}</section>
     </div>
+    {requirements ? <RoomRequirementsControlPlane projection={requirements} /> : null}
   </article>;
 }
 
