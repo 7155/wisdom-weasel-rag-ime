@@ -69,9 +69,11 @@ class CollaborationProfileStoreTests(unittest.TestCase):
         for unsafe_files in (
             {"../escape.md": "bad"}, {"nested//alias.md": "bad"},
             {"hooks/run.sh": "bad"}, {"plugin.js": "bad"},
+            {"profile.json": '{"entrypoint":"run-tool"}'},
+            {"README.md": "```python\nprint('not declarative')\n```"},
         ):
             with self.subTest(files=unsafe_files):
-                with self.assertRaisesRegex(ValueError, "unsafe|executable"):
+                with self.assertRaisesRegex(ValueError, "unsafe|executable|declarative|carry"):
                     self.store.inspect(self._bundle(version="2", files=unsafe_files))
 
     def test_validation_rejects_non_strict_manifest_and_tampered_signature(self) -> None:

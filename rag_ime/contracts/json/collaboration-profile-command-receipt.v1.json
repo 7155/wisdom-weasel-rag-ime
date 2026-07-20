@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.collaboration-profile-command-receipt.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "receiptId", "commandId", "commandHash", "action", "status", "profileId", "routeHash", "guardEpoch", "result", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.collaboration-profile-command-receipt.v1"},
+    "receiptId": {"type": "string", "pattern": "^profile-command-receipt:[a-f0-9]{24}$"},
+    "commandId": {"type": "string", "pattern": "^profile-command:[A-Za-z0-9._:-]{1,96}$"},
+    "commandHash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "action": {"type": "string", "enum": ["inspect", "validate", "compile", "dry_run", "stage", "activate", "rollback", "revoke"]},
+    "status": {"type": "string", "const": "applied"},
+    "profileId": {"type": ["string", "null"]},
+    "routeHash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "guardEpoch": {"type": "integer", "minimum": 0},
+    "result": {"type": "object"},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

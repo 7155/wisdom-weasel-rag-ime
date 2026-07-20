@@ -36,6 +36,7 @@ from .agent_surface_runtime import AgentSurfaceRuntime, PiSurfaceCompletionProvi
 from .agent_role_book_control import AgentRoleBookControlService
 from .agent_service import AgentService, agent_service_from_settings
 from .agent_routes import (
+    agent_collaboration_profile_route,
     agent_approval_route,
     agent_artifact_route,
     agent_context_item_route,
@@ -5923,6 +5924,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         wake_schedule_id, wake_schedule_action = agent_wake_schedule_route(parsed.path)
         subagent_run_id, subagent_action = agent_subagent_route(parsed.path)
         artifact_id = agent_artifact_route(parsed.path)
+        collaboration_profile_id = agent_collaboration_profile_route(parsed.path)
         if agent_room_id and room_action == "events":
             query = parse_qs(parsed.query or "")
             self._stream_agent_room_events(
@@ -6312,6 +6314,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "limit": _query_first(query, "limit"),
                     }
                 ),
+            )
+            return
+        if collaboration_profile_id:
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.collaboration_profile_projection(collaboration_profile_id),
             )
             return
         if kernel_room_id and kernel_action == "snapshot":
@@ -7324,6 +7332,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             approval_id, approval_action = agent_approval_route(path)
             if path == "/api/agent/runtime/ensure":
                 self._write_json(HTTPStatus.OK, self.service.agent.ensure_runtime(payload))
+            elif path == "/api/agent/collaboration-profiles/commands":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.apply_collaboration_profile_command(
+                        payload, caller_authorized=True
+                    ),
+                )
             elif path == "/api/agent/providers/auth/preview":
                 self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.preview(payload))
             elif path == "/api/agent/providers/auth/apply":

@@ -6713,6 +6713,164 @@ export const contractSchemas = {
       }
     }
   },
+  "collaboration-profile-command-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.collaboration-profile-command-receipt.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "commandId",
+      "commandHash",
+      "action",
+      "status",
+      "profileId",
+      "routeHash",
+      "guardEpoch",
+      "result",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.collaboration-profile-command-receipt.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "pattern": "^profile-command-receipt:[a-f0-9]{24}$"
+      },
+      "commandId": {
+        "type": "string",
+        "pattern": "^profile-command:[A-Za-z0-9._:-]{1,96}$"
+      },
+      "commandHash": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "inspect",
+          "validate",
+          "compile",
+          "dry_run",
+          "stage",
+          "activate",
+          "rollback",
+          "revoke"
+        ]
+      },
+      "status": {
+        "type": "string",
+        "const": "applied"
+      },
+      "profileId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "routeHash": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "guardEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "result": {
+        "type": "object"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "collaboration-profile-command.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.collaboration-profile-command.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "commandId",
+      "action",
+      "idempotencyKey",
+      "actorRef",
+      "payload",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.collaboration-profile-command.v1"
+      },
+      "commandId": {
+        "type": "string",
+        "pattern": "^profile-command:[A-Za-z0-9._:-]{1,96}$"
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "inspect",
+          "validate",
+          "compile",
+          "dry_run",
+          "stage",
+          "activate",
+          "rollback",
+          "revoke"
+        ]
+      },
+      "idempotencyKey": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "actorRef": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "profileId": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+      },
+      "candidateId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
+      "contentHash": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "expectedPointerRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "activationScope": {
+        "type": "string",
+        "enum": [
+          "immediate",
+          "new_roots_only"
+        ]
+      },
+      "adminConfirmation": {
+        "type": "string",
+        "maxLength": 80
+      },
+      "payload": {
+        "type": "object"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "collaboration-profile-compile-receipt.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.collaboration-profile-compile-receipt.v1",
@@ -6784,6 +6942,80 @@ export const contractSchemas = {
             "control",
             "delegation"
           ]
+        }
+      }
+    }
+  },
+  "collaboration-profile-projection.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.collaboration-profile-projection.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "profileId",
+      "routeHash",
+      "requiredReadScopes",
+      "requiredWriteScopes",
+      "guardEpoch",
+      "normalAgentFallback",
+      "inspection",
+      "recentReceipts"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.collaboration-profile-projection.v1"
+      },
+      "profileId": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+      },
+      "routeHash": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "requiredReadScopes": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 1,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "agent.read"
+          ]
+        }
+      },
+      "requiredWriteScopes": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "agent.write",
+            "agent.approve"
+          ]
+        }
+      },
+      "guardEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "normalAgentFallback": {
+        "type": "boolean",
+        "const": true
+      },
+      "inspection": {
+        "type": "object"
+      },
+      "recentReceipts": {
+        "type": "array",
+        "maxItems": 50,
+        "items": {
+          "type": "object"
         }
       }
     }

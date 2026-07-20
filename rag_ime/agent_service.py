@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import secrets
+import sqlite3
 import time
 import uuid
 from collections import deque
@@ -44,6 +45,7 @@ from .agent_room_capabilities import (
     room_runtime_registry,
 )
 from .agent_definition_compiler import AgentDefinitionCompiler
+from .collaboration_profile_control import CollaborationProfileControl
 from .agent_definitions import collaboration_role
 from .agent_templates import agent_template
 from .agent_prompt_plans import PromptLayer, RoomPromptPlanStore
@@ -126,6 +128,7 @@ class AgentService:
         room_delivery_gate_enforcement: bool = False,
         room_artifact_hash_provider: Callable[[str], str] | None = None,
         room_kernel_poll_seconds: float = 0.25,
+        collaboration_profile_signers: Mapping[str, bytes] | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.project = str(project or "")
@@ -228,6 +231,10 @@ class AgentService:
         self.room_peer_review.initialize()
         self._room_artifact_hash_provider = room_artifact_hash_provider
         self.agent_definition_compiler = AgentDefinitionCompiler()
+        self._collaboration_profile_signers = {
+            str(signer_id): bytes(key)
+            for signer_id, key in (collaboration_profile_signers or {}).items()
+        }
         self._room_kernel_poll_seconds = room_kernel_poll_seconds
         self.observations = ObservationHub(db_path)
         self.room_events = AgentRoomEventHub(self.rooms)
@@ -1327,6 +1334,35 @@ class AgentService:
             ).encode("utf-8")
         ).hexdigest()
         return snapshot
+
+    def collaboration_profile_projection(self, profile_id: str) -> dict[str, object]:
+        with sqlite3.connect(self.db_path) as conn:
+            return self._collaboration_profile_control(conn).projection(profile_id)
+
+    def apply_collaboration_profile_command(
+        self,
+        payload: Mapping[str, object],
+        *,
+        caller_authorized: bool = False,
+    ) -> dict[str, object]:
+        if not caller_authorized:
+            raise PermissionError("CollaborationProfile control requires an authorized control caller")
+        with sqlite3.connect(self.db_path) as conn:
+            return self._collaboration_profile_control(conn).execute(payload)
+
+    def _collaboration_profile_control(
+        self,
+        conn: sqlite3.Connection,
+    ) -> CollaborationProfileControl:
+        return CollaborationProfileControl(
+            conn,
+            trusted_signers=self._collaboration_profile_signers,
+            baseline_capabilities=(
+                "rag", "memory", "planning", "review", "control", "delegation"
+            ),
+            binding_revision="room-v2-agent-definition-compiler-v1",
+            cancel_root=lambda root_id, _now_ms: self.room_kernel_worker.cancel_root(root_id),
+        )
 
     def bind_room_capability_runtime(
         self,

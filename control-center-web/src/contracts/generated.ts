@@ -52,7 +52,10 @@ import type { AgentToolResultV1 } from './generated/agent-tool-result.v1';
 import type { AgentWorkflowStateV1 } from './generated/agent-workflow-state.v1';
 import type { AssistantCandidateActionV1 } from './generated/assistant-candidate-action.v1';
 import type { AssistantOverlayV1 } from './generated/assistant-overlay.v1';
+import type { CollaborationProfileCommandReceiptV1 } from './generated/collaboration-profile-command-receipt.v1';
+import type { CollaborationProfileCommandV1 } from './generated/collaboration-profile-command.v1';
 import type { CollaborationProfileCompileReceiptV1 } from './generated/collaboration-profile-compile-receipt.v1';
+import type { CollaborationProfileProjectionV1 } from './generated/collaboration-profile-projection.v1';
 import type { CollaborationProfileV1 } from './generated/collaboration-profile.v1';
 import type { CollaborationRoleV1 } from './generated/collaboration-role.v1';
 import type { CompiledAgentRuntimeProfileV1 } from './generated/compiled-agent-runtime-profile.v1';
@@ -173,7 +176,10 @@ export type {
   AgentWorkflowStateV1,
   AssistantCandidateActionV1,
   AssistantOverlayV1,
+  CollaborationProfileCommandReceiptV1,
+  CollaborationProfileCommandV1,
   CollaborationProfileCompileReceiptV1,
+  CollaborationProfileProjectionV1,
   CollaborationProfileV1,
   CollaborationRoleV1,
   CompiledAgentRuntimeProfileV1,
@@ -295,7 +301,10 @@ export interface ContractTypeMap {
   'agent-workflow-state.v1': AgentWorkflowStateV1;
   'assistant-candidate-action.v1': AssistantCandidateActionV1;
   'assistant-overlay.v1': AssistantOverlayV1;
+  'collaboration-profile-command-receipt.v1': CollaborationProfileCommandReceiptV1;
+  'collaboration-profile-command.v1': CollaborationProfileCommandV1;
   'collaboration-profile-compile-receipt.v1': CollaborationProfileCompileReceiptV1;
+  'collaboration-profile-projection.v1': CollaborationProfileProjectionV1;
   'collaboration-profile.v1': CollaborationProfileV1;
   'collaboration-role.v1': CollaborationRoleV1;
   'compiled-agent-runtime-profile.v1': CompiledAgentRuntimeProfileV1;

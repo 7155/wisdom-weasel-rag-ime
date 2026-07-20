@@ -24,6 +24,10 @@ _SAFE_FILE_SUFFIXES = {".md", ".txt", ".json"}
 _EXECUTABLE_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".py", ".sh", ".command", ".exe", ".dylib", ".so"}
 _MAX_FILES = 32
 _MAX_TOTAL_BYTES = 256 * 1024
+_FORBIDDEN_DECLARATIVE_KEYS = {
+    "code", "script", "scripts", "command", "commands", "entrypoint",
+    "executable", "implementation", "toolimplementation", "hook",
+}
 
 
 class CollaborationProfileStore:
@@ -197,6 +201,8 @@ class CollaborationProfileStore:
         profile_id: object,
         content_hash: object,
         expected_pointer_revision: int,
+        activation_scope: str = "immediate",
+        receipt_callback: Callable[[dict[str, object]], None] | None = None,
         _fail_after_pointer: bool = False,
     ) -> dict[str, object]:
         normalized_id = _required_text(profile_id, "profile_id")
@@ -206,6 +212,8 @@ class CollaborationProfileStore:
             raise ValueError("profile content hash belongs to another profile")
         if version[8] is not None:
             raise ValueError("revoked profile version cannot be activated")
+        if activation_scope not in {"immediate", "new_roots_only"}:
+            raise ValueError("profile activation scope is invalid")
         now = self._clock()
         with self.conn:
             pointer = self._pointer(normalized_id)
@@ -213,6 +221,9 @@ class CollaborationProfileStore:
             if current_revision != int(expected_pointer_revision):
                 raise ValueError("profile active pointer revision changed")
             previous_active = str(pointer[1]) if pointer and pointer[1] is not None else None
+            affected_roots = self._affected_active_roots(normalized_id, previous_active)
+            if activation_scope == "immediate" and affected_roots:
+                raise ValueError("active Root pins this profile; use new_roots_only")
             next_revision = current_revision + 1
             self.conn.execute(
                 """
@@ -233,9 +244,24 @@ class CollaborationProfileStore:
                 profile_id=normalized_id, action="activate", from_hash=previous_active,
                 to_hash=normalized_hash, pointer_revision=next_revision, now=now,
             )
-        return _pointer_payload(normalized_id, normalized_hash, previous_active, next_revision, receipt_id)
+            guard_epoch = self._bump_guard(normalized_id, now)
+            result = {
+                **_pointer_payload(normalized_id, normalized_hash, previous_active, next_revision, receipt_id),
+                "activationScope": activation_scope,
+                "guardEpoch": guard_epoch,
+                "affectedRootIds": affected_roots,
+            }
+            if receipt_callback is not None:
+                receipt_callback(result)
+        return result
 
-    def rollback(self, *, profile_id: object, expected_pointer_revision: int) -> dict[str, object]:
+    def rollback(
+        self,
+        *,
+        profile_id: object,
+        expected_pointer_revision: int,
+        receipt_callback: Callable[[dict[str, object]], None] | None = None,
+    ) -> dict[str, object]:
         normalized_id = _required_text(profile_id, "profile_id")
         now = self._clock()
         with self.conn:
@@ -245,6 +271,7 @@ class CollaborationProfileStore:
             if int(pointer[3]) != int(expected_pointer_revision):
                 raise ValueError("profile active pointer revision changed")
             active_hash = str(pointer[1]) if pointer[1] is not None else None
+            affected_roots = self._affected_active_roots(normalized_id, active_hash)
             target_hash = str(pointer[2])
             target = self._version(target_hash)
             if target[8] is not None:
@@ -258,7 +285,16 @@ class CollaborationProfileStore:
                 profile_id=normalized_id, action="rollback", from_hash=active_hash,
                 to_hash=target_hash, pointer_revision=next_revision, now=now,
             )
-        return _pointer_payload(normalized_id, target_hash, active_hash, next_revision, receipt_id)
+            self._revoke_profile_bindings(normalized_id, active_hash, now)
+            guard_epoch = self._bump_guard(normalized_id, now)
+            result = {
+                **_pointer_payload(normalized_id, target_hash, active_hash, next_revision, receipt_id),
+                "guardEpoch": guard_epoch,
+                "affectedRootIds": affected_roots,
+            }
+            if receipt_callback is not None:
+                receipt_callback(result)
+        return result
 
     def revoke(
         self,
@@ -266,6 +302,7 @@ class CollaborationProfileStore:
         content_hash: object,
         reason: object,
         expected_pointer_revision: int,
+        receipt_callback: Callable[[dict[str, object]], None] | None = None,
     ) -> dict[str, object]:
         normalized_hash = _required_hash(content_hash)
         version = self._version(normalized_hash)
@@ -277,6 +314,7 @@ class CollaborationProfileStore:
             current_revision = int(pointer[3]) if pointer else 0
             if current_revision != int(expected_pointer_revision):
                 raise ValueError("profile active pointer revision changed")
+            affected_roots = self._affected_active_roots(profile_id, normalized_hash)
             self.conn.execute(
                 "UPDATE collaboration_profile_versions SET revoked_at_ms = ?, revoke_reason = ? WHERE content_hash = ?",
                 (now, reason_text, normalized_hash),
@@ -293,10 +331,16 @@ class CollaborationProfileStore:
                     profile_id=profile_id, action="revoke", from_hash=normalized_hash,
                     to_hash=None, pointer_revision=next_revision, now=now,
                 )
-        return {
-            "profileId": profile_id, "contentHash": normalized_hash, "revoked": True,
-            "pointerRevision": next_revision, "receiptId": receipt_id,
-        }
+            self._revoke_profile_bindings(profile_id, normalized_hash, now)
+            guard_epoch = self._bump_guard(profile_id, now)
+            result = {
+                "profileId": profile_id, "contentHash": normalized_hash, "revoked": True,
+                "pointerRevision": next_revision, "receiptId": receipt_id,
+                "guardEpoch": guard_epoch, "affectedRootIds": affected_roots,
+            }
+            if receipt_callback is not None:
+                receipt_callback(result)
+        return result
 
     def active_ref(self, profile_id: object) -> dict[str, object] | None:
         normalized_id = _required_text(profile_id, "profile_id")
@@ -343,6 +387,57 @@ class CollaborationProfileStore:
                 for row in rows
             ],
         }
+
+    def guard_epoch(self, profile_id: object) -> int:
+        normalized_id = _required_text(profile_id, "profile_id")
+        row = self.conn.execute(
+            "SELECT guard_epoch FROM collaboration_profile_guards WHERE profile_id = ?",
+            (normalized_id,),
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def _bump_guard(self, profile_id: str, now: int) -> int:
+        current = self.guard_epoch(profile_id)
+        next_epoch = current + 1
+        self.conn.execute(
+            """INSERT INTO collaboration_profile_guards(profile_id, guard_epoch, updated_at_ms)
+               VALUES (?, ?, ?)
+               ON CONFLICT(profile_id) DO UPDATE SET
+                   guard_epoch = excluded.guard_epoch,
+                   updated_at_ms = excluded.updated_at_ms""",
+            (profile_id, next_epoch, now),
+        )
+        return next_epoch
+
+    def _affected_active_roots(self, profile_id: str, content_hash: str | None) -> list[str]:
+        if not content_hash:
+            return []
+        marker = f"rag-ime-definition://collaboration-profile/{profile_id}"
+        rows = self.conn.execute(
+            """SELECT DISTINCT d.root_id
+               FROM room_v2_capability_runtime_bindings b
+               JOIN room_kernel_dispatches d ON d.target_session_id = b.session_id
+               WHERE b.state IN ('prepared', 'active')
+                 AND d.state IN ('pending', 'leased', 'running', 'retry_wait', 'timer_wait')
+                 AND instr(b.participant_binding_json, ?) > 0
+                 AND instr(b.participant_binding_json, ?) > 0
+               ORDER BY d.root_id""",
+            (marker, content_hash),
+        ).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def _revoke_profile_bindings(self, profile_id: str, content_hash: str | None, now: int) -> None:
+        if not content_hash:
+            return
+        marker = f"rag-ime-definition://collaboration-profile/{profile_id}"
+        self.conn.execute(
+            """UPDATE room_v2_capability_runtime_bindings
+               SET state = 'revoked', capability_epoch = capability_epoch + 1, updated_at_ms = ?
+               WHERE state IN ('prepared', 'active')
+                 AND instr(participant_binding_json, ?) > 0
+                 AND instr(participant_binding_json, ?) > 0""",
+            (now, marker, content_hash),
+        )
 
     def _candidate(self, candidate_id: object, *, expected_stage: str) -> tuple[object, ...]:
         normalized_id = _required_text(candidate_id, "candidate_id")
@@ -489,11 +584,37 @@ def _safe_files(value: object) -> dict[str, str]:
             raise ValueError("unsafe profile package file type")
         if not isinstance(raw_content, str):
             raise ValueError("profile package files must contain text")
+        _reject_embedded_code(path, raw_content)
         total += len(raw_content.encode("utf-8"))
         if total > _MAX_TOTAL_BYTES:
             raise ValueError("profile package exceeds its byte limit")
         result[path] = raw_content
     return {key: result[key] for key in sorted(result)}
+
+
+def _reject_embedded_code(path: str, content: str) -> None:
+    lowered = content.lower()
+    if "```" in content or lowered.startswith("#!"):
+        raise ValueError("profile packages are declarative and cannot contain code")
+    if PurePosixPath(path).suffix.lower() != ".json":
+        return
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise ValueError("profile JSON files must be valid declarative JSON") from exc
+
+    def visit(value: object) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                normalized = re.sub(r"[^a-z]", "", str(key).lower())
+                if normalized in _FORBIDDEN_DECLARATIVE_KEYS:
+                    raise ValueError("profile packages cannot carry executable fields")
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    visit(parsed)
 
 
 def _bounded_unique_strings(value: object, field: str, minimum: int, maximum: int) -> tuple[str, ...]:
