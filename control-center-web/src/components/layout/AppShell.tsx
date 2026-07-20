@@ -44,7 +44,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
           <div className="shell-topbar__title" key={activeRoute.id}>
             <h1>{activeRoute.label}</h1>
-            <span>{activeRoute.group === 'system' ? '系统' : activeRoute.group === 'knowledge' ? '知识与记录' : '工作台'}</span>
+            <span>{activeRoute.group === 'operations' ? '治理与系统' : activeRoute.group === 'capability' ? '能力与知识' : '工作台'}</span>
           </div>
           <div className="shell-topbar__actions">
             <ConnectionIndicator />

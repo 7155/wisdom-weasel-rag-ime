@@ -15,11 +15,11 @@ import { routeIcons } from './route-icons';
 
 const groupLabels = {
   work: '工作台',
-  knowledge: '知识与记录',
-  system: '系统',
+  capability: '能力与知识',
+  operations: '治理与系统',
 } as const;
 
-const mobilePrimaryRoutes: RouteId[] = ['planning', 'input', 'agent', 'memory'];
+const mobilePrimaryRoutes: RouteId[] = ['planning', 'agent', 'rooms', 'roles'];
 
 function RouteLink({
   compact = false,
@@ -120,7 +120,7 @@ export function MobileRouteMenu({ activeRouteId }: { activeRouteId: RouteId }) {
       <DialogContent className="shell-mobile-menu">
         <DialogHeader>
           <DialogTitle>控制中心</DialogTitle>
-          <DialogDescription>本机控制台 · 14 个工作区</DialogDescription>
+          <DialogDescription>本机控制台 · {routeRegistry.length} 个工作区</DialogDescription>
         </DialogHeader>
         <nav className="shell-mobile-menu__routes" aria-label="全部导航">
           {routeRegistry.map((route) => (

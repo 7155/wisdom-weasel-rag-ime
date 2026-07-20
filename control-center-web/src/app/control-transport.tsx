@@ -282,7 +282,7 @@ function createPreviewTransport(): MockControlTransport {
     const session = previewSession(
       `session-persona-${nextSessionId++}`,
       stringValue(body.title) || '新对话',
-      stringValue(body.roleId) || 'zhiyou-v1',
+      stringValue(body.roleId) || 'vcp-v1',
       Date.now(),
       stringValue(body.roleVersion) || '1',
     );

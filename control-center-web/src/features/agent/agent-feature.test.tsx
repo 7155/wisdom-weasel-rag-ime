@@ -1735,7 +1735,7 @@ describe('Agent experience', () => {
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.sessions.create')).toBe(true));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
     expect(create?.request.body).toMatchObject({
-      roleId: 'zhiyou-v1',
+      roleId: 'vcp-v1',
       roleVersion: '1',
       mode: 'coordinator',
       workspaceRoots: ['/Volumes/undo 4t/git/learnA'],

@@ -146,7 +146,7 @@ const routeFixtures: Partial<Record<ControlPathId, MockRouteHandler>> = {
 const pages: readonly [string, ComponentType, string, ControlPathId][] = [
   ['overview', OverviewFeature, '今日概览', 'overview.get'],
   ['input', InputMethodFeature, '输入法', 'input.source.get'],
-  ['plugins', PluginsFeature, '插件与工具', 'agent.tools.list'],
+  ['plugins', PluginsFeature, '能力中心', 'agent.tools.list'],
   ['voice', VoiceFeature, '语音输入', 'configuration.settings'],
   ['planning', PlanningFeature, '规划', 'planning.dashboard'],
   ['memory', MemoryFeature, '记忆', 'memory.pages'],

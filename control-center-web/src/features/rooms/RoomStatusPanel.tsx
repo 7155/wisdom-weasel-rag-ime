@@ -19,7 +19,6 @@ import { IconButton } from '@/components/primitives';
 import type { RoomProjectionState, RoomTurnProjection } from '@/contracts/room-reducer';
 import type { RoomSummary, RoomWorkItem } from '.';
 import { useAgentLiveStore } from '../agent/state/live-store';
-import { RoomKernelLivePanel } from './kernel/RoomKernelLivePanel';
 import '../agent/agent.css';
 
 export function RoomStatusPanel({
@@ -50,7 +49,6 @@ export function RoomStatusPanel({
         <IconButton icon={<PanelRightClose size={17} />} label="收起 Room 状态" onClick={onClose} tooltip />
       </header>
       <div className="agent-status-panel__body">
-        {room ? <RoomKernelLivePanel roomId={room.id} /> : null}
         <RoomStatusSection count={turn ? 1 : 0} icon={ListChecks} title="当前回合">
           {turn ? (
             <div className="agent-status-turn" data-state={turn.status}>

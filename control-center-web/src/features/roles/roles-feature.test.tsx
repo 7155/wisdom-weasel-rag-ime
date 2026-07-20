@@ -247,8 +247,9 @@ describe('Roles experience', () => {
     await user.click(await screen.findByRole('button', { name: /智鼬·闪念/ }));
     expect(screen.getAllByText('DeepSeek V4 Flash').length).toBeGreaterThan(0);
     expect(screen.getByText('超长上下文，擅长高速扫描')).toBeInTheDocument();
-    expect(screen.getByText('长材料扫读与线索提取 · 归类、去重和结构化整理')).toBeInTheDocument();
-    expect(screen.getByText('复杂实现 · 高风险决定 · 独立最终验收')).toBeInTheDocument();
+    expect(screen.getByText('普通')).toBeInTheDocument();
+    expect(screen.getByText('超长材料高速扫读与提取 · 归类、去重和格式转换')).toBeInTheDocument();
+    expect(screen.getByText('复杂推理 · 复杂实现 · 高风险决定 · 最终验收')).toBeInTheDocument();
     expect(screen.getByText('不启用推理')).toBeInTheDocument();
   });
 

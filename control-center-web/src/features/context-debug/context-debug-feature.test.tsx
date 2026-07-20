@@ -33,7 +33,10 @@ describe('ContextDebugFeature', () => {
     });
     renderFeature(transport, '/context-debug?sessionId=session-a');
 
-    expect(await screen.findByText('原始上下文 Debug')).toBeInTheDocument();
+    expect(await screen.findByText('上下文透视')).toBeInTheDocument();
+    expect(screen.getByText('Stable prefix')).toBeInTheDocument();
+    expect(screen.getByText('来源正文默认隐藏。', { exact: false })).toBeInTheDocument();
+    await user.click(screen.getByText('展开原始审计区'));
     expect(await screen.findByText('并行 2 项')).toBeInTheDocument();
     expect(screen.getByText('memory_search')).toBeInTheDocument();
     expect(screen.getByText('ime_overview')).toBeInTheDocument();
@@ -69,6 +72,35 @@ describe('ContextDebugFeature', () => {
 
     expect(await screen.findByText('本机原始上下文调试尚未启用')).toBeInTheDocument();
     expect(screen.getByText('指定会话', { exact: false })).toBeInTheDocument();
+  });
+
+  it('keeps long prompt bodies hidden until the user opens the audit payload', async () => {
+    const user = userEvent.setup();
+    const payload = debugContextResponse();
+    const longPrompt = `LONG_PRIVATE_PROMPT_${'x'.repeat(4_000)}`;
+    payload.context.prompt = longPrompt;
+    Object.assign(payload.context, { contextProjection: {
+      stablePrefixMessages: 18,
+      dynamicTailMessages: 3,
+      sealedMessages: 44,
+      pendingMessages: 1,
+      compactionState: 'sealed',
+      recoveryState: 'ready',
+    }, cacheEvidence: [{ requestIndex: 2, prefixSha256: 'abc', prefixBytes: 1024, deltaBytes: 64, duplicateBytes: 1024, inputTokens: 1400, outputTokens: 20, cacheReadTokens: 1200, cacheWriteTokens: 80, capability: 'reported' }] });
+    payload.telemetry = { cumulativeUsage: { cacheRead: 1200, cacheWrite: 80 } };
+    const transport = new MockControlTransport({ routes: {
+      'agent.sessions.list': { ok: true, sessions: [{ id: 'session-a', title: 'Long prompt', mode: 'assistant', status: 'idle', roleId: 'vcp-v1', roleVersion: '1', updatedAtMs: 1, workspaceRoots: [] }] },
+      'agent.session.debugContext.get': payload,
+    } });
+    renderFeature(transport, '/context-debug?sessionId=session-a');
+
+    expect(await screen.findByText('1,200 tokens')).toBeVisible();
+    expect(screen.getByText('supported · hit')).toBeVisible();
+    expect(screen.getByText(/sealed \/ ready/)).toBeVisible();
+    expect(document.body).not.toHaveTextContent(longPrompt);
+    await user.click(screen.getByText('展开原始审计区'));
+    await user.click(screen.getByRole('tab', { name: 'Runtime 输入' }));
+    expect(screen.getByText(longPrompt)).toBeVisible();
   });
 });
 
