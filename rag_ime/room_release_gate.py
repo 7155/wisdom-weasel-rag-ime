@@ -30,6 +30,10 @@ def stage_room_v2_canary(*, product_root: str | Path, pi_root: str | Path, sourc
         foreign_keys = staged.execute("PRAGMA foreign_key_check").fetchall()
     schema_paths = sorted((product / "rag_ime/contracts/json").glob("*.json"))
     pi_build_path = Path(pi_build).resolve() if pi_build else None
+    product_commit = _git(product, "rev-parse", "HEAD")
+    pi_commit = _git(pi, "rev-parse", "HEAD")
+    pi_manifest_path, pi_manifest = _pi_build_manifest(pi_build_path)
+    pi_source = pi_manifest.get("source") if isinstance(pi_manifest.get("source"), dict) else {}
     checks = {
         "productClean": not _git(product, "status", "--porcelain"),
         "piClean": not _git(pi, "status", "--porcelain"),
@@ -41,11 +45,19 @@ def stage_room_v2_canary(*, product_root: str | Path, pi_root: str | Path, sourc
         "expectedSchemaCount": ROOM_V2_RELEASE_SCHEMA_COUNT,
         "frontendPresent": frontend.is_dir(),
         "defaultOff": os.environ.get("RAG_IME_ROOM_KERNEL_MODE", "off").strip().lower() == "off",
-        "piBuildPresent": bool(pi_build_path and pi_build_path.exists()),
+        "piBuildPresent": bool(pi_manifest_path and pi_manifest_path.is_file()),
+        "piBuildManifestValid": bool(
+            pi_manifest.get("schemaVersion") == "rag-ime.pi-runtime-manifest.v1"
+            and pi_manifest.get("runtimeProtocolVersion") == "2"
+            and pi_manifest.get("runtimeMethods") == ["room.dispatch", "room.cancel"]
+        ),
+        "piBuildProductCommitMatches": pi_source.get("productCommit") == product_commit,
+        "piBuildSourceCommitMatches": pi_source.get("commit") == pi_commit,
     }
     readiness = {
-        "product": _git(product, "rev-parse", "HEAD"),
-        "pi": _git(pi, "rev-parse", "HEAD"),
+        "product": product_commit,
+        "pi": pi_commit,
+        "piBuildManifest": _sha256(pi_manifest_path) if pi_manifest_path else "missing",
         "migration": _sha256(staged_db),
         "schema": _tree_hash(schema_paths),
         "routes": _sha256(product / "control-center-web/src/platform/routes.ts"),
@@ -61,20 +73,33 @@ def stage_room_v2_canary(*, product_root: str | Path, pi_root: str | Path, sourc
     if not all((checks["productClean"], checks["piClean"],
                 checks["migrationVersion"] == checks["expectedMigrationVersion"], quick_check == "ok",
                 not foreign_keys, checks["schemaCount"] == checks["expectedSchemaCount"],
-                checks["frontendPresent"], checks["defaultOff"], checks["piBuildPresent"])):
+                checks["frontendPresent"], checks["defaultOff"], checks["piBuildPresent"],
+                checks["piBuildManifestValid"], checks["piBuildProductCommitMatches"],
+                checks["piBuildSourceCommitMatches"])):
         remaining.append("local_provenance_or_dry_run")
     remaining.extend(("loopback_worker_control_e2e", "metal_runtime_e2e", "network_provider_e2e", "named_canary_metrics", "administrator_promotion_approval"))
     receipt = {
         "schemaVersion": "rag-ime.room-v2-release-receipt.v1", "status": "staged_not_installed",
         "productionCanaryEligible": not remaining, "sourceDatabaseModified": False, "installedAppsModified": False,
         "productBranch": _git(product, "branch", "--show-current"), "productCommit": readiness["product"],
-        "piCommit": readiness["pi"], "piBuildSha256": _sha256(pi_build_path) if pi_build_path and pi_build_path.is_file() else "",
+        "piCommit": readiness["pi"], "piBuildSha256": _sha256(pi_manifest_path) if pi_manifest_path else "",
         "checks": checks, "readiness": readiness, "readinessHash": _hash(readiness), "remainingGates": remaining,
         "stagedDatabase": staged_db.name,
     }
     receipt["receiptHash"] = _hash(receipt)
     (output / "release-receipt.json").write_text(json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return receipt
+
+
+def _pi_build_manifest(path: Path | None) -> tuple[Path | None, dict[str, object]]:
+    if path is None:
+        return None, {}
+    manifest_path = path / "manifest.json" if path.is_dir() else path
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, {}
+    return (manifest_path, payload) if isinstance(payload, dict) else (None, {})
 
 
 def _git(root: Path, *args: str) -> str:

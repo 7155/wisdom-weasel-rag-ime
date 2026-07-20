@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import subprocess
 import tempfile
@@ -26,9 +27,25 @@ class RoomReleaseGateTests(unittest.TestCase):
             path = self.product / relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(relative + "\n", encoding="utf-8")
         routes = self.product / "control-center-web/src/platform/routes.ts"; routes.parent.mkdir(parents=True); routes.write_text("export const routes = {};\n", encoding="utf-8")
         self.frontend = self.root / "frontend"; self.frontend.mkdir(); (self.frontend / "index.js").write_text("ready\n", encoding="utf-8")
-        self.pi_build = self.pi / "dist/cli.js"; self.pi_build.parent.mkdir(); self.pi_build.write_text("built\n", encoding="utf-8")
+        (self.pi / "README.md").write_text("fixture\n", encoding="utf-8")
         for repo in (self.product, self.pi):
             subprocess.run(["git", "add", "."], cwd=repo, check=True); subprocess.run(["git", "commit", "-qm", "fixture"], cwd=repo, check=True)
+        self.pi_build = self.root / "pi-build"; self.pi_build.mkdir()
+        (self.pi_build / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "rag-ime.pi-runtime-manifest.v1",
+                    "runtimeProtocolVersion": "2",
+                    "runtimeMethods": ["room.dispatch", "room.cancel"],
+                    "source": {
+                        "commit": subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.pi, check=True, text=True, stdout=subprocess.PIPE).stdout.strip(),
+                        "productCommit": subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.product, check=True, text=True, stdout=subprocess.PIPE).stdout.strip(),
+                    },
+                },
+                sort_keys=True,
+            ) + "\n",
+            encoding="utf-8",
+        )
         self.db = self.root / "source.sqlite"
         with sqlite3.connect(self.db) as conn:
             apply_database_migrations(conn, applied_at_ms=0)
@@ -44,6 +61,9 @@ class RoomReleaseGateTests(unittest.TestCase):
         self.assertEqual(reports[0]["receiptHash"], reports[1]["receiptHash"])
         self.assertEqual(reports[0]["checks"]["migrationVersion"], 94)
         self.assertEqual(reports[0]["checks"]["schemaCount"], 136)
+        self.assertTrue(reports[0]["checks"]["piBuildManifestValid"])
+        self.assertTrue(reports[0]["checks"]["piBuildProductCommitMatches"])
+        self.assertTrue(reports[0]["checks"]["piBuildSourceCommitMatches"])
         self.assertNotIn("local_provenance_or_dry_run", reports[0]["remainingGates"])
         self.assertFalse(reports[0]["productionCanaryEligible"])
         self.assertIn("loopback_worker_control_e2e", reports[0]["remainingGates"])
