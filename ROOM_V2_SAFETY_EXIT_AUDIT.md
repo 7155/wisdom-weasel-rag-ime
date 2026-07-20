@@ -1,6 +1,45 @@
 # Room V2 安全退出审计
 
-审计基线：`399d6a2`（历史原始审计基线为 `feea050`）。审计日期：2026-07-20。
+审计基线：产品 `a4c12fc`、Pi `692bb0e878772129766b9eb837a8caa57f48e0e7`（历史原始审计基线为 `feea050`）。审计日期：2026-07-20。
+
+## 2026-07-20 最终独立复审（待 P0 整改复测）
+
+本节覆盖前三批结论；后文保留每一轮当时的事实，不能用旧结论替代当前结论。本轮不只重跑原七项审计测试，还检查了 live 产品链、正式 Pi handler、进程 kill gate、九类 surface receipt、Root 资源账本、前端 reducer，以及 `/private/tmp` staged Runtime 的清单和离线 E2E。
+
+当前发现一个必须阻止合并放行的 P0：`cancelled_with_unknowns` 表示仍可能有后台执行，但前端把它算作 `isFinal=true`，随后显示“已结束/终态已确认”并隐藏停止按钮。这正是“看起来完成了但后台还可能在跑”。在该语义修复并复测前，第 5 项必须判为 ❌。
+
+| 检查项 | 当前结论 | 最终复审 |
+|---|---|---|
+| 1. 路径唯一性 | ⚠️ 需关注 | managed create/dispatch/commit/finalize/control 均经 `KernelCommandBus`，RoomBinding 会拒绝 legacy intercom/mention/wake；但 Store 状态迁移仍是公开 Python API，普通 noRoom/legacy Room 仍保留独立执行方式。managed Root 的 owner 唯一，模块级误用仍靠约定。 |
+| 2. 深度与资源限制 | ✅ 代码安全 | hop 12、depth 4、旧 budget 1000 之外，Root 现有 4 小时墙钟、输入/输出 Token、Dispatch 64、并发 4、Tool call/cost、retry 8、repair 4 的 Kernel 硬账本；入队原子 reserve，settle/cancel consume 或 release，调用者不能放宽。真实 Provider Token/费用口径仍是 canary 校准项，不改变代码 Gate 结论。 |
+| 3. 取消传播 | ⚠️ 需关注 | accepted-before-ACK、retry/timer/outbox crash、unknown、profile revoke 均进入 durable cancel；Pi 返回 provider/tool/exec/retry/compaction/branch summary/timer/continuation/session 九类 typed receipt，`pendingTargets` 非空保持 cancelling。真实 Provider、命令子进程和正式 App 权限尚未逐 surface 故障注入。 |
+| 4. 去重 | ✅ 安全（managed） | Root owner、Dispatch/Commit/Continuation/Post/command/cancel intent 均有 durable fence；unknown Dispatch 不重放；重复 settle/maintenance 不双开火。 |
+| 5. isFinal | ❌ 危险 | 后端允许 unknown surface 形成 `cancelled_with_unknowns` terminal receipt；前端 reducer 又把它列入 final 集合，ControlPlane 因 `isFinal` 优先而遮住“仍有未知执行”并隐藏停止。这必须在最终复测前修复。 |
+| 6. 失控恢复 | ⚠️ 需关注 | Runtime Host 已登记 PID/PGID/job/birth token，cancel timeout、orphan reconcile 和 admin panic 可 SIGKILL process group，PID 复用时 fail closed；但显式 `panic_kill()` 尚无产品管理 route，正式 App 的 `ps/killpg` 权限和真实进程树也未演练。 |
+
+### 真实入口和边界结论
+
+| 范围 | 结论 | 本轮证据 |
+|---|---|---|
+| live create -> dispatch -> post/complete -> finalize | ✅ | `RoomKernelServiceTests` 走真实 `AgentService`、command bus、capability tool、settle、公开 Post、需求证明和 terminal receipt；loopback HTTP 测试因当前沙箱禁止 bind 而跳过。 |
+| 正式 Pi handler/pointer | ✅ 源码，⚠️ 发布产物 | product contract 固定 `692bb0e...` 和 `room.dispatch/room.cancel`；Pi worktree HEAD 精确匹配且 clean。staged manifest 的 Pi commit/hash 正确，但 `source.productCommit=7934bd5`，落后最新产品 `a4c12fc`，最终候选必须重建。 |
+| staged Runtime E2E | ✅ 离线 staging | `/private/tmp/room-v2-pi-build-692bb0e8.wYXEHW` 经 manifest 全文件校验后以 `--no-activate` 安装到临时目录；manifest SHA-256 为 `54f580eb43494d95315357a0ca0c2daef4232d3c4b13d614aa0b175003447652`。离线 deterministic Provider 实跑得到 prompt -> followUp、protocol 2、9 个 terminated surface、`passed_not_installed`。 |
+| kill gate | ⚠️ | unit tests证明 admin auth、PGID kill、orphan reconcile、PID reuse fence；Python cross-process tests在本沙箱因 `ps` 被拒绝而无法注册 birth token。这不是成功证据，正式签名 App 必须验证权限。 |
+| Prompt/Skill/Profile/continuation | ✅ 代码链 | PromptPlan stable prefix/provider tail、唯一 native Skill load/restore、Root 固定 Profile/revoke cancel、A -> B -> A structured continuation 与三次 settle 兜底均有通过测试。 |
+| Session/Post | ✅ | managed Session assistant正文、reasoning/progress/audio 不投影；只有显式 `room_post` 公开。 |
+| Governance/Knowledge | ✅ 代码路由 | canonical `agent.governance.read` 与 `agent.knowledgeGovernance.read` 只返回投影；Knowledge caller 从 authenticated binding 派生，先做 owner/scope filter。正式 App 鉴权与大数据性能仍需 canary。 |
+| ordinary noRoom | ✅ | 无 RoomBinding 时 PromptPlan/Skill/Profile/Knowledge/Kernel 都不会偷偷创建 managed side effect，原普通 Agent 模式保留。 |
+| Voice | ✅ 范围清晰 | 用户语音输入仅在确认 Final Text 后复用文字入口。Room capability 没有 TTS、VoiceProfile、SpeechChunk、播放队列或自动播放；Agent/Room 发声仍明确 out-of-scope。 |
+
+### 当前 production blockers
+
+1. 修复 `cancelled_with_unknowns -> isFinal` P0，并证明未知 surface 时输入解锁、停止按钮、警告和管理员 kill 行为符合产品语义。
+2. 用最新产品提交重新构建 staged Runtime；manifest 的 `source.productCommit`、contract hash、文件 hash 必须与最终候选一致。
+3. 在正式安装路径验证 Runtime 指针、签名 App 的 `ps/killpg` 权限、Host process-group、cancel timeout、orphan reconcile 与 admin panic 管理入口。
+4. 使用真实网络 Provider 对账 Token/Tool cost，并逐个注入九类 surface 卡死；不得只依赖 deterministic Provider。
+5. 完成真实 HTTP、前端 desktop/mobile、named canary、rollback 和管理员审计演练。production 开关继续保持关闭，不得签发 release receipt。
+
+本轮 staged 证据是 `passed_not_installed`，不是 installed、不是 online Provider、也不是 production E2E。
 
 ## 2026-07-20 独立复审结论
 
