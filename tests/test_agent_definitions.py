@@ -152,7 +152,10 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         self.assertEqual([item["roleId"] for item in roles], [
             "coordinator", "researcher", "implementer", "reviewer", "specialist",
         ])
-        self.assertEqual(profiles[0]["profileId"], "evidence-review")
+        self.assertEqual(
+            [item["profileId"] for item in profiles],
+            ["standard-room", "evidence-review"],
+        )
         serialized = json.dumps({"roles": roles, "profiles": profiles}, ensure_ascii=False).lower()
         self.assertNotIn("voiceprofile", serialized)
         self.assertNotIn("tts", serialized)
