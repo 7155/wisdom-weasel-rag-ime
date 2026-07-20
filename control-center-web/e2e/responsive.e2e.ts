@@ -75,6 +75,54 @@ test('voice provider rows stay inside the management grid', async ({ page }) => 
   }
 });
 
+test('Room mobile header keeps workspace tabs on a separate row from actions', async ({ page }) => {
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/#/rooms');
+    const header = page.locator('.room-workspace > header');
+    const tabs = page.getByRole('radiogroup', { name: 'Room 工作区' });
+    const actions = page.locator('.room-header-actions');
+    await expect(header).toBeVisible();
+    await expect(tabs).toBeVisible();
+    await expect(actions).toBeVisible();
+    await expect(page.getByRole('radio', { name: 'Sessions' })).toBeVisible();
+    const [headerBox, tabsBox, actionsBox] = await Promise.all([
+      header.boundingBox(),
+      tabs.boundingBox(),
+      actions.boundingBox(),
+    ]);
+    expect(headerBox).not.toBeNull();
+    expect(tabsBox).not.toBeNull();
+    expect(actionsBox).not.toBeNull();
+    expect((tabsBox?.y ?? 0) + (tabsBox?.height ?? 0)).toBeLessThanOrEqual((actionsBox?.y ?? 0) + 1);
+    expect((tabsBox?.x ?? 0) + (tabsBox?.width ?? 0)).toBeLessThanOrEqual((headerBox?.x ?? 0) + (headerBox?.width ?? 0) + 1);
+    expect((actionsBox?.x ?? 0) + (actionsBox?.width ?? 0)).toBeLessThanOrEqual((headerBox?.x ?? 0) + (headerBox?.width ?? 0) + 1);
+    await expectNoHorizontalPageOverflow(page);
+  }
+});
+
+test('capability lifecycle labels stay whole on narrow screens', async ({ page }) => {
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/#/plugins');
+    const labels = page.locator('.capability-stage-legend b');
+    await expect(labels).toHaveCount(6);
+    const measurements = await labels.evaluateAll((items) => items.map((item) => {
+      const label = item as HTMLElement;
+      return {
+        whiteSpace: getComputedStyle(label).whiteSpace,
+        width: label.getBoundingClientRect().width,
+        scrollWidth: label.scrollWidth,
+      };
+    }));
+    for (const measurement of measurements) {
+      expect(measurement.whiteSpace).toBe('nowrap');
+      expect(measurement.scrollWidth).toBeLessThanOrEqual(measurement.width + 1);
+    }
+    await expectNoHorizontalPageOverflow(page);
+  }
+});
+
 test('closing the Agent session rail releases its grid column', async ({ page }) => {
   test.skip(isMobileViewport(page), 'mobile session rail is an overlay');
   const viewport = { width: 1_280, height: 640 };

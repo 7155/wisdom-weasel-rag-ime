@@ -121,6 +121,11 @@ export function PluginsFeature() {
   const versionItems = arrayRecords(asRecord(versions.data).items);
   const lifecyclePolicies = arrayRecords(asRecord(lifecycle.data).policies);
   const lifecycleEvents = arrayRecords(asRecord(lifecycle.data).recentEvents);
+  const authorizedCount = canonicalCapabilityCount(items, capabilityAuthorizationState, (value) => value === 'authorized');
+  const disclosedCount = canonicalCapabilityCount(items, capabilityDisclosureState, (value) => value === 'disclosed');
+  const loadedCount = canonicalCapabilityCount(items, capabilityLoadState, (value) => value === 'loaded');
+  const invokedCount = canonicalCapabilityCount(items, capabilityInvocationState, (value) => value === 'invoked');
+  const revokedCount = canonicalCapabilityCount(items, capabilityRevocationState, (value) => value === 'revoked');
   const pendingSummary = asRecord(pendingChange.summary);
   const lifecyclePending = validate.isPending || preview.isPending || apply.isPending;
   const pluginQueriesPending = installed.isPending || versions.isPending || proposals.isPending;
@@ -191,9 +196,11 @@ export function PluginsFeature() {
         <ManagementSection description="目录可见不等于已经授权或加载。Runtime 必须逐阶段留下可审计状态。" title="能力生命周期">
           <MetricStrip items={[
             { label: 'Available', value: items.length, detail: '目录已发现', icon: Wrench },
-            { label: 'Authorized', value: items.filter((item) => item.enabled === true || stringValue(item.authorization) === 'authorized').length, detail: '明确授权', icon: ShieldCheck, tone: 'success' },
-            { label: 'Disclosed', value: items.filter((item) => item.disclosed === true).length, detail: '后端未投影则为 0', icon: Boxes },
-            { label: 'Invoked', value: items.filter((item) => Number(item.invocationCount || 0) > 0).length, detail: '本会话调用', icon: History },
+            capabilityMetric('Authorized', authorizedCount, '明确授权', ShieldCheck),
+            capabilityMetric('Disclosed', disclosedCount, '已向模型披露', Boxes),
+            capabilityMetric('Loaded', loadedCount, '定义已加载', PackageCheck),
+            capabilityMetric('Invoked', invokedCount, '本会话调用', History),
+            capabilityMetric('Revoked', revokedCount, '授权已撤销', Power),
           ]} />
           <div className="capability-stage-legend" aria-label="能力阶段说明"><span><b>available</b>目录可见</span><span><b>authorized</b>策略允许</span><span><b>disclosed</b>已向模型披露</span><span><b>loaded</b>定义已加载</span><span><b>invoked</b>已调用</span><span><b>revoked</b>授权已撤销</span></div>
         </ManagementSection>
@@ -416,7 +423,46 @@ export function PluginsFeature() {
 function ToolDetail({ item, onClose }: { item: ToolRecord; onClose: () => void }) {
   const operations = operationLabelsFor(item); const modes = stringArray(item.sessionModes); const unknownOperationCount = Math.max(0, stringArray(item.operations).length - operations.length);
   const schema = asRecord(item.schema ?? item.inputSchema ?? item.parameters);
-  return <aside aria-label="工具详情" className="plugins-detail"><div className="plugins-detail__toolbar"><span>工具详情</span><IconButton icon={<PanelRightClose size={16} />} label="关闭工具详情" onClick={onClose} tooltip /></div><div className="plugins-detail__heading"><span className="plugins-detail__icon"><Wrench aria-hidden="true" size={18} /></span><div><small>{domainLabel(item)}</small><h3>{publicToolName(item)}</h3><p>{publicToolDescription(item)}</p></div><StatusBadge {...availabilityBadge(item)} /></div><dl className="plugins-detail__facts"><div><dt><CheckCircle2 aria-hidden="true" size={15} />当前状态</dt><dd>{availabilityDescription(item)}</dd></div><div><dt><MessageCircle aria-hidden="true" size={15} />可用方式</dt><dd>{modes.length ? modes.map(modeLabel).join('、') : '暂无可用方式'}</dd></div><div><dt><ShieldCheck aria-hidden="true" size={15} />操作确认</dt><dd>{confirmationLabel(stringValue(item.riskLevel, 'R0'))}</dd></div></dl><div className="plugins-detail__capabilities"><h4>可以做什么</h4>{operations.length || unknownOperationCount ? <ul>{operations.map((operation) => <li key={operation}>{operation}</li>)}{unknownOperationCount ? <li>其他 {unknownOperationCount} 项能力</li> : null}</ul> : <p>目录中尚未提供能力说明。</p>}</div><section className="capability-disclosure"><h4>渐进披露</h4><dl><div><dt>Use when</dt><dd>{stringValue(item.useWhen, publicToolDescription(item))}</dd></div><div><dt>Not for</dt><dd>{stringValue(item.notFor, '目录尚未投影不适用边界')}</dd></div><div><dt>Output</dt><dd>{stringValue(item.output, '由 typed route 返回结构化结果')}</dd></div><div><dt>Next</dt><dd>{stringValue(item.next, '由任务状态与收工检查决定')}</dd></div></dl>{Object.keys(schema).length ? <details><summary>按需查看 Tool Schema</summary><pre>{JSON.stringify(schema, null, 2)}</pre></details> : <p>Tool Schema 尚未投影；不会用前端猜测结构。</p>}</section></aside>;
+  return <aside aria-label="工具详情" className="plugins-detail"><div className="plugins-detail__toolbar"><span>工具详情</span><IconButton icon={<PanelRightClose size={16} />} label="关闭工具详情" onClick={onClose} tooltip /></div><div className="plugins-detail__heading"><span className="plugins-detail__icon"><Wrench aria-hidden="true" size={18} /></span><div><small>{domainLabel(item)}</small><h3>{publicToolName(item)}</h3><p>{publicToolDescription(item)}</p></div><StatusBadge {...availabilityBadge(item)} /></div><dl className="plugins-detail__facts"><div><dt><CheckCircle2 aria-hidden="true" size={15} />当前状态</dt><dd>{availabilityDescription(item)}</dd></div><div><dt><MessageCircle aria-hidden="true" size={15} />可用方式</dt><dd>{modes.length ? modes.map(modeLabel).join('、') : '暂无可用方式'}</dd></div><div><dt><ShieldCheck aria-hidden="true" size={15} />操作确认</dt><dd>{confirmationLabel(stringValue(item.riskLevel, 'R0'))}</dd></div></dl><div className="plugins-detail__capabilities"><h4>可以做什么</h4>{operations.length || unknownOperationCount ? <ul>{operations.map((operation) => <li key={operation}>{operation}</li>)}{unknownOperationCount ? <li>其他 {unknownOperationCount} 项能力</li> : null}</ul> : <p>目录中尚未提供能力说明。</p>}</div><section className="capability-disclosure"><h4>渐进披露</h4><dl><div><dt>Use when</dt><dd>{stringValue(item.useWhen, publicToolDescription(item))}</dd></div><div><dt>Not for</dt><dd>{stringValue(item.notFor, '边界未提供，暂不向模型披露')}</dd></div><div><dt>Output</dt><dd>{stringValue(item.output, '未提供，禁止前端推断')}</dd></div><div><dt>Next</dt><dd>{stringValue(item.next, '未提供，禁止前端推断')}</dd></div></dl>{Object.keys(schema).length ? <details><summary>按需查看 Tool Schema</summary><pre>{JSON.stringify(schema, null, 2)}</pre></details> : <p>Tool Schema 尚未投影；不会用前端猜测结构。</p>}</section></aside>;
+}
+
+function capabilityMetric(label: string, value: number | undefined, detail: string, icon: typeof Wrench) {
+  return { label, value: value ?? '—', detail: value === undefined ? '未投影' : detail, icon, tone: value === undefined ? 'warning' as const : 'neutral' as const };
+}
+
+function canonicalCapabilityCount(items: ToolRecord[], state: (item: ToolRecord) => string | undefined, matches: (value: string) => boolean): number | undefined {
+  const values = items.map(state);
+  return items.length && values.every((value): value is string => value !== undefined)
+    ? values.filter(matches).length
+    : undefined;
+}
+
+function capabilityAuthorizationState(item: ToolRecord): string | undefined {
+  if (typeof item.authorizationState === 'string') return item.authorizationState;
+  if (typeof item.authorized === 'boolean') return item.authorized ? 'authorized' : 'denied';
+  return undefined;
+}
+function capabilityDisclosureState(item: ToolRecord): string | undefined {
+  if (typeof item.disclosureState === 'string') return item.disclosureState;
+  if (typeof item.disclosed === 'boolean') return item.disclosed ? 'disclosed' : 'withheld';
+  return undefined;
+}
+function capabilityLoadState(item: ToolRecord): string | undefined {
+  if (typeof item.loadState === 'string') return item.loadState;
+  if (item.loadedReceipt !== undefined) return item.loadedReceipt ? 'loaded' : 'not_loaded';
+  if (typeof item.loaded === 'boolean') return item.loaded ? 'loaded' : 'not_loaded';
+  return undefined;
+}
+function capabilityInvocationState(item: ToolRecord): string | undefined {
+  if (typeof item.invocationCount === 'number') return item.invocationCount > 0 ? 'invoked' : 'not_invoked';
+  if (item.lastInvocationReceipt !== undefined) return item.lastInvocationReceipt ? 'invoked' : 'not_invoked';
+  return undefined;
+}
+function capabilityRevocationState(item: ToolRecord): string | undefined {
+  if (typeof item.revocationState === 'string') return item.revocationState;
+  if (item.revocationReceipt !== undefined) return item.revocationReceipt ? 'revoked' : 'not_revoked';
+  if (typeof item.revoked === 'boolean') return item.revoked ? 'revoked' : 'not_revoked';
+  return undefined;
 }
 
 function itemKey(item: ToolRecord): string { return stringValue(item.id, stringValue(item.displayName)); }
