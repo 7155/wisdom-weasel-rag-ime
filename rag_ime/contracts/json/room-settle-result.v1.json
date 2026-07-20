@@ -9,6 +9,7 @@
     "receipt": {"type": "object"},
     "post": {
       "type": ["object", "null"]
-    }
+    },
+    "executionReceipt": {"type": "object"}
   }
 }

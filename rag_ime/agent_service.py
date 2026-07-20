@@ -38,7 +38,16 @@ from .agent_room_intercom import (
     AgentRoomIntercomStore,
     AgentRoomTargetBusy,
 )
-from .agent_room_capabilities import RoomCapabilityManifestStore, room_runtime_registry
+from .agent_room_capabilities import (
+    RoomCapabilityManifestStore,
+    ToolAuthorizationError,
+    room_runtime_registry,
+)
+from .agent_definition_compiler import AgentDefinitionCompiler
+from .agent_definitions import collaboration_role
+from .agent_templates import agent_template
+from .agent_prompt_plans import PromptLayer, RoomPromptPlanStore
+from .agent_room_context import ProviderProjectionJournalStore
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_contracts import validate_kernel_contract
@@ -199,6 +208,11 @@ class AgentService:
         self.room_kernel_projection.initialize()
         self.room_capabilities = RoomCapabilityManifestStore(db_path)
         self.room_capabilities.initialize()
+        self.room_prompt_plans = RoomPromptPlanStore(db_path)
+        self.room_prompt_plans.initialize()
+        self.room_projection_journals = ProviderProjectionJournalStore(db_path)
+        self.room_projection_journals.initialize()
+        self.agent_definition_compiler = AgentDefinitionCompiler()
         self._room_kernel_poll_seconds = room_kernel_poll_seconds
         self.observations = ObservationHub(db_path)
         self.room_events = AgentRoomEventHub(self.rooms)
@@ -377,6 +391,8 @@ class AgentService:
                 for tool in manifest["tools"]
                 if isinstance(tool, Mapping) and tool.get("authorized") is True
             ]
+        if self.room_capabilities.runtime_binding(str(session.get("id") or ""), active_only=False) is not None:
+            return []
         provider = self._tool_manifest_provider
         if provider is None:
             return []
@@ -385,6 +401,18 @@ class AgentService:
     def _runtime_session_context(self, session: Mapping[str, object]) -> Mapping[str, object]:
         bound = self.room_capabilities.manifest_for_runtime(str(session.get("id") or ""))
         if bound is None:
+            tombstone = self.room_capabilities.runtime_binding(
+                str(session.get("id") or ""), active_only=False
+            )
+            if tombstone is not None:
+                return {
+                    "roomCapability": {
+                        "manifestId": tombstone["manifestId"],
+                        "manifestHash": tombstone["manifestHash"],
+                        "capabilityEpoch": tombstone["capabilityEpoch"],
+                        "status": tombstone["state"],
+                    }
+                }
             return {}
         manifest, binding = bound
         return {
@@ -1284,6 +1312,7 @@ class AgentService:
         profile_allowed: Sequence[str],
         state_allowed: Sequence[str],
         created_at_ms: int,
+        runtime_state: str = "active",
     ) -> dict[str, object]:
         session_id = str(participant_binding.get("sessionId") or "")
         dispatch = self.room_kernel.dispatch(dispatch_id)
@@ -1326,8 +1355,125 @@ class AgentService:
             participant_binding=participant_binding,
             surface_manifest_hashes={name: str(manifest["manifestHash"]) for name in ("prompt", "runtime", "gateway", "ui")},
             created_at_ms=created_at_ms,
+            state=runtime_state,
         )
         return {"manifest": manifest, "binding": binding, "created": created, "bindingCreated": binding_created}
+
+    def _prepare_managed_room_dispatch(
+        self,
+        dispatch: Mapping[str, object],
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Durably prepare Prompt/Profile/Capability before the Kernel may lease."""
+
+        del now_ms
+        dispatch_id = _required_text(dispatch, "dispatchId")
+        prepared_at_ms = self.room_kernel.dispatch_enqueued_at(dispatch_id)
+        session_id = _required_text(dispatch, "targetSessionId")
+        room_id = str(self.room_kernel.root(_required_text(dispatch, "rootId"))["roomId"])
+        participant = self.rooms.participant_for_session(session_id)
+        if participant is None or participant.get("roomId") != room_id:
+            raise RoomKernelFenceError("managed Dispatch Session has no canonical Room participant")
+        persona = self.personas.resolve(participant.get("roleId"), participant.get("roleVersion") or "1")
+        collaboration_role_id = str(participant.get("collaborationRole") or "implementer")
+        if collaboration_role_id == "executor":
+            collaboration_role_id = "implementer"
+        role = collaboration_role(collaboration_role_id)
+        template_id = {
+            "coordinator": "planner",
+            "researcher": "researcher",
+            "reviewer": "reviewer",
+        }.get(str(participant.get("collaborationRole") or ""), "worker")
+        template = agent_template(template_id)
+        capability_revision = _required_text(dispatch, "runtimeProfileRevision")
+        generation = int(dispatch["generation"])
+        capability_epoch = int(dispatch["capabilityEpoch"])
+        room_binding = {
+            "schemaVersion": "wisdom-weasel.room-binding.v2",
+            "bindingId": f"room-binding:{dispatch_id}",
+            "rootId": dispatch["rootId"],
+            "roomId": room_id,
+            "participantId": participant["id"],
+            "taskId": dispatch["taskId"],
+            "generation": generation,
+            "protocolRevision": "room-v2",
+            "capabilityRevision": capability_revision,
+            "access": "write",
+        }
+        compiled = self.agent_definition_compiler.compile(
+            binding_id=f"participant-binding:{dispatch_id}",
+            session_id=session_id,
+            persona=persona,
+            collaboration_role=role,
+            template=template,
+            profile=None,
+            authorized_capabilities=("control", "delegation", "memory", "planning", "rag", "review"),
+            capability_revision=capability_revision,
+            capability_epoch=capability_epoch,
+            prompt_plan_revision="room-prompt-plan-v1",
+            skill_policy_revision="room-skill-policy-v1",
+            context_policy_revision="room-context-policy-v1",
+            room_binding_ref={
+                "bindingId": room_binding["bindingId"],
+                "schemaVersion": room_binding["schemaVersion"],
+            },
+        )
+        participant_binding = compiled.binding.to_payload()
+        journal_id = f"room-journal:{dispatch_id}"
+        self.room_projection_journals.open_journal(
+            journal_id=journal_id,
+            root_id=str(dispatch["rootId"]),
+            room_id=room_id,
+            binding_id=str(participant_binding["bindingId"]),
+            session_id=session_id,
+            session_epoch=max(1, generation + 1),
+            context_epoch=max(1, capability_epoch + 1),
+            generation=generation,
+            created_at_ms=prepared_at_ms,
+        )
+        layers = (
+            PromptLayer("core_rails", "pi-core-safety", "pi-core-safety:v1", persona.safety_policy_prompt, ("safety", "authorization")),
+            PromptLayer("persona", "persona-compiler", f"persona:{persona.role_id}@{persona.version}", persona.persona_prompt, ("identity",)),
+            PromptLayer("collaboration_role", "collaboration-role-compiler", f"collaboration-role:{role.role_id}@{role.version}", json.dumps(role.to_payload(), ensure_ascii=False, sort_keys=True), ("collaboration-duty",)),
+            PromptLayer("agent_template_policy", "template-capability-compiler", f"agent-template:{template.template_id}@{template.version}", template.prompt, ("tool-policy", "skill-policy")),
+            PromptLayer("room_profile_overlay", "profile-room-kernel-compiler", "profile:none", "", ("room-overlay",), "no-profile"),
+            PromptLayer("provider_dynamic_facts", "room-context-compiler", journal_id, "", ("dynamic-facts",)),
+        )
+        prompt = self.room_prompt_plans.compile(
+            receipt_id=f"prompt-compile:{dispatch_id}",
+            room_binding=room_binding,
+            participant_binding=participant_binding,
+            journal_id=journal_id,
+            session_epoch=max(1, generation + 1),
+            context_epoch=max(1, capability_epoch + 1),
+            skill_policy_revision="room-skill-policy-v1",
+            context_policy_revision="room-context-policy-v1",
+            layers=layers,
+            created_at_ms=prepared_at_ms,
+        )
+        if prompt is None:
+            raise RoomKernelFenceError("managed Dispatch PromptCompile produced no receipt")
+        tools = tuple(room_runtime_registry())
+        bound = self.bind_room_capability_runtime(
+            room_binding=room_binding,
+            participant_binding=participant_binding,
+            prompt_compile_receipt=prompt["receipt"],
+            manifest_id=f"capability-manifest:{dispatch_id}",
+            dispatch_id=dispatch_id,
+            user_authorized=tools,
+            template_allowed=tools,
+            role_allowed=tools,
+            profile_allowed=tools,
+            state_allowed=tools,
+            created_at_ms=prepared_at_ms,
+            runtime_state="prepared",
+        )
+        return {
+            "sessionId": session_id,
+            "manifestId": bound["manifest"]["manifestId"],
+            "manifestHash": bound["manifest"]["manifestHash"],
+            "promptCompileReceiptId": prompt["receipt"]["receiptId"],
+        }
 
     def room_capability_tool_search(self, payload: Mapping[str, object]) -> dict[str, object]:
         receipt, _ = self.room_capabilities.runtime_tool_search(
@@ -1358,6 +1504,8 @@ class AgentService:
     ) -> dict[str, object] | None:
         bound = self.room_capabilities.manifest_for_runtime(session_id)
         if bound is None:
+            if self.room_capabilities.runtime_binding(session_id, active_only=False) is not None:
+                raise ToolAuthorizationError("Session Room Capability Manifest is not active")
             return None
         manifest, binding = bound
         live = self.room_kernel.session_binding(session_id)
@@ -1451,7 +1599,15 @@ class AgentService:
             or int(settle.get("capabilityEpoch", -1)) != int(dispatch["capabilityEpoch"])
         ):
             raise RoomKernelFenceError("settle receipt does not match Dispatch fences")
-        if dispatch.get("state") != "running":
+        invocation_receipt_id = str(payload.get("invocationReceiptId") or "").strip()
+        runtime_capability = self.room_capabilities.manifest_for_runtime(str(settle["sessionId"]))
+        if runtime_capability is not None and not invocation_receipt_id:
+            raise RoomKernelFenceError(
+                "governed Room settle requires the originating invocation receipt"
+            )
+        if dispatch.get("state") != "running" and not (
+            dispatch.get("state") == "committed" and invocation_receipt_id
+        ):
             raise RoomKernelFenceError("only a running Dispatch can settle")
         proposal = commit.get("postProposal")
         if commit.get("action") == "post":
@@ -1473,14 +1629,24 @@ class AgentService:
             generation=int(settle["generation"]),
             now_ms=int(commit.get("createdAtMs") or int(time.time() * 1000)),
             post_proposal=proposal if isinstance(proposal, Mapping) else None,
+            invocation_receipt_id=invocation_receipt_id,
         )
         post = dict(proposal) if isinstance(proposal, Mapping) else None
+        execution_receipt = (
+            self.room_capabilities.execution_receipt(invocation_receipt_id)
+            if invocation_receipt_id
+            else None
+        )
+        if runtime_capability is not None and receipt.get("status") == "applied":
+            self._revoke_room_runtime_capability(str(settle["sessionId"]), int(commit.get("createdAtMs") or 0))
         self.room_kernel_projection.sync_room(room_id)
         result = {
             "schemaVersion": "wisdom-weasel.room-settle-result.v1",
             "receipt": receipt,
             "post": post,
         }
+        if execution_receipt is not None:
+            result["executionReceipt"] = execution_receipt
         validate_kernel_contract("roomSettleResult", result)
         return result
 
@@ -4979,6 +5145,8 @@ class AgentService:
         self.room_kernel_worker = RoomKernelWorker(
             self.room_kernel,
             self.runtime,  # type: ignore[arg-type]
+            prepare_dispatch=self._prepare_managed_room_dispatch,
+            revoke_session=self._revoke_room_runtime_capability,
         )
         self.room_kernel_worker_loop = RoomKernelWorkerLoop(
             self.room_kernel_worker,
@@ -4990,6 +5158,16 @@ class AgentService:
     def _sync_all_room_kernel_projections(self) -> None:
         for room_id in self.room_kernel.room_ids():
             self.room_kernel_projection.sync_room(room_id)
+
+    def _revoke_room_runtime_capability(self, session_id: str, now_ms: int) -> None:
+        binding = self.room_capabilities.runtime_binding(session_id)
+        if binding is None:
+            return
+        self.room_capabilities.revoke_runtime(
+            session_id,
+            capability_epoch=int(binding["capabilityEpoch"]) + 1,
+            now_ms=now_ms,
+        )
 
     def close(self) -> None:
         self.room_kernel_worker_loop.close()
@@ -5500,6 +5678,8 @@ def _room_kernel_mode_from_environment() -> KernelMode:
     value = os.environ.get("RAG_IME_ROOM_KERNEL_MODE", "off").strip().lower()
     if value not in {"off", "shadow", "cohort", "test"}:
         return "off"
+    if value == "cohort" and os.environ.get("RAG_IME_ROOM_KERNEL_COHORT_ID", "").strip() != "room-v2-test":
+        return "shadow"
     return value  # type: ignore[return-value]
 
 

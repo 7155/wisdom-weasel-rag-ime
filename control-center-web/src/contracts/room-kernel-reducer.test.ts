@@ -109,12 +109,21 @@ describe('generated-contract Room Kernel projection', () => {
     const snapshot: RoomKernelSnapshot = {
       roomId: 'room-a', lastSequence: 20, snapshotHash: `sha256:${'a'.repeat(64)}`,
       roots: [root(), rootB], tasks: [task()], dispatches: [dispatch()], posts: [post()],
-      sessions: [{ sessionId: 'session-b', rootId: 'root-b', generation: 8, state: 'running', updatedAtMs: 9 }],
+      sessions: [{
+        sessionId: 'session-b', rootId: 'root-b', generation: 8, state: 'running', updatedAtMs: 9,
+        capabilityManifest: {
+          manifestId: 'manifest-b', manifestHash: 'b'.repeat(64), status: 'active', rootId: 'root-b',
+          taskId: 'task-b', dispatchId: 'dispatch-b', generation: 8, capabilityEpoch: 4,
+          promptCompileReceiptId: 'prompt-b', promptPlanHash: 'c'.repeat(64),
+          compiledRuntimeProfileRef: { profileId: 'profile-b', revision: '1', contentHash: 'sha256:profile-b' },
+        },
+      }],
       receipts: [],
     };
     const state = applyRoomKernelSnapshot(createRoomKernelProjection('room-a'), snapshot);
     expect(Object.keys(state.rootsById)).toEqual(['root-a', 'root-b']);
     expect(state.sessionsById['session-b']?.rootId).toBe('root-b');
+    expect(state.sessionsById['session-b']?.capabilityManifest?.manifestHash).toBe('b'.repeat(64));
     expect(state.snapshotHash).toBe(snapshot.snapshotHash);
     expect(state.postOrder).toEqual(['post-a']);
   });

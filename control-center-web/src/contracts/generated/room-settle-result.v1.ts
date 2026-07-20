@@ -12,4 +12,7 @@ export interface RoomSettleResultV1 {
   post: {
     [k: string]: unknown;
   } | null;
+  executionReceipt?: {
+    [k: string]: unknown;
+  };
 }

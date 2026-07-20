@@ -310,17 +310,50 @@ class RoomKernelStore:
                 (state, int(now_ms), dispatch_id),
             )
 
-    def lease_next(self, *, now_ms: int, ttl_ms: int) -> dict[str, object] | None:
+    def pending_dispatch(self, *, now_ms: int) -> dict[str, object] | None:
         if self.mode not in {"cohort", "test"}:
             return None
-        with self._connect(immediate=True) as conn:
+        with self._connect() as conn:
             row = conn.execute(
-                """SELECT o.*, d.state AS dispatch_state
-                   FROM room_kernel_outbox o JOIN room_kernel_dispatches d USING(dispatch_id)
+                """SELECT o.payload_json FROM room_kernel_outbox o
+                   JOIN room_kernel_dispatches d USING(dispatch_id)
                    WHERE o.state = 'pending' AND o.shadow_only = 0
                      AND o.available_at_ms <= ? AND d.state = 'pending'
                    ORDER BY o.available_at_ms, o.outbox_id LIMIT 1""",
                 (int(now_ms),),
+            ).fetchone()
+        return json.loads(str(row["payload_json"])) if row is not None else None
+
+    def dispatch_enqueued_at(self, dispatch_id: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT created_at_ms FROM room_kernel_dispatches WHERE dispatch_id = ?",
+                (_required(dispatch_id, "dispatch_id"),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(dispatch_id)
+        return int(row["created_at_ms"])
+
+    def lease_next(
+        self,
+        *,
+        now_ms: int,
+        ttl_ms: int,
+        dispatch_id: str = "",
+        prepared_session_id: str = "",
+        prepared_manifest_hash: str = "",
+    ) -> dict[str, object] | None:
+        if self.mode not in {"cohort", "test"}:
+            return None
+        with self._connect(immediate=True) as conn:
+            row = conn.execute(
+                """SELECT o.*, d.state AS dispatch_state, d.target_session_id
+                   FROM room_kernel_outbox o JOIN room_kernel_dispatches d USING(dispatch_id)
+                   WHERE o.state = 'pending' AND o.shadow_only = 0
+                     AND o.available_at_ms <= ? AND d.state = 'pending'
+                     AND (? = '' OR o.dispatch_id = ?)
+                   ORDER BY o.available_at_ms, o.outbox_id LIMIT 1""",
+                (int(now_ms), dispatch_id, dispatch_id),
             ).fetchone()
             if row is None:
                 return None
@@ -328,6 +361,17 @@ class RoomKernelStore:
             if int(row["generation"]) != int(root["generation"]):
                 conn.execute("UPDATE room_kernel_outbox SET state = 'cancelled' WHERE outbox_id = ?", (row["outbox_id"],))
                 return None
+            if prepared_session_id or prepared_manifest_hash:
+                if str(row["target_session_id"]) != prepared_session_id:
+                    raise RoomKernelFenceError("prepared capability belongs to another Session")
+                activated = conn.execute(
+                    """UPDATE room_v2_capability_runtime_bindings
+                       SET state = 'active', updated_at_ms = ?
+                       WHERE session_id = ? AND manifest_hash = ? AND state = 'prepared'""",
+                    (int(now_ms), prepared_session_id, prepared_manifest_hash),
+                )
+                if activated.rowcount != 1:
+                    raise RoomKernelFenceError("Dispatch has no matching prepared Capability Manifest")
             lease_id = _stable_id("room-lease", str(row["dispatch_id"]), str(now_ms))
             token = _stable_id("room-lease-token", lease_id, str(row["generation"]))
             expires = int(now_ms) + max(1, int(ttl_ms))
@@ -557,6 +601,7 @@ class RoomKernelStore:
         generation: int,
         now_ms: int,
         post_proposal: Mapping[str, object] | None = None,
+        invocation_receipt_id: str = "",
     ) -> dict[str, object]:
         validate_kernel_contract("roomCommit", payload)
         if post_proposal is not None:
@@ -566,11 +611,49 @@ class RoomKernelStore:
         with self._connect(immediate=True) as conn:
             dispatch = self._dispatch_row(conn, str(payload["dispatchId"]))
             root = self._root_row(conn, str(dispatch["root_id"]))
+            invocation = None
+            if invocation_receipt_id:
+                invocation = conn.execute(
+                    """SELECT i.*, b.session_id AS bound_session_id, b.state AS bound_state
+                       FROM room_v2_tool_invocation_receipts i
+                       JOIN room_v2_capability_runtime_bindings b
+                         ON b.manifest_id = i.manifest_id AND b.manifest_hash = i.manifest_hash
+                       WHERE i.receipt_id = ?""",
+                    (invocation_receipt_id,),
+                ).fetchone()
+                if invocation is None:
+                    raise RoomKernelFenceError("RoomCommit invocation receipt is missing")
+                command = json.loads(str(invocation["command_json"]))
+                if (
+                    command.get("dispatchId") != payload["dispatchId"]
+                    or command.get("rootId") != root["root_id"]
+                    or int(command.get("generation", -1)) != int(generation)
+                    or command.get("tool") not in {"room_post", "room_commit"}
+                ):
+                    raise RoomKernelFenceError("RoomCommit invocation receipt does not match Dispatch fences")
             if generation != int(root["generation"]) or generation != int(dispatch["generation"]):
                 return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "stale_generation", "dispatchId": payload["dispatchId"]}, now_ms=now_ms)
             existing = conn.execute("SELECT commit_id FROM room_kernel_commits WHERE dispatch_id = ?", (payload["dispatchId"],)).fetchone()
             if existing is not None:
+                if invocation is not None:
+                    execution = conn.execute(
+                        "SELECT payload_json FROM room_v2_tool_execution_receipts WHERE invocation_receipt_id = ?",
+                        (invocation_receipt_id,),
+                    ).fetchone()
+                    if execution is None:
+                        raise RoomKernelFenceError(
+                            "RoomCommit exists without its execution receipt; result is unknown"
+                        )
+                    replay = json.loads(str(execution["payload_json"]))
+                    if replay.get("commitId") != existing["commit_id"]:
+                        raise RoomKernelFenceError("invocation receipt was rebound to another RoomCommit")
+                    kernel_receipt = replay.get("kernelReceipt")
+                    if not isinstance(kernel_receipt, Mapping):
+                        raise RoomKernelFenceError("execution receipt has no canonical Kernel receipt")
+                    return dict(kernel_receipt)
                 return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="duplicate", status="noop", generation=int(root["generation"]), details={"commitId": str(existing["commit_id"])}, now_ms=now_ms)
+            if invocation is not None and str(invocation["bound_state"]) != "active":
+                raise RoomKernelFenceError("RoomCommit capability was revoked before execution")
             if str(dispatch["state"]) != "running":
                 return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "dispatch_not_running", "dispatchId": payload["dispatchId"], "dispatchState": str(dispatch["state"])}, now_ms=now_ms)
             if post_proposal is not None:
@@ -616,7 +699,34 @@ class RoomKernelStore:
                         post_proposal["createdAtMs"],
                     ),
                 )
-            return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="accepted", status="applied", generation=generation, details={"commitId": payload["commitId"]}, now_ms=now_ms)
+            receipt = self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="accepted", status="applied", generation=generation, details={"commitId": payload["commitId"]}, now_ms=now_ms)
+            if invocation is not None:
+                execution_payload = {
+                    "schemaVersion": "wisdom-weasel.room-tool-execution-receipt.v1",
+                    "executionReceiptId": f"execution:{invocation_receipt_id}",
+                    "invocationReceiptId": invocation_receipt_id,
+                    "kernelReceiptId": receipt["receiptId"],
+                    "commitId": payload["commitId"],
+                    "sessionId": str(invocation["bound_session_id"]),
+                    "toolName": str(json.loads(str(invocation["command_json"]))["tool"]),
+                    "status": "applied",
+                    "kernelReceipt": receipt,
+                    "createdAtMs": int(now_ms),
+                }
+                conn.execute(
+                    """INSERT INTO room_v2_tool_execution_receipts(
+                       execution_receipt_id, invocation_receipt_id, kernel_receipt_id,
+                       session_id, tool_name, status, result_hash, payload_json, created_at_ms
+                       ) VALUES (?, ?, ?, ?, ?, 'applied', ?, ?, ?)""",
+                    (
+                        execution_payload["executionReceiptId"], invocation_receipt_id,
+                        receipt["receiptId"], execution_payload["sessionId"],
+                        execution_payload["toolName"],
+                        hashlib.sha256(_json(execution_payload).encode("utf-8")).hexdigest(),
+                        _json(execution_payload), int(now_ms),
+                    ),
+                )
+            return receipt
 
     def cancel_target(
         self, *, root_id: str, target_kind: Literal["task", "dispatch"], target_id: str, now_ms: int

@@ -352,6 +352,7 @@ class RoomCapabilityManifestStore:
         participant_binding: Mapping[str, object],
         surface_manifest_hashes: Mapping[str, str],
         created_at_ms: int,
+        state: str = "active",
     ) -> tuple[dict[str, object], bool]:
         """Seal the one manifest identity consumed by Prompt, Runtime, Gateway and UI."""
 
@@ -380,6 +381,9 @@ class RoomCapabilityManifestStore:
         profile_hash = _required(compiled_runtime_profile_ref.get("contentHash"), "profileHash")
         if participant_binding.get("compiledRuntimeProfileRef") != dict(compiled_runtime_profile_ref):
             raise CapabilityManifestConflict("CompiledRuntimeProfile ref differs from ParticipantBinding")
+        binding_state = str(state).strip()
+        if binding_state not in {"prepared", "active"}:
+            raise ValueError("runtime capability binding state must be prepared or active")
         payload = {
             "sessionId": _required(session_id, "session_id"),
             "manifestId": manifest_id,
@@ -392,13 +396,13 @@ class RoomCapabilityManifestStore:
                 "contentHash": profile_hash,
             },
             "capabilityEpoch": int(manifest["capabilityEpoch"]),
-            "state": "active",
+            "state": binding_state,
         }
         timestamp = _non_negative(created_at_ms, "created_at_ms")
         with self._connect(immediate=True) as conn:
             existing = conn.execute(
-                "SELECT * FROM room_v2_capability_runtime_bindings WHERE session_id = ?",
-                (session_id,),
+                "SELECT * FROM room_v2_capability_runtime_bindings WHERE session_id = ? AND manifest_id = ?",
+                (session_id, manifest_id),
             ).fetchone()
             if existing is not None:
                 stored = _runtime_binding_payload(existing)
@@ -411,12 +415,12 @@ class RoomCapabilityManifestStore:
                    prompt_plan_hash, compiled_profile_id, compiled_profile_revision,
                    compiled_profile_hash, room_binding_json, participant_binding_json,
                    capability_epoch, state, created_at_ms, updated_at_ms
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     session_id, manifest_id, manifest_hash, payload["promptCompileReceiptId"],
                     payload["promptPlanHash"], profile_id, profile_revision, profile_hash,
                     _json(dict(room_binding)), _json(dict(participant_binding)),
-                    payload["capabilityEpoch"], timestamp, timestamp,
+                    payload["capabilityEpoch"], binding_state, timestamp, timestamp,
                 ),
             )
         return payload, True
@@ -424,17 +428,21 @@ class RoomCapabilityManifestStore:
     def runtime_binding(self, session_id: str, *, active_only: bool = True) -> dict[str, object] | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM room_v2_capability_runtime_bindings WHERE session_id = ?",
-                (_required(session_id, "session_id"),),
+                """SELECT * FROM room_v2_capability_runtime_bindings
+                   WHERE session_id = ? AND (? = 0 OR state = 'active')
+                   ORDER BY CASE state WHEN 'active' THEN 0 WHEN 'prepared' THEN 1 ELSE 2 END,
+                            updated_at_ms DESC, created_at_ms DESC LIMIT 1""",
+                (_required(session_id, "session_id"), 1 if active_only else 0),
             ).fetchone()
-        if row is None or (active_only and str(row["state"]) != "active"):
+        if row is None:
             return None
         return _runtime_binding_payload(row)
 
     def revoke_runtime(self, session_id: str, *, capability_epoch: int, now_ms: int) -> None:
         with self._connect(immediate=True) as conn:
             row = conn.execute(
-                "SELECT capability_epoch FROM room_v2_capability_runtime_bindings WHERE session_id = ?",
+                """SELECT manifest_id, capability_epoch FROM room_v2_capability_runtime_bindings
+                   WHERE session_id = ? AND state = 'active'""",
                 (_required(session_id, "session_id"),),
             ).fetchone()
             if row is None:
@@ -442,8 +450,10 @@ class RoomCapabilityManifestStore:
             if int(capability_epoch) <= int(row["capability_epoch"]):
                 raise CapabilityManifestConflict("revocation must advance capabilityEpoch")
             conn.execute(
-                "UPDATE room_v2_capability_runtime_bindings SET state = 'revoked', capability_epoch = ?, updated_at_ms = ? WHERE session_id = ?",
-                (int(capability_epoch), _non_negative(now_ms, "now_ms"), session_id),
+                """UPDATE room_v2_capability_runtime_bindings
+                   SET state = 'revoked', capability_epoch = ?, updated_at_ms = ?
+                   WHERE session_id = ? AND manifest_id = ?""",
+                (int(capability_epoch), _non_negative(now_ms, "now_ms"), session_id, row["manifest_id"]),
             )
 
     def manifest_for_runtime(self, session_id: str) -> tuple[dict[str, object], dict[str, object]] | None:
@@ -451,6 +461,19 @@ class RoomCapabilityManifestStore:
         if binding is None:
             return None
         return self._manifest(str(binding["manifestId"]), str(binding["manifestHash"])), binding
+
+    def execution_receipt(self, invocation_receipt_id: str) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM room_v2_tool_execution_receipts WHERE invocation_receipt_id = ?",
+                (_required(invocation_receipt_id, "invocation_receipt_id"),),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(str(row["payload_json"]))
+        if not isinstance(payload, dict):
+            raise RuntimeError("tool execution receipt is corrupt")
+        return payload
 
     def runtime_tool_search(
         self, *, session_id: str, receipt_id: str, query: str, created_at_ms: int
@@ -498,8 +521,10 @@ class RoomCapabilityManifestStore:
         manifest = self._manifest(str(binding["manifestId"]), str(binding["manifestHash"]))
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT room_binding_json, participant_binding_json FROM room_v2_capability_runtime_bindings WHERE session_id = ?",
-                (session_id,),
+                """SELECT room_binding_json, participant_binding_json
+                   FROM room_v2_capability_runtime_bindings
+                   WHERE session_id = ? AND manifest_id = ? AND state = 'active'""",
+                (session_id, binding["manifestId"]),
             ).fetchone()
         assert row is not None
         return self.authorize_invocation(

@@ -15,6 +15,19 @@ export type PrivateSessionProjection = {
   generation: number;
   state: SessionState;
   updatedAtMs: number;
+  capabilityManifest?: {
+    manifestId: string;
+    manifestHash: string;
+    status: 'active' | 'revoked';
+    rootId: string;
+    taskId: string;
+    dispatchId: string;
+    generation: number;
+    capabilityEpoch: number;
+    promptCompileReceiptId: string;
+    promptPlanHash: string;
+    compiledRuntimeProfileRef: { profileId: string; revision: string; contentHash: string };
+  };
 };
 
 export type RootProjection = RoomRootExecutionV2 & {
@@ -262,12 +275,45 @@ function privateSession(value: unknown): PrivateSessionProjection {
   const item = record(value);
   const sessionState = item.state;
   if (!isSessionState(sessionState)) throw new TypeError('Session state is invalid');
+  const capabilityManifest = item.capabilityManifest === undefined
+    ? undefined
+    : privateCapabilityManifest(item.capabilityManifest);
   return {
     sessionId: requiredText(item.sessionId, 'sessionId'),
     rootId: optionalText(item.rootId),
     generation: nonNegativeInteger(item.generation, 'generation'),
     state: sessionState,
     updatedAtMs: nonNegativeInteger(item.updatedAtMs, 'updatedAtMs'),
+    ...(capabilityManifest ? { capabilityManifest } : {}),
+  };
+}
+
+function privateCapabilityManifest(value: unknown): NonNullable<PrivateSessionProjection['capabilityManifest']> {
+  const item = record(value);
+  const status = item.status;
+  if (status !== 'active' && status !== 'revoked') throw new TypeError('Capability Manifest status is invalid');
+  const profile = record(item.compiledRuntimeProfileRef);
+  const manifestHash = requiredText(item.manifestHash, 'manifestHash');
+  const promptPlanHash = requiredText(item.promptPlanHash, 'promptPlanHash');
+  if (!/^[a-f0-9]{64}$/.test(manifestHash) || !/^[a-f0-9]{64}$/.test(promptPlanHash)) {
+    throw new TypeError('Capability Manifest hashes are invalid');
+  }
+  return {
+    manifestId: requiredText(item.manifestId, 'manifestId'),
+    manifestHash,
+    status,
+    rootId: requiredText(item.rootId, 'rootId'),
+    taskId: requiredText(item.taskId, 'taskId'),
+    dispatchId: requiredText(item.dispatchId, 'dispatchId'),
+    generation: nonNegativeInteger(item.generation, 'generation'),
+    capabilityEpoch: nonNegativeInteger(item.capabilityEpoch, 'capabilityEpoch'),
+    promptCompileReceiptId: requiredText(item.promptCompileReceiptId, 'promptCompileReceiptId'),
+    promptPlanHash,
+    compiledRuntimeProfileRef: {
+      profileId: requiredText(profile.profileId, 'profileId'),
+      revision: requiredText(profile.revision, 'profileRevision'),
+      contentHash: requiredText(profile.contentHash, 'profileContentHash'),
+    },
   };
 }
 

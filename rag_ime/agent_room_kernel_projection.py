@@ -256,6 +256,31 @@ class RoomKernelProjection:
                 "state": _session_state(state),
                 "updatedAtMs": int(row["updated_at_ms"]),
             }
+            capability = conn.execute(
+                """SELECT b.*, m.root_id, m.task_id, m.dispatch_id, m.generation
+                   FROM room_v2_capability_runtime_bindings b
+                   JOIN room_v2_capability_manifests m ON m.manifest_id = b.manifest_id
+                   WHERE b.session_id = ? AND m.root_id = ? AND m.dispatch_id = ?""",
+                (session_id, row["root_id"], row["dispatch_id"]),
+            ).fetchone()
+            if capability is not None:
+                session["capabilityManifest"] = {
+                    "manifestId": str(capability["manifest_id"]),
+                    "manifestHash": str(capability["manifest_hash"]),
+                    "status": str(capability["state"]),
+                    "rootId": str(capability["root_id"]),
+                    "taskId": str(capability["task_id"]),
+                    "dispatchId": str(capability["dispatch_id"]),
+                    "generation": int(capability["generation"]),
+                    "capabilityEpoch": int(capability["capability_epoch"]),
+                    "promptCompileReceiptId": str(capability["prompt_compile_receipt_id"]),
+                    "promptPlanHash": str(capability["prompt_plan_hash"]),
+                    "compiledRuntimeProfileRef": {
+                        "profileId": str(capability["compiled_profile_id"]),
+                        "revision": str(capability["compiled_profile_revision"]),
+                        "contentHash": str(capability["compiled_profile_hash"]),
+                    },
+                }
             records.append(("session", session_id, "binding", session_id, "session_projection", {"session": session}))
         return records
 

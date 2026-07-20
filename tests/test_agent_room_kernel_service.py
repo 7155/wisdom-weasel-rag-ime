@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +21,7 @@ from rag_ime.agent_room_kernel_contracts import (
     ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
     ROOT_EXECUTION_SCHEMA_VERSION,
 )
-from rag_ime.agent_service import AgentService
+from rag_ime.agent_service import AgentService, _room_kernel_mode_from_environment
 from rag_ime.debug_server import DebugRequestHandler
 
 
@@ -201,6 +202,24 @@ class RoomKernelServiceTests(unittest.TestCase):
             "createdAtMs": 20,
         }
 
+    def _room_tool_invocation(self, call_id: str, content: str) -> str:
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": f"load:{call_id}",
+                "toolName": "room_post",
+                "createdAtMs": 29,
+            }
+        )["result"]
+        result = self.service.execute_room_capability_tool(
+            self.session_id,
+            "room_post",
+            {"content": content},
+            tool_call_id=call_id,
+            load_receipt_id=str(loaded["receiptId"]),
+        )
+        return str(result["invocationReceipt"]["receiptId"])
+
     def test_command_requires_server_authorization_and_current_room_generation(self) -> None:
         with self.assertRaises(PermissionError):
             self.service.apply_room_kernel_command(self.room_id, self._cancel_command())
@@ -220,6 +239,19 @@ class RoomKernelServiceTests(unittest.TestCase):
         snapshot = self.service.room_kernel_snapshot(self.room_id)
         self.assertEqual(snapshot["roots"][0]["state"], "cancelled")
         self.assertTrue(any(item["receiptId"] == receipt["receiptId"] for item in snapshot["receipts"]))
+
+    def test_environment_cohort_requires_the_named_test_opt_in(self) -> None:
+        with patch.dict("os.environ", {"RAG_IME_ROOM_KERNEL_MODE": "cohort"}, clear=True):
+            self.assertEqual(_room_kernel_mode_from_environment(), "shadow")
+        with patch.dict(
+            "os.environ",
+            {
+                "RAG_IME_ROOM_KERNEL_MODE": "cohort",
+                "RAG_IME_ROOM_KERNEL_COHORT_ID": "room-v2-test",
+            },
+            clear=True,
+        ):
+            self.assertEqual(_room_kernel_mode_from_environment(), "cohort")
 
     def test_settle_bridge_requires_matching_settle_and_explicit_post(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
@@ -268,10 +300,13 @@ class RoomKernelServiceTests(unittest.TestCase):
                 caller_authorized=True,
             )
         settle = {**bad_settle, "eventKind": "agent_settled"}
+        invocation_receipt_id = self._room_tool_invocation(
+            "call:settle-service", "This text was explicitly committed."
+        )
 
         result = self.service.settle_room_kernel_dispatch(
             self.room_id,
-            {"settleReceipt": settle, "commit": commit},
+            {"settleReceipt": settle, "commit": commit, "invocationReceiptId": invocation_receipt_id},
             caller_authorized=True,
         )
 
@@ -319,11 +354,14 @@ class RoomKernelServiceTests(unittest.TestCase):
             "capabilityEpoch": 7,
             "createdAtMs": 31,
         }
+        invocation_receipt_id = self._room_tool_invocation(
+            "call:invalid-post", "Must not be committed."
+        )
 
         with self.assertRaisesRegex(RoomKernelFenceError, "RoomPost proposal"):
             self.service.settle_room_kernel_dispatch(
                 self.room_id,
-                {"settleReceipt": settle, "commit": commit},
+                {"settleReceipt": settle, "commit": commit, "invocationReceiptId": invocation_receipt_id},
                 caller_authorized=True,
             )
 
@@ -353,63 +391,11 @@ class RoomKernelServiceTests(unittest.TestCase):
     def test_capability_manifest_cuts_legacy_room_tool_to_one_kernel_path(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
         self.service.room_kernel_worker.run_once()
-        digest = "a" * 64
-        room_binding = {
-            "schemaVersion": "wisdom-weasel.room-binding.v2",
-            "bindingId": "room-binding:service",
-            "rootId": "root:service",
-            "roomId": self.room_id,
-            "participantId": str(self.participant["id"]),
-            "taskId": "task:service",
-            "generation": 0,
-            "protocolRevision": "room-v2",
-            "capabilityRevision": "capability:service-v1",
-            "access": "write",
-        }
-        participant_binding = {
-            "schemaVersion": "wisdom-weasel.room-participant-binding.v2",
-            "bindingId": "participant-binding:service",
-            "sessionId": self.session_id,
-            "personaRef": f"rag-ime-definition://persona/p?version=1&contentHash=sha256:{digest}",
-            "collaborationRoleRef": f"rag-ime-definition://collaboration-role/r?version=1&contentHash=sha256:{digest}",
-            "agentTemplateRef": f"rag-ime-definition://agent-template/t?version=1&contentHash=sha256:{digest}",
-            "collaborationProfileRef": None,
-            "compiledRuntimeProfileRef": {"profileId": "profile:service", "revision": "1", "contentHash": "sha256:abcdef"},
-            "capabilityRevision": "capability:service-v1",
-            "capabilityEpoch": 7,
-            "roomBindingRef": {"bindingId": "room-binding:service", "schemaVersion": "wisdom-weasel.room-binding.v2"},
-        }
-        prompt_receipt = {
-            "schemaVersion": "wisdom-weasel.prompt-compile-receipt.v1",
-            "receiptId": "prompt:service",
-            "plan": {
-                "bindingId": "participant-binding:service",
-                "roomId": self.room_id,
-                "rootId": "root:service",
-                "sessionId": self.session_id,
-                "generation": 0,
-                "capabilityRevision": "capability:service-v1",
-                "capabilityEpoch": 7,
-                "planHash": "b" * 64,
-            },
-            "omittedLayers": [],
-            "producerAudit": [],
-            "createdAtMs": 4,
-        }
         tools = ("room_state", "room_post", "room_commit")
-        bound = self.service.bind_room_capability_runtime(
-            room_binding=room_binding,
-            participant_binding=participant_binding,
-            prompt_compile_receipt=prompt_receipt,
-            manifest_id="manifest:service",
-            dispatch_id="dispatch:service",
-            user_authorized=tools,
-            template_allowed=tools,
-            role_allowed=tools,
-            profile_allowed=tools,
-            state_allowed=tools,
-            created_at_ms=4,
-        )
+        bound = self.service.room_capabilities.manifest_for_runtime(self.session_id)
+        self.assertIsNotNone(bound)
+        self.assertEqual(bound[0]["dispatchId"], "dispatch:service")
+        self.assertEqual(bound[1]["promptCompileReceiptId"], "prompt-compile:dispatch:service")
         self.assertEqual(
             [item["name"] for item in self.service._runtime_tool_manifest({"id": self.session_id})],
             list(tools),
@@ -427,6 +413,59 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertEqual(legacy["invocationReceipt"], canonical["invocationReceipt"])
         self.assertFalse(legacy["result"]["executionPerformed"])
+        commit = {
+            "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
+            "commitId": "commit:capability-service",
+            "dispatchId": "dispatch:service",
+            "action": "post",
+            "contentHash": "sha256:deliver",
+            "postProposal": {
+                "schemaVersion": "wisdom-weasel.room-post.v2",
+                "postId": "post:capability-service",
+                "roomId": self.room_id,
+                "rootId": "root:service",
+                "generation": 0,
+                "dispatchId": "dispatch:service",
+                "authorActorRef": str(self.participant["id"]),
+                "kind": "result",
+                "visibility": "room",
+                "content": "deliver",
+                "idempotencyKey": "post:capability-service",
+                "publicationSource": {"kind": "room_commit", "ref": "commit:capability-service"},
+                "createdAtMs": 6,
+            },
+            "evidenceRefs": [],
+            "requirementCoverage": [],
+            "createdAtMs": 6,
+        }
+        settle = {
+            "schemaVersion": ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
+            "settleReceiptId": "settle:capability-service",
+            "eventKind": "agent_settled",
+            "status": "settled",
+            "dispatchId": "dispatch:service",
+            "sessionId": self.session_id,
+            "generation": 0,
+            "capabilityEpoch": 7,
+            "createdAtMs": 6,
+        }
+        settle_payload = {
+            "settleReceipt": settle,
+            "commit": commit,
+            "invocationReceiptId": canonical["invocationReceipt"]["receiptId"],
+        }
+        first_settle = self.service.settle_room_kernel_dispatch(
+            self.room_id, settle_payload, caller_authorized=True,
+        )
+        replayed_settle = self.service.settle_room_kernel_dispatch(
+            self.room_id, settle_payload, caller_authorized=True,
+        )
+        self.assertEqual(first_settle["receipt"], replayed_settle["receipt"])
+        self.assertEqual(
+            first_settle["executionReceipt"]["kernelReceiptId"],
+            first_settle["receipt"]["receiptId"],
+        )
+        self.assertEqual(first_settle["executionReceipt"], replayed_settle["executionReceipt"])
         self.assertIsNone(self.service.execute_room_capability_tool(
             "ordinary-session", "room_send", {"content": "ordinary"}, tool_call_id="call:ordinary", load_receipt_id=""
         ))
@@ -435,7 +474,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             self._cancel_command(),
             caller_authorized=True,
         )
-        with self.assertRaises(RoomKernelFenceError):
+        with self.assertRaises((RoomKernelFenceError, ToolAuthorizationError)):
             self.service.execute_room_capability_tool(
                 self.session_id,
                 "room_post",
@@ -443,12 +482,40 @@ class RoomKernelServiceTests(unittest.TestCase):
                 tool_call_id="call:after-cancel",
                 load_receipt_id=str(loaded["receiptId"]),
             )
-        self.service.room_capabilities.revoke_runtime(self.session_id, capability_epoch=8, now_ms=6)
+        self.assertEqual(
+            self.service.room_capabilities.runtime_binding(self.session_id, active_only=False)["state"],
+            "revoked",
+        )
         with self.assertRaises(ToolAuthorizationError):
             self.service.room_capabilities.authorize_runtime_invocation(
                 session_id=self.session_id, receipt_id="invoke:revoked", invocation_key="call:revoked",
                 load_receipt_id=str(loaded["receiptId"]), tool_name="room_post", arguments={"content": "no"}, created_at_ms=7,
             )
+
+    def test_managed_dispatch_preparation_replays_after_crash_before_lease(self) -> None:
+        dispatch = self._dispatch()
+        self.service.room_kernel.enqueue_dispatch(dispatch, now_ms=3)
+
+        first = self.service._prepare_managed_room_dispatch(dispatch, 3)
+        prepared = self.service.room_capabilities.runtime_binding(
+            self.session_id, active_only=False
+        )
+        self.assertEqual(prepared["state"], "prepared")
+        with self.assertRaises(KeyError):
+            self.service.room_kernel.lease("dispatch:service")
+        self.assertEqual(self.factory.runtime.dispatched, [])
+
+        replayed = self.service._prepare_managed_room_dispatch(dispatch, 99)
+        self.assertEqual(first, replayed)
+        self.service.room_kernel_worker.run_once()
+        active = self.service.room_capabilities.runtime_binding(self.session_id)
+        self.assertEqual(active["manifestHash"], first["manifestHash"])
+        self.assertEqual(self.factory.runtime.dispatched, ["dispatch:service"])
+
+        snapshot = self.service.room_kernel_snapshot(self.room_id)
+        projected = next(item for item in snapshot["sessions"] if item["sessionId"] == self.session_id)
+        self.assertEqual(projected["capabilityManifest"]["manifestHash"], first["manifestHash"])
+        self.assertEqual(projected["capabilityManifest"]["status"], "active")
 
     def test_real_http_snapshot_command_and_sse_gap_routes(self) -> None:
         wrapper = SimpleNamespace(

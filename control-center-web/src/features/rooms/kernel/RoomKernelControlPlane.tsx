@@ -166,7 +166,7 @@ function RootControlSection({
     {commandError ? <p className="room-kernel-control__command-error" role="alert">{commandError}</p> : null}
     <div className="room-kernel-root__planes">
       <section className="room-kernel-posts" aria-label={`${root.rootId} 公开 Posts`}><header><strong>公开 Posts</strong><small>仅显式提交</small></header>{posts.length ? posts.map((post) => <article key={post!.postId}><span><b>{postKindLabel(post!.kind)}</b><small>{post!.authorActorRef}</small></span><p>{post!.content}</p></article>) : <p className="room-kernel-control__empty">还没有公开提交。</p>}</section>
-      <section className="room-kernel-sessions" aria-label={`${root.rootId} 私有 Sessions`}><header><strong>私有 Session Inspector</strong><small>过程不进入 Room</small></header>{sessions.length ? sessions.map((session) => <details key={session.sessionId}><summary><LockKeyhole size={13} /><span><strong>{session.sessionId}</strong><small>{sessionStateLabel(session.state)} · generation {session.generation}</small></span></summary><dl><div><dt>公开状态</dt><dd>仅状态元数据</dd></div><div><dt>Transcript</dt><dd>私有，不投影到 Room</dd></div></dl></details>) : <p className="room-kernel-control__empty">当前没有绑定 Session。</p>}</section>
+      <section className="room-kernel-sessions" aria-label={`${root.rootId} 私有 Sessions`}><header><strong>私有 Session Inspector</strong><small>过程不进入 Room</small></header>{sessions.length ? sessions.map((session) => <details key={session.sessionId}><summary><LockKeyhole size={13} /><span><strong>{session.sessionId}</strong><small>{sessionStateLabel(session.state)} · generation {session.generation}</small></span></summary><dl><div><dt>公开状态</dt><dd>仅状态元数据</dd></div><div><dt>Transcript</dt><dd>私有，不投影到 Room</dd></div>{session.capabilityManifest ? <><div><dt>Capability</dt><dd>{session.capabilityManifest.status} · epoch {session.capabilityManifest.capabilityEpoch}</dd></div><div><dt>Manifest</dt><dd title={session.capabilityManifest.manifestHash}>{session.capabilityManifest.manifestId} · {shortHash(session.capabilityManifest.manifestHash)}</dd></div><div><dt>Profile</dt><dd title={session.capabilityManifest.compiledRuntimeProfileRef.contentHash}>{session.capabilityManifest.compiledRuntimeProfileRef.profileId} · {session.capabilityManifest.compiledRuntimeProfileRef.revision}</dd></div></> : null}</dl></details>) : <p className="room-kernel-control__empty">当前没有绑定 Session。</p>}</section>
     </div>
   </article>;
 }
@@ -204,6 +204,10 @@ function sessionStateLabel(value: string): string {
 
 function runtimeReceiptStatusLabel(value: RuntimeReceiptSummary['status']): string {
   return ({ pending: '待封存', sealed: '已封存', rejected: '已拒绝', missing: '缺失' } as const)[value];
+}
+
+function shortHash(value: string): string {
+  return value.length > 12 ? `${value.slice(0, 12)}...` : value;
 }
 
 function receiptStatusLabel(receipt: RoomKernelReceiptV1): string {

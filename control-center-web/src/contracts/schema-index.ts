@@ -13696,6 +13696,9 @@ export const contractSchemas = {
           "object",
           "null"
         ]
+      },
+      "executionReceipt": {
+        "type": "object"
       }
     }
   },

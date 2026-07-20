@@ -169,12 +169,29 @@ export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
       projection={projection}
       budgetsByRootId={{}}
       contextReceiptsByRootId={{}}
-      capabilityReceiptsByRootId={{}}
+      capabilityReceiptsByRootId={capabilityReceipts(projection)}
       commandTransport={controlGate?.commandEnabled && commandTransport ? commandTransport : undefined}
       commandDisabledReason={controlGate?.reason}
       panicEnabled={controlGate?.panicEnabled === true}
     /> : null}
   </section>;
+}
+
+function capabilityReceipts(projection: RoomKernelProjection) {
+  return Object.values(projection.sessionsById).reduce<Record<string, {
+    revision: string;
+    status: 'sealed' | 'rejected';
+    contentHash: string;
+  }>>((result, session) => {
+    const capability = session.capabilityManifest;
+    if (!capability || !session.rootId) return result;
+    result[session.rootId] = {
+      revision: `${capability.manifestId} / epoch ${capability.capabilityEpoch}`,
+      status: capability.status === 'active' ? 'sealed' : 'rejected',
+      contentHash: `sha256:${capability.manifestHash}`,
+    };
+    return result;
+  }, {});
 }
 
 export function parseSnapshot(value: unknown, roomId: string): RoomKernelSnapshot {

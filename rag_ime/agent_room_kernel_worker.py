@@ -36,28 +36,51 @@ class RoomKernelWorker:
         runtime: RoomRuntime,
         *,
         message_builder: Callable[[Mapping[str, object]], str] | None = None,
+        prepare_dispatch: Callable[[Mapping[str, object], int], Mapping[str, object]] | None = None,
+        revoke_session: Callable[[str, int], object] | None = None,
         clock_ms: Callable[[], int] | None = None,
     ) -> None:
         self.store = store
         self.runtime = runtime
         self.message_builder = message_builder or _default_dispatch_message
+        self.prepare_dispatch = prepare_dispatch
+        self.revoke_session = revoke_session
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
 
     def run_once(self, *, lease_ttl_ms: int = 30_000) -> dict[str, object] | None:
         if self.store.mode not in {"cohort", "test"}:
             return None
         now_ms = self.clock_ms()
-        lease = self.store.lease_next(now_ms=now_ms, ttl_ms=lease_ttl_ms)
+        pending = self.store.pending_dispatch(now_ms=now_ms)
+        if pending is None:
+            return None
+        prepared: Mapping[str, object] = {}
+        if self.prepare_dispatch is not None:
+            prepared = self.prepare_dispatch(pending, now_ms)
+            if not prepared.get("sessionId") or not prepared.get("manifestHash"):
+                raise RoomKernelFenceError("managed Dispatch preparation returned no capability fence")
+        lease = self.store.lease_next(
+            now_ms=now_ms,
+            ttl_ms=lease_ttl_ms,
+            dispatch_id=str(pending["dispatchId"]),
+            prepared_session_id=str(prepared.get("sessionId") or ""),
+            prepared_manifest_hash=str(prepared.get("manifestHash") or ""),
+        )
         if lease is None:
             return None
         dispatch = self.store.outbox(str(lease["dispatchId"]))["payload"]
         if not isinstance(dispatch, Mapping):
             raise RoomKernelFenceError("outbox payload is not a Dispatch envelope")
-        runtime_receipt = self.runtime.dispatch_room(
-            dispatch,
-            message=self.message_builder(dispatch),
-            lease_token=str(lease["leaseToken"]),
-        )
+        try:
+            runtime_receipt = self.runtime.dispatch_room(
+                dispatch,
+                message=self.message_builder(dispatch),
+                lease_token=str(lease["leaseToken"]),
+            )
+        except BaseException:
+            if self.revoke_session is not None:
+                self.revoke_session(str(dispatch["targetSessionId"]), self.clock_ms())
+            raise
         return self.store.accept_runtime_receipt(
             lease_token=str(lease["leaseToken"]),
             runtime_receipt=runtime_receipt,
@@ -69,6 +92,8 @@ class RoomKernelWorker:
         kernel_receipt = self.store.cancel_root(root_id, now_ms=self.clock_ms())
         runtime_receipts: list[dict[str, object]] = []
         for target in targets:
+            if self.revoke_session is not None:
+                self.revoke_session(str(target["sessionId"]), self.clock_ms())
             runtime_receipts.append(
                 self.runtime.cancel_room(
                     session_id=str(target["sessionId"]),
@@ -101,6 +126,8 @@ class RoomKernelWorker:
         for target in targets:
             target_root_id = str(target["rootId"])
             try:
+                if self.revoke_session is not None:
+                    self.revoke_session(str(target["sessionId"]), self.clock_ms())
                 generation = int(self.store.root(target_root_id)["generation"])
                 self.runtime.cancel_room(
                     session_id=str(target["sessionId"]),
@@ -119,7 +146,16 @@ class RoomKernelWorker:
         return {"kernelReceipt": receipt, "runtimeCancelFailures": failures}
 
     def reconcile(self) -> list[dict[str, object]]:
-        return self.store.reconcile_expired_leases(now_ms=self.clock_ms())
+        receipts = self.store.reconcile_expired_leases(now_ms=self.clock_ms())
+        if self.revoke_session is not None:
+            for receipt in receipts:
+                dispatch_id = str((receipt.get("details") or {}).get("dispatchId") or "")
+                if dispatch_id:
+                    self.revoke_session(
+                        str(self.store.dispatch(dispatch_id)["targetSessionId"]),
+                        self.clock_ms(),
+                    )
+        return receipts
 
 
 def _default_dispatch_message(dispatch: Mapping[str, object]) -> str:
