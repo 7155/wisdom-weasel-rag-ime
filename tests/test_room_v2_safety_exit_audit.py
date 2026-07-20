@@ -35,6 +35,7 @@ class _AcceptedRuntime:
             "receiptKind": "cancel_applied",
             "status": "applied",
             "rootId": root_id,
+            "sessionId": session_id,
             "generation": generation,
         }
 
@@ -60,7 +61,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_reproducer_runtime_accept_then_kernel_ack_crash_becomes_uncancellable_unknown(self) -> None:
+    def test_runtime_accept_then_kernel_ack_crash_is_reconciled_by_durable_cancel(self) -> None:
         original = self.store.accept_runtime_receipt
 
         def crash_after_runtime_effect(**_kwargs):
@@ -73,25 +74,23 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
 
         self.clock = 20
         self.worker.reconcile()
-        self.assertEqual(self.store.dispatch("dispatch:1")["state"], "unknown")
-        self.assertEqual(self.runtime.cancel_calls, [])
+        self.assertEqual(self.store.dispatch("dispatch:1")["state"], "cancelled")
+        self.assertEqual(self.runtime.cancel_calls, [("session:b", "root:1", 1)])
         self.assertEqual(self.revoked, ["session:b"])
+        self.assertEqual(self.store.root("root:1")["state"], "cancelled")
+        self.assertIsNotNone(self.store.root("root:1")["terminalReceiptId"])
 
-        result = self.worker.apply_control_command(self._panic_command())
-        self.assertEqual(result["kernelReceipt"]["details"]["unknownDispatches"], 1)
-        self.assertEqual(self.runtime.cancel_calls, [])
-        self.assertEqual(self.store.dispatch("dispatch:1")["state"], "unknown")
-
-    def test_reproducer_direct_store_cancel_commits_without_runtime_propagation(self) -> None:
+    def test_direct_store_cancel_persists_runtime_effect_for_replay(self) -> None:
         self.worker.run_once()
         self.assertEqual(self.store.dispatch("dispatch:1")["state"], "running")
 
         self.store.cancel_root("root:1", now_ms=20)
+        self.clock = 20
+        self.worker.drain_cancel_outbox()
+        self.assertEqual(self.runtime.cancel_calls, [("session:b", "root:1", 1)])
+        self.assertEqual(self.store.root("root:1")["state"], "cancelled")
 
-        self.assertEqual(self.store.dispatch("dispatch:1")["state"], "cancelled")
-        self.assertEqual(self.runtime.cancel_calls, [])
-
-    def test_source_census_records_non_cutover_execution_and_context_paths(self) -> None:
+    def test_source_census_records_cutover_paths_and_remaining_context_gates(self) -> None:
         service = (REPO / "rag_ime/agent_service.py").read_text(encoding="utf-8")
         kernel = (REPO / "rag_ime/agent_room_kernel.py").read_text(encoding="utf-8")
         prompt = (REPO / "rag_ime/agent_prompt_plans.py").read_text(encoding="utf-8")
@@ -100,11 +99,11 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
             for path in (REPO / "integrations/pi").rglob("*.ts")
         )
 
-        # There is no product root/task/dispatch creation call site yet; tests seed it directly.
-        self.assertNotIn(".create_root(", service)
-        self.assertNotIn(".create_task(", service)
-        self.assertNotIn(".enqueue_dispatch(", service)
-        self.assertIn("Non-cutover Room state machine", kernel)
+        # Product routes converge on one command bus; store methods are persistence internals.
+        self.assertIn("room_kernel_commands.create_root_task(", service)
+        self.assertIn("room_kernel_commands.dispatch(", service)
+        self.assertIn("room_kernel_commands.finalize(", service)
+        self.assertIn("Canonical durable Room state machine", kernel)
 
         # PromptPlan and native Room Skill governance are durable audit models, not live Pi inputs.
         self.assertIn("Shadow-only six-layer PromptPlan", prompt)
@@ -112,30 +111,34 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         self.assertNotIn("RoomSkillPolicyStore", service)
         self.assertIn("profile=None", service)
 
-        # Python calls typed Room RPC, but this repository contains no Pi host handler for it.
-        self.assertNotIn("room.dispatch", integrations)
-        self.assertNotIn("room.cancel", integrations)
+        # Product integration pins the reviewed Pi runtime handlers and typed methods.
+        self.assertIn("room.dispatch", integrations)
+        self.assertIn("room.cancel", integrations)
 
-        # The legacy default still projects completed private Session text to the Room timeline.
+        # Legacy projection still exists for ordinary rooms, but managed Room bindings suppress it.
         self.assertIn('return "participant_message", {"message": message}', service)
+        self.assertIn('self.room_kernel.mode in {"cohort", "kernel_only"}', service)
 
         recognized = {
             action
             for action in ("snapshot", "events", "commands", "settle", "create", "dispatch", "finalize")
             if agent_room_kernel_route(f"/api/agent/rooms/room:1/kernel/{action}")[1]
         }
-        self.assertEqual(recognized, {"snapshot", "events", "commands", "settle"})
+        self.assertEqual(
+            recognized,
+            {"snapshot", "events", "commands", "settle", "create", "dispatch", "finalize"},
+        )
 
-    def test_finality_query_proves_cancelled_root_has_no_terminal_receipt_and_open_task(self) -> None:
+    def test_cancelled_root_closes_tasks_and_has_authoritative_terminal_receipt(self) -> None:
         self.worker.run_once()
         self.worker.cancel_root("root:1")
         root = self.store.root("root:1")
         rejected = self.store.finalize_root("root:1", now_ms=30)
 
         self.assertEqual(root["state"], "cancelled")
-        self.assertIsNone(root["terminalReceiptId"])
-        self.assertEqual(rejected["status"], "rejected")
-        self.assertEqual(rejected["details"]["openTasks"], 1)
+        self.assertIsNotNone(root["terminalReceiptId"])
+        self.assertEqual(rejected["status"], "applied")
+        self.assertEqual(rejected["receiptKind"], "terminal")
 
     def _seed_dispatch(self) -> None:
         self.store.create_root(

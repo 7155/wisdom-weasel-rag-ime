@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RoomV2ReadinessTests(unittest.TestCase):
-    def test_clean_upgrade_from_65_to_88(self) -> None:
+    def test_clean_upgrade_from_65_to_89(self) -> None:
         with tempfile.TemporaryDirectory(prefix="room-v2-upgrade-") as directory:
             old_migrations = Path(directory) / "migrations-65"
             old_migrations.mkdir()
@@ -32,7 +32,7 @@ class RoomV2ReadinessTests(unittest.TestCase):
                 baseline = apply_database_migrations(conn, migrations_dir=old_migrations, applied_at_ms=1)
                 upgraded = apply_database_migrations(conn, applied_at_ms=2)
                 self.assertEqual(baseline.current_version, 65)
-                self.assertEqual(upgraded.current_version, 88)
+                self.assertEqual(upgraded.current_version, 89)
                 self.assertEqual(
                     upgraded.applied_versions,
                     tuple(migration.version for migration in load_migrations() if migration.version > 65),

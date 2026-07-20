@@ -264,6 +264,57 @@ class RoomKernelServiceTests(unittest.TestCase):
         ):
             self.assertEqual(_room_kernel_mode_from_environment(), "cohort")
 
+    def test_product_create_dispatch_and_finalize_use_command_bus(self) -> None:
+        root_id = "root:product-route"
+        task_id = "task:product-route"
+        created = self.service.create_room_kernel_root(
+            self.room_id,
+            {
+                "rootExecution": {
+                    "schemaVersion": ROOT_EXECUTION_SCHEMA_VERSION,
+                    "rootId": root_id,
+                    "roomId": self.room_id,
+                    "generation": 0,
+                    "state": "running",
+                    "owner": str(self.participant["id"]),
+                    "requirementAnchorRef": "requirement-anchor:product@sha256:test",
+                    "createdByActorRef": "user:local",
+                    "terminalReceiptId": None,
+                    "activeProfileRef": None,
+                    "budgetPolicyRef": "room-budget:test-v1",
+                    "createdAtMs": 1,
+                },
+                "task": {
+                    "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
+                    "taskId": task_id,
+                    "rootId": root_id,
+                    "parentTaskId": None,
+                    "ownerParticipantId": str(self.participant["id"]),
+                    "assigneeParticipantId": str(self.participant["id"]),
+                    "objective": "Exercise the product Kernel API.",
+                    "expectedOutput": "A typed receipt.",
+                    "requirementItemIds": ["requirement:product"],
+                    "acceptanceCriterionIds": [],
+                    "revision": 0,
+                    "state": "active",
+                },
+                "budget": 10,
+                "maxHops": 3,
+                "maxDepth": 2,
+            },
+            caller_authorized=True,
+        )
+        self.assertEqual(created["task"]["rootId"], created["root"]["rootId"])
+        envelope = {**self._dispatch("dispatch:product-route"), "rootId": root_id, "taskId": task_id}
+        dispatched = self.service.dispatch_room_kernel(
+            self.room_id, envelope, caller_authorized=True
+        )
+        self.assertTrue(dispatched["created"])
+        final = self.service.finalize_room_kernel_route(
+            self.room_id, {"rootId": root_id}, caller_authorized=True
+        )
+        self.assertEqual(final["receipt"]["status"], "rejected")
+
     def test_runtime_failure_and_user_correction_are_automatic_incidents(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
 

@@ -7470,6 +7470,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         kernel_room_id, payload, caller_authorized=True
                     ),
                 )
+            elif kernel_room_id and kernel_action == "create":
+                self._write_json(HTTPStatus.CREATED, self.service.agent.create_room_kernel_root(kernel_room_id, payload, caller_authorized=True))
+            elif kernel_room_id and kernel_action == "dispatch":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.agent.dispatch_room_kernel(kernel_room_id, payload, caller_authorized=True))
+            elif kernel_room_id and kernel_action == "finalize":
+                self._write_json(HTTPStatus.OK, self.service.agent.finalize_room_kernel_route(kernel_room_id, payload, caller_authorized=True))
             elif kernel_room_id and kernel_action == "settle":
                 self._write_json(
                     HTTPStatus.OK,

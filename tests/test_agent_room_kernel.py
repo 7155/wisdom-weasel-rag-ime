@@ -19,7 +19,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-room-kernel-")
         self.db_path = Path(self.tmp.name) / "rag-ime.sqlite"
         self.store = RoomKernelStore(self.db_path, mode="test")
-        self.assertEqual(self.store.initialize(), 88)
+        self.assertEqual(self.store.initialize(), 89)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -57,6 +57,41 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(shadow.counts("root:1")["dispatches"], 1)
         self.assertEqual(shadow.counts("root:1")["outbox"], 1)
         self.assertIsNone(shadow.lease_next(now_ms=100, ttl_ms=10))
+
+    def test_product_root_and_initial_task_are_created_atomically(self) -> None:
+        created = self.store.create_root_with_task(
+            root("root:atomic"),
+            task("task:atomic", root_id="root:atomic"),
+            budget=10,
+            max_hops=3,
+            max_depth=2,
+            acceptance_criteria=(),
+            now_ms=1,
+        )
+        self.assertEqual(created["task"]["rootId"], created["root"]["rootId"])
+        replayed = self.store.create_root_with_task(
+            root("root:atomic"),
+            task("task:atomic", root_id="root:atomic"),
+            budget=10,
+            max_hops=3,
+            max_depth=2,
+            acceptance_criteria=(),
+            now_ms=2,
+        )
+        self.assertEqual(replayed, created)
+
+        with self.assertRaises(Exception):
+            self.store.create_root_with_task(
+                root("root:rollback"),
+                task("task:atomic", root_id="root:rollback"),
+                budget=10,
+                max_hops=3,
+                max_depth=2,
+                acceptance_criteria=(),
+                now_ms=2,
+            )
+        with self.assertRaises(KeyError):
+            self.store.root("root:rollback")
 
     def test_a_to_b_to_a_is_bounded_by_hop_and_depth_fences(self) -> None:
         self.seed(max_hops=2, max_depth=1)
@@ -251,11 +286,11 @@ def root(root_id: str) -> dict[str, object]:
     }
 
 
-def task(task_id: str) -> dict[str, object]:
+def task(task_id: str, *, root_id: str = "root:1") -> dict[str, object]:
     return {
         "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
         "taskId": task_id,
-        "rootId": "root:1",
+        "rootId": root_id,
         "parentTaskId": None,
         "ownerParticipantId": "participant:a",
         "assigneeParticipantId": "participant:a",

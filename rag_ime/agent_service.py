@@ -57,7 +57,7 @@ from .agent_room_work import AgentRoomWorkStore
 from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_contracts import validate_kernel_contract
 from .agent_room_kernel_projection import RoomKernelProjection
-from .agent_room_kernel_worker import RoomKernelWorker, RoomKernelWorkerLoop
+from .agent_room_kernel_worker import KernelCommandBus, RoomKernelWorker, RoomKernelWorkerLoop
 from .agent_room_learning_governance import RoomLearningGovernanceStore
 from .agent_room_learning_runtime import ReflectionProvider, RoomLearningRuntime
 from .agent_knowledge_promotion import KNOWLEDGE_ROUTE_HASH, KnowledgePromotionStore
@@ -1499,7 +1499,7 @@ class AgentService:
                 "rag", "memory", "planning", "review", "control", "delegation"
             ),
             binding_revision="room-v2-agent-definition-compiler-v1",
-            cancel_root=lambda root_id, _now_ms: self.room_kernel_worker.cancel_root(root_id),
+            cancel_root=lambda root_id, _now_ms: self.room_kernel_commands.cancel_root(root_id),
         )
 
     def bind_room_capability_runtime(
@@ -1821,9 +1821,47 @@ class AgentService:
         self.rooms.get(room_id)
         if str(payload.get("roomId") or "") != room_id:
             raise RoomKernelFenceError("control command path Room does not match payload")
-        result = self.room_kernel_worker.apply_control_command(payload)
+        result = self.room_kernel_commands.control(payload)
         self.room_kernel_projection.sync_room(room_id)
         return dict(result["kernelReceipt"])
+
+    def create_room_kernel_root(self, room_id: str, payload: Mapping[str, object], *, caller_authorized: bool = False) -> dict[str, object]:
+        if not caller_authorized:
+            raise PermissionError("Room Kernel create requires an authorized caller")
+        self.rooms.get(room_id)
+        root = payload.get("rootExecution"); task = payload.get("task")
+        if not isinstance(root, Mapping) or not isinstance(task, Mapping) or root.get("roomId") != room_id or task.get("rootId") != root.get("rootId"):
+            raise RoomKernelFenceError("Root/Task creation payload does not match path Room")
+        created = self.room_kernel_commands.create_root_task(
+            root,
+            task,
+            budget=int(payload.get("budget") or 1),
+            max_hops=int(payload.get("maxHops") or 1),
+            max_depth=int(payload.get("maxDepth") or 1),
+            acceptance_criteria=tuple(str(item) for item in payload.get("acceptanceCriteria") or ()),
+            now_ms=int(root.get("createdAtMs") or int(time.time() * 1000)),
+        )
+        self.room_kernel_projection.sync_room(room_id)
+        return created
+
+    def dispatch_room_kernel(self, room_id: str, payload: Mapping[str, object], *, caller_authorized: bool = False) -> dict[str, object]:
+        if not caller_authorized:
+            raise PermissionError("Room Kernel dispatch requires an authorized caller")
+        root = self.room_kernel.root(str(payload.get("rootId") or ""))
+        if root.get("roomId") != room_id:
+            raise RoomKernelFenceError("Dispatch Root belongs to another Room")
+        dispatch, created = self.room_kernel_commands.dispatch(payload, now_ms=int(time.time() * 1000))
+        self.room_kernel_worker_loop.wake()
+        self.room_kernel_projection.sync_room(room_id)
+        return {"dispatch": dispatch, "created": created}
+
+    def finalize_room_kernel_route(self, room_id: str, payload: Mapping[str, object], *, caller_authorized: bool = False) -> dict[str, object]:
+        if not caller_authorized:
+            raise PermissionError("Room Kernel finalize requires an authorized caller")
+        root_id = str(payload.get("rootId") or "")
+        if self.room_kernel.root(root_id).get("roomId") != room_id:
+            raise RoomKernelFenceError("Finalize Root belongs to another Room")
+        return self.finalize_room_kernel_root(root_id, catalog_revision_id=str(payload.get("catalogRevisionId") or ""), target_commit=str(payload.get("targetCommit") or ""), blind_review_status=str(payload.get("blindReviewStatus") or "unavailable"), delivery_gate_preview_receipt_id=str(payload.get("deliveryGatePreviewReceiptId") or ""))
 
     def settle_room_kernel_dispatch(
         self,
@@ -1888,7 +1926,7 @@ class AgentService:
                 raise RoomKernelFenceError("RoomPost proposal does not match the settled Commit")
         elif proposal is not None:
             raise RoomKernelFenceError("non-post Commit cannot publish a RoomPost")
-        receipt = self.room_kernel.apply_commit(
+        receipt = self.room_kernel_commands.commit(
             commit,
             generation=int(settle["generation"]),
             now_ms=int(commit.get("createdAtMs") or int(time.time() * 1000)),
@@ -1964,7 +2002,7 @@ class AgentService:
                     delivery_gate_preview_receipt_id,
                     current_artifact_hash=current_artifact_hash,
                 )
-        receipt = self.room_kernel.finalize_root(root_id, now_ms=timestamp, delivery_gate_preview=preview)
+        receipt = self.room_kernel_commands.finalize(root_id, now_ms=timestamp, delivery_gate_preview=preview)
         root = self.room_kernel.root(root_id)
         self.room_kernel_projection.sync_room(str(root["roomId"]), now_ms=timestamp)
         return {"receipt": receipt, "deliveryGateObservation": observation}
@@ -5475,6 +5513,7 @@ class AgentService:
             revoke_session=self._revoke_room_runtime_capability,
             learning_observer=self._record_room_learning_signal,
         )
+        self.room_kernel_commands = KernelCommandBus(self.room_kernel, self.room_kernel_worker)
         self.room_kernel_worker_loop = RoomKernelWorkerLoop(
             self.room_kernel_worker,
             on_change=self._sync_all_room_kernel_projections,
@@ -5567,7 +5606,7 @@ class AgentService:
             "payload": {"dispatchId": item.get("dispatch_id")},
             "createdAtMs": int(item["created_at_ms"]),
         }
-        return self.room_kernel_worker.apply_control_command(command)
+        return self.room_kernel_commands.control(command)
 
     def _run_room_learning_maintenance(self) -> None:
         now_ms = int(time.time() * 1000)

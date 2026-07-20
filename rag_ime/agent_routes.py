@@ -149,7 +149,7 @@ def agent_room_kernel_route(path: str) -> tuple[str, str]:
         return "", ""
     room_id = unquote(parts[0]).strip()
     action = parts[2]
-    if not room_id or action not in {"snapshot", "events", "commands", "settle"}:
+    if not room_id or action not in {"snapshot", "events", "commands", "settle", "create", "dispatch", "finalize"}:
         return "", ""
     return room_id, action
 

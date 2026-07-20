@@ -2,6 +2,31 @@
 
 审计基线：`feea050`。审计日期：2026-07-20。
 
+## 2026-07-20 P0 整改进展（生产仍关闭）
+
+本节是对原始审计的追加记录；下文保留 `feea050` 基线结论，便于复盘“发现了什么、如何修复”，不改写历史证据。当前已经完成首批 P0 整改，但 **不能据此签发 production release receipt**：Prompt、Skill、Profile、continuation、完整 AbortScope 和真实生产演练仍是强制 Gate。
+
+| 原阻塞项 | 当前整改 | 新的不变量/证据 |
+|---|---|---|
+| 多条产品执行路径 | 已增加 `KernelCommandBus`；create/dispatch/control/commit/finalize/cancel 的产品服务入口经同一总线，Store 只保留持久化状态机职责。 | `AgentService` 不再直接调用 create/enqueue/commit/finalize/cancel 状态迁移。 |
+| Root 与首 Task 分裂写入 | 已增加原子 `create_root_with_task()`，两者在同一 `BEGIN IMMEDIATE` 事务创建；身份冲突 fail closed。 | Task 冲突时 Root 一并回滚，重复的完全相同请求可重放。 |
+| accepted-before-ACK 幽灵执行 | Dispatch 调 Pi 前先写 `runtime_effect=intent`；lease 过期转 unknown 后提升 Root generation，并创建 durable cancel intent。 | reconcile 不重放不明 Dispatch，而是补发 `room.cancel`，收到匹配回执才结束。 |
+| cancel DB/RPC 崩溃窗口 | 新增 `room_kernel_cancel_outbox`，含 lease、retry、dead-letter 和 runtime receipt；root/target/panic 共享该队列。 | 用户停止、直接 Store cancel、panic 和 unknown reconciliation 都可恢复投递。 |
+| cancel 没有终态 | Root cancel 先关闭全部开放 Task；所有 root-scoped cancel intent 回执齐全后才写唯一 terminal receipt 并进入 `cancelled`。 | 前端只能由 Root + 同 generation terminal receipt 解锁。 |
+| 调用方可无限放大限制 | Kernel 增加不可由请求绕过的系统 ceiling：`MAX_HOPS=12`、`MAX_DEPTH=4`、`MAX_BUDGET=1000`。 | 请求只能在系统上限内向下收紧。 |
+| 产品没有 create/dispatch/finalize | 已补齐三条 HTTP/Control route 和服务方法；managed cohort 入口通过 command bus。 | route policy、后端服务与控制中心 canonical path 均有测试。 |
+| Pi handler 无来源证明 | 产品 integration 增加 typed adapter 和来源契约；managed runtime manifest 固定 required methods、contract hash、最低已审查 Pi commit，并在 build 时验证 handler。 | `60913d3`；只生成 `/tmp` staging payload，未覆盖本机安装。 |
+| Session 正文污染 Room | managed `cohort/kernel_only` 且存在 canonical SessionBinding 时，`message_completed` 不再投影为公开 `participant_message`。 | 真实 AgentService 测试验证私有文本不进入 Room timeline/snapshot。 |
+
+仍未完成的强制项：
+
+1. 六层 PromptPlan 成为真实 Room Provider payload 的唯一 instruction producer，并保持稳定缓存前缀。
+2. native `SKILL.md`、load/restore receipt 与 compaction hook 接入真实 Pi。
+3. Collaboration Profile 固定到 Root/Dispatch/Prompt compile，而不是 `profile=None`。
+4. 结构化 continuation queue 与确定性 settle 规则真正完成 A -> B -> A；模型只能提议，Kernel 决定是否交接。
+5. Root AbortScope 覆盖模型、工具、命令子进程、retry/timer、follow-up、compaction，并有管理员进程级 kill 与未确认目标清单。
+6. 真实 production-mode E2E、回滚演练和前端全链验证；完成前 rollout 必须保持关闭。
+
 ## 结论
 
 当前实现是有价值的 **Kernel 原型与 test cohort**，不是已经接管产品 Room 的生产执行面。六项安全退出检查中，路径唯一性、取消传播、最终态和 panic 恢复均为危险；深度/预算与去重仍需关注。不要因为单元测试或 `room-v2-test` cohort 通过而宣布生产完成。
