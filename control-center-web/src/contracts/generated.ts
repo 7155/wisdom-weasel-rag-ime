@@ -59,6 +59,7 @@ import type { CompiledAgentRuntimeProfileV1 } from './generated/compiled-agent-r
 import type { ControlToolManifestV1 } from './generated/control-tool-manifest.v1';
 import type { DailyActivityTimelineV1 } from './generated/daily-activity-timeline.v1';
 import type { DailyConversationDigestV1 } from './generated/daily-conversation-digest.v1';
+import type { DeliveryGateObservationV1 } from './generated/delivery-gate-observation.v1';
 import type { ForegroundCommitV1 } from './generated/foreground-commit.v1';
 import type { ForegroundContextV2 } from './generated/foreground-context.v2';
 import type { FrontendCapabilitiesV1 } from './generated/frontend-capabilities.v1';
@@ -88,6 +89,8 @@ import type { PromptCompileReceiptV1 } from './generated/prompt-compile-receipt.
 import type { PromptPlanV1 } from './generated/prompt-plan.v1';
 import type { ProviderProjectionJournalV1 } from './generated/provider-projection-journal.v1';
 import type { ProviderProjectionReceiptV1 } from './generated/provider-projection-receipt.v1';
+import type { RequirementAnchorV1 } from './generated/requirement-anchor.v1';
+import type { RequirementCatalogRevisionV1 } from './generated/requirement-catalog-revision.v1';
 import type { RimeRankSelectionV1 } from './generated/rime-rank-selection.v1';
 import type { RimeSelectV1 } from './generated/rime-select.v1';
 import type { RimeSuggestRequestV1 } from './generated/rime-suggest-request.v1';
@@ -117,6 +120,7 @@ import type { RoomTaskV2 } from './generated/room-task.v2';
 import type { RoomToolDisclosureReceiptV1 } from './generated/room-tool-disclosure-receipt.v1';
 import type { RoomToolInvocationReceiptV1 } from './generated/room-tool-invocation-receipt.v1';
 import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1';
+import type { TypedVerificationReceiptV1 } from './generated/typed-verification-receipt.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
 
 export type {
@@ -175,6 +179,7 @@ export type {
   ControlToolManifestV1,
   DailyActivityTimelineV1,
   DailyConversationDigestV1,
+  DeliveryGateObservationV1,
   ForegroundCommitV1,
   ForegroundContextV2,
   FrontendCapabilitiesV1,
@@ -204,6 +209,8 @@ export type {
   PromptPlanV1,
   ProviderProjectionJournalV1,
   ProviderProjectionReceiptV1,
+  RequirementAnchorV1,
+  RequirementCatalogRevisionV1,
   RimeRankSelectionV1,
   RimeSelectV1,
   RimeSuggestRequestV1,
@@ -233,6 +240,7 @@ export type {
   RoomToolDisclosureReceiptV1,
   RoomToolInvocationReceiptV1,
   SessionMemoryRecallV1,
+  TypedVerificationReceiptV1,
   UserMemoryDraftV1,
 };
 
@@ -292,6 +300,7 @@ export interface ContractTypeMap {
   'control-tool-manifest.v1': ControlToolManifestV1;
   'daily-activity-timeline.v1': DailyActivityTimelineV1;
   'daily-conversation-digest.v1': DailyConversationDigestV1;
+  'delivery-gate-observation.v1': DeliveryGateObservationV1;
   'foreground-commit.v1': ForegroundCommitV1;
   'foreground-context.v2': ForegroundContextV2;
   'frontend-capabilities.v1': FrontendCapabilitiesV1;
@@ -321,6 +330,8 @@ export interface ContractTypeMap {
   'prompt-plan.v1': PromptPlanV1;
   'provider-projection-journal.v1': ProviderProjectionJournalV1;
   'provider-projection-receipt.v1': ProviderProjectionReceiptV1;
+  'requirement-anchor.v1': RequirementAnchorV1;
+  'requirement-catalog-revision.v1': RequirementCatalogRevisionV1;
   'rime-rank-selection.v1': RimeRankSelectionV1;
   'rime-select.v1': RimeSelectV1;
   'rime-suggest-request.v1': RimeSuggestRequestV1;
@@ -350,6 +361,7 @@ export interface ContractTypeMap {
   'room-tool-disclosure-receipt.v1': RoomToolDisclosureReceiptV1;
   'room-tool-invocation-receipt.v1': RoomToolInvocationReceiptV1;
   'session-memory-recall.v1': SessionMemoryRecallV1;
+  'typed-verification-receipt.v1': TypedVerificationReceiptV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
 }
 

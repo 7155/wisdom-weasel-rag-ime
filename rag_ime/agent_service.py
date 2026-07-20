@@ -48,6 +48,7 @@ from .agent_definitions import collaboration_role
 from .agent_templates import agent_template
 from .agent_prompt_plans import PromptLayer, RoomPromptPlanStore
 from .agent_room_context import ProviderProjectionJournalStore
+from .agent_room_requirements import RequirementGovernanceStore
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_contracts import validate_kernel_contract
@@ -212,6 +213,8 @@ class AgentService:
         self.room_prompt_plans.initialize()
         self.room_projection_journals = ProviderProjectionJournalStore(db_path)
         self.room_projection_journals.initialize()
+        self.room_requirements = RequirementGovernanceStore(db_path)
+        self.room_requirements.initialize()
         self.agent_definition_compiler = AgentDefinitionCompiler()
         self._room_kernel_poll_seconds = room_kernel_poll_seconds
         self.observations = ObservationHub(db_path)
@@ -1370,7 +1373,8 @@ class AgentService:
         dispatch_id = _required_text(dispatch, "dispatchId")
         prepared_at_ms = self.room_kernel.dispatch_enqueued_at(dispatch_id)
         session_id = _required_text(dispatch, "targetSessionId")
-        room_id = str(self.room_kernel.root(_required_text(dispatch, "rootId"))["roomId"])
+        root = self.room_kernel.root(_required_text(dispatch, "rootId"))
+        room_id = str(root["roomId"])
         participant = self.rooms.participant_for_session(session_id)
         if participant is None or participant.get("roomId") != room_id:
             raise RoomKernelFenceError("managed Dispatch Session has no canonical Room participant")
@@ -1468,11 +1472,21 @@ class AgentService:
             created_at_ms=prepared_at_ms,
             runtime_state="prepared",
         )
+        requirement_binding, _ = self.room_requirements.prepare_dispatch_binding(
+            dispatch_id=dispatch_id,
+            root_id=str(dispatch["rootId"]),
+            task_id=str(dispatch["taskId"]),
+            session_id=session_id,
+            generation=generation,
+            requirement_anchor_ref=str(root.get("requirementAnchorRef") or ""),
+            created_at_ms=prepared_at_ms,
+        )
         return {
             "sessionId": session_id,
             "manifestId": bound["manifest"]["manifestId"],
             "manifestHash": bound["manifest"]["manifestHash"],
             "promptCompileReceiptId": prompt["receipt"]["receiptId"],
+            "requirementObservation": requirement_binding,
         }
 
     def room_capability_tool_search(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -1649,6 +1663,33 @@ class AgentService:
             result["executionReceipt"] = execution_receipt
         validate_kernel_contract("roomSettleResult", result)
         return result
+
+    def finalize_room_kernel_root(
+        self,
+        root_id: str,
+        *,
+        catalog_revision_id: str = "",
+        target_commit: str = "",
+        blind_review_status: str = "unavailable",
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Observe DeliveryGate, but never turn its warning into Kernel enforcement."""
+
+        timestamp = int(now_ms if now_ms is not None else time.time() * 1000)
+        observation = None
+        if catalog_revision_id:
+            observation = self.room_requirements.observe_delivery_gate(
+                gate_receipt_id=f"delivery-gate:{root_id}:{catalog_revision_id}",
+                root_id=root_id,
+                catalog_revision_id=catalog_revision_id,
+                target_commit=target_commit or "working-tree",
+                blind_review_status=blind_review_status,
+                created_at_ms=timestamp,
+            )
+        receipt = self.room_kernel.finalize_root(root_id, now_ms=timestamp)
+        root = self.room_kernel.root(root_id)
+        self.room_kernel_projection.sync_room(str(root["roomId"]), now_ms=timestamp)
+        return {"receipt": receipt, "deliveryGateObservation": observation}
 
     def room_work_items(
         self,

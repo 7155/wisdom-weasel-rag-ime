@@ -14,6 +14,9 @@ from rag_ime.agent_room_kernel_contracts import (
     PARTICIPANT_BINDING_SCHEMA_VERSION,
     ROOM_BINDING_SCHEMA_VERSION,
     ROOM_COMMIT_SCHEMA_VERSION,
+    ROOM_POST_SCHEMA_VERSION,
+    ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
+    ROOM_SETTLE_RESULT_SCHEMA_VERSION,
     ROOT_EXECUTION_SCHEMA_VERSION,
     ROOM_TASK_SCHEMA_VERSION,
     validate_kernel_contract,
@@ -100,6 +103,21 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "room-kernel-receipt.v1.json",
                 "https://wisdom-weasel.local/contracts/room-kernel-receipt.v1.json",
                 KERNEL_RECEIPT_SCHEMA_VERSION,
+            ),
+            "roomPost": (
+                "room-post.v2.json",
+                "https://wisdom-weasel.local/contracts/room-post.v2.json",
+                ROOM_POST_SCHEMA_VERSION,
+            ),
+            "roomSettleReceipt": (
+                "room-settle-receipt.v1.json",
+                "https://wisdom-weasel.local/contracts/room-settle-receipt.v1.json",
+                ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
+            ),
+            "roomSettleResult": (
+                "room-settle-result.v1.json",
+                "https://wisdom-weasel.local/contracts/room-settle-result.v1.json",
+                ROOM_SETTLE_RESULT_SCHEMA_VERSION,
             ),
         }
 

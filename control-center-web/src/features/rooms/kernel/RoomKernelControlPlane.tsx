@@ -148,7 +148,7 @@ function RootControlSection({
   };
   return <article className="room-kernel-root" data-root-state={root.state}>
     <header className="room-kernel-root__header">
-      <span><small>Root · generation {root.generation}</small><strong>{root.rootId}</strong><i data-state={root.state}>{rootStateLabel(root)}</i></span>
+      <span><small>Root · generation {root.generation}</small><strong>{root.rootId}</strong><i data-state={root.state}>{rootStateLabel(root, receipt)}</i></span>
       {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? commandAwaitingProjection ? '等待 canonical Root 投影更新' : '提交带 generation 的取消命令' : commandDisabledReason || '后端 command route 尚未接入'} onClick={() => void requestStop()}>{pending ? '正在提交' : commandAwaitingProjection ? '已提交' : '停止'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />终态已确认</span>}
     </header>
     <div className="room-kernel-root__summary">
@@ -160,13 +160,13 @@ function RootControlSection({
     <section className="room-kernel-root__receipts" aria-label={`${root.rootId} 运行回执`}>
       <ReceiptSummary icon={<LockKeyhole size={14} />} label="Context" receipt={contextReceipt} />
       <ReceiptSummary icon={<Wrench size={14} />} label="Capability" receipt={capabilityReceipt} />
-      <span><CircleCheck size={14} /><small>Terminal</small><strong>{receipt ? `${receipt.receiptKind}/${receipt.status} · ${receipt.receiptId}` : '等待全链静止'}</strong></span>
+      <span><CircleCheck size={14} /><small>Terminal</small><strong>{receipt ? `${receipt.receiptKind}/${receipt.status} · ${deliveryGateLabel(receipt)}` : '等待全链静止'}</strong></span>
       <span data-receipt-state={commandReceipt?.status ?? cancelReceipt?.status}><Square size={14} /><small>Cancel</small><strong>{commandReceipt ? `${receiptStatusLabel(commandReceipt)} · ${commandReceipt.receiptId}` : cancelReceipt ? `${receiptStatusLabel(cancelReceipt)} · ${cancelReceipt.receiptId}` : commandTransport ? '尚未请求' : '只读，控制命令未授权'}</strong></span>
     </section>
     {commandError ? <p className="room-kernel-control__command-error" role="alert">{commandError}</p> : null}
     <div className="room-kernel-root__planes">
       <section className="room-kernel-posts" aria-label={`${root.rootId} 公开 Posts`}><header><strong>公开 Posts</strong><small>仅显式提交</small></header>{posts.length ? posts.map((post) => <article key={post!.postId}><span><b>{postKindLabel(post!.kind)}</b><small>{post!.authorActorRef}</small></span><p>{post!.content}</p></article>) : <p className="room-kernel-control__empty">还没有公开提交。</p>}</section>
-      <section className="room-kernel-sessions" aria-label={`${root.rootId} 私有 Sessions`}><header><strong>私有 Session Inspector</strong><small>过程不进入 Room</small></header>{sessions.length ? sessions.map((session) => <details key={session.sessionId}><summary><LockKeyhole size={13} /><span><strong>{session.sessionId}</strong><small>{sessionStateLabel(session.state)} · generation {session.generation}</small></span></summary><dl><div><dt>公开状态</dt><dd>仅状态元数据</dd></div><div><dt>Transcript</dt><dd>私有，不投影到 Room</dd></div>{session.capabilityManifest ? <><div><dt>Capability</dt><dd>{session.capabilityManifest.status} · epoch {session.capabilityManifest.capabilityEpoch}</dd></div><div><dt>Manifest</dt><dd title={session.capabilityManifest.manifestHash}>{session.capabilityManifest.manifestId} · {shortHash(session.capabilityManifest.manifestHash)}</dd></div><div><dt>Profile</dt><dd title={session.capabilityManifest.compiledRuntimeProfileRef.contentHash}>{session.capabilityManifest.compiledRuntimeProfileRef.profileId} · {session.capabilityManifest.compiledRuntimeProfileRef.revision}</dd></div></> : null}</dl></details>) : <p className="room-kernel-control__empty">当前没有绑定 Session。</p>}</section>
+      <section className="room-kernel-sessions" aria-label={`${root.rootId} 私有 Sessions`}><header><strong>私有 Session Inspector</strong><small>过程不进入 Room</small></header>{sessions.length ? sessions.map((session) => <details key={session.sessionId}><summary><LockKeyhole size={13} /><span><strong>{session.sessionId}</strong><small>{sessionStateLabel(session.state)} · generation {session.generation}</small></span></summary><dl><div><dt>公开状态</dt><dd>仅状态元数据</dd></div><div><dt>Transcript</dt><dd>私有，不投影到 Room</dd></div>{session.capabilityManifest ? <><div><dt>Capability</dt><dd>{session.capabilityManifest.status} · epoch {session.capabilityManifest.capabilityEpoch}</dd></div><div><dt>Manifest</dt><dd title={session.capabilityManifest.manifestHash}>{session.capabilityManifest.manifestId} · {shortHash(session.capabilityManifest.manifestHash)}</dd></div><div><dt>Profile</dt><dd title={session.capabilityManifest.compiledRuntimeProfileRef.contentHash}>{session.capabilityManifest.compiledRuntimeProfileRef.profileId} · {session.capabilityManifest.compiledRuntimeProfileRef.revision}</dd></div></> : null}{session.requirementObservation ? <><div><dt>Requirement</dt><dd>{session.requirementObservation.catalogRevisionId || '目录缺失'} · {session.requirementObservation.state}</dd></div><div><dt>Proof</dt><dd>{session.requirementObservation.warnings.length ? `观察警告 ${session.requirementObservation.warnings.length} 项` : `${session.requirementObservation.proofReceiptRefs.length} 个回执`}</dd></div></> : null}</dl></details>) : <p className="room-kernel-control__empty">当前没有绑定 Session。</p>}</section>
     </div>
   </article>;
 }
@@ -193,9 +193,24 @@ function ReceiptSummary({ icon, label, receipt }: { icon: ReactNode; label: stri
   return <span>{icon}<small>{label}</small><strong>{receipt ? `${runtimeReceiptStatusLabel(receipt.status)} · ${receipt.revision}` : '未上报'}</strong></span>;
 }
 
-function rootStateLabel(root: RootProjection): string {
-  if (root.isFinal) return '已完成并确认';
+function rootStateLabel(root: RootProjection, receipt?: RoomKernelReceiptV1): string {
+  if (root.isFinal) return deliveryGatePassed(receipt) ? '已完成，交付观察通过' : '已结束，交付观察有警告';
   return ({ pending: '排队中', running: '执行中', waiting: '等待中', blocked: '已阻塞', cancelling: '取消中', completed: '已完成，等待终态回执', failed: '失败，等待终态回执', cancelled: '已取消，等待终态回执', cancelled_with_unknowns: '已取消，仍有未知执行' } as Record<RootProjection['state'], string>)[root.state];
+}
+
+function deliveryGatePassed(receipt?: RoomKernelReceiptV1): boolean {
+  const observation = receipt?.details?.deliveryGateObservation;
+  return typeof observation === 'object' && observation !== null
+    && 'gateStatus' in observation && observation.gateStatus === 'observed_pass';
+}
+
+function deliveryGateLabel(receipt: RoomKernelReceiptV1): string {
+  if (deliveryGatePassed(receipt)) return '交付观察通过';
+  const observation = receipt.details?.deliveryGateObservation;
+  if (typeof observation === 'object' && observation !== null && 'gateStatus' in observation) {
+    return observation.gateStatus === 'warn_blocked' ? '交付观察有阻塞或未知项' : '交付观察未完成';
+  }
+  return '交付观察未上报';
 }
 
 function sessionStateLabel(value: string): string {

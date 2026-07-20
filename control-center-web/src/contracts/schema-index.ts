@@ -7859,6 +7859,83 @@ export const contractSchemas = {
       }
     }
   },
+  "delivery-gate-observation.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.delivery-gate-observation.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "gateReceiptId",
+      "rootId",
+      "catalogRevisionId",
+      "targetCommit",
+      "mode",
+      "gateStatus",
+      "enforcementApplied",
+      "blindReviewStatus",
+      "reasons",
+      "proofMatrix",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.delivery-gate-observation.v1"
+      },
+      "gateReceiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "catalogRevisionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "targetCommit": {
+        "type": "string",
+        "minLength": 1
+      },
+      "mode": {
+        "const": "observe_warn"
+      },
+      "gateStatus": {
+        "enum": [
+          "observed_pass",
+          "warn_blocked"
+        ]
+      },
+      "enforcementApplied": {
+        "const": false
+      },
+      "blindReviewStatus": {
+        "enum": [
+          "pending",
+          "passed",
+          "failed",
+          "unavailable"
+        ]
+      },
+      "reasons": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "proofMatrix": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "foreground-commit.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.foreground-commit.v1",
@@ -11989,6 +12066,150 @@ export const contractSchemas = {
     },
     "additionalProperties": false
   },
+  "requirement-anchor.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.requirement-anchor.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "anchorId",
+      "rootId",
+      "rootSequence",
+      "originalContentSha256",
+      "originalByteLength",
+      "createdBy",
+      "authenticity",
+      "provenance",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.requirement-anchor.v1"
+      },
+      "anchorId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootSequence": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "originalContentSha256": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "originalByteLength": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "createdBy": {
+        "type": "string",
+        "minLength": 1
+      },
+      "authenticity": {
+        "enum": [
+          "original_user_bytes",
+          "legacy_quarantined"
+        ]
+      },
+      "provenance": {
+        "type": "object"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "requirement-catalog-revision.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.requirement-catalog-revision.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "catalogRevisionId",
+      "rootId",
+      "revision",
+      "supersedesRevisionId",
+      "anchorRefs",
+      "items",
+      "acceptanceCriteria",
+      "changeReason",
+      "provenance",
+      "payloadHash",
+      "createdBy",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.requirement-catalog-revision.v1"
+      },
+      "catalogRevisionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "supersedesRevisionId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "anchorRefs": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string"
+        }
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "acceptanceCriteria": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "changeReason": {
+        "type": "string",
+        "minLength": 1
+      },
+      "provenance": {
+        "type": "object"
+      },
+      "payloadHash": {
+        "type": "string",
+        "minLength": 64,
+        "maxLength": 64
+      },
+      "createdBy": {
+        "type": "string",
+        "minLength": 1
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "rime-rank-selection.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.rime-rank-selection.v1",
@@ -14701,6 +14922,83 @@ export const contractSchemas = {
             "type": "string"
           }
         }
+      }
+    }
+  },
+  "typed-verification-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.typed-verification-receipt.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "rootId",
+      "catalogRevisionId",
+      "receiptType",
+      "sourceCommit",
+      "environment",
+      "commandOrAction",
+      "exitStatus",
+      "outputHash",
+      "artifactHash",
+      "verifier",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.typed-verification-receipt.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "catalogRevisionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "receiptType": {
+        "enum": [
+          "test",
+          "build",
+          "install",
+          "evidence"
+        ]
+      },
+      "sourceCommit": {
+        "type": "string",
+        "minLength": 1
+      },
+      "environment": {
+        "type": "string",
+        "minLength": 1
+      },
+      "commandOrAction": {
+        "type": "string",
+        "minLength": 1
+      },
+      "exitStatus": {
+        "type": "integer"
+      },
+      "outputHash": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "artifactHash": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "verifier": {
+        "type": "string",
+        "minLength": 1
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
       }
     }
   },

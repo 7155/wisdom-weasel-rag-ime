@@ -135,6 +135,108 @@ class RequirementGovernanceStore:
             raise KeyError(anchor_id)
         return bytes(row["original_bytes"])
 
+    def prepare_dispatch_binding(
+        self,
+        *,
+        dispatch_id: str,
+        root_id: str,
+        task_id: str,
+        session_id: str,
+        generation: int,
+        requirement_anchor_ref: str,
+        created_at_ms: int,
+    ) -> tuple[dict[str, object], bool]:
+        """Freeze the requirement/proof observation set before a Dispatch can lease."""
+
+        anchor_id = str(requirement_anchor_ref or "").split("@", 1)[0].strip()
+        with self._connect(immediate=True) as conn:
+            anchor = conn.execute(
+                "SELECT anchor_id FROM room_v2_requirement_anchors WHERE anchor_id = ? AND root_id = ?",
+                (anchor_id, root_id),
+            ).fetchone()
+            anchors = [anchor_id] if anchor is not None else []
+            warnings = [] if anchors else ["requirement_anchor_not_registered"]
+            catalog = conn.execute(
+                """SELECT catalog_revision_id FROM room_v2_requirement_catalog_revisions
+                   WHERE root_id = ? ORDER BY revision DESC LIMIT 1""",
+                (root_id,),
+            ).fetchone()
+            catalog_id = str(catalog[0]) if catalog is not None else None
+            if catalog_id is None:
+                warnings.append("requirement_catalog_missing")
+                proofs: list[str] = []
+            else:
+                proofs = [
+                    str(row[0])
+                    for row in conn.execute(
+                        """SELECT DISTINCT receipt_id FROM room_v2_criterion_proofs
+                           WHERE root_id = ? AND catalog_revision_id = ? ORDER BY receipt_id""",
+                        (root_id, catalog_id),
+                    ).fetchall()
+                ]
+            payload = {
+                "dispatchId": _required(dispatch_id, "dispatch_id"),
+                "rootId": _required(root_id, "root_id"),
+                "taskId": _required(task_id, "task_id"),
+                "sessionId": _required(session_id, "session_id"),
+                "generation": _non_negative(generation, "generation"),
+                "anchorRefs": anchors,
+                "catalogRevisionId": catalog_id,
+                "proofReceiptRefs": proofs,
+                "observationWarnings": warnings,
+                "gateObservationRef": None,
+                "state": "prepared",
+                "createdAtMs": _non_negative(created_at_ms, "created_at_ms"),
+            }
+            existing = conn.execute(
+                "SELECT * FROM room_v2_dispatch_requirement_bindings WHERE dispatch_id = ?",
+                (dispatch_id,),
+            ).fetchone()
+            if existing is not None:
+                stored = _dispatch_binding_payload(existing)
+                if stored != payload:
+                    raise RequirementRevisionConflict("Dispatch requirement observation changed")
+                return stored, False
+            conn.execute(
+                """INSERT INTO room_v2_dispatch_requirement_bindings(
+                   dispatch_id, root_id, task_id, session_id, generation,
+                   anchor_refs_json, catalog_revision_id, proof_receipt_refs_json,
+                   observation_warnings_json, gate_observation_ref, state,
+                   created_at_ms, updated_at_ms
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'prepared', ?, ?)""",
+                (
+                    dispatch_id, root_id, task_id, session_id, generation,
+                    _json(anchors), catalog_id, _json(proofs), _json(warnings),
+                    created_at_ms, created_at_ms,
+                ),
+            )
+        return payload, True
+
+    def dispatch_binding(self, dispatch_id: str) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM room_v2_dispatch_requirement_bindings WHERE dispatch_id = ?",
+                (_required(dispatch_id, "dispatch_id"),),
+            ).fetchone()
+        return _dispatch_binding_payload(row) if row is not None else None
+
+    def latest_gate_observation(self, root_id: str) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT * FROM room_v2_delivery_gate_receipts
+                   WHERE root_id = ? ORDER BY created_at_ms DESC, gate_receipt_id DESC LIMIT 1""",
+                (_required(root_id, "root_id"),),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "gateReceiptId": str(row["gate_receipt_id"]),
+            "gateStatus": str(row["gate_status"]),
+            "mode": str(row["mode"]),
+            "enforcementApplied": bool(row["enforcement_applied"]),
+            "reasons": json.loads(str(row["reasons_json"])),
+        }
+
     def revise_catalog(
         self,
         *,
@@ -516,6 +618,19 @@ class RequirementGovernanceStore:
                 "createdAtMs": _non_negative(created_at_ms, "created_at_ms"),
             }
             validate_contract(payload, "delivery-gate-observation.v1.json")
+            existing = conn.execute(
+                "SELECT * FROM room_v2_delivery_gate_receipts WHERE gate_receipt_id = ?",
+                (payload["gateReceiptId"],),
+            ).fetchone()
+            if existing is not None:
+                stored = _delivery_gate_payload(existing)
+                replay = dict(payload)
+                replay["createdAtMs"] = stored["createdAtMs"]
+                if stored != replay:
+                    raise RequirementRevisionConflict(
+                        "DeliveryGate observation identity changed"
+                    )
+                return stored
             conn.execute(
                 """
                 INSERT INTO room_v2_delivery_gate_receipts(
@@ -585,6 +700,42 @@ def _verification_payload(row: sqlite3.Row) -> dict[str, object]:
         "outputHash": str(row["output_hash"]), "artifactHash": str(row["artifact_hash"]),
         "verifier": str(row["verifier"]), "createdAtMs": int(row["created_at_ms"]),
     }
+
+
+def _dispatch_binding_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "dispatchId": str(row["dispatch_id"]),
+        "rootId": str(row["root_id"]),
+        "taskId": str(row["task_id"]),
+        "sessionId": str(row["session_id"]),
+        "generation": int(row["generation"]),
+        "anchorRefs": json.loads(str(row["anchor_refs_json"])),
+        "catalogRevisionId": str(row["catalog_revision_id"]) if row["catalog_revision_id"] else None,
+        "proofReceiptRefs": json.loads(str(row["proof_receipt_refs_json"])),
+        "observationWarnings": json.loads(str(row["observation_warnings_json"])),
+        "gateObservationRef": str(row["gate_observation_ref"]) if row["gate_observation_ref"] else None,
+        "state": str(row["state"]),
+        "createdAtMs": int(row["created_at_ms"]),
+    }
+
+
+def _delivery_gate_payload(row: sqlite3.Row) -> dict[str, object]:
+    payload = {
+        "schemaVersion": "wisdom-weasel.delivery-gate-observation.v1",
+        "gateReceiptId": str(row["gate_receipt_id"]),
+        "rootId": str(row["root_id"]),
+        "catalogRevisionId": str(row["catalog_revision_id"]),
+        "targetCommit": str(row["target_commit"]),
+        "mode": str(row["mode"]),
+        "gateStatus": str(row["gate_status"]),
+        "enforcementApplied": bool(row["enforcement_applied"]),
+        "blindReviewStatus": str(row["blind_review_status"]),
+        "reasons": json.loads(str(row["reasons_json"])),
+        "proofMatrix": json.loads(str(row["proof_matrix_json"])),
+        "createdAtMs": int(row["created_at_ms"]),
+    }
+    validate_contract(payload, "delivery-gate-observation.v1.json")
+    return payload
 
 
 def _normalize_item(value: Mapping[str, object]) -> dict[str, object]:

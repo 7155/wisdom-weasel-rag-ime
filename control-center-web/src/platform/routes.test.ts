@@ -73,6 +73,7 @@ const canonicalPathIds = [
   'agent.room.kernel.snapshot',
   'agent.room.kernel.events',
   'agent.room.kernel.command',
+  'agent.room.kernel.settle',
   'agent.room.topics',
   'agent.room.topic.create',
   'agent.room.topic.update',

@@ -281,6 +281,19 @@ class RoomKernelProjection:
                         "contentHash": str(capability["compiled_profile_hash"]),
                     },
                 }
+            requirement = conn.execute(
+                "SELECT * FROM room_v2_dispatch_requirement_bindings WHERE dispatch_id = ?",
+                (row["dispatch_id"],),
+            ).fetchone()
+            if requirement is not None:
+                session["requirementObservation"] = {
+                    "anchorRefs": json.loads(str(requirement["anchor_refs_json"])),
+                    "catalogRevisionId": str(requirement["catalog_revision_id"]) if requirement["catalog_revision_id"] else None,
+                    "proofReceiptRefs": json.loads(str(requirement["proof_receipt_refs_json"])),
+                    "warnings": json.loads(str(requirement["observation_warnings_json"])),
+                    "gateObservationRef": str(requirement["gate_observation_ref"]) if requirement["gate_observation_ref"] else None,
+                    "state": str(requirement["state"]),
+                }
             records.append(("session", session_id, "binding", session_id, "session_projection", {"session": session}))
         return records
 

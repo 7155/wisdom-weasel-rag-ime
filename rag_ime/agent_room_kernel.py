@@ -372,6 +372,20 @@ class RoomKernelStore:
                 )
                 if activated.rowcount != 1:
                     raise RoomKernelFenceError("Dispatch has no matching prepared Capability Manifest")
+                requirement_activated = conn.execute(
+                    """UPDATE room_v2_dispatch_requirement_bindings
+                       SET state = 'active', updated_at_ms = ?
+                       WHERE dispatch_id = ? AND session_id = ? AND generation = ?
+                         AND state = 'prepared'""",
+                    (
+                        int(now_ms), row["dispatch_id"], prepared_session_id,
+                        int(row["generation"]),
+                    ),
+                )
+                if requirement_activated.rowcount != 1:
+                    raise RoomKernelFenceError(
+                        "Dispatch has no matching prepared requirement observation"
+                    )
             lease_id = _stable_id("room-lease", str(row["dispatch_id"]), str(now_ms))
             token = _stable_id("room-lease-token", lease_id, str(row["generation"]))
             expires = int(now_ms) + max(1, int(ttl_ms))
@@ -846,6 +860,16 @@ class RoomKernelStore:
     def finalize_root(self, root_id: str, *, now_ms: int) -> dict[str, object]:
         with self._connect(immediate=True) as conn:
             root = self._root_row(conn, root_id)
+            if root["terminal_receipt_id"]:
+                terminal = conn.execute(
+                    "SELECT payload_json FROM room_kernel_receipts WHERE receipt_id = ?",
+                    (root["terminal_receipt_id"],),
+                ).fetchone()
+                if terminal is None:
+                    raise RoomKernelFenceError(
+                        "completed Root is missing its canonical terminal receipt"
+                    )
+                return json.loads(str(terminal["payload_json"]))
             active = int(conn.execute(f"SELECT COUNT(*) FROM room_kernel_dispatches WHERE root_id = ? AND state IN ({','.join('?' for _ in _ACTIVE_DISPATCH_STATES)})", (root_id, *_ACTIVE_DISPATCH_STATES)).fetchone()[0])
             unknown = int(conn.execute("SELECT COUNT(*) FROM room_kernel_dispatches WHERE root_id = ? AND state IN ('unknown','dead_letter')", (root_id,)).fetchone()[0])
             open_outbox = int(conn.execute("SELECT COUNT(*) FROM room_kernel_outbox WHERE root_id = ? AND state IN ('pending','leased','running','retry_wait','timer_wait')", (root_id,)).fetchone()[0])
@@ -856,7 +880,34 @@ class RoomKernelStore:
             missing = sorted(expected - covered)
             if active or unknown or open_outbox or active_leases or open_tasks or missing:
                 return self._receipt(conn, root_id=root_id, command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "root_not_quiescent", "activeDispatches": active, "unknownDispatches": unknown, "openOutbox": open_outbox, "activeLeases": active_leases, "openTasks": open_tasks, "missingAcceptanceCriteria": missing}, now_ms=now_ms)
-            receipt = self._receipt(conn, root_id=root_id, command_id=None, receipt_kind="terminal", status="applied", generation=int(root["generation"]), details={"quiescent": True, "acceptanceSatisfied": True}, now_ms=now_ms)
+            gate = conn.execute(
+                """SELECT * FROM room_v2_delivery_gate_receipts
+                   WHERE root_id = ? ORDER BY created_at_ms DESC, gate_receipt_id DESC LIMIT 1""",
+                (root_id,),
+            ).fetchone()
+            delivery_observation = {
+                "gateObservationRef": str(gate["gate_receipt_id"]) if gate is not None else None,
+                "gateStatus": str(gate["gate_status"]) if gate is not None else "not_observed",
+                "mode": str(gate["mode"]) if gate is not None else "observe_warn",
+                "enforcementApplied": False,
+                "reasons": json.loads(str(gate["reasons_json"])) if gate is not None else ["delivery_gate_not_observed"],
+            }
+            conn.execute(
+                """UPDATE room_v2_dispatch_requirement_bindings
+                   SET state = 'terminal', gate_observation_ref = ?, updated_at_ms = ?
+                   WHERE root_id = ? AND state = 'active'""",
+                (delivery_observation["gateObservationRef"], int(now_ms), root_id),
+            )
+            receipt = self._receipt(
+                conn, root_id=root_id, command_id=None, receipt_kind="terminal",
+                status="applied", generation=int(root["generation"]),
+                details={
+                    "quiescent": True,
+                    "acceptanceSatisfied": True,
+                    "deliveryGateObservation": delivery_observation,
+                },
+                now_ms=now_ms,
+            )
             conn.execute("UPDATE room_kernel_roots SET state = 'completed', terminal_receipt_id = ?, updated_at_ms = ? WHERE root_id = ?", (receipt["receiptId"], int(now_ms), root_id))
             return receipt
 

@@ -23,6 +23,8 @@ from rag_ime.agent_room_kernel_contracts import (
 )
 from rag_ime.agent_service import AgentService, _room_kernel_mode_from_environment
 from rag_ime.debug_server import DebugRequestHandler
+from rag_ime.pi_runtime import PiRuntimeConfig
+from tests.test_pi_runtime_v2 import FAKE_HOST
 
 
 class KernelRuntime:
@@ -163,7 +165,13 @@ class RoomKernelServiceTests(unittest.TestCase):
             now_ms=2,
         )
 
-    def _dispatch(self, dispatch_id: str = "dispatch:service") -> dict[str, object]:
+    def _dispatch(
+        self,
+        dispatch_id: str = "dispatch:service",
+        *,
+        capability_epoch: int = 7,
+        runtime_profile_revision: str = "runtime-profile:service-v1",
+    ) -> dict[str, object]:
         return {
             "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
             "dispatchId": dispatch_id,
@@ -180,8 +188,8 @@ class RoomKernelServiceTests(unittest.TestCase):
             "intentKind": "execute",
             "idempotencyKey": dispatch_id,
             "attempt": 0,
-            "capabilityEpoch": 7,
-            "runtimeProfileRevision": "runtime-profile:service-v1",
+            "capabilityEpoch": capability_epoch,
+            "runtimeProfileRevision": runtime_profile_revision,
             "state": "pending",
         }
 
@@ -516,6 +524,259 @@ class RoomKernelServiceTests(unittest.TestCase):
         projected = next(item for item in snapshot["sessions"] if item["sessionId"] == self.session_id)
         self.assertEqual(projected["capabilityManifest"]["manifestHash"], first["manifestHash"])
         self.assertEqual(projected["capabilityManifest"]["status"], "active")
+
+    def _exercise_requirement_proof_observation_to_terminal(self) -> None:
+        original = "必须发布结果并完成任务"
+        anchor, _ = self.service.room_requirements.append_anchor(
+            anchor_id="requirement-anchor:service",
+            root_id="root:service",
+            original_content=original,
+            created_by="user:local",
+            provenance={"source": "test-user-request"},
+            created_at_ms=2,
+        )
+        catalog, _ = self.service.room_requirements.revise_catalog(
+            catalog_revision_id="catalog:service:1",
+            root_id="root:service",
+            expected_current_revision=0,
+            anchor_refs=[anchor["anchorId"]],
+            items=[{
+                "itemId": "requirement:service",
+                "kind": "explicit_user_requirement",
+                "statement": original,
+                "origin": "user",
+                "state": "active",
+                "sourceSpans": [{"anchorId": anchor["anchorId"], "startByte": 0, "endByte": len(original.encode("utf-8"))}],
+            }],
+            acceptance_criteria=[{
+                "criterionId": "criterion:service",
+                "itemId": "requirement:service",
+                "acceptanceCriterionFullNameZh": "用户端完整交付链路",
+                "criterionKind": "user_journey",
+                "expectedReceiptTypes": ["test"],
+                "statement": "Post 与终态回执可追踪",
+            }],
+            change_reason="建立原始需求目录",
+            provenance={"source": "test"},
+            created_by="user:local",
+            created_at_ms=2,
+        )
+        verification = {
+            "schemaVersion": "wisdom-weasel.typed-verification-receipt.v1",
+            "receiptId": "verification:service",
+            "rootId": "root:service",
+            "catalogRevisionId": catalog["catalogRevisionId"],
+            "receiptType": "test",
+            "sourceCommit": "commit:test",
+            "environment": "room-v2-test",
+            "commandOrAction": "managed cohort e2e",
+            "exitStatus": 0,
+            "outputHash": "a" * 64,
+            "artifactHash": "b" * 64,
+            "verifier": "managed-test-runner",
+            "createdAtMs": 2,
+        }
+        self.service.room_requirements.record_verification_receipt(verification)
+        self.service.room_requirements.link_proof(
+            proof_id="proof:service",
+            root_id="root:service",
+            catalog_revision_id=str(catalog["catalogRevisionId"]),
+            criterion_id="criterion:service",
+            receipt_id="verification:service",
+            linked_by="managed-test-runner",
+            created_at_ms=2,
+        )
+
+        first_dispatch = self._dispatch()
+        self.service.room_kernel.enqueue_dispatch(first_dispatch, now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        observation = self.service.room_requirements.dispatch_binding("dispatch:service")
+        self.assertEqual(observation["anchorRefs"], ["requirement-anchor:service"])
+        self.assertEqual(observation["proofReceiptRefs"], ["verification:service"])
+        self.assertEqual(observation["state"], "active")
+
+        invocation_id = self._room_tool_invocation("call:e2e-post", "公开交付")
+        post_commit = {
+            "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
+            "commitId": "commit:e2e-post",
+            "dispatchId": "dispatch:service",
+            "action": "post",
+            "contentHash": "sha256:e2e-post",
+            "postProposal": {
+                "schemaVersion": "wisdom-weasel.room-post.v2",
+                "postId": "post:e2e",
+                "roomId": self.room_id,
+                "rootId": "root:service",
+                "generation": 0,
+                "dispatchId": "dispatch:service",
+                "authorActorRef": str(self.participant["id"]),
+                "kind": "result",
+                "visibility": "room",
+                "content": "公开交付",
+                "idempotencyKey": "post:e2e",
+                "publicationSource": {"kind": "room_commit", "ref": "commit:e2e-post"},
+                "createdAtMs": 4,
+            },
+            "evidenceRefs": ["verification:service"],
+            "requirementCoverage": ["criterion:service"],
+            "createdAtMs": 4,
+        }
+        settle = {
+            "schemaVersion": ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
+            "settleReceiptId": "settle:e2e-post",
+            "eventKind": "agent_settled",
+            "status": "settled",
+            "dispatchId": "dispatch:service",
+            "sessionId": self.session_id,
+            "generation": 0,
+            "capabilityEpoch": 7,
+            "createdAtMs": 4,
+        }
+        self.service.settle_room_kernel_dispatch(
+            self.room_id,
+            {"settleReceipt": settle, "commit": post_commit, "invocationReceiptId": invocation_id},
+            caller_authorized=True,
+        )
+
+        second = self._dispatch(
+            "dispatch:complete",
+            capability_epoch=8,
+            runtime_profile_revision="runtime-profile:service-v2",
+        )
+        self.service.room_kernel.enqueue_dispatch(second, now_ms=5)
+        self.service.room_kernel_worker.run_once()
+        loaded = self.service.room_capability_tool_load({
+            "sessionId": self.session_id,
+            "receiptId": "load:e2e-complete",
+            "toolName": "room_commit",
+            "createdAtMs": 6,
+        })["result"]
+        invoked = self.service.execute_room_capability_tool(
+            self.session_id,
+            "room_commit",
+            {"result": "完成"},
+            tool_call_id="call:e2e-complete",
+            load_receipt_id=str(loaded["receiptId"]),
+        )
+        complete_commit = {
+            "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
+            "commitId": "commit:e2e-complete",
+            "dispatchId": "dispatch:complete",
+            "action": "complete",
+            "contentHash": "sha256:e2e-complete",
+            "postProposal": None,
+            "evidenceRefs": ["verification:service"],
+            "requirementCoverage": ["criterion:service"],
+            "createdAtMs": 6,
+        }
+        complete_settle = {
+            **settle,
+            "settleReceiptId": "settle:e2e-complete",
+            "dispatchId": "dispatch:complete",
+            "capabilityEpoch": 8,
+            "createdAtMs": 6,
+        }
+        self.service.settle_room_kernel_dispatch(
+            self.room_id,
+            {
+                "settleReceipt": complete_settle,
+                "commit": complete_commit,
+                "invocationReceiptId": invoked["invocationReceipt"]["receiptId"],
+            },
+            caller_authorized=True,
+        )
+        final = self.service.finalize_room_kernel_root(
+            "root:service",
+            catalog_revision_id=str(catalog["catalogRevisionId"]),
+            target_commit="commit:test",
+            blind_review_status="passed",
+            now_ms=7,
+        )
+        gate = final["receipt"]["details"]["deliveryGateObservation"]
+        self.assertEqual(gate["gateStatus"], "observed_pass")
+        self.assertTrue(gate["gateObservationRef"])
+        self.assertFalse(gate["enforcementApplied"])
+        self.assertEqual(self.service.room_kernel_snapshot(self.room_id)["posts"][0]["postId"], "post:e2e")
+        replayed = self.service.finalize_room_kernel_root(
+            "root:service",
+            catalog_revision_id=str(catalog["catalogRevisionId"]),
+            target_commit="commit:test",
+            blind_review_status="passed",
+            now_ms=9,
+        )
+        self.assertEqual(replayed, final)
+
+    def test_requirement_proof_observation_reaches_terminal_without_enforcement(self) -> None:
+        self._exercise_requirement_proof_observation_to_terminal()
+
+    def test_named_cohort_crosses_process_boundary_through_the_full_managed_chain(self) -> None:
+        self.service.close()
+        host = self.root / "room-v2-process-host"
+        host.write_text(FAKE_HOST, encoding="utf-8")
+        host.chmod(0o755)
+        config = PiRuntimeConfig(
+            enabled=True,
+            executable=host,
+            agent_dir=self.root / "process-agent",
+            session_dir=self.root / "process-sessions",
+            logs_dir=self.root / "process-logs",
+            idle_timeout_seconds=0,
+            command_timeout_seconds=5,
+            provider="gpt",
+            model="gpt-5.6-luna",
+            provider_environment={"TEST_ROOM_TYPES": "1"},
+            pi_version="0.80.7",
+            protocol_version="2",
+            max_sessions=4,
+        )
+        with patch.dict(
+            "os.environ",
+            {
+                "RAG_IME_ROOM_KERNEL_MODE": "cohort",
+                "RAG_IME_ROOM_KERNEL_COHORT_ID": "room-v2-test",
+            },
+            clear=True,
+        ):
+            mode = _room_kernel_mode_from_environment()
+        self.service = AgentService(
+            db_path=self.root / "process.sqlite",
+            runtime_config=config,
+            room_kernel_mode=mode,
+            room_kernel_poll_seconds=60,
+        )
+        self.service.room_kernel_worker_loop.close()
+        room = self.service.create_room(
+            {
+                "title": "room-v2-test process cohort",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "zhiyou-v1", "roleVersion": "1"},
+                    {"roleId": "hermes-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        self.room_id = str(room["id"])
+        self.participant = room["participants"][1]
+        self.session_id = str(self.participant["sessionId"])
+        self._seed()
+
+        self._exercise_requirement_proof_observation_to_terminal()
+
+        requests = [
+            json.loads(line)
+            for line in (config.agent_dir / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        methods = [str(request["method"]) for request in requests]
+        self.assertEqual(methods[0], "hello")
+        self.assertIn("session.open", methods)
+        self.assertLess(methods.index("session.open"), methods.index("room.dispatch"))
+        self.assertEqual(methods.count("room.dispatch"), 2)
+        self.assertEqual(
+            [request["params"]["dispatchId"] for request in requests if request["method"] == "room.dispatch"],
+            ["dispatch:service", "dispatch:complete"],
+        )
 
     def test_real_http_snapshot_command_and_sse_gap_routes(self) -> None:
         wrapper = SimpleNamespace(

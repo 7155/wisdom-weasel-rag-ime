@@ -28,6 +28,14 @@ export type PrivateSessionProjection = {
     promptPlanHash: string;
     compiledRuntimeProfileRef: { profileId: string; revision: string; contentHash: string };
   };
+  requirementObservation?: {
+    anchorRefs: string[];
+    catalogRevisionId: string | null;
+    proofReceiptRefs: string[];
+    warnings: string[];
+    gateObservationRef: string | null;
+    state: 'prepared' | 'active' | 'terminal';
+  };
 };
 
 export type RootProjection = RoomRootExecutionV2 & {
@@ -278,6 +286,9 @@ function privateSession(value: unknown): PrivateSessionProjection {
   const capabilityManifest = item.capabilityManifest === undefined
     ? undefined
     : privateCapabilityManifest(item.capabilityManifest);
+  const requirementObservation = item.requirementObservation === undefined
+    ? undefined
+    : privateRequirementObservation(item.requirementObservation);
   return {
     sessionId: requiredText(item.sessionId, 'sessionId'),
     rootId: optionalText(item.rootId),
@@ -285,6 +296,23 @@ function privateSession(value: unknown): PrivateSessionProjection {
     state: sessionState,
     updatedAtMs: nonNegativeInteger(item.updatedAtMs, 'updatedAtMs'),
     ...(capabilityManifest ? { capabilityManifest } : {}),
+    ...(requirementObservation ? { requirementObservation } : {}),
+  };
+}
+
+function privateRequirementObservation(value: unknown): NonNullable<PrivateSessionProjection['requirementObservation']> {
+  const item = record(value);
+  const state = item.state;
+  if (state !== 'prepared' && state !== 'active' && state !== 'terminal') {
+    throw new TypeError('Requirement observation state is invalid');
+  }
+  return {
+    anchorRefs: textArray(item.anchorRefs),
+    catalogRevisionId: optionalText(item.catalogRevisionId),
+    proofReceiptRefs: textArray(item.proofReceiptRefs),
+    warnings: textArray(item.warnings),
+    gateObservationRef: optionalText(item.gateObservationRef),
+    state,
   };
 }
 
@@ -352,6 +380,13 @@ function requiredText(value: unknown, field: string): string {
 function optionalText(value: unknown): string | null {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized || null;
+}
+
+function textArray(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || !item.trim())) {
+    throw new TypeError('Expected a non-empty string array');
+  }
+  return value.map((item) => item.trim());
 }
 
 function nonNegativeInteger(value: unknown, field: string): number {

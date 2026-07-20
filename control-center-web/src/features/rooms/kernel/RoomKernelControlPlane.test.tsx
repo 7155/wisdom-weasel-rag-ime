@@ -59,10 +59,18 @@ describe('RoomKernelControlPlane', () => {
     state.rootsById['root-a'] = { ...state.rootsById['root-a']!, state: 'completed', terminalReceiptId: 'terminal-a', isFinal: true };
     state.terminalReceiptByRootId['root-a'] = receipt({
       receiptId: 'terminal-a', commandId: null, receiptKind: 'terminal', rootId: 'root-a', generation: 3,
+      details: {
+        deliveryGateObservation: {
+          gateObservationRef: 'gate-a', gateStatus: 'warn_blocked', mode: 'observe_warn',
+          enforcementApplied: false, reasons: ['unresolved_unknown'],
+        },
+      },
     });
     renderPlane(state);
     expect(screen.getByText('终态已确认')).toBeInTheDocument();
-    expect(screen.getByText('terminal/applied · terminal-a')).toBeInTheDocument();
+    expect(screen.getByText('已结束，交付观察有警告')).toBeInTheDocument();
+    expect(screen.getByText('terminal/applied · 交付观察有阻塞或未知项')).toBeInTheDocument();
+    expect(screen.queryByText('已完成，交付观察通过')).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: '停止' })).toHaveLength(1);
   });
 

@@ -441,6 +441,14 @@ export const CONTROL_ROUTES = {
     requiredBody: ['schemaVersion', 'commandId', 'roomId', 'commandKind', 'sourceKind', 'sourceId', 'idempotencyKey', 'generation', 'payload', 'createdAtMs'],
     responseContract: 'room-kernel-receipt.v1',
   },
+  'agent.room.kernel.settle': {
+    method: 'POST',
+    path: '/api/agent/rooms/:roomId/kernel/settle',
+    params: { roomId: null },
+    body: ['settleReceipt', 'commit', 'invocationReceiptId'],
+    requiredBody: ['settleReceipt', 'commit'],
+    responseContract: 'room-settle-result.v1',
+  },
   'agent.room.topics': {
     method: 'GET',
     path: '/api/agent/rooms/:roomId/topics',
