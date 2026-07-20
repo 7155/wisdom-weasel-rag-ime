@@ -213,6 +213,13 @@ for line in sys.stdin:
             "rootId": params["rootId"], "generation": params["generation"],
             "sessionId": session_id, "cancelledContinuationIds": [],
             "activeRunAborted": False,
+            "cancellationSurfaces": {name: {
+                "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
+                "surface": name, "state": "terminated", "targetIds": [],
+            } for name in (
+                "provider", "tool", "exec", "retry", "compaction",
+                "branch_summary", "timer", "continuation", "session")},
+            "pendingTargets": [],
         })
     elif method == "plugins.list":
         result(request, {"plugins": []})
@@ -798,7 +805,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertIn("session.steer", [row["method"] for row in requests])
         self.assertIn("session.follow_up", [row["method"] for row in requests])
 
-    def test_abort_ack_without_agent_settled_retires_only_the_old_turn(self) -> None:
+    def test_abort_ack_without_agent_settled_escalates_to_durable_host_tree_kill(self) -> None:
         session_id = str(self.first["id"])
         accepted = self.runtime.prompt(session_id, "hang-without-settled")
         turn_id = str(accepted["turnId"])
@@ -815,7 +822,14 @@ class PiRuntimeV2Tests(unittest.TestCase):
         completed = [item for item in self.events.replay(session_id)[0] if item.event_type == "turn_completed"]
         self.assertEqual(completed[-1].turn_id, turn_id)
         self.assertEqual(completed[-1].payload["status"], "aborted")
-        self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout")
+        self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout_kill")
+        _wait_until(
+            lambda: self.runtime.runtime_status()["status"] == "faulted"
+            and self.runtime.runtime_status()["runtimeHostKillGate"]["lastKillReceipt"] is not None
+        )
+        kill_gate = self.runtime.runtime_status()["runtimeHostKillGate"]
+        self.assertEqual(kill_gate["lastKillReceipt"]["requestKind"], "cancel_timeout")
+        self.assertEqual(kill_gate["lastKillReceipt"]["state"], "terminated")
 
         completed_count = len(completed)
         self.runtime._handle_host_event({
@@ -829,8 +843,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             len([item for item in self.events.replay(session_id)[0] if item.event_type == "turn_completed"]),
             completed_count,
         )
-        with self.runtime._lock:
-            self.assertEqual(self.runtime._states[session_id].turn_id, "")
+        self.assertNotIn(session_id, self.runtime._states)
 
     def test_abort_settled_error_is_terminal_aborted_not_faulted(self) -> None:
         session_id = str(self.first["id"])

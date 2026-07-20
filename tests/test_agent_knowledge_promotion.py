@@ -20,7 +20,7 @@ class KnowledgePromotionTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="knowledge-promotion-")
         self.db = Path(self.tmp.name) / "knowledge.sqlite"
         self.store = KnowledgePromotionStore(self.db, authority_secrets={"user:1": b"user-secret", "admin:1": b"admin-secret"})
-        self.assertEqual(self.store.initialize(), 90)
+        self.assertEqual(self.store.initialize(), 92)
         self._seed_evidence()
         self.caller_a = self._caller("session:a", "participant:a", "binding:a", "auth:1")
         self.caller_b = self._caller("session:b", "participant:b", "binding:b", "auth:1")
@@ -201,6 +201,22 @@ class KnowledgePromotionTests(unittest.TestCase):
     def test_route_contract_does_not_accept_owner_or_scope(self) -> None:
         self.assertTrue(KNOWLEDGE_ROUTE_HASH.startswith("sha256:"))
         self.assertEqual(len(KNOWLEDGE_ROUTE_HASH), 71)
+
+    def test_governance_snapshot_is_sanitized_and_complete(self) -> None:
+        candidate = self._private_candidate(
+            "candidate:governance", "evidence:a", "session:a", text="Governed fact"
+        )
+        self._approve_promote(
+            candidate, "approval:governance", "promotion:governance",
+            "claim:governance", "outbox:governance",
+        )
+        snapshot = self.store.governance_snapshot()
+        self.assertEqual(snapshot["promotionCandidates"][0]["candidateHash"], candidate["candidateHash"])
+        self.assertEqual(snapshot["claims"][0]["claimVersionId"], "claim:governance")
+        encoded = json.dumps(snapshot)
+        self.assertNotIn("authoritySignature", encoded)
+        self.assertNotIn("secretScan", encoded)
+        self.assertNotIn("Governed fact", encoded)
 
     def test_index_outbox_exhaustion_moves_to_dead_letter(self) -> None:
         def broken_adapter(_payload):

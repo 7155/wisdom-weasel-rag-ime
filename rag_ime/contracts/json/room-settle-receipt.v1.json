@@ -13,6 +13,18 @@
     "sessionId": {"type": "string", "minLength": 1},
     "generation": {"type": "integer", "minimum": 0},
     "capabilityEpoch": {"type": "integer", "minimum": 0},
+    "resourceUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inputTokens": {"type": "integer", "minimum": 0},
+        "outputTokens": {"type": "integer", "minimum": 0},
+        "toolCalls": {"type": "integer", "minimum": 0},
+        "toolCost": {"type": "integer", "minimum": 0},
+        "retryCount": {"type": "integer", "minimum": 0},
+        "repairCount": {"type": "integer", "minimum": 0}
+      }
+    },
     "createdAtMs": {"type": "integer", "minimum": 0}
   }
 }

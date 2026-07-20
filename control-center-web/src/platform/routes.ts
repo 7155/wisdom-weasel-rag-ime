@@ -483,6 +483,15 @@ export const CONTROL_ROUTES = {
     body: ['query', 'limit', 'retrievalReceiptId', 'createdAtMs'],
     requiredBody: ['query'],
   },
+  'agent.governance.read': {
+    method: 'GET',
+    path: '/api/agent/governance',
+    query: ['scopeKey'],
+  },
+  'agent.knowledgeGovernance.read': {
+    method: 'GET',
+    path: '/api/agent/knowledge-governance',
+  },
   'agent.knowledge.read': {
     method: 'POST',
     path: '/api/agent/sessions/:sessionId/knowledge-read',

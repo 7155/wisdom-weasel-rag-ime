@@ -139,7 +139,9 @@ class RoomKernelWorker:
         return receipts
 
     def reconcile(self) -> list[dict[str, object]]:
-        receipts = self.store.reconcile_expired_leases(now_ms=self.clock_ms())
+        now_ms = self.clock_ms()
+        receipts = self.store.cancel_expired_roots(now_ms=now_ms)
+        receipts.extend(self.store.reconcile_expired_leases(now_ms=now_ms))
         # Durable cancel delivery owns capability revocation too; doing it here
         # would double-fire the same session when the outbox is drained below.
         self.drain_cancel_outbox()
@@ -196,6 +198,7 @@ class KernelCommandBus:
         now_ms: int,
         post_proposal: Mapping[str, object] | None = None,
         invocation_receipt_id: str = "",
+        resource_usage: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         return self.store.apply_commit(
             payload,
@@ -203,6 +206,7 @@ class KernelCommandBus:
             now_ms=now_ms,
             post_proposal=post_proposal,
             invocation_receipt_id=invocation_receipt_id,
+            resource_usage=resource_usage,
         )
 
     def finalize(

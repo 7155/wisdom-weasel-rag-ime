@@ -1,5 +1,6 @@
 import { AlertTriangle, BookOpenCheck, DatabaseZap, ShieldCheck } from 'lucide-react';
-import { Children, useMemo, useState, type ReactNode } from 'react';
+import { Children, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useControlTransport } from '@/app/control-transport';
 import { Field, Input } from '@/components/primitives';
 import {
   InlineNotice,
@@ -25,7 +26,30 @@ type ScopeFilters = { root: string; owner: string; room: string; session: string
 const emptyFilters: ScopeFilters = { root: '', owner: '', room: '', session: '' };
 
 export function GovernanceFeature() {
-  return <GovernanceCenter governance={emptyGovernanceProjection} knowledge={emptyKnowledgeGovernanceProjection} liveRoutesAvailable={false} />;
+  const transport = useControlTransport();
+  const [governance, setGovernance] = useState(emptyGovernanceProjection);
+  const [knowledge, setKnowledge] = useState(emptyKnowledgeGovernanceProjection);
+  const [live, setLive] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      transport.request({ pathId: 'agent.governance.read' }),
+      transport.request({ pathId: 'agent.knowledgeGovernance.read' }),
+    ]).then(([governanceResponse, knowledgeResponse]) => {
+      if (!active) return;
+      const governancePayload = governanceResponse as { governance?: GovernanceProjection };
+      const knowledgePayload = knowledgeResponse as { knowledge?: KnowledgeGovernanceProjection };
+      setGovernance(governancePayload.governance ?? emptyGovernanceProjection);
+      setKnowledge(knowledgePayload.knowledge ?? emptyKnowledgeGovernanceProjection);
+      setLive(true);
+    }).catch(() => {
+      if (active) setLive(false);
+    });
+    return () => { active = false; };
+  }, [transport]);
+
+  return <GovernanceCenter governance={governance} knowledge={knowledge} liveRoutesAvailable={live} />;
 }
 
 export function GovernanceCenter({

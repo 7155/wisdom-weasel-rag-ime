@@ -61,6 +61,7 @@ from .agent_room_kernel_contracts import validate_kernel_contract
 from .agent_room_kernel_projection import RoomKernelProjection
 from .agent_room_kernel_worker import KernelCommandBus, RoomKernelWorker, RoomKernelWorkerLoop
 from .agent_room_learning_governance import RoomLearningGovernanceStore
+from .agent_governance_projection import GovernanceProjectionStore
 from .agent_room_learning_runtime import ReflectionProvider, RoomLearningRuntime
 from .agent_knowledge_promotion import KNOWLEDGE_ROUTE_HASH, KnowledgePromotionStore
 from .knowledge_scope import bound_session_knowledge_caller
@@ -253,6 +254,8 @@ class AgentService:
             config_secret=room_guard_config_secret,
         )
         self.room_learning.initialize()
+        self.governance_projection = GovernanceProjectionStore(db_path)
+        self.governance_projection.initialize()
         self.room_learning_runtime = RoomLearningRuntime(
             self.room_learning,
             reflection_provider=room_reflection_provider,
@@ -471,6 +474,7 @@ class AgentService:
             str(binding["promptCompileReceiptId"])
         )
         dispatch = self.room_kernel.dispatch(str(manifest["dispatchId"]))
+        root_limits = self.room_kernel.resource_limits(str(dispatch["rootId"]))
         skill_selection = self.room_skill_policy.select_stage(
             _room_skill_stage(dispatch)
         )
@@ -490,6 +494,15 @@ class AgentService:
                 "throughSequence": prompt["throughSequence"],
                 "projectionHash": prompt["projectionHash"],
                 "generation": prompt["generation"],
+            },
+            "roomResourceLimits": {
+                "deadlineAtMs": root_limits["deadline_at_ms"],
+                "maxInputTokens": 64_000,
+                "maxOutputTokens": 16_000,
+                "maxToolCalls": 64,
+                "maxToolCost": 10_000,
+                "retryRemaining": max(0, int(root_limits["retry_limit"]) - int(root_limits["retry_used"])),
+                "repairRemaining": max(0, int(root_limits["repair_limit"]) - int(root_limits["repair_used"])),
             },
         }
         if skill_selection["selection"] == "required":
@@ -1381,6 +1394,7 @@ class AgentService:
             root_id: self.room_peer_review.read_projection(root_id)
             for root_id in self.room_kernel.root_ids(room_id)
         }
+        snapshot["cancellationSurfaces"] = self.room_kernel.cancellation_surface_projection(room_id)
         snapshot_material = {key: value for key, value in snapshot.items() if key != "snapshotHash"}
         snapshot["snapshotHash"] = "sha256:" + hashlib.sha256(
             json.dumps(
@@ -2144,6 +2158,11 @@ class AgentService:
             now_ms=int(commit.get("createdAtMs") or int(time.time() * 1000)),
             post_proposal=proposal if isinstance(proposal, Mapping) else None,
             invocation_receipt_id=invocation_receipt_id,
+            resource_usage=(
+                settle.get("resourceUsage")
+                if isinstance(settle.get("resourceUsage"), Mapping)
+                else None
+            ),
         )
         if receipt.get("details", {}).get("childDispatchId"):
             self.room_kernel_worker_loop.wake()
@@ -2170,6 +2189,18 @@ class AgentService:
             result["executionReceipt"] = execution_receipt
         validate_kernel_contract("roomSettleResult", result)
         return result
+
+    def governance_read_model(self, *, scope_key: str | None = None) -> dict[str, object]:
+        return {
+            "schemaVersion": "wisdom-weasel.governance-read-model.v1",
+            "governance": self.governance_projection.snapshot(scope_key=scope_key),
+        }
+
+    def knowledge_governance_read_model(self) -> dict[str, object]:
+        return {
+            "schemaVersion": "wisdom-weasel.knowledge-governance-read-model.v1",
+            "knowledge": self.knowledge_promotion.governance_snapshot(),
+        }
 
     def finalize_room_kernel_root(
         self,

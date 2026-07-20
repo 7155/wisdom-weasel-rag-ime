@@ -37,6 +37,13 @@ class _AcceptedRuntime:
             "rootId": root_id,
             "sessionId": session_id,
             "generation": generation,
+            "cancellationSurfaces": {surface: {
+                "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
+                "surface": surface, "state": "terminated", "targetIds": [],
+            } for surface in (
+                "provider", "tool", "exec", "retry", "compaction",
+                "branch_summary", "timer", "continuation", "session")},
+            "pendingTargets": [],
         }
 
 

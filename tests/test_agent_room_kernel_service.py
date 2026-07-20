@@ -4,6 +4,7 @@ import json
 import sqlite3
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from http.server import ThreadingHTTPServer
@@ -72,6 +73,13 @@ class KernelRuntime:
             "sessionId": session_id,
             "rootId": root_id,
             "generation": generation,
+            "cancellationSurfaces": {surface: {
+                "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
+                "surface": surface, "state": "terminated", "targetIds": [],
+            } for surface in (
+                "provider", "tool", "exec", "retry", "compaction",
+                "branch_summary", "timer", "continuation", "session")},
+            "pendingTargets": [],
         }
 
     def stop(self):
@@ -282,7 +290,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                     "terminalReceiptId": None,
                     "activeProfileRef": None,
                     "budgetPolicyRef": "room-budget:test-v1",
-                    "createdAtMs": 1,
+                    "createdAtMs": int(time.time() * 1000),
                 },
                 "task": {
                     "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
@@ -556,6 +564,14 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertTrue(results[2]["blocked"])
         self.assertEqual(self.service.room_kernel.root("root:service")["state"], "blocked")
         self.assertIsNone(self.service.room_capabilities.runtime_binding(self.session_id))
+
+    def test_canonical_governance_read_models_are_available_without_mutation(self) -> None:
+        governance = self.service.governance_read_model()
+        knowledge = self.service.knowledge_governance_read_model()
+        self.assertEqual(governance["schemaVersion"], "wisdom-weasel.governance-read-model.v1")
+        self.assertEqual(knowledge["schemaVersion"], "wisdom-weasel.knowledge-governance-read-model.v1")
+        self.assertIn("activePointers", governance["governance"])
+        self.assertIn("promotionCandidates", knowledge["knowledge"])
 
     def test_kernel_bound_message_completion_never_enters_legacy_room_timeline(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)

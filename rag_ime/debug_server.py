@@ -6317,6 +6317,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if parsed.path == "/api/agent/governance":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.governance_read_model(
+                    scope_key=_query_first(query, "scopeKey") or None
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/knowledge-governance":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.knowledge_governance_read_model(),
+            )
+            return
         if collaboration_profile_id:
             self._write_json(
                 HTTPStatus.OK,

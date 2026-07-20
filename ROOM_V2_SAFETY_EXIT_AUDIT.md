@@ -2,6 +2,20 @@
 
 审计基线：`feea050`。审计日期：2026-07-20。
 
+## 2026-07-20 第三批强制 Gate 整改（生产仍关闭）
+
+本批把第二批仍标记为缺失的资源与进程终止边界落到真实 Kernel/Pi 链。结论仍是 `staged_not_installed`，不签发 production release receipt。
+
+| 强制 Gate | 已落地机制 | 仍需生产演练的边界 |
+|---|---|---|
+| Root 硬资源上限 | migration 0091 为每个 Root 固定墙钟、输入/输出 Token、Dispatch、并发、Tool call/cost、retry、repair 上限；Dispatch 在同一事务 reserve，Commit/cancel consume 或 release。请求只能消费，不能放宽系统上限。 | Provider 的实际 Token/成本口径仍需真实账单对账；超限后的长时间压力与故障注入仍需 canary。 |
+| Runtime Host Kill Gate | migration 0092 持久化 Host PID、PGID、job identity、进程 birth token 和 kill receipt；正常 cancel/abort 先协作，超时后 SIGKILL 整个 process group；重启先 reconcile orphan；PID 身份不符时 fail closed 为 unknown，绝不误杀复用 PID。 | macOS 正式安装进程树、管理员 panic、崩溃重启和权限边界仍需隔离 canary。 |
+| 九类终止证明 | Provider、tool、exec、retry、compaction、branch summary、timer、continuation、session 各返回 typed termination receipt。`pendingTargets` 不为空时 Root 保持 cancelling；unknown 只能形成显式 `cancelled_with_unknowns`，不能伪装成干净完成。 | 真实 Provider/命令子进程需要逐 surface 故障注入，验证无未注册执行。 |
+| 治理/知识读模型 | 控制中心改读 canonical `agent.governance.read` 与 `agent.knowledgeGovernance.read`；后端只返回治理投影，不把签名/密钥暴露给浏览器。 | 正式 App 的鉴权、空态、错误态与大量数据性能仍需 UI canary。 |
+| 正式 Pi 构建 | 正式源码提交 `692bb0e878772129766b9eb837a8caa57f48e0e7`；本地无网络 deterministic Provider 通过真实 Session/tool loop/cancel；构建只写 `/tmp`，smoke 确认 protocol v2 与 cancellation primitives。 | 未覆盖正式安装指针，未启用网络 Provider，未改变生产开关。 |
+
+本批后剩余风险不再是“有没有总电闸”，而是 production 环境的实证：正式安装包的进程权限、Provider 计量偏差、长链压力、管理员操作审计与回滚演练。任何未知 surface 都必须继续对用户可见，不能由前端 `isFinal` 隐藏。
+
 ## 2026-07-20 第二批强制 Gate 整改（生产仍关闭）
 
 本节继续追加整改证据，不修改下文原始审计。Prompt、Skill、Profile、continuation 和 AbortScope 已从“设计/影子模型”进入 managed Room 的真实执行链；这仍然不是生产放行声明。
@@ -15,7 +29,7 @@
 | 深度与互相触发 | continuation 复用 Kernel 的 `MAX_HOPS=12`、`MAX_DEPTH=4`、`MAX_BUDGET=1000`，测试覆盖 A -> B -> A 以及第 13 hop/15 次互相触发被拒绝。 | 还需墙钟、Token 和单 Root Dispatch 总数的独立硬上限。 |
 | Root AbortScope | Dispatch 入队即注册 queued/running/provider/tool/process/retry/compaction/timer/continuation 九个 surface；取消通过 durable outbox，只有 Pi 匹配 cancel receipt 后进入 cancelled。 | 当前仍缺 Host PID/process-group 管理员 kill、每个 surface 的独立终止回执与未确认执行清单，因此 panic 不能判定完全闭环。 |
 
-Pi 真实 handler 已固定到独立源码提交 `f842dfbd0cd14e80618371b888a3149c320905c5`，包含 live Prompt/Skill、compaction restore 与 fail-closed 校验。产品只更新最低审核 commit 和 typed contract；未覆盖本机安装、未打开 production rollout、未签发 release receipt。
+Pi 真实 handler 在第二批固定到独立源码提交 `f842dfbd0cd14e80618371b888a3149c320905c5`，包含 live Prompt/Skill、compaction restore 与 fail-closed 校验；第三批最低审核 commit 已更新为 `692bb0e878772129766b9eb837a8caa57f48e0e7`。产品仍未覆盖本机安装、未打开 production rollout、未签发 release receipt。
 
 ## 2026-07-20 P0 整改进展（生产仍关闭）
 

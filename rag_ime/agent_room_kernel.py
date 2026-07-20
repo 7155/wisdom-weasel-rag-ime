@@ -22,16 +22,32 @@ _TERMINAL_TASK_STATES = ("completed", "failed", "cancelled")
 SYSTEM_MAX_HOPS = 12
 SYSTEM_MAX_DEPTH = 4
 SYSTEM_MAX_BUDGET = 1_000
+SYSTEM_MAX_WALL_CLOCK_MS = 14_400_000
+SYSTEM_MAX_INPUT_TOKENS = 2_000_000
+SYSTEM_MAX_OUTPUT_TOKENS = 500_000
+SYSTEM_MAX_DISPATCHES = 64
+SYSTEM_MAX_CONCURRENCY = 4
+SYSTEM_MAX_TOOL_CALLS = 500
+SYSTEM_MAX_TOOL_COST = 100_000
+SYSTEM_MAX_RETRIES = 8
+SYSTEM_MAX_REPAIRS = 4
+DISPATCH_INPUT_TOKEN_RESERVATION = 64_000
+DISPATCH_OUTPUT_TOKEN_RESERVATION = 16_000
+DISPATCH_TOOL_CALL_RESERVATION = 64
+DISPATCH_TOOL_COST_RESERVATION = 10_000
 _ABORT_SURFACES = (
     "queued",
     "running",
     "provider",
     "tool",
+    "exec",
     "process",
     "retry",
     "compaction",
+    "branch_summary",
     "timer",
     "continuation",
+    "session",
 )
 
 
@@ -106,6 +122,7 @@ class RoomKernelStore:
                     int(now_ms),
                 ),
             )
+            self._insert_root_limits(conn, root_id, now_ms=now_ms)
         return self.root(root_id)
 
     def create_task(self, payload: Mapping[str, object], *, now_ms: int) -> dict[str, object]:
@@ -206,6 +223,7 @@ class RoomKernelStore:
                     str(task_payload["state"]), _json(task_payload), int(now_ms),
                 ),
             )
+            self._insert_root_limits(conn, root_id, now_ms=now_ms)
         return {"root": self.root(root_id), "task": self.task(task_id)}
 
     def normalize_legacy_dispatch(
@@ -373,6 +391,12 @@ class RoomKernelStore:
                 str(payload["triggerId"]), str(payload["intentKind"]),
                 str(payload["idempotencyKey"]), _json(payload), int(now_ms), int(now_ms),
             ),
+        )
+        # The reservation row is fenced by a foreign key to the dispatch. Keep
+        # both writes in the same transaction, but create the dispatch first.
+        self._reserve_dispatch_limits(
+            conn, root_id=str(root["root_id"]), dispatch_id=str(payload["dispatchId"]),
+            now_ms=now_ms,
         )
         conn.execute(
             """UPDATE room_kernel_roots
@@ -544,6 +568,28 @@ class RoomKernelStore:
                 receipts.append(self._receipt(conn, root_id=str(lease["root_id"]), command_id=None, receipt_kind="dispatch_unknown", status="unknown", generation=int(lease["generation"]), details={"dispatchId": dispatch_id, "deadLetterId": dead_id}, now_ms=now_ms))
         return receipts
 
+    def cancel_expired_roots(self, *, now_ms: int) -> list[dict[str, object]]:
+        """Turn hard wall-clock deadlines into the same durable cancel path."""
+
+        with self._connect(immediate=True) as conn:
+            root_ids = [
+                str(row[0])
+                for row in conn.execute(
+                    """SELECT limits.root_id FROM room_kernel_root_limits limits
+                       JOIN room_kernel_roots root USING(root_id)
+                       WHERE limits.deadline_at_ms<=?
+                         AND root.state NOT IN ('cancelling','cancelled','completed','failed')""",
+                    (int(now_ms),),
+                )
+            ]
+            return [
+                self._cancel_root(
+                    conn, root_id, command_id=None, now_ms=now_ms,
+                    receipt_kind="root_cancelled",
+                )
+                for root_id in root_ids
+            ]
+
     def lease_cancel(self, *, now_ms: int, ttl_ms: int = 30_000) -> dict[str, object] | None:
         with self._connect(immediate=True) as conn:
             row = conn.execute("""SELECT * FROM room_kernel_cancel_outbox
@@ -566,15 +612,85 @@ class RoomKernelStore:
                 or runtime_receipt.get("sessionId") != row["session_id"]
                 or int(runtime_receipt.get("generation", -1)) != int(row["generation"])):
                 raise RoomKernelFenceError("runtime cancel receipt does not match durable intent")
+            surfaces = runtime_receipt.get("cancellationSurfaces")
+            required_surfaces = {
+                "provider", "tool", "exec", "retry", "compaction",
+                "branch_summary", "timer", "continuation", "session",
+            }
+            if not isinstance(surfaces, Mapping) or set(surfaces) != required_surfaces:
+                raise RoomKernelFenceError("runtime cancel receipt lacks per-surface termination proof")
+            allowed_surface_states = {"requested", "acknowledged", "terminated", "unknown"}
+            typed_surfaces: dict[str, dict[str, object]] = {}
+            for surface, raw_proof in surfaces.items():
+                if not isinstance(raw_proof, Mapping):
+                    raise RoomKernelFenceError("runtime cancel receipt lacks typed surface proof")
+                proof = dict(raw_proof)
+                if (
+                    proof.get("schemaVersion")
+                    != "wisdom-weasel.runtime-surface-termination-receipt.v1"
+                    or proof.get("surface") != surface
+                    or str(proof.get("state")) not in allowed_surface_states
+                    or not isinstance(proof.get("targetIds", []), list)
+                ):
+                    raise RoomKernelFenceError("runtime cancel receipt has invalid surface proof")
+                typed_surfaces[str(surface)] = proof
+            pending_targets = sorted(
+                surface for surface, proof in typed_surfaces.items()
+                if proof["state"] in {"requested", "acknowledged"}
+            )
+            declared_pending = sorted(
+                str(value) for value in runtime_receipt.get("pendingTargets") or []
+                if str(value).strip()
+            )
+            if pending_targets != declared_pending:
+                raise RoomKernelFenceError("runtime cancel pendingTargets mismatch surface proof")
+            for surface, proof in typed_surfaces.items():
+                conn.execute(
+                    """INSERT INTO room_v2_runtime_cancel_surface_receipts(
+                       cancel_id,surface,state,target_ref,detail_json,updated_at_ms)
+                       VALUES (?,?,?,'',?,?)
+                       ON CONFLICT(cancel_id,surface) DO UPDATE SET
+                       state=excluded.state,detail_json=excluded.detail_json,updated_at_ms=excluded.updated_at_ms""",
+                    (cancel_id, surface, str(proof["state"]), _json(proof), int(now_ms)),
+                )
+            if pending_targets:
+                conn.execute(
+                    """UPDATE room_kernel_cancel_outbox SET state='retry_wait',lease_until_ms=0,
+                       available_at_ms=?,runtime_receipt_json=? WHERE cancel_id=?""",
+                    (int(now_ms) + 500, _json(runtime_receipt), cancel_id),
+                )
+                return {
+                    "cancelId": cancel_id,
+                    "state": "pending",
+                    "pendingTargets": pending_targets,
+                    "terminalReceipt": None,
+                }
             conn.execute("UPDATE room_kernel_cancel_outbox SET state='applied',lease_until_ms=0,runtime_receipt_json=? WHERE cancel_id=?", (_json(runtime_receipt), cancel_id))
             conn.execute("UPDATE room_kernel_runtime_effects SET state='cancelled',runtime_receipt_json=?,updated_at_ms=? WHERE dispatch_id=?", (_json(runtime_receipt), int(now_ms), row["dispatch_id"]))
             conn.execute("UPDATE room_kernel_abort_scopes SET state='cancelled',cancel_receipt_json=?,updated_at_ms=? WHERE dispatch_id=?", (_json(runtime_receipt), int(now_ms), row["dispatch_id"]))
             conn.execute("UPDATE room_kernel_dispatches SET state='cancelled',updated_at_ms=? WHERE dispatch_id=? AND state IN ('unknown','leased','running')", (int(now_ms), row["dispatch_id"]))
+            self._settle_dispatch_limits(
+                conn, str(row["dispatch_id"]), usage=None, consumed=False, now_ms=now_ms
+            )
             remaining = int(conn.execute("SELECT COUNT(*) FROM room_kernel_cancel_outbox WHERE root_id=? AND terminalize_root=1 AND state!='applied'", (row["root_id"],)).fetchone()[0])
             terminal = None
             if bool(row["terminalize_root"]) and remaining == 0:
-                terminal = self._terminal_cancel(conn, str(row["root_id"]), now_ms=now_ms)
-            return {"cancelId": cancel_id, "state": "applied", "terminalReceipt": terminal}
+                unknowns = int(conn.execute(
+                    """SELECT COUNT(*) FROM room_v2_runtime_cancel_surface_receipts surface
+                       JOIN room_kernel_cancel_outbox cancel USING(cancel_id)
+                       WHERE cancel.root_id=? AND surface.state='unknown'""",
+                    (row["root_id"],),
+                ).fetchone()[0])
+                terminal = self._terminal_cancel(
+                    conn, str(row["root_id"]), now_ms=now_ms,
+                    cancellation_outcome="cancelled_with_unknowns" if unknowns else "cancelled",
+                )
+            return {
+                "cancelId": cancel_id,
+                "state": "applied",
+                "pendingTargets": [],
+                "terminalReceipt": terminal,
+            }
 
     def fail_cancel(self, cancel_id: str, reason: str, *, now_ms: int) -> None:
         with self._connect(immediate=True) as conn:
@@ -605,10 +721,17 @@ class RoomKernelStore:
             (int(now_ms), dispatch_id),
         )
 
-    def _terminal_cancel(self, conn: sqlite3.Connection, root_id: str, *, now_ms: int) -> dict[str, object]:
+    def _terminal_cancel(
+        self,
+        conn: sqlite3.Connection,
+        root_id: str,
+        *,
+        now_ms: int,
+        cancellation_outcome: str = "cancelled",
+    ) -> dict[str, object]:
         root = self._root_row(conn, root_id)
         receipt = self._receipt(conn, root_id=root_id, command_id=None, receipt_kind="terminal", status="applied",
-            generation=int(root["generation"]), details={"terminalState": "cancelled", "quiescent": True}, now_ms=now_ms)
+            generation=int(root["generation"]), details={"terminalState": cancellation_outcome, "quiescent": True}, now_ms=now_ms)
         conn.execute("UPDATE room_kernel_roots SET state='cancelled',terminal_receipt_id=?,updated_at_ms=? WHERE root_id=?", (receipt["receiptId"], int(now_ms), root_id))
         return receipt
 
@@ -881,6 +1004,7 @@ class RoomKernelStore:
         now_ms: int,
         post_proposal: Mapping[str, object] | None = None,
         invocation_receipt_id: str = "",
+        resource_usage: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         validate_kernel_contract("roomCommit", payload)
         if post_proposal is not None:
@@ -996,6 +1120,10 @@ class RoomKernelStore:
             conn.execute("UPDATE room_kernel_dispatches SET state = 'committed', updated_at_ms = ? WHERE dispatch_id = ?", (int(now_ms), payload["dispatchId"]))
             conn.execute("UPDATE room_kernel_outbox SET state = 'committed', updated_at_ms = ? WHERE dispatch_id = ?", (int(now_ms), payload["dispatchId"]))
             conn.execute("UPDATE room_kernel_leases SET state = 'completed', updated_at_ms = ? WHERE dispatch_id = ? AND state = 'active'", (int(now_ms), payload["dispatchId"]))
+            self._settle_dispatch_limits(
+                conn, str(payload["dispatchId"]), usage=resource_usage,
+                consumed=True, now_ms=now_ms,
+            )
             remaining = max(0, int(root["budget_remaining"]) - int(dispatch["budget_cost"]))
             reserved = max(0, int(root["budget_reserved"]) - int(dispatch["budget_cost"]))
             covered = set(json.loads(str(root["covered_criteria_json"])))
@@ -1174,6 +1302,9 @@ class RoomKernelStore:
                 "UPDATE room_kernel_abort_scopes SET state='cancelled',updated_at_ms=? WHERE dispatch_id=?",
                 (int(now_ms), dispatch_id),
             )
+            self._settle_dispatch_limits(
+                conn, dispatch_id, usage=None, consumed=False, now_ms=now_ms
+            )
         return self._receipt(conn, root_id=root_id, command_id=command_id, receipt_kind="target_cancelled", status="applied" if count else "noop", generation=int(root["generation"]), details={"targetKind": target_kind, "targetId": target_id, "cancelledDispatches": count, "cancelIntents": len(targets)}, now_ms=now_ms)
 
     def _panic(self, conn: sqlite3.Connection, *, room_id: str, command_id: str | None, now_ms: int) -> dict[str, object]:
@@ -1218,6 +1349,9 @@ class RoomKernelStore:
             conn.execute(
                 "UPDATE room_kernel_abort_scopes SET state='cancelled',updated_at_ms=? WHERE dispatch_id=?",
                 (int(now_ms), dispatch_id),
+            )
+            self._settle_dispatch_limits(
+                conn, dispatch_id, usage=None, consumed=False, now_ms=now_ms
             )
         conn.execute("UPDATE room_kernel_tasks SET state='cancelled',updated_at_ms=? WHERE root_id=? AND state NOT IN ('completed','failed','cancelled')", (int(now_ms), root_id))
         state = "cancelling" if targets else "cancelled"
@@ -1323,6 +1457,31 @@ class RoomKernelStore:
             payload = json.loads(str(row["payload_json"]))
             payload.update({"generation": int(row["generation"]), "state": str(row["state"]), "budgetRemaining": int(row["budget_remaining"]), "budgetReserved": int(row["budget_reserved"]), "terminalReceiptId": row["terminal_receipt_id"]})
             return payload
+
+    def cancellation_surface_projection(self, room_id: str) -> list[dict[str, object]]:
+        """Read-only per-surface cancellation evidence for control projections."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT cancel.cancel_id,cancel.root_id,cancel.dispatch_id,
+                          surface.surface,surface.state,surface.target_ref,
+                          surface.detail_json,surface.updated_at_ms
+                   FROM room_v2_runtime_cancel_surface_receipts surface
+                   JOIN room_kernel_cancel_outbox cancel USING(cancel_id)
+                   JOIN room_kernel_roots root ON root.root_id=cancel.root_id
+                   WHERE root.room_id=?
+                   ORDER BY surface.updated_at_ms,cancel.cancel_id,surface.surface""",
+                (room_id,),
+            ).fetchall()
+        return [{
+            "cancelId": str(row["cancel_id"]),
+            "rootId": str(row["root_id"]),
+            "dispatchId": str(row["dispatch_id"]),
+            "surface": str(row["surface"]),
+            "state": str(row["state"]),
+            "targetRef": str(row["target_ref"]),
+            "detail": json.loads(str(row["detail_json"])),
+            "updatedAtMs": int(row["updated_at_ms"]),
+        } for row in rows]
 
     def task(self, task_id: str) -> dict[str, object]:
         with self._connect() as conn:
@@ -1447,6 +1606,149 @@ class RoomKernelStore:
         with self._connect() as conn:
             names = {"commands": "room_kernel_commands", "dispatches": "room_kernel_dispatches", "commits": "room_kernel_commits", "outbox": "room_kernel_outbox", "leases": "room_kernel_leases", "receipts": "room_kernel_receipts", "deadLetters": "room_kernel_dead_letters"}
             return {key: int(conn.execute(f"SELECT COUNT(*) FROM {table} WHERE root_id = ?", (root_id,)).fetchone()[0]) for key, table in names.items()}
+
+    def resource_limits(self, root_id: str) -> dict[str, object]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM room_kernel_root_limits WHERE root_id=?", (root_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(root_id)
+        return {key: row[key] for key in row.keys()}
+
+    @staticmethod
+    def _insert_root_limits(
+        conn: sqlite3.Connection, root_id: str, *, now_ms: int
+    ) -> None:
+        conn.execute(
+            """INSERT INTO room_kernel_root_limits(
+               root_id,deadline_at_ms,input_token_limit,output_token_limit,
+               dispatch_limit,concurrency_limit,tool_call_limit,tool_cost_limit,
+               retry_limit,repair_limit,updated_at_ms)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                root_id, int(now_ms) + SYSTEM_MAX_WALL_CLOCK_MS,
+                SYSTEM_MAX_INPUT_TOKENS, SYSTEM_MAX_OUTPUT_TOKENS,
+                SYSTEM_MAX_DISPATCHES, SYSTEM_MAX_CONCURRENCY,
+                SYSTEM_MAX_TOOL_CALLS, SYSTEM_MAX_TOOL_COST,
+                SYSTEM_MAX_RETRIES, SYSTEM_MAX_REPAIRS, int(now_ms),
+            ),
+        )
+
+    @staticmethod
+    def _reserve_dispatch_limits(
+        conn: sqlite3.Connection, *, root_id: str, dispatch_id: str, now_ms: int
+    ) -> None:
+        limits = conn.execute(
+            "SELECT * FROM room_kernel_root_limits WHERE root_id=?", (root_id,)
+        ).fetchone()
+        if limits is None:
+            raise RoomKernelFenceError("Root resource limits are missing")
+        if int(now_ms) >= int(limits["deadline_at_ms"]):
+            raise RoomKernelFenceError("Root wall-clock deadline exceeded")
+        checks = (
+            ("dispatch", 1, "dispatch_limit", "dispatch_used", "dispatch_reserved"),
+            ("concurrency", 1, "concurrency_limit", None, "concurrency_reserved"),
+            ("input token", DISPATCH_INPUT_TOKEN_RESERVATION, "input_token_limit", "input_token_used", "input_token_reserved"),
+            ("output token", DISPATCH_OUTPUT_TOKEN_RESERVATION, "output_token_limit", "output_token_used", "output_token_reserved"),
+            ("tool call", DISPATCH_TOOL_CALL_RESERVATION, "tool_call_limit", "tool_call_used", "tool_call_reserved"),
+            ("tool cost", DISPATCH_TOOL_COST_RESERVATION, "tool_cost_limit", "tool_cost_used", "tool_cost_reserved"),
+        )
+        for label, requested, limit_key, used_key, reserved_key in checks:
+            used = int(limits[used_key]) if used_key else 0
+            if used + int(limits[reserved_key]) + requested > int(limits[limit_key]):
+                raise RoomKernelFenceError(f"Root {label} limit exhausted")
+        conn.execute(
+            """INSERT INTO room_kernel_dispatch_resource_reservations(
+               dispatch_id,root_id,input_tokens,output_tokens,tool_calls,tool_cost,
+               state,created_at_ms,updated_at_ms)
+               VALUES (?,?,?,?,?,?,'reserved',?,?)""",
+            (
+                dispatch_id, root_id, DISPATCH_INPUT_TOKEN_RESERVATION,
+                DISPATCH_OUTPUT_TOKEN_RESERVATION, DISPATCH_TOOL_CALL_RESERVATION,
+                DISPATCH_TOOL_COST_RESERVATION, int(now_ms), int(now_ms),
+            ),
+        )
+        conn.execute(
+            """UPDATE room_kernel_root_limits SET
+               dispatch_reserved=dispatch_reserved+1,
+               concurrency_reserved=concurrency_reserved+1,
+               input_token_reserved=input_token_reserved+?,
+               output_token_reserved=output_token_reserved+?,
+               tool_call_reserved=tool_call_reserved+?,
+               tool_cost_reserved=tool_cost_reserved+?,updated_at_ms=?
+               WHERE root_id=?""",
+            (
+                DISPATCH_INPUT_TOKEN_RESERVATION, DISPATCH_OUTPUT_TOKEN_RESERVATION,
+                DISPATCH_TOOL_CALL_RESERVATION, DISPATCH_TOOL_COST_RESERVATION,
+                int(now_ms), root_id,
+            ),
+        )
+
+    @staticmethod
+    def _settle_dispatch_limits(
+        conn: sqlite3.Connection,
+        dispatch_id: str,
+        *,
+        usage: Mapping[str, object] | None,
+        consumed: bool,
+        now_ms: int,
+    ) -> None:
+        reservation = conn.execute(
+            """SELECT * FROM room_kernel_dispatch_resource_reservations
+               WHERE dispatch_id=? AND state='reserved'""",
+            (dispatch_id,),
+        ).fetchone()
+        if reservation is None:
+            return
+        actual = {key: max(0, int((usage or {}).get(key, 0))) for key in (
+            "inputTokens", "outputTokens", "toolCalls", "toolCost", "retryCount", "repairCount"
+        )}
+        if not consumed:
+            actual = {key: 0 for key in actual}
+        limits = conn.execute(
+            "SELECT * FROM room_kernel_root_limits WHERE root_id=?", (reservation["root_id"],)
+        ).fetchone()
+        for actual_key, limit_key, used_key, reserved_key, reservation_key in (
+            ("inputTokens", "input_token_limit", "input_token_used", "input_token_reserved", "input_tokens"),
+            ("outputTokens", "output_token_limit", "output_token_used", "output_token_reserved", "output_tokens"),
+            ("toolCalls", "tool_call_limit", "tool_call_used", "tool_call_reserved", "tool_calls"),
+            ("toolCost", "tool_cost_limit", "tool_cost_used", "tool_cost_reserved", "tool_cost"),
+            ("retryCount", "retry_limit", "retry_used", None, None),
+            ("repairCount", "repair_limit", "repair_used", None, None),
+        ):
+            other_reserved = (
+                max(0, int(limits[reserved_key]) - int(reservation[reservation_key]))
+                if reserved_key and reservation_key
+                else 0
+            )
+            if int(limits[used_key]) + other_reserved + actual[actual_key] > int(limits[limit_key]):
+                raise RoomKernelFenceError(f"Root {actual_key} usage exceeds hard limit")
+        conn.execute(
+            """UPDATE room_kernel_root_limits SET
+               input_token_reserved=MAX(0,input_token_reserved-?),
+               output_token_reserved=MAX(0,output_token_reserved-?),
+               tool_call_reserved=MAX(0,tool_call_reserved-?),
+               tool_cost_reserved=MAX(0,tool_cost_reserved-?),
+               dispatch_reserved=MAX(0,dispatch_reserved-1),
+               concurrency_reserved=MAX(0,concurrency_reserved-1),
+               dispatch_used=dispatch_used+?,input_token_used=input_token_used+?,
+               output_token_used=output_token_used+?,tool_call_used=tool_call_used+?,
+               tool_cost_used=tool_cost_used+?,retry_used=retry_used+?,repair_used=repair_used+?,
+               updated_at_ms=? WHERE root_id=?""",
+            (
+                reservation["input_tokens"], reservation["output_tokens"],
+                reservation["tool_calls"], reservation["tool_cost"],
+                1 if consumed else 0, actual["inputTokens"], actual["outputTokens"],
+                actual["toolCalls"], actual["toolCost"], actual["retryCount"],
+                actual["repairCount"], int(now_ms), reservation["root_id"],
+            ),
+        )
+        conn.execute(
+            """UPDATE room_kernel_dispatch_resource_reservations
+               SET state=?,actual_usage_json=?,updated_at_ms=? WHERE dispatch_id=?""",
+            ("consumed" if consumed else "released", _json(actual), int(now_ms), dispatch_id),
+        )
 
     @staticmethod
     def _root_row(conn: sqlite3.Connection, root_id: str) -> sqlite3.Row:

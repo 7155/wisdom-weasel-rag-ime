@@ -61,6 +61,8 @@ const canonicalPathIds = [
   'agent.collaborationProfile.get',
   'agent.collaborationProfile.command',
   'agent.knowledge.search',
+  'agent.governance.read',
+  'agent.knowledgeGovernance.read',
   'agent.knowledge.read',
   'agent.media.list',
   'agent.deep-search',

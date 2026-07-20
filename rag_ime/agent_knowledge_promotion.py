@@ -52,6 +52,91 @@ class KnowledgePromotionStore:
         with self._connect() as conn:
             return apply_database_migrations(conn).current_version
 
+    def governance_snapshot(self) -> dict[str, list[dict[str, object]]]:
+        """Return the sanitized canonical read model; never expose signatures or scans."""
+
+        with self._connect() as conn:
+            candidates = conn.execute("SELECT * FROM room_v2_promotion_candidates ORDER BY created_at_ms DESC").fetchall()
+            receipts = conn.execute("SELECT * FROM room_v2_promotion_receipts ORDER BY created_at_ms DESC").fetchall()
+            claims = conn.execute("SELECT * FROM room_v2_knowledge_claim_versions ORDER BY created_at_ms DESC").fetchall()
+            lifecycle = conn.execute("SELECT * FROM room_v2_knowledge_lifecycle_receipts ORDER BY created_at_ms DESC").fetchall()
+            epochs = conn.execute("SELECT * FROM room_v2_knowledge_epochs ORDER BY scope_key").fetchall()
+            quarantines = conn.execute("SELECT * FROM room_v2_external_import_intakes ORDER BY created_at_ms DESC").fetchall()
+            outbox = conn.execute("SELECT * FROM room_v2_knowledge_index_outbox ORDER BY created_at_ms DESC").fetchall()
+            tombstones = conn.execute("SELECT * FROM room_v2_knowledge_cache_tombstones ORDER BY created_at_ms DESC").fetchall()
+            datasets = conn.execute("SELECT * FROM room_v2_knowledge_eval_fixture_datasets ORDER BY created_at_ms DESC").fetchall()
+            eval_runs = conn.execute("SELECT * FROM room_v2_knowledge_search_use_eval_runs ORDER BY created_at_ms DESC").fetchall()
+        return {
+            "promotionCandidates": [{
+                "promotionCandidateId": str(row["promotion_candidate_id"]),
+                "evidenceKind": str(row["evidence_kind"]), "evidenceRef": str(row["evidence_ref"]),
+                "claimKey": str(row["claim_key"]),
+                **({"claimText": str(row["claim_text"])} if row["visibility"] != "private" else {}),
+                "ownerKind": str(row["owner_kind"]), "ownerId": str(row["owner_id"]),
+                "scopeKind": str(row["scope_kind"]), "scopeId": str(row["scope_id"]),
+                "visibility": str(row["visibility"]), "risk": str(row["risk"]),
+                "candidateHash": str(row["candidate_hash"]),
+                "conflictClaimRefs": json.loads(str(row["conflict_claim_refs_json"])),
+            } for row in candidates],
+            "promotionReceipts": [{
+                "promotionReceiptId": str(row["promotion_receipt_id"]),
+                "promotionCandidateId": str(row["promotion_candidate_id"]),
+                "claimVersionId": str(row["claim_version_id"]), "scopeKey": str(row["scope_key"]),
+                "knowledgeEpoch": int(row["knowledge_epoch"]), "candidateHash": str(row["candidate_hash"]),
+            } for row in receipts],
+            "claims": [{
+                "claimVersionId": str(row["claim_version_id"]), "claimIdentity": str(row["claim_identity"]),
+                "claimKey": str(row["claim_key"]),
+                **({"claimText": str(row["claim_text"])} if row["visibility"] != "private" else {}),
+                "claimHash": str(row["claim_hash"]), "ownerKind": str(row["owner_kind"]),
+                "ownerId": str(row["owner_id"]), "scopeKind": str(row["scope_kind"]),
+                "scopeId": str(row["scope_id"]), "visibility": str(row["visibility"]),
+                "provenance": json.loads(str(row["provenance_json"])),
+                "contradictionRefs": json.loads(str(row["contradiction_refs_json"])),
+            } for row in claims],
+            "conflicts": [{
+                "promotionCandidateId": str(row["promotion_candidate_id"]),
+                "state": str(row["conflict_status"]),
+                "claimRefs": json.loads(str(row["conflict_claim_refs_json"])),
+            } for row in candidates if str(row["conflict_status"]) != "clear"],
+            "lifecycleReceipts": [{
+                "lifecycleReceiptId": str(row["lifecycle_receipt_id"]),
+                "claimIdentity": str(row["claim_identity"]), "operation": str(row["operation"]),
+                "knowledgeEpoch": int(row["knowledge_epoch"]), "scopeKey": str(row["scope_key"]),
+            } for row in lifecycle],
+            "epochs": [{"scopeKey": str(row["scope_key"]), "knowledgeEpoch": int(row["knowledge_epoch"])} for row in epochs],
+            "quarantines": [{
+                "importId": str(row["import_id"]), "sourceName": str(row["source_name"]),
+                "status": str(row["scan_status"]), "contentHash": str(row["content_hash"]),
+                "findingCount": len(json.loads(str(row["finding_codes_json"]))),
+            } for row in quarantines],
+            "outbox": [{
+                "outboxId": str(row["outbox_id"]), "claimVersionId": str(row["claim_version_id"]),
+                "operation": str(row["operation"]), "state": str(row["state"]),
+                "attemptCount": int(row["attempt_count"]), "lastError": str(row["last_error"]),
+            } for row in outbox],
+            "tombstones": [{
+                "tombstoneId": str(row["tombstone_id"]), "scopeKey": str(row["scope_key"]),
+                "knowledgeEpoch": int(row["knowledge_epoch"]), "sessionId": str(row["session_id"] or ""),
+                "reason": str(row["reason"]),
+            } for row in tombstones],
+            "evalDatasets": [{
+                "datasetId": str(row["dataset_id"]), "datasetVersion": int(row["dataset_version"]),
+                "thresholds": json.loads(str(row["thresholds_json"])), "contentHash": str(row["content_hash"]),
+                "expiresAtMs": int(row["expires_at_ms"]),
+            } for row in datasets],
+            "searchUseEvalRuns": [{
+                "schemaVersion": "wisdom-weasel.knowledge-search-use-eval-run.v1",
+                "evalRunId": str(row["eval_run_id"]), "datasetId": str(row["dataset_id"]),
+                "datasetContentHash": str(row["dataset_content_hash"]), "roomBindingId": str(row["room_binding_id"]),
+                "traceCount": int(row["trace_count"]), "metrics": json.loads(str(row["metrics_json"])),
+                "strataMetrics": json.loads(str(row["strata_metrics_json"])), "status": str(row["status"]),
+                "failureReasons": json.loads(str(row["failure_reasons_json"])), "reportOnly": True,
+                "evaluatorId": str(row["evaluator_id"]), "contentHash": str(row["content_hash"]),
+                "evaluatorSignature": "redacted", "createdAtMs": int(row["created_at_ms"]),
+            } for row in eval_runs],
+        }
+
     def scan_external_before_copy(self, *, import_id: str, source_name: str, raw_bytes: bytes, created_at_ms: int) -> dict[str, object]:
         """Scan caller bytes before any managed copy, parse, chunk, embedding, or raw DB write."""
         findings = _scan(raw_bytes.decode("utf-8", errors="replace")); status = "quarantined" if findings else "allowed"

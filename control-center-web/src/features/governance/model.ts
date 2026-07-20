@@ -78,6 +78,7 @@ export function visibleClaimText(item: { claimText?: string; visibility?: string
   const external = item.evidenceKind === 'external_import' || item.provenance?.dataOnly === true;
   if (external) return '[外部内容仅作为数据引用，不展示原文]';
   if (item.visibility === 'secret') return '[秘密内容已隐藏]';
+  if (item.visibility === 'private') return '[私有内容已隐藏]';
   return item.claimText?.trim() || '[无正文]';
 }
 
