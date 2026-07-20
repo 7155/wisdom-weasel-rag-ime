@@ -10,6 +10,7 @@ export type RouteId =
   | 'planning'
   | 'memory'
   | 'knowledge'
+  | 'governance'
   | 'history'
   | 'observability'
   | 'context-debug'
@@ -36,6 +37,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
   { id: 'voice', path: '/voice', label: '语音', shortLabel: '语音', group: 'work' },
   { id: 'memory', path: '/memory', label: '记忆', shortLabel: '记忆', group: 'knowledge' },
   { id: 'knowledge', path: '/knowledge', label: '知识库', shortLabel: '知识', group: 'knowledge' },
+  { id: 'governance', path: '/governance', label: '治理中心', shortLabel: '治理', group: 'knowledge' },
   { id: 'history', path: '/history', label: '历史', shortLabel: '历史', group: 'knowledge' },
   { id: 'observability', path: '/observability', label: '运行观察', shortLabel: '观察', group: 'system' },
   { id: 'context-debug', path: '/context-debug', label: '上下文 Debug', shortLabel: 'Debug', group: 'system' },

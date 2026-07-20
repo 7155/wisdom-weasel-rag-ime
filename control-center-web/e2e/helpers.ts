@@ -11,6 +11,7 @@ export const routes = [
   { id: 'planning', label: '规划' },
   { id: 'memory', label: '记忆' },
   { id: 'knowledge', label: '知识库' },
+  { id: 'governance', label: '治理中心' },
   { id: 'history', label: '历史' },
   { id: 'observability', label: '运行观察' },
   { id: 'diagnostics', label: '诊断' },
