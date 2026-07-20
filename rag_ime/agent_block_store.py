@@ -165,11 +165,14 @@ class AgentBlockStore:
     ) -> list[dict[str, object]]:
         """Hydrate runtime history and recover rich messages omitted after compaction/restart."""
 
-        runtime_by_id = {
-            str(message.get("id") or ""): dict(message)
-            for message in runtime_messages
-            if str(message.get("id") or "")
-        }
+        runtime_order: list[str] = []
+        runtime_by_id: dict[str, dict[str, object]] = {}
+        for message in runtime_messages:
+            message_id = str(message.get("id") or "")
+            if not message_id or message_id in runtime_by_id:
+                continue
+            runtime_order.append(message_id)
+            runtime_by_id[message_id] = dict(message)
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -183,6 +186,7 @@ class AgentBlockStore:
                 """,
                 (session_id, session_id),
             ).fetchall()
+        missing_envelopes: list[tuple[int, str, dict[str, object]]] = []
         for row in rows:
             message_id = str(row["message_id"])
             base = runtime_by_id.get(message_id)
@@ -203,13 +207,27 @@ class AgentBlockStore:
                 ),
             ]
             runtime_by_id[message_id] = base
-        return sorted(
-            runtime_by_id.values(),
-            key=lambda message: (
-                max(0, int(message.get("createdAtMs") or 0)),
-                str(message.get("id") or ""),
-            ),
-        )
+            if message_id not in runtime_order:
+                missing_envelopes.append((int(row["created_at_ms"]), message_id, base))
+
+        # Pi's runtime snapshot owns message/parent order. Timestamps can drift
+        # across processes, so they are used only to place persisted envelopes
+        # that the runtime omitted after compaction or restart.
+        hydrated = [runtime_by_id[message_id] for message_id in runtime_order]
+        for persisted_at_ms, _message_id, envelope in missing_envelopes:
+            insert_at = len(hydrated)
+            for index, runtime_message in enumerate(hydrated):
+                runtime_id = str(runtime_message.get("id") or "")
+                if runtime_id not in runtime_order:
+                    continue
+                runtime_created_at_ms = max(
+                    0, int(runtime_message.get("createdAtMs") or 0)
+                )
+                if persisted_at_ms <= runtime_created_at_ms:
+                    insert_at = index
+                    break
+            hydrated.insert(insert_at, envelope)
+        return hydrated
 
     def cancel_generation(self, root_id: str, generation: int, *, now_ms: int | None = None) -> int:
         with self._connect(immediate=True) as conn:

@@ -358,7 +358,7 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
 
         self.assertEqual(input_after, input_before)
         self.assertTrue(report["verification"]["ok"])
-        self.assertEqual(report["migration"]["currentVersion"], 92)
+        self.assertEqual(report["migration"]["currentVersion"], 94)
         self.assertEqual(report["legacyItems"]["promoted"], 1)
         self.assertEqual(report["legacyItems"]["quarantined"], 1)
         self.assertFalse(report["verification"]["vectorGateRequired"])
@@ -459,7 +459,7 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
             current = int(conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0])
         with closing(sqlite3.connect(rollback)) as conn:
             previous = int(conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0])
-        self.assertEqual(current, 92)
+        self.assertEqual(current, 93)
         self.assertEqual(previous, 58)
 
     def test_copy_cli_accepts_sidecars_materialized_by_read_only_wal_backup(self) -> None:

@@ -27,7 +27,12 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self.db_path = Path(self.tmp.name) / "tools.sqlite3"
         self.sessions = AgentSessionStore(self.db_path)
         self.sessions.initialize()
-        self.session = self.sessions.create(title="governed tools", created_at_ms=1)
+        self.session = self.sessions.create(
+            title="governed tools",
+            role_id="zhiyou-v1",
+            role_version="1",
+            created_at_ms=1,
+        )
         self.role_books = AgentRoleBookStore(self.db_path)
         self.role_books.initialize()
         self.seed = self.role_books.ensure_seeded(

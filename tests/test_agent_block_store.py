@@ -121,6 +121,35 @@ class AgentBlockStoreTest(unittest.TestCase):
         merged = self.store.hydrate_messages("session:1", [newer])
         self.assertEqual([item["id"] for item in merged], ["message:1", "message:2"])
 
+    def test_hydration_preserves_runtime_order_when_timestamps_are_reversed_or_equal(self) -> None:
+        first = {
+            **self.message(),
+            "id": "runtime:first",
+            "blocks": [],
+            "createdAtMs": 200,
+        }
+        second = {
+            **self.message(),
+            "id": "runtime:second",
+            "blocks": [],
+            "createdAtMs": 100,
+        }
+        third = {
+            **self.message(),
+            "id": "runtime:third",
+            "blocks": [],
+            "createdAtMs": 100,
+        }
+
+        hydrated = self.store.hydrate_messages(
+            "session:1", [first, second, third]
+        )
+
+        self.assertEqual(
+            [message["id"] for message in hydrated],
+            ["runtime:first", "runtime:second", "runtime:third"],
+        )
+
     def test_exact_replay_does_not_double_count_root_budget(self) -> None:
         message = self.message()
         first = self.store.persist_message(

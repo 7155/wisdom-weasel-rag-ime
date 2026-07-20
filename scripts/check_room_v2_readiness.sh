@@ -21,4 +21,4 @@ uv run python -m unittest \
   tests.test_agent_room_capabilities.RoomCapabilityManifestTests.test_legacy_and_canonical_entry_share_one_authorization_receipt
 node scripts/generate_control_center_contracts.mjs --check
 
-printf '%s\n' "Room V2 readiness gate passed: commits, 65->92 migration, 135 contracts, capability receipts, default-off rollback, and no-binding smoke."
+printf '%s\n' "Room V2 readiness gate passed: commits, 65->94 migration, 136 contracts, capability receipts, default-off rollback, and no-binding smoke."

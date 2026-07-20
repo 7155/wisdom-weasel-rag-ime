@@ -23,7 +23,7 @@ class RuntimeHostKillGateTests(unittest.TestCase):
             signal_tree=self.signals.append,
             identity_probe=lambda pid: self.observed.get(pid),
         )
-        self.assertEqual(self.gate.initialize(), 92)
+        self.assertEqual(self.gate.initialize(), 94)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
