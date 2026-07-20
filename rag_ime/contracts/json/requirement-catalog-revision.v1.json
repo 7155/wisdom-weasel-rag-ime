@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "wisdom-weasel.requirement-catalog-revision.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "catalogRevisionId", "rootId", "revision", "supersedesRevisionId", "anchorRefs", "items", "acceptanceCriteria", "changeReason", "provenance", "payloadHash", "createdBy", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.requirement-catalog-revision.v1"},
+    "catalogRevisionId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 1},
+    "supersedesRevisionId": {"type": ["string", "null"]},
+    "anchorRefs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "items": {"type": "array", "items": {"type": "object"}},
+    "acceptanceCriteria": {"type": "array", "items": {"type": "object"}},
+    "changeReason": {"type": "string", "minLength": 1},
+    "provenance": {"type": "object"},
+    "payloadHash": {"type": "string", "minLength": 64, "maxLength": 64},
+    "createdBy": {"type": "string", "minLength": 1},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}
