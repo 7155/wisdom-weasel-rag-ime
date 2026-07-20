@@ -25,9 +25,12 @@ POINTER_NAME = "current.json"
 _MANIFEST_CONTRACT = "pi-runtime-manifest.v1.json"
 _VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 _TOOL_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_RUNTIME_METHOD_PATTERN = re.compile(r"^[a-z][a-z0-9_.]{0,63}$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_GIT_COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _MAX_JSON_BYTES = 2 * 1024 * 1024
 _MAX_RUNTIME_FILES = 100_000
+REQUIRED_ROOM_RUNTIME_METHODS = ("room.dispatch", "room.cancel")
 
 
 class ManagedPiRuntimeError(RuntimeError):
@@ -46,6 +49,7 @@ class ManagedPiRuntimeInstallation:
     tools: tuple[str, ...]
     manifest_sha256: str
     protocol_version: str = "1"
+    runtime_methods: tuple[str, ...] = ()
 
 
 def discover_managed_pi_runtime(
@@ -171,6 +175,9 @@ def build_managed_pi_runtime_manifest(
     source_commit: str,
     source_package: str,
     protocol_version: str = "1",
+    runtime_methods: tuple[str, ...] = (),
+    source_contract_sha256: str = "",
+    handlers_commit: str = "",
 ) -> dict[str, object]:
     root = Path(payload_dir).expanduser().resolve(strict=True)
     if not root.is_dir() or root.is_symlink():
@@ -211,11 +218,27 @@ def build_managed_pi_runtime_manifest(
     missing = [path.as_posix() for path in critical if path.as_posix() not in file_paths]
     if missing:
         raise ManagedPiRuntimeError(f"managed Pi payload is missing critical files: {', '.join(missing)}")
+    normalized_protocol = _protocol_version(protocol_version)
+    normalized_runtime_methods = _runtime_methods(runtime_methods, normalized_protocol)
+    source: dict[str, object] = {
+        "repository": str(source_repository).strip(),
+        "commit": str(source_commit).strip(),
+        "package": str(source_package).strip(),
+    }
+    if normalized_protocol == "2":
+        source["sourceContractSha256"] = _sha256_text(
+            source_contract_sha256, label="runtime source contract digest"
+        )
+        normalized_handlers_commit = str(handlers_commit or "").strip().lower()
+        if not _GIT_COMMIT_PATTERN.fullmatch(normalized_handlers_commit):
+            raise ManagedPiRuntimeError("managed Pi Room handlers commit is invalid")
+        source["handlersCommit"] = normalized_handlers_commit
     manifest: dict[str, object] = {
         "schemaVersion": MANIFEST_SCHEMA_VERSION,
         "runtimeVersion": version,
         "piVersion": str(pi_version).strip(),
-        "runtimeProtocolVersion": _protocol_version(protocol_version),
+        "runtimeProtocolVersion": normalized_protocol,
+        "runtimeMethods": list(normalized_runtime_methods),
         "platform": _current_platform(),
         "architecture": _current_architecture(),
         "launchKind": launch_kind,
@@ -224,11 +247,7 @@ def build_managed_pi_runtime_manifest(
         "extensionEntrypoint": critical[1].as_posix(),
         "tools": list(normalized_tools),
         "createdAtMs": int(time.time() * 1000),
-        "source": {
-            "repository": str(source_repository).strip(),
-            "commit": str(source_commit).strip(),
-            "package": str(source_package).strip(),
-        },
+        "source": source,
         "files": files,
     }
     _validate_manifest(manifest)
@@ -343,6 +362,10 @@ def _load_installation(
         tools=_validate_tools(manifest.get("tools")),
         manifest_sha256=actual_manifest_sha256,
         protocol_version=_protocol_version(manifest.get("runtimeProtocolVersion") or "1"),
+        runtime_methods=_runtime_methods(
+            manifest.get("runtimeMethods"),
+            _protocol_version(manifest.get("runtimeProtocolVersion") or "1"),
+        ),
     )
 
 
@@ -355,12 +378,20 @@ def _validate_manifest(manifest: Mapping[str, object]) -> None:
     if not str(manifest.get("piVersion") or "").strip():
         raise ManagedPiRuntimeError("managed Pi manifest piVersion is empty")
     _validate_tools(manifest.get("tools"))
-    _protocol_version(manifest.get("runtimeProtocolVersion") or "1")
+    protocol_version = _protocol_version(manifest.get("runtimeProtocolVersion") or "1")
+    _runtime_methods(manifest.get("runtimeMethods"), protocol_version)
     source = manifest.get("source")
     if not isinstance(source, Mapping) or any(
         not str(source.get(key) or "").strip() for key in ("repository", "commit", "package")
     ):
         raise ManagedPiRuntimeError("managed Pi manifest source provenance is incomplete")
+    if protocol_version == "2":
+        _sha256_text(
+            source.get("sourceContractSha256"), label="runtime source contract digest"
+        )
+        handlers_commit = str(source.get("handlersCommit") or "").strip().lower()
+        if not _GIT_COMMIT_PATTERN.fullmatch(handlers_commit):
+            raise ManagedPiRuntimeError("managed Pi Room handlers commit is invalid")
     items = _manifest_file_items(manifest)
     if not items:
         raise ManagedPiRuntimeError("managed Pi manifest does not list files")
@@ -379,6 +410,21 @@ def _protocol_version(value: object) -> str:
     if normalized not in {"1", "2"}:
         raise ManagedPiRuntimeError("managed Pi runtimeProtocolVersion must be 1 or 2")
     return normalized
+
+
+def _runtime_methods(value: object, protocol_version: str) -> tuple[str, ...]:
+    if value is None and protocol_version == "1":
+        return ()
+    if not isinstance(value, (list, tuple)) or len(value) > 32:
+        raise ManagedPiRuntimeError("managed Pi runtime method list is invalid")
+    methods = tuple(str(item or "").strip() for item in value)
+    if len(set(methods)) != len(methods) or any(
+        not _RUNTIME_METHOD_PATTERN.fullmatch(method) for method in methods
+    ):
+        raise ManagedPiRuntimeError("managed Pi runtime method list is invalid")
+    if protocol_version == "2" and not set(REQUIRED_ROOM_RUNTIME_METHODS).issubset(methods):
+        raise ManagedPiRuntimeError("managed Pi protocol v2 omits required Room runtime methods")
+    return methods
 
 
 def _manifest_file_items(manifest: Mapping[str, object]) -> list[Mapping[str, object]]:

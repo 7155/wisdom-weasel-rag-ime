@@ -1,19 +1,92 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.build_managed_pi_runtime_v2 import (
     ROOT,
     _copy_product_skills,
     _default_pi_worktree,
     _runtime_host_banner,
+    _verified_room_runtime_contract,
 )
 
 
 class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
+    def test_room_runtime_source_contract_pins_and_verifies_both_host_handlers(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-room-host-contract-") as temporary:
+            root = Path(temporary)
+            protocol = root / "packages" / "rag-ime-runtime-host" / "src" / "protocol.ts"
+            runtime_host = protocol.parent / "runtime-host.ts"
+            protocol.parent.mkdir(parents=True)
+            protocol.write_text(
+                'export type RuntimeMethod = | "room.dispatch" | "room.cancel";\n',
+                encoding="utf-8",
+            )
+            runtime_host.write_text(
+                'switch (method) { case "room.dispatch": break; case "room.cancel": break; }\n',
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Room Test",
+                    "-c",
+                    "user.email=room@example.invalid",
+                    "commit",
+                    "-qm",
+                    "room handlers",
+                ],
+                cwd=root,
+                check=True,
+            )
+            commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout.strip()
+            contract_path = root / "room-runtime-host-contract.json"
+            adapter_path = root / "room-runtime-host.ts"
+            contract_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.pi-room-runtime-host-contract.v1",
+                        "sourceRepository": "https://github.com/earendil-works/pi.git",
+                        "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
+                        "protocolVersion": "2",
+                        "minimumHandlersCommit": commit,
+                        "requiredMethods": ["room.dispatch", "room.cancel"],
+                        "handlerSources": {
+                            "protocol": protocol.relative_to(root).as_posix(),
+                            "runtimeHost": runtime_host.relative_to(root).as_posix(),
+                        },
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+            adapter_path.write_text(
+                'export const methods = ["room.dispatch", "room.cancel"] as const;\n',
+                encoding="utf-8",
+            )
+            with (
+                patch("scripts.build_managed_pi_runtime_v2.ROOM_RUNTIME_CONTRACT", contract_path),
+                patch("scripts.build_managed_pi_runtime_v2.ROOM_RUNTIME_ADAPTER", adapter_path),
+            ):
+                contract, digest = _verified_room_runtime_contract(root)
+
+        self.assertEqual(contract["minimumHandlersCommit"], commit)
+        self.assertEqual(len(digest), 64)
+
     def test_default_pi_worktree_prefers_canonical_main_checkout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-pi-worktree-") as temporary:
             workspace = Path(temporary)
@@ -35,6 +108,8 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn('product_commit.encode("ascii")', script)
         self.assertIn('"productCommit": product_commit', script)
         self.assertIn('manifest["createdAtMs"] = product_commit_ms', script)
+        self.assertIn("_verified_room_runtime_contract", script)
+        self.assertIn("source_contract_sha256=room_runtime_contract_sha256", script)
 
     def test_input_method_project_owns_all_managed_skills(self) -> None:
         skills_root = ROOT / "integrations" / "pi" / "skills"

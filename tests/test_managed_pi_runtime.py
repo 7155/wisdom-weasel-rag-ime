@@ -119,7 +119,15 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             config = PiRuntimeConfig.from_environment()
 
         self.assertEqual(discovered.protocol_version, "2")
+        self.assertEqual(discovered.runtime_methods, ("room.dispatch", "room.cancel"))
         self.assertEqual(config.protocol_version, "2")
+
+    def test_protocol_v2_manifest_without_complete_room_methods_fails_closed(self) -> None:
+        payload, manifest = self._payload("runtime-v2-incomplete", protocol_version="2")
+        manifest["runtimeMethods"] = ["room.dispatch"]
+
+        with self.assertRaisesRegex(ManagedPiRuntimeError, "omits required Room runtime methods"):
+            write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
 
     def test_pi_runtime_config_discovers_managed_install_without_path_fallback(self) -> None:
         payload, _ = self._payload("runtime-1")
@@ -215,6 +223,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         node.chmod(0o755)
         executable.write_text(f"console.log('{runtime_version}')\n", encoding="utf-8")
         extension.write_text("export default function () {}\n", encoding="utf-8")
+        protocol_v2 = protocol_version == "2"
         manifest = build_managed_pi_runtime_manifest(
             payload,
             runtime_version=runtime_version,
@@ -227,6 +236,9 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             source_commit=hashlib.sha256(runtime_version.encode("utf-8")).hexdigest()[:12],
             source_package="@earendil-works/pi-coding-agent",
             protocol_version=protocol_version,
+            runtime_methods=("room.dispatch", "room.cancel") if protocol_v2 else (),
+            source_contract_sha256="a" * 64 if protocol_v2 else "",
+            handlers_commit="b" * 40 if protocol_v2 else "",
         )
         write_managed_pi_runtime_manifest(payload / MANIFEST_NAME, manifest)
         return payload, manifest
