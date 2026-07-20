@@ -189,10 +189,10 @@ describe('Agent chat rendering', () => {
     const blocks: UiAgentBlock[] = [
       { id: 'card', type: 'card', status: 'completed', presentationKind: 'card.v1', data: { title: '发布检查', tone: 'success', bodyMarkdown: '[安全链接](https://example.com) <img src=x onerror=alert(1)> [危险](javascript:alert(1))', fields: [{ label: '测试', value: '通过' }] } },
       { id: 'checklist', type: 'checklist', status: 'completed', presentationKind: 'checklist.v1', data: { title: '验收项', items: [{ id: 'one', text: '类型检查', checked: true }, { id: 'two', text: '移动端检查' }] } },
-      { id: 'table', type: 'table', status: 'completed', presentationKind: 'table.v1', data: { title: '结果表', columns: [{ key: 'item', label: '项目' }, { key: 'state', label: '状态' }], rows: [{ item: 'Room Post', state: '通过' }] } },
-      { id: 'artifact', type: 'artifact', status: 'completed', presentationKind: 'artifact.v1', data: { title: '审计报告', summary: '已持久化', receiptUrl: 'javascript:alert(1)' } },
-      { id: 'reference', type: 'reference', status: 'completed', presentationKind: 'reference.v1', data: { title: '需求原文', href: 'javascript:alert(1)', excerpt: '原始需求保持不变' } },
-      { id: 'status', type: 'status', status: 'completed', presentationKind: 'status.v1', data: { title: 'Runtime', state: 'completed', detail: '全部收束' } },
+      { id: 'table', type: 'table', status: 'completed', presentationKind: 'table.v1', data: { title: '结果表', columns: ['项目', '状态'], rows: [['Room Post', '通过']] } },
+      { id: 'artifact', type: 'artifact', status: 'completed', presentationKind: 'artifact.v1', data: { title: '审计报告', summary: '已持久化', url: 'javascript:alert(1)' } },
+      { id: 'reference', type: 'reference', status: 'completed', presentationKind: 'reference.v1', data: { title: '需求原文', url: 'javascript:alert(1)', excerpt: '原始需求保持不变' } },
+      { id: 'status', type: 'status', status: 'completed', presentationKind: 'status.v1', data: { title: 'Runtime', state: 'completed', summary: '全部收束' } },
     ];
 
     const { container } = render(<TooltipProvider><AgentBlocks blocks={blocks} /></TooltipProvider>);
@@ -213,8 +213,8 @@ describe('Agent chat rendering', () => {
     const partial = '{"type":"card","data":{"title":"还没结束"';
     const blocks: UiAgentBlock[] = [
       { id: 'stream', type: 'text', status: 'running', presentationKind: 'markdown', data: { text: partial } },
-      { id: 'large-code', type: 'code', status: 'completed', presentationKind: 'code.v1', data: { fileName: 'worker.log', language: 'text', code: Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n') } },
-      { id: 'future', type: 'unknown', rawType: 'timeline_chart', status: 'completed', presentationKind: 'timeline.v2', data: { title: '未来时间线' } },
+      { id: 'large-code', type: 'code', status: 'completed', presentationKind: 'code', data: { fileName: 'worker.log', language: 'text', code: Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n') } },
+      { id: 'future', type: 'unknown', rawType: 'timeline_chart', status: 'completed', presentationKind: 'timeline.v2', summary: '未来时间线', data: { title: '不应从任意 data 展示' } },
     ];
 
     const { container } = render(<TooltipProvider><AgentBlocks blocks={blocks} streaming /></TooltipProvider>);

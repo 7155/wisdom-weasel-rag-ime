@@ -827,8 +827,9 @@ describe('Rooms experience', () => {
         blocks: [
           { id: 'reasoning', type: 'reasoning_summary', status: 'completed', presentationKind: 'reasoning_summary', data: { text: '秘密思考摘要' } },
           { id: 'text', type: 'text', status: 'completed', presentationKind: 'markdown', data: { text: '公开回答' } },
-          { id: 'status', type: 'status', status: 'completed', presentationKind: 'status.v1', data: { title: '交付状态', state: 'completed', detail: '已通过刷新恢复' } },
-          { id: 'checklist', type: 'checklist', status: 'completed', presentationKind: 'checklist.v1', data: { title: '公开验收', items: [{ id: 'room-post', text: 'Room Post 可重渲染', checked: true }] } },
+          { id: 'status', type: 'status', status: 'completed', presentationKind: 'status.v1', visibility: 'room_post', data: { title: '交付状态', state: 'completed', summary: '已通过刷新恢复' } },
+          { id: 'checklist', type: 'checklist', status: 'completed', presentationKind: 'checklist.v1', visibility: 'room_post', data: { title: '公开验收', items: [{ id: 'room-post', text: 'Room Post 可重渲染', checked: true }] } },
+          { id: 'private-card', type: 'card', status: 'completed', presentationKind: 'card.v1', visibility: 'private_session', data: { title: '私有 Session 中间稿', bodyMarkdown: '不应进入 Posts' } },
         ],
       },
     };
@@ -852,6 +853,8 @@ describe('Rooms experience', () => {
     expect(screen.getByText('公开回答')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: '交付状态' })).toHaveTextContent('已通过刷新恢复');
     expect(screen.getByText('Room Post 可重渲染')).toBeInTheDocument();
+    expect(container).not.toHaveTextContent('私有 Session 中间稿');
+    expect(container).not.toHaveTextContent('不应进入 Posts');
     expect(container.querySelector('.room-group-activity')).not.toBeInTheDocument();
     expect(container).not.toHaveTextContent('秘密思考摘要');
     expect(container).not.toHaveTextContent('participant_activity');

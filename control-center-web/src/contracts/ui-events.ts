@@ -127,13 +127,15 @@ interface UiAgentBlockDataByType {
     byteSize?: unknown;
     receiptUrl?: unknown;
     href?: unknown;
+    url?: unknown;
     summary?: unknown;
   };
   reference: { title?: unknown; label?: unknown; href?: unknown; url?: unknown; source?: unknown; excerpt?: unknown };
-  status: { title?: unknown; state?: unknown; detail?: unknown; fields?: unknown };
+  status: { title?: unknown; label?: unknown; state?: unknown; detail?: unknown; summary?: unknown; fields?: unknown };
 }
 
 type UiAgentBlockForType<T extends KnownAgentBlockType> = {
+  schemaVersion?: 'rag-ime.agent-block.v1';
   id: string;
   type: T;
   status: AgentMessageV1['blocks'][number]['status'];
@@ -142,6 +144,12 @@ type UiAgentBlockForType<T extends KnownAgentBlockType> = {
     ? UiAgentBlockDataByType[T] & Record<string, unknown>
     : Record<string, unknown>;
   rawType?: string;
+  summary?: string;
+  source?: { kind: string; ref: string };
+  visibility?: 'private_session' | 'room_post' | 'root_post';
+  digest?: string;
+  ref?: string;
+  generation?: number;
 };
 
 export type UiAgentBlock = {
@@ -263,12 +271,26 @@ export function normalizeAgentMessage(value: Record<string, unknown>): UiAgentMe
 function normalizeAgentBlock(value: Record<string, unknown>): UiAgentBlock {
   const rawType = String(value.type ?? 'unknown');
   const known = agentBlockTypeSet.has(rawType);
+  const source = value.source && typeof value.source === 'object' && !Array.isArray(value.source)
+    ? value.source as Record<string, unknown>
+    : undefined;
   return {
+    ...(value.schemaVersion === 'rag-ime.agent-block.v1' ? { schemaVersion: value.schemaVersion } : {}),
     id: String(value.id),
     type: known ? (rawType as KnownAgentBlockType) : 'unknown',
     status: value.status as AgentMessageV1['blocks'][number]['status'],
     presentationKind: String(value.presentationKind),
     data: value.data as Record<string, unknown>,
     ...(known ? {} : { rawType }),
+    ...(typeof value.summary === 'string' ? { summary: value.summary } : {}),
+    ...(source && typeof source.kind === 'string' && typeof source.ref === 'string'
+      ? { source: { kind: source.kind, ref: source.ref } }
+      : {}),
+    ...(['private_session', 'room_post', 'root_post'].includes(String(value.visibility))
+      ? { visibility: value.visibility as 'private_session' | 'room_post' | 'root_post' }
+      : {}),
+    ...(typeof value.digest === 'string' ? { digest: value.digest } : {}),
+    ...(typeof value.ref === 'string' ? { ref: value.ref } : {}),
+    ...(typeof value.generation === 'number' && Number.isInteger(value.generation) ? { generation: value.generation } : {}),
   } as UiAgentBlock;
 }

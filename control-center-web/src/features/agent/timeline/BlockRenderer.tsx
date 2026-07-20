@@ -285,7 +285,7 @@ function isSafeMarkdownFragmentStart(
 
 function UnknownBlock({ block }: { block: UiAgentBlock }) {
   const label = text(block.rawType) || text(block.presentationKind) || 'unknown';
-  const summary = text(block.data.summary ?? block.data.title ?? block.data.label);
+  const summary = text(block.summary);
   return (
     <details className="agent-unknown-block">
       <summary>暂不支持的内容 · {label}</summary>
@@ -346,7 +346,7 @@ function TableBlock({ data }: { data: Record<string, unknown> }) {
 }
 
 function ArtifactBlock({ data }: { data: Record<string, unknown> }) {
-  const href = safeMediaSource(text(data.receiptUrl ?? data.href), 'file');
+  const href = safeArtifactLink(text(data.receiptUrl ?? data.href ?? data.url));
   const name = text(data.title ?? data.name ?? data.fileName) || '任务产物';
   return (
     <section className="agent-rich-artifact" aria-label={name}>
@@ -365,7 +365,7 @@ function StatusBlock({ data }: { data: Record<string, unknown> }) {
   return (
     <section className="agent-rich-status" data-tone={tone} aria-label={title}>
       <Activity size={17} />
-      <span><strong>{title}</strong><small>{text(data.detail) || publicStructuredValue(state)}</small></span>
+      <span><strong>{title}</strong><small>{text(data.detail ?? data.summary ?? data.label) || publicStructuredValue(state)}</small></span>
       {fields.length ? <dl>{fields.map((field, index) => <div key={`${field.label}:${index}`}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl> : null}
     </section>
   );
@@ -727,6 +727,13 @@ function safeMediaSource(value: string, kind: 'image' | 'audio' | 'file'): strin
   if (value.startsWith('/companions/') && kind === 'image') return value;
   if (value.startsWith('/api/agent/') || value.startsWith('/media/') || value.startsWith('blob:')) return value;
   return null;
+}
+
+function safeArtifactLink(value: string): string | null {
+  const managed = safeMediaSource(value, 'file');
+  if (managed) return managed;
+  const external = safeLink(value);
+  return external?.startsWith('https://') ? external : null;
 }
 
 function fileMeta(data: Record<string, unknown>): string {
