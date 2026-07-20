@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -121,6 +122,38 @@ class RoomPromptPlanTests(unittest.TestCase):
         self.assertEqual(after["receipt"]["plan"]["contextEpoch"], 2)
         self.assertEqual(after["receipt"]["plan"]["dynamicTailRefs"], [recovery])
         self.assertIn("需求锚点", after["dynamicTailBytes"].decode("utf-8"))
+
+    def test_provider_payload_hides_context_diagnostics_but_ledger_keeps_them(self) -> None:
+        audit_content = json.dumps(
+            {
+                "objective": "验证 Room 取消传播",
+                "relevance": 0.97,
+                "scoreBreakdown": {"vector": 0.8},
+                "rank": 1,
+                "internalId": "row:4",
+                "contentHash": "sha256:secret",
+                "debugReason": "vector lane",
+                "sources": [
+                    {"title": "取消设计", "path": "docs/cancel.md", "sourceId": "chunk:2"}
+                ],
+            },
+            ensure_ascii=False,
+        )
+        entry = self._entry("knowledge_receipt", "knowledge:1", audit_content, 1)
+        self._append("journal:1", entry, "knowledge:1", 10)
+        self._compile("receipt:noise-filter")
+
+        provider = self.store.provider_payload("receipt:noise-filter")
+        visible = str(provider["providerContext"])
+        for forbidden in (
+            "relevance", "score", "rank", "internalid", "hash", "debugreason",
+            "receipt", "row:4", "chunk:2",
+        ):
+            self.assertNotIn(forbidden, visible.casefold())
+        self.assertIn("验证 Room 取消传播", visible)
+        self.assertIn("取消设计", visible)
+        self.assertIn("docs/cancel.md", visible)
+        self.assertEqual(self.context.replay_root("root:1")[0]["content"], audit_content)
 
     def test_capability_revision_and_epoch_are_pinned_and_stale_receipt_conflicts(self) -> None:
         first = self._compile("receipt:capability")

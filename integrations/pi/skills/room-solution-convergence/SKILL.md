@@ -3,7 +3,9 @@ name: room-solution-convergence
 description: Compare viable approaches against evidence and explicit constraints, then record one reviewable decision without silently widening scope.
 when:
   - 多个可行方案需要按约束收敛
-does: 比较取舍并形成可审查的方案决策。
+  - 方案比较与收敛
+does: 比较取舍并输出可审查的方案决策与否决项。
+output: 选定方案、证据化比较、否决项、取舍和失效条件。
 notFor:
   - 已有明确方案只需实施
 ---

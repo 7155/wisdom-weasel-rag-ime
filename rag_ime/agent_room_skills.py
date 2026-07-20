@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -111,6 +112,42 @@ class RoomSkillPolicy:
         if skill_id not in self._by_id:
             raise ValueError(f"Skill is not governed by Room policy: {skill_id}")
         return _native_skill_body(self.skill_path(skill_id).read_text(encoding="utf-8"))
+
+    def catalog(self) -> list[dict[str, object]]:
+        """Expose only progressive-disclosure metadata, never Skill bodies."""
+
+        return [self._catalog_entry(skill_id) for skill_id in self.skill_ids]
+
+    def load_exact(self, skill_id: str) -> dict[str, object]:
+        """Load exactly one governed native Skill; fuzzy names are rejected."""
+
+        skill_id = _required_text(skill_id, "skillId")
+        if skill_id not in self._by_id:
+            raise ValueError(f"Skill is not governed by Room policy: {skill_id}")
+        return {
+            **self._catalog_entry(skill_id),
+            "body": self.skill_body(skill_id),
+            "contentRevision": self.skill_hash(skill_id),
+        }
+
+    def _catalog_entry(self, skill_id: str) -> dict[str, object]:
+        metadata = _native_skill_metadata(
+            self.skill_path(skill_id).read_text(encoding="utf-8")
+        )
+        if metadata["name"] != skill_id:
+            raise ValueError(f"native Skill name differs from policy: {skill_id}")
+        entry = self._by_id[skill_id]
+        return {
+            "name": skill_id,
+            "description": metadata["description"],
+            "when": metadata["when"],
+            "does": metadata["does"],
+            "output": metadata["output"],
+            "notFor": metadata["notFor"],
+            "stages": list(entry["stages"]),  # type: ignore[arg-type]
+            "risk": entry["risk"],
+            "nextCandidates": list(entry["nextCandidates"]),  # type: ignore[arg-type]
+        }
 
     def select_stage(self, stage: str) -> dict[str, object]:
         """Select only explicit stages; semantic matching remains Pi's native job."""
@@ -480,6 +517,45 @@ def _native_skill_body(content: str) -> str:
     if closing is None:
         raise ValueError("native Skill source has unclosed YAML frontmatter")
     return "".join(lines[closing + 1 :]).strip()
+
+
+def _native_skill_metadata(content: str) -> dict[str, object]:
+    """Parse the deliberately small catalog subset of native Skill frontmatter."""
+
+    if not content.startswith("---"):
+        raise ValueError("native Skill source is missing YAML frontmatter")
+    lines = content.splitlines()
+    try:
+        closing = lines[1:].index("---") + 1
+    except ValueError as exc:
+        raise ValueError("native Skill source has unclosed YAML frontmatter") from exc
+    scalar: dict[str, str] = {}
+    arrays: dict[str, list[str]] = {"when": [], "notFor": []}
+    current_array = ""
+    for line in lines[1:closing]:
+        list_match = re.fullmatch(r"\s+-\s+(.+)", line)
+        if list_match and current_array:
+            arrays[current_array].append(list_match.group(1).strip())
+            continue
+        field_match = re.fullmatch(r"([A-Za-z][A-Za-z0-9]*):(?:\s*(.*))?", line)
+        if not field_match:
+            raise ValueError("native Skill frontmatter uses unsupported YAML")
+        key, value = field_match.groups()
+        current_array = key if key in arrays and not value else ""
+        if value:
+            scalar[key] = value.strip()
+    if any(not scalar.get(key) for key in ("name", "description", "does", "output")):
+        raise ValueError("native Skill catalog metadata is incomplete")
+    if not arrays["when"] or not arrays["notFor"]:
+        raise ValueError("native Skill requires non-empty when and notFor metadata")
+    return {
+        "name": scalar["name"],
+        "description": scalar["description"],
+        "does": scalar["does"],
+        "output": scalar["output"],
+        "when": arrays["when"],
+        "notFor": arrays["notFor"],
+    }
 
 
 def _string_list(value: object, field: str, *, allow_empty: bool) -> list[str]:

@@ -3,7 +3,9 @@ name: room-review-feedback-resolution
 description: Resolve independent review findings one by one with evidence, preserving disagreement and requiring re-review where the finding demands it.
 when:
   - 独立复核意见需要修复、回应或申诉
-does: 逐项闭环复核意见并保留证据。
+  - 复核意见处理
+does: 逐项闭环复核意见并输出状态、证据与复核要求。
+output: 每条 finding 的状态、修复证据、复核要求和剩余风险。
 notFor:
   - 尚未产生正式复核意见
 ---

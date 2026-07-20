@@ -3,7 +3,9 @@ name: room-delivery-closure
 description: Close a delivery only after acceptance, required reviews, public evidence, cancellation cleanup, and remaining-risk ownership are explicit.
 when:
   - 所有必需工作完成并需要最终收口
-does: 核验验收、证据、清理和剩余风险。
+  - 最终收口与交付关闭
+does: 核验并输出验收、证据、清理、剩余风险和收口建议。
+output: 验收证据、清理状态、剩余风险负责人和收口建议。
 notFor:
   - 仍需接手、复核或修复
 ---

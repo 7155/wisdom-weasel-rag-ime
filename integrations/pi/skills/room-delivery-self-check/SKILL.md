@@ -3,7 +3,9 @@ name: room-delivery-self-check
 description: Check the implementer's own delivery against requirements, tests, side effects, handoff state, and unresolved blockers before settling.
 when:
   - 实施者收工前需要逐项自检
-does: 核对交付、验证、交接和阻塞状态。
+  - 收工前自检
+does: 核对并输出交付、验证、交接和阻塞状态。
+output: 带证据的自检清单、缺口、阻塞和 settle 建议。
 notFor:
   - 需要独立角色做愿景复核
 ---

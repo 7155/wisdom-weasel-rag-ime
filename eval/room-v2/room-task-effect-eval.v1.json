@@ -1,0 +1,300 @@
+{
+  "schemaVersion": "wisdom-weasel.room-task-effect-eval.v1",
+  "passed": true,
+  "caseCount": 14,
+  "metrics": {
+    "skillPrecision": 1.0,
+    "skillRecall": 1.0,
+    "toolPrecision": 1.0,
+    "toolRecall": 1.0,
+    "catalogBytes": 5656,
+    "loadBodyBytes": 15646,
+    "skillCatalogBytes": 5656,
+    "skillBodyBytes": 15646,
+    "progressiveDisclosureRatio": 0.3615,
+    "toolCatalogBytes": 348,
+    "toolSchemaBytes": 759,
+    "toolProgressiveDisclosureRatio": 0.4585,
+    "promptErrorCount": 0,
+    "chainBreakCount": 0,
+    "contextNoiseCount": 0
+  },
+  "skillContractErrors": [],
+  "promptContractErrors": [],
+  "cases": [
+    {
+      "id": "research",
+      "stage": "research",
+      "actualSkills": [],
+      "expectedSkills": [],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_state"
+      ],
+      "expectedTools": [
+        "room_state"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "planning",
+      "stage": "planning",
+      "actualSkills": [
+        "room-implementation-planning"
+      ],
+      "expectedSkills": [
+        "room-implementation-planning"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_state"
+      ],
+      "expectedTools": [
+        "room_state"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "implementation",
+      "stage": "implementation",
+      "actualSkills": [
+        "room-test-driven-implementation"
+      ],
+      "expectedSkills": [
+        "room-test-driven-implementation"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_commit"
+      ],
+      "expectedTools": [
+        "room_commit"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "review",
+      "stage": "vision-review",
+      "actualSkills": [
+        "room-independent-vision-review"
+      ],
+      "expectedSkills": [
+        "room-independent-vision-review"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_state"
+      ],
+      "expectedTools": [
+        "room_state"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "clarification",
+      "stage": "requirements",
+      "actualSkills": [
+        "room-requirement-clarification"
+      ],
+      "expectedSkills": [
+        "room-requirement-clarification"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_post"
+      ],
+      "expectedTools": [
+        "room_post"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "evidence-delivery",
+      "stage": "closure",
+      "actualSkills": [
+        "room-delivery-closure"
+      ],
+      "expectedSkills": [
+        "room-delivery-closure"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_post"
+      ],
+      "expectedTools": [
+        "room_post"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "blocked",
+      "stage": "handoff",
+      "actualSkills": [
+        "room-structured-handoff"
+      ],
+      "expectedSkills": [
+        "room-structured-handoff"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_commit"
+      ],
+      "expectedTools": [
+        "room_commit"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "handoff",
+      "stage": "handoff",
+      "actualSkills": [
+        "room-structured-handoff"
+      ],
+      "expectedSkills": [
+        "room-structured-handoff"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_post"
+      ],
+      "expectedTools": [
+        "room_post"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "ordinary-chat",
+      "stage": "conversation",
+      "actualSkills": [],
+      "expectedSkills": [],
+      "forbiddenSkillHits": [],
+      "actualTools": [],
+      "expectedTools": [],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "self-check-not-review",
+      "stage": "self-check",
+      "actualSkills": [
+        "room-delivery-self-check"
+      ],
+      "expectedSkills": [
+        "room-delivery-self-check"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_state"
+      ],
+      "expectedTools": [
+        "room_state"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "debug-not-implement",
+      "stage": "debugging",
+      "actualSkills": [
+        "room-systematic-debugging"
+      ],
+      "expectedSkills": [
+        "room-systematic-debugging"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_state"
+      ],
+      "expectedTools": [
+        "room_state"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "solution-not-plan",
+      "stage": "solution",
+      "actualSkills": [
+        "room-solution-convergence"
+      ],
+      "expectedSkills": [
+        "room-solution-convergence"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_state"
+      ],
+      "expectedTools": [
+        "room_state"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "feedback-not-review",
+      "stage": "feedback",
+      "actualSkills": [
+        "room-review-feedback-resolution"
+      ],
+      "expectedSkills": [
+        "room-review-feedback-resolution"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_commit"
+      ],
+      "expectedTools": [
+        "room_commit"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
+      "id": "unclear-trivial-not-trigger",
+      "stage": "conversation",
+      "actualSkills": [],
+      "expectedSkills": [],
+      "forbiddenSkillHits": [],
+      "actualTools": [],
+      "expectedTools": [],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    }
+  ],
+  "contextCases": [
+    {
+      "id": "knowledge-result-with-audit-noise",
+      "visibleBytes": 141,
+      "auditBytes": 280,
+      "missingExpected": [],
+      "leakedInternals": [],
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "Deterministic contract evaluation does not claim semantic selection quality from a live LLM.",
+    "Provider-side tokenization and cache-hit billing require a real configured Provider canary."
+  ]
+}

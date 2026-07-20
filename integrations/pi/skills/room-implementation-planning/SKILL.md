@@ -3,7 +3,9 @@ name: room-implementation-planning
 description: Turn an approved solution into bounded, dependency-aware implementation and verification work while preserving ownership and acceptance links.
 when:
   - 已批准方案需要拆成可执行任务
-does: 形成有依赖、所有者和验证门的实施计划。
+  - 实施计划与任务拆解
+does: 输出有依赖、所有者和验证门的实施计划。
+output: 需求可追溯、按所有权拆分且带验证门的实施计划。
 notFor:
   - 方案尚未收敛
 ---

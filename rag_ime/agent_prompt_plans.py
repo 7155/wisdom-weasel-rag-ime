@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -109,10 +110,17 @@ class RoomPromptPlanStore:
             for item in projection["pendingTail"]
         ]
         stable_prefix = _frame(
-            [stable_layers, *(str(item["content"]).encode("utf-8") for item in projection["sealedPrefix"])]
+            [
+                stable_layers,
+                *(
+                    _model_visible_projection_content(item).encode("utf-8")
+                    for item in projection["sealedPrefix"]
+                ),
+            ]
         )
         dynamic_tail = b"".join(
-            str(item["content"]).encode("utf-8") for item in projection["pendingTail"]
+            _model_visible_projection_content(item).encode("utf-8")
+            for item in projection["pendingTail"]
         )
         stable_hash = _sha256(stable_prefix)
         plan_material = {
@@ -433,9 +441,88 @@ def _provider_projection_text(items: object, *, state: str) -> str:
     for item in items:
         if not isinstance(item, Mapping):
             raise PromptPlanConflict("Room projection item is corrupt")
-        lines.append(str(item.get("content") or ""))
+        lines.append(_model_visible_projection_content(item))
     lines.append("</room-projection>")
     return "\n".join(lines) + "\n"
+
+
+_MODEL_CONTEXT_FORBIDDEN_KEY_PARTS = (
+    "relevance",
+    "score",
+    "rank",
+    "hash",
+    "debug",
+    "diagnostic",
+    "trace",
+    "receipt",
+    "internal",
+)
+_MODEL_CONTEXT_SOURCE_FIELDS = frozenset({"label", "title", "path", "uri", "section"})
+_MODEL_CONTEXT_KIND = {
+    "control_receipt": "control",
+    "evidence_receipt": "evidence",
+    "skill_receipt": "skill",
+    "knowledge_receipt": "knowledge",
+    "recovery_packet": "recovery",
+}
+
+
+def _model_visible_projection_content(item: Mapping[str, object]) -> str:
+    """Compile audit-rich Room entries into compact model-visible facts."""
+
+    raw = str(item.get("content") or "")
+    raw_kind = str(item.get("entryKind") or "room_fact").strip() or "room_fact"
+    kind = _MODEL_CONTEXT_KIND.get(raw_kind, raw_kind)
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        value = raw
+    visible = _model_visible_value(value)
+    if isinstance(visible, str):
+        content = visible.strip()
+    else:
+        content = json.dumps(visible, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f'<room-fact kind="{kind}">{content}</room-fact>'
+
+
+def _model_visible_value(value: object, *, source_context: bool = False) -> object:
+    if isinstance(value, Mapping):
+        result: dict[str, object] = {}
+        for raw_key, raw_value in value.items():
+            key = str(raw_key)
+            normalized = "".join(character for character in key.casefold() if character.isalnum())
+            is_source = normalized in {"source", "sources", "citation", "citations"}
+            if source_context and normalized not in _MODEL_CONTEXT_SOURCE_FIELDS:
+                continue
+            if (
+                any(part in normalized for part in _MODEL_CONTEXT_FORBIDDEN_KEY_PARTS)
+                or _model_context_identifier_key(key)
+            ):
+                continue
+            child = _model_visible_value(raw_value, source_context=is_source or source_context)
+            if child not in (None, "", [], {}):
+                result[key] = child
+        return result
+    if isinstance(value, list):
+        return [
+            child
+            for item in value
+            for child in [_model_visible_value(item, source_context=source_context)]
+            if child not in (None, "", [], {})
+        ]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _model_context_identifier_key(key: str) -> bool:
+    stripped = key.strip()
+    lowered = stripped.casefold()
+    if lowered in {"id", "ids", "ref", "refs"}:
+        return True
+    if re.search(r"(?:^|[_.-])(?:id|ids|ref|refs)$", lowered):
+        return True
+    return bool(re.search(r"(?:Id|ID|Ids|IDs|Ref|Refs)$", stripped))
 
 
 def _receipt_payload(row: sqlite3.Row) -> dict[str, object]:
