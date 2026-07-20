@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "rag-ime.session-recall-policy.v1",
+  "revision": "2026-07-20.effect-eval.1",
+  "weights": {
+    "sessionStartSummary": 0.0,
+    "compactionSummary": 0.2
+  },
+  "evidence": {
+    "fixture": "eval/session-recall/session-recall-fixtures.v1.json",
+    "receipt": "eval/session-recall/session-recall-effect-receipt.v1.json",
+    "receiptSha256": "4dd1ec48cd0e9951f693e99b1ce70026bd448af2f372efe6b1a94d868ed2cfe3"
+  }
+}

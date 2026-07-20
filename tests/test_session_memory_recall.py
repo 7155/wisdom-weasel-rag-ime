@@ -317,6 +317,11 @@ class SessionMemoryRecallTests(unittest.TestCase):
         self.assertNotIn("vectorFusion", rendered)
         self.assertNotIn("score=", rendered)
         self.assertNotIn("sourceId", rendered)
+        self.assertNotIn("recallId", rendered)
+        self.assertNotIn("ownerId", rendered)
+        self.assertNotIn("rawScores", rendered)
+        self.assertNotIn("sha256", rendered)
+        self.assertNotIn("atom:session-rag", rendered)
 
     def test_topic_book_quota_prefers_query_tags_and_vector_relevance(self) -> None:
         def book(

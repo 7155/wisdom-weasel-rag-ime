@@ -438,6 +438,28 @@ class RoomCapabilityManifestStore:
             return None
         return _runtime_binding_payload(row)
 
+    def runtime_identity(self, session_id: str) -> dict[str, object] | None:
+        """Return the server-stored Room identity needed by context recall."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT binding.room_binding_json, manifest.dispatch_id
+                   FROM room_v2_capability_runtime_bindings binding
+                   JOIN room_v2_capability_manifests manifest
+                     ON manifest.manifest_id = binding.manifest_id
+                   WHERE binding.session_id = ?
+                   ORDER BY CASE binding.state WHEN 'active' THEN 0 WHEN 'prepared' THEN 1 ELSE 2 END,
+                            binding.updated_at_ms DESC, binding.created_at_ms DESC LIMIT 1""",
+                (_required(session_id, "session_id"),),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(str(row["room_binding_json"]))
+        if not isinstance(payload, dict):
+            raise RuntimeError("Room runtime binding identity is corrupt")
+        payload["dispatchId"] = str(row["dispatch_id"])
+        return payload
+
     def revoke_runtime(self, session_id: str, *, capability_epoch: int, now_ms: int) -> None:
         with self._connect(immediate=True) as conn:
             row = conn.execute(
