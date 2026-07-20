@@ -203,6 +203,7 @@ describe('MemoryFeature relations', () => {
             id: 'evidence:workflow-noise',
             title: 'curation_prepare 流程回执',
             detail: 'user_message',
+            type: 'user_message',
             status: 'active',
             source: { kind: 'agent_memory_evidence', id: 'evidence:workflow-noise' },
             ownerKind: 'agent',
@@ -216,6 +217,7 @@ describe('MemoryFeature relations', () => {
     renderMemory(transport, '/memory?layer=evidence');
 
     expect(await screen.findByText('审计保留')).toBeInTheDocument();
+    expect(screen.getByText(/对话审计/u)).toBeInTheDocument();
     expect(screen.queryByText('使用中')).not.toBeInTheDocument();
   });
 

@@ -40,6 +40,7 @@ class KernelRuntime:
         self.default_model_profile = "pi/test"
         self.dispatched: list[str] = []
         self.cancelled: list[tuple[str, str, int]] = []
+        self.surface_state = "terminated"
         self.stopped = False
 
     def runtime_status(self):
@@ -75,11 +76,15 @@ class KernelRuntime:
             "generation": generation,
             "cancellationSurfaces": {surface: {
                 "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
-                "surface": surface, "state": "terminated", "targetIds": [],
+                "surface": surface, "state": self.surface_state,
+                "targetIds": [f"{surface}:test"] if self.surface_state == "unknown" else [],
             } for surface in (
                 "provider", "tool", "exec", "retry", "compaction",
                 "branch_summary", "timer", "continuation", "session")},
-            "pendingTargets": [],
+            "pendingTargets": ([
+                "provider", "tool", "exec", "retry", "compaction",
+                "branch_summary", "timer", "continuation", "session",
+            ] if self.surface_state == "unknown" else []),
         }
 
     def stop(self):
@@ -375,6 +380,19 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertTrue(kernel_receipt_id)
         self.service._run_room_learning_maintenance()
         self.assertEqual(len(self.factory.runtime.cancelled), 1)
+
+    def test_unknown_cancel_snapshot_stays_nonterminal_with_pending_targets(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        self.factory.runtime.surface_state = "unknown"
+        self.service.room_kernel_worker.cancel_root("root:service")
+
+        snapshot = self.service.room_kernel_snapshot(self.room_id)
+        projected_root = next(item for item in snapshot["roots"] if item["rootId"] == "root:service")
+        self.assertEqual(projected_root["state"], "cancelled_with_unknowns")
+        self.assertIsNone(projected_root["terminalReceiptId"])
+        self.assertEqual(len(snapshot["pendingTargets"]), 9)
+        self.assertEqual({item["state"] for item in snapshot["pendingTargets"]}, {"unknown"})
 
     def test_knowledge_caller_is_built_from_authenticated_live_participant_binding(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)

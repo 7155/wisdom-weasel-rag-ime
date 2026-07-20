@@ -41,7 +41,7 @@ describe('Room Kernel HTTP and SSE contracts', () => {
 });
 
 function snapshot() {
-  return { roomId: 'room:a', lastSequence: 1, snapshotHash: `sha256:${'a'.repeat(64)}`, roots: [], tasks: [], dispatches: [], posts: [], sessions: [], receipts: [] };
+  return { roomId: 'room:a', lastSequence: 1, snapshotHash: `sha256:${'a'.repeat(64)}`, roots: [], tasks: [], dispatches: [], posts: [], sessions: [], receipts: [], cancellationSurfaces: [] };
 }
 
 function rootEvent(sequence: number): RoomEventEnvelopeV2 {

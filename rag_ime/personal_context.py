@@ -64,7 +64,7 @@ _STABLE_ATOM_KINDS = frozenset(
     }
 )
 _ROLE_BOOK_MODEL_MAX_CHARS = 12_000
-_ROLE_BOOK_MODEL_MAX_MESSAGES = 24
+_ROLE_BOOK_MODEL_MAX_EVIDENCE_ITEMS = 24
 _ROLE_BOOK_PROPOSAL_MAX_CHARS = 3_200
 _ROLE_PROPOSAL_FIELDS = (
     "traitProposals",
@@ -1788,11 +1788,11 @@ class PersonalContextConsolidator:
             activity_context=activity_context,
             active_role_book=active_role_book,
         )
-        conversation = list(bundle.get("conversationEvidence") or [])
+        curation_evidence = list(bundle.get("curationEvidence") or [])
         provider = _bounded_text(getattr(organizer, "provider_name", ""), 80)
-        if not conversation:
+        if not curation_evidence:
             return empty, {
-                "status": "no_conversation_evidence",
+                "status": "no_eligible_evidence",
                 "provider": provider,
                 "inputChars": _serialized_chars(bundle),
                 "acceptedProposalCount": 0,
@@ -1818,7 +1818,7 @@ class PersonalContextConsolidator:
                 raw,
                 allowed_evidence_ids={
                     str(item["evidenceId"])
-                    for item in conversation
+                    for item in curation_evidence
                     if isinstance(item, Mapping)
                 },
                 active_role_book=active_role_book,
@@ -2315,25 +2315,36 @@ def _build_role_book_model_bundle(
     activity_context: Mapping[str, object],
     active_role_book: Mapping[str, object] | None,
 ) -> dict[str, object]:
-    conversation: list[dict[str, object]] = []
+    curation_evidence: list[dict[str, object]] = []
     for item in evidence:
         source_kind = str(item.get("sourceKind") or "")
-        if source_kind not in {"user_message", "assistant_message"}:
+        metadata = item.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        eligible = (
+            source_kind == "session_digest"
+            and compact_whitespace(str(metadata.get("trigger") or ""))
+            in {"automatic", "manual", "compaction", "idle_batch"}
+        ) or (
+            source_kind == "tool_receipt" and metadata.get("applied") is True
+        ) or (
+            source_kind == "work_receipt" and metadata.get("accepted") is True
+        )
+        if not eligible:
             continue
         text = compact_whitespace(str(item.get("text") or ""))
         evidence_id = compact_whitespace(str(item.get("evidenceId") or ""))
         if not text or not evidence_id or _contains_sensitive_content(text):
             continue
-        conversation.append(
+        curation_evidence.append(
             {
                 "evidenceId": evidence_id,
-                "role": "user" if source_kind == "user_message" else "assistant",
+                "sourceKind": source_kind,
                 "text": _truncate(text, 600),
                 "occurredAtMs": max(0, int(item.get("occurredAtMs") or 0)),
                 "reviewEvidenceOnly": True,
             }
         )
-    conversation = conversation[-_ROLE_BOOK_MODEL_MAX_MESSAGES:]
+    curation_evidence = curation_evidence[-_ROLE_BOOK_MODEL_MAX_EVIDENCE_ITEMS:]
 
     segments: list[dict[str, object]] = []
     for item in list(activity_context.get("segments") or []):
@@ -2385,10 +2396,10 @@ def _build_role_book_model_bundle(
         active_sections[section] = texts
 
     payload: dict[str, object] = {
-        "schemaVersion": "rag-ime.role-book-curation-input.v1",
+        "schemaVersion": "rag-ime.role-book-curation-input.v2",
         "roleId": role_id,
         "roleVersion": role_version,
-        "conversationEvidence": conversation,
+        "curationEvidence": curation_evidence,
         "activityContext": activity,
         "activeRoleBook": {
             "sections": active_sections,
@@ -2398,19 +2409,20 @@ def _build_role_book_model_bundle(
         "policy": {
             "reviewOnly": True,
             "allowedEvidenceIds": [
-                str(item["evidenceId"]) for item in conversation
+                str(item["evidenceId"]) for item in curation_evidence
             ],
+            "rawConversationMaySupplyEvidence": False,
             "timelineMaySupplyEvidence": False,
             "autoActivation": False,
         },
     }
     while (
         _serialized_chars(payload) > _ROLE_BOOK_MODEL_MAX_CHARS
-        and len(conversation) > 1
+        and len(curation_evidence) > 1
     ):
-        conversation.pop(0)
+        curation_evidence.pop(0)
         payload["policy"]["allowedEvidenceIds"] = [  # type: ignore[index]
-            str(item["evidenceId"]) for item in conversation
+            str(item["evidenceId"]) for item in curation_evidence
         ]
     if _serialized_chars(payload) > _ROLE_BOOK_MODEL_MAX_CHARS:
         raise ValueError("Role Book organizer input exceeded its strict character budget")

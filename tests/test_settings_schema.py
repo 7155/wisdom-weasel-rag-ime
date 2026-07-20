@@ -44,7 +44,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["activeRag"]["defaultPlacement"], "replace_selection")
         self.assertEqual(defaults["activeRag"]["maxCandidates"], 1)
         self.assertEqual(defaults["activeRag"]["quickModel"], "deepseek/deepseek-v4-flash")
-        self.assertEqual(defaults["activeRag"]["quickThinkingLevel"], "off")
+        self.assertEqual(defaults["activeRag"]["quickThinkingLevel"], "high")
         self.assertNotIn("visualModel", defaults["activeRag"])
         self.assertTrue(defaults["activeRag"]["allowRemoteModel"])
         self.assertTrue(defaults["privacy"]["allowRemoteModelForActiveRag"])
@@ -81,7 +81,10 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(fields["models.hot"]["default"], "minimind_ime_v2")
         self.assertEqual(fields["context.tokenBudget"]["default"], 4096)
         self.assertEqual(fields["activeRag.quickModel"]["type"], "pi-model")
-        self.assertEqual(fields["activeRag.quickThinkingLevel"]["options"], ["off", "low"])
+        self.assertEqual(
+            fields["activeRag.quickThinkingLevel"]["options"],
+            ["minimal", "low", "medium", "high", "xhigh", "max"],
+        )
         self.assertNotIn("activeRag.visualModel", fields)
         self.assertEqual(
             fields["memory.automaticOrganization.enabled"]["label"],

@@ -1395,6 +1395,10 @@ class AgentService:
             for root_id in self.room_kernel.root_ids(room_id)
         }
         snapshot["cancellationSurfaces"] = self.room_kernel.cancellation_surface_projection(room_id)
+        snapshot["pendingTargets"] = [
+            item for item in snapshot["cancellationSurfaces"]
+            if item["state"] in {"requested", "acknowledged", "unknown"}
+        ]
         snapshot_material = {key: value for key, value in snapshot.items() if key != "snapshotHash"}
         snapshot["snapshotHash"] = "sha256:" + hashlib.sha256(
             json.dumps(

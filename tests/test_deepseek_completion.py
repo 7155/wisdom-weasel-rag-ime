@@ -949,12 +949,16 @@ class DeepSeekCompletionTests(unittest.TestCase):
         self.assertEqual(payload["taskMode"], "answer")
         self.assertEqual(payload["currentRequest"], selected_request)
 
-    def test_active_rag_short_anchor_uses_last_complete_context_clause(self) -> None:
+    def test_active_rag_insert_uses_complete_foreground_instead_of_short_anchor(self) -> None:
+        foreground = (
+            "完成重构。最好测试上下文是否增量缓存命中。工具和 skill 是否成熟。"
+            "系统提示词目前要明确下来。目标 cafe 项目的 skill 也很有价值，有机转换过来。"
+        )
         messages = build_deepseek_completion_messages(
             DeepSeekCompletionRequest(
                 scene="active_rag",
-                current_context="请把知识生成的上下文、证据和空结果恢复链路全部改正确。改正",
-                selected_text="改正",
+                current_context=foreground,
+                selected_text="也很有价值，有机转换过来。",
                 context_packet={
                     "schemaVersion": "rag-ime.smart-context-packet.v1",
                     "currentInput": {"intent": "complete", "placement": "insert_after_selection"},
@@ -965,8 +969,10 @@ class DeepSeekCompletionTests(unittest.TestCase):
         )
         payload = json.loads(messages[1]["content"])
 
-        self.assertNotEqual(payload["currentRequest"], "改正")
-        self.assertIn("空结果恢复链路", payload["currentRequest"])
+        self.assertEqual(payload["currentRequest"], foreground)
+        self.assertEqual(payload["currentContext"], foreground)
+        self.assertIn("currentContext 是完整、已预算的前台编辑文本", messages[0]["content"])
+        self.assertIn("不能让 selectedText 光标锚点覆盖它", payload["task"])
 
     def test_active_rag_recovery_prompt_is_explicit_and_has_no_short_anchor(self) -> None:
         messages = build_deepseek_completion_messages(

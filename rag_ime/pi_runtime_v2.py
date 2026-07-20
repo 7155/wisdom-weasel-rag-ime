@@ -1131,8 +1131,8 @@ class PiRuntimeHostManager:
         normalized_provider = _model_reference_part(provider, field="provider", maximum=80)
         normalized_model = _model_reference_part(model_id, field="modelId", maximum=160)
         normalized_thinking = str(thinking_level or "").strip().lower()
-        if normalized_thinking not in {"off", "low"}:
-            raise ValueError("stateless Pi completion only supports off or low thinking")
+        if normalized_thinking not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("stateless Pi completion received an unsupported thinking level")
         normalized_message = str(message or "").strip()
         if not normalized_message:
             raise ValueError("stateless Pi completion message is required")
@@ -1364,7 +1364,7 @@ class PiRuntimeHostManager:
             typed_surfaces[surface] = proof
         derived_pending = [
             surface for surface in _CANCELLATION_SURFACES
-            if typed_surfaces[surface]["state"] in {"requested", "acknowledged"}
+            if typed_surfaces[surface]["state"] in {"requested", "acknowledged", "unknown"}
         ]
         declared_pending = [
             str(value) for value in result.get("pendingTargets") or [] if str(value).strip()

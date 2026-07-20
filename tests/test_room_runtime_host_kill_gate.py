@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import os
+import signal
+import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
-from rag_ime.room_runtime_host_kill_gate import RuntimeHostKillGate
+from rag_ime.room_runtime_host_kill_gate import RuntimeHostKillGate, process_birth_token
 
 
 class RuntimeHostKillGateTests(unittest.TestCase):
@@ -113,6 +118,52 @@ class RuntimeHostKillGateTests(unittest.TestCase):
         self.assertEqual(receipt["state"], "terminated")
         self.assertEqual(receipt["pendingTargets"], [])
         self.assertEqual(self.signals, [])
+
+    def test_real_process_group_is_killed_and_reconciled_without_an_orphan(self) -> None:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            start_new_session=True,
+        )
+        try:
+            process_group_id = os.getpgid(process.pid)
+            birth_token = process_birth_token(process.pid)
+            gate = RuntimeHostKillGate(
+                self.db_path,
+                confirm_attempts=20,
+                confirm_interval_seconds=0.01,
+            )
+            gate.register_process(
+                host_identity="host:real",
+                owner_instance_id="runtime:old-real",
+                pid=process.pid,
+                process_group_id=process_group_id,
+                job_identity="job:real",
+                process_birth_token=birth_token,
+                executable_ref=sys.executable,
+                now_ms=int(time.time() * 1000),
+            )
+
+            receipts = gate.reconcile_orphans(
+                owner_instance_id="runtime:new-real",
+                now_ms=int(time.time() * 1000),
+            )
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]["requestKind"], "orphan_reconcile")
+            self.assertIn(receipts[0]["state"], {"acknowledged", "terminated"})
+
+            self.assertEqual(process.wait(timeout=3), -signal.SIGKILL)
+            terminal = gate.confirm_termination(
+                str(receipts[0]["killReceiptId"]),
+                now_ms=int(time.time() * 1000),
+            )
+            self.assertEqual(terminal["state"], "terminated")
+            self.assertEqual(terminal["pendingTargets"], [])
+            with self.assertRaises(ProcessLookupError):
+                os.kill(process.pid, 0)
+        finally:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=3)
 
 
 if __name__ == "__main__":

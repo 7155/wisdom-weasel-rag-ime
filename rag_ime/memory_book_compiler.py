@@ -2339,6 +2339,10 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
     kind = str(payload.get("kind") or "project_fact")
     app = str(payload.get("app") or "")
     project = str(payload.get("project") or "")
+    owner_kind, owner_id = _memory_owner(
+        payload.get("ownerKind") or "user",
+        payload.get("ownerId") or "default",
+    )
     claim_key = _normalized_claim_key(payload.get("claimKey"))
     if not claim_key:
         raise ValueError("memory atom claimKey is required")
@@ -2365,17 +2369,29 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         """
         SELECT *
         FROM memory_atoms
-        WHERE claim_key = ?
+        WHERE owner_kind = ?
+          AND owner_id = ?
+          AND claim_key = ?
           AND COALESCE(scope_project, '') = ?
           AND COALESCE(scope_app, '') = ?
-          AND kind = ?
           AND id <> ?
           AND claim_state = 'current'
           AND status IN ('active', 'approved')
         ORDER BY valid_from_ms DESC, updated_at_ms DESC
         """,
-        (claim_key, project, app, kind, atom_id),
+        (owner_kind, owner_id, claim_key, project, app, atom_id),
     ).fetchall()
+    if current_rows:
+        existing_lineage_id = next(
+            (
+                compact_whitespace(str(row["lineage_id"] or ""))
+                for row in current_rows
+                if compact_whitespace(str(row["lineage_id"] or ""))
+            ),
+            "",
+        )
+        if existing_lineage_id:
+            lineage_id = existing_lineage_id
     if claim_state == "current" and requested_status in {"active", "approved"}:
         newer_current = next(
             (
@@ -2466,8 +2482,8 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
             project,
             _bounded_float(payload.get("confidence"), default=0.5),
             _bounded_float(payload.get("qualityScore"), default=0.5),
-            str(payload.get("ownerKind") or "user"),
-            str(payload.get("ownerId") or "default"),
+            owner_kind,
+            owner_id,
             stored_status,
             timestamp,
             timestamp,

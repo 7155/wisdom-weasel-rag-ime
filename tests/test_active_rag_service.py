@@ -713,6 +713,8 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(ready["status"], "ready")
         self.assertIn("避免空结果", payload["currentRequest"])
         self.assertNotEqual(payload["currentRequest"], stale)
+        self.assertEqual(ready["diagnostics"]["retrieval"]["querySource"], "foreground_context")
+        self.assertEqual(ready["diagnostics"]["retrieval"]["queryChars"], len(current))
         self.assertEqual(
             ready["diagnostics"]["contextInjection"]["resolvedRequestChars"],
             len(payload["currentRequest"]),

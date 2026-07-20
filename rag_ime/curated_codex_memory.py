@@ -571,7 +571,8 @@ def _current_claim(
             """
             SELECT id, kind, text, claim_key
             FROM memory_atoms
-            WHERE COALESCE(scope_project, '') = ? AND claim_key = ?
+            WHERE owner_kind = 'user' AND owner_id = 'default'
+              AND COALESCE(scope_project, '') = ? AND claim_key = ?
               AND status IN ('active', 'approved') AND claim_state = 'current'
             ORDER BY updated_at_ms DESC, id DESC LIMIT 1
             """,

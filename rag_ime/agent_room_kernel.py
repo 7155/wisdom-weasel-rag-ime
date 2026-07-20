@@ -636,7 +636,7 @@ class RoomKernelStore:
                 typed_surfaces[str(surface)] = proof
             pending_targets = sorted(
                 surface for surface, proof in typed_surfaces.items()
-                if proof["state"] in {"requested", "acknowledged"}
+                if proof["state"] in {"requested", "acknowledged", "unknown"}
             )
             declared_pending = sorted(
                 str(value) for value in runtime_receipt.get("pendingTargets") or []
@@ -654,6 +654,11 @@ class RoomKernelStore:
                     (cancel_id, surface, str(proof["state"]), _json(proof), int(now_ms)),
                 )
             if pending_targets:
+                if any(proof["state"] == "unknown" for proof in typed_surfaces.values()):
+                    conn.execute(
+                        "UPDATE room_kernel_roots SET state='cancelled_with_unknowns',updated_at_ms=? WHERE root_id=?",
+                        (int(now_ms), row["root_id"]),
+                    )
                 conn.execute(
                     """UPDATE room_kernel_cancel_outbox SET state='retry_wait',lease_until_ms=0,
                        available_at_ms=?,runtime_receipt_json=? WHERE cancel_id=?""",
@@ -1320,7 +1325,7 @@ class RoomKernelStore:
     def _cancel_root(self, conn: sqlite3.Connection, root_id: str, *, command_id: str | None, now_ms: int, receipt_kind: str) -> dict[str, object]:
         root = self._root_row(conn, root_id)
         root_state = str(root["state"])
-        if root_state == "cancelling":
+        if root_state in {"cancelling", "cancelled_with_unknowns"}:
             pending = int(conn.execute(
                 "SELECT COUNT(*) FROM room_kernel_cancel_outbox WHERE root_id=? AND terminalize_root=1 AND state!='applied'",
                 (root_id,),
@@ -1328,7 +1333,7 @@ class RoomKernelStore:
             return self._receipt(
                 conn, root_id=root_id, command_id=command_id, receipt_kind=receipt_kind,
                 status="noop", generation=int(root["generation"]),
-                details={"reason": "already_cancelling", "cancelledDispatches": 0, "unknownDispatches": 0, "cancelIntents": pending}, now_ms=now_ms,
+                details={"reason": "already_cancelling", "cancelledDispatches": 0, "unknownDispatches": int(root_state == "cancelled_with_unknowns"), "cancelIntents": pending}, now_ms=now_ms,
             )
         if root_state in {"cancelled", "completed", "failed"}:
             return self._receipt(
