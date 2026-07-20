@@ -11,6 +11,8 @@ from types import SimpleNamespace
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from tests.runtime_capabilities import requires_loopback_bind
+
 from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_room_capabilities import ToolAuthorizationError
 from rag_ime.agent_room_kernel_contracts import (
@@ -525,6 +527,31 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(projected["capabilityManifest"]["manifestHash"], first["manifestHash"])
         self.assertEqual(projected["capabilityManifest"]["status"], "active")
 
+    def test_room_binding_rejects_legacy_intercom_before_it_can_enqueue(self) -> None:
+        dispatch = self._dispatch()
+        self.service.room_kernel.enqueue_dispatch(dispatch, now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        target = next(
+            participant
+            for participant in self.service.rooms.get(self.room_id)["participants"]
+            if participant["id"] != self.participant["id"]
+        )
+
+        with self.assertRaisesRegex(RoomKernelFenceError, "owned by Kernel"):
+            self.service.send_room_intercom(
+                self.session_id,
+                {
+                    "kind": "send",
+                    "targetParticipantId": target["id"],
+                    "clientMessageId": "legacy-after-binding",
+                    "content": "must not enter the legacy queue",
+                },
+            )
+        self.assertEqual(
+            self.service.list_room_intercom(self.session_id)["items"],
+            [],
+        )
+
     def _exercise_requirement_proof_observation_to_terminal(self) -> None:
         original = "必须发布结果并完成任务"
         anchor, _ = self.service.room_requirements.append_anchor(
@@ -778,6 +805,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             ["dispatch:service", "dispatch:complete"],
         )
 
+    @requires_loopback_bind
     def test_real_http_snapshot_command_and_sse_gap_routes(self) -> None:
         wrapper = SimpleNamespace(
             agent=self.service,

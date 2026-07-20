@@ -49,6 +49,7 @@ from .agent_templates import agent_template
 from .agent_prompt_plans import PromptLayer, RoomPromptPlanStore
 from .agent_room_context import ProviderProjectionJournalStore
 from .agent_room_requirements import RequirementGovernanceStore
+from .agent_room_route_owners import room_route_owner
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_contracts import validate_kernel_contract
@@ -1078,6 +1079,7 @@ class AgentService:
             raise ValueError("scheduled wake target is invalid")
 
         session_id = str(session["id"])
+        self._guard_legacy_room_route("wake.dispatch", session_id)
         instruction = str(claim.get("instruction") or "")
         planning_task_id = str(claim.get("planningTaskId") or "")
         planning_context = (
@@ -2464,6 +2466,7 @@ class AgentService:
             decision["workItemState"] = str(work_item["state"])
         target = self.rooms.participant(str(decision["targetParticipantId"]))
         target_session_id = str(target["sessionId"])
+        self._guard_legacy_room_route("room.message.mention", target_session_id)
         with self._room_turn_lock:
             latest_target = self.rooms.participant(str(target["id"]))
             if str(latest_target.get("status") or "") != "active":
@@ -2619,7 +2622,7 @@ class AgentService:
         source_session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
-        item = self.room_intercom.enqueue(source_session_id, payload)
+        item = self._enqueue_room_intercom(source_session_id, payload)
         return {
             "schemaVersion": "rag-ime.agent-room-intercom-enqueue.v1",
             "ok": True,
@@ -2654,6 +2657,7 @@ class AgentService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
+        self._guard_legacy_room_route("work_item.assign", session_id)
         participant = self.rooms.participant_for_session(session_id)
         if participant is None:
             raise ValueError("session is not an active Room participant")
@@ -2680,7 +2684,7 @@ class AgentService:
                 for value in list(work.get("acceptanceCriteria", []))[:6]
             )
             try:
-                delivery = self.room_intercom.enqueue(
+                delivery = self._enqueue_room_intercom(
                     session_id,
                     {
                         "kind": "send",
@@ -2724,6 +2728,7 @@ class AgentService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
+        self._guard_legacy_room_route("work_item.submit", session_id)
         actor = self._require_room_participant(session_id)
         work = self.room_work.submit(session_id, payload)
         self._publish_room_work_activity(work, phase="submitted", actor=actor)
@@ -2746,6 +2751,7 @@ class AgentService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
+        self._guard_legacy_room_route("work_item.accept", session_id)
         actor = self._require_room_participant(session_id)
         work = self.room_work.accept(session_id, payload)
         self._publish_room_work_activity(work, phase="completed", actor=actor)
@@ -2763,6 +2769,7 @@ class AgentService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
+        self._guard_legacy_room_route("work_item.return", session_id)
         actor = self._require_room_participant(session_id)
         work = self.room_work.return_for_revision(session_id, payload)
         self._publish_room_work_activity(work, phase="returned", actor=actor)
@@ -2784,6 +2791,7 @@ class AgentService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
+        self._guard_legacy_room_route("work_item.block", session_id)
         actor = self._require_room_participant(session_id)
         work = self.room_work.block(session_id, payload)
         self._publish_room_work_activity(work, phase="blocked", actor=actor)
@@ -2805,6 +2813,7 @@ class AgentService:
         session_id: str,
         payload: Mapping[str, object],
     ) -> dict[str, object]:
+        self._guard_legacy_room_route("work_item.escalate", session_id)
         actor = self._require_room_participant(session_id)
         work = self.room_work.escalate(session_id, payload)
         self._publish_room_work_activity(work, phase="escalated", actor=actor)
@@ -5446,6 +5455,7 @@ class AgentService:
         item: Mapping[str, object],
     ) -> Mapping[str, object]:
         target_session_id = str(item.get("targetSessionId") or "")
+        self._guard_legacy_room_route("intercom.delivery", target_session_id)
         if not self._room_target_idle(target_session_id):
             raise AgentRoomTargetBusy("target participant is not idle")
         source = self.rooms.participant(str(item.get("sourceParticipantId") or ""))
@@ -5589,7 +5599,7 @@ class AgentService:
         source = self._require_room_participant(session_id)
         if target_participant_id == str(source["id"]):
             return None
-        return self.room_intercom.enqueue(
+        return self._enqueue_room_intercom(
             session_id,
             {
                 "kind": "send",
@@ -5602,6 +5612,26 @@ class AgentService:
                 "content": content,
             },
         )
+
+    def _enqueue_room_intercom(
+        self,
+        source_session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        route = self.room_intercom.store.resolve_route(source_session_id, payload)
+        kind = str(payload.get("kind") or "send")
+        route_id = f"intercom.{kind}"
+        self._guard_legacy_room_route(route_id, str(route["source"]["sessionId"]))
+        self._guard_legacy_room_route(route_id, str(route["target"]["sessionId"]))
+        return self.room_intercom.enqueue(source_session_id, payload)
+
+    def _guard_legacy_room_route(self, route_id: str, session_id: str) -> None:
+        binding = self.room_kernel.session_binding(str(session_id or ""))
+        owner = room_route_owner(route_id, has_room_binding=binding is not None)
+        if binding is not None and owner == "kernel":
+            raise RoomKernelFenceError(
+                f"RoomBinding route {route_id} is owned by Kernel, not the legacy executor"
+            )
 
     @staticmethod
     def _room_work_operation(

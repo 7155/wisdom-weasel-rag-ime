@@ -11,6 +11,8 @@ from unittest.mock import patch
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from tests.runtime_capabilities import requires_loopback_bind
+
 from rag_ime.agent_room_work import AgentRoomWorkAssignmentChanged
 from rag_ime.agent_service import AgentService
 from rag_ime.debug_server import DebugRequestHandler
@@ -134,6 +136,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
             other["id"],
         )
 
+    @requires_loopback_bind
     def test_http_routes_create_list_get_and_reassign_work_items(self) -> None:
         owner, next_owner, _ = self.participants
         wrapper = SimpleNamespace(
@@ -211,6 +214,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    @requires_loopback_bind
     def test_http_routes_add_remove_and_permanently_delete_room_membership(self) -> None:
         room = self.service.create_room(
             {
