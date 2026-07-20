@@ -118,7 +118,13 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         self._seed_superseded_model_pair()
         self._seed_model_book(memory_atom_id=NEW_ATOM_ID)
         self._rebuild_retrieval_docs()
-        created = self.service.create_session({"title": "记忆首次注入验收"})
+        created = self.service.create_session(
+            {
+                "title": "记忆首次注入验收",
+                "roleId": "zhiyou-v1",
+                "roleVersion": "1",
+            }
+        )
         session = created["session"]
         session_id = str(session["id"])
 
