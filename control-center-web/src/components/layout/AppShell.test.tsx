@@ -21,12 +21,12 @@ describe('control center shell', () => {
     const user = userEvent.setup();
     render(<App />);
 
-    expect(screen.getAllByRole('heading', { name: '规划' })).not.toHaveLength(0);
+    expect(screen.getAllByRole('heading', { name: '任务与验收' })).not.toHaveLength(0);
     expect(document.querySelector('main[data-route-id="planning"]')).toBeInTheDocument();
 
-    await user.click(screen.getAllByRole('link', { name: 'Agent' })[0]);
+    await user.click(screen.getAllByRole('link', { name: 'Session 工作台' })[0]);
     await waitFor(() => expect(document.querySelector('main[data-route-id="agent"]')).toBeInTheDocument());
-    expect(screen.getByRole('heading', { name: 'Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Session 工作台' })).toBeInTheDocument();
 
     act(() => publishConnectionState({ state: 'connected', label: 'Sidecar 已连接' }));
     expect(screen.getByRole('status')).toHaveTextContent('Sidecar 已连接');
@@ -43,7 +43,7 @@ describe('control center shell', () => {
     await user.click(screen.getByRole('button', { name: '交给智鼬整理' }));
 
     await waitFor(() => expect(document.querySelector('main[data-route-id="agent"]')).toBeInTheDocument());
-    expect(document.querySelector('.shell-topbar__title h1')).toHaveTextContent('Agent');
+    expect(document.querySelector('.shell-topbar__title h1')).toHaveTextContent('Session 工作台');
     expect(document.querySelector('.shell-sidebar [data-route="agent"]')).toHaveAttribute('aria-current', 'page');
   });
 

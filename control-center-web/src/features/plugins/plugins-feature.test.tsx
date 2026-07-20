@@ -16,7 +16,7 @@ describe('PluginsFeature', () => {
     const user = userEvent.setup();
     renderPlugins();
 
-    expect(await screen.findByRole('heading', { name: '插件与工具', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '能力中心', level: 1 })).toBeInTheDocument();
     const list = await screen.findByRole('group', { name: '工具列表' });
     expect(within(list).getByRole('button', { name: /记忆与工具书/ })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.queryByRole('complementary', { name: '工具详情' })).not.toBeInTheDocument();
@@ -53,7 +53,7 @@ describe('PluginsFeature', () => {
   it('filters tools by readable purpose, availability and supported mode', async () => {
     const user = userEvent.setup();
     renderPlugins();
-    await screen.findByRole('heading', { name: '插件与工具', level: 1 });
+    await screen.findByRole('heading', { name: '能力中心', level: 1 });
 
     const search = await screen.findByRole('textbox', { name: '搜索' });
     await user.type(search, '语音');

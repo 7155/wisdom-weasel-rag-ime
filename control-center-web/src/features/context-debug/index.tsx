@@ -149,8 +149,8 @@ export function ContextDebugFeature() {
         <div className="context-debug-heading">
           <span className="context-debug-heading__icon"><Braces size={18} /></span>
           <span>
-            <h1>原始上下文 Debug</h1>
-            <small><ShieldCheck size={12} />本机临时内存，不写入观察数据库</small>
+            <h1>上下文透视</h1>
+            <small><ShieldCheck size={12} />默认只显示结构和用量，正文仅在审计区按需展开</small>
           </span>
         </div>
         <div className="context-debug-controls">
@@ -204,6 +204,10 @@ export function ContextDebugFeature() {
         </DebugNotice>
       ) : null}
 
+      <ContextXraySummary call={selectedCall} context={context} telemetry={response.telemetry} />
+
+      <details className="context-debug-audit">
+        <summary><Braces size={15} /><span><strong>展开原始审计区</strong><small>按需显示消息正文、Provider 载荷、System Prompt、工具 Schema 与原始记录</small></span></summary>
       <div className="context-debug-workspace">
         <aside className="context-debug-call-rail" aria-label="LLM 调用列表">
           <DebugSummary context={context} />
@@ -287,8 +291,51 @@ export function ContextDebugFeature() {
           />
         </section>
       </div>
+      </details>
     </main>
   );
+}
+
+function ContextXraySummary({ call, context, telemetry }: { call?: DebugModelCall; context?: DebugContextRecord; telemetry: Record<string, unknown> }) {
+  const raw = record(context?.raw);
+  const projection = record(raw.contextProjection ?? raw.contextAssembly ?? telemetry.contextProjection);
+  const usage = record(telemetry.cumulativeUsage ?? telemetry.usage ?? raw.usage);
+  const cacheEvidence = context?.cacheEvidence.at(-1);
+  const stablePrefix = projectedNumber(projection, ['stablePrefixMessages', 'stablePrefixCount']) ?? call?.contextDelta.commonPrefixMessages;
+  const dynamicTail = projectedNumber(projection, ['dynamicTailMessages', 'dynamicTailCount']) ?? call?.contextDelta.addedMessageCount;
+  const sealed = projectedNumber(projection, ['sealedMessages', 'sealedCount']);
+  const pending = projectedNumber(projection, ['pendingMessages', 'pendingCount']);
+  const cacheRead = cacheEvidence?.capability === 'reported' ? cacheEvidence.cacheReadTokens : projectedNumber(usage, ['cacheRead', 'cache_read_input_tokens']);
+  const cacheWrite = cacheEvidence?.capability === 'reported' ? cacheEvidence.cacheWriteTokens : projectedNumber(usage, ['cacheWrite', 'cache_creation_input_tokens']);
+  const compaction = projectedText(projection, ['compactionState', 'compaction', 'lastCompactionStatus']);
+  const recovery = projectedText(projection, ['recoveryState', 'recovery', 'bootstrapRecoveryState']);
+  return <section className="context-xray-summary" aria-label="Session 上下文结构">
+    <header><span><Layers3 size={16} /><strong>Session Context X-ray</strong></span><small>{context ? `Turn ${shortId(context.turnId)}` : '等待 Runtime 投影'}</small></header>
+    <dl>
+      <XrayMetric label="Stable prefix" value={stablePrefix} suffix="条" />
+      <XrayMetric label="Dynamic tail" value={dynamicTail} suffix="条" />
+      <XrayMetric label="Sealed" value={sealed} suffix="条" />
+      <XrayMetric label="Pending" value={pending} suffix="条" />
+      <XrayMetric label="Cache read" value={cacheRead} suffix="tokens" />
+      <XrayMetric label="Cache write" value={cacheWrite} suffix="tokens" />
+    </dl>
+    <div className="context-xray-summary__states"><span><strong>Cache support / hit</strong><small>{cacheEvidence ? cacheEvidence.capability === 'unsupported' ? 'unsupported · Provider 未报告' : cacheEvidence.cacheReadTokens > 0 ? 'supported · hit' : 'supported · no hit' : '后端未投影'}</small></span><span><strong>Compaction / Recovery</strong><small>{compaction || '未投影'} / {recovery || '未投影'}</small></span><span><strong>Context delta</strong><small>{call ? `共同前缀 ${call.contextDelta.commonPrefixMessages} 条${call.contextDelta.prefixBytes !== undefined ? ` / ${call.contextDelta.prefixBytes} bytes` : ''} · +${call.contextDelta.addedMessageCount} / -${call.contextDelta.removedMessageCount}` : '暂无模型调用'}</small></span></div>
+    <p>来源正文默认隐藏。展开下方审计区后，才会显示具体消息、评分调试、Provider 载荷和工具 Schema。</p>
+  </section>;
+}
+
+function XrayMetric({ label, suffix, value }: { label: string; suffix: string; value?: number }) {
+  return <div data-available={value !== undefined}><dt>{label}</dt><dd>{value === undefined ? '未投影' : `${value.toLocaleString('zh-CN')} ${suffix}`}</dd></div>;
+}
+
+function projectedNumber(source: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) if (typeof source[key] === 'number' && Number.isFinite(source[key])) return source[key] as number;
+  return undefined;
+}
+
+function projectedText(source: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) if (typeof source[key] === 'string' && source[key]) return source[key] as string;
+  return '';
 }
 
 function DebugSummary({ context }: { context?: DebugContextRecord }) {
