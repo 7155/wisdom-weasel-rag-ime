@@ -41,9 +41,9 @@ import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { roleItems } from '@/features/agent/types';
 import { publicErrorText } from '@/features/overview/management-ui';
 import {
-  collaborationProfileFixtures,
+  collaborationProfileCatalog,
   collaborationRoleFixtures,
-  type CollaborationProfileFixture,
+  type CollaborationProfileCatalogItem,
   type CollaborationRoleFixture,
 } from './agent-definition-fixtures';
 import { CollaborationProfileGovernancePanel } from './CollaborationProfileGovernancePanel';
@@ -111,7 +111,7 @@ export function RolesFeature() {
   const persona = personas.find((item) => item.roleId === selectedPersona);
   const template = templates.find((item) => item.templateId === selectedTemplate);
   const collaborationRole = collaborationRoleFixtures.find((item) => item.roleId === selectedCollaborationRole);
-  const collaborationProfile = collaborationProfileFixtures.find((item) => item.profileId === selectedCollaborationProfile);
+  const collaborationProfile = collaborationProfileCatalog.find((item) => item.profileId === selectedCollaborationProfile);
   const notice = [catalogNotice, actionNotice].filter(Boolean).join('；');
 
   async function startPersonaSession(): Promise<void> {
@@ -255,7 +255,7 @@ export function RolesFeature() {
         <DefinitionCatalogLayout
           ariaLabel="角色书列表"
           icon="profile"
-          items={collaborationProfileFixtures.map((item) => ({ id: item.profileId, name: item.displayName, summary: item.summary }))}
+          items={collaborationProfileCatalog.map((item) => ({ id: item.profileId, name: item.displayName, summary: item.summary }))}
           selectedId={selectedCollaborationProfile}
           onSelect={setSelectedCollaborationProfile}
         >{collaborationProfile ? <CollaborationProfileInspector profile={collaborationProfile} /> : null}</DefinitionCatalogLayout>
@@ -595,12 +595,10 @@ function CollaborationRoleInspector({ role }: { role: CollaborationRoleFixture }
   </aside>;
 }
 
-function CollaborationProfileInspector({ profile }: { profile: CollaborationProfileFixture }) {
+function CollaborationProfileInspector({ profile }: { profile: CollaborationProfileCatalogItem }) {
   return <aside className="role-inspector definition-inspector">
-    <div className="template-inspector__title"><span><UsersRound size={23} /></span><div><small>角色书 · 只读基线</small><h3>{profile.displayName}</h3><p>{profile.summary}</p></div></div>
-    <dl><div><dt>协作岗位</dt><dd>{profile.collaborationRoles.join(' · ')}</dd></div><div><dt>必要门禁</dt><dd>{profile.requiredGates.join(' · ')}</dd></div><div><dt>信任边界</dt><dd>只能收窄已授权能力</dd></div></dl>
-    <section className="definition-responsibilities" aria-label="角色书能力请求"><header><strong>能力请求</strong><small>请求不是授权</small></header><div className="template-capabilities">{profile.capabilityRequests.map((capability) => <span key={capability}>{capabilityLabel(capability as AgentTemplateV1['capabilities'][number])}</span>)}</div></section>
-    <CollaborationProfileGovernancePanel projection={profile.governance} />
+    <div className="template-inspector__title"><span><UsersRound size={23} /></span><div><small>角色书 · canonical runtime</small><h3>{profile.displayName}</h3><p>{profile.summary}</p></div></div>
+    <CollaborationProfileGovernancePanel profileId={profile.profileId} />
   </aside>;
 }
 

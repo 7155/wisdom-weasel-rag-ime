@@ -449,6 +449,19 @@ export const CONTROL_ROUTES = {
     requiredBody: ['settleReceipt', 'commit'],
     responseContract: 'room-settle-result.v1',
   },
+  'agent.collaborationProfile.get': {
+    method: 'GET',
+    path: '/api/agent/collaboration-profiles/:profileId',
+    params: { profileId: null },
+    responseContract: 'collaboration-profile-projection.v1',
+  },
+  'agent.collaborationProfile.command': {
+    method: 'POST',
+    path: '/api/agent/collaboration-profiles/commands',
+    body: ['schemaVersion', 'commandId', 'action', 'idempotencyKey', 'actorRef', 'profileId', 'candidateId', 'contentHash', 'expectedPointerRevision', 'activationScope', 'adminConfirmation', 'payload', 'createdAtMs'],
+    requiredBody: ['schemaVersion', 'commandId', 'action', 'idempotencyKey', 'actorRef', 'payload', 'createdAtMs'],
+    responseContract: 'collaboration-profile-command-receipt.v1',
+  },
   'agent.room.topics': {
     method: 'GET',
     path: '/api/agent/rooms/:roomId/topics',

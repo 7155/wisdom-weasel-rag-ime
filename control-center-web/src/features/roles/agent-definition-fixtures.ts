@@ -1,5 +1,5 @@
-// Temporary read-only projections. Lane A will regenerate the canonical wire
-// types after room-participant-binding.v2 and the catalog endpoints are merged.
+// Collaboration roles and the small Profile catalog are discovery metadata.
+// Profile runtime state is read from the generated canonical projection.
 export type CollaborationRoleFixture = {
   roleId: 'coordinator' | 'researcher' | 'implementer' | 'reviewer' | 'specialist';
   version: '1';
@@ -12,36 +12,10 @@ export type CollaborationRoleFixture = {
   capabilityRestrictions: string[];
 };
 
-export type CollaborationProfileFixture = {
+export type CollaborationProfileCatalogItem = {
   profileId: string;
-  version: '1';
   displayName: string;
   summary: string;
-  collaborationRoles: string[];
-  requiredGates: string[];
-  capabilityRequests: string[];
-  trustTier: 'builtin';
-  governance: CollaborationProfileGovernanceProjection;
-};
-
-export type CollaborationProfileGovernanceProjection = {
-  pointerRevision: number;
-  activeContentHash: string;
-  activeVersion: string;
-  signerId: string;
-  pipelineChecks: Array<'inspect' | 'validate' | 'compile' | 'dry-run' | 'stage' | 'activate'>;
-  compileReceipt: {
-    receiptId: string;
-    bindingRevision: string;
-    effectiveCapabilities: string[];
-    rejectedCapabilities: string[];
-  };
-  diff: {
-    previousVersion: string | null;
-    currentVersion: string;
-    removedCapabilities: string[];
-    addedCapabilities: string[];
-  };
 };
 
 export const collaborationRoleFixtures: CollaborationRoleFixture[] = [
@@ -92,32 +66,9 @@ export const collaborationRoleFixtures: CollaborationRoleFixture[] = [
   },
 ];
 
-export const collaborationProfileFixtures: CollaborationProfileFixture[] = [
+export const collaborationProfileCatalog: CollaborationProfileCatalogItem[] = [
   {
-    profileId: 'evidence-review', version: '1', displayName: '证据研究与独立复核',
+    profileId: 'evidence-review', displayName: '证据研究与独立复核',
     summary: '研究员先提交可追溯发现，审查员再按同一需求独立复核。',
-    collaborationRoles: ['研究员', '审查员'],
-    requiredGates: ['证据提交', '独立复核'],
-    capabilityRequests: ['delegation', 'memory', 'rag', 'review'],
-    trustTier: 'builtin',
-    governance: {
-      pointerRevision: 1,
-      activeContentHash: `sha256:${'a'.repeat(64)}`,
-      activeVersion: '1',
-      signerId: 'builtin',
-      pipelineChecks: ['inspect', 'validate', 'compile', 'dry-run', 'stage', 'activate'],
-      compileReceipt: {
-        receiptId: 'profile-compile:fixture00000000000000000',
-        bindingRevision: 'binding-revision-1',
-        effectiveCapabilities: ['memory', 'rag', 'review'],
-        rejectedCapabilities: ['delegation'],
-      },
-      diff: {
-        previousVersion: null,
-        currentVersion: '1',
-        removedCapabilities: ['delegation'],
-        addedCapabilities: [],
-      },
-    },
   },
 ];
