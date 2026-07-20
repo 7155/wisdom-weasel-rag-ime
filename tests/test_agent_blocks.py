@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import unittest
 
 from rag_ime.agent_blocks import (
@@ -68,6 +69,16 @@ class AgentBlocksTest(unittest.TestCase):
                 self.assertEqual(result.text, raw)
                 self.assertEqual(result.blocks, ())
 
+    def test_rejects_non_finite_json_numbers_before_sse_or_persistence(self) -> None:
+        for value in (math.nan, math.inf, -math.inf):
+            with self.subTest(value=value):
+                raw = fenced([{"id": "status", "type": "status", "data": {"value": value}}])
+                result = extract_completed_agent_blocks(
+                    raw, source_kind="pi_session_message", source_ref="m"
+                )
+                self.assertEqual(result.text, raw)
+                self.assertEqual(result.blocks, ())
+
     def test_unknown_type_has_readable_inert_fallback(self) -> None:
         raw = fenced([{"id": "future", "type": "future_chart", "data": {"raw": [1, 2, 3]}}])
         result = extract_completed_agent_blocks(raw, source_kind="pi_session_message", source_ref="m")
@@ -113,6 +124,20 @@ class AgentBlocksTest(unittest.TestCase):
         self.assertEqual(block["source"], {"kind": "pi_runtime_event", "ref": "session:1:message:1"})
         self.assertEqual(block["visibility"], "private_session")
         self.assertEqual(block["generation"], 0)
+
+    def test_trusted_runtime_blocks_suppress_fenced_fallback_without_leaking_json(self) -> None:
+        raw_text = fenced([{"id": "status:1", "type": "status", "data": {"title": "fallback"}}])
+        message = _pi_message_payload(
+            {"role": "assistant", "content": [{"type": "text", "text": raw_text}]},
+            session_id="session:1",
+            turn_id="turn:1",
+            message_id="message:1",
+            trusted_blocks=[{"id": "status:1", "type": "status", "data": {"title": "trusted"}}],
+        ).to_payload()
+        structured = [block for block in message["blocks"] if block["type"] == "status"]
+        self.assertEqual(len(structured), 1)
+        self.assertEqual(structured[0]["summary"], "状态：trusted")
+        self.assertNotIn("rag_ime_blocks", json.dumps(message, ensure_ascii=False))
 
     def test_persisted_projection_rejects_tampered_data_digest_summary_or_ref(self) -> None:
         original = normalize_trusted_agent_blocks(

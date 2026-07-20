@@ -2164,6 +2164,7 @@ def _pi_message_payload(
         role = "tool" if role.lower().startswith("tool") else "assistant"
     content = raw.get("content")
     resolved_message_id = message_id or _pi_message_id(raw, turn_id)
+    fallback_blocks_enabled = trusted_blocks is None
     blocks: list[AgentBlock] = []
     blocks.extend(
         AgentBlock.from_payload(item)
@@ -2187,7 +2188,8 @@ def _pi_message_payload(
         )
         if extracted is not None:
             visible_content = extracted.text
-            blocks.extend(AgentBlock.from_payload(item) for item in extracted.blocks)
+            if fallback_blocks_enabled:
+                blocks.extend(AgentBlock.from_payload(item) for item in extracted.blocks)
         if visible_content:
             blocks.append(
                 normalize_agent_block(
@@ -2217,7 +2219,8 @@ def _pi_message_payload(
                 )
                 if extracted is not None:
                     visible_content = extracted.text
-                    blocks.extend(AgentBlock.from_payload(item) for item in extracted.blocks)
+                    if fallback_blocks_enabled:
+                        blocks.extend(AgentBlock.from_payload(item) for item in extracted.blocks)
                 if visible_content:
                     blocks.append(
                         normalize_agent_block(

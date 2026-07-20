@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.agent_protocol import AgentEventEnvelope
+from rag_ime.agent_blocks import normalize_trusted_agent_blocks, provider_block_projection
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
 from rag_ime.agent_room_kernel import RoomKernelFenceError
@@ -199,6 +200,7 @@ class AgentServiceTests(unittest.TestCase):
         )["session"]
         self.assertEqual(restored_profile["toolProfileVersion"], "control-center-v1")
         self.assertEqual(restored_profile["toolAllowlistMode"], "profile")
+
         self.assertEqual(restored_profile["allowedTools"], [])
         context_disabled = self.service.update_session(
             session_id,
@@ -267,6 +269,69 @@ class AgentServiceTests(unittest.TestCase):
         deleted = self.service.delete_session(session_id)
         self.assertTrue(deleted["ok"])
         self.assertEqual(self.service.list_sessions()["items"], [])
+
+    def test_rich_history_hydrates_from_sidecar_after_restart_and_compacted_snapshot(self) -> None:
+        session = self.service.create_session({"title": "Rich restart"})["session"]
+        session_id = str(session["id"])
+        rich = list(normalize_trusted_agent_blocks(
+            [{
+                "id": "table:restart",
+                "type": "table",
+                "data": {
+                    "title": "重启恢复",
+                    "columns": ["状态"],
+                    "rows": [["raw-restart-secret"]],
+                },
+            }],
+            source_kind="pi_runtime_event",
+            source_ref=f"{session_id}:message:rich",
+        ))
+        message = {
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "message:rich",
+            "sessionId": session_id,
+            "turnId": "turn:rich",
+            "role": "assistant",
+            "status": "completed",
+            "blocks": [
+                {
+                    "id": "text:rich", "type": "text", "status": "completed",
+                    "presentationKind": "markdown", "data": {"text": "可读交付"},
+                },
+                *rich,
+            ],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 10,
+            "completedAtMs": 10,
+        }
+        self.service.agent_blocks.persist_message(message, created_at_ms=10)
+        db_path = self.root / "rag-ime.sqlite"
+        self.service.close()
+        self.service = AgentService(
+            db_path=db_path,
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config",
+                session_dir=self.root / "sessions",
+                logs_dir=self.root / "logs",
+            ),
+            process_id_provider=lambda: self.process_id,
+        )
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value={"messages": [], "telemetry": None, "messageQueue": None},
+        ):
+            recovered = self.service.messages(session_id)["items"]
+
+        self.assertEqual([block["type"] for block in recovered[0]["blocks"]], ["text", "table"])
+        self.assertEqual(recovered[0]["blocks"][1]["data"]["rows"], [["raw-restart-secret"]])
+        provider_text = provider_block_projection("可读交付", recovered[0]["blocks"][1:])
+        self.assertIn("表格：重启恢复，1 行 1 列", provider_text)
+        self.assertNotIn("raw-restart-secret", provider_text)
 
     def test_delete_stops_a_runtime_that_still_has_the_session_open(self) -> None:
         session = self.service.create_session({"title": "打开中的会话"})["session"]

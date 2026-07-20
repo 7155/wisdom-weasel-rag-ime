@@ -539,6 +539,39 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.service._run_room_learning_maintenance()
         self.assertEqual(len(self.factory.runtime.cancelled), 1)
 
+    def test_cancelled_root_rejects_late_rich_sidecar_writeback(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        self.service.room_kernel_worker.cancel_root("root:service")
+        blocks = list(normalize_trusted_agent_blocks(
+            [{"id": "status:late", "type": "status", "data": {"title": "过期结果"}}],
+            source_kind="pi_runtime_event",
+            source_ref=f"{self.session_id}:message:late",
+        ))
+        self.service.events.publish(
+            self.session_id,
+            "message_completed",
+            {
+                "message": {
+                    "schemaVersion": "rag-ime.agent-message.v1",
+                    "id": "message:late",
+                    "sessionId": self.session_id,
+                    "turnId": "turn:late",
+                    "role": "assistant",
+                    "status": "completed",
+                    "blocks": blocks,
+                    "attachments": [],
+                    "citations": [],
+                    "createdAtMs": 5,
+                }
+            },
+            turn_id="turn:late",
+        )
+        self.assertEqual(
+            self.service.agent_blocks.blocks_for_message(self.session_id, "message:late"),
+            [],
+        )
+
     def test_unknown_cancel_snapshot_stays_nonterminal_with_pending_targets(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
         self.service.room_kernel_worker.run_once()

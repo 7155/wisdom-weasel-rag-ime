@@ -192,6 +192,8 @@ describe('Agent chat rendering', () => {
       { id: 'table', type: 'table', status: 'completed', presentationKind: 'table.v1', data: { title: '结果表', columns: ['项目', '状态'], rows: [['Room Post', '通过']] } },
       { id: 'artifact', type: 'artifact', status: 'completed', presentationKind: 'artifact.v1', data: { title: '审计报告', summary: '已持久化', url: 'javascript:alert(1)' } },
       { id: 'reference', type: 'reference', status: 'completed', presentationKind: 'reference.v1', data: { title: '需求原文', url: 'javascript:alert(1)', excerpt: '原始需求保持不变' } },
+      { id: 'artifact-protocol-relative', type: 'artifact', status: 'completed', presentationKind: 'artifact.v1', data: { title: '协议相对地址', url: '//evil.example/file' } },
+      { id: 'reference-backslash', type: 'reference', status: 'completed', presentationKind: 'reference.v1', data: { title: '反斜杠地址', url: '/\\evil.example', excerpt: '不可点击' } },
       { id: 'status', type: 'status', status: 'completed', presentationKind: 'status.v1', data: { title: 'Runtime', state: 'completed', summary: '全部收束' } },
     ];
 
@@ -206,6 +208,8 @@ describe('Agent chat rendering', () => {
     expect(screen.getByRole('table')).toHaveTextContent('Room Post通过');
     expect(screen.queryByRole('button', { name: '打开产物回执' })).not.toBeInTheDocument();
     expect(screen.getByText('原始需求保持不变').closest('a')).toBeNull();
+    expect(screen.getByText('协议相对地址').closest('a')).toBeNull();
+    expect(screen.getByText('不可点击').closest('a')).toBeNull();
     expect(screen.getByRole('region', { name: 'Runtime' })).toHaveTextContent('全部收束');
   });
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass
 from typing import Mapping, Sequence
@@ -336,8 +337,10 @@ def _presentation(block_type: str) -> str:
 def _safe_data(value: object, depth: int = 0) -> bool:
     if depth > 8:
         return False
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None or isinstance(value, (bool, int)):
         return True
+    if isinstance(value, float):
+        return math.isfinite(value)
     if isinstance(value, str):
         return len(value.encode("utf-8")) <= MAX_BLOCK_BYTES
     if isinstance(value, list):
@@ -356,7 +359,9 @@ def _safe_data(value: object, depth: int = 0) -> bool:
 
 
 def _canonical_json(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
 
 
 def _content_digest(block_type: str, data: object) -> str:

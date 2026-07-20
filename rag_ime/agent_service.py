@@ -4002,6 +4002,10 @@ class AgentService:
             if isinstance(runtime_snapshot, Mapping)
             else self.runtime.messages(session_id)
         )
+        messages = self.agent_blocks.hydrate_messages(
+            session_id,
+            [message for message in messages if isinstance(message, Mapping)],
+        )
         telemetry = (
             runtime_snapshot.get("telemetry")
             if isinstance(runtime_snapshot, Mapping) and isinstance(runtime_snapshot.get("telemetry"), Mapping)
@@ -6096,6 +6100,16 @@ class AgentService:
             message = event.payload.get("message")
             if isinstance(message, Mapping):
                 binding = self.room_kernel.session_binding(event.session_id)
+                participant = self.rooms.participant_for_session(
+                    event.session_id, active_only=False
+                )
+                kernel_room = (
+                    participant is not None
+                    and bool(self.room_kernel.root_ids(str(participant.get("roomId") or "")))
+                )
+                block_write_allowed = not kernel_room or (
+                    binding is not None and binding.get("state") == "running"
+                )
                 generation = int(binding.get("generation") or 0) if binding else 0
                 bound_message = dict(message)
                 bound_message["blocks"] = bind_block_scope(
@@ -6107,7 +6121,7 @@ class AgentService:
                 event.payload["message"] = bound_message
                 message = bound_message
                 self._append_recent_recall_message(event.session_id, message)
-                if any(
+                if block_write_allowed and any(
                     isinstance(block, Mapping)
                     and block.get("schemaVersion") == "rag-ime.agent-block.v1"
                     for block in message.get("blocks", [])

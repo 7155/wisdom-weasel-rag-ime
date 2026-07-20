@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.agent_block_store import AgentBlockConflict, AgentBlockStore
 from rag_ime.agent_blocks import normalize_trusted_agent_blocks
@@ -69,8 +70,69 @@ class AgentBlockStoreTest(unittest.TestCase):
             source_kind="pi_runtime_event", source_ref="message:2", generation=3,
         ))
         self.store.persist_message(second, root_id="root:1", generation=3, created_at_ms=13)
-        self.assertEqual(self.store.cancel_generation("root:1", 3, now_ms=14), 1)
-        self.assertEqual(self.store.blocks_for_message("session:1", "message:2"), [])
+        # Completed history remains rerenderable; Root cancellation fences stale
+        # future writes rather than erasing already completed Session output.
+        self.assertEqual(self.store.cancel_generation("root:1", 3, now_ms=14), 0)
+        self.assertEqual(len(self.store.blocks_for_message("session:1", "message:2")), 1)
+
+    def test_message_envelope_replay_is_atomic_and_cannot_partially_append(self) -> None:
+        message = self.message()
+        self.store.persist_message(message, root_id="root:1", generation=2, created_at_ms=10)
+        expanded = json.loads(json.dumps(message))
+        expanded["blocks"] = [
+            *expanded["blocks"],
+            *normalize_trusted_agent_blocks(
+                [{"id": "status:2", "type": "status", "data": {"title": "late"}}],
+                source_kind="pi_runtime_event", source_ref="message:1", generation=2,
+            ),
+        ]
+        with self.assertRaisesRegex(AgentBlockConflict, "envelope"):
+            self.store.persist_message(expanded, root_id="root:1", generation=2, created_at_ms=11)
+        blocks = self.store.blocks_for_message("session:1", "message:1", generation=2)
+        self.assertEqual([block["id"] for block in blocks], ["table:1"])
+
+    def test_hydrates_runtime_messages_and_recovers_missing_compacted_envelope(self) -> None:
+        message = self.message()
+        text_block = {
+            "id": "text:1", "type": "text", "status": "completed",
+            "presentationKind": "markdown", "data": {"text": "可读结论"},
+        }
+        message["blocks"] = [text_block, *message["blocks"]]
+        self.store.persist_message(message, root_id="root:1", generation=2, created_at_ms=10)
+
+        hydrated = self.store.hydrate_messages("session:1", [{**message, "blocks": [text_block]}])
+        self.assertEqual([block["type"] for block in hydrated[0]["blocks"]], ["text", "table"])
+        recovered = self.store.hydrate_messages("session:1", [])
+        self.assertEqual(recovered, hydrated)
+        self.assertEqual(recovered[0]["blocks"][1]["data"]["rows"], [["raw"]])
+
+        newer = {
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "message:2",
+            "sessionId": "session:1",
+            "turnId": "turn:2",
+            "role": "assistant",
+            "status": "completed",
+            "blocks": [text_block],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 20,
+        }
+        merged = self.store.hydrate_messages("session:1", [newer])
+        self.assertEqual([item["id"] for item in merged], ["message:1", "message:2"])
+
+    def test_exact_replay_does_not_double_count_root_budget(self) -> None:
+        message = self.message()
+        first = self.store.persist_message(
+            message, root_id="root:1", generation=2, created_at_ms=10
+        )
+        with patch(
+            "rag_ime.agent_block_store.MAX_ROOT_BLOCK_BYTES", first["beforeBytes"]
+        ):
+            replay = self.store.persist_message(
+                message, root_id="root:1", generation=2, created_at_ms=11
+            )
+        self.assertEqual(replay, first)
 
     def test_same_ref_cannot_be_rebound(self) -> None:
         message = self.message()

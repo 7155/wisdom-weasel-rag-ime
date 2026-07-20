@@ -713,6 +713,7 @@ function publicStructuredValue(value: string): string {
 
 function safeLink(value: string | undefined): string | undefined {
   if (!value) return undefined;
+  if (value.includes('\\') || value.startsWith('//')) return undefined;
   if (value.startsWith('#/') || value.startsWith('/')) return value;
   try {
     const url = new URL(value);

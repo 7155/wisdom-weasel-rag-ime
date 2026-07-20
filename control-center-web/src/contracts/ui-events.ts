@@ -68,7 +68,7 @@ export const knownAgentBlockTypes = [
   'approval',
   'error',
   'unknown',
-] as const;
+] as const satisfies readonly AgentMessageV1['blocks'][number]['type'][];
 
 export type KnownAgentEventType = (typeof knownAgentEventTypes)[number];
 export type KnownRoomEventType = (typeof knownRoomEventTypes)[number];

@@ -42,7 +42,7 @@ class RoomReleaseGateTests(unittest.TestCase):
             frontend_dist=self.frontend, output_dir=self.root / name, pi_build=self.pi_build) for name in ("out-a", "out-b")]
         self.assertEqual(before, self.db.read_bytes())
         self.assertEqual(reports[0]["receiptHash"], reports[1]["receiptHash"])
-        self.assertEqual(reports[0]["checks"]["migrationVersion"], 92)
+        self.assertEqual(reports[0]["checks"]["migrationVersion"], 93)
         self.assertEqual(reports[0]["checks"]["schemaCount"], 135)
         self.assertFalse(reports[0]["productionCanaryEligible"])
         self.assertIn("loopback_worker_control_e2e", reports[0]["remainingGates"])
