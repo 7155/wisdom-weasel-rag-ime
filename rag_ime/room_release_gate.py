@@ -52,7 +52,7 @@ def stage_room_v2_canary(*, product_root: str | Path, pi_root: str | Path, sourc
         "frontend": _tree_hash([path for path in frontend.rglob("*") if path.is_file()]) if frontend.is_dir() else "missing",
     }
     remaining = []
-    if not all((checks["productClean"], checks["piClean"], checks["migrationVersion"] == 89, quick_check == "ok",
+    if not all((checks["productClean"], checks["piClean"], checks["migrationVersion"] == 90, quick_check == "ok",
                 not foreign_keys, checks["schemaCount"] == 135, checks["frontendPresent"], checks["defaultOff"], checks["piBuildPresent"])):
         remaining.append("local_provenance_or_dry_run")
     remaining.extend(("loopback_worker_control_e2e", "metal_runtime_e2e", "network_provider_e2e", "named_canary_metrics", "administrator_promotion_approval"))

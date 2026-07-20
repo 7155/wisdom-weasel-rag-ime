@@ -86,15 +86,28 @@ for line in sys.stdin:
     elif method == "completion.cancel":
         result(request, {"requestId": params["requestId"], "cancelled": True})
     elif method == "session.open":
+        room_skill = params.get("roomSkillPolicy") or {}
+        room_skill_load = ({
+            "schemaVersion": "rag-ime.skill-load.v1",
+            "name": room_skill["skillId"],
+            "catalogRevision": "c" * 64,
+            "contentRevision": room_skill["skillHash"],
+            "loadReason": "stage_required",
+        } if room_skill.get("selection") == "required" else None)
         session = sessions.setdefault(session_id, {
             "sessionId": session_id, "piSessionId": "pi-" + session_id,
             "sessionFile": str(pathlib.Path(os.environ["RAG_IME_PI_SESSION_DIR"]) / (session_id + ".jsonl")),
             "leafId": "", "messages": [], "thinkingLevel": params.get("thinkingLevel", "medium"),
             "model": model,
+            "roomCapability": params.get("roomCapability"),
+            "roomProviderContext": params.get("roomProviderContext"),
+            "roomSkillLoad": room_skill_load,
+            "isIdle": True,
             "messageQueue": {"steering": [], "followUp": [], "steeringMode": "one-at-a-time",
                              "followUpMode": "one-at-a-time"},
         })
-        result(request, {"snapshot": session, "evictedSessionId": None})
+        result(request, {"snapshot": session, "evictedSessionId": None,
+                         "roomSkillLoad": room_skill_load})
     elif method == "session.snapshot":
         result(request, sessions[session_id])
     elif method == "session.commands":
@@ -180,12 +193,18 @@ for line in sys.stdin:
     elif method == "room.dispatch":
         if params.get("message") == "crash-host-after-room-dispatch":
             os._exit(23)
+        room_provider = sessions[session_id].get("roomProviderContext") or {}
         result(request, {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
             "receiptKind": "dispatch_accepted", "status": "accepted",
             "rootId": params["rootId"], "dispatchId": params["dispatchId"],
             "generation": params["generation"], "sessionId": session_id,
             "delivery": "prompt", "turnId": "room-turn-" + params["dispatchId"],
+            **({"roomSkillLoad": sessions[session_id]["roomSkillLoad"]}
+               if sessions[session_id].get("roomSkillLoad") else {}),
+            "providerContextReceipt": ({**room_provider,
+                "providerRequestId": "room-turn-" + params["dispatchId"]}
+                if room_provider else None),
         })
     elif method == "room.cancel":
         result(request, {
@@ -329,7 +348,21 @@ class PiRuntimeV2Tests(unittest.TestCase):
             config=self.runtime.config,
             sessions=self.store,
             events=self.events,
-            session_context_provider=lambda _session: {"roomCapability": capability},
+            session_context_provider=lambda _session: {
+                "roomCapability": capability,
+                "managedSystemPrompt": "stable-room-prefix",
+                "providerContext": "dynamic-room-tail",
+                "roomProviderContext": {
+                    "journalId": "journal:1",
+                    "throughSequence": 1,
+                    "projectionHash": "c" * 64,
+                },
+                "roomSkillPolicy": {
+                    "selection": "required",
+                    "skillId": "room-test-driven-implementation",
+                    "skillHash": "d" * 64,
+                },
+            },
             tool_manifest_provider=lambda _session: [],
         )
         self.runtime.ensure(str(self.first["id"]))
@@ -339,6 +372,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
         ]
         opened = [request for request in requests if request["method"] == "session.open"][-1]
         self.assertEqual(opened["params"]["roomCapability"], capability)
+        self.assertEqual(opened["params"]["systemPrompt"], "stable-room-prefix")
+        self.assertEqual(opened["params"]["sessionContext"], "dynamic-room-tail")
+        self.assertEqual(opened["params"]["roomProviderContext"]["journalId"], "journal:1")
+        self.assertEqual(
+            opened["params"]["roomSkillPolicy"]["skillId"],
+            "room-test-driven-implementation",
+        )
 
     def test_typed_room_rpc_is_negotiated_and_correlated_across_the_host_process(self) -> None:
         self.runtime.stop()

@@ -37,6 +37,7 @@ class RoomKernelWorker:
         *,
         message_builder: Callable[[Mapping[str, object]], str] | None = None,
         prepare_dispatch: Callable[[Mapping[str, object], int], Mapping[str, object]] | None = None,
+        accept_runtime_context: Callable[[Mapping[str, object]], object] | None = None,
         revoke_session: Callable[[str, int], object] | None = None,
         learning_observer: Callable[[Mapping[str, object]], object] | None = None,
         clock_ms: Callable[[], int] | None = None,
@@ -45,6 +46,7 @@ class RoomKernelWorker:
         self.runtime = runtime
         self.message_builder = message_builder or _default_dispatch_message
         self.prepare_dispatch = prepare_dispatch
+        self.accept_runtime_context = accept_runtime_context
         self.revoke_session = revoke_session
         self.learning_observer = learning_observer
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
@@ -98,6 +100,8 @@ class RoomKernelWorker:
                     # Lease reconciliation remains the fallback evidence path.
                     pass
             raise
+        if self.accept_runtime_context is not None:
+            self.accept_runtime_context(runtime_receipt)
         return self.store.accept_runtime_receipt(
             lease_token=str(lease["leaseToken"]),
             runtime_receipt=runtime_receipt,

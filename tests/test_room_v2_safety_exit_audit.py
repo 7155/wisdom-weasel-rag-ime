@@ -90,7 +90,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         self.assertEqual(self.runtime.cancel_calls, [("session:b", "root:1", 1)])
         self.assertEqual(self.store.root("root:1")["state"], "cancelled")
 
-    def test_source_census_records_cutover_paths_and_remaining_context_gates(self) -> None:
+    def test_source_census_records_live_context_and_governed_cutover_paths(self) -> None:
         service = (REPO / "rag_ime/agent_service.py").read_text(encoding="utf-8")
         kernel = (REPO / "rag_ime/agent_room_kernel.py").read_text(encoding="utf-8")
         prompt = (REPO / "rag_ime/agent_prompt_plans.py").read_text(encoding="utf-8")
@@ -105,11 +105,17 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         self.assertIn("room_kernel_commands.finalize(", service)
         self.assertIn("Canonical durable Room state machine", kernel)
 
-        # PromptPlan and native Room Skill governance are durable audit models, not live Pi inputs.
-        self.assertIn("Shadow-only six-layer PromptPlan", prompt)
-        self.assertIn('"mode": "shadow_compare_only"', prompt)
-        self.assertNotIn("RoomSkillPolicyStore", service)
-        self.assertIn("profile=None", service)
+        # Bound Room Sessions consume the compiled provider payload and one governed Skill.
+        self.assertIn("Durable six-layer PromptPlan", prompt)
+        self.assertIn('"mode": "live_room_binding"', prompt)
+        self.assertIn("RoomSkillPolicyStore", service)
+        self.assertIn("_runtime_session_context", service)
+        self.assertIn("_accept_managed_room_runtime_context", service)
+
+        # A Root pins one immutable CollaborationProfile; dispatch compilation consumes it.
+        self.assertIn("_resolve_room_collaboration_profile", service)
+        self.assertIn("profile=active_profile", service)
+        self.assertNotIn("profile=None", service)
 
         # Product integration pins the reviewed Pi runtime handlers and typed methods.
         self.assertIn("room.dispatch", integrations)

@@ -107,6 +107,11 @@ class RoomSkillPolicy:
         body = _native_skill_body(content)
         return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
+    def skill_body(self, skill_id: str) -> str:
+        if skill_id not in self._by_id:
+            raise ValueError(f"Skill is not governed by Room policy: {skill_id}")
+        return _native_skill_body(self.skill_path(skill_id).read_text(encoding="utf-8"))
+
     def select_stage(self, stage: str) -> dict[str, object]:
         """Select only explicit stages; semantic matching remains Pi's native job."""
 
@@ -169,6 +174,31 @@ class RoomSkillPolicyStore:
     def next_candidates(self, skill_id: str) -> list[str]:
         # This is deliberately a pure read. Candidates never imply Dispatch creation.
         return self.policy.next_candidates(skill_id)
+
+    def active_for_session(self, session_id: str) -> dict[str, object] | None:
+        return self._latest_for_session(session_id, state="active")
+
+    def latest_for_session(self, session_id: str) -> dict[str, object] | None:
+        """Return the newest receipt for audit, including an already revoked pin."""
+
+        return self._latest_for_session(session_id)
+
+    def _latest_for_session(
+        self, session_id: str, *, state: str | None = None
+    ) -> dict[str, object] | None:
+        where = "session_id = ?"
+        params: tuple[object, ...] = (_required_text(session_id, "sessionId"),)
+        if state is not None:
+            where += " AND state = ?"
+            params += (state,)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""SELECT * FROM room_v2_skill_load_receipts
+                    WHERE {where}
+                    ORDER BY created_at_ms DESC, receipt_id DESC LIMIT 1""",
+                params,
+            ).fetchone()
+        return _receipt_payload(row) if row is not None else None
 
     def pin_skill(
         self,

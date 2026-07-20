@@ -2,6 +2,21 @@
 
 审计基线：`feea050`。审计日期：2026-07-20。
 
+## 2026-07-20 第二批强制 Gate 整改（生产仍关闭）
+
+本节继续追加整改证据，不修改下文原始审计。Prompt、Skill、Profile、continuation 和 AbortScope 已从“设计/影子模型”进入 managed Room 的真实执行链；这仍然不是生产放行声明。
+
+| 强制 Gate | 已落地机制 | 仍需生产演练的边界 |
+|---|---|---|
+| Collaboration Profile | Root 首次 managed Dispatch 时固定 `profileId/version/bundleHash/definitionHash/pointerRevision/guardEpoch`；后续请求不能热切换；撤销会取消仍引用该版本的活跃 Root。Prompt compiler 接收真实 manifest，不再使用 `profile=None`。 | 需要签名 Profile 激活、滚动升级和撤销中的真实多 Root 演练。 |
+| 六层 PromptPlan | 1-5 层按固定顺序生成 cache-stable system prompt；第 6 层只由 ProjectionJournal 形成 append-only provider tail。RoomBinding 下 legacy system-prompt producer 明确禁用，Pi `session.open` 返回 provider receipt 后才封存投影。 | 需要真实 Provider 的 cache 命中、上下文上限和断线恢复指标。 |
+| native Skill | 每阶段最多一个 required `SKILL.md`；Pi 原生 search/load 做唯一匹配和正文 hash 校验，返回 load receipt；compaction 恢复原 receipt，恢复失败 fail closed；`nextCandidates` 只读，不自动派发。 | 需要真实 Skill 目录升级、撤销和 compaction 中断演练。 |
+| deterministic continuation | `RoomCommit` 显式决定 `dispatch/wait/block/complete/post`；child Dispatch 与父 Commit 在同一事务写入并预留预算。settle 缺 Commit 最多重试 3 次，随后阻塞而不是静默断链。 | 需要长链、并发 settle 和 worker 重启压力测试。 |
+| 深度与互相触发 | continuation 复用 Kernel 的 `MAX_HOPS=12`、`MAX_DEPTH=4`、`MAX_BUDGET=1000`，测试覆盖 A -> B -> A 以及第 13 hop/15 次互相触发被拒绝。 | 还需墙钟、Token 和单 Root Dispatch 总数的独立硬上限。 |
+| Root AbortScope | Dispatch 入队即注册 queued/running/provider/tool/process/retry/compaction/timer/continuation 九个 surface；取消通过 durable outbox，只有 Pi 匹配 cancel receipt 后进入 cancelled。 | 当前仍缺 Host PID/process-group 管理员 kill、每个 surface 的独立终止回执与未确认执行清单，因此 panic 不能判定完全闭环。 |
+
+Pi 真实 handler 已固定到独立源码提交 `f842dfbd0cd14e80618371b888a3149c320905c5`，包含 live Prompt/Skill、compaction restore 与 fail-closed 校验。产品只更新最低审核 commit 和 typed contract；未覆盖本机安装、未打开 production rollout、未签发 release receipt。
+
 ## 2026-07-20 P0 整改进展（生产仍关闭）
 
 本节是对原始审计的追加记录；下文保留 `feea050` 基线结论，便于复盘“发现了什么、如何修复”，不改写历史证据。当前已经完成首批 P0 整改，但 **不能据此签发 production release receipt**：Prompt、Skill、Profile、continuation、完整 AbortScope 和真实生产演练仍是强制 Gate。

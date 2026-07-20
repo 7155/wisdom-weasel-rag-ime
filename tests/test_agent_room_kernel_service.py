@@ -530,6 +530,33 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(self.service.room_kernel.dispatch("dispatch:service")["state"], "running")
         self.assertEqual(self.service.room_kernel_snapshot(self.room_id)["posts"], [])
 
+    def test_agent_settled_without_commit_retries_then_blocks_deterministically(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch("dispatch:no-commit"), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        settle = {
+            "schemaVersion": ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
+            "settleReceiptId": "settle:no-commit",
+            "eventKind": "agent_settled",
+            "status": "settled",
+            "dispatchId": "dispatch:no-commit",
+            "sessionId": self.session_id,
+            "generation": 0,
+            "capabilityEpoch": 7,
+            "createdAtMs": 31,
+        }
+
+        results = [
+            self.service.settle_room_kernel_dispatch(
+                self.room_id, {"settleReceipt": settle}, caller_authorized=True
+            )
+            for _ in range(3)
+        ]
+
+        self.assertTrue(results[0]["retryRequired"])
+        self.assertTrue(results[2]["blocked"])
+        self.assertEqual(self.service.room_kernel.root("root:service")["state"], "blocked")
+        self.assertIsNone(self.service.room_capabilities.runtime_binding(self.session_id))
+
     def test_kernel_bound_message_completion_never_enters_legacy_room_timeline(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
         before = len(self.service.rooms.list_events(self.room_id, limit=200))
@@ -669,6 +696,20 @@ class RoomKernelServiceTests(unittest.TestCase):
 
         replayed = self.service._prepare_managed_room_dispatch(dispatch, 99)
         self.assertEqual(first, replayed)
+        with sqlite3.connect(self.service.db_path) as conn:
+            pin = conn.execute(
+                """SELECT profile_id,profile_version,pointer_revision,guard_epoch,
+                          bundle_content_hash,definition_content_hash
+                   FROM room_v2_root_profile_pins WHERE root_id='root:service'"""
+            ).fetchone()
+        self.assertEqual(pin[:4], ("standard-room", "1", 0, 0))
+        self.assertTrue(str(pin[4]).startswith("sha256:"))
+        self.assertTrue(str(pin[5]).startswith("sha256:"))
+        with self.assertRaisesRegex(RoomKernelFenceError, "cannot hot-swap"):
+            self.service._resolve_room_collaboration_profile(
+                {**self.service.room_kernel.root("root:service"), "activeProfileRef": "evidence-review"},
+                pinned_at_ms=100,
+            )
         self.service.room_kernel_worker.run_once()
         active = self.service.room_capabilities.runtime_binding(self.session_id)
         self.assertEqual(active["manifestHash"], first["manifestHash"])
@@ -951,11 +992,28 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(methods[0], "hello")
         self.assertIn("session.open", methods)
         self.assertLess(methods.index("session.open"), methods.index("room.dispatch"))
+        opened = next(request for request in requests if request["method"] == "session.open")
+        self.assertIn("<room-prompt-plan", opened["params"]["systemPrompt"])
+        self.assertNotIn("运行时工具渐进披露规则", opened["params"]["systemPrompt"])
+        self.assertIn('"dispatchId":"dispatch:service"', opened["params"]["sessionContext"])
+        self.assertEqual(
+            opened["params"]["roomSkillPolicy"]["skillId"],
+            "room-test-driven-implementation",
+        )
         self.assertEqual(methods.count("room.dispatch"), 2)
         self.assertEqual(
             [request["params"]["dispatchId"] for request in requests if request["method"] == "room.dispatch"],
             ["dispatch:service", "dispatch:complete"],
         )
+        skill_receipt = self.service.room_skill_receipts.latest_for_session(self.session_id)
+        self.assertIsNotNone(skill_receipt)
+        self.assertEqual(skill_receipt["skillId"], "room-test-driven-implementation")
+        self.assertEqual(skill_receipt["state"], "revoked")
+        projection = self.service.room_projection_journals.projection(
+            "room-journal:dispatch:service", expected_generation=0
+        )
+        self.assertEqual(projection["pendingTail"], [])
+        self.assertEqual(projection["sealedThroughSequence"], 1)
 
     @requires_loopback_bind
     def test_real_http_snapshot_command_and_sse_gap_routes(self) -> None:

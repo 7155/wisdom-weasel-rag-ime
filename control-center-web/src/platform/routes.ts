@@ -446,7 +446,7 @@ export const CONTROL_ROUTES = {
     path: '/api/agent/rooms/:roomId/kernel/settle',
     params: { roomId: null },
     body: ['settleReceipt', 'commit', 'invocationReceiptId'],
-    requiredBody: ['settleReceipt', 'commit'],
+    requiredBody: ['settleReceipt'],
     responseContract: 'room-settle-result.v1',
   },
   'agent.room.kernel.create': {

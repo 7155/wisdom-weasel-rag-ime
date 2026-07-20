@@ -101,6 +101,11 @@ class RoomKernelWorkerTests(unittest.TestCase):
         runtime = FakeRoomRuntime()
         worker = RoomKernelWorker(self.store, runtime, clock_ms=self.clock)
         worker.run_once()
+        registered = self.store.abort_scope("dispatch:cancel")
+        self.assertEqual(
+            set(registered["surfaces"]),
+            {"queued", "running", "provider", "tool", "process", "retry", "compaction", "timer", "continuation"},
+        )
 
         result = worker.cancel_root("root:1")
 
@@ -108,6 +113,7 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertEqual(result["runtimeReceipts"][0]["receiptKind"], "cancel_applied")
         self.assertEqual(runtime.cancellations[0]["generation"], 1)
         self.assertEqual(self.store.root("root:1")["state"], "cancelled")
+        self.assertEqual(self.store.abort_scope("dispatch:cancel")["state"], "cancelled")
 
     def test_cancel_target_reaches_runtime_without_terminalizing_root(self) -> None:
         self.store.enqueue_dispatch(dispatch("dispatch:target", key="worker:target"), now_ms=3)

@@ -465,10 +465,6 @@ class PiRuntimeHostManager:
             if not self.config.model_configured:
                 raise PiRuntimeError(self.config.model_configuration_error or "Pi model is not configured")
             client = self._host()
-            with self._lock:
-                if session_id in self._open_sessions:
-                    self._schedule_idle_locked()
-                    return {"state": client.send("session.snapshot", {"sessionId": session_id})}
             session = dict(self.sessions.get(session_id))
             binding = self.sessions.runtime_binding(session_id)
             if binding is not None:
@@ -477,14 +473,36 @@ class PiRuntimeHostManager:
                 session["_runtimeBinding"] = binding
             if self._session_context_provider is not None:
                 session.update(dict(self._session_context_provider(session)))
+            with self._lock:
+                already_open = session_id in self._open_sessions
+            if already_open:
+                snapshot = dict(client.send("session.snapshot", {"sessionId": session_id}))
+                current_room = _mapping(snapshot.get("roomCapability"))
+                desired_room = _mapping(session.get("roomCapability"))
+                if (
+                    not desired_room
+                    or current_room.get("promptPlanHash") == desired_room.get("promptPlanHash")
+                ):
+                    with self._lock:
+                        self._schedule_idle_locked()
+                    return {"state": snapshot}
+                if not bool(snapshot.get("isIdle")):
+                    raise PiRuntimeError("managed Room Session must settle before rebinding PromptPlan")
+                client.send("session.close", {"sessionId": session_id})
+                with self._lock:
+                    self._open_sessions.discard(session_id)
+                    self._states.pop(session_id, None)
             roots = [str(value) for value in session.get("workspaceRoots") or [] if str(value).strip()]
             cwd = roots[0] if roots else str(self.config.agent_dir)
             provider, model_id = self.config.resolved_model_reference(session)
             session_file = str((binding or {}).get("transcriptRef") or session.get("sessionFile") or "").strip()
+            managed_system_prompt = str(session.get("managedSystemPrompt") or "")
+            if isinstance(session.get("roomCapability"), Mapping) and not managed_system_prompt:
+                raise PiRuntimeError("managed Room Session has no live PromptPlan payload")
             params: dict[str, object] = {
                 "sessionId": session_id,
                 "cwd": cwd,
-                "systemPrompt": self.config.system_prompt_for_session(session),
+                "systemPrompt": managed_system_prompt or self.config.system_prompt_for_session(session),
                 "toolManifest": self.tool_catalog(session_id),
                 "noContextFiles": (
                     str(session.get("toolProfileVersion") or "")
@@ -496,6 +514,12 @@ class PiRuntimeHostManager:
             }
             if isinstance(session.get("roomCapability"), Mapping):
                 params["roomCapability"] = dict(session["roomCapability"])
+                params["sessionContext"] = str(session.get("providerContext") or "")
+                if isinstance(session.get("roomProviderContext"), Mapping):
+                    params["roomProviderContext"] = dict(session["roomProviderContext"])
+                room_skill = session.get("roomSkillPolicy")
+                if isinstance(room_skill, Mapping) and room_skill.get("selection") == "required":
+                    params["roomSkillPolicy"] = dict(room_skill)
             if provider and model_id:
                 params.update({"provider": provider, "modelId": model_id})
             thinking_level = str(session.get("thinkingLevel") or "").strip().lower()
@@ -531,7 +555,12 @@ class PiRuntimeHostManager:
                 self._status = "ready"
                 self._schedule_idle_locked()
             self.events.publish(session_id, "status_changed", {"status": "ready"})
-            return {"state": snapshot, "session": bound, "evictedSessionId": evicted or None}
+            return {
+                "state": snapshot,
+                "session": bound,
+                "evictedSessionId": evicted or None,
+                "roomSkillLoad": result.get("roomSkillLoad"),
+            }
 
     def prompt(
         self,
@@ -1151,7 +1180,7 @@ class PiRuntimeHostManager:
         generation = _integer(payload.get("generation"))
         if generation < 0:
             raise ValueError("Room dispatch generation must be non-negative")
-        self.ensure(session_id)
+        opened = self.ensure(session_id)
         client = self._require_client()
         with self._lock:
             negotiated = _runtime_primitive_capabilities(
@@ -1179,6 +1208,8 @@ class PiRuntimeHostManager:
             or result.get("status") != "accepted"
         ):
             raise PiRuntimeError("Pi Runtime Host returned an invalid Room dispatch receipt")
+        if "roomSkillLoad" not in result and isinstance(opened.get("roomSkillLoad"), Mapping):
+            result["roomSkillLoad"] = dict(opened["roomSkillLoad"])
         return dict(result)
 
     def cancel_room(

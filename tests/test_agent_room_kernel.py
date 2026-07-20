@@ -19,7 +19,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-room-kernel-")
         self.db_path = Path(self.tmp.name) / "rag-ime.sqlite"
         self.store = RoomKernelStore(self.db_path, mode="test")
-        self.assertEqual(self.store.initialize(), 89)
+        self.assertEqual(self.store.initialize(), 90)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -133,6 +133,82 @@ class RoomKernelCoreTests(unittest.TestCase):
                 ),
                 now_ms=13,
             )
+
+    def test_dispatch_commit_atomically_creates_bounded_a_to_b_to_a_continuation(self) -> None:
+        self.seed(max_hops=3, criteria=())
+        first, _ = self.store.enqueue_dispatch(
+            dispatch("dispatch:a1", key="a1", target="participant:a"), now_ms=10
+        )
+        self.store.set_dispatch_wait_state("dispatch:a1", "running", now_ms=11)
+        child_b = dispatch(
+            "dispatch:b1", key="b1", target="participant:b", hop=1,
+            parent=str(first["dispatchId"]),
+        )
+        first_commit = {
+            **commit("commit:a-to-b", "dispatch:a1"),
+            "action": "dispatch",
+            "continuation": {"decision": "dispatch", "childDispatch": child_b},
+        }
+
+        receipt = self.store.apply_commit(first_commit, generation=0, now_ms=12)
+
+        self.assertEqual(receipt["details"]["childDispatchId"], "dispatch:b1")
+        self.assertEqual(self.store.dispatch("dispatch:b1")["state"], "pending")
+        self.assertEqual(self.store.continuation("commit:a-to-b")["decision"], "dispatch")
+        self.store.set_dispatch_wait_state("dispatch:b1", "running", now_ms=13)
+        child_a = dispatch(
+            "dispatch:a2", key="a2", target="participant:a", hop=2,
+            parent="dispatch:b1",
+        )
+        second_commit = {
+            **commit("commit:b-to-a", "dispatch:b1"),
+            "action": "dispatch",
+            "continuation": {"decision": "dispatch", "childDispatch": child_a},
+        }
+        self.store.apply_commit(second_commit, generation=0, now_ms=14)
+        self.assertEqual(self.store.dispatch("dispatch:a2")["parentDispatchId"], "dispatch:b1")
+
+    def test_fifteen_agent_mentions_are_stopped_by_system_hop_ceiling(self) -> None:
+        self.seed(budget=100, max_hops=12, max_depth=4, criteria=())
+        parent = None
+        for hop in range(13):
+            item, _ = self.store.enqueue_dispatch(
+                dispatch(
+                    f"dispatch:hop-{hop}", key=f"hop-{hop}",
+                    target=f"participant:{hop % 15}", hop=hop, parent=parent,
+                ),
+                now_ms=10 + hop,
+            )
+            parent = str(item["dispatchId"])
+        with self.assertRaisesRegex(RoomKernelFenceError, "hop limit"):
+            self.store.enqueue_dispatch(
+                dispatch(
+                    "dispatch:hop-13", key="hop-13", target="participant:13",
+                    hop=13, parent=parent,
+                ),
+                now_ms=30,
+            )
+
+    def test_missing_commit_retries_are_bounded_then_block_root(self) -> None:
+        self.seed(criteria=())
+        self.store.enqueue_dispatch(dispatch("dispatch:settle", key="settle"), now_ms=10)
+        self.store.set_dispatch_wait_state("dispatch:settle", "running", now_ms=11)
+
+        first = self.store.record_uncommitted_settle(
+            "dispatch:settle", generation=0, now_ms=12, max_attempts=3
+        )
+        second = self.store.record_uncommitted_settle(
+            "dispatch:settle", generation=0, now_ms=13, max_attempts=3
+        )
+        third = self.store.record_uncommitted_settle(
+            "dispatch:settle", generation=0, now_ms=14, max_attempts=3
+        )
+
+        self.assertEqual(first["receiptKind"], "settle_retry_required")
+        self.assertEqual(second["details"]["attempt"], 2)
+        self.assertEqual(third["receiptKind"], "settle_blocked")
+        self.assertEqual(self.store.root("root:1")["state"], "blocked")
+        self.assertEqual(self.store.task("task:1")["state"], "blocked")
 
     def test_budget_is_reserved_at_enqueue_and_released_by_cancel(self) -> None:
         self.seed(budget=10, criteria=())
