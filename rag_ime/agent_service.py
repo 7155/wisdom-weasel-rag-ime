@@ -58,6 +58,8 @@ from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_contracts import validate_kernel_contract
 from .agent_room_kernel_projection import RoomKernelProjection
 from .agent_room_kernel_worker import RoomKernelWorker, RoomKernelWorkerLoop
+from .agent_room_learning_governance import RoomLearningGovernanceStore
+from .agent_room_learning_runtime import ReflectionProvider, RoomLearningRuntime
 from .agent_runtime_driver import (
     AgentRuntimeError,
     AgentRuntimePolicy,
@@ -129,6 +131,9 @@ class AgentService:
         room_artifact_hash_provider: Callable[[str], str] | None = None,
         room_kernel_poll_seconds: float = 0.25,
         collaboration_profile_signers: Mapping[str, bytes] | None = None,
+        room_learning_authority_secrets: Mapping[str, bytes | str] | None = None,
+        room_guard_config_secret: bytes | str | None = None,
+        room_reflection_provider: ReflectionProvider | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.project = str(project or "")
@@ -229,6 +234,16 @@ class AgentService:
         self.room_requirements.initialize()
         self.room_peer_review = RoomPeerReviewStore(db_path, runner_secrets=room_runner_secrets)
         self.room_peer_review.initialize()
+        self.room_learning = RoomLearningGovernanceStore(
+            db_path,
+            authority_secrets=room_learning_authority_secrets,
+            config_secret=room_guard_config_secret,
+        )
+        self.room_learning.initialize()
+        self.room_learning_runtime = RoomLearningRuntime(
+            self.room_learning,
+            reflection_provider=room_reflection_provider,
+        )
         self._room_artifact_hash_provider = room_artifact_hash_provider
         self.agent_definition_compiler = AgentDefinitionCompiler()
         self._collaboration_profile_signers = {
@@ -1348,7 +1363,67 @@ class AgentService:
         if not caller_authorized:
             raise PermissionError("CollaborationProfile control requires an authorized control caller")
         with sqlite3.connect(self.db_path) as conn:
-            return self._collaboration_profile_control(conn).execute(payload)
+            result = self._collaboration_profile_control(conn).execute(payload)
+        self._run_room_learning_maintenance()
+        return result
+
+    def observe_room_user_correction(
+        self,
+        *,
+        room_id: str,
+        root_id: str,
+        dispatch_id: str,
+        correction_ref: str,
+        caller_authorized: bool = False,
+        now_ms: int | None = None,
+    ) -> dict[str, object] | None:
+        if not caller_authorized:
+            raise PermissionError("Room correction observation requires an authorized caller")
+        if self.room_kernel.root(root_id).get("roomId") != room_id:
+            raise RoomKernelFenceError("correction Root belongs to another Room")
+        return self._persist_room_learning_event(
+            root_id=root_id,
+            dispatch_id=dispatch_id,
+            taxonomy="user_correction",
+            failure_signature=f"user_correction:{correction_ref}",
+            reason="user_correction",
+            now_ms=int(now_ms if now_ms is not None else time.time() * 1000),
+        )
+
+    def rollback_room_guard(
+        self,
+        *,
+        scope_key: str,
+        rollback_receipt_id: str,
+        authority_ref: str,
+        authority_secret: bytes | str,
+        reason: str,
+        caller_authorized: bool = False,
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        if not caller_authorized:
+            raise PermissionError("Room Guard rollback requires an authorized caller")
+        timestamp = int(now_ms if now_ms is not None else time.time() * 1000)
+        result = self.room_learning.rollback(
+            rollback_receipt_id=rollback_receipt_id,
+            scope_key=scope_key,
+            authority_ref=authority_ref,
+            authority_secret=authority_secret,
+            reason=reason,
+            now_ms=timestamp,
+        )
+        for dispatch_id in result["cancelledDispatchIds"]:
+            dispatch = self.room_kernel.dispatch(str(dispatch_id))
+            self._persist_room_learning_event(
+                root_id=str(dispatch["rootId"]),
+                dispatch_id=str(dispatch_id),
+                taxonomy="rollback",
+                failure_signature=f"rollback:{reason}",
+                reason="rollback",
+                now_ms=timestamp,
+            )
+        self._run_room_learning_maintenance()
+        return result
 
     def _collaboration_profile_control(
         self,
@@ -1467,8 +1542,28 @@ class AgentService:
             "capabilityRevision": capability_revision,
             "access": "write",
         }
+        participant_binding_id = f"participant-binding:{dispatch_id}"
+        guard_pin = self.room_learning.guard_for_root(
+            binding_id=participant_binding_id,
+            root_id=str(dispatch["rootId"]),
+            scope_key=f"room:{room_id}",
+        )
+        guard_surfaces = (
+            self.room_learning.materialized_guard(
+                scope_key=str(guard_pin["scopeKey"]),
+                guard_epoch=int(guard_pin["guardEpoch"]),
+                config_hash=str(guard_pin["configHash"]),
+            )
+            if guard_pin is not None
+            else None
+        )
+        skill_policy_revision = (
+            f"room-skill-policy-v1@{guard_pin['configHash']}"
+            if guard_pin is not None
+            else "room-skill-policy-v1"
+        )
         compiled = self.agent_definition_compiler.compile(
-            binding_id=f"participant-binding:{dispatch_id}",
+            binding_id=participant_binding_id,
             session_id=session_id,
             persona=persona,
             collaboration_role=role,
@@ -1478,7 +1573,7 @@ class AgentService:
             capability_revision=capability_revision,
             capability_epoch=capability_epoch,
             prompt_plan_revision="room-prompt-plan-v1",
-            skill_policy_revision="room-skill-policy-v1",
+            skill_policy_revision=skill_policy_revision,
             context_policy_revision="room-context-policy-v1",
             room_binding_ref={
                 "bindingId": room_binding["bindingId"],
@@ -1498,12 +1593,24 @@ class AgentService:
             generation=generation,
             created_at_ms=prepared_at_ms,
         )
+        profile_overlay = (
+            json.dumps(guard_surfaces["prompt"], ensure_ascii=False, sort_keys=True)
+            if guard_surfaces is not None
+            else ""
+        )
         layers = (
             PromptLayer("core_rails", "pi-core-safety", "pi-core-safety:v1", persona.safety_policy_prompt, ("safety", "authorization")),
             PromptLayer("persona", "persona-compiler", f"persona:{persona.role_id}@{persona.version}", persona.persona_prompt, ("identity",)),
             PromptLayer("collaboration_role", "collaboration-role-compiler", f"collaboration-role:{role.role_id}@{role.version}", json.dumps(role.to_payload(), ensure_ascii=False, sort_keys=True), ("collaboration-duty",)),
             PromptLayer("agent_template_policy", "template-capability-compiler", f"agent-template:{template.template_id}@{template.version}", template.prompt, ("tool-policy", "skill-policy")),
-            PromptLayer("room_profile_overlay", "profile-room-kernel-compiler", "profile:none", "", ("room-overlay",), "no-profile"),
+            PromptLayer(
+                "room_profile_overlay",
+                "guard-materialization" if guard_pin is not None else "profile-room-kernel-compiler",
+                str(guard_pin["configHash"]) if guard_pin is not None else "profile:none",
+                profile_overlay,
+                ("room-overlay",),
+                "guard-active" if guard_pin is not None else "no-profile",
+            ),
             PromptLayer("provider_dynamic_facts", "room-context-compiler", journal_id, "", ("dynamic-facts",)),
         )
         prompt = self.room_prompt_plans.compile(
@@ -1513,7 +1620,7 @@ class AgentService:
             journal_id=journal_id,
             session_epoch=max(1, generation + 1),
             context_epoch=max(1, capability_epoch + 1),
-            skill_policy_revision="room-skill-policy-v1",
+            skill_policy_revision=skill_policy_revision,
             context_policy_revision="room-context-policy-v1",
             layers=layers,
             created_at_ms=prepared_at_ms,
@@ -1535,6 +1642,15 @@ class AgentService:
             created_at_ms=prepared_at_ms,
             runtime_state="prepared",
         )
+        if guard_pin is not None:
+            self.room_learning.bind_execution(
+                dispatch_id=dispatch_id,
+                root_id=str(dispatch["rootId"]),
+                scope_key=str(guard_pin["scopeKey"]),
+                guard_epoch=int(guard_pin["guardEpoch"]),
+                config_hash=str(guard_pin["configHash"]),
+                now_ms=prepared_at_ms,
+            )
         requirement_binding, _ = self.room_requirements.prepare_dispatch_binding(
             dispatch_id=dispatch_id,
             root_id=str(dispatch["rootId"]),
@@ -1550,6 +1666,7 @@ class AgentService:
             "manifestHash": bound["manifest"]["manifestHash"],
             "promptCompileReceiptId": prompt["receipt"]["receiptId"],
             "requirementObservation": requirement_binding,
+            "guardPin": guard_pin,
         }
 
     def room_capability_tool_search(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -1686,6 +1803,13 @@ class AgentService:
             dispatch.get("state") == "committed" and invocation_receipt_id
         ):
             raise RoomKernelFenceError("only a running Dispatch can settle")
+        guard_pin = self.room_learning.execution_pin(str(dispatch["dispatchId"]))
+        if guard_pin is not None and dispatch.get("state") == "running":
+            self.room_learning.accept_writeback(
+                dispatch_id=str(dispatch["dispatchId"]),
+                guard_epoch=int(guard_pin["guardEpoch"]),
+                config_hash=str(guard_pin["configHash"]),
+            )
         proposal = commit.get("postProposal")
         if commit.get("action") == "post":
             if not isinstance(proposal, Mapping):
@@ -1716,6 +1840,11 @@ class AgentService:
         )
         if runtime_capability is not None and receipt.get("status") == "applied":
             self._revoke_room_runtime_capability(str(settle["sessionId"]), int(commit.get("createdAtMs") or 0))
+        if guard_pin is not None and receipt.get("status") == "applied":
+            self.room_learning.complete_writeback(
+                dispatch_id=str(dispatch["dispatchId"]),
+                now_ms=int(commit.get("createdAtMs") or int(time.time() * 1000)),
+            )
         self.room_kernel_projection.sync_room(room_id)
         result = {
             "schemaVersion": "wisdom-weasel.room-settle-result.v1",
@@ -5281,6 +5410,7 @@ class AgentService:
             self.runtime,  # type: ignore[arg-type]
             prepare_dispatch=self._prepare_managed_room_dispatch,
             revoke_session=self._revoke_room_runtime_capability,
+            learning_observer=self._record_room_learning_signal,
         )
         self.room_kernel_worker_loop = RoomKernelWorkerLoop(
             self.room_kernel_worker,
@@ -5292,6 +5422,89 @@ class AgentService:
     def _sync_all_room_kernel_projections(self) -> None:
         for room_id in self.room_kernel.room_ids():
             self.room_kernel_projection.sync_room(room_id)
+        self._run_room_learning_maintenance()
+
+    def _record_room_learning_signal(self, signal: Mapping[str, object]) -> None:
+        now_ms = int(signal.get("createdAtMs") or int(time.time() * 1000))
+        self._persist_room_learning_event(
+            root_id=str(signal["rootId"]),
+            dispatch_id=str(signal["dispatchId"]),
+            taxonomy="tool_failure",
+            failure_signature=f"runtime_failed:{signal.get('reason') or 'unknown'}",
+            reason=f"runtime_failed:{signal.get('reason') or 'unknown'}",
+            now_ms=now_ms,
+        )
+
+    def _persist_room_learning_event(
+        self,
+        *,
+        root_id: str,
+        dispatch_id: str,
+        taxonomy: str,
+        failure_signature: str,
+        reason: str,
+        now_ms: int,
+    ) -> dict[str, object] | None:
+        receipt = self.room_kernel.record_learning_signal(
+            root_id=root_id,
+            dispatch_id=dispatch_id,
+            receipt_kind="dead_letter" if taxonomy == "tool_failure" else "rejected",
+            status="unknown" if taxonomy == "tool_failure" else "rejected",
+            reason=reason,
+            now_ms=now_ms,
+        )
+        return self.room_learning_runtime.record_signal(
+            root_id=root_id,
+            dispatch_id=dispatch_id,
+            kernel_receipt_id=str(receipt["receiptId"]),
+            taxonomy=taxonomy,
+            failure_signature=failure_signature,
+            evidence_refs=[str(receipt["receiptId"])],
+            observed_at_ms=now_ms,
+        )
+
+    def _apply_managed_cancel(self, item: Mapping[str, object]) -> Mapping[str, object]:
+        root = self.room_kernel.root(str(item["root_id"]))
+        command = {
+            "schemaVersion": "wisdom-weasel.room-kernel-command.v1",
+            "commandId": f"managed-cancel:{item['cancel_id']}",
+            "rootId": root["rootId"],
+            "roomId": root["roomId"],
+            "commandKind": "cancel_root",
+            "targetKind": "root",
+            "targetId": root["rootId"],
+            "sourceKind": str(item["source_kind"]),
+            "sourceId": str(item["source_receipt_id"]),
+            "idempotencyKey": str(item["cancel_id"]),
+            "generation": int(root["generation"]),
+            "payload": {"dispatchId": item.get("dispatch_id")},
+            "createdAtMs": int(item["created_at_ms"]),
+        }
+        return self.room_kernel_worker.apply_control_command(command)
+
+    def _run_room_learning_maintenance(self) -> None:
+        now_ms = int(time.time() * 1000)
+        try:
+            self.room_learning_runtime.ingest_kernel_receipts(now_ms=now_ms)
+        except Exception:
+            pass
+        for _ in range(8):
+            try:
+                if self.room_learning_runtime.materialize_once(now_ms=now_ms) is None:
+                    break
+            except Exception:
+                break
+        for _ in range(8):
+            result = self.room_learning_runtime.drain_cancel_once(
+                self._apply_managed_cancel,
+                now_ms=now_ms,
+            )
+            if result is None or result.get("state") != "applied":
+                break
+        try:
+            self.room_learning_runtime.run_reflection_once(now_ms=now_ms)
+        except Exception:
+            pass
 
     def _revoke_room_runtime_capability(self, session_id: str, now_ms: int) -> None:
         binding = self.room_capabilities.runtime_binding(session_id)

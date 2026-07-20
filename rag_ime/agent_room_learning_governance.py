@@ -64,10 +64,14 @@ class RoomLearningGovernanceStore:
                 canonical_id = incident_id
             else:
                 canonical_id = str(existing["incident_id"])
-            try:
+            existing_occurrence = conn.execute(
+                "SELECT incident_id FROM room_v2_incident_occurrences WHERE occurrence_id=?",
+                (occurrence_id,),
+            ).fetchone()
+            if existing_occurrence is None:
                 conn.execute("INSERT INTO room_v2_incident_occurrences VALUES (?,?,?,?,?,?,?)", (occurrence_id, canonical_id, root_id, dispatch_id, kernel_receipt_id, _json(refs), observed_at_ms))
-            except sqlite3.IntegrityError as exc:
-                raise LearningGovernanceError("Incident occurrence replay") from exc
+            elif str(existing_occurrence[0]) != canonical_id:
+                raise LearningGovernanceError("Incident occurrence identity changed")
         return {"incidentId": canonical_id, "dedupeHash": dedupe, "occurrenceId": occurrence_id}, created
 
     def nominate_lesson(self, *, lesson_candidate_id: str, incident_id: str, facts: Sequence[str], causes: Sequence[str], applicability_boundary: Mapping[str, object], counterexamples: Sequence[str], provenance: Sequence[str], nominated_by: str, created_at_ms: int) -> dict[str, object]:
@@ -84,6 +88,14 @@ class RoomLearningGovernanceStore:
                 raise LearningGovernanceError("Lesson provenance exceeds Incident evidence")
             material = {"lessonCandidateId": lesson_candidate_id, "incidentId": incident_id, "facts": facts_n, "causes": causes_n, "applicabilityBoundary": boundary, "counterexamples": examples, "provenance": sources, "nominatedBy": nominated_by, "createdAtMs": created_at_ms}
             candidate_hash = _hash_json(material)
+            existing = conn.execute(
+                "SELECT candidate_hash FROM room_v2_lesson_candidates WHERE lesson_candidate_id=?",
+                (lesson_candidate_id,),
+            ).fetchone()
+            if existing is not None:
+                if str(existing[0]) != candidate_hash:
+                    raise LearningGovernanceError("Lesson candidate identity changed")
+                return {**material, "candidateHash": candidate_hash, "state": "candidate_only"}
             conn.execute("INSERT INTO room_v2_lesson_candidates VALUES (?,?,?,?,?,?,?,?,?,?)", (lesson_candidate_id, incident_id, _json(facts_n), _json(causes_n), _json(boundary), _json(examples), _json(sources), candidate_hash, nominated_by, created_at_ms))
         return {**material, "candidateHash": candidate_hash, "state": "candidate_only"}
 
@@ -166,6 +178,13 @@ class RoomLearningGovernanceStore:
             if not self._config_secret or not hmac.compare_digest(config_signature, expected_signature): raise LearningGovernanceError("signed config hash is invalid")
             conn.execute("INSERT INTO room_v2_guard_activation_receipts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (activation_receipt_id, scope_key, guard_candidate_id, guard["candidate_hash"], previous, previous_activation, epoch, now_ms, approval_receipt_id, _json(ids), signed_hash, config_signature, now_ms))
             conn.execute("INSERT INTO room_v2_guard_active_pointers VALUES (?,?,?,?,?,?) ON CONFLICT(scope_key) DO UPDATE SET guard_epoch=excluded.guard_epoch,active_guard_candidate_id=excluded.active_guard_candidate_id,active_candidate_hash=excluded.active_candidate_hash,activation_receipt_id=excluded.activation_receipt_id,updated_at_ms=excluded.updated_at_ms", (scope_key, epoch, guard_candidate_id, guard["candidate_hash"], activation_receipt_id, now_ms))
+            conn.execute(
+                """INSERT INTO room_v2_guard_materialization_outbox(
+                   outbox_id,scope_key,guard_candidate_id,guard_epoch,candidate_hash,
+                   action,state,created_at_ms,updated_at_ms)
+                   VALUES (?,?,?,?,?,'materialize','pending',?,?)""",
+                (f"guard-materialize:{activation_receipt_id}", scope_key, guard_candidate_id, epoch, guard["candidate_hash"], now_ms, now_ms),
+            )
         return {**config_material, "activationReceiptId": activation_receipt_id, "signedConfigHash": signed_hash}
 
     def expected_config_signature(self, *, scope: Mapping[str, object], guard_candidate_id: str, candidate_hash: str, guard_epoch: int, applies_after_ms: int, eval_run_ids: Sequence[str]) -> str:
@@ -173,30 +192,136 @@ class RoomLearningGovernanceStore:
         return hmac.new(self._config_secret, _hash_json(material).encode(), hashlib.sha256).hexdigest()
 
     def guard_for_root(self, *, binding_id: str | None, root_id: str, scope_key: str) -> dict[str, object] | None:
-        if not binding_id: return None
+        if not binding_id or not binding_id.startswith("participant-binding:"): return None
+        dispatch_id = binding_id.removeprefix("participant-binding:")
         with self._connect() as conn:
-            bound = conn.execute("SELECT 1 FROM room_v2_capability_manifests WHERE binding_id=? AND root_id=?", (binding_id, root_id)).fetchone()
+            dispatch = conn.execute(
+                "SELECT 1 FROM room_kernel_dispatches WHERE dispatch_id=? AND root_id=?",
+                (dispatch_id, root_id),
+            ).fetchone()
             root = conn.execute("SELECT created_at_ms FROM room_kernel_roots WHERE root_id=?", (root_id,)).fetchone()
             pointer = conn.execute("SELECT * FROM room_v2_guard_active_pointers WHERE scope_key=?", (scope_key,)).fetchone()
-            if bound is None or root is None or pointer is None or not pointer["active_guard_candidate_id"]: return None
-            activation = conn.execute("SELECT applies_to_roots_created_after_ms FROM room_v2_guard_activation_receipts WHERE activation_receipt_id=?", (pointer["activation_receipt_id"],)).fetchone()
-            if activation is None or int(root[0]) <= int(activation[0]): return None
-            return {"guardCandidateId": str(pointer["active_guard_candidate_id"]), "guardEpoch": int(pointer["guard_epoch"]), "scopeKey": scope_key}
+            if dispatch is None or root is None or pointer is None or not pointer["active_guard_candidate_id"]: return None
+            activation = conn.execute("SELECT * FROM room_v2_guard_activation_receipts WHERE activation_receipt_id=?", (pointer["activation_receipt_id"],)).fetchone()
+            if activation is None or int(root[0]) <= int(activation["applies_to_roots_created_after_ms"]): return None
+            guard = self._guard(conn, str(pointer["active_guard_candidate_id"])); self._assert_guard_hash(guard)
+            if (
+                str(pointer["active_candidate_hash"]) != str(guard["candidate_hash"])
+                or str(activation["candidate_hash"]) != str(guard["candidate_hash"])
+                or int(activation["guard_epoch"]) != int(pointer["guard_epoch"])
+                or str(activation["signed_config_hash"]) != _hash_json({
+                    "scopeKey": scope_key,
+                    "guardCandidateId": str(guard["guard_candidate_id"]),
+                    "candidateHash": str(guard["candidate_hash"]),
+                    "guardEpoch": int(pointer["guard_epoch"]),
+                    "appliesAfterMs": int(activation["applies_to_roots_created_after_ms"]),
+                    "evalRunIds": json.loads(str(activation["eval_run_ids_json"])),
+                })
+            ):
+                raise LearningGovernanceError("active Guard pointer hash/epoch mismatch")
+            expected = hmac.new(self._config_secret, str(activation["signed_config_hash"]).encode(), hashlib.sha256).hexdigest()
+            if not self._config_secret or not hmac.compare_digest(str(activation["config_signature"]), expected):
+                raise LearningGovernanceError("active Guard config signature mismatch")
+            return {
+                "guardCandidateId": str(pointer["active_guard_candidate_id"]),
+                "guardEpoch": int(pointer["guard_epoch"]),
+                "scopeKey": scope_key,
+                "candidateHash": str(guard["candidate_hash"]),
+                "configHash": str(activation["signed_config_hash"]),
+                "activationReceiptId": str(pointer["activation_receipt_id"]),
+            }
 
-    def bind_execution(self, *, dispatch_id: str, root_id: str, scope_key: str, guard_epoch: int, now_ms: int) -> None:
+    def materialized_guard(self, *, scope_key: str, guard_epoch: int, config_hash: str) -> dict[str, object]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT surface,payload_json,candidate_hash,guard_epoch,config_hash,
+                          guard_candidate_id
+                   FROM room_v2_guard_materializations
+                   WHERE scope_key=? AND state='active' ORDER BY surface""",
+                (scope_key,),
+            ).fetchall()
+        if len(rows) != 4 or any(int(row["guard_epoch"]) != guard_epoch or str(row["config_hash"]) != config_hash for row in rows):
+            raise LearningGovernanceError("Guard materialization hash/epoch mismatch")
+        candidate_ids = {str(row["guard_candidate_id"]) for row in rows}
+        if len(candidate_ids) != 1:
+            raise LearningGovernanceError("Guard materialization candidate mismatch")
+        with self._connect() as conn:
+            guard = self._guard(conn, candidate_ids.pop())
+            self._assert_guard_hash(guard)
+        base = {
+            "guardCandidateId": str(guard["guard_candidate_id"]),
+            "guardEpoch": guard_epoch,
+            "candidateHash": str(guard["candidate_hash"]),
+            "scope": json.loads(str(guard["scope_json"])),
+            "condition": json.loads(str(guard["condition_json"])),
+            "action": json.loads(str(guard["action_json"])),
+        }
+        expected = {
+            "prompt": {**base, "policyKind": "structured_prompt_guard"},
+            "skill": {**base, "policyKind": "skill_admission_guard"},
+            "tool": {**base, "policyKind": "tool_authorization_guard"},
+            "test_fixture": {
+                **base,
+                "policyKind": "regression_fixture",
+                "thresholds": json.loads(str(guard["thresholds_json"])),
+            },
+        }
+        materialized = {str(row["surface"]): json.loads(str(row["payload_json"])) for row in rows}
+        if materialized != expected:
+            raise LearningGovernanceError("Guard materialization payload mismatch")
+        return materialized
+
+    def bind_execution(self, *, dispatch_id: str, root_id: str, scope_key: str, guard_epoch: int, config_hash: str = "", now_ms: int) -> None:
         with self._connect(immediate=True) as conn:
             pointer = conn.execute("SELECT * FROM room_v2_guard_active_pointers WHERE scope_key=?", (scope_key,)).fetchone()
             dispatch = conn.execute("SELECT 1 FROM room_kernel_dispatches WHERE dispatch_id=? AND root_id=?", (dispatch_id, root_id)).fetchone()
             root = conn.execute("SELECT created_at_ms FROM room_kernel_roots WHERE root_id=?", (root_id,)).fetchone()
-            activation = conn.execute("SELECT applies_to_roots_created_after_ms FROM room_v2_guard_activation_receipts WHERE activation_receipt_id=?", (pointer["activation_receipt_id"],)).fetchone() if pointer and pointer["activation_receipt_id"] else None
-            if pointer is None or dispatch is None or root is None or activation is None or int(root[0]) <= int(activation[0]) or int(pointer["guard_epoch"]) != guard_epoch or not pointer["active_guard_candidate_id"]: raise LearningGovernanceError("stale Guard epoch binding")
-            conn.execute("INSERT INTO room_v2_guard_execution_bindings VALUES (?,?,?,?,?,'active',?,?)", (dispatch_id, root_id, scope_key, pointer["active_guard_candidate_id"], guard_epoch, now_ms, now_ms))
+            activation = conn.execute("SELECT * FROM room_v2_guard_activation_receipts WHERE activation_receipt_id=?", (pointer["activation_receipt_id"],)).fetchone() if pointer and pointer["activation_receipt_id"] else None
+            if pointer is None or dispatch is None or root is None or activation is None or int(root[0]) <= int(activation["applies_to_roots_created_after_ms"]) or int(pointer["guard_epoch"]) != guard_epoch or not pointer["active_guard_candidate_id"]: raise LearningGovernanceError("stale Guard epoch binding")
+            guard = self._guard(conn, str(pointer["active_guard_candidate_id"])); self._assert_guard_hash(guard)
+            pinned_hash = str(activation["signed_config_hash"])
+            if config_hash and config_hash != pinned_hash: raise LearningGovernanceError("Guard config hash binding mismatch")
+            conn.execute(
+                """INSERT INTO room_v2_guard_execution_bindings(
+                   dispatch_id,root_id,scope_key,guard_candidate_id,guard_epoch,state,
+                   bound_at_ms,updated_at_ms,guard_config_hash,guard_candidate_hash,
+                   activation_receipt_id) VALUES (?,?,?,?,?,'active',?,?,?,?,?)""",
+                (dispatch_id, root_id, scope_key, pointer["active_guard_candidate_id"], guard_epoch, now_ms, now_ms, pinned_hash, guard["candidate_hash"], pointer["activation_receipt_id"]),
+            )
 
-    def accept_writeback(self, *, dispatch_id: str, guard_epoch: int) -> None:
+    def accept_writeback(self, *, dispatch_id: str, guard_epoch: int, config_hash: str = "") -> None:
         with self._connect() as conn:
             binding = conn.execute("SELECT * FROM room_v2_guard_execution_bindings WHERE dispatch_id=?", (dispatch_id,)).fetchone()
-            pointer = conn.execute("SELECT guard_epoch FROM room_v2_guard_active_pointers WHERE scope_key=?", (binding["scope_key"],)).fetchone() if binding else None
-        if binding is None or binding["state"] != "active" or pointer is None or int(pointer[0]) != guard_epoch or int(binding["guard_epoch"]) != guard_epoch: raise LearningGovernanceError("old Guard epoch writeback rejected")
+        if binding is None or binding["state"] != "active" or int(binding["guard_epoch"]) != guard_epoch or (config_hash and str(binding["guard_config_hash"]) != config_hash): raise LearningGovernanceError("old Guard epoch writeback rejected")
+
+    def execution_pin(self, dispatch_id: str) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM room_v2_guard_execution_bindings WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "dispatchId": str(row["dispatch_id"]),
+            "rootId": str(row["root_id"]),
+            "scopeKey": str(row["scope_key"]),
+            "guardCandidateId": str(row["guard_candidate_id"]),
+            "guardEpoch": int(row["guard_epoch"]),
+            "configHash": str(row["guard_config_hash"]),
+            "candidateHash": str(row["guard_candidate_hash"]),
+            "activationReceiptId": str(row["activation_receipt_id"]),
+            "state": str(row["state"]),
+        }
+
+    def complete_writeback(self, *, dispatch_id: str, now_ms: int) -> None:
+        with self._connect(immediate=True) as conn:
+            conn.execute(
+                """UPDATE room_v2_guard_execution_bindings
+                   SET state='terminal',updated_at_ms=?
+                   WHERE dispatch_id=? AND state='active'""",
+                (now_ms, dispatch_id),
+            )
 
     def rollback(self, *, rollback_receipt_id: str, scope_key: str, authority_ref: str, authority_secret: bytes | str, reason: str, now_ms: int, fail_before_pointer: bool = False) -> dict[str, object]:
         if not (authority_ref.startswith("admin:") or authority_ref.startswith("user:")): raise LearningGovernanceError("Rollback requires administrator or user")
@@ -205,19 +330,74 @@ class RoomLearningGovernanceStore:
         with self._connect(immediate=True) as conn:
             pointer = conn.execute("SELECT * FROM room_v2_guard_active_pointers WHERE scope_key=?", (scope_key,)).fetchone()
             if pointer is None or not pointer["active_guard_candidate_id"]: raise LearningGovernanceError("No active Guard to rollback")
-            activation = conn.execute("SELECT previous_guard_candidate_id,previous_activation_receipt_id FROM room_v2_guard_activation_receipts WHERE activation_receipt_id=?", (pointer["activation_receipt_id"],)).fetchone()
-            restored = str(activation[0]) if activation and activation[0] else None; epoch = int(pointer["guard_epoch"]) + 1
-            restored_activation = str(activation[1]) if activation and activation[1] else None
+            activation = conn.execute("SELECT * FROM room_v2_guard_activation_receipts WHERE activation_receipt_id=?", (pointer["activation_receipt_id"],)).fetchone()
+            restored = str(activation["previous_guard_candidate_id"]) if activation and activation["previous_guard_candidate_id"] else None; epoch = int(pointer["guard_epoch"]) + 1
+            restored_source_activation_id = str(activation["previous_activation_receipt_id"]) if activation and activation["previous_activation_receipt_id"] else None
+            restored_activation = None
             dispatches = [str(row[0]) for row in conn.execute("SELECT dispatch_id FROM room_v2_guard_execution_bindings WHERE scope_key=? AND guard_epoch=? AND state='active'", (scope_key, pointer["guard_epoch"])).fetchall()]
             conn.execute("UPDATE room_v2_guard_execution_bindings SET state='cancel_requested',updated_at_ms=? WHERE scope_key=? AND guard_epoch=? AND state='active'", (now_ms, scope_key, pointer["guard_epoch"]))
             if fail_before_pointer: raise LearningGovernanceError("injected rollback crash")
             restored_hash = ""
             if restored:
                 restored_row = self._guard(conn, restored); restored_hash = str(restored_row["candidate_hash"])
+                source_activation = conn.execute(
+                    "SELECT * FROM room_v2_guard_activation_receipts WHERE activation_receipt_id=?",
+                    (restored_source_activation_id,),
+                ).fetchone()
+                if source_activation is None:
+                    raise LearningGovernanceError("Rollback restore activation disappeared")
+                restored_activation = f"rollback-activation:{rollback_receipt_id}"
+                eval_ids = json.loads(str(source_activation["eval_run_ids_json"]))
+                config_material = {
+                    "scopeKey": scope_key,
+                    "guardCandidateId": restored,
+                    "candidateHash": restored_hash,
+                    "guardEpoch": epoch,
+                    "appliesAfterMs": now_ms,
+                    "evalRunIds": eval_ids,
+                }
+                signed_hash = _hash_json(config_material)
+                config_signature = hmac.new(self._config_secret, signed_hash.encode(), hashlib.sha256).hexdigest()
+                conn.execute(
+                    """INSERT INTO room_v2_guard_activation_receipts VALUES
+                       (?,?,?,?,NULL,NULL,?,?,?,?,?,?,?)""",
+                    (
+                        restored_activation, scope_key, restored, restored_hash, epoch,
+                        now_ms, source_activation["approval_receipt_id"], _json(eval_ids),
+                        signed_hash, config_signature, now_ms,
+                    ),
+                )
             material = {"rollbackReceiptId": rollback_receipt_id, "scopeKey": scope_key, "fromGuardCandidateId": pointer["active_guard_candidate_id"], "restoredGuardCandidateId": restored, "guardEpoch": epoch, "cancelledDispatchIds": dispatches, "authorityRef": authority_ref, "reason": reason, "createdAtMs": now_ms}
             content_hash = _hash_json(material); signature = hmac.new(configured, content_hash.encode(), hashlib.sha256).hexdigest()
             conn.execute("INSERT INTO room_v2_guard_rollback_receipts VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (rollback_receipt_id, scope_key, pointer["active_guard_candidate_id"], restored, epoch, _json(dispatches), authority_ref, reason, content_hash, signature, content_hash, now_ms))
             conn.execute("UPDATE room_v2_guard_active_pointers SET guard_epoch=?,active_guard_candidate_id=?,active_candidate_hash=?,activation_receipt_id=?,updated_at_ms=? WHERE scope_key=?", (epoch, restored, restored_hash, restored_activation, now_ms, scope_key))
+            conn.execute(
+                """INSERT INTO room_v2_guard_materialization_outbox(
+                   outbox_id,scope_key,guard_candidate_id,guard_epoch,candidate_hash,
+                   action,state,created_at_ms,updated_at_ms)
+                   VALUES (?,?,?,?,?,'cleanup','pending',?,?)""",
+                (f"guard-cleanup:{rollback_receipt_id}", scope_key, pointer["active_guard_candidate_id"], epoch, str(pointer["active_candidate_hash"]), now_ms, now_ms),
+            )
+            if restored:
+                conn.execute(
+                    """INSERT INTO room_v2_guard_materialization_outbox(
+                       outbox_id,scope_key,guard_candidate_id,guard_epoch,candidate_hash,
+                       action,state,created_at_ms,updated_at_ms)
+                       VALUES (?,?,?,?,?,'materialize','pending',?,?)""",
+                    (
+                        f"guard-materialize:{rollback_receipt_id}", scope_key, restored,
+                        epoch, restored_hash, now_ms, now_ms,
+                    ),
+                )
+            for dispatch_id in dispatches:
+                root_row = conn.execute("SELECT root_id FROM room_kernel_dispatches WHERE dispatch_id=?", (dispatch_id,)).fetchone()
+                if root_row is None: continue
+                conn.execute(
+                    """INSERT OR IGNORE INTO room_v2_managed_cancel_outbox(
+                       cancel_id,source_kind,source_receipt_id,root_id,dispatch_id,state,
+                       created_at_ms,updated_at_ms) VALUES (?,?,?,?,?,'pending',?,?)""",
+                    (f"guard-cancel:{rollback_receipt_id}:{dispatch_id}", "guard_rollback", rollback_receipt_id, root_row[0], dispatch_id, now_ms, now_ms),
+                )
         return material
 
     @staticmethod

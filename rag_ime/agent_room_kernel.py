@@ -621,6 +621,34 @@ class RoomKernelStore:
             )
         return receipts
 
+    def record_learning_signal(
+        self,
+        *,
+        root_id: str,
+        dispatch_id: str,
+        receipt_kind: str,
+        status: str,
+        reason: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Persist a Kernel-lineage receipt before governance observes a failure."""
+
+        with self._connect(immediate=True) as conn:
+            root = self._root_row(conn, root_id)
+            dispatch = self._dispatch_row(conn, dispatch_id)
+            if str(dispatch["root_id"]) != root_id:
+                raise RoomKernelFenceError("learning signal Dispatch belongs to another Root")
+            return self._receipt(
+                conn,
+                root_id=root_id,
+                command_id=None,
+                receipt_kind=receipt_kind,
+                status=status,
+                generation=int(root["generation"]),
+                details={"dispatchId": dispatch_id, "reason": reason},
+                now_ms=now_ms,
+            )
+
     def apply_commit(
         self,
         payload: Mapping[str, object],

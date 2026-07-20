@@ -38,6 +38,7 @@ class RoomKernelWorker:
         message_builder: Callable[[Mapping[str, object]], str] | None = None,
         prepare_dispatch: Callable[[Mapping[str, object], int], Mapping[str, object]] | None = None,
         revoke_session: Callable[[str, int], object] | None = None,
+        learning_observer: Callable[[Mapping[str, object]], object] | None = None,
         clock_ms: Callable[[], int] | None = None,
     ) -> None:
         self.store = store
@@ -45,6 +46,7 @@ class RoomKernelWorker:
         self.message_builder = message_builder or _default_dispatch_message
         self.prepare_dispatch = prepare_dispatch
         self.revoke_session = revoke_session
+        self.learning_observer = learning_observer
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
 
     def run_once(self, *, lease_ttl_ms: int = 30_000) -> dict[str, object] | None:
@@ -77,9 +79,23 @@ class RoomKernelWorker:
                 message=self.message_builder(dispatch),
                 lease_token=str(lease["leaseToken"]),
             )
-        except BaseException:
+        except BaseException as exc:
             if self.revoke_session is not None:
                 self.revoke_session(str(dispatch["targetSessionId"]), self.clock_ms())
+            if self.learning_observer is not None:
+                try:
+                    self.learning_observer(
+                        {
+                            "eventKind": "runtime_failed",
+                            "rootId": str(dispatch["rootId"]),
+                            "dispatchId": str(dispatch["dispatchId"]),
+                            "reason": f"{type(exc).__name__}: {exc}"[:500],
+                            "createdAtMs": self.clock_ms(),
+                        }
+                    )
+                except Exception:
+                    # Lease reconciliation remains the fallback evidence path.
+                    pass
             raise
         return self.store.accept_runtime_receipt(
             lease_token=str(lease["leaseToken"]),
@@ -123,16 +139,19 @@ class RoomKernelWorker:
                 target["rootId"] = root_id
         receipt = self.store.apply_control_command(command)
         failures: dict[str, list[str]] = {}
+        runtime_receipts: list[dict[str, object]] = []
         for target in targets:
             target_root_id = str(target["rootId"])
             try:
                 if self.revoke_session is not None:
                     self.revoke_session(str(target["sessionId"]), self.clock_ms())
                 generation = int(self.store.root(target_root_id)["generation"])
-                self.runtime.cancel_room(
-                    session_id=str(target["sessionId"]),
-                    root_id=target_root_id,
-                    generation=generation,
+                runtime_receipts.append(
+                    self.runtime.cancel_room(
+                        session_id=str(target["sessionId"]),
+                        root_id=target_root_id,
+                        generation=generation,
+                    )
                 )
             except Exception as exc:
                 failures.setdefault(target_root_id, []).append(str(target["dispatchId"]))
@@ -143,7 +162,11 @@ class RoomKernelWorker:
                     reason=reason,
                     now_ms=self.clock_ms(),
                 )
-        return {"kernelReceipt": receipt, "runtimeCancelFailures": failures}
+        return {
+            "kernelReceipt": receipt,
+            "runtimeReceipts": runtime_receipts,
+            "runtimeCancelFailures": failures,
+        }
 
     def reconcile(self) -> list[dict[str, object]]:
         receipts = self.store.reconcile_expired_leases(now_ms=self.clock_ms())

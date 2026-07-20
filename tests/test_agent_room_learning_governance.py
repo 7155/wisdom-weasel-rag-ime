@@ -16,7 +16,7 @@ class RoomLearningGovernanceTests(unittest.TestCase):
         self.db = Path(self.tmp.name) / "room.sqlite"
         self.requirements = RequirementGovernanceStore(self.db); self.requirements.initialize()
         self.peer = RoomPeerReviewStore(self.db, runner_secrets={"runner:test": b"runner-secret"}); self.peer.initialize()
-        self.store = RoomLearningGovernanceStore(self.db, authority_secrets={"admin:1": b"approval-secret", "user:1": b"user-secret"}, config_secret=b"config-secret", evidence_ttl_ms=1_000); self.assertEqual(self.store.initialize(), 84)
+        self.store = RoomLearningGovernanceStore(self.db, authority_secrets={"admin:1": b"approval-secret", "user:1": b"user-secret"}, config_secret=b"config-secret", evidence_ttl_ms=1_000); self.assertEqual(self.store.initialize(), 85)
         self._seed_runtime()
         self.incident, _ = self._incident("incident:1", "occurrence:1")
 
@@ -76,7 +76,7 @@ class RoomLearningGovernanceTests(unittest.TestCase):
             self.store.activate_guard(activation_receipt_id="activation:1", guard_candidate_id="guard:1", approval_receipt_id=approval["approvalReceiptId"], eval_run_ids=evals, now_ms=100, config_signature=signature)
         self.assertIsNone(self.store.guard_for_root(binding_id="binding:1", root_id="root:1", scope_key="room:room:1"))
         self._seed_new_root()
-        self.assertEqual(self.store.guard_for_root(binding_id="binding:new", root_id="root:new", scope_key="room:room:1")["guardEpoch"], 1)
+        self.assertEqual(self.store.guard_for_root(binding_id="participant-binding:dispatch:new", root_id="root:new", scope_key="room:room:1")["guardEpoch"], 1)
         self.store.bind_execution(dispatch_id="dispatch:new", root_id="root:new", scope_key="room:room:1", guard_epoch=1, now_ms=102)
         with self.assertRaisesRegex(LearningGovernanceError, "injected"):
             self.store.rollback(rollback_receipt_id="rollback:crash", scope_key="room:room:1", authority_ref="user:1", authority_secret=b"user-secret", reason="emergency", now_ms=103, fail_before_pointer=True)

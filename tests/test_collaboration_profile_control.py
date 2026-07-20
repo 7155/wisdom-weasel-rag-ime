@@ -118,7 +118,13 @@ class CollaborationProfileControlTests(unittest.TestCase):
             confirmation="REVOKE PROFILE", payload={"reason": "compromised"},
         ))
         self.assertEqual(revoked["result"]["affectedRootIds"], ["root-1"])
-        self.assertEqual(self.cancelled, ["root-1"])
+        self.assertEqual(self.cancelled, [])
+        cancel = self.conn.execute(
+            """SELECT source_kind,root_id,state FROM room_v2_managed_cancel_outbox
+               WHERE source_receipt_id=?""",
+            (revoked["receiptId"],),
+        ).fetchone()
+        self.assertEqual(cancel, ("profile_revoke", "root-1", "pending"))
         state, epoch = self.conn.execute(
             "SELECT state, capability_epoch FROM room_v2_capability_runtime_bindings WHERE session_id = 'session-1'"
         ).fetchone()

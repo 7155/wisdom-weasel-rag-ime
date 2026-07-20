@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -262,6 +263,59 @@ class RoomKernelServiceTests(unittest.TestCase):
             clear=True,
         ):
             self.assertEqual(_room_kernel_mode_from_environment(), "cohort")
+
+    def test_runtime_failure_and_user_correction_are_automatic_incidents(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+
+        def fail_dispatch(*_args, **_kwargs):
+            raise ConnectionError("Pi host exited")
+
+        self.factory.runtime.dispatch_room = fail_dispatch
+        with self.assertRaisesRegex(ConnectionError, "Pi host exited"):
+            self.service.room_kernel_worker.run_once()
+        with sqlite3.connect(self.service.db_path) as conn:
+            incident = conn.execute(
+                "SELECT taxonomy,evidence_refs_json FROM room_v2_incidents WHERE taxonomy='tool_failure'"
+            ).fetchone()
+        self.assertEqual(incident[0], "tool_failure")
+        self.assertTrue(json.loads(incident[1]))
+
+        self.service.observe_room_user_correction(
+            room_id=self.room_id,
+            root_id="root:service",
+            dispatch_id="dispatch:service",
+            correction_ref="room-post:user-correction",
+            caller_authorized=True,
+            now_ms=5,
+        )
+        with sqlite3.connect(self.service.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM room_v2_incidents WHERE taxonomy='user_correction'"
+                ).fetchone()[0],
+                1,
+            )
+
+    def test_durable_managed_cancel_reaches_kernel_and_pi_abort_once(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        with sqlite3.connect(self.service.db_path) as conn:
+            conn.execute(
+                """INSERT INTO room_v2_managed_cancel_outbox(
+                   cancel_id,source_kind,source_receipt_id,root_id,state,created_at_ms,updated_at_ms)
+                   VALUES ('cancel:test','profile_revoke','profile-receipt:test','root:service','pending',4,4)"""
+            )
+        self.service._run_room_learning_maintenance()
+        self.assertEqual(self.service.room_kernel.root("root:service")["state"], "cancelled")
+        self.assertEqual(len(self.factory.runtime.cancelled), 1)
+        with sqlite3.connect(self.service.db_path) as conn:
+            state, kernel_receipt_id = conn.execute(
+                "SELECT state,kernel_receipt_id FROM room_v2_managed_cancel_outbox WHERE cancel_id='cancel:test'"
+            ).fetchone()
+        self.assertEqual(state, "applied")
+        self.assertTrue(kernel_receipt_id)
+        self.service._run_room_learning_maintenance()
+        self.assertEqual(len(self.factory.runtime.cancelled), 1)
 
     def test_settle_bridge_requires_matching_settle_and_explicit_post(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)

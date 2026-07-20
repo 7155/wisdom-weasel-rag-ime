@@ -197,6 +197,20 @@ class CollaborationProfileControl:
                 guard_epoch=int(result.get("guardEpoch") or 0),
             )
             self._insert_receipt(command, command_hash, receipt)
+            if action in {"rollback", "revoke"}:
+                source_kind = "profile_rollback" if action == "rollback" else "profile_revoke"
+                for root_id in result.get("affectedRootIds", []):
+                    self.conn.execute(
+                        """INSERT OR IGNORE INTO room_v2_managed_cancel_outbox(
+                           cancel_id,source_kind,source_receipt_id,root_id,state,
+                           created_at_ms,updated_at_ms)
+                           VALUES (?,?,?,?, 'pending',?,?)""",
+                        (
+                            f"profile-cancel:{receipt['receiptId']}:{root_id}", source_kind,
+                            receipt["receiptId"], str(root_id), int(command["createdAtMs"]),
+                            int(command["createdAtMs"]),
+                        ),
+                    )
             receipt_box.append(receipt)
 
         if action == "activate":
@@ -222,9 +236,6 @@ class CollaborationProfileControl:
                 receipt_callback=persist,
             )
         receipt = receipt_box[0]
-        if action in {"rollback", "revoke"} and self._cancel_root is not None:
-            for root_id in receipt["result"].get("affectedRootIds", []):  # type: ignore[union-attr]
-                self._cancel_root(str(root_id), int(command["createdAtMs"]))
         return receipt
 
     @staticmethod
