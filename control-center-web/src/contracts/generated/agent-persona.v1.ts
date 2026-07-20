@@ -33,6 +33,34 @@ export interface AgentPersonaV1 {
     modelProfile?: string;
     thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   };
+  runtimeCharacteristics: {
+    intelligence: string;
+    speed: string;
+    context: string;
+    /**
+     * @minItems 1
+     * @maxItems 6
+     */
+    suitableTasks:
+      | [string]
+      | [string, string]
+      | [string, string, string]
+      | [string, string, string, string]
+      | [string, string, string, string, string]
+      | [string, string, string, string, string, string];
+    /**
+     * @minItems 1
+     * @maxItems 6
+     */
+    unsuitableTasks:
+      | [string]
+      | [string, string]
+      | [string, string, string]
+      | [string, string, string, string]
+      | [string, string, string, string, string]
+      | [string, string, string, string, string, string];
+    isDefault: boolean;
+  };
   safetyPolicyVersion: 'control-center-safe-v1';
   /**
    * @minItems 1

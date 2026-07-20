@@ -47,6 +47,9 @@ class AgentSessionStoreTests(unittest.TestCase):
 
         self.assertEqual(session["title"], "输入助手 今天")
         self.assertEqual(session["mode"], "assistant")
+        self.assertEqual(session["roleId"], "vcp-v1")
+        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-sol")
+        self.assertEqual(session["thinkingLevel"], "max")
         self.assertTrue(session["projectContextEnabled"])
         self.assertFalse(session["piSkillsEnabled"])
         self.assertFalse(session["codexSkillsEnabled"])

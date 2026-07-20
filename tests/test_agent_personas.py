@@ -79,27 +79,28 @@ class AgentPersonaStoreTests(unittest.TestCase):
         coordinator = self.store.create({**base, "selectableModes": ["coordinator"]})
         self.assertEqual(coordinator.selectable_modes, ("coordinator",))
 
-    def test_runtime_defaults_are_persistent_for_builtin_and_user_personas(self) -> None:
-        saved = self.store.set_runtime_defaults(
-            "zhiyou-v1",
-            "1",
-            model_profile="gpt/gpt-5.6-terra",
-            thinking_level="high",
-            updated_at_ms=456,
-        )
+    def test_builtin_defaults_are_fixed_while_user_defaults_are_persistent(self) -> None:
         self.assertEqual(
-            saved,
-            {"modelProfile": "gpt/gpt-5.6-terra", "thinkingLevel": "high"},
+            self.store.runtime_defaults("zhiyou-v1", "1"),
+            {"modelProfile": "gpt/gpt-5.6-terra", "thinkingLevel": "max"},
         )
-        self.assertEqual(self.store.runtime_defaults("zhiyou-v1", "1"), saved)
-
-        with self.assertRaisesRegex(ValueError, "thinkingLevel"):
+        with self.assertRaisesRegex(ValueError, "fixed"):
             self.store.set_runtime_defaults(
                 "zhiyou-v1",
                 "1",
                 model_profile="gpt/gpt-5.6-terra",
-                thinking_level="ultra",
+                thinking_level="high",
             )
+
+        created = self.store.create({
+            "displayName": "测试角色", "tagline": "测试定位", "summary": "测试摘要",
+            "traits": ["清楚"], "timelineModel": "terra", "selectableModes": ["assistant"],
+        })
+        saved = self.store.set_runtime_defaults(
+            created.role_id, "1", model_profile="gpt/gpt-5.6-terra",
+            thinking_level="high", updated_at_ms=456,
+        )
+        self.assertEqual(self.store.runtime_defaults(created.role_id, "1"), saved)
 
 
 if __name__ == "__main__":

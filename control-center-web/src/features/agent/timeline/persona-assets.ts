@@ -5,7 +5,7 @@ import terraPortrait from '@/assets/personas/terra-v2.webp';
 export type PersonaPresence = 'idle' | 'listening' | 'thinking' | 'done' | 'warning';
 
 type PersonaAssetStates = Readonly<Record<PersonaPresence, string>>;
-type PersonaTimeline = 'legacy-state' | 'past' | 'present' | 'future';
+type PersonaTimeline = 'legacy-state' | 'past' | 'present' | 'future' | 'flash';
 
 type PersonaAssetRecord = Readonly<{
   personaId: string;
@@ -30,6 +30,7 @@ export const personaAssetManifest = {
     'rag-ime-timeline-past-v1': assetRecord('hermes-v1', 'past', '初识阶段', singlePortrait(lunaPortrait)),
     'rag-ime-timeline-present-v1': assetRecord('zhiyou-v1', 'present', '此刻阶段', singlePortrait(terraPortrait)),
     'rag-ime-timeline-future-v1': assetRecord('vcp-v1', 'future', '构筑阶段', singlePortrait(solPortrait)),
+    'rag-ime-timeline-flash-v1': assetRecord('flash-v1', 'flash', '闪念阶段', singlePortrait(lunaPortrait)),
   },
 } as const;
 

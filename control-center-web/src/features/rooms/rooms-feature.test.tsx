@@ -148,7 +148,7 @@ describe('Rooms experience', () => {
         naturalJitter: 0,
         fallbackParticipantId: '',
       },
-      moderatorRoleId: userCreatedPersona.roleId,
+      moderatorRoleId: 'vcp-v1',
       workspaceRoots: ['/Volumes/work/learnA'],
     });
     expect(await screen.findByRole('button', { name: '打开 Room：发布前检查' })).toHaveAttribute('aria-current', 'true');

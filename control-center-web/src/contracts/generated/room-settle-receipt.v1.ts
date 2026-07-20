@@ -13,5 +13,13 @@ export interface RoomSettleReceiptV1 {
   sessionId: string;
   generation: number;
   capabilityEpoch: number;
+  resourceUsage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    toolCalls?: number;
+    toolCost?: number;
+    retryCount?: number;
+    repairCount?: number;
+  };
   createdAtMs: number;
 }

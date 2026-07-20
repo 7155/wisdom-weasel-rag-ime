@@ -13,6 +13,9 @@ export interface RoomCommitV2 {
   postProposal: {
     [k: string]: unknown;
   } | null;
+  continuation?: {
+    [k: string]: unknown;
+  } | null;
   evidenceRefs: string[];
   requirementCoverage: string[];
   createdAtMs: number;

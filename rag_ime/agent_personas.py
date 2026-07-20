@@ -11,6 +11,7 @@ from typing import Iterator, Mapping
 from .agent_roles import (
     PersonaDefaults,
     PersonaManifest,
+    PersonaRuntimeCharacteristics,
     PersonaVisualProfile,
     agent_role,
     user_persona_manifest,
@@ -149,6 +150,11 @@ class AgentPersonaStore:
 
     def runtime_defaults(self, role_id: object, version: object) -> dict[str, str] | None:
         role = self.resolve(role_id, version)
+        if role.defaults.model_policy == "fixed":
+            return {
+                "modelProfile": role.defaults.model_profile,
+                "thinkingLevel": role.defaults.thinking_level,
+            }
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -175,6 +181,8 @@ class AgentPersonaStore:
         updated_at_ms: int | None = None,
     ) -> dict[str, str]:
         role = self.resolve(role_id, version)
+        if role.defaults.model_policy == "fixed":
+            raise ValueError("builtin persona runtime defaults are fixed")
         profile = _model_profile(model_profile)
         level = str(thinking_level or "").strip().lower()
         if level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
@@ -237,6 +245,13 @@ def _manifest(row: sqlite3.Row) -> PersonaManifest:
             model_policy=str(row["model_policy"]),
             memory_policy=str(row["memory_policy"]),
             tool_profile_version=tool_profile_version,
+        ),
+        runtime_characteristics=PersonaRuntimeCharacteristics(
+            intelligence="由所选模型决定",
+            speed="由所选模型决定",
+            context="按 Session 模型与作用域配置",
+            suitable_tasks=("用户定义的陪伴与协作任务",),
+            unsuitable_tasks=("超出已连接工具、权限或证据范围的任务",),
         ),
         selectable_modes=modes,
         safety_policy_version=str(row["safety_policy_version"]),

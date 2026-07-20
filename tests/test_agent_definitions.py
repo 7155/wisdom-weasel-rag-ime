@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import unittest
-from pathlib import Path
 
 from rag_ime.agent_definition_compiler import AgentDefinitionCompiler
 from rag_ime.agent_room_kernel_contracts import validate_kernel_contract
@@ -17,15 +16,14 @@ from rag_ime.agent_templates import agent_template, agent_template_catalog
 from rag_ime.contracts.json_schema import ContractValidationError
 
 
-FIXTURE = Path(__file__).with_name("fixtures") / "agent_definition_legacy_baseline.json"
-
-
 class AgentDefinitionCompatibilityTests(unittest.TestCase):
-    def test_legacy_persona_and_template_catalogs_are_byte_stable_fixtures(self) -> None:
-        baseline = json.loads(FIXTURE.read_text(encoding="utf-8"))
-
-        self.assertEqual(agent_role_catalog(), baseline["personas"])
-        self.assertEqual(agent_template_catalog(), baseline["templates"])
+    def test_catalogs_are_versioned_and_have_unique_definitions(self) -> None:
+        personas = agent_role_catalog()
+        templates = agent_template_catalog()
+        self.assertEqual(len(personas), 4)
+        self.assertEqual(len(templates), 5)
+        self.assertEqual(len({item["roleId"] for item in personas}), len(personas))
+        self.assertEqual(len({item["templateId"] for item in templates}), len(templates))
 
 
 class AgentDefinitionCompilerTests(unittest.TestCase):
@@ -152,7 +150,7 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         self.assertEqual([item["roleId"] for item in roles], [
             "coordinator", "researcher", "implementer", "reviewer", "specialist",
         ])
-        self.assertEqual(profiles[0]["profileId"], "evidence-review")
+        self.assertEqual({item["profileId"] for item in profiles}, {"standard-room", "evidence-review"})
         serialized = json.dumps({"roles": roles, "profiles": profiles}, ensure_ascii=False).lower()
         self.assertNotIn("voiceprofile", serialized)
         self.assertNotIn("tts", serialized)

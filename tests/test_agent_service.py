@@ -145,10 +145,10 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(runtime["schemaVersion"], "rag-ime.agent-runtime.v1")
         self.assertEqual(runtime["status"], "disabled")
         roles = self.service.list_roles()
-        self.assertEqual(roles["items"][0]["displayName"], "智鼬·此刻")
+        self.assertEqual(roles["items"][0]["displayName"], "智鼬·未来")
         self.assertEqual(
             [item["roleId"] for item in roles["items"]],
-            ["zhiyou-v1", "hermes-v1", "vcp-v1"],
+            ["vcp-v1", "zhiyou-v1", "hermes-v1", "flash-v1"],
         )
         self.assertNotIn("systemPrompt", roles["items"][0])
 
@@ -908,7 +908,7 @@ class AgentServiceTests(unittest.TestCase):
                 "mode": "assistant",
                 "roleId": "hermes-v1",
                 "roleVersion": "1",
-                "modelProfile": "gpt/test-model",
+                "modelProfile": "gpt/gpt-5.6-luna",
                 "toolProfileVersion": "subagent-readonly-v1",
             }
         )["session"]
@@ -1079,7 +1079,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         session = self.service.create_session({"title": "默认角色"})["session"]
         self.assertEqual(session["roleId"], "hermes-v1")
-        self.assertEqual(session["modelProfile"], "deepseek/deepseek-chat")
+        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-luna")
 
         runtime = self.service.update_configuration(
             {
@@ -1108,7 +1108,7 @@ class AgentServiceTests(unittest.TestCase):
 
             self.assertEqual(runtime["runtimeKind"], "gateway_http")
             self.assertEqual(runtime["driverId"], "test-gateway")
-            self.assertEqual(session["modelProfile"], "gateway/default")
+            self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-sol")
             self.assertEqual(factory.created_for, ["interactive"])
         finally:
             service.close()
@@ -1126,7 +1126,7 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(created["roleId"], "hermes-v1")
         self.assertEqual(created["roleVersion"], "1")
-        self.assertEqual(created["modelProfile"], "pi/default")
+        self.assertEqual(created["modelProfile"], "gpt/gpt-5.6-luna")
         self.assertEqual(created["toolProfileVersion"], "control-center-v1")
         renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
         self.assertEqual(renamed["roleId"], "hermes-v1")
@@ -1331,8 +1331,8 @@ class AgentServiceTests(unittest.TestCase):
         source, target = room["participants"]
         source_session = self.service.sessions.get(str(source["sessionId"]))
         target_session = self.service.sessions.get(str(target["sessionId"]))
-        self.assertEqual(source_session["modelProfile"], "pi/default")
-        self.assertEqual(target_session["modelProfile"], "pi/default")
+        self.assertEqual(source_session["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(target_session["modelProfile"], "gpt/gpt-5.6-sol")
         item = {
             "id": "room-message:test",
             "kind": "ask",
@@ -1677,7 +1677,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             initial_roles["hermes-v1"],
             {
-                "modelPolicy": "runtime-default",
+                "modelPolicy": "fixed",
                 "memoryPolicy": "personal-evidence-v1",
                 "toolProfileVersion": "control-center-v1",
                 "modelProfile": "gpt/gpt-5.6-luna",
@@ -1687,43 +1687,28 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(initial_roles["zhiyou-v1"]["modelProfile"], "gpt/gpt-5.6-terra")
         self.assertEqual(initial_roles["zhiyou-v1"]["thinkingLevel"], "max")
         self.assertEqual(initial_roles["vcp-v1"]["modelProfile"], "gpt/gpt-5.6-sol")
-        self.assertEqual(initial_roles["vcp-v1"]["thinkingLevel"], "xhigh")
+        self.assertEqual(initial_roles["vcp-v1"]["thinkingLevel"], "max")
+        self.assertEqual(initial_roles["flash-v1"]["modelProfile"], "deepseek/deepseek-v4-flash")
         with patch.object(service.runtime, "available_models", return_value=available_models):
             catalog = service.role_model_catalog()
         self.assertEqual(catalog["providers"][0]["models"][0]["name"], "GPT-5.6 Luna")
         with patch.object(service.runtime, "available_models", return_value=available_models):
-            response = service.update_role_runtime_defaults(
-                {
-                    "roleId": "zhiyou-v1",
-                    "roleVersion": "1",
-                    "provider": "gpt",
-                    "modelId": "gpt-5.6-luna",
-                    "thinkingLevel": "max",
-                }
-            )
-        self.assertEqual(response["role"]["defaults"]["thinkingLevel"], "max")
-        self.assertEqual(
-            service.list_roles()["items"][0]["defaults"]["modelProfile"],
-            "gpt/gpt-5.6-luna",
-        )
+            with self.assertRaisesRegex(ValueError, "fixed"):
+                service.update_role_runtime_defaults(
+                    {"roleId": "zhiyou-v1", "roleVersion": "1", "provider": "gpt",
+                     "modelId": "gpt-5.6-terra", "thinkingLevel": "max"}
+                )
         with patch.object(service.runtime, "set_thinking_level") as set_thinking:
             session = service.create_session(
                 {"title": "继承角色默认", "roleId": "zhiyou-v1", "roleVersion": "1"}
             )["session"]
-        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-terra")
         self.assertEqual(session["thinkingLevel"], "max")
         set_thinking.assert_not_called()
 
-        explicit = service.create_session(
-            {
-                "title": "本轮显式模型",
-                "roleId": "zhiyou-v1",
-                "roleVersion": "1",
-                "modelProfile": "gpt/gpt-5.6-sol",
-            }
-        )["session"]
-        self.assertEqual(explicit["modelProfile"], "gpt/gpt-5.6-sol")
-        self.assertEqual(explicit["thinkingLevel"], "")
+        with self.assertRaisesRegex(ValueError, "cannot be overridden"):
+            service.create_session({"title": "本轮显式模型", "roleId": "zhiyou-v1",
+                                    "roleVersion": "1", "modelProfile": "gpt/gpt-5.6-sol"})
 
     def test_command_catalog_exposes_only_pi_prompt_commands_and_degrades_cleanly(self) -> None:
         session = self.service.create_session({"title": "命令目录"})["session"]

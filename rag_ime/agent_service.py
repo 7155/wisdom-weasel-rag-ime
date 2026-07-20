@@ -754,7 +754,17 @@ class AgentService:
             default_model_profile=str(session_defaults["modelProfile"]),
         )
         requested_model_profile = payload.get("modelProfile")
-        if requested_model_profile is not None:
+        # This private marker is used only by the input-method deep-search
+        # worker; public route policies reject it before this service boundary.
+        if role.defaults.model_policy == "fixed" and payload.get("_internalModelOverride") is not True:
+            if (
+                requested_model_profile is not None
+                and str(requested_model_profile) != role.defaults.model_profile
+            ):
+                raise ValueError("builtin persona model cannot be overridden")
+            model_profile = role.defaults.model_profile
+            thinking_level = role.defaults.thinking_level
+        elif requested_model_profile is not None:
             model_profile = str(requested_model_profile)
             # A role's reasoning level is part of its saved model choice, not
             # an independent persona preference.  An explicit session model
@@ -951,6 +961,12 @@ class AgentService:
         drivers keep their own configured model rather than receiving a model
         identifier they cannot resolve.
         """
+
+        if role.defaults.model_policy == "fixed":
+            return {
+                "modelProfile": role.defaults.model_profile,
+                "thinkingLevel": role.defaults.thinking_level,
+            }
 
         default_profile = str(
             default_model_profile
@@ -1752,6 +1768,7 @@ class AgentService:
             {
                 "profilePin": profile_pin,
                 "promptGuidance": list(active_profile.prompt_guidance),
+                "profilePrompt": active_profile.system_prompt,
                 "guardPrompt": guard_surfaces["prompt"] if guard_surfaces is not None else {},
             },
             ensure_ascii=False,
@@ -1760,7 +1777,7 @@ class AgentService:
         layers = (
             PromptLayer("core_rails", "pi-core-safety", "pi-core-safety:v1", persona.safety_policy_prompt, ("safety", "authorization")),
             PromptLayer("persona", "persona-compiler", f"persona:{persona.role_id}@{persona.version}", persona.persona_prompt, ("identity",)),
-            PromptLayer("collaboration_role", "collaboration-role-compiler", f"collaboration-role:{role.role_id}@{role.version}", json.dumps(role.to_payload(), ensure_ascii=False, sort_keys=True), ("collaboration-duty",)),
+            PromptLayer("collaboration_role", "collaboration-role-compiler", f"collaboration-role:{role.role_id}@{role.version}", role.system_prompt, ("collaboration-duty",)),
             PromptLayer("agent_template_policy", "template-capability-compiler", f"agent-template:{template.template_id}@{template.version}", template.prompt, ("tool-policy", "skill-policy")),
             PromptLayer(
                 "room_profile_overlay",
@@ -4232,6 +4249,7 @@ class AgentService:
                 "roleVersion": str(session_defaults["roleVersion"]),
                 "modelProfile": str(session_defaults["modelProfile"]),
                 "toolProfileVersion": str(session_defaults["toolProfileVersion"]),
+                "_internalModelOverride": True,
             }
         )
         return dict(created["session"]), True

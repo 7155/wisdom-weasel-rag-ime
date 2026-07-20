@@ -5,7 +5,9 @@ import {
   BriefcaseBusiness,
   Check,
   Cpu,
+  Database,
   Gauge,
+  Rabbit,
   LockKeyhole,
   MessageCirclePlus,
   Plus,
@@ -16,6 +18,7 @@ import {
   UserRoundPlus,
   UsersRound,
   Wrench,
+  Zap,
   X,
 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
@@ -239,7 +242,7 @@ export function RolesFeature() {
       {notice ? <p className="roles-notice" role="status">{notice}</p> : null}
       {view === 'personas' || view === 'personaGrowth' ? (
         <div className="roles-layout">
-          <section className="persona-grid" aria-label="角色列表">{personas.length ? personas.map((item) => <button type="button" key={`${item.roleId}:${item.version}`} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setActionNotice(''); }}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div><b aria-label="角色阶段">{personaPhase(item).label}</b>{personaExpressionTraits(item).map((trait) => <i key={trait}>{trait}</i>)}</div></button>) : <p className="roles-empty">本机还没有可用角色。</p>}</section>
+          <section className="persona-grid" aria-label="角色列表">{personas.length ? personas.map((item) => <button type="button" key={`${item.roleId}:${item.version}`} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setActionNotice(''); }}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}{item.runtimeCharacteristics.isDefault ? <em>默认</em> : null}</strong><small>{item.tagline}</small></span><div><b aria-label="角色阶段">{personaPhase(item).label}</b><i>{modelDisplayName(item.defaults.modelProfile)}</i><i>{item.runtimeCharacteristics.speed}</i></div></button>) : <p className="roles-empty">本机还没有可用角色。</p>}</section>
           {persona && view === 'personas' ? <PersonaInspector catalog={modelCatalog} persona={persona} saving={roleDefaultsSaving} onSave={saveRoleRuntimeDefaults} onOpenGrowth={() => setView('personaGrowth')} /> : null}
           {persona && view === 'personaGrowth' ? <PersonaGrowthInspector persona={persona} onBack={() => setView('personas')} /> : null}
         </div>
@@ -321,7 +324,8 @@ function PersonaInspector({
   const selectedModel = models.find((model) => `${model.provider}/${model.id}` === modelProfile);
   const thinkingLevels = selectedModel?.thinkingLevels?.length ? selectedModel.thinkingLevels : ['off'];
   const changed = modelProfile !== initialProfile || thinkingLevel !== (persona.defaults.thinkingLevel ?? 'off');
-  return <aside className="role-inspector" data-accent={persona.visualProfile.accentToken}><div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>角色</small><h3>{persona.displayName}</h3><p>{persona.summary}</p></span></div><dl><div><dt><Gauge size={15} />陪伴阶段</dt><dd>{phase.label}</dd></div><div><dt><Sparkles size={15} />表达特征</dt><dd>{expressionTraits.length ? expressionTraits.join(' · ') : '自然'}</dd></div><div><dt><LockKeyhole size={15} />可用方式</dt><dd>{persona.selectableModes.map(modeLabel).join(' · ')}</dd></div><div><dt><ShieldCheck size={15} />操作确认</dt><dd>敏感操作由你确认</dd></div><div><dt><Wrench size={15} />工具使用</dt><dd>按任务调用已连接工具</dd></div></dl><Button variant="quiet" size="small" leadingIcon={<BookOpen size={14} />} onClick={onOpenGrowth}>查看成长档案</Button><section className="role-runtime-defaults" aria-label="角色运行默认设置"><header><span><Cpu size={15} /><strong>默认模型</strong></span><small>新对话自动使用</small></header>{models.length ? <><label><span>模型</span><Select aria-label="角色默认模型" value={modelProfile} onValueChange={(value) => { setModelProfile(value); const next = models.find((model) => `${model.provider}/${model.id}` === value); const levels = next?.thinkingLevels?.length ? next.thinkingLevels : ['off']; if (!levels.includes(thinkingLevel)) setThinkingLevel(levels[0] ?? 'off'); }} options={models.map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name }))} /></label><label><span>推理强度</span><Select aria-label="角色默认推理强度" value={thinkingLevel} onValueChange={setThinkingLevel} options={thinkingLevels.map((level) => ({ value: level, label: thinkingLabel(level) }))} /></label><Button variant="primary" size="small" leadingIcon={<Save size={14} />} loading={saving} disabled={!changed || !modelProfile} onClick={() => void onSave(modelProfile, thinkingLevel)}>保存默认设置</Button></> : <p><BrainCircuit size={15} />当前 Pi 模型目录不可用，请先在配置页完成模型配置。</p>}</section></aside>;
+  const fixed = persona.defaults.modelPolicy === 'fixed';
+  return <aside className="role-inspector" data-accent={persona.visualProfile.accentToken}><div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>{persona.runtimeCharacteristics.isDefault ? '默认角色' : '角色'}</small><h3>{persona.displayName}</h3><p>{persona.summary}</p></span></div><dl><div><dt><Gauge size={15} />陪伴阶段</dt><dd>{phase.label}</dd></div><div><dt><BrainCircuit size={15} />智能</dt><dd>{persona.runtimeCharacteristics.intelligence}</dd></div><div><dt><Rabbit size={15} />速度</dt><dd>{persona.runtimeCharacteristics.speed}</dd></div><div><dt><Database size={15} />上下文</dt><dd>{persona.runtimeCharacteristics.context}</dd></div><div><dt><Sparkles size={15} />适合</dt><dd>{persona.runtimeCharacteristics.suitableTasks.join(' · ')}</dd></div><div><dt><ShieldCheck size={15} />不适合</dt><dd>{persona.runtimeCharacteristics.unsuitableTasks.join(' · ')}</dd></div><div><dt><LockKeyhole size={15} />可用方式</dt><dd>{persona.selectableModes.map(modeLabel).join(' · ')}</dd></div><div><dt><Wrench size={15} />工具使用</dt><dd>按任务调用已连接工具，敏感操作由你确认</dd></div></dl><Button variant="quiet" size="small" leadingIcon={<BookOpen size={14} />} onClick={onOpenGrowth}>查看成长档案</Button><section className="role-runtime-defaults" aria-label="角色运行默认设置"><header><span>{persona.roleId === 'flash-v1' ? <Zap size={15} /> : <Cpu size={15} />}<strong>{fixed ? '固定运行配置' : '默认模型'}</strong></span><small>新对话自动使用</small></header>{fixed ? <div className="role-runtime-fixed"><span><b>{modelDisplayName(modelProfile)}</b><small>{modelProfile}</small></span><span><b>推理强度</b><small>{thinkingLabel(thinkingLevel)}</small></span></div> : models.length ? <><label><span>模型</span><Select aria-label="角色默认模型" value={modelProfile} onValueChange={(value) => { setModelProfile(value); const next = models.find((model) => `${model.provider}/${model.id}` === value); const levels = next?.thinkingLevels?.length ? next.thinkingLevels : ['off']; if (!levels.includes(thinkingLevel)) setThinkingLevel(levels[0] ?? 'off'); }} options={models.map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name }))} /></label><label><span>推理强度</span><Select aria-label="角色默认推理强度" value={thinkingLevel} onValueChange={setThinkingLevel} options={thinkingLevels.map((level) => ({ value: level, label: thinkingLabel(level) }))} /></label><Button variant="primary" size="small" leadingIcon={<Save size={14} />} loading={saving} disabled={!changed || !modelProfile} onClick={() => void onSave(modelProfile, thinkingLevel)}>保存默认设置</Button></> : <p><BrainCircuit size={15} />当前 Pi 模型目录不可用，请先在配置页完成模型配置。</p>}</section></aside>;
 }
 
 type RoleBookProposal = {
@@ -725,13 +729,19 @@ function thinkingLabel(level: string): string {
   return ({ off: '不启用推理', minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '极高', max: 'Max' } as Record<string, string>)[level] ?? level;
 }
 
-function personaPhase(persona: AgentPersonaV1): { id: TimelineModel | ''; label: string } {
+function personaPhase(persona: AgentPersonaV1): { id: TimelineModel | 'flash' | ''; label: string } {
   const assetId = persona.visualProfile.avatarAssetId.toLowerCase();
   const policy = persona.defaults.modelPolicy.toLowerCase();
   if (assetId.includes('present') || policy.includes('terra')) return { id: 'terra', label: '此刻阶段' };
   if (assetId.includes('past') || policy.includes('luna')) return { id: 'luna', label: '初识阶段' };
   if (assetId.includes('future') || policy.includes('sol')) return { id: 'sol', label: '构筑阶段' };
+  if (assetId.includes('flash')) return { id: 'flash', label: '闪念阶段' };
   return { id: '', label: '自定义阶段' };
+}
+
+function modelDisplayName(profile?: string): string {
+  const model = String(profile ?? '').split('/').at(-1) ?? '';
+  return (({ 'gpt-5.6-sol': 'GPT-5.6 Sol', 'gpt-5.6-terra': 'GPT-5.6 Terra', 'gpt-5.6-luna': 'GPT-5.6 Luna', 'deepseek-v4-flash': 'DeepSeek V4 Flash' } as Record<string, string>)[model] ?? model) || 'Session 选择';
 }
 
 function personaExpressionTraits(persona: AgentPersonaV1): string[] {
