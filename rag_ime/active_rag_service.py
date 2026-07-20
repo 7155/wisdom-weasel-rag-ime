@@ -649,6 +649,16 @@ class ActiveRagService:
         primary_count = 0
         timeline_count = 0
         retrieval_error = ""
+        retrieval_query = _resolved_active_rag_request_text(request)
+        retrieval_query_source = (
+            "selected_text"
+            if request.placement == "replace_selection" and compact_whitespace(request.selected_text)
+            else (
+                "foreground_context"
+                if compact_whitespace(request.context or request.surrounding_before)
+                else "selected_text_fallback"
+            )
+        )
         retrieval_allowed = self.core is not None and request.local_retrieval_allowed
         if retrieval_allowed:
             try:
@@ -661,7 +671,7 @@ class ActiveRagService:
                 primary_raw_count = len(evidence)
                 evidence = _filter_primary_active_rag_evidence(
                     evidence,
-                    query=_resolved_active_rag_request_text(request),
+                    query=retrieval_query,
                 )
                 primary_count = len(evidence)
             except Exception as exc:
@@ -692,6 +702,10 @@ class ActiveRagService:
                 "primaryRetrievedCount": primary_count,
                 "timelineRetrievedCount": timeline_count,
                 "requestEvidenceCount": len(request.evidence_pack),
+                "querySource": retrieval_query_source,
+                "queryChars": len(retrieval_query),
+                "queryHash": stable_text_hash(retrieval_query) if retrieval_query else "",
+                "anchorChars": len(compact_whitespace(request.selected_text)),
                 "fallbackToRequestEvidence": fallback_used,
                 "retrievedCount": len(result),
                 "evidenceCount": len(_grounding_evidence(result)),
@@ -1419,20 +1433,16 @@ def _sensitive_blocked_payload(*, session_id: str, reason: str) -> dict[str, obj
 
 
 def _resolved_active_rag_request_text(request: ActiveRagStartRequest) -> str:
-    """Resolve the live request without trusting a stale semantic anchor."""
+    """Resolve the semantic request while keeping caret anchors subordinate."""
 
     selected = compact_whitespace(request.selected_text)
     context = compact_whitespace(request.context or request.surrounding_before)
-    if request.placement == "replace_selection" or not context:
-        return selected[-240:]
-    if selected and selected in context:
-        return selected[-240:]
-    clauses = [
-        compact_whitespace(item)
-        for item in re.split(r"(?<=[。！？!?；;])|\n+", context)
-        if compact_whitespace(item)
-    ]
-    return (clauses[-1] if clauses else context)[-240:]
+    if request.placement == "replace_selection" and selected:
+        return selected[-4_000:]
+    # The lightning button sends a short selectedText value to identify the
+    # caret region. In insert/append mode the complete editable foreground is
+    # the user's request, so an in-context anchor must never replace it.
+    return (context or selected)[-4_000:]
 
 
 def _timeline_item_relevant(item: dict[str, object], query: str) -> bool:
@@ -2504,6 +2514,12 @@ def _completion_delta_diagnostics(
     )
     if transport_modes:
         summary["transportModes"] = transport_modes
+    thinking_levels = sorted(
+        {compact_whitespace(str(item.get("thinkingLevel") or "")) for item in metadata}
+        - {""}
+    )
+    if thinking_levels:
+        summary["thinkingLevels"] = thinking_levels
     first_token_values = [
         int(item.get("firstTokenMs") or 0)
         for item in metadata
@@ -2824,13 +2840,15 @@ def _active_rag_display_candidate_payload(
 
 def _frame_from_request(request: ActiveRagStartRequest) -> ActiveRagFrame:
     return ActiveRagFrame(
-        selected_text=_resolved_active_rag_request_text(request),
+        # Keep the transport anchor separate. Retrieval chooses the complete
+        # foreground as its primary query for insert/append placements.
+        selected_text=request.selected_text,
         selected_text_hash=request.selected_text_hash,
         frontend_revision=int(request.frontend_revision),
         selection_epoch=int(request.selection_epoch),
         panel_session_id=request.panel_session_id,
         front_app_bundle_id=request.front_app_bundle_id,
-        surrounding_before=request.surrounding_before,
+        surrounding_before=request.context or request.surrounding_before,
         surrounding_after=request.surrounding_after,
         intent=request.intent,
         placement=request.placement,

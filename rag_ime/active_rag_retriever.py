@@ -66,20 +66,23 @@ def _query_from_frame(
     lane_weights: tuple[tuple[str, float], ...] = (),
 ) -> HybridRagQuery:
     selected = compact_whitespace(frame.selected_text)
-    context = compact_whitespace(" ".join(item for item in (frame.surrounding_before, frame.surrounding_after) if item))
-    intent_terms = {
-        "rewrite": "改写 优化 表达",
-        "continue": "续写 下一步 候选",
-        "summarize": "总结 压缩 重点",
-        "debug": "排错 原因 修复",
-    }
-    intent_term = intent_terms.get(frame.intent, "")
-    query_text = compact_whitespace(" ".join(item for item in (selected, intent_term) if item))
+    foreground = compact_whitespace(frame.surrounding_before)
+    context = compact_whitespace(
+        " ".join(item for item in (foreground, frame.surrounding_after) if item)
+    )
+    query_text = (
+        selected
+        if frame.placement == "replace_selection" and selected
+        else (foreground or selected)
+    )
     return HybridRagQuery(
-        query_text=query_text or context[-240:],
+        # query_text drives both the semantic embedding and primary BM25 lane.
+        # Generic intent words and the short caret anchor must not displace the
+        # complete foreground document in explicit generation.
+        query_text=query_text or context[-4_000:],
         raw_input=selected,
         preedit=selected[:80],
-        committed_tail=context[-400:],
+        committed_tail=context[-4_000:],
         rime_candidates=(),
         project=frame.project,
         app=frame.app or frame.front_app_bundle_id,

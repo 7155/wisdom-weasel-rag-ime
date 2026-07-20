@@ -311,7 +311,7 @@ function referenceTime(item: Record<string, unknown>): string {
 function referenceKindLabel(kind: MemoryReferenceKind): string {
   return ({
     event: '原始事件',
-    evidence: 'Agent 证据',
+    evidence: 'Agent 证据/审计',
     atom: '记忆 Atom',
     book: '主题书',
     timeline: '活动时间线',

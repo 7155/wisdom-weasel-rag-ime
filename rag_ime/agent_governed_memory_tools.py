@@ -778,11 +778,12 @@ class MemoryGovernanceProposalStore:
             """
             SELECT id
             FROM memory_atoms
-            WHERE claim_key = ? AND COALESCE(scope_project, '') = ?
-              AND COALESCE(scope_app, '') = '' AND kind = ?
+            WHERE owner_kind = 'user' AND owner_id = 'default'
+              AND claim_key = ? AND COALESCE(scope_project, '') = ?
+              AND COALESCE(scope_app, '') = ''
               AND claim_state = 'current' AND status IN ('active', 'approved')
             """,
-            (claim_key, self.project, memory_kind),
+            (claim_key, self.project),
         ).fetchone()
         if existing is not None and str(existing["id"]) != atom_id:
             raise ValueError("a current memory already exists for this claimKey; use correct_preview")

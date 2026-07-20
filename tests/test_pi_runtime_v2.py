@@ -238,7 +238,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             request_id="surface-one-shot-1",
             provider="deepseek",
             model_id="deepseek-v4-flash",
-            thinking_level="off",
+            thinking_level="high",
             message="只回复这一次",
             on_text_delta=deltas.append,
             timeout_seconds=15,
@@ -258,7 +258,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         params = requests[-1]["params"]
         self.assertEqual(params["provider"], "deepseek")
         self.assertEqual(params["modelId"], "deepseek-v4-flash")
-        self.assertEqual(params["thinkingLevel"], "off")
+        self.assertEqual(params["thinkingLevel"], "high")
         self.assertNotIn("sessionId", params)
         self.assertNotIn("images", params)
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])

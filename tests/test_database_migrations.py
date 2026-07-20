@@ -32,11 +32,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
                     41, 42, 43, 44, 45, 46, 47,
                     51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                    61, 62, 63, 64, 65,
+                    61, 62, 63, 64, 65, 66,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 65)
+            self.assertEqual(status["currentVersion"], 66)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -217,12 +217,12 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
 
                 appended = apply_database_migrations(conn)
-                self.assertEqual(appended.applied_versions, (63, 64, 65))
+                self.assertEqual(appended.applied_versions, (63, 64, 65, 66))
                 self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 65)
+                self.assertEqual(status["currentVersion"], 66)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -310,7 +310,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
                 }
 
-            self.assertEqual(result.applied_versions, (59, 60, 61, 62, 63, 64, 65))
+            self.assertEqual(result.applied_versions, (59, 60, 61, 62, 63, 64, 65, 66))
             self.assertEqual(
                 rows["atom:legacy-old"],
                 (
@@ -438,7 +438,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 (
                     39, 40, 41, 42, 43, 44, 45, 46, 47,
                     51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                    61, 62, 63, 64, 65,
+                    61, 62, 63, 64, 65, 66,
                 ),
             )
             self.assertEqual(
@@ -501,7 +501,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 result = apply_database_migrations(conn)
 
-                self.assertEqual(result.applied_versions, (61, 62, 63, 64, 65))
+                self.assertEqual(result.applied_versions, (61, 62, 63, 64, 65, 66))
                 self.assertEqual(
                     conn.execute(
                         """
@@ -590,7 +590,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 result = apply_database_migrations(conn)
 
-                self.assertEqual(result.applied_versions, (62, 63, 64, 65))
+                self.assertEqual(result.applied_versions, (62, 63, 64, 65, 66))
                 self.assertEqual(
                     conn.execute(
                         """
@@ -626,6 +626,140 @@ class DatabaseMigrationTests(unittest.TestCase):
                     ).fetchone(),
                     ("rebuild", 62, "pending"),
                 )
+
+    def test_owner_claim_identity_migration_repairs_cross_kind_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0066-") as temporary:
+            migrations_0065 = Path(temporary) / "migrations"
+            migrations_0065.mkdir()
+            for source in DEFAULT_MIGRATIONS_DIR.glob("*.sql"):
+                if source.name < "0066_":
+                    shutil.copy2(source, migrations_0065 / source.name)
+
+            with closing(sqlite3.connect(":memory:")) as conn:
+                apply_database_migrations(conn, migrations_dir=migrations_0065)
+                conn.executemany(
+                    """
+                    INSERT INTO memory_atoms(
+                        id, kind, text, canonical_text,
+                        source_event_ids_json, source_memory_ids_json,
+                        scope_app, scope_project, confidence, quality_score,
+                        status, created_at_ms, updated_at_ms,
+                        owner_kind, owner_id, claim_key, lineage_id,
+                        claim_state, valid_from_ms
+                    ) VALUES (?, ?, ?, ?, '[]', '[]', '', 'ime', 1.0, 1.0,
+                              'active', ?, ?, 'user', 'default',
+                              'ime:runtime-model', ?, 'current', ?)
+                    """,
+                    (
+                        (
+                            "atom:model-old",
+                            "project_fact",
+                            "输入法当前使用 Qwen 0.8B。",
+                            "输入法当前使用 Qwen 0.8B。",
+                            100,
+                            100,
+                            "lineage:old",
+                            100,
+                        ),
+                        (
+                            "atom:model-new",
+                            "project_decision",
+                            "输入法当前使用 100M 自训练模型。",
+                            "输入法当前使用 100M 自训练模型。",
+                            200,
+                            200,
+                            "lineage:new",
+                            200,
+                        ),
+                    ),
+                )
+
+                result = apply_database_migrations(conn)
+                rows = conn.execute(
+                    """
+                    SELECT id, status, claim_state, valid_to_ms, lineage_id
+                    FROM memory_atoms
+                    WHERE claim_key = 'ime:runtime-model'
+                    ORDER BY valid_from_ms
+                    """
+                ).fetchall()
+
+                self.assertEqual(result.applied_versions, (66,))
+                self.assertEqual(
+                    rows,
+                    [
+                        (
+                            "atom:model-old",
+                            "superseded",
+                            "superseded",
+                            200,
+                            "lineage:new",
+                        ),
+                        (
+                            "atom:model-new",
+                            "active",
+                            "current",
+                            None,
+                            "lineage:new",
+                        ),
+                    ],
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT old_memory_id, new_memory_id, reason, status
+                        FROM memory_supersessions
+                        WHERE old_memory_id = 'atom:model-old'
+                          AND new_memory_id = 'atom:model-new'
+                        """
+                    ).fetchone(),
+                    (
+                        "atom:model-old",
+                        "atom:model-new",
+                        "same_owner_claim_key_newer_value",
+                        "active",
+                    ),
+                )
+
+                # The same claim key is valid for independent owners after the
+                # old global index has been replaced.
+                conn.executemany(
+                    """
+                    INSERT INTO memory_atoms(
+                        id, kind, text, source_event_ids_json,
+                        source_memory_ids_json, scope_app, scope_project,
+                        confidence, quality_score, status, created_at_ms,
+                        updated_at_ms, owner_kind, owner_id, claim_key,
+                        lineage_id, claim_state, valid_from_ms
+                    ) VALUES (?, 'project_fact', ?, '[]', '[]', '', 'ime',
+                              1.0, 1.0, 'active', 300, 300, 'agent', ?,
+                              'ime:runtime-model', ?, 'current', 300)
+                    """,
+                    (
+                        ("atom:role-a", "角色 A 使用模型 Alpha。", "role-a", "lineage:a"),
+                        ("atom:role-b", "角色 B 使用模型 Beta。", "role-b", "lineage:b"),
+                    ),
+                )
+                self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
+                self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        """
+                        INSERT INTO memory_atoms(
+                            id, kind, text, source_event_ids_json,
+                            source_memory_ids_json, scope_app, scope_project,
+                            confidence, quality_score, status, created_at_ms,
+                            updated_at_ms, owner_kind, owner_id, claim_key,
+                            lineage_id, claim_state, valid_from_ms
+                        ) VALUES (
+                            'atom:role-a-duplicate', 'project_decision',
+                            '角色 A 的冲突 current。', '[]', '[]', '', 'ime',
+                            1.0, 1.0, 'active', 400, 400, 'agent', 'role-a',
+                            'ime:runtime-model', 'lineage:a', 'current', 400
+                        )
+                        """
+                    )
 
     def test_legacy_feedback_table_is_rebuilt_without_losing_rows(self) -> None:
         with closing(sqlite3.connect(":memory:")) as conn, conn:

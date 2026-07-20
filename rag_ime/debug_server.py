@@ -3166,6 +3166,7 @@ class DebugImeService:
                 self.core.db_path,
                 organizer=DeepSeekMemoryOrganizer(config),
                 project=project,
+                embedding_provider=self.core.embedding_provider,
             )
             curator.initialize()
             report = curator.run_due(

@@ -145,7 +145,8 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "domain": "agents",
         "displayName": "Agent 角色书",
         "description": (
-            "读取固定角色书版本、审阅版本历史，并生成只等待人工审阅的角色书草案；"
+            "读取角色书；仅在任务完成且有可复用变化时生成待审草案；"
+            "原始聊天只审计，不直接写入；"
             "不能激活草案或修改身份、权限、安全策略与工具白名单"
         ),
         "operations": ("get", "history", "propose_revision", "review"),

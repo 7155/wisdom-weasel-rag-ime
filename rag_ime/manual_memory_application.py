@@ -400,11 +400,14 @@ def verify_manual_memory_application(
     duplicate_claims = int(
         conn.execute(
             """SELECT COUNT(*) FROM (
-                   SELECT claim_key, kind, COUNT(*) AS count
+                   SELECT owner_kind, owner_id, claim_key,
+                          COALESCE(scope_app, '') AS app, COUNT(*) AS count
                    FROM memory_atoms
                    WHERE status IN ('active', 'approved') AND claim_state = 'current'
                      AND scope_project = ? AND trim(claim_key) != ''
-                   GROUP BY claim_key, kind HAVING COUNT(*) > 1
+                   GROUP BY owner_kind, owner_id, claim_key,
+                            COALESCE(scope_app, '')
+                   HAVING COUNT(*) > 1
                )""",
             (project,),
         ).fetchone()[0]
