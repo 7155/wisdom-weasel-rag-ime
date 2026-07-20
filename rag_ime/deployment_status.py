@@ -188,6 +188,11 @@ def audit_installed_product(
         installed_root=app_support / "Agent" / "config" / "skills",
         required="piRuntime" in required or "piSkills" in required,
     )
+    components["roomRuntimeResources"] = _room_runtime_resources_component(
+        source_root=repo_root / "integrations" / "pi",
+        installed_root=app_support / "app" / "integrations" / "pi",
+        required="sidecar" in required or "roomRuntimeResources" in required,
+    )
 
     issues = [
         {"component": name, "code": item["code"], "detail": item["detail"]}
@@ -466,6 +471,62 @@ def _pi_skills_component(
         "current": current,
         "sourcePath": str(source_root),
         "installedPath": str(installed_root),
+        "skills": sorted(source_skills or {}),
+    }
+
+
+def _room_runtime_resources_component(
+    *,
+    source_root: Path,
+    installed_root: Path,
+    required: bool,
+) -> dict[str, Any]:
+    source_policy = sha256_file(source_root / "room-skill-policy.json")
+    source_skills = _product_skill_digests(source_root / "skills")
+    installed_policy = sha256_file(installed_root / "room-skill-policy.json")
+    installed_skills = (
+        _selected_skill_digests(installed_root / "skills", tuple(source_skills))
+        if source_skills
+        else None
+    )
+    source_available = bool(source_policy and source_skills)
+    installed = bool(installed_policy and installed_skills)
+    current = bool(
+        source_available
+        and installed_policy == source_policy
+        and installed_skills == source_skills
+    )
+    if not source_available:
+        ok = not required
+        code = "source_unavailable"
+        detail = "Room runtime resources are unavailable" + (
+            " but are required." if required else "."
+        )
+    elif not installed:
+        ok = not required
+        code = "not_installed"
+        detail = "Room runtime resources are not installed" + (
+            " but are required." if required else "."
+        )
+    elif not current:
+        ok = False
+        code = "source_mismatch"
+        detail = "Room runtime policy or skills do not match this source tree."
+    else:
+        ok = True
+        code = "ready"
+        detail = "Room runtime policy and skills match this source tree."
+    return {
+        "id": "roomRuntimeResources",
+        "ok": ok,
+        "code": code,
+        "detail": detail,
+        "required": required,
+        "installed": installed,
+        "current": current,
+        "sourcePath": str(source_root),
+        "installedPath": str(installed_root),
+        "policySha256": source_policy or "",
         "skills": sorted(source_skills or {}),
     }
 

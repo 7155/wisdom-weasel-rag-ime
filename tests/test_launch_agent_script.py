@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rag_ime.agent_room_skills import RoomSkillPolicy
+
 
 class LaunchAgentScriptTests(unittest.TestCase):
     def test_stop_runtime_proves_all_launch_agents_ports_and_processes_absent(self) -> None:
@@ -299,6 +301,49 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertIn("while (( SECONDS < health_deadline )); do", script_source)
         self.assertNotIn("for _attempt in {1..20}", script_source)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', script_source)
+
+    def test_sidecar_install_does_not_publish_marker_before_health(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-sidecar-marker-test-") as tmp:
+            home = Path(tmp) / "home"
+            fake_bin = Path(tmp) / "bin"
+            home.mkdir()
+            fake_bin.mkdir()
+            launchctl = fake_bin / "launchctl"
+            launchctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            launchctl.chmod(0o755)
+            env = {
+                **os.environ,
+                "HOME": str(home),
+                "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
+                "RAG_IME_PYTHON": sys.executable,
+                "RAG_IME_SIDECAR_PORT": "19876",
+                "RAG_IME_SIDECAR_HEALTH_TIMEOUT_SECONDS": "1",
+                "RAG_IME_INSTALL_AGENT_GATEWAY": "0",
+                "RAG_IME_KILL_STALE_SIDECAR_ON_INSTALL": "0",
+                "RAG_IME_EMBEDDING_PROVIDER": "local-hash",
+            }
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "install_sidecar_launch_agent.sh")],
+                cwd=root,
+                env=env,
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            marker = (
+                home
+                / "Library"
+                / "Application Support"
+                / "RagIme"
+                / "app"
+                / "rag-ime-install-marker.json"
+            )
+            marker_exists = marker.exists()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("health: not ready", result.stderr)
+        self.assertFalse(marker_exists)
 
     def test_install_agent_gateway_dry_run_uses_managed_runtime_and_scrubs_source_overrides(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -681,6 +726,15 @@ class LaunchAgentScriptTests(unittest.TestCase):
             managed_native_session = managed_extension.with_name("pi-native-session.ts")
             managed_extension_text = managed_extension.read_text(encoding="utf-8")
             managed_native_session_text = managed_native_session.read_text(encoding="utf-8")
+            portable_pi_root = managed_extension.parent
+            portable_room_policy = portable_pi_root / "room-skill-policy.json"
+            portable_room_skills = portable_pi_root / "skills"
+            portable_room_skill = (
+                portable_room_skills / "room-delivery-closure" / "SKILL.md"
+            )
+            RoomSkillPolicy(portable_room_policy, portable_room_skills)
+            portable_room_policy_text = portable_room_policy.read_text(encoding="utf-8")
+            portable_room_skill_text = portable_room_skill.read_text(encoding="utf-8")
             managed_memory_skill = (
                 home
                 / "Library"
@@ -723,6 +777,23 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(
             managed_native_session_text,
             (root / "integrations" / "pi" / "pi-native-session.ts").read_text(encoding="utf-8"),
+        )
+        self.assertEqual(
+            portable_room_policy_text,
+            (root / "integrations" / "pi" / "room-skill-policy.json").read_text(
+                encoding="utf-8"
+            ),
+        )
+        self.assertEqual(
+            portable_room_skill_text,
+            (
+                root
+                / "integrations"
+                / "pi"
+                / "skills"
+                / "room-delivery-closure"
+                / "SKILL.md"
+            ).read_text(encoding="utf-8"),
         )
         self.assertNotIn("must-not-be-installed", managed_extension_text)
         self.assertIn("remember_preview", managed_memory_skill_text)

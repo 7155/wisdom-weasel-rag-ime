@@ -152,6 +152,48 @@ class InstalledProductAuditTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["components"]["piSkills"]["code"], "source_mismatch")
 
+    def test_portable_room_runtime_resources_detect_missing_and_drift(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-room-resource-audit-") as tmp:
+            root, home, support = self._layout(Path(tmp))
+            commit = "1" * 40
+            self._write_control(home, commit)
+            self._write_component(support / "app", "sidecar-runtime", commit)
+            self._write_squirrel(root, home)
+            installed_root = support / "app" / "integrations" / "pi"
+            policy = installed_root / "room-skill-policy.json"
+            policy.unlink()
+
+            report = audit_installed_product(
+                repo_root=root,
+                home=home,
+                app_support=support,
+                verify_pi_files=False,
+            )
+            self.assertFalse(report["ok"])
+            self.assertEqual(
+                report["components"]["roomRuntimeResources"]["code"],
+                "not_installed",
+            )
+
+            source_policy = root / "integrations" / "pi" / "room-skill-policy.json"
+            policy.write_text(source_policy.read_text(encoding="utf-8"), encoding="utf-8")
+            installed_skill = (
+                installed_root / "skills" / "room-test" / "SKILL.md"
+            )
+            installed_skill.write_text("stale room skill\n", encoding="utf-8")
+            report = audit_installed_product(
+                repo_root=root,
+                home=home,
+                app_support=support,
+                verify_pi_files=False,
+            )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(
+            report["components"]["roomRuntimeResources"]["code"],
+            "source_mismatch",
+        )
+
     def _layout(self, base: Path) -> tuple[Path, Path, Path]:
         root = base / "repo"
         home = base / "home"
@@ -169,6 +211,37 @@ class InstalledProductAuditTests(unittest.TestCase):
             "RagImeAssistantPanelController.swift",
         ):
             (sources / name).write_text(f"// {name}\n", encoding="utf-8")
+        source_pi = root / "integrations" / "pi"
+        installed_pi = support / "app" / "integrations" / "pi"
+        source_skill = source_pi / "skills" / "room-test" / "SKILL.md"
+        installed_skill = installed_pi / "skills" / "room-test" / "SKILL.md"
+        agent_skill = (
+            support
+            / "Agent"
+            / "config"
+            / "skills"
+            / "room-test"
+            / "SKILL.md"
+        )
+        source_skill.parent.mkdir(parents=True)
+        installed_skill.parent.mkdir(parents=True)
+        agent_skill.parent.mkdir(parents=True)
+        source_policy = source_pi / "room-skill-policy.json"
+        installed_policy = installed_pi / "room-skill-policy.json"
+        source_policy.write_text('{"schemaVersion":"test"}\n', encoding="utf-8")
+        installed_policy.write_text(
+            source_policy.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        source_skill.write_text("room test skill\n", encoding="utf-8")
+        installed_skill.write_text(
+            source_skill.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        agent_skill.write_text(
+            source_skill.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
         return root, home, support
 
     def _write_control(self, home: Path, commit: str) -> None:

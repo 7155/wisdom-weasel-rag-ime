@@ -197,7 +197,8 @@ if [[ ! -f "$ROOT/scripts/sidecar_launch.py" ]]; then
   exit 1
 fi
 
-for source_file in "$PI_EXTENSION_SOURCE" "$PI_NATIVE_SESSION_SOURCE"; do
+for source_file in "$PI_EXTENSION_SOURCE" "$PI_NATIVE_SESSION_SOURCE" \
+  "$PI_INTEGRATION_SOURCE_DIR/room-skill-policy.json"; do
   if [[ ! -f "$source_file" || -L "$source_file" ]]; then
     echo "controlled Pi integration source not found or is a symlink: $source_file" >&2
     exit 1
@@ -207,14 +208,15 @@ if [[ ! -d "$PI_SKILLS_SOURCE_DIR" || -L "$PI_SKILLS_SOURCE_DIR" ]]; then
   echo "controlled Pi skills source not found or is a symlink: $PI_SKILLS_SOURCE_DIR" >&2
   exit 1
 fi
-if [[ -n "$(find "$PI_SKILLS_SOURCE_DIR" -type l -print -quit)" ]]; then
-  echo "controlled Pi skills source must not contain symlinks: $PI_SKILLS_SOURCE_DIR" >&2
+if [[ -n "$(find "$PI_INTEGRATION_SOURCE_DIR" -type l -print -quit)" ]]; then
+  echo "controlled Pi integration source must not contain symlinks: $PI_INTEGRATION_SOURCE_DIR" >&2
   exit 1
 fi
 
 SSL_CERT_FILE_DEFAULT="${SSL_CERT_FILE:-$(detect_ssl_cert_file || true)}"
 
 mkdir -p "$PLIST_DIR" "$LOG_DIR" "$(dirname "$DB_PATH")" "$APP_CODE_DIR"
+rm -f "$INSTALL_MARKER"
 rm -rf "$APP_CODE_DIR/rag_ime"
 cp -R "$ROOT/rag_ime" "$APP_CODE_DIR/rag_ime"
 cp "$ROOT/scripts/sidecar_launch.py" "$LAUNCH_WRAPPER"
@@ -222,8 +224,7 @@ cp "$ROOT/scripts/portable_restore_supervisor.py" "$RESTORE_SUPERVISOR"
 chmod 700 "$RESTORE_SUPERVISOR"
 rm -rf "$PI_INTEGRATION_DIR"
 mkdir -p "$PI_INTEGRATION_DIR"
-cp "$PI_EXTENSION_SOURCE" "$PI_EXTENSION_TARGET"
-cp "$PI_NATIVE_SESSION_SOURCE" "$PI_INTEGRATION_DIR/pi-native-session.ts"
+cp -R "$PI_INTEGRATION_SOURCE_DIR"/. "$PI_INTEGRATION_DIR"/
 chmod 644 "$PI_EXTENSION_TARGET" "$PI_INTEGRATION_DIR/pi-native-session.ts"
 
 # Protocol v2 loads Agent-dir skills before payload-bundled copies. Refreshing
@@ -240,7 +241,8 @@ for skill_source in "$PI_SKILLS_SOURCE_DIR"/*; do
   cp -R "$skill_source" "$skill_target"
 done
 
-"$PYTHON_EXECUTABLE" - "$INSTALL_MARKER" "$ROOT" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$PYTHON_EXECUTABLE" <<'PY'
+write_install_marker() {
+  "$PYTHON_EXECUTABLE" - "$INSTALL_MARKER" "$ROOT" "$SOURCE_COMMIT" "$SOURCE_DIRTY" "$PYTHON_EXECUTABLE" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
@@ -265,6 +267,7 @@ target.write_text(
     encoding="utf-8",
 )
 PY
+}
 
 # Keep the explicit high-intelligence route usable after every reinstall. The
 # LaunchAgent cannot inherit an interactive shell's secrets, so install one
@@ -747,6 +750,7 @@ if command -v plutil >/dev/null 2>&1; then
 fi
 
 if [[ "$DRY_RUN" == "1" || "$DRY_RUN" == "true" || "$DRY_RUN" == "TRUE" ]]; then
+  write_install_marker
   echo "$PLIST_PATH"
   echo "dry-run: not loading launch agent"
   exit 0
@@ -847,6 +851,7 @@ if not payload.get("ok"):
 PY
   then
     echo "health: OK"
+    write_install_marker
     if [[ "${RAG_IME_INSTALL_AGENT_GATEWAY:-1}" != "0" ]]; then
       RAG_IME_APP_SUPPORT_DIR="$APP_SUPPORT_DIR" \
       RAG_IME_DB_PATH="$DB_PATH" \
