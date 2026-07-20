@@ -15,7 +15,7 @@
         "sources": [{"title": "取消设计", "path": "docs/cancel.md", "sourceId": "chunk:2"}]
       },
       "expectedIncludes": ["验证 Room 取消传播", "取消设计", "docs/cancel.md"],
-      "forbiddenTerms": ["relevance", "rank", "score", "internalId", "contentHash", "debugReason", "row:4", "chunk:2"]
+      "forbiddenTerms": ["relevance", "rank", "score", "internalId", "contentHash", "debugReason", "receipt", "row:4", "chunk:2"]
     }
   ],
   "cases": [

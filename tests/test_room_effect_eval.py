@@ -76,7 +76,10 @@ class RoomTaskEffectEvalTests(unittest.TestCase):
         visible = _model_visible_projection_content(
             {"entryKind": "knowledge_receipt", "content": audit_content}
         )
-        for forbidden in ("relevance", "score", "rank", "internalId", "Hash", "debugReason", "task:secret", "chunk:2"):
+        for forbidden in (
+            "relevance", "score", "rank", "internalId", "Hash", "debugReason",
+            "receipt", "task:secret", "chunk:2",
+        ):
             self.assertNotIn(forbidden.casefold(), visible.casefold())
         self.assertIn("修复取消传播", visible)
         self.assertIn('"valid":true', visible)

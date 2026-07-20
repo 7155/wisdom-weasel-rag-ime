@@ -458,13 +458,21 @@ _MODEL_CONTEXT_FORBIDDEN_KEY_PARTS = (
     "internal",
 )
 _MODEL_CONTEXT_SOURCE_FIELDS = frozenset({"label", "title", "path", "uri", "section"})
+_MODEL_CONTEXT_KIND = {
+    "control_receipt": "control",
+    "evidence_receipt": "evidence",
+    "skill_receipt": "skill",
+    "knowledge_receipt": "knowledge",
+    "recovery_packet": "recovery",
+}
 
 
 def _model_visible_projection_content(item: Mapping[str, object]) -> str:
     """Compile audit-rich Room entries into compact model-visible facts."""
 
     raw = str(item.get("content") or "")
-    kind = str(item.get("entryKind") or "room_fact").strip() or "room_fact"
+    raw_kind = str(item.get("entryKind") or "room_fact").strip() or "room_fact"
+    kind = _MODEL_CONTEXT_KIND.get(raw_kind, raw_kind)
     try:
         value = json.loads(raw)
     except json.JSONDecodeError:

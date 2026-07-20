@@ -286,7 +286,7 @@
   "contextCases": [
     {
       "id": "knowledge-result-with-audit-noise",
-      "visibleBytes": 149,
+      "visibleBytes": 141,
       "auditBytes": 280,
       "missingExpected": [],
       "leakedInternals": [],

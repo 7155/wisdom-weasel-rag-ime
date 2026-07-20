@@ -147,7 +147,7 @@ class RoomPromptPlanTests(unittest.TestCase):
         visible = str(provider["providerContext"])
         for forbidden in (
             "relevance", "score", "rank", "internalid", "hash", "debugreason",
-            "row:4", "chunk:2",
+            "receipt", "row:4", "chunk:2",
         ):
             self.assertNotIn(forbidden, visible.casefold())
         self.assertIn("验证 Room 取消传播", visible)
