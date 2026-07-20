@@ -27,6 +27,10 @@ export function useControlTransport(): ControlTransport {
   return transport;
 }
 
+export function useOptionalControlTransport(): ControlTransport | null {
+  return useContext(ControlTransportContext);
+}
+
 export function createConfiguredControlTransport(): ControlTransport {
   return new NativeControlTransport();
 }
