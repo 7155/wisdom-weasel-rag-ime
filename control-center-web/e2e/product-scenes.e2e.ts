@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { expectNoHorizontalPageOverflow, percentile, settleAgentTimeline } from './helpers';
+import { expectNoHorizontalPageOverflow, isMobileViewport, percentile, settleAgentTimeline } from './helpers';
 
 test('production Agent scene preserves Turn aggregation and composer responsiveness', async ({
   page,
@@ -76,6 +76,10 @@ test('production Agent scene matches the desktop and mobile visual baselines', a
 test('production Room and Role scenes retain group and persona boundaries', async ({ page }, testInfo) => {
   await page.goto('/#/rooms');
   const roomsScene = page.locator('main[data-route-id="rooms"]');
+  if (isMobileViewport(page)) {
+    await expect(roomsScene.locator('.rooms-rail')).toBeHidden();
+    await roomsScene.getByRole('button', { name: '打开 Rooms 列表' }).click();
+  }
   await expect(roomsScene.locator('.rooms-rail')).toBeVisible();
   await expect(roomsScene.locator('.rooms-rail-empty')).toHaveText('还没有 Room');
   await expect(roomsScene.locator('.room-workspace')).toBeVisible();

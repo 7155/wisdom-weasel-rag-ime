@@ -75,28 +75,94 @@ test('voice provider rows stay inside the management grid', async ({ page }) => 
   }
 });
 
-test('Room mobile header keeps workspace tabs on a separate row from actions', async ({ page }) => {
+test('Room mobile drawer leaves the workspace full width and preserves narrow controls', async ({ page }, testInfo) => {
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/#/rooms');
+    const feature = page.locator('main[data-route-id="rooms"]');
+    const workspace = page.locator('.room-workspace');
+    const rail = page.locator('.rooms-rail');
+    const railTrigger = page.getByRole('button', { name: '打开 Rooms 列表' });
     const header = page.locator('.room-workspace > header');
     const tabs = page.getByRole('radiogroup', { name: 'Room 工作区' });
     const actions = page.locator('.room-header-actions');
+    await expect(rail).toBeHidden();
+    await expect(railTrigger).toBeVisible();
     await expect(header).toBeVisible();
     await expect(tabs).toBeVisible();
     await expect(actions).toBeVisible();
     await expect(page.getByRole('radio', { name: 'Sessions' })).toBeVisible();
-    const [headerBox, tabsBox, actionsBox] = await Promise.all([
+    const [featureBox, workspaceBox, headerBox, tabsBox, actionsBox] = await Promise.all([
+      feature.boundingBox(),
+      workspace.boundingBox(),
       header.boundingBox(),
       tabs.boundingBox(),
       actions.boundingBox(),
     ]);
+    expect(featureBox).not.toBeNull();
+    expect(workspaceBox).not.toBeNull();
     expect(headerBox).not.toBeNull();
     expect(tabsBox).not.toBeNull();
     expect(actionsBox).not.toBeNull();
+    expect(workspaceBox?.x).toBe(featureBox?.x);
+    expect(workspaceBox?.width).toBeGreaterThanOrEqual((featureBox?.width ?? 0) - 1);
     expect((tabsBox?.y ?? 0) + (tabsBox?.height ?? 0)).toBeLessThanOrEqual((actionsBox?.y ?? 0) + 1);
     expect((tabsBox?.x ?? 0) + (tabsBox?.width ?? 0)).toBeLessThanOrEqual((headerBox?.x ?? 0) + (headerBox?.width ?? 0) + 1);
     expect((actionsBox?.x ?? 0) + (actionsBox?.width ?? 0)).toBeLessThanOrEqual((headerBox?.x ?? 0) + (headerBox?.width ?? 0) + 1);
+
+    await railTrigger.click();
+    await expect(rail).toBeVisible();
+    await expect(rail).toHaveAttribute('role', 'dialog');
+    await expect(rail).toHaveAttribute('aria-modal', 'true');
+    await expect(page.getByRole('button', { name: '关闭 Rooms 列表' }).first()).toBeFocused();
+    await expect(page.locator('.rooms-rail-backdrop')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(rail).toBeHidden();
+    await expect(railTrigger).toBeFocused();
+
+    await railTrigger.click();
+    await page.locator('.rooms-rail-backdrop').click({ position: { x: width - 10, y: 120 } });
+    await expect(rail).toBeHidden();
+    await railTrigger.click();
+    const roomChoice = rail.getByRole('button', { name: /^打开 Room：/ }).first();
+    if (await roomChoice.count()) {
+      await roomChoice.click();
+      await expect(rail).toBeHidden();
+    } else {
+      await page.getByRole('button', { name: '关闭 Rooms 列表' }).first().click();
+    }
+
+    const activeTopic = page.locator('.room-topic-tabs > button[aria-current="true"]');
+    if (await activeTopic.count()) {
+      await expect(activeTopic).toBeVisible();
+      const topicMeasurement = await activeTopic.evaluate((element) => ({
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        text: element.textContent?.trim() ?? '',
+      }));
+      expect(topicMeasurement.text.length).toBeGreaterThan(0);
+      expect(topicMeasurement.scrollWidth).toBeLessThanOrEqual(topicMeasurement.clientWidth + 1);
+      if (width <= 360) await expect(page.locator('.room-work-summary')).toBeHidden();
+    }
+
+    const mentionChips = page.locator('.room-mention-chips');
+    if (await mentionChips.count()) {
+      const chips = mentionChips.getByRole('button');
+      expect(await chips.count()).toBeGreaterThan(1);
+      await mentionChips.evaluate((element) => { element.scrollLeft = element.scrollWidth; });
+      const [chipContainerBox, lastChipBox] = await Promise.all([
+        mentionChips.boundingBox(),
+        chips.last().boundingBox(),
+      ]);
+      expect(lastChipBox).not.toBeNull();
+      expect((lastChipBox?.x ?? 0) + (lastChipBox?.width ?? 0)).toBeLessThanOrEqual((chipContainerBox?.x ?? 0) + (chipContainerBox?.width ?? 0) + 1);
+    }
+    if (width === 320) {
+      await testInfo.attach('room-mobile-320-drawer-and-controls', {
+        body: await page.screenshot({ animations: 'disabled', fullPage: false }),
+        contentType: 'image/png',
+      });
+    }
     await expectNoHorizontalPageOverflow(page);
   }
 });
