@@ -246,7 +246,7 @@ export function MemoryFeature() {
                           title: stringValue(row.title, '未命名记忆'),
                           detail: stringValue(row.detail, '暂无摘要'),
                           meta: [
-                            sourceLabel(stringValue(row.source)),
+                            catalogSourceLabel(kind, row),
                             ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId)),
                           ].filter(Boolean).join(' · '),
                           status: <StatusBadge label={catalogStatusLabel(kind, rowStatus)} tone={catalogStatusTone(kind, rowStatus)} />,
@@ -591,6 +591,9 @@ function MemoryCatalogDetail({
   const status = stringValue(row.status);
   const forgotten = status === 'not_for_memory' || status === 'expired';
   const redacted = row.sensitive === true;
+  const auditOnly = kind === 'evidence' && isRawConversationEvidence(
+    stringValue(row.type, stringValue(row.detail)),
+  );
   return (
     <section className="memory-catalog-detail" aria-label={`${stringValue(row.title, '记忆')} 详情`}>
       <div className="memory-catalog-detail__identity">
@@ -600,7 +603,7 @@ function MemoryCatalogDetail({
       </div>
       <dl>
         <div><dt>状态</dt><dd>{catalogStatusLabel(kind, status)}</dd></div>
-        <div><dt>来源</dt><dd>{sourceLabel(stringValue(row.source))}</dd></div>
+        <div><dt>来源</dt><dd>{catalogSourceLabel(kind, row)}</dd></div>
         {stringValue(row.ownerKind) ? (
           <div><dt>归属</dt><dd>{ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId))}</dd></div>
         ) : null}
@@ -612,6 +615,10 @@ function MemoryCatalogDetail({
       {redacted ? (
         <InlineNotice title="敏感内容已脱敏" tone="warning">
           此处不会显示原文。来源标识、处理时间和治理状态仍可用于审计。
+        </InlineNotice>
+      ) : auditOnly ? (
+        <InlineNotice title="原始对话仅用于审计" tone="info">
+          这条记录不会直接进入角色书或长期事实；只有 Agent 显式工具草案，或空闲期生成的有界摘要，才可参与后续整理。
         </InlineNotice>
       ) : forgotten ? (
         <InlineNotice title="这条证据已退出记忆召回" tone="info">
@@ -748,7 +755,7 @@ function normalizeCatalogReferenceKind(
 function referenceKindLabel(kind: MemoryReferenceSelection['kind']): string {
   return ({
     event: '原始事件',
-    evidence: 'Agent 证据',
+    evidence: 'Agent 证据/审计',
     atom: '当前事实',
     book: '主题书',
     timeline: '活动时间线',
@@ -1078,7 +1085,7 @@ function kindLabel(kind: MemoryKind): string {
     atoms: '记忆原子',
     tags: '标签',
     phrases: '短语',
-    evidence: '整理证据',
+    evidence: '证据与审计',
     groups: '分组',
     negative: '负反馈',
   }[kind];
@@ -1161,6 +1168,22 @@ function sourceLabel(source: string): string {
   if (normalized.includes('manual')) return '手动整理';
   if (normalized.includes('sqlite') || normalized.includes('memory_')) return '本地记忆';
   return '其他来源';
+}
+
+function catalogSourceLabel(kind: MemoryKind, row: Record<string, unknown>): string {
+  if (kind !== 'evidence') return sourceLabel(stringValue(row.source));
+  // Older/local page payloads sometimes expose source_kind as the detail
+  // field. Keep the UI honest even while those rows are being migrated.
+  const type = stringValue(row.type, stringValue(row.detail));
+  if (isRawConversationEvidence(type)) return '对话审计';
+  if (type === 'session_digest') return '空闲摘要';
+  if (type === 'tool_receipt') return '已应用工具回执';
+  if (type === 'work_receipt') return '已验收工作回执';
+  return sourceLabel(stringValue(row.source));
+}
+
+function isRawConversationEvidence(type: string): boolean {
+  return type === 'user_message' || type === 'assistant_message' || type === 'room_event';
 }
 
 function ownerAwareKind(kind: MemoryKind): boolean {

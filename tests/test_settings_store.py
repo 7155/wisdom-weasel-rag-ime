@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -65,15 +66,40 @@ class SettingsStoreTests(unittest.TestCase):
         result = self.store.update_settings(
             {
                 "activeRag.quickModel": "deepseek/deepseek-v4-flash",
-                "activeRag.quickThinkingLevel": "off",
+                "activeRag.quickThinkingLevel": "high",
             }
         )
 
-        self.assertEqual(result.settings["activeRag"]["quickThinkingLevel"], "off")
-        with self.assertRaisesRegex(ValueError, "must be one of: off, low"):
-            self.store.update_settings({"activeRag.quickThinkingLevel": "high"})
+        self.assertEqual(result.settings["activeRag"]["quickThinkingLevel"], "high")
+        with self.assertRaisesRegex(ValueError, "must be one of: minimal, low, medium, high, xhigh, max"):
+            self.store.update_settings({"activeRag.quickThinkingLevel": "off"})
         with self.assertRaisesRegex(ValueError, "provider/model reference"):
             self.store.update_settings({"activeRag.quickModel": "deepseek-v4-flash"})
+
+    def test_legacy_lightning_off_setting_falls_back_to_thinking_default(self) -> None:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute(
+                """
+                INSERT INTO management_settings(key, value_json, updated_at_ms, updated_by)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    "activeRag",
+                    json.dumps(
+                        {
+                            "quickModel": "deepseek/deepseek-v4-flash",
+                            "quickThinkingLevel": "off",
+                        }
+                    ),
+                    1,
+                    "legacy-test",
+                ),
+            )
+
+        settings = self.store.get_settings(include_sensitive=True)
+
+        self.assertEqual(settings["activeRag"]["quickModel"], "deepseek/deepseek-v4-flash")
+        self.assertEqual(settings["activeRag"]["quickThinkingLevel"], "high")
 
     def test_dotted_leaf_update_preserves_persisted_sibling_overrides(self) -> None:
         self.store.update_settings(

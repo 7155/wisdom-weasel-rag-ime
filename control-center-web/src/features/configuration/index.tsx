@@ -440,7 +440,7 @@ const fieldLabels: Record<string, string> = { 'interaction.postCommit.numberKeys
 function publicSectionLabel(id: string, label: string): string { return sectionLabels[id] ?? (/[\u3400-\u9fff]/.test(label) ? label : '其他设置'); }
 function publicFieldLabel(key: string, label: string): string { return fieldLabels[key] ?? (label && !/pathId|schema|revision|hash|receipt|provider/i.test(label) ? publicDescription(label) : '设置项'); }
 function publicDescription(value: string): string { return value.replace(/Sidecar/gi, '后台服务').replace(/SQLite FTS5/gi, '本机索引').replace(/BM25/gi, '关键词检索').replace(/Hybrid RAG/gi, '多路知识检索').replace(/Active RAG/gi, '深度生成').replace(/RAG/gi, '知识检索').replace(/fallback/gi, '备用方式').replace(/TTL/gi, '保留时间').replace(/token/gi, '容量').replace(/POST/gi, '管理请求').replace(/patch/gi, '配置'); }
-function optionLabel(key: string, value: string, _field: Record<string, unknown> = {}): string { return ({ pass_through: '按原数字键处理', select_prediction: '选择对应候选', accept_top_prediction: '接受首个预测', rime_default: '保持输入法默认', disabled: '不使用', compact: '紧凑', expanded: '展开', replace_selection: '替换选中内容', insert_after_selection: '插入到选中内容后', show_only: '只显示不插入', lazy: '使用时启动', 'sichuan-mild': '四川轻度模糊音', none: '关闭', off: '关闭', low: '低' } as Record<string, string>)[value] ?? value; }
+function optionLabel(key: string, value: string, _field: Record<string, unknown> = {}): string { return ({ pass_through: '按原数字键处理', select_prediction: '选择对应候选', accept_top_prediction: '接受首个预测', rime_default: '保持输入法默认', disabled: '不使用', compact: '紧凑', expanded: '展开', replace_selection: '替换选中内容', insert_after_selection: '插入到选中内容后', show_only: '只显示不插入', lazy: '使用时启动', 'sichuan-mild': '四川轻度模糊音', none: '关闭', off: '关闭', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高' } as Record<string, string>)[value] ?? value; }
 
 function parsePiModelOptions(value: unknown): PiModelOption[] {
   const envelope = asRecord(value);
@@ -463,5 +463,6 @@ function parsePiModelOptions(value: unknown): PiModelOption[] {
 
 function oneShotThinkingLevels(model: PiModelOption | undefined): string[] {
   if (!model) return [];
-  return ['off', 'low'].filter((level) => model.thinkingLevels.includes(level));
+  return ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+    .filter((level) => model.thinkingLevels.includes(level));
 }

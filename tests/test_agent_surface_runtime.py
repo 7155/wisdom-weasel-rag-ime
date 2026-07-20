@@ -26,6 +26,8 @@ class _SurfaceRuntimeStub:
         self.thinking_levels: list[tuple[str, str]] = []
         self.completions: list[dict[str, object]] = []
         self.cancelled_completion_ids: list[str] = []
+        self.completion_text = "继续完成这段文字。"
+        self.completion_deltas = ["继续完成", "这段文字。"]
         self.selected = {
             "provider": "test",
             "id": "text-only",
@@ -86,10 +88,10 @@ class _SurfaceRuntimeStub:
         }
         self.completions.append(call)
         if on_text_delta is not None:
-            on_text_delta("继续完成")
-            on_text_delta("这段文字。")
+            for delta in self.completion_deltas:
+                on_text_delta(delta)
         return {
-            "text": "继续完成这段文字。",
+            "text": self.completion_text,
             "firstTokenMs": 3800,
             "elapsedMs": 4200,
             "usage": {"totalTokens": 24},
@@ -134,7 +136,7 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
         self.settings = {
             "activeRag": {
                 "quickModel": "deepseek/deepseek-v4-flash",
-                "quickThinkingLevel": "off",
+                "quickThinkingLevel": "high",
                 "visualModel": "gpt/gpt-5.6-luna",
                 "visualThinkingLevel": "low",
             }
@@ -167,8 +169,9 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
         self.assertEqual(len(self.runtime.completions), 2)
         self.assertEqual(self.runtime.completions[0]["provider"], "deepseek")
         self.assertEqual(self.runtime.completions[0]["modelId"], "deepseek-v4-flash")
-        self.assertEqual(self.runtime.completions[0]["thinkingLevel"], "off")
+        self.assertEqual(self.runtime.completions[0]["thinkingLevel"], "high")
         self.assertIn("不调用工具", str(self.runtime.completions[0]["message"]))
+        self.assertIn("不要使用 JSON", str(self.runtime.completions[0]["message"]))
         self.assertIn("可按内容需要使用简洁 Markdown", str(self.runtime.completions[0]["message"]))
         self.assertEqual(self.runtime.prompt_session_ids, [])
         self.assertEqual(self.sessions.list(include_internal=True), [])
@@ -206,12 +209,48 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
         self.assertEqual(call["modelId"], "deepseek-v4-flash")
         request_data = json.loads(str(call["message"]).split("\n", 1)[1])
         self.assertEqual(request_data["currentRequest"], "根据界面继续")
+        self.assertEqual(request_data["currentContext"], "根据界面继续")
         self.assertEqual(request_data["selectedText"], "补全这段话")
+        self.assertEqual(request_data["placement"], "insert_after_selection")
+        self.assertEqual(request_data["inputPriority"][0], "currentContext")
+        self.assertIn("currentContext 是完整前台文本和最高优先级语义输入", str(call["message"]))
         self.assertEqual(request_data["windowContext"]["snapshotId"], "axsnap-1")
         self.assertEqual(request_data["contextPacket"]["windowContext"]["nodeCount"], 2)
         self.assertEqual(request_data["evidencePack"][0]["sourceType"], "memory")
         self.assertNotIn("images", call)
         self.assertEqual(self.sessions.list(include_internal=True), [])
+
+    def test_legacy_off_surface_setting_is_upgraded_to_thinking(self) -> None:
+        self.settings["activeRag"]["quickThinkingLevel"] = "off"
+
+        result = self.surface.complete(
+            {
+                "privacyDisposition": "allowed",
+                "requestId": "surface-request-legacy-off",
+                "currentRequest": "继续完成前台请求",
+            }
+        )
+
+        self.assertEqual(result["thinkingLevel"], "high")
+        self.assertEqual(self.runtime.completions[0]["thinkingLevel"], "high")
+
+    def test_provider_unwraps_candidate_json_before_it_reaches_the_ime(self) -> None:
+        self.runtime.completion_text = '{"candidate":"完整前台文本已经优先进入 RAG。","role":"answer"}'
+        self.runtime.completion_deltas = [self.runtime.completion_text]
+        provider = PiSurfaceCompletionProvider(local_runtime=self.surface)
+
+        result = list(
+            provider.stream_candidates(
+                DeepSeekCompletionRequest(
+                    scene="active_rag",
+                    current_context="验证完整前台文本优先",
+                    surface_request_id="surface-request-json-envelope",
+                )
+            )
+        )
+
+        self.assertEqual(result[0].text, "完整前台文本已经优先进入 RAG。")
+        self.assertTrue(result[0].metadata["outputNormalized"])
 
     def test_surface_runtime_rejects_legacy_visual_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "does not accept screenshots"):

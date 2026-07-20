@@ -61,12 +61,12 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
             return FakeResponse()
 
         bundle = {
-            "schemaVersion": "rag-ime.role-book-curation-input.v1",
-            "conversationEvidence": [
+            "schemaVersion": "rag-ime.role-book-curation-input.v2",
+            "curationEvidence": [
                 {
-                    "evidenceId": "evidence:user:1",
-                    "role": "user",
-                    "text": "继续维护角色书",
+                    "evidenceId": "evidence:digest:1",
+                    "sourceKind": "session_digest",
+                    "text": "已完成并验证角色书维护边界",
                 }
             ],
             "activityContext": {
@@ -74,7 +74,8 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
                 "maySupportRoleProposals": False,
             },
             "policy": {
-                "allowedEvidenceIds": ["evidence:user:1"],
+                "allowedEvidenceIds": ["evidence:digest:1"],
+                "rawConversationMaySupplyEvidence": False,
                 "autoActivation": False,
             },
         }
@@ -93,11 +94,12 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
         request_payload = captured["payload"]
         system_prompt = request_payload["messages"][0]["content"]
         self.assertIn("review-only", system_prompt)
+        self.assertIn("原始 user/assistant 消息", system_prompt)
         self.assertIn("不能单独", system_prompt)
         model_input = json.loads(request_payload["messages"][1]["content"])
         self.assertEqual(
             model_input["bundle"]["policy"]["allowedEvidenceIds"],
-            ["evidence:user:1"],
+            ["evidence:digest:1"],
         )
         self.assertFalse(model_input["bundle"]["policy"]["autoActivation"])
 

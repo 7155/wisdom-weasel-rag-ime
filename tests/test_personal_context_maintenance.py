@@ -147,29 +147,25 @@ class PersonalContextMaintenanceRunnerTests(unittest.TestCase):
     ) -> None:
         seed = self._seed_role("architect", "role-v1", created_at_ms=10)
         evidence = AgentMemoryEvidenceStore(self.db_path, project="project-a")
-        user = evidence.record_user_message(
+        digest = evidence.record_session_digest(
             session_id="session:periodic",
-            pi_entry_id="user:periodic",
+            digest_id="digest:periodic",
             role_id="architect",
-            text="后续继续维护角色书中的当前承诺。",
+            text="任务完成：修正时间线证据边界；后续继续维护角色书中的当前承诺。",
             occurred_at_ms=100,
+            metadata={"trigger": "idle_batch"},
         )["evidence"]
-        assistant = evidence.record_assistant_message(
+        receipt = evidence.record_work_receipt(
+            work_item_id="work:receipt:periodic",
+            receipt_id="receipt:periodic",
             session_id="session:periodic",
-            pi_entry_id="assistant:periodic",
             role_id="architect",
-            text="今天已经发现并修正时间线证据边界问题。",
+            text="完成周期性角色书整理",
+            accepted=True,
             occurred_at_ms=110,
         )["evidence"]
-        self._record_work(
-            "project-a",
-            "architect",
-            "receipt:periodic",
-            "完成周期性角色书整理",
-            occurred_at_ms=120,
-        )
         organizer = _MaintenanceRoleBookOrganizer(
-            [user["evidenceId"], assistant["evidenceId"]]
+            [digest["evidenceId"], receipt["evidenceId"]]
         )
 
         report = PersonalContextMaintenanceRunner(
@@ -486,7 +482,7 @@ class _MaintenanceRoleBookOrganizer:
                 "roleVersion": role_version,
             }
         )
-        user_id, assistant_id = self.evidence_ids
+        digest_id, receipt_id = self.evidence_ids
         return {
             "traitProposals": [],
             "capabilityProposals": [],
@@ -494,14 +490,14 @@ class _MaintenanceRoleBookOrganizer:
                 {
                     "text": "时间线只能辅助判断，角色经验必须引用对话证据",
                     "confidence": 0.95,
-                    "sourceEvidenceIds": [assistant_id],
+                    "sourceEvidenceIds": [receipt_id],
                 }
             ],
             "commitmentProposals": [
                 {
                     "text": "继续维护角色书中的当前承诺",
                     "confidence": 0.85,
-                    "sourceEvidenceIds": [user_id],
+                    "sourceEvidenceIds": [digest_id],
                 }
             ],
         }

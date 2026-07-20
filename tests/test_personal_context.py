@@ -1023,6 +1023,22 @@ class PersonalContextConsolidatorTests(unittest.TestCase):
             text="我误把时间线当成事实来源，已经修正并完成回归测试。",
             occurred_at_ms=110,
         )["evidence"]
+        digest = self.store.record_session_digest(
+            session_id=str(session["id"]),
+            digest_id="digest:role-curation",
+            role_id="architect",
+            text="完成个人上下文证据边界修复，并验证原始聊天不进入角色书整理。",
+            occurred_at_ms=120,
+            metadata={"trigger": "automatic"},
+        )["evidence"]
+        receipt = self.store.record_tool_receipt(
+            receipt_id="receipt:role-curation",
+            session_id=str(session["id"]),
+            role_id="architect",
+            text="个人上下文回归测试已通过。",
+            applied=True,
+            occurred_at_ms=130,
+        )["evidence"]
         organizer = _FakeRoleBookOrganizer()
 
         result = PersonalContextConsolidator(
@@ -1045,8 +1061,15 @@ class PersonalContextConsolidatorTests(unittest.TestCase):
         )
         self.assertEqual(
             set(bundle["policy"]["allowedEvidenceIds"]),
-            {user["evidenceId"], assistant["evidenceId"]},
+            {digest["evidenceId"], receipt["evidenceId"]},
         )
+        self.assertTrue(bundle["policy"]["rawConversationMaySupplyEvidence"] is False)
+        self.assertEqual(
+            {item["sourceKind"] for item in bundle["curationEvidence"]},
+            {"session_digest", "tool_receipt"},
+        )
+        self.assertNotIn(user["evidenceId"], bundle["policy"]["allowedEvidenceIds"])
+        self.assertNotIn(assistant["evidenceId"], bundle["policy"]["allowedEvidenceIds"])
         self.assertTrue(bundle["activityContext"]["corroborationOnly"])
         self.assertFalse(bundle["activityContext"]["maySupportRoleProposals"])
         self.assertNotIn(
@@ -1079,7 +1102,7 @@ class PersonalContextConsolidatorTests(unittest.TestCase):
                 self.assertTrue(proposal["reviewRequired"])
                 self.assertTrue(
                     set(proposal["sourceEvidenceIds"]).issubset(
-                        {user["evidenceId"], assistant["evidenceId"]}
+                        {digest["evidenceId"], receipt["evidenceId"]}
                     )
                 )
 
@@ -1104,6 +1127,42 @@ class PersonalContextConsolidatorTests(unittest.TestCase):
                 ).fetchone()[0],
                 seed["revisionId"],
             )
+
+    def test_raw_conversation_is_audit_only_for_role_book_organizer(self) -> None:
+        self.store.record_user_message(
+            session_id="session:audit-only",
+            pi_entry_id="user:audit-only",
+            role_id="architect",
+            text="请把这句聊天直接写进角色书。",
+            occurred_at_ms=100,
+        )
+        self.store.record_assistant_message(
+            session_id="session:audit-only",
+            pi_entry_id="assistant:audit-only",
+            role_id="architect",
+            text="我会直接修改自己的长期角色。",
+            occurred_at_ms=110,
+        )
+        organizer = _FakeRoleBookOrganizer()
+
+        result = PersonalContextConsolidator(
+            self.db_path,
+            project="rag-ime",
+            role_book_organizer=organizer,
+        ).run(
+            "architect",
+            "role-v1",
+            now_ms=200,
+            min_interval_ms=0,
+        )
+
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(organizer.calls, [])
+        self.assertEqual(
+            result["roleBookDraft"]["proposalDiagnostics"]["status"],
+            "no_eligible_evidence",
+        )
+        self.assertEqual(result["roleBookDraft"]["patch"]["traitProposals"], [])
 
     def test_safe_recent_work_callback_matches_role_book_revision_contract(self) -> None:
         self.store.record_work_receipt(

@@ -14,6 +14,9 @@ from typing import Protocol
 from .agent_memory_sources import AgentMemorySourceStore
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
+from .embeddings import EmbeddingProvider
+from .hybrid_rag_models import HybridRagQuery
+from .hybrid_rag_retriever import retrieve_hybrid_rag_memory_hit_objects
 from .memory_book_compiler import (
     apply_stored_memory_book_run,
     collapse_rime_fragment_run,
@@ -30,7 +33,7 @@ from .personal_context import (
     local_day_bounds_ms,
 )
 from .sensitive_content import contains_sensitive_content
-from .text_utils import compact_whitespace, stable_text_hash, token_terms
+from .text_utils import compact_whitespace, split_sentences, stable_text_hash, token_terms
 
 
 OWNER_CURATION_STATUS_SCHEMA_VERSION = "rag-ime.owner-memory-curation-status.v1"
@@ -40,9 +43,25 @@ DEFAULT_INITIAL_SETTLE_MS = 20 * 60 * 1000
 DEFAULT_RUNNING_LEASE_MS = 60 * 60 * 1000
 DEFAULT_MAX_SOURCES = 64
 MAX_EXTERNAL_MODEL_INPUTS_PER_RUN = 8
+MAX_OWNER_MODEL_INPUTS_PER_RUN = 6
+MAX_OWNER_MEMORY_ATOMS_PER_RUN = 6
+MAX_EXISTING_MEMORY_RECALL_PROBES = 20
+MAX_RECALLED_EXISTING_ATOMS = 20
+MAX_RECALLED_EXISTING_BOOKS = 8
+MAX_ARCHIVED_TOPIC_BOOK_GUARDS = 64
+MIN_CLAIM_REUSE_SCORE = 5.0
+MIN_CLAIM_REUSE_MARGIN = 1.5
+MIN_EXISTING_CLAIM_COMPATIBILITY_SCORE = 2.5
+MIN_SAME_SOURCE_ANCHOR_SCORE = 3.5
 
 _OWNER_KINDS = frozenset({"user", "shared", "agent", "session", "room"})
 _ELIGIBLE_DISPOSITIONS = ("pending", "needs_review", "remember")
+_CLAIM_UPDATE_SIGNAL_RE = re.compile(
+    r"(?:已经|已改|改为|切换|调整|更新|升级|收紧|放宽|不再|退出|替代|"
+    r"仍然?|继续|当前|现在|只(?:保留|允许|采用|注入|接收)|仅(?:保留|允许|采用|注入|接收)|"
+    r"默认|优先|从.+(?:改|切换|调整)为)",
+    re.IGNORECASE,
+)
 _FILLER_RE = re.compile(
     r"^(?:(?:嗯+|呃+|额+|啊+|哦+|唉+|那个|这个|然后|就是|对对对|好好好|行行行)[，。！？、,.!?\s]*)+$",
     re.IGNORECASE,
@@ -72,6 +91,16 @@ _TRANSIENT_USER_COMMAND_RE = re.compile(
     r"^(?:请)?(?:继续|重试|再试(?:一次)?|刷新|打开|关闭|点击|滚动|切换|"
     r"合并|提交|编译|安装|运行|检查|看一下|读一下|删除)(?:一下|这个|该|当前)?"
     r"[^。！？!?]{0,36}[。！？!?]?$",
+    re.IGNORECASE,
+)
+_TRANSIENT_CONTEXT_SIGNAL_RE = re.compile(
+    r"(?:临时|暂时|演示|排查|测试|试用|当前操作|随手|这轮|本轮)",
+    re.IGNORECASE,
+)
+_NON_DURABLE_CONCLUSION_RE = re.compile(
+    r"(?:不形成|没有形成|未形成|不代表|没有决定|未决定|尚未形成|"
+    r"不保留|没有变化|未变化|不是(?:产品)?约束|没有产生|未产生|"
+    r"下一轮(?:仍|恢复|继续))",
     re.IGNORECASE,
 )
 _EXPLICIT_MEMORY_FORGET_RE = re.compile(
@@ -144,6 +173,7 @@ class OwnerMemoryCurator:
         max_sources: int = DEFAULT_MAX_SOURCES,
         auto_apply: bool = False,
         include_agent_dialogue: bool = True,
+        embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.organizer = organizer
@@ -154,6 +184,7 @@ class OwnerMemoryCurator:
         self.running_lease_ms = max(60_000, int(running_lease_ms))
         self.auto_apply = bool(auto_apply)
         self.include_agent_dialogue = bool(include_agent_dialogue)
+        self.embedding_provider = embedding_provider
         # The provider projection has a hard 64-input contract. Rime commits
         # are coalesced before this limit is applied, so this is a logical
         # utterance cap rather than a low-level event cap.
@@ -269,6 +300,8 @@ class OwnerMemoryCurator:
                     project=self.project,
                     limit=self.max_sources,
                     include_agent_dialogue=self.include_agent_dialogue,
+                    embedding_provider=self.embedding_provider,
+                    include_existing_memory=False,
                 )
             inputs = [
                 dict(item)
@@ -346,18 +379,72 @@ class OwnerMemoryCurator:
                     }
                 )
 
+            bounded_model_inputs = _bounded_owner_model_inputs(model_inputs)
+            deferred_model_input_count = max(
+                0,
+                len(model_inputs) - len(bounded_model_inputs),
+            )
+            if deferred_model_input_count:
+                model_inputs = bounded_model_inputs
+                # The organizer may emit at most six durable Atoms. Stop the
+                # cursor at the last source actually presented to it. The
+                # bound accounts for clauses as well as source count because a
+                # single user input can legitimately contain several facts.
+                boundary = (
+                    int(model_inputs[-1]["createdAtMs"]),
+                    str(model_inputs[-1]["sourceId"]),
+                )
+
             compile_output: dict[str, object] = {}
             model_decisions: list[dict[str, object]] = []
+            claim_key_reconciliations: list[dict[str, object]] = []
+            memory_atom_repairs: list[dict[str, object]] = []
             plan: dict[str, object] | None = None
             if model_inputs:
-                model_bundle = {
-                    **bundle,
-                    "inputs": model_inputs,
-                    "cursor": {
-                        **dict(bundle.get("cursor") or {}),
-                        "batchSourceCount": len(model_inputs),
-                    },
-                }
+                with self._connect() as conn:
+                    existing_memory_context = _build_existing_memory_context(
+                        conn,
+                        inputs=model_inputs,
+                        owner_kind=owner[0],
+                        owner_id=owner[1],
+                        project=self.project,
+                        embedding_provider=self.embedding_provider,
+                    )
+                model_event_ids = [
+                    event_id
+                    for item in model_inputs
+                    for event_id in item.get("sourceEventIds") or []
+                    if isinstance(event_id, int)
+                ]
+                model_bundle = _with_owner_bundle_hash(
+                    {
+                        **bundle,
+                        **existing_memory_context,
+                        "inputs": model_inputs,
+                        "recentEvents": [
+                            {
+                                "eventId": int(item["sourceEventIds"][0]),
+                                "sourceEventIds": list(item["sourceEventIds"]),
+                                "createdAtMs": item["createdAtMs"],
+                                "sourceOccurredAtMs": item["sourceOccurredAtMs"],
+                                "text": item["text"],
+                                "source": item["sourceKind"],
+                                "project": self.project,
+                                "app": "RagImeControl",
+                                "contextGroupId": "",
+                            }
+                            for item in model_inputs
+                        ],
+                        "legalSourceEventIds": model_event_ids,
+                        "cursor": {
+                            **dict(bundle.get("cursor") or {}),
+                            "toSourceCreatedAtMs": boundary[0],
+                            "toSourceId": boundary[1],
+                            "pendingEventCount": len(model_inputs),
+                            "batchSourceCount": len(model_inputs),
+                        },
+                    }
+                )
                 compile_output = self.organizer.curate_owner_memory(
                     bundle=model_bundle,
                     project=self.project,
@@ -365,9 +452,33 @@ class OwnerMemoryCurator:
                     owner_id=owner[1],
                     instruction=instruction,
                 )
+                compile_output = _reconcile_owner_compile_claim_keys(
+                    compile_output,
+                    model_inputs=model_inputs,
+                    existing_memory_atoms=[
+                        dict(item)
+                        for item in model_bundle.get("existingMemoryAtoms") or []
+                        if isinstance(item, dict)
+                    ],
+                )
+                claim_key_reconciliations = [
+                    dict(item)
+                    for item in compile_output.get("claimKeyReconciliations") or []
+                    if isinstance(item, dict)
+                ]
+                memory_atom_repairs = [
+                    dict(item)
+                    for item in compile_output.get("memoryAtomRepairs") or []
+                    if isinstance(item, dict)
+                ]
                 model_decisions = self._apply_model_decisions(
                     compile_output,
                     model_inputs=model_inputs,
+                    existing_memory_atoms=[
+                        dict(item)
+                        for item in model_bundle.get("existingMemoryAtoms") or []
+                        if isinstance(item, dict)
+                    ],
                     run_id=run_id,
                     current_ms=current_ms,
                 )
@@ -526,6 +637,14 @@ class OwnerMemoryCurator:
                 "sourceCount": len(_all_input_source_ids(inputs)),
                 "logicalInputCount": len(inputs),
                 "modelSourceCount": len(_all_input_source_ids(model_inputs)),
+                "modelFactProbeCount": len(
+                    _existing_memory_recall_probes(model_inputs)
+                ),
+                "deferredModelInputCount": deferred_model_input_count,
+                "claimKeyReconciliationCount": len(claim_key_reconciliations),
+                "claimKeyReconciliations": claim_key_reconciliations,
+                "memoryAtomRepairCount": len(memory_atom_repairs),
+                "memoryAtomRepairs": memory_atom_repairs,
                 "deterministicDecisions": deterministic,
                 "modelDecisions": model_decisions,
                 "reviewRequired": run_status == "waiting_review",
@@ -552,6 +671,7 @@ class OwnerMemoryCurator:
         compile_output: Mapping[str, object],
         *,
         model_inputs: list[dict[str, object]],
+        existing_memory_atoms: list[dict[str, object]],
         run_id: str,
         current_ms: int,
     ) -> list[dict[str, object]]:
@@ -569,9 +689,17 @@ class OwnerMemoryCurator:
                 continue
             decisions_by_ref[source_ref] = decision
 
-        durable_atom_event_ids = _eligible_owner_atom_event_ids(
+        (
+            durable_atom_event_ids,
+            over_capacity_atom_event_ids,
+        ) = _owner_atom_event_ids_by_capacity(
             compile_output,
             model_inputs=model_inputs,
+            existing_claim_keys={
+                compact_whitespace(str(item.get("claimKey") or ""))
+                for item in existing_memory_atoms
+                if compact_whitespace(str(item.get("claimKey") or ""))
+            },
         )
 
         results: list[dict[str, object]] = []
@@ -587,7 +715,16 @@ class OwnerMemoryCurator:
                 durable_atom_event_ids.intersection(source_event_ids)
             )
             actor_kind = "model"
-            if decision is None:
+            if over_capacity_atom_event_ids.intersection(source_event_ids):
+                # Never consolidate a dense logical source after storing only
+                # a prefix of its proposed Atoms. Keep the whole source in the
+                # review lane so an operator can split or re-curate it.
+                disposition = "needs_review"
+                confidence = 1.0
+                effective = "needs_review"
+                reason = "atom_batch_capacity_exceeded"
+                actor_kind = "system"
+            elif decision is None:
                 if agent_curated_external:
                     disposition = "remember"
                     confidence = 0.9
@@ -1200,6 +1337,140 @@ def _empty_agent_conversation_context(timeline_date: str) -> dict[str, object]:
     }
 
 
+def _empty_existing_memory_context() -> dict[str, object]:
+    return {
+        "existingMemoryBooks": [],
+        "existingMemoryAtoms": [],
+        "existingMemoryRecall": {
+            "strategy": "deferred_until_quality_gate",
+            "probeCount": 0,
+            "hybridQueryCount": 0,
+            "hybridErrorCount": 0,
+            "vectorEnabled": False,
+            "recalledAtomCount": 0,
+            "recalledBookCount": 0,
+        },
+        "archivedMemoryBookGuards": [],
+    }
+
+
+def _build_existing_memory_context(
+    conn: sqlite3.Connection,
+    *,
+    inputs: list[dict[str, object]],
+    owner_kind: str,
+    owner_id: str,
+    project: str,
+    embedding_provider: EmbeddingProvider | None,
+) -> dict[str, object]:
+    """Recall only the old facts relevant to quality-gated source inputs."""
+
+    book_rows = conn.execute(
+        """
+        SELECT *
+        FROM memory_books
+        WHERE owner_kind = ? AND owner_id = ?
+          AND status IN ('active', 'approved', 'archived')
+          AND book_type = 'topic'
+          AND (? = '' OR project = ? OR project = '')
+        ORDER BY CASE WHEN status = 'archived' THEN 1 ELSE 0 END,
+                 updated_at_ms DESC
+        """,
+        (owner_kind, owner_id, project, project),
+    ).fetchall()
+    atom_rows = conn.execute(
+        """
+        SELECT *
+        FROM memory_atoms
+        WHERE owner_kind = ? AND owner_id = ? AND status = 'active'
+          AND claim_state = 'current'
+          AND (? = '' OR scope_project = ? OR scope_project = '')
+        ORDER BY updated_at_ms DESC
+        """,
+        (owner_kind, owner_id, project, project),
+    ).fetchall()
+    recalled_atom_ids, recalled_book_ids, recall_summary = (
+        _recall_existing_memory_for_inputs(
+            conn,
+            inputs=inputs,
+            atom_rows=atom_rows,
+            book_rows=book_rows,
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            project=project,
+            embedding_provider=embedding_provider,
+        )
+    )
+    atom_rows_by_id = {str(row["id"]): row for row in atom_rows}
+    book_rows_by_id = {str(row["book_id"]): row for row in book_rows}
+    books = [
+        {
+            "bookId": str(row["book_id"]),
+            "bookType": str(row["book_type"]),
+            "bookKey": str(row["book_key"]),
+            "title": str(row["title"]),
+            "summary": compact_whitespace(str(row["summary"]))[:800],
+            "tags": _json_strings(row["tags_json"]),
+            "sourceEventIds": _json_ints(row["source_event_ids_json"]),
+            "memoryAtomIds": _json_strings(row["memory_atom_ids_json"]),
+            "status": str(row["status"]),
+        }
+        for book_id in recalled_book_ids
+        if (row := book_rows_by_id.get(book_id)) is not None
+    ]
+    atoms = [
+        {
+            "atomId": str(row["id"]),
+            "kind": str(row["kind"]),
+            "canonicalText": str(row["canonical_text"] or row["text"]),
+            "summary": "",
+            "tags": [],
+            "sourceEventIds": _json_ints(row["source_event_ids_json"]),
+            "status": str(row["status"]),
+            "claimKey": str(row["claim_key"] or ""),
+            "lineageId": str(row["lineage_id"] or ""),
+            "claimState": str(row["claim_state"] or "current"),
+            "validFromMs": int(row["valid_from_ms"] or 0),
+            "validToMs": (
+                int(row["valid_to_ms"])
+                if row["valid_to_ms"] is not None
+                else None
+            ),
+            "supersedesId": str(row["supersedes_id"] or ""),
+            "project": str(row["scope_project"] or ""),
+            "app": str(row["scope_app"] or ""),
+        }
+        for atom_id in recalled_atom_ids
+        if (row := atom_rows_by_id.get(atom_id)) is not None
+    ]
+    archived_book_guards = [
+        {
+            "bookId": str(row["book_id"]),
+            "bookKey": str(row["book_key"] or ""),
+            "title": str(row["title"] or ""),
+            "tags": _json_strings(row["tags_json"]),
+            "status": "archived",
+        }
+        for row in book_rows
+        if str(row["status"] or "") == "archived"
+    ][:MAX_ARCHIVED_TOPIC_BOOK_GUARDS]
+    return {
+        "existingMemoryBooks": books,
+        "existingMemoryAtoms": atoms,
+        "existingMemoryRecall": recall_summary,
+        "archivedMemoryBookGuards": archived_book_guards,
+    }
+
+
+def _with_owner_bundle_hash(payload: dict[str, object]) -> dict[str, object]:
+    result = dict(payload)
+    result.pop("bundleHash", None)
+    result["bundleHash"] = stable_text_hash(
+        json.dumps(result, ensure_ascii=False, sort_keys=True)
+    )
+    return result
+
+
 def _build_owner_source_bundle(
     conn: sqlite3.Connection,
     *,
@@ -1208,6 +1479,8 @@ def _build_owner_source_bundle(
     project: str,
     limit: int,
     include_agent_dialogue: bool = True,
+    embedding_provider: EmbeddingProvider | None = None,
+    include_existing_memory: bool = True,
 ) -> dict[str, object]:
     cursor = conn.execute(
         """
@@ -1325,68 +1598,18 @@ def _build_owner_source_bundle(
         else _empty_agent_conversation_context(curation_date)
     )
 
-    books = [
-        {
-            "bookId": str(row["book_id"]),
-            "bookType": str(row["book_type"]),
-            "bookKey": str(row["book_key"]),
-            "title": str(row["title"]),
-            "summary": compact_whitespace(str(row["summary"]))[:800],
-            "tags": _json_strings(row["tags_json"]),
-            "sourceEventIds": _json_ints(row["source_event_ids_json"]),
-            "memoryAtomIds": _json_strings(row["memory_atom_ids_json"]),
-            "status": str(row["status"]),
-        }
-        for row in conn.execute(
-            """
-            SELECT *
-            FROM memory_books
-            WHERE owner_kind = ? AND owner_id = ?
-              AND status IN ('active', 'approved', 'archived')
-              AND book_type = 'topic'
-              AND (? = '' OR project = ? OR project = '')
-            ORDER BY CASE WHEN status = 'archived' THEN 1 ELSE 0 END,
-                     updated_at_ms DESC
-            LIMIT 12
-            """,
-            (owner_kind, owner_id, project, project),
-        ).fetchall()
-    ]
-    atoms = [
-        {
-            "atomId": str(row["id"]),
-            "kind": str(row["kind"]),
-            "canonicalText": str(row["canonical_text"] or row["text"]),
-            "summary": "",
-            "tags": [],
-            "sourceEventIds": _json_ints(row["source_event_ids_json"]),
-            "status": str(row["status"]),
-            "claimKey": str(row["claim_key"] or ""),
-            "lineageId": str(row["lineage_id"] or ""),
-            "claimState": str(row["claim_state"] or "current"),
-            "validFromMs": int(row["valid_from_ms"] or 0),
-            "validToMs": (
-                int(row["valid_to_ms"])
-                if row["valid_to_ms"] is not None
-                else None
-            ),
-            "supersedesId": str(row["supersedes_id"] or ""),
-            "project": str(row["scope_project"] or ""),
-            "app": str(row["scope_app"] or ""),
-        }
-        for row in conn.execute(
-            """
-            SELECT *
-            FROM memory_atoms
-            WHERE owner_kind = ? AND owner_id = ? AND status = 'active'
-              AND claim_state = 'current'
-              AND (? = '' OR scope_project = ? OR scope_project = '')
-            ORDER BY updated_at_ms DESC
-            LIMIT 80
-            """,
-            (owner_kind, owner_id, project, project),
-        ).fetchall()
-    ]
+    existing_memory_context = (
+        _build_existing_memory_context(
+            conn,
+            inputs=inputs,
+            owner_kind=owner_kind,
+            owner_id=owner_id,
+            project=project,
+            embedding_provider=embedding_provider,
+        )
+        if include_existing_memory
+        else _empty_existing_memory_context()
+    )
     display_name = owner_id
     if owner_kind == "agent":
         display_row = conn.execute(
@@ -1430,8 +1653,15 @@ def _build_owner_source_bundle(
             }
             for item in inputs
         ],
-        "existingMemoryBooks": books,
-        "existingMemoryAtoms": atoms,
+        "existingMemoryBooks": existing_memory_context["existingMemoryBooks"],
+        "existingMemoryAtoms": existing_memory_context["existingMemoryAtoms"],
+        "existingMemoryRecall": existing_memory_context["existingMemoryRecall"],
+        # Archived books are compact governance tombstones, not retrieval
+        # context. The write gate uses them to prevent a later model response
+        # from silently recreating a topic the user explicitly archived.
+        "archivedMemoryBookGuards": existing_memory_context[
+            "archivedMemoryBookGuards"
+        ],
         "activityContext": activity_context,
         "agentConversationContext": conversation_context,
         "legalContextGroupIds": [],
@@ -1448,11 +1678,647 @@ def _build_owner_source_bundle(
             "pendingEventCount": len(inputs),
         },
     }
-    hash_payload = dict(payload)
-    payload["bundleHash"] = stable_text_hash(
-        json.dumps(hash_payload, ensure_ascii=False, sort_keys=True)
+    return _with_owner_bundle_hash(payload)
+
+
+def _recall_existing_memory_for_inputs(
+    conn: sqlite3.Connection,
+    *,
+    inputs: list[dict[str, object]],
+    atom_rows: list[sqlite3.Row],
+    book_rows: list[sqlite3.Row],
+    owner_kind: str,
+    owner_id: str,
+    project: str,
+    embedding_provider: EmbeddingProvider | None,
+) -> tuple[list[str], list[str], dict[str, object]]:
+    """Recall old claims per factual clause, then expand through Topic Books."""
+
+    probes = _existing_memory_recall_probes(inputs)
+    atom_rows_by_id = {str(row["id"]): row for row in atom_rows}
+    book_rows_by_id = {str(row["book_id"]): row for row in book_rows}
+    atom_scores: dict[str, dict[int, float]] = {}
+    book_scores: dict[str, dict[int, float]] = {}
+    hybrid_query_count = 0
+    hybrid_error_count = 0
+
+    for probe_index, probe in enumerate(probes):
+        local_atoms = sorted(
+            (
+                (
+                    str(row["id"]),
+                    _existing_memory_text_score(
+                        probe,
+                        " ".join(
+                            (
+                                str(row["canonical_text"] or row["text"] or ""),
+                                str(row["claim_key"] or ""),
+                            )
+                        ),
+                    ),
+                )
+                for row in atom_rows
+            ),
+            key=lambda item: (-item[1], item[0]),
+        )
+        for atom_id, score in local_atoms[:6]:
+            if score > 0.0:
+                _add_recall_probe_score(atom_scores, atom_id, probe_index, score)
+
+        local_books = sorted(
+            (
+                (
+                    str(row["book_id"]),
+                    _existing_memory_text_score(
+                        probe,
+                        " ".join(
+                            (
+                                str(row["title"] or ""),
+                                str(row["summary"] or ""),
+                                " ".join(_json_strings(row["tags_json"])),
+                                " ".join(_json_strings(row["query_expansions_json"])),
+                            )
+                        ),
+                    ),
+                )
+                for row in book_rows
+            ),
+            key=lambda item: (-item[1], item[0]),
+        )
+        for book_id, score in local_books[:4]:
+            if score > 0.0:
+                _add_recall_probe_score(book_scores, book_id, probe_index, score)
+
+        try:
+            hits = retrieve_hybrid_rag_memory_hit_objects(
+                conn,
+                HybridRagQuery(
+                    query_text=probe,
+                    raw_input=probe,
+                    project=project,
+                    top_k=10,
+                    latency_budget_ms=250,
+                    visible_owners=((owner_kind, owner_id),),
+                    enabled_lanes=(("time", False), ("feedback", False)),
+                ),
+                embedding_provider,
+            )
+            hybrid_query_count += 1
+        except (RuntimeError, sqlite3.Error, ValueError):
+            # The lexical owner-local path keeps curation correct while a
+            # projection or optional embedding provider is temporarily stale.
+            hybrid_error_count += 1
+            hits = []
+        for rank, hit in enumerate(hits, start=1):
+            metadata = dict(hit.metadata or {})
+            if (
+                str(metadata.get("ownerKind") or "") != owner_kind
+                or str(metadata.get("ownerId") or "") != owner_id
+            ):
+                continue
+            fused_score = 2.0 / (rank + 1.0) + min(max(hit.score, 0.0), 2.0) * 0.1
+            if hit.doc_type == "atom" and hit.source_id in atom_rows_by_id:
+                _add_recall_probe_score(
+                    atom_scores,
+                    hit.source_id,
+                    probe_index,
+                    fused_score,
+                )
+            elif hit.doc_type == "book" and hit.source_id in book_rows_by_id:
+                _add_recall_probe_score(
+                    book_scores,
+                    hit.source_id,
+                    probe_index,
+                    fused_score,
+                )
+
+    direct_atom_scores = {
+        atom_id: dict(per_probe) for atom_id, per_probe in atom_scores.items()
+    }
+    direct_book_scores = {
+        book_id: dict(per_probe) for book_id, per_probe in book_scores.items()
+    }
+    atom_to_books: dict[str, list[str]] = {}
+    for book_id, row in book_rows_by_id.items():
+        for atom_id in _json_strings(row["memory_atom_ids_json"]):
+            if atom_id not in atom_rows_by_id:
+                continue
+            atom_to_books.setdefault(atom_id, []).append(book_id)
+            for probe_index, score in direct_book_scores.get(book_id, {}).items():
+                _add_recall_probe_score(
+                    atom_scores,
+                    atom_id,
+                    probe_index,
+                    score * 0.55,
+                )
+    for atom_id, per_probe in direct_atom_scores.items():
+        for book_id in atom_to_books.get(atom_id, []):
+            for probe_index, score in per_probe.items():
+                _add_recall_probe_score(
+                    book_scores,
+                    book_id,
+                    probe_index,
+                    score * 0.45,
+                )
+
+    recalled_atom_ids = _rank_recalled_ids_with_probe_coverage(
+        atom_scores,
+        coverage_scores=direct_atom_scores,
+        rows=atom_rows_by_id,
+        limit=MAX_RECALLED_EXISTING_ATOMS,
     )
-    return payload
+    recalled_book_ids = _rank_recalled_ids(
+        book_scores,
+        rows=book_rows_by_id,
+        limit=MAX_RECALLED_EXISTING_BOOKS,
+    )
+    return recalled_atom_ids, recalled_book_ids, {
+        "strategy": "per_fact_hybrid_union_with_book_graph",
+        "probeCount": len(probes),
+        "hybridQueryCount": hybrid_query_count,
+        "hybridErrorCount": hybrid_error_count,
+        "vectorEnabled": bool(
+            embedding_provider
+            and getattr(embedding_provider, "fingerprint", "none") != "none"
+        ),
+        "recalledAtomCount": len(recalled_atom_ids),
+        "recalledBookCount": len(recalled_book_ids),
+    }
+
+
+def _existing_memory_recall_probes(
+    inputs: list[dict[str, object]],
+) -> list[str]:
+    probes: list[str] = []
+    seen: set[str] = set()
+    for item in inputs:
+        text = compact_whitespace(str(item.get("text") or ""))
+        if not text:
+            continue
+        clauses = split_sentences(text) or [text]
+        for clause in clauses:
+            probe = compact_whitespace(clause)[:600]
+            normalized = normalize_text(probe)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            probes.append(probe)
+            if len(probes) >= MAX_EXISTING_MEMORY_RECALL_PROBES:
+                return probes
+    return probes
+
+
+def _existing_memory_text_score(query: str, text: str) -> float:
+    normalized_query = normalize_text(query)
+    normalized_text = normalize_text(text)
+    if not normalized_query or not normalized_text:
+        return 0.0
+    score = 0.0
+    if normalized_query in normalized_text or normalized_text in normalized_query:
+        score += 4.0
+    hits: list[str] = []
+    for term in token_terms(query, max_terms=64):
+        if term.casefold() in text.casefold():
+            hits.append(term)
+    strong_hits = [
+        term
+        for term in hits
+        if len(term) >= 3 or (term.isascii() and len(term) >= 2)
+    ]
+    if not strong_hits and len(hits) < 3:
+        return score
+    score += sum(1.0 + min(len(term), 8) / 8.0 for term in strong_hits)
+    score += max(0, len(hits) - len(strong_hits)) * 0.2
+    return score
+
+
+def _reconcile_owner_compile_claim_keys(
+    compile_output: Mapping[str, object],
+    *,
+    model_inputs: list[dict[str, object]],
+    existing_memory_atoms: list[dict[str, object]],
+) -> dict[str, object]:
+    """Repair a high-confidence model claim-key split before durable gating.
+
+    Recall and classification are intentionally separate. A model can see the
+    correct old Atom yet rename its semantic slot when the new wording is more
+    specific. Only an explicit update signal plus a strong, unambiguous text
+    match may reuse an old claim; uncertain cases remain separate/reviewable.
+    """
+
+    result = dict(compile_output)
+    existing_by_claim = {
+        compact_whitespace(str(item.get("claimKey") or "")): dict(item)
+        for item in existing_memory_atoms
+        if compact_whitespace(str(item.get("claimKey") or ""))
+    }
+    raw_atoms = [
+        dict(item)
+        for item in compile_output.get("memoryAtoms") or []
+        if isinstance(item, Mapping)
+    ]
+    raw_claim_key_counts: dict[str, int] = {}
+    for item in raw_atoms:
+        raw_claim_key = compact_whitespace(str(item.get("claimKey") or ""))
+        if raw_claim_key:
+            raw_claim_key_counts[raw_claim_key] = (
+                raw_claim_key_counts.get(raw_claim_key, 0) + 1
+            )
+    assigned_existing: set[str] = set()
+    reconciliations: list[dict[str, object]] = []
+    atoms: list[dict[str, object]] = []
+    for item in raw_atoms:
+        claim_key = compact_whitespace(str(item.get("claimKey") or ""))
+        canonical = compact_whitespace(
+            str(item.get("canonicalText") or item.get("text") or "")
+        )
+        source_event_ids = _positive_event_ids(item.get("sourceEventIds"))
+        source_text = " ".join(
+            compact_whitespace(str(model_input.get("text") or ""))
+            for model_input in model_inputs
+            if source_event_ids.intersection(
+                _positive_event_ids(model_input.get("sourceEventIds"))
+            )
+        )
+        update_text = f"{canonical} {source_text}"
+        if (
+            canonical
+            and _CLAIM_UPDATE_SIGNAL_RE.search(update_text)
+            and (
+                claim_key not in existing_by_claim
+                or raw_claim_key_counts.get(claim_key, 0) > 1
+            )
+        ):
+            ranked = sorted(
+                (
+                    (
+                        _existing_memory_text_score(
+                            update_text,
+                            " ".join(
+                                (
+                                    compact_whitespace(
+                                        str(
+                                            candidate.get("canonicalText")
+                                            or candidate.get("text")
+                                            or ""
+                                        )
+                                    ),
+                                    candidate_claim_key,
+                                )
+                            ),
+                        ),
+                        candidate_claim_key,
+                        candidate,
+                    )
+                    for candidate_claim_key, candidate in existing_by_claim.items()
+                    if candidate_claim_key not in assigned_existing
+                    or candidate_claim_key == claim_key
+                ),
+                key=lambda candidate: (-candidate[0], candidate[1]),
+            )
+            if ranked:
+                best_score, best_claim_key, best = ranked[0]
+                runner_up_score = ranked[1][0] if len(ranked) > 1 else 0.0
+                if (
+                    best_claim_key != claim_key
+                    and best_score >= MIN_CLAIM_REUSE_SCORE
+                    and best_score - runner_up_score >= MIN_CLAIM_REUSE_MARGIN
+                ):
+                    original_claim_key = claim_key
+                    claim_key = best_claim_key
+                    item["claimKey"] = best_claim_key
+                    item["kind"] = compact_whitespace(
+                        str(best.get("kind") or item.get("kind") or "")
+                    )
+                    existing_lineage = compact_whitespace(
+                        str(best.get("lineageId") or "")
+                    )
+                    if existing_lineage:
+                        item["lineageId"] = existing_lineage
+                    reconciliations.append(
+                        {
+                            "fromClaimKey": original_claim_key,
+                            "toClaimKey": best_claim_key,
+                            "targetAtomId": compact_whitespace(
+                                str(best.get("atomId") or "")
+                            ),
+                            "score": round(best_score, 4),
+                            "runnerUpScore": round(runner_up_score, 4),
+                            "reason": (
+                                "explicit_update_reassigned_mismatched_recalled_slot"
+                                if original_claim_key in existing_by_claim
+                                else "explicit_update_high_confidence_recalled_slot"
+                            ),
+                        }
+                    )
+        if claim_key in existing_by_claim:
+            assigned_existing.add(claim_key)
+        atoms.append(item)
+    atoms, same_source_reconciliations = _merge_same_source_claim_fragments(
+        atoms,
+        model_inputs=model_inputs,
+        existing_by_claim=existing_by_claim,
+    )
+    reconciliations.extend(same_source_reconciliations)
+    atoms, memory_atom_repairs = _repair_single_atom_source_coverage(
+        atoms,
+        model_inputs=model_inputs,
+        existing_by_claim=existing_by_claim,
+    )
+    result["memoryAtoms"] = atoms
+    result["claimKeyReconciliations"] = reconciliations
+    result["memoryAtomRepairs"] = memory_atom_repairs
+    return result
+
+
+def _merge_same_source_claim_fragments(
+    atoms: list[dict[str, object]],
+    *,
+    model_inputs: list[dict[str, object]],
+    existing_by_claim: Mapping[str, dict[str, object]],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Keep a low-compatibility fragment from overwriting an unrelated slot."""
+
+    source_text_by_events = {
+        tuple(sorted(_positive_event_ids(item.get("sourceEventIds")))): compact_whitespace(
+            str(item.get("text") or "")
+        )
+        for item in model_inputs
+        if _positive_event_ids(item.get("sourceEventIds"))
+    }
+    indexes_by_events: dict[tuple[int, ...], list[int]] = {}
+    for index, item in enumerate(atoms):
+        event_key = tuple(sorted(_positive_event_ids(item.get("sourceEventIds"))))
+        if event_key:
+            indexes_by_events.setdefault(event_key, []).append(index)
+
+    consumed: set[int] = set()
+    reconciliations: list[dict[str, object]] = []
+    for event_key, indexes in indexes_by_events.items():
+        if len(indexes) < 2:
+            continue
+        source_text = source_text_by_events.get(event_key, "")
+        scored: list[tuple[int, str, float, dict[str, object]]] = []
+        for index in indexes:
+            item = atoms[index]
+            claim_key = compact_whitespace(str(item.get("claimKey") or ""))
+            existing = existing_by_claim.get(claim_key)
+            if existing is None:
+                continue
+            canonical = compact_whitespace(
+                str(item.get("canonicalText") or item.get("text") or "")
+            )
+            score = _existing_memory_text_score(
+                canonical,
+                " ".join(
+                    (
+                        compact_whitespace(
+                            str(
+                                existing.get("canonicalText")
+                                or existing.get("text")
+                                or ""
+                            )
+                        ),
+                        claim_key,
+                    )
+                ),
+            )
+            scored.append((index, claim_key, score, existing))
+        anchors = [
+            item for item in scored if item[2] >= MIN_SAME_SOURCE_ANCHOR_SCORE
+        ]
+        if not anchors:
+            continue
+        anchor_index, anchor_claim, _anchor_atom_score, anchor_existing = max(
+            anchors,
+            key=lambda item: (
+                _existing_memory_text_score(
+                    source_text,
+                    " ".join(
+                        (
+                            compact_whitespace(
+                                str(
+                                    item[3].get("canonicalText")
+                                    or item[3].get("text")
+                                    or ""
+                                )
+                            ),
+                            item[1],
+                        )
+                    ),
+                ),
+                item[2],
+                item[1],
+            ),
+        )
+        anchor_source_score = _existing_memory_text_score(
+            source_text,
+            " ".join(
+                (
+                    compact_whitespace(
+                        str(
+                            anchor_existing.get("canonicalText")
+                            or anchor_existing.get("text")
+                            or ""
+                        )
+                    ),
+                    anchor_claim,
+                )
+            ),
+        )
+        anchor = atoms[anchor_index]
+        for index, claim_key, score, existing in scored:
+            if (
+                index == anchor_index
+                or claim_key == anchor_claim
+                or score >= MIN_EXISTING_CLAIM_COMPATIBILITY_SCORE
+                or anchor_source_score - score < MIN_CLAIM_REUSE_MARGIN
+            ):
+                continue
+            fragment = atoms[index]
+            anchor_text = compact_whitespace(
+                str(anchor.get("canonicalText") or anchor.get("text") or "")
+            )
+            fragment_text = compact_whitespace(
+                str(fragment.get("canonicalText") or fragment.get("text") or "")
+            )
+            if fragment_text and normalize_text(fragment_text) not in normalize_text(
+                anchor_text
+            ):
+                anchor["canonicalText"] = "；".join(
+                    value for value in (anchor_text.rstrip("；。"), fragment_text) if value
+                )
+            anchor["sourceEventIds"] = sorted(
+                _positive_event_ids(anchor.get("sourceEventIds"))
+                | _positive_event_ids(fragment.get("sourceEventIds"))
+            )
+            anchor["tags"] = list(
+                dict.fromkeys(
+                    [
+                        *[str(value) for value in anchor.get("tags") or []],
+                        *[str(value) for value in fragment.get("tags") or []],
+                    ]
+                )
+            )
+            consumed.add(index)
+            reconciliations.append(
+                {
+                    "fromClaimKey": claim_key,
+                    "toClaimKey": anchor_claim,
+                    "targetAtomId": compact_whitespace(
+                        str(anchor_existing.get("atomId") or "")
+                    ),
+                    "score": round(anchor_source_score, 4),
+                    "runnerUpScore": round(score, 4),
+                    "reason": "same_source_low_compatibility_merged_into_anchor",
+                }
+            )
+    return [item for index, item in enumerate(atoms) if index not in consumed], reconciliations
+
+
+def _repair_single_atom_source_coverage(
+    atoms: list[dict[str, object]],
+    *,
+    model_inputs: list[dict[str, object]],
+    existing_by_claim: Mapping[str, dict[str, object]],
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Use a concise authoritative update when model compression drops a clause."""
+
+    atoms_by_events: dict[tuple[int, ...], list[dict[str, object]]] = {}
+    for atom in atoms:
+        event_key = tuple(sorted(_positive_event_ids(atom.get("sourceEventIds"))))
+        if event_key:
+            atoms_by_events.setdefault(event_key, []).append(atom)
+    repairs: list[dict[str, object]] = []
+    for model_input in model_inputs:
+        event_key = tuple(
+            sorted(_positive_event_ids(model_input.get("sourceEventIds")))
+        )
+        grouped_atoms = atoms_by_events.get(event_key, [])
+        if len(grouped_atoms) != 1:
+            continue
+        atom = grouped_atoms[0]
+        claim_key = compact_whitespace(str(atom.get("claimKey") or ""))
+        source_text = compact_whitespace(str(model_input.get("text") or ""))
+        canonical = compact_whitespace(
+            str(atom.get("canonicalText") or atom.get("text") or "")
+        )
+        clauses = split_sentences(source_text)
+        if (
+            claim_key not in existing_by_claim
+            or not source_text
+            or not canonical
+            or len(source_text) > 280
+            or len(clauses) < 2
+            or len(clauses) > 3
+            or contains_sensitive_content(source_text)
+            or _CLAIM_UPDATE_SIGNAL_RE.search(source_text) is None
+        ):
+            continue
+        missing_clauses = [
+            clause
+            for clause in clauses
+            if _existing_memory_text_score(clause, canonical)
+            < MIN_EXISTING_CLAIM_COMPATIBILITY_SCORE
+        ]
+        if not missing_clauses:
+            continue
+        atom["canonicalText"] = source_text
+        repairs.append(
+            {
+                "claimKey": claim_key,
+                "sourceEventIds": list(event_key),
+                "missingClauseCount": len(missing_clauses),
+                "reason": "concise_existing_claim_source_clause_restored",
+            }
+        )
+    return atoms, repairs
+
+
+def _add_recall_probe_score(
+    scores: dict[str, dict[int, float]],
+    item_id: str,
+    probe_index: int,
+    score: float,
+) -> None:
+    if not item_id or score <= 0.0:
+        return
+    per_probe = scores.setdefault(item_id, {})
+    per_probe[probe_index] = max(per_probe.get(probe_index, 0.0), float(score))
+
+
+def _rank_recalled_ids(
+    scores: dict[str, dict[int, float]],
+    *,
+    rows: dict[str, sqlite3.Row],
+    limit: int,
+) -> list[str]:
+    return [
+        item_id
+        for item_id, _ in sorted(
+            scores.items(),
+            key=lambda item: (
+                -(sum(item[1].values()) + max(0, len(item[1]) - 1) * 0.35),
+                -int(rows[item[0]]["updated_at_ms"] or 0),
+                item[0],
+            ),
+        )[: max(0, int(limit))]
+        if item_id in rows
+    ]
+
+
+def _rank_recalled_ids_with_probe_coverage(
+    scores: dict[str, dict[int, float]],
+    *,
+    coverage_scores: dict[str, dict[int, float]],
+    rows: dict[str, sqlite3.Row],
+    limit: int,
+) -> list[str]:
+    """Reserve one direct old-fact hit per probe before global reranking."""
+
+    bounded_limit = max(0, int(limit))
+    selected: list[str] = []
+    selected_set: set[str] = set()
+    probe_indexes = sorted(
+        {
+            probe_index
+            for per_probe in coverage_scores.values()
+            for probe_index in per_probe
+        }
+    )
+    for probe_index in probe_indexes:
+        candidates = [
+            (item_id, per_probe[probe_index])
+            for item_id, per_probe in coverage_scores.items()
+            if probe_index in per_probe and item_id in rows
+        ]
+        if not candidates:
+            continue
+        uncovered_candidates = [
+            item for item in candidates if item[0] not in selected_set
+        ]
+        item_id, _ = min(
+            uncovered_candidates or candidates,
+            key=lambda item: (
+                -item[1],
+                -int(rows[item[0]]["updated_at_ms"] or 0),
+                item[0],
+            ),
+        )
+        if item_id not in selected_set:
+            selected.append(item_id)
+            selected_set.add(item_id)
+        if len(selected) >= bounded_limit:
+            return selected
+
+    for item_id in _rank_recalled_ids(scores, rows=rows, limit=bounded_limit):
+        if item_id in selected_set:
+            continue
+        selected.append(item_id)
+        selected_set.add(item_id)
+        if len(selected) >= bounded_limit:
+            break
+    return selected
 
 
 def _coalesce_owner_inputs(
@@ -1514,6 +2380,35 @@ def _bounded_external_model_inputs(
             external_count += 1
         result.append(item)
         if len(result) >= limit:
+            break
+    return result
+
+
+def _bounded_owner_model_inputs(
+    inputs: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Bound one organizer call by both logical sources and likely facts."""
+
+    result: list[dict[str, object]] = []
+    estimated_atom_count = 0
+    for item in inputs:
+        clause_count = len(_existing_memory_recall_probes([item]))
+        atom_demand = min(
+            MAX_OWNER_MEMORY_ATOMS_PER_RUN,
+            max(1, clause_count),
+        )
+        if result and (
+            len(result) >= MAX_OWNER_MODEL_INPUTS_PER_RUN
+            or estimated_atom_count + atom_demand
+            > MAX_OWNER_MEMORY_ATOMS_PER_RUN
+        ):
+            break
+        result.append(item)
+        estimated_atom_count += atom_demand
+        if (
+            len(result) >= MAX_OWNER_MODEL_INPUTS_PER_RUN
+            or estimated_atom_count >= MAX_OWNER_MEMORY_ATOMS_PER_RUN
+        ):
             break
     return result
 
@@ -1585,6 +2480,7 @@ def _durable_atom_rejection_reason(
     *,
     kind: str,
     source_texts: list[str],
+    allow_verbatim_existing_claim: bool = False,
 ) -> str:
     if kind not in _DURABLE_ATOM_KINDS:
         return "non_durable_atom_kind"
@@ -1593,7 +2489,7 @@ def _durable_atom_rejection_reason(
     if canonical.endswith(("?", "？")) or _looks_like_standalone_question(canonical):
         return "standalone_question"
     normalized = normalize_text(canonical)
-    if len(canonical) >= 48 and any(
+    if not allow_verbatim_existing_claim and len(canonical) >= 48 and any(
         normalized == normalize_text(source_text)
         for source_text in source_texts
     ):
@@ -1661,18 +2557,22 @@ def _origin_tags_for_event_ids(
     return list(dict.fromkeys(tags))
 
 
-def _eligible_owner_atom_event_ids(
+def _owner_atom_event_ids_by_capacity(
     compile_output: Mapping[str, object],
     *,
     model_inputs: list[dict[str, object]],
-) -> set[int]:
+    existing_claim_keys: set[str],
+) -> tuple[set[int], set[int]]:
     legal_event_ids = {
         event_id
         for model_input in model_inputs
         for event_id in _positive_event_ids(model_input.get("sourceEventIds"))
     }
     eligible: set[int] = set()
-    for item in list(compile_output.get("memoryAtoms") or [])[:6]:
+    over_capacity: set[int] = set()
+    for atom_index, item in enumerate(
+        list(compile_output.get("memoryAtoms") or [])
+    ):
         if not isinstance(item, Mapping):
             continue
         canonical = compact_whitespace(
@@ -1689,10 +2589,19 @@ def _eligible_owner_atom_event_ids(
             canonical,
             kind=compact_whitespace(str(item.get("kind") or "")),
             source_texts=source_texts,
+            allow_verbatim_existing_claim=(
+                compact_whitespace(str(item.get("claimKey") or ""))
+                in existing_claim_keys
+            ),
         ):
             continue
-        eligible.update(source_ids)
-    return eligible
+        target = (
+            eligible
+            if atom_index < MAX_OWNER_MEMORY_ATOMS_PER_RUN
+            else over_capacity
+        )
+        target.update(source_ids)
+    return eligible, over_capacity
 
 
 def _owner_topic_terms(*values: object) -> set[str]:
@@ -1830,9 +2739,16 @@ def _govern_owner_compile_output(
         for item in existing_atoms
         if compact_whitespace(str(item.get("atomId") or ""))
     }
+    existing_atoms_by_claim_key = {
+        compact_whitespace(str(item.get("claimKey") or "")): item
+        for item in existing_atoms
+        if compact_whitespace(str(item.get("claimKey") or ""))
+    }
     atoms: list[dict[str, object]] = []
     atom_ids: list[str] = []
-    for item in compile_output.get("memoryAtoms") or []:
+    for item in list(
+        compile_output.get("memoryAtoms") or []
+    )[:MAX_OWNER_MEMORY_ATOMS_PER_RUN]:
         if not isinstance(item, dict):
             continue
         canonical = compact_whitespace(
@@ -1844,7 +2760,15 @@ def _govern_owner_compile_output(
             model_inputs=bundle_inputs,
             legal_event_ids=remembered_event_ids,
         )
-        kind = compact_whitespace(str(item.get("kind") or ""))
+        claim_key = compact_whitespace(str(item.get("claimKey") or ""))[:120]
+        existing_claim = existing_atoms_by_claim_key.get(claim_key)
+        kind = compact_whitespace(
+            str(
+                (existing_claim or {}).get("kind")
+                or item.get("kind")
+                or ""
+            )
+        )
         if (
             not canonical
             or contains_sensitive_content(canonical)
@@ -1853,6 +2777,7 @@ def _govern_owner_compile_output(
                 canonical,
                 kind=kind,
                 source_texts=source_texts,
+                allow_verbatim_existing_claim=existing_claim is not None,
             )
         ):
             continue
@@ -1860,7 +2785,6 @@ def _govern_owner_compile_output(
             f"atom:{owner_hash}:"
             f"{stable_text_hash(normalize_text(canonical)).removeprefix('sha256:')[:24]}"
         )
-        claim_key = compact_whitespace(str(item.get("claimKey") or ""))[:120]
         if not claim_key:
             claim_digest = stable_text_hash(normalize_text(canonical)).removeprefix(
                 "sha256:"
@@ -1878,6 +2802,13 @@ def _govern_owner_compile_output(
                 "canonicalText": canonical,
                 "kind": kind,
                 "claimKey": claim_key,
+                "lineageId": compact_whitespace(
+                    str(
+                        (existing_claim or {}).get("lineageId")
+                        or item.get("lineageId")
+                        or ""
+                    )
+                ),
                 "summary": (
                     ""
                     if contains_sensitive_content(summary)
@@ -1963,7 +2894,10 @@ def _govern_owner_compile_output(
     ]
     existing_books = [
         dict(item)
-        for item in bundle.get("existingMemoryBooks") or []
+        for item in [
+            *(bundle.get("existingMemoryBooks") or []),
+            *(bundle.get("archivedMemoryBookGuards") or []),
+        ]
         if isinstance(item, dict)
     ]
     proposed_books = [
@@ -2176,6 +3110,11 @@ def _deterministic_disposition(item: Mapping[str, object]) -> str | None:
         return "runtime_probe"
     if _EXPLICIT_MEMORY_FORGET_RE.search(text):
         return None
+    if (
+        _TRANSIENT_CONTEXT_SIGNAL_RE.search(text)
+        and _NON_DURABLE_CONCLUSION_RE.search(text)
+    ):
+        return "explicit_non_durable_context"
     if _looks_like_standalone_question(text):
         return "standalone_question_no_durable_claim"
     if (

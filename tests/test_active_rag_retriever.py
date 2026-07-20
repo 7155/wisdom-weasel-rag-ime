@@ -8,6 +8,7 @@ from unittest.mock import patch
 from rag_ime.active_rag_models import ActiveRagFrame
 from rag_ime.active_rag_retriever import (
     _diversify_active_rag_evidence,
+    _query_from_frame,
     _relevant_active_rag_candidates,
     retrieve_active_rag_evidence,
 )
@@ -17,6 +18,38 @@ from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 
 
 class ActiveRagRetrieverTests(unittest.TestCase):
+    def test_insert_query_uses_complete_foreground_instead_of_caret_anchor(self) -> None:
+        foreground = (
+            "完成重构。最好测试上下文是否增量缓存命中。工具和 skill 是否成熟。"
+            "目标 cafe 项目的 skill 也很有价值，有机转换过来。"
+        )
+        anchor = "也很有价值，有机转换过来。"
+        frame = ActiveRagFrame.from_text(
+            anchor,
+            surrounding_before=foreground,
+            intent="complete",
+            placement="insert_after_selection",
+        )
+
+        query = _query_from_frame(frame)
+
+        self.assertEqual(query.query_text, foreground)
+        self.assertEqual(query.raw_input, anchor)
+        self.assertEqual(query.committed_tail, foreground)
+
+    def test_replace_query_keeps_selected_text_primary(self) -> None:
+        selected = "把这句话改得更清楚"
+        query = _query_from_frame(
+            ActiveRagFrame.from_text(
+                selected,
+                surrounding_before="前台里还有其他完整文本",
+                intent="rewrite",
+                placement="replace_selection",
+            )
+        )
+
+        self.assertEqual(query.query_text, selected)
+
     def test_active_rag_wires_the_core_embedding_provider_into_hybrid_retrieval(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-active-retriever-") as tmp:
             provider = HashingEmbeddingProvider(dimensions=16)

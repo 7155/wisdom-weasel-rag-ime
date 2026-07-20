@@ -815,18 +815,17 @@ def _duplicate_current_claims(conn: sqlite3.Connection) -> list[dict[str, object
             "ownerId": str(row["owner_id"]),
             "project": str(row["scope_project"] or ""),
             "app": str(row["scope_app"] or ""),
-            "kind": str(row["kind"]),
             "claimKey": str(row["claim_key"]),
             "count": int(row["count"]),
         }
         for row in conn.execute(
-            """SELECT owner_kind, owner_id, scope_project, scope_app, kind,
+            """SELECT owner_kind, owner_id, scope_project, scope_app,
                       claim_key, COUNT(*) AS count
                FROM memory_atoms
                WHERE status IN ('active', 'approved') AND claim_state = 'current'
                  AND trim(COALESCE(claim_key, '')) <> ''
                GROUP BY owner_kind, owner_id, COALESCE(scope_project, ''),
-                        COALESCE(scope_app, ''), kind, claim_key
+                        COALESCE(scope_app, ''), claim_key
                HAVING COUNT(*) > 1"""
         ).fetchall()
     ]
