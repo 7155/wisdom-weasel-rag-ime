@@ -199,7 +199,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             contract["minimumHandlersCommit"],
-            "692bb0e878772129766b9eb837a8caa57f48e0e7",
+            "c4752416150b715b5079549024efd0299fa259e5",
         )
         self.assertEqual(set(contract["requiredMethods"]), {"room.dispatch", "room.cancel"})
         build = (REPO / "scripts/build_managed_pi_runtime_v2.py").read_text(encoding="utf-8")
