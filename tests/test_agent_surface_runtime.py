@@ -220,7 +220,7 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
         self.assertNotIn("images", call)
         self.assertEqual(self.sessions.list(include_internal=True), [])
 
-    def test_legacy_off_surface_setting_is_upgraded_to_thinking(self) -> None:
+    def test_off_surface_setting_is_forwarded_to_supported_model(self) -> None:
         self.settings["activeRag"]["quickThinkingLevel"] = "off"
 
         result = self.surface.complete(
@@ -231,8 +231,8 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(result["thinkingLevel"], "high")
-        self.assertEqual(self.runtime.completions[0]["thinkingLevel"], "high")
+        self.assertEqual(result["thinkingLevel"], "off")
+        self.assertEqual(self.runtime.completions[0]["thinkingLevel"], "off")
 
     def test_provider_unwraps_candidate_json_before_it_reaches_the_ime(self) -> None:
         self.runtime.completion_text = '{"candidate":"完整前台文本已经优先进入 RAG。","role":"answer"}'

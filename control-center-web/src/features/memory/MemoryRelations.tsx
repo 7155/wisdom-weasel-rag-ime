@@ -1,11 +1,8 @@
 import { BookOpen, Boxes, Network, RefreshCw, Search, Tags } from 'lucide-react';
 import {
   useDeferredValue,
-  useEffect,
   useMemo,
-  useRef,
   useState,
-  type KeyboardEvent,
 } from 'react';
 import { Button, EmptyState, Input, SegmentedControl, Select } from '@/components/primitives';
 import {
@@ -17,12 +14,12 @@ import {
   stringValue,
 } from '@/features/overview/management-ui';
 import { useMemoryEntityQuery, useMemoryGraphQueries } from './api';
+import { MemoryRelationCanvas } from './MemoryRelationCanvas';
 import {
   buildGroupBookGraph,
   buildGroupTagGraph,
   buildTagGraph,
   parseMemoryGraph,
-  truncateGraphLabel,
   type BookBipartiteGraphLayout,
   type BipartiteGraphLayout,
   type MemoryBookNode,
@@ -179,6 +176,7 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
             filtered.tags.length ? (
               <TagNetwork
                 availableNodes={filtered.tags}
+                enabled={enabled && view === 'tags'}
                 graph={tagGraph}
                 onSelect={selectTag}
                 selectedId={selectedTagId}
@@ -190,6 +188,7 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
             <GroupTagNetwork
               availableGroups={filtered.groups}
               availableTags={filtered.tags}
+              enabled={enabled && view === 'groups'}
               graph={groupTagGraph}
               onSelect={selectBipartite}
               selectedKey={selectedBipartiteKey}
@@ -198,6 +197,7 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
             <GroupBookNetwork
               availableBooks={filtered.books}
               availableGroups={filtered.groups}
+              enabled={enabled && view === 'books'}
               graph={groupBookGraph}
               onSelect={selectBipartite}
               selectedKey={selectedBipartiteKey}
@@ -240,11 +240,13 @@ function GraphScope({
 
 function TagNetwork({
   availableNodes,
+  enabled,
   graph,
   onSelect,
   selectedId,
 }: {
   availableNodes: readonly MemoryTagNode[];
+  enabled: boolean;
   graph: TagGraphLayout;
   onSelect: (id: string) => void;
   selectedId: string;
@@ -253,18 +255,7 @@ function TagNetwork({
     ? selectedId
     : availableNodes[0]?.id ?? '';
   const selected = availableNodes.find((node) => node.id === activeId) ?? null;
-  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
   const entity = useMemoryEntityQuery('tag', selected?.entityId ?? '', Boolean(selected));
-  const viewportRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    const node = graph.nodes.find((item) => item.id === activeId);
-    if (!viewport || !node) return;
-    const renderedWidth = Math.max(viewport.clientWidth, 820);
-    const targetX = (node.x / graph.width) * renderedWidth;
-    viewport.scrollLeft = Math.max(0, targetX - viewport.clientWidth / 2);
-  }, [activeId, graph]);
 
   return (
     <>
@@ -278,66 +269,26 @@ function TagNetwork({
         <div className="memory-explorer__visual">
           <GraphLegend view="tags" />
           <GraphTruthNotice edgeCount={graph.edges.length} nodeCount={graph.nodes.length} />
-          <div
-            aria-label="标签当前页局部关系图"
-            className="memory-graph__viewport"
-            ref={viewportRef}
-            role="group"
-          >
-            <svg
-              aria-labelledby="memory-tag-graph-title memory-tag-graph-description"
-              className="memory-graph__canvas"
-              height={graph.height}
-              style={{ height: graph.height }}
-              viewBox={`0 0 ${graph.width} ${graph.height}`}
-              width={graph.width}
-            >
-              <title id="memory-tag-graph-title">标签当前页局部关系图</title>
-              <desc id="memory-tag-graph-description">节点大小表示关联记忆数，连线表示已经记录的标签关系。</desc>
-              {graph.edges.map((edge) => {
-                const source = nodesById.get(edge.source);
-                const target = nodesById.get(edge.target);
-                if (!source || !target) return null;
-                const emphasized = activeId === edge.source || activeId === edge.target;
-                return (
-                  <line
-                    className="memory-graph__edge"
-                    data-emphasized={emphasized || undefined}
-                    data-muted={!emphasized || undefined}
-                    key={`${edge.source}-${edge.target}-${edge.type}`}
-                    strokeWidth={edge.strokeWidth}
-                    x1={source.x}
-                    x2={target.x}
-                    y1={source.y}
-                    y2={target.y}
-                  />
-                );
-              })}
-              {graph.nodes.map((node) => {
-                const selectedNode = node.id === activeId;
-                const accessibleLabel = `${node.label}，${node.itemCount} 条记忆，${node.edgeCount} 个连接，来源 ${formatSource(node.source)}`;
-                return (
-                  <g
-                    aria-label={accessibleLabel}
-                    aria-pressed={selectedNode}
-                    className="memory-graph__node"
-                    data-selected={selectedNode || undefined}
-                    key={node.id}
-                    onClick={() => onSelect(node.id)}
-                    onKeyDown={(event) => activateNode(event, () => onSelect(node.id))}
-                    role="button"
-                    tabIndex={0}
-                    transform={`translate(${node.x} ${node.y})`}
-                  >
-                    <title>{accessibleLabel}</title>
-                    <circle className="memory-graph__node-shape" fill={node.color} r={node.radius} stroke={node.color} />
-                    <text className="memory-graph__node-count memory-graph__node-count--inside" textAnchor="middle" y={4}>{node.itemCount}</text>
-                    <text className="memory-graph__node-label memory-graph__node-label--outside" textAnchor="middle" y={node.radius + 19}>{truncateGraphLabel(node.label, 18)}</text>
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
+          <MemoryRelationCanvas
+            edges={graph.edges.map((edge) => ({
+              id: `tag-edge:${edge.source}:${edge.target}:${edge.type}`,
+              source: edge.source,
+              target: edge.target,
+              label: formatRelation(edge.type),
+              weight: edge.weight,
+              evidenceCount: edge.evidenceCount,
+            }))}
+            enabled={enabled}
+            nodes={graph.nodes.map((node) => ({
+              id: node.id,
+              label: node.label,
+              kind: 'tag',
+              count: node.itemCount,
+              connections: node.edgeCount,
+            }))}
+            onSelect={onSelect}
+            selectedId={selectedId}
+          />
         </div>
       </div>
       {selected ? (
@@ -363,12 +314,14 @@ function TagNetwork({
 function GroupTagNetwork({
   availableGroups,
   availableTags,
+  enabled,
   graph,
   onSelect,
   selectedKey,
 }: {
   availableGroups: readonly MemoryGroupNode[];
   availableTags: readonly MemoryTagNode[];
+  enabled: boolean;
   graph: BipartiteGraphLayout;
   onSelect: (key: string) => void;
   selectedKey: string;
@@ -381,8 +334,6 @@ function GroupTagNetwork({
     ...availableTags.map((tag) => tagKey(tag.id)),
   ]);
   const activeKey = validKeys.has(selectedKey) ? selectedKey : defaultKey;
-  const groupsById = new Map(graph.groups.map((group) => [group.id, group]));
-  const tagsById = new Map(graph.tags.map((tag) => [tag.id, tag]));
   const selectedGroup = activeKey.startsWith('group:')
     ? availableGroups.find((group) => group.id === activeKey.slice(6)) ?? null
     : null;
@@ -405,89 +356,23 @@ function GroupTagNetwork({
         <div className="memory-explorer__visual">
           <GraphLegend view="groups" />
           <GraphTruthNotice edgeCount={graph.edges.length} nodeCount={graph.groups.length + graph.tags.length} />
-          <div className="memory-graph__viewport" role="group" aria-label="分组与标签关系图">
-            <svg
-              aria-labelledby="memory-group-graph-title memory-group-graph-description"
-              className="memory-graph__canvas memory-graph__canvas--bipartite"
-              height={graph.height}
-              style={{ height: graph.height }}
-              viewBox={`0 0 ${graph.width} ${graph.height}`}
-              width={graph.width}
-            >
-              <title id="memory-group-graph-title">分组与标签关系图</title>
-              <desc id="memory-group-graph-description">连线表示已经记录的分组与标签成员关系。</desc>
-              <text className="memory-graph__column-title" x={80} y={25}>分组</text>
-              <text className="memory-graph__column-title" x={760} y={25}>标签</text>
-              {graph.edges.map((edge) => {
-                const group = groupsById.get(edge.groupId);
-                const tag = tagsById.get(edge.tagId);
-                if (!group || !tag) return null;
-                const emphasized = activeKey === groupKey(group.id) || activeKey === tagKey(tag.id);
-                return (
-                  <line
-                    aria-label={`${group.label} 到 ${tag.label}，${formatRelation(edge.relation)}，来源 ${formatSource(edge.source)}`}
-                    className="memory-graph__edge memory-graph__edge--membership"
-                    data-emphasized={emphasized || undefined}
-                    data-muted={!emphasized || undefined}
-                    key={`${edge.groupId}-${edge.tagId}`}
-                    strokeWidth={Math.max(1, .8 + edge.weight)}
-                    x1={group.x + group.width / 2}
-                    x2={tag.x - tag.radius}
-                    y1={group.y}
-                    y2={tag.y}
-                  />
-                );
-              })}
-              {graph.groups.map((group) => {
-                const key = groupKey(group.id);
-                const selectedNode = key === activeKey;
-                const accessibleLabel = `分组 ${group.label}，${group.eventCount} 个成员，来源 ${formatSource(group.source)}`;
-                return (
-                  <g
-                    aria-label={accessibleLabel}
-                    aria-pressed={selectedNode}
-                    className="memory-graph__node"
-                    data-selected={selectedNode || undefined}
-                    key={key}
-                    onClick={() => onSelect(key)}
-                    onKeyDown={(event) => activateNode(event, () => onSelect(key))}
-                    role="button"
-                    tabIndex={0}
-                    transform={`translate(${group.x} ${group.y})`}
-                  >
-                    <title>{accessibleLabel}</title>
-                    <rect className="memory-graph__node-shape" fill={group.color} height={group.height} rx={6} stroke={group.color} width={group.width} x={-group.width / 2} y={-group.height / 2} />
-                    <text className="memory-graph__node-label" textAnchor="middle" y={-2}>{truncateGraphLabel(group.label, 19)}</text>
-                    <text className="memory-graph__node-count" textAnchor="middle" y={12}>{group.eventCount} 个成员</text>
-                  </g>
-                );
-              })}
-              {graph.tags.map((tag) => {
-                const key = tagKey(tag.id);
-                const selectedNode = key === activeKey;
-                const accessibleLabel = `标签 ${tag.label}，${tag.itemCount} 条记忆，来源 ${formatSource(tag.source)}`;
-                return (
-                  <g
-                    aria-label={accessibleLabel}
-                    aria-pressed={selectedNode}
-                    className="memory-graph__node"
-                    data-selected={selectedNode || undefined}
-                    key={key}
-                    onClick={() => onSelect(key)}
-                    onKeyDown={(event) => activateNode(event, () => onSelect(key))}
-                    role="button"
-                    tabIndex={0}
-                    transform={`translate(${tag.x} ${tag.y})`}
-                  >
-                    <title>{accessibleLabel}</title>
-                    <circle className="memory-graph__node-shape" fill={tag.color} r={tag.radius} stroke={tag.color} />
-                    <text className="memory-graph__bipartite-label" x={tag.radius + 8} y={-2}>{truncateGraphLabel(tag.label, 16)}</text>
-                    <text className="memory-graph__bipartite-count" x={tag.radius + 8} y={12}>{tag.itemCount} 记忆</text>
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
+          <MemoryRelationCanvas
+            edges={graph.edges.map((edge) => ({
+              id: `group-tag:${edge.groupId}:${edge.tagId}`,
+              source: groupKey(edge.groupId),
+              target: tagKey(edge.tagId),
+              label: formatRelation(edge.relation),
+              weight: edge.weight,
+              evidenceCount: edge.evidenceCount,
+            }))}
+            enabled={enabled}
+            nodes={[
+              ...graph.groups.map((node) => ({ id: groupKey(node.id), label: node.label, kind: 'group' as const, count: node.eventCount, connections: node.edgeCount })),
+              ...graph.tags.map((node) => ({ id: tagKey(node.id), label: node.label, kind: 'tag' as const, count: node.itemCount, connections: node.edgeCount })),
+            ]}
+            onSelect={onSelect}
+            selectedId={selectedKey}
+          />
         </div>
       </div>
       {selectedGroup || selectedTag ? (
@@ -513,12 +398,14 @@ function GroupTagNetwork({
 function GroupBookNetwork({
   availableBooks,
   availableGroups,
+  enabled,
   graph,
   onSelect,
   selectedKey,
 }: {
   availableBooks: readonly MemoryBookNode[];
   availableGroups: readonly MemoryGroupNode[];
+  enabled: boolean;
   graph: BookBipartiteGraphLayout;
   onSelect: (key: string) => void;
   selectedKey: string;
@@ -531,8 +418,6 @@ function GroupBookNetwork({
     ...availableBooks.map((book) => bookKey(book.id)),
   ]);
   const activeKey = validKeys.has(selectedKey) ? selectedKey : defaultKey;
-  const groupsById = new Map(graph.groups.map((group) => [group.id, group]));
-  const booksById = new Map(graph.books.map((book) => [book.id, book]));
   const selectedGroup = activeKey.startsWith('group:')
     ? availableGroups.find((group) => group.id === activeKey.slice(6)) ?? null
     : null;
@@ -555,89 +440,23 @@ function GroupBookNetwork({
         <div className="memory-explorer__visual">
           <GraphLegend view="books" />
           <GraphTruthNotice edgeCount={graph.edges.length} nodeCount={graph.groups.length + graph.books.length} />
-          <div className="memory-graph__viewport" role="group" aria-label="分组与主题书关系图">
-            <svg
-              aria-labelledby="memory-book-graph-title memory-book-graph-description"
-              className="memory-graph__canvas memory-graph__canvas--bipartite"
-              height={graph.height}
-              style={{ height: graph.height }}
-              viewBox={`0 0 ${graph.width} ${graph.height}`}
-              width={graph.width}
-            >
-              <title id="memory-book-graph-title">分组与主题书关系图</title>
-              <desc id="memory-book-graph-description">连线表示已经记录的分组与主题书成员关系。</desc>
-              <text className="memory-graph__column-title" x={80} y={25}>分组</text>
-              <text className="memory-graph__column-title" x={735} y={25}>主题书</text>
-              {graph.edges.map((edge) => {
-                const group = groupsById.get(edge.groupId);
-                const book = booksById.get(edge.bookId);
-                if (!group || !book) return null;
-                const emphasized = activeKey === groupKey(group.id) || activeKey === bookKey(book.id);
-                return (
-                  <line
-                    aria-label={`${group.label} 到 ${book.label}，${formatRelation(edge.relation)}，来源 ${formatSource(edge.source)}`}
-                    className="memory-graph__edge memory-graph__edge--membership"
-                    data-emphasized={emphasized || undefined}
-                    data-muted={!emphasized || undefined}
-                    key={`${edge.groupId}-${edge.bookId}`}
-                    strokeWidth={Math.max(1, .8 + edge.weight)}
-                    x1={group.x + group.width / 2}
-                    x2={book.x - book.width / 2}
-                    y1={group.y}
-                    y2={book.y}
-                  />
-                );
-              })}
-              {graph.groups.map((group) => {
-                const key = groupKey(group.id);
-                const selectedNode = key === activeKey;
-                const accessibleLabel = `分组 ${group.label}，${group.eventCount} 个成员，来源 ${formatSource(group.source)}`;
-                return (
-                  <g
-                    aria-label={accessibleLabel}
-                    aria-pressed={selectedNode}
-                    className="memory-graph__node"
-                    data-selected={selectedNode || undefined}
-                    key={key}
-                    onClick={() => onSelect(key)}
-                    onKeyDown={(event) => activateNode(event, () => onSelect(key))}
-                    role="button"
-                    tabIndex={0}
-                    transform={`translate(${group.x} ${group.y})`}
-                  >
-                    <title>{accessibleLabel}</title>
-                    <rect className="memory-graph__node-shape" fill={group.color} height={group.height} rx={6} stroke={group.color} width={group.width} x={-group.width / 2} y={-group.height / 2} />
-                    <text className="memory-graph__node-label" textAnchor="middle" y={-2}>{truncateGraphLabel(group.label, 19)}</text>
-                    <text className="memory-graph__node-count" textAnchor="middle" y={12}>{group.eventCount} 个成员</text>
-                  </g>
-                );
-              })}
-              {graph.books.map((book) => {
-                const key = bookKey(book.id);
-                const selectedNode = key === activeKey;
-                const accessibleLabel = `主题书 ${book.label}，${book.memberCount} 条记忆，${book.edgeCount} 个分组，来源 ${formatSource(book.source)}`;
-                return (
-                  <g
-                    aria-label={accessibleLabel}
-                    aria-pressed={selectedNode}
-                    className="memory-graph__node"
-                    data-selected={selectedNode || undefined}
-                    key={key}
-                    onClick={() => onSelect(key)}
-                    onKeyDown={(event) => activateNode(event, () => onSelect(key))}
-                    role="button"
-                    tabIndex={0}
-                    transform={`translate(${book.x} ${book.y})`}
-                  >
-                    <title>{accessibleLabel}</title>
-                    <rect className="memory-graph__node-shape" fill={book.color} height={book.height} rx={4} stroke={book.color} width={book.width} x={-book.width / 2} y={-book.height / 2} />
-                    <text className="memory-graph__node-label" textAnchor="middle" y={-2}>{truncateGraphLabel(book.label, 19)}</text>
-                    <text className="memory-graph__node-count" textAnchor="middle" y={12}>{book.memberCount} 条记忆</text>
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
+          <MemoryRelationCanvas
+            edges={graph.edges.map((edge) => ({
+              id: `group-book:${edge.groupId}:${edge.bookId}`,
+              source: groupKey(edge.groupId),
+              target: bookKey(edge.bookId),
+              label: formatRelation(edge.relation),
+              weight: edge.weight,
+              evidenceCount: edge.evidenceCount,
+            }))}
+            enabled={enabled}
+            nodes={[
+              ...graph.groups.map((node) => ({ id: groupKey(node.id), label: node.label, kind: 'group' as const, count: node.eventCount, connections: node.edgeCount })),
+              ...graph.books.map((node) => ({ id: bookKey(node.id), label: node.label, kind: 'book' as const, count: node.memberCount, connections: node.edgeCount })),
+            ]}
+            onSelect={onSelect}
+            selectedId={selectedKey}
+          />
         </div>
       </div>
       {selectedGroup || selectedBook ? (
@@ -677,10 +496,16 @@ function NodeScanList({
       <div className="memory-node-list__scroll">
         {nodes.map((node) => (
           <button
+            aria-label={`${node.label}，${node.itemCount} 条记忆，${node.edgeCount} 个连接，来源 ${formatSource(node.source)}`}
             aria-pressed={activeId === node.id}
             data-selected={activeId === node.id || undefined}
             key={node.id}
             onClick={() => onSelect(node.id)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              onSelect(node.id);
+            }}
             type="button"
           >
             <span><strong>{node.label}</strong><small>{node.description || '无说明'}</small></span>
@@ -710,7 +535,7 @@ function BipartiteScanList({
         {groups.map((group) => {
           const key = groupKey(group.id);
           return (
-            <button aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
+            <button aria-label={`分组 ${group.label}，${group.eventCount} 个成员，来源 ${formatSource(group.source)}`} aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
               <span><strong>{group.label}</strong><small>{group.note || '无说明'}</small></span>
               <span><b>{group.eventCount}</b><small>{group.tagIds.length} 标签 · {formatSource(group.source)}</small></span>
             </button>
@@ -722,7 +547,7 @@ function BipartiteScanList({
         {tags.map((tag) => {
           const key = tagKey(tag.id);
           return (
-            <button aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
+            <button aria-label={`标签 ${tag.label}，${tag.itemCount} 条记忆，来源 ${formatSource(tag.source)}`} aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
               <span><strong>{tag.label}</strong><small>{tag.description || '无说明'}</small></span>
               <span><b>{tag.itemCount}</b><small>{tag.edgeCount} 关系 · {formatSource(tag.source)}</small></span>
             </button>
@@ -751,7 +576,7 @@ function GroupBookScanList({
         {groups.map((group) => {
           const key = groupKey(group.id);
           return (
-            <button aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
+            <button aria-label={`分组 ${group.label}，${group.eventCount} 个成员，来源 ${formatSource(group.source)}`} aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
               <span><strong>{group.label}</strong><small>{group.note || '无说明'}</small></span>
               <span><b>{group.eventCount}</b><small>{group.bookIds.length} 主题书 · {formatSource(group.source)}</small></span>
             </button>
@@ -763,7 +588,7 @@ function GroupBookScanList({
         {books.map((book) => {
           const key = bookKey(book.id);
           return (
-            <button aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
+            <button aria-label={`主题书 ${book.label}，${book.memberCount} 条记忆，${book.edgeCount} 个分组，来源 ${formatSource(book.source)}`} aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
               <span><strong>{book.label}</strong><small>{book.description || '无说明'}</small></span>
               <span><b>{book.memberCount}</b><small>{book.edgeCount} 分组 · {formatSource(book.source)}</small></span>
             </button>
@@ -778,7 +603,7 @@ function GraphTruthNotice({ edgeCount, nodeCount }: { edgeCount: number; nodeCou
   return (
     <p className="memory-graph__truth" data-empty={edgeCount === 0 || undefined}>
       {edgeCount > 0
-        ? `当前显示 ${nodeCount} 项记忆与 ${edgeCount} 条已记录关系。`
+        ? `当前显示 ${nodeCount} 项记忆与 ${edgeCount} 条有证据关系。`
         : `${nodeCount} 项记忆目前没有已记录关系。`}
     </p>
   );
@@ -790,7 +615,7 @@ function GraphLegend({ view }: { view: RelationView }) {
       {view === 'tags' ? <span><i data-shape="tag" />标签 · 大小表示记忆量</span> : <span><i data-shape="group" />分组</span>}
       {view === 'groups' ? <span><i data-shape="tag" />标签</span> : null}
       {view === 'books' ? <span><i data-shape="book" />主题书</span> : null}
-      <span><i data-shape="edge" />当前节点的已记录关系</span>
+      <span><i data-shape="edge" />显式关系 · 同一 Atom 共现</span>
     </div>
   );
 }
@@ -1082,12 +907,6 @@ function safePublicStringList(value: unknown): string[] {
     const text = item.trim().slice(0, 64);
     return text ? [text] : [];
   }).slice(0, 64);
-}
-
-function activateNode(event: KeyboardEvent<SVGGElement>, select: () => void) {
-  if (event.key !== 'Enter' && event.key !== ' ') return;
-  event.preventDefault();
-  select();
 }
 
 function groupKey(id: string): string {

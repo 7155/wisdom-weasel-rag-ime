@@ -71,8 +71,17 @@ final class RagImeAssistantPanelController {
     pendingUpdate?.cancel()
     ttlDismissWorkItem?.cancel()
     generatingTimer?.invalidate()
-    contextPopover?.close()
-    panel.orderOut(nil)
+    let popover = contextPopover
+    let window = panel
+    let closeUI = {
+      popover?.close()
+      window.orderOut(nil)
+    }
+    if Thread.isMainThread {
+      closeUI()
+    } else {
+      DispatchQueue.main.async(execute: closeUI)
+    }
     if Self.activeOwner === self { Self.activeOwner = nil }
   }
 

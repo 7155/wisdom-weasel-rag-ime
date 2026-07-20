@@ -6843,6 +6843,8 @@ export const contractSchemas = {
       "segmentationMode": {
         "type": "string",
         "enum": [
+          "semantic_task_v4",
+          "semantic_task_v3",
           "semantic_task_v2",
           "legacy_app_interval_v1"
         ]
@@ -11780,6 +11782,7 @@ export const contractSchemas = {
             "enum": [
               "not_configured",
               "no_conversation_evidence",
+              "no_eligible_evidence",
               "unsupported",
               "completed",
               "failed"

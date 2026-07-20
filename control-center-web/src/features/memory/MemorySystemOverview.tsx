@@ -4,8 +4,10 @@ import {
   BookOpen,
   CalendarClock,
   DatabaseZap,
+  Eye,
   Network,
   ShieldCheck,
+  Sparkles,
   Tags,
   UserRoundCog,
 } from 'lucide-react';
@@ -15,6 +17,7 @@ import { asRecord, numberValue, stringValue } from '@/features/overview/manageme
 interface MemorySystemOverviewProps {
   onOpenLayer: (layer: 'evidence' | 'atoms' | 'books' | 'roleBooks') => void;
   onOpenOrganize: () => void;
+  onOpenRelations: () => void;
   onOpenTimeline: () => void;
   summary: Record<string, unknown>;
 }
@@ -22,6 +25,7 @@ interface MemorySystemOverviewProps {
 export function MemorySystemOverview({
   onOpenLayer,
   onOpenOrganize,
+  onOpenRelations,
   onOpenTimeline,
   summary,
 }: MemorySystemOverviewProps) {
@@ -42,11 +46,18 @@ export function MemorySystemOverview({
     <section className="memory-system-overview" aria-labelledby="memory-system-overview-title">
       <div className="memory-system-overview__headline">
         <div>
-          <span>Personal Context Core</span>
-          <h2 id="memory-system-overview-title">个人上下文</h2>
-          <p>证据、当前事实、主题关系和会话角色保持独立生命周期。</p>
+          <span>记忆工作台</span>
+          <h2 id="memory-system-overview-title">查记忆、看关系、再整理</h2>
+          <p>默认只展示可用事实；来源、历史版本和治理细节按需展开。</p>
         </div>
-        <div className="memory-system-overview__signals" aria-label="记忆系统状态">
+        <div className="memory-system-overview__primary-actions" aria-label="记忆主要操作">
+          <Button leadingIcon={<Eye size={16} />} onClick={() => onOpenLayer('atoms')} size="small">查看记忆</Button>
+          <Button leadingIcon={<Network size={16} />} onClick={onOpenRelations} size="small" variant="quiet">打开关系图</Button>
+          <Button leadingIcon={<Sparkles size={16} />} onClick={onOpenOrganize} size="small" variant="quiet">AI 整理</Button>
+        </div>
+      </div>
+
+      <div className="memory-system-overview__signals" aria-label="记忆系统状态">
           <StatusSignal
             detail={projectionSignal.detail}
             label="召回投影"
@@ -62,7 +73,6 @@ export function MemorySystemOverview({
             label="最近时间线"
             tone={stringValue(latestTimeline.status) === 'draft' ? 'warning' : 'info'}
           />
-        </div>
       </div>
 
       <div className="memory-system-overview__pipeline" aria-label="个人上下文数据层">
@@ -107,10 +117,8 @@ export function MemorySystemOverview({
           <span><ShieldCheck size={15} />{numberValue(summary.forgottenSourceCount)} 条已隔离</span>
         </div>
         <div className="memory-system-overview__actions">
-          <Button onClick={() => onOpenLayer('atoms')} size="small" variant="quiet">查看事实</Button>
-          <Button onClick={onOpenOrganize} size="small" variant="quiet">处理草案</Button>
           <Button leadingIcon={<CalendarClock size={15} />} onClick={onOpenTimeline} size="small">
-            打开时间线
+            查看时间线
           </Button>
         </div>
       </div>

@@ -22,7 +22,8 @@ export interface DailyActivityTimelineV1 {
   approvedAtMs: number;
   createdAtMs: number;
   updatedAtMs: number;
-  segmentationMode?: 'semantic_task_v2' | 'legacy_app_interval_v1';
+  segmentationMode?:
+    'semantic_task_v4' | 'semantic_task_v3' | 'semantic_task_v2' | 'legacy_app_interval_v1';
   source?: Source;
   ref?: Ref;
   policy: {

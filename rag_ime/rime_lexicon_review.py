@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -19,6 +20,8 @@ from .text_utils import compact_whitespace
 SCHEMA_VERSION = "rag-ime.rime-lexicon-review.v1"
 CONFIRM_TEXT = "APPLY_REVIEWED_RIME_LEXICON"
 _MANIFEST_NAME = "manifest.json"
+_MAX_REVIEW_BATCH = 80
+_SAFE_TEXT_RE = re.compile(r"^[\u4e00-\u9fffA-Za-z0-9.+#-]+$")
 
 
 def review_rime_lexicon(
@@ -35,11 +38,18 @@ def review_rime_lexicon(
         applied_keys = {_entry_key(entry) for entry in _read_user_dictionary(user_dict)}
     usage_entries = [{**entry, "reviewSource": "usage", "reviewReason": "来自真实选词反馈"} for entry in preview["entries"]]
     dsv4_entries = _dsv4_phrase_entries(db_path, project=project, limit=limit)
-    entries = [
-        entry
-        for entry in _merge_review_entries(usage_entries, dsv4_entries)
-        if _entry_key(entry) not in applied_keys
-    ][: max(1, int(limit))]
+    merged_entries = _merge_review_entries(usage_entries, dsv4_entries)
+    reviewed_entries: list[dict[str, object]] = []
+    filtered_entry_count = 0
+    for entry in merged_entries:
+        if _entry_key(entry) in applied_keys:
+            continue
+        disposition = _common_word_disposition(entry)
+        if not disposition["allowed"]:
+            filtered_entry_count += 1
+            continue
+        reviewed_entries.append({**entry, **disposition})
+    entries = reviewed_entries[: min(_MAX_REVIEW_BATCH, max(1, int(limit)))]
     review_token = _review_token(project=project, entries=entries)
     return {
         "schemaVersion": SCHEMA_VERSION,
@@ -50,7 +60,7 @@ def review_rime_lexicon(
             {
                 **entry,
                 "reviewKey": _entry_key(entry),
-                "selected": True,
+                "selected": bool(entry.get("defaultSelected")),
             }
             for entry in entries
         ],
@@ -58,6 +68,8 @@ def review_rime_lexicon(
         "confirmText": CONFIRM_TEXT,
         "applySupported": True,
         "reviewRequired": True,
+        "filteredEntryCount": filtered_entry_count + max(0, len(reviewed_entries) - len(entries)),
+        "selectionPolicy": "只默认选择有至少 3 次真实反馈的常用词；模型整理词必须人工勾选",
     }
 
 
@@ -308,6 +320,35 @@ def _merge_review_entries(
         )
     )
     return result
+
+
+def _common_word_disposition(entry: dict[str, object]) -> dict[str, object]:
+    text = compact_whitespace(str(entry.get("text") or ""))
+    pinyin = _normalize_pinyin(str(entry.get("pinyin") or ""))
+    positive_count = int(entry.get("positiveCount") or 0)
+    source = str(entry.get("reviewSource") or "")
+    reasons = [str(value) for value in entry.get("reasons", []) if isinstance(value, str)]
+    explicit_usage = source == "usage" and any(
+        reason.startswith(("boost:", "correction_pair:")) for reason in reasons
+    )
+    cjk_count = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+    if not text or not pinyin:
+        return {"allowed": False, "filterReason": "缺少词条或拼音"}
+    if cjk_count < 2:
+        return {"allowed": False, "filterReason": "单字或非中文词不进入自动词库"}
+    if len(text) > 16 or cjk_count > 12:
+        return {"allowed": False, "filterReason": "词条过长"}
+    if not _SAFE_TEXT_RE.fullmatch(text):
+        return {"allowed": False, "filterReason": "包含不可审计字符"}
+    if positive_count < 2 and not explicit_usage:
+        return {"allowed": False, "filterReason": "缺少重复使用证据"}
+    is_model_candidate = "dsv4" in source
+    return {
+        "allowed": True,
+        "defaultSelected": not is_model_candidate and (positive_count >= 3 or explicit_usage),
+        "riskLabel": "模型建议，需人工确认" if is_model_candidate else "真实选词反馈",
+        "filterReason": "",
+    }
 
 
 def _dsv4_phrase_entries(

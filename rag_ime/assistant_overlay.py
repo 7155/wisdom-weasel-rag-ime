@@ -193,7 +193,7 @@ def _status_text(
     if pending:
         return "AI 正在想..."
     if actual_candidate_count:
-        return "AI 建议"
+        return "智能建议"
     if ui_mode.startswith("post_commit"):
         return "AI 待命"
     return ""

@@ -45,7 +45,7 @@
     "updatedAtMs": {"type": "integer", "minimum": 0},
     "segmentationMode": {
       "type": "string",
-      "enum": ["semantic_task_v2", "legacy_app_interval_v1"]
+      "enum": ["semantic_task_v4", "semantic_task_v3", "semantic_task_v2", "legacy_app_interval_v1"]
     },
     "source": {"$ref": "#/$defs/source"},
     "ref": {"$ref": "#/$defs/ref"},

@@ -173,6 +173,7 @@ export function MemoryFeature() {
             else openCatalogLayer(next);
           }}
           onOpenOrganize={() => setView('organize')}
+          onOpenRelations={() => openView('relations')}
           onOpenTimeline={() => openView('timeline')}
           summary={summaryPayload}
         />
@@ -183,11 +184,11 @@ export function MemoryFeature() {
           value={view}
         >
           <TabsList aria-label="记忆视图">
-            <TabsTrigger value="catalog">事实链</TabsTrigger>
+            <TabsTrigger value="catalog">记忆</TabsTrigger>
             <TabsTrigger value="roleBooks">角色书</TabsTrigger>
             <TabsTrigger value="timeline">时间线</TabsTrigger>
-            <TabsTrigger value="relations">关系索引</TabsTrigger>
-            <TabsTrigger value="organize">治理</TabsTrigger>
+            <TabsTrigger value="relations">关系图</TabsTrigger>
+            <TabsTrigger value="organize">AI 整理</TabsTrigger>
           </TabsList>
           <TabsContent value="catalog">
             <ManagementSection

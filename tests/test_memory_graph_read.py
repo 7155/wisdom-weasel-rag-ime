@@ -190,6 +190,10 @@ class MemoryGraphReadTests(unittest.TestCase):
         self.assertNotIn(self.ids["otherTag"], entity_ids)
         self.assertTrue(all(node["kind"] == "tag" for node in first["nodes"]))
         self.assertTrue(all(edge["kind"] == "tagRelation" for edge in first["edges"]))
+        cooccurrence = [edge for edge in first["edges"] if edge["relation"] == "co_occurs"]
+        self.assertEqual(len(cooccurrence), 1)
+        self.assertEqual(cooccurrence[0]["source"], "atom_cooccurrence")
+        self.assertEqual(cooccurrence[0]["evidenceCount"], 1)
         self.assertNotIn("rawTextVisible", first)
         self.assertNotIn("绝不能出现在图里的敏感正文", json.dumps(first, ensure_ascii=False))
 

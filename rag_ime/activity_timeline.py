@@ -28,6 +28,7 @@ DEFAULT_SEGMENT_GAP_MS = 45 * 60 * 1_000
 _SEMANTIC_TASK_MAX_GAP_MS = 6 * 60 * 60 * 1_000
 _MAX_SEMANTIC_TASKS_PER_DAY = 3
 _FRAGMENT_BURST_GAP_MS = 20 * 1_000
+_TIMELINE_SEGMENTATION_MODE = "semantic_task_v4"
 
 _INTERNAL_EVENT_SOURCES = frozenset(
     {
@@ -169,7 +170,7 @@ class DailyActivityTimelineStore:
                     "date": day.isoformat(),
                     "timeline": {},
                 }
-            event_hash = _event_hash(events)
+            event_hash = _timeline_event_hash(events)
             existing = conn.execute(
                 """
                 SELECT * FROM daily_activity_timelines
@@ -190,7 +191,7 @@ class DailyActivityTimelineStore:
                 existing is not None
                 and (
                     existing_status in {"approved", "rejected", "superseded"}
-                    or existing_segmentation_mode == "semantic_task_v2"
+                    or existing_segmentation_mode == _TIMELINE_SEGMENTATION_MODE
                 )
             ):
                 timeline = _timeline_payload(existing)
@@ -226,7 +227,7 @@ class DailyActivityTimelineStore:
                 "derivedFrom": "input_events",
                 "derivedArtifactType": "daily_activity_timeline",
                 "segmentGapMs": self.segment_gap_ms,
-                "segmentationMode": "semantic_task_v2",
+                "segmentationMode": _TIMELINE_SEGMENTATION_MODE,
                 "longTermFact": False,
                 "automaticPromotion": True,
                 "explicitApprovalRequired": False,
@@ -409,7 +410,7 @@ class DailyActivityTimelineStore:
 
             day = _validated_date(str(row["timeline_date"]))
             current_events = self._events(conn, day)
-            if not current_events or _event_hash(current_events) != expected_hash:
+            if not current_events or _timeline_event_hash(current_events) != expected_hash:
                 raise StaleActivityTimelineError(
                     "input events changed after review; rebuild the timeline draft"
                 )
@@ -716,12 +717,22 @@ def _segments(
         if not snippets:
             snippets = ["[无可显示文本]"]
         title = _task_title(group, snippets=snippets)
-        detail_snippets = [value for value in snippets if value != title]
         summary = title
-        if detail_snippets:
-            summary += f"：{'；'.join(detail_snippets[:4])}"
-        if len(group) > 4:
-            summary += f"；另有 {len(group) - 4} 条输入"
+        if len(group) >= 8:
+            app_label = f"跨 {len(apps)} 个应用" if len(apps) > 1 else f"在 {apps[0]}"
+            summary += f"：{app_label}持续推进，归并 {len(group)} 条可追溯输入"
+        elif len(group) == 1:
+            summary = title
+        else:
+            detail_snippets = [
+                value
+                for value in snippets
+                if value != title and not _is_low_information_text(value)
+            ]
+            if detail_snippets:
+                summary += f"：{'；'.join(detail_snippets[:3])}"
+            if len(group) > 3:
+                summary += f"；另有 {len(group) - 3} 条输入"
         segment_id = (
             "activity-segment:"
             f"{_stable_digest(str(position), app, source_hash)[:24]}"
@@ -794,6 +805,10 @@ def _event_hash(events: Sequence[_ActivityEvent]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _timeline_event_hash(events: Sequence[_ActivityEvent]) -> str:
+    return _stable_digest(_event_hash(events), _TIMELINE_SEGMENTATION_MODE)
+
+
 def _timeline_payload(row: sqlite3.Row) -> dict[str, object]:
     timeline_id = str(row["timeline_id"])
     event_hash = str(row["source_event_hash"])
@@ -801,7 +816,11 @@ def _timeline_payload(row: sqlite3.Row) -> dict[str, object]:
     segmentation_mode = compact_whitespace(
         str(metadata.get("segmentationMode") or "")
     )
-    if segmentation_mode != "semantic_task_v2":
+    if segmentation_mode not in {
+        _TIMELINE_SEGMENTATION_MODE,
+        "semantic_task_v3",
+        "semantic_task_v2",
+    }:
         segmentation_mode = "legacy_app_interval_v1"
     segments = _timeline_segments_payload(
         row["segments_json"],
@@ -993,7 +1012,59 @@ def _semantic_task_groups(
             if changed:
                 break
     groups = sorted(groups, key=lambda group: (group[0].created_at_ms, group[0].event_id))
+    groups = _absorb_low_information_groups(groups)
     return _coarsen_task_groups(groups, maximum=_MAX_SEMANTIC_TASKS_PER_DAY)
+
+
+def _absorb_low_information_groups(
+    groups: Sequence[Sequence[_ActivityEvent]],
+) -> list[list[_ActivityEvent]]:
+    """Keep one-off fragments as evidence without presenting them as tasks."""
+
+    result = [list(group) for group in groups if group]
+    index = 0
+    while len(result) > 1 and index < len(result):
+        group = result[index]
+        if not _is_low_information_group(group):
+            index += 1
+            continue
+        if index == 0:
+            target = 1
+        elif index == len(result) - 1:
+            target = index - 1
+        else:
+            previous_gap = max(
+                0,
+                group[0].created_at_ms - result[index - 1][-1].created_at_ms,
+            )
+            next_gap = max(
+                0,
+                result[index + 1][0].created_at_ms - group[-1].created_at_ms,
+            )
+            target = index - 1 if previous_gap <= next_gap else index + 1
+        result[target] = sorted(
+            [*result[target], *group],
+            key=lambda value: (value.created_at_ms, value.event_id),
+        )
+        del result[index]
+        if target < index:
+            index = max(0, index - 1)
+    return result
+
+
+def _is_low_information_group(group: Sequence[_ActivityEvent]) -> bool:
+    if len(group) != 1:
+        return False
+    return _is_low_information_text(group[0].text)
+
+
+def _is_low_information_text(value: str) -> bool:
+    text = compact_whitespace(value)
+    if not text or contains_sensitive_content(text):
+        return True
+    latin = re.sub(r"[^a-z0-9]+", "", text.casefold())
+    cjk_count = len(re.findall(r"[\u3400-\u9fff]", text))
+    return cjk_count < 2 and len(latin) < 4
 
 
 def _event_group_affinity(
@@ -1277,6 +1348,9 @@ def _task_title(
 ) -> str:
     combined = compact_whitespace(" ".join(snippets)).casefold()
     terms = {term for event in group for term in _event_semantic_terms(event)}
+    coarse_title = _coarse_task_title(group)
+    if coarse_title:
+        return coarse_title
     if {
         "concept:codex",
         "concept:account",
@@ -1287,9 +1361,6 @@ def _task_title(
         return "CAS 切换 Codex 账号"
     if sum("Git 合并" in _event_task_facets(event) for event in group) >= 2:
         return "合并分支并记录改动"
-    coarse_title = _coarse_task_title(group)
-    if coarse_title:
-        return coarse_title
     visible = [value for value in snippets if value != "[敏感内容已脱敏]"]
     if not visible:
         return "敏感活动（内容已脱敏）"
@@ -1303,7 +1374,7 @@ def _task_title(
 def _coarse_task_title(group: Sequence[_ActivityEvent]) -> str:
     """Name a large work block by repeated facets, not one longest utterance."""
 
-    if len(group) < 8:
+    if len(group) < 4:
         return ""
     facet_counts: dict[str, int] = {}
     facet_order = {

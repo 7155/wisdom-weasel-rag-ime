@@ -281,6 +281,7 @@ describe('document knowledge library', () => {
     expect(request(transport, 'knowledgeBases.graph.get')?.query).toMatchObject({ limit: 80, depth: 2, excludeChunks: true });
     expect(screen.getByLabelText('交互式知识图谱画布')).toHaveClass('knowledge-graph__canvas');
     expect(screen.getByLabelText('交互式知识图谱画布')).toHaveAttribute('data-renderer', 'g6');
+    expect(screen.getByLabelText('交互式知识图谱画布')).toHaveAttribute('data-layout', 'force-network');
     expect(screen.getByLabelText('交互式知识图谱画布')).toHaveAttribute('data-edge-mode', 'semantic');
     await user.click(screen.getByRole('switch', { name: '显示结构关系' }));
     expect(screen.getByLabelText('交互式知识图谱画布')).toHaveAttribute('data-edge-mode', 'structure');

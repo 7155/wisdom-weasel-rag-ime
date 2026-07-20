@@ -49,6 +49,72 @@
   gap: 22px;
 }
 
+.activity-day-map {
+  display: grid;
+  min-width: 0;
+  gap: 7px;
+  padding: 12px 14px 14px;
+  border-block: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-surface-subtle) 66%, transparent);
+}
+
+.activity-day-map > header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.activity-day-map > header > div { display: inline-flex; align-items: center; gap: 7px; }
+.activity-day-map > header svg { color: var(--color-accent); }
+.activity-day-map > header strong { font-size: 13px; }
+.activity-day-map > header > span { color: var(--color-text-tertiary); font-size: 11px; }
+
+.activity-day-map__axis {
+  display: flex;
+  justify-content: space-between;
+  padding-left: 1px;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.activity-day-map__rows {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  background-image: linear-gradient(to right, var(--color-border) 1px, transparent 1px);
+  background-size: 25% 100%;
+}
+
+.activity-day-map__row { position: relative; min-width: 0; height: 25px; }
+
+.activity-day-map__row > button {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  min-width: 8px;
+  overflow: hidden;
+  padding: 0 8px;
+  border: 0;
+  border-left: 3px solid var(--period-color, var(--color-accent));
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--period-color, var(--color-accent)) 13%, var(--color-surface));
+  color: var(--color-text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+
+.activity-day-map__row > button[data-period='morning'] { --period-color: var(--color-warning); }
+.activity-day-map__row > button[data-period='afternoon'] { --period-color: var(--color-info); }
+.activity-day-map__row > button[data-period='evening'] { --period-color: var(--color-accent); }
+.activity-day-map__row > button[data-period='day'] { --period-color: var(--color-success); }
+.activity-day-map__row > button:hover { background: color-mix(in srgb, var(--period-color) 21%, var(--color-surface)); box-shadow: 0 3px 10px rgb(0 0 0 / 9%); transform: translateY(-1px); }
+.activity-day-map__row > button:focus-visible { outline: 2px solid var(--period-color); outline-offset: 2px; }
+.activity-day-map__row > button span { display: block; overflow: hidden; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+
 .activity-timeline__period {
   display: grid;
   min-width: 0;
@@ -117,33 +183,62 @@
 }
 
 .activity-timeline__task-list {
+  position: relative;
   display: grid;
   min-width: 0;
-  gap: 8px;
+  padding-left: 22px;
+  gap: 0;
+}
+
+.activity-timeline__task-list::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 7px;
+  width: 1px;
+  background: var(--color-border-strong);
+  content: '';
 }
 
 .activity-timeline__task {
+  position: relative;
   display: grid;
   width: 100%;
   min-width: 0;
-  min-height: 124px;
+  min-height: 112px;
   align-items: stretch;
   padding: 0;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
   background: var(--color-surface);
   color: var(--color-text-primary);
   cursor: pointer;
   font: inherit;
   grid-template-columns: 118px minmax(0, 1fr) 156px 34px;
   text-align: left;
-  transition: border-color 140ms ease, background-color 140ms ease, box-shadow 140ms ease;
+  transition: background-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.activity-timeline__task::before {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: -21px;
+  width: 12px;
+  height: 12px;
+  border: 3px solid var(--color-surface);
+  border-radius: 50%;
+  background: var(--timeline-period-color);
+  box-shadow: 0 0 0 1px var(--timeline-period-color);
+  content: '';
+  transform: translateY(-50%);
 }
 
 .activity-timeline__task:hover {
-  border-color: var(--color-border-strong);
   background: var(--color-surface-subtle);
-  box-shadow: 0 5px 16px rgb(0 0 0 / 5%);
+  box-shadow: inset 3px 0 0 var(--timeline-period-color);
+  transform: translateX(2px);
 }
 
 .activity-timeline__task:focus-visible {
@@ -157,7 +252,7 @@
   align-content: center;
   padding: 18px 14px;
   border-right: 1px solid var(--color-border);
-  background: var(--color-surface-subtle);
+  background: transparent;
   gap: 4px;
 }
 
@@ -271,6 +366,11 @@
   align-self: center;
   color: var(--color-text-tertiary);
   justify-self: center;
+}
+
+.activity-timeline__task:hover .activity-timeline__task-open {
+  color: var(--timeline-period-color);
+  transform: translateX(2px);
 }
 
 .activity-timeline__semantic-empty {
@@ -570,4 +670,9 @@
   .activity-timeline__task-open { grid-column: 2; grid-row: 1 / span 3; }
   .activity-timeline__event > summary { grid-template-columns: 54px minmax(0, 1fr) 18px; }
   .activity-timeline__event-body { padding-left: 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-day-map__row > button,
+  .activity-timeline__task { transition: none; }
 }

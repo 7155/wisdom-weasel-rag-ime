@@ -468,7 +468,7 @@ class DailyActivityTimelineTests(unittest.TestCase):
         self.assertNotIn("memory_id 内容", serialized)
         self.assertIn("仍可进入时间线的可见内容", serialized)
 
-    def test_legacy_draft_is_rebuilt_with_semantic_task_v2(self) -> None:
+    def test_legacy_draft_is_rebuilt_with_current_semantic_tasks(self) -> None:
         self._record(
             8,
             20,
@@ -527,8 +527,55 @@ class DailyActivityTimelineTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(
             json.loads(str(row[0]))["segmentationMode"],
-            "semantic_task_v2",
+            "semantic_task_v4",
         )
+
+    def test_one_off_fragment_is_evidence_not_a_standalone_task(self) -> None:
+        for minute, text in (
+            (0, "优化记忆检索与时间线展示"),
+            (5, "修复 Tag 关系图首次打开不完整"),
+            (10, "验证记忆整理证据链"),
+            (15, "完成时间线前端交互"),
+            (20, "检查 RAG 召回与主题书"),
+            (25, "测试输入法上下文注入"),
+            (30, "补齐 Agent 记忆工具"),
+            (35, "整理今日记忆系统进展"),
+        ):
+            self._record(
+                9,
+                minute,
+                app="com.openai.codex",
+                source="squirrel_commit",
+                text=text,
+            )
+        self._record(
+            10,
+            0,
+            app="com.microsoft.edgemac",
+            source="squirrel_commit",
+            text="ku",
+        )
+        self._record(
+            10,
+            20,
+            app="com.openai.codex",
+            source="squirrel_commit",
+            text="LongMemEval 评测与简历指标整理",
+        )
+
+        timeline = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        ).build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(10, 30),
+        )["timeline"]
+
+        self.assertEqual(timeline["segmentationMode"], "semantic_task_v4")
+        self.assertNotIn("ku", [item["title"] for item in timeline["segments"]])
+        self.assertLessEqual(timeline["segmentCount"], 3)
+        self.assertEqual(timeline["eventCount"], 10)
 
     def test_runtime_context_group_never_forces_unrelated_tasks_together(self) -> None:
         shared_scope = "app:com.openai.codex:window:main"

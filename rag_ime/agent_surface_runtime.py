@@ -324,14 +324,9 @@ class AgentSurfaceRuntime:
         provider, model_id = (part.strip() for part in model_reference.split("/", 1))
         if not provider or not model_id:
             raise ValueError(f"activeRag.{model_key} must be a Pi provider/model reference")
-        thinking_level = str(active_rag.get(thinking_key) or "high").strip().lower()
-        # Existing installs may still persist the former `off` default. Keep
-        # the lightning invariant during that transition; the settings reader
-        # will also replace this invalid legacy leaf with the new default.
-        if thinking_level == "off":
-            thinking_level = "high"
-        if thinking_level not in {"minimal", "low", "medium", "high", "xhigh", "max"}:
-            raise ValueError(f"activeRag.{thinking_key} must enable a supported thinking level")
+        thinking_level = str(active_rag.get(thinking_key) or "off").strip().lower()
+        if thinking_level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError(f"activeRag.{thinking_key} must use a supported thinking level")
         return provider, model_id, thinking_level
 
     def _internal_session(

@@ -71,12 +71,12 @@ class SettingsStoreTests(unittest.TestCase):
         )
 
         self.assertEqual(result.settings["activeRag"]["quickThinkingLevel"], "high")
-        with self.assertRaisesRegex(ValueError, "must be one of: minimal, low, medium, high, xhigh, max"):
-            self.store.update_settings({"activeRag.quickThinkingLevel": "off"})
+        off_result = self.store.update_settings({"activeRag.quickThinkingLevel": "off"})
+        self.assertEqual(off_result.settings["activeRag"]["quickThinkingLevel"], "off")
         with self.assertRaisesRegex(ValueError, "provider/model reference"):
             self.store.update_settings({"activeRag.quickModel": "deepseek-v4-flash"})
 
-    def test_legacy_lightning_off_setting_falls_back_to_thinking_default(self) -> None:
+    def test_lightning_off_setting_is_preserved(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
@@ -99,7 +99,7 @@ class SettingsStoreTests(unittest.TestCase):
         settings = self.store.get_settings(include_sensitive=True)
 
         self.assertEqual(settings["activeRag"]["quickModel"], "deepseek/deepseek-v4-flash")
-        self.assertEqual(settings["activeRag"]["quickThinkingLevel"], "high")
+        self.assertEqual(settings["activeRag"]["quickThinkingLevel"], "off")
 
     def test_dotted_leaf_update_preserves_persisted_sibling_overrides(self) -> None:
         self.store.update_settings(

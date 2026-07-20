@@ -119,7 +119,7 @@ describe('MemoryFeature relations', () => {
 
     expect(await screen.findByRole('heading', { name: '记忆', level: 1 })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '记忆整理审核' })).not.toBeInTheDocument();
-    await user.click(await screen.findByRole('tab', { name: '治理' }));
+    await user.click(await screen.findByRole('tab', { name: 'AI 整理' }));
     expect(await screen.findByRole('heading', { name: '记忆整理审核', level: 2 })).toBeInTheDocument();
     expect(await screen.findByRole('list', { name: '记忆整理建议' })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('输入一个明确的知识任务')).not.toBeInTheDocument();
@@ -151,7 +151,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('tab', { name: '治理' }));
+    await user.click(await screen.findByRole('tab', { name: 'AI 整理' }));
     const checkbox = await screen.findByRole('checkbox', { name: '选择 合并输入法同义标签' });
     expect(checkbox).not.toBeChecked();
     await user.click(checkbox);
@@ -188,7 +188,7 @@ describe('MemoryFeature relations', () => {
     expect(within(layerSelector).queryByRole('radio', { name: '短语' })).not.toBeInTheDocument();
     expect(within(layerSelector).queryByRole('radio', { name: '负反馈' })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('tab', { name: '关系索引' }));
+    await user.click(screen.getByRole('tab', { name: '关系图' }));
     expect(await screen.findByRole('heading', { name: '记忆关系', level: 2 })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /Agent Runtime，11 条记忆/ })).toBeInTheDocument();
   });
@@ -390,9 +390,9 @@ describe('MemoryFeature relations', () => {
   });
 
   it.each([
-    { layer: 'atoms', id: 'atom:deep-link', kind: 'atom', tab: '事实链' },
-    { layer: 'books', id: 'book:deep-link', kind: 'book', tab: '事实链' },
-    { layer: 'evidence', id: 'evidence:deep-link', kind: 'evidence', tab: '事实链' },
+    { layer: 'atoms', id: 'atom:deep-link', kind: 'atom', tab: '记忆' },
+    { layer: 'books', id: 'book:deep-link', kind: 'book', tab: '记忆' },
+    { layer: 'evidence', id: 'evidence:deep-link', kind: 'evidence', tab: '记忆' },
     { layer: 'timelines', id: 'timeline:2026-07-18', kind: 'timeline', tab: '时间线' },
     { layer: 'role-books', id: 'revision:deep-link', kind: 'role_book_revision', tab: '角色书' },
   ])('opens the $layer deep link and selects its stable reference', async ({ id, kind, layer, tab }) => {
@@ -621,9 +621,10 @@ describe('MemoryFeature relations', () => {
     renderMemory(transport);
 
     expect(await screen.findByRole('heading', { name: '记忆', level: 1 })).toBeInTheDocument();
-    await user.click(await screen.findByRole('tab', { name: '关系索引' }));
+    await user.click(await screen.findByRole('tab', { name: '关系图' }));
     expect(await screen.findByText(/共 2 项 · 1 条关系/)).toBeInTheDocument();
     expect(screen.getByText('还有更多关系未显示')).toBeInTheDocument();
+    expect(document.querySelector('.memory-relation-canvas')).toHaveAttribute('data-layout', 'force-network');
 
     await waitFor(() => {
       const graphRequests = transport.requests.filter((call) =>
@@ -723,7 +724,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('tab', { name: '关系索引' }));
+    await user.click(await screen.findByRole('tab', { name: '关系图' }));
     expect(await screen.findByRole('button', { name: /首批标签，1 条记忆/ })).toBeInTheDocument();
     const search = screen.getByRole('textbox', { name: '筛选分组或标签' });
     await user.type(search, '远端标签');
@@ -766,7 +767,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('tab', { name: '关系索引' }));
+    await user.click(await screen.findByRole('tab', { name: '关系图' }));
     expect(await screen.findByText('读取失败')).toBeInTheDocument();
     expect(screen.getByText('当前关系读取失败，请稍后重试。')).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(internal);
@@ -797,7 +798,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('tab', { name: '关系索引' }));
+    await user.click(await screen.findByRole('tab', { name: '关系图' }));
     expect(await screen.findByRole('button', { name: /可用标签，1 条记忆/ })).toBeInTheDocument();
     expect(screen.queryByText('读取失败')).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(internal);
@@ -822,7 +823,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('tab', { name: '关系索引' }));
+    await user.click(await screen.findByRole('tab', { name: '关系图' }));
     const details = await screen.findByRole('region', { name: 'Agent Runtime 详情' });
     const connectionSection = within(details).getByRole('heading', { name: '已存关系' }).closest('section');
     expect(connectionSection).not.toBeNull();
@@ -858,7 +859,7 @@ describe('MemoryFeature relations', () => {
       },
     });
     renderMemory(transport);
-    await user.click(await screen.findByRole('tab', { name: '关系索引' }));
+    await user.click(await screen.findByRole('tab', { name: '关系图' }));
     expect(await screen.findByText('1 项记忆目前没有已记录关系。')).toBeInTheDocument();
     expect(document.querySelectorAll('.memory-graph__edge')).toHaveLength(0);
   });
@@ -882,7 +883,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('tab', { name: '关系索引' }));
+    await user.click(await screen.findByRole('tab', { name: '关系图' }));
     expect(await screen.findByRole('heading', { name: '孤立标签', level: 3 })).toBeInTheDocument();
     expect(await screen.findByRole('alert')).toHaveTextContent('实体详情读取失败，请稍后重试。');
     expect(document.body).not.toHaveTextContent(internal);

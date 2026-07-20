@@ -1,5 +1,5 @@
 import type { Graph } from '@antv/g6';
-import { LocateFixed, Scan, ZoomIn, ZoomOut } from 'lucide-react';
+import { Focus, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/primitives';
 import type { KnowledgeGraphEdge, KnowledgeGraphNode, KnowledgeGraphNodeKind } from './api';
@@ -32,6 +32,9 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
     let cancelled = false;
     let initializing = false;
     let resizeFrame = 0;
+    let settleFrame = 0;
+    let lastWidth = 0;
+    let lastHeight = 0;
 
     const initialize = async () => {
       if (cancelled || initializing || graphRef.current || container.clientWidth < 2 || container.clientHeight < 2) return;
@@ -48,17 +51,16 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
         data: graphData,
         layout: {
           type: 'd3-force',
+          iterations: nodes.length > 60 ? 180 : 240,
           preventOverlap: true,
-          alphaDecay: .12,
-          alphaMin: .02,
-          velocityDecay: .62,
-          iterations: 120,
-          force: {
-            center: { x: .5, y: .5, strength: .12 },
-            charge: { strength: -260, distanceMax: 480 },
-            link: { distance: 86, strength: .72 },
-          },
-          collide: { radius: 30, strength: .9, iterations: 2 },
+          collideStrength: .9,
+          collideIterations: 2,
+          nodeStrength: nodes.length > 60 ? -150 : -220,
+          edgeStrength: .68,
+          linkDistance: nodes.length > 60 ? 72 : 92,
+          centerStrength: .14,
+          alphaDecay: .038,
+          velocityDecay: .4,
         },
         node: {
           type: 'circle',
@@ -68,6 +70,9 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
             stroke: cssColor(style, '--color-surface', '#fff'),
             lineWidth: 1.5,
             opacity: .94,
+            shadowBlur: 8,
+            shadowColor: (datum) => kindColor(String(datum.data?.kind), style),
+            shadowColorOpacity: .1,
             labelText: (datum) => truncate(String(datum.data?.label ?? datum.id), 24),
             labelFill: cssColor(style, '--color-text-secondary', '#526159'),
             labelFontSize: 11,
@@ -81,6 +86,7 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
               stroke: cssColor(style, '--color-focus', '#2772c5'),
               shadowBlur: 9,
               shadowColor: cssColor(style, '--color-selection', '#bfe3de'),
+              shadowColorOpacity: .32,
             },
             active: { opacity: 1, lineWidth: 2 },
             inactive: { opacity: .16, labelOpacity: .12 },
@@ -92,6 +98,8 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
             stroke: cssColor(style, '--color-border-strong', '#aebdb4'),
             opacity: .42,
             lineWidth: (datum) => Math.max(.8, Math.min(2, Number(datum.data?.weight ?? .5) * 1.8)),
+            endArrow: mode === 'structure',
+            endArrowSize: 4,
             labelText: '',
           },
           state: {
@@ -118,7 +126,7 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
           },
         },
         behaviors: [
-          'drag-element',
+          'drag-element-force',
           'drag-canvas',
           { type: 'zoom-canvas', sensitivity: 1.15, minZoom: .12, maxZoom: 4 },
           { type: 'hover-activate', degree: 1 },
@@ -138,21 +146,39 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
       if (cancelled) { graph.destroy(); return; }
       graphRef.current = graph;
       await graph.fitView({}, { duration: 180 });
+      lastWidth = container.clientWidth;
+      lastHeight = container.clientHeight;
       setReadyVersion((value) => value + 1);
     };
 
     const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
       cancelAnimationFrame(resizeFrame);
       resizeFrame = requestAnimationFrame(() => {
-        if (graphRef.current) graphRef.current.resize(container.clientWidth, container.clientHeight);
-        else void initialize();
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        if (graphRef.current) {
+          graphRef.current.resize(width, height);
+          const becameVisible = (lastWidth < 2 || lastHeight < 2) && width >= 2 && height >= 2;
+          const materiallyChanged = lastWidth > 0 && Math.abs(width - lastWidth) / lastWidth > .2;
+          lastWidth = width;
+          lastHeight = height;
+          if (becameVisible || materiallyChanged) void graphRef.current.fitView({}, { duration: 180 });
+        } else void initialize();
       });
     });
     resizeObserver?.observe(container);
+    settleFrame = requestAnimationFrame(() => requestAnimationFrame(() => {
+      const graph = graphRef.current;
+      if (graph && container.clientWidth >= 2 && container.clientHeight >= 2) {
+        graph.resize(container.clientWidth, container.clientHeight);
+        void graph.fitView({}, { duration: 180 });
+      } else void initialize();
+    }));
     void initialize();
     return () => {
       cancelled = true;
       cancelAnimationFrame(resizeFrame);
+      cancelAnimationFrame(settleFrame);
       resizeObserver?.disconnect();
       graphRef.current?.destroy();
       graphRef.current = null;
@@ -174,13 +200,13 @@ export const InteractiveGraphCanvas = memo(function InteractiveGraphCanvas({
   const ready = readyVersion > 0;
 
   return (
-    <div className="knowledge-graph__canvas" aria-label="交互式知识图谱画布" data-edge-mode={mode} data-ready={readyVersion > 0 || undefined} data-renderer="g6">
+    <div className="knowledge-graph__canvas" aria-label="交互式知识图谱画布" data-edge-mode={mode} data-layout="force-network" data-ready={readyVersion > 0 || undefined} data-renderer="g6">
       <div className="knowledge-graph__g6" ref={containerRef} />
       <div className="knowledge-graph__canvas-controls" aria-label="图谱视口控制">
-        <Button disabled={!ready} leadingIcon={<ZoomIn size={14} />} onClick={() => invoke((graph) => graph.zoomBy(1.25, { duration: 120 }))} size="small" title={ready ? '放大图谱' : '图谱正在加载'} variant="quiet">放大</Button>
-        <Button disabled={!ready} leadingIcon={<ZoomOut size={14} />} onClick={() => invoke((graph) => graph.zoomBy(.8, { duration: 120 }))} size="small" title={ready ? '缩小图谱' : '图谱正在加载'} variant="quiet">缩小</Button>
-        <Button disabled={!ready} leadingIcon={<Scan size={14} />} onClick={() => invoke((graph) => graph.fitView({}, { duration: 180 }))} size="small" title={ready ? '让全部节点适应当前画布' : '图谱正在加载'} variant="quiet">适应画布</Button>
-        <Button disabled={!ready || selection?.type !== 'node'} leadingIcon={<LocateFixed size={14} />} onClick={() => selection?.type === 'node' && invoke((graph) => graph.focusElement(selection.id, { duration: 180 }))} size="small" title={selection?.type === 'node' ? '把所选节点移到画布中心' : '请先选择一个节点'} variant="quiet">定位节点</Button>
+        <Button aria-label="放大知识图谱" disabled={!ready} leadingIcon={<ZoomIn size={15} />} onClick={() => invoke((graph) => graph.zoomBy(1.25, { duration: 140 }))} size="small" title={ready ? '放大图谱' : '图谱正在加载'} variant="quiet" />
+        <Button aria-label="缩小知识图谱" disabled={!ready} leadingIcon={<ZoomOut size={15} />} onClick={() => invoke((graph) => graph.zoomBy(.8, { duration: 140 }))} size="small" title={ready ? '缩小图谱' : '图谱正在加载'} variant="quiet" />
+        <Button aria-label="适应画布" disabled={!ready} leadingIcon={<Maximize2 size={15} />} onClick={() => invoke((graph) => graph.fitView({}, { duration: 220 }))} size="small" title={ready ? '让全部节点适应当前画布' : '图谱正在加载'} variant="quiet" />
+        <Button aria-label="定位节点" disabled={!ready || selection?.type !== 'node'} leadingIcon={<Focus size={15} />} onClick={() => selection?.type === 'node' && invoke((graph) => graph.focusElement(selection.id, { duration: 180 }))} size="small" title={selection?.type === 'node' ? '把所选节点移到画布中心' : '请先选择一个节点'} variant="quiet" />
       </div>
       <GraphLegend nodes={nodes} />
     </div>

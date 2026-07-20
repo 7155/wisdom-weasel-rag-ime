@@ -271,7 +271,7 @@ enum RagImeAssistantCommitMode: Equatable {
 final class RagImeSuggestionCardView: NSVisualEffectView {
   static let compactHeight: CGFloat = 38
   static let pendingHeight: CGFloat = 44
-  static let thinkingHeight: CGFloat = 164
+  static let thinkingHeight: CGFloat = 174
   static let thinkingWidth: CGFloat = 440
   static let errorHeight: CGFloat = 82
   static let rowHeight: CGFloat = 40
@@ -346,8 +346,8 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     wantsLayer = true
     layer?.cornerRadius = 8
     layer?.borderWidth = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
-    layer?.borderColor = NSColor.separatorColor.cgColor
-    layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.98).cgColor
+    layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.72).cgColor
+    layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.96).cgColor
     layer?.masksToBounds = true
     stateTint.wantsLayer = true
     stateTint.layer?.backgroundColor = NSColor.clear.cgColor
@@ -367,8 +367,8 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     actionSeparator.wantsLayer = true
     actionSeparator.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.42).cgColor
     actionContainer.wantsLayer = true
-    actionContainer.layer?.cornerRadius = 6
-    actionContainer.layer?.masksToBounds = true
+    actionContainer.layer?.cornerRadius = 0
+    actionContainer.layer?.masksToBounds = false
     actionDividerLeading.wantsLayer = true
     quickGenerateButton.isBordered = false
     quickGenerateButton.focusRingType = .none
@@ -378,10 +378,10 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     quickGenerateButton.imagePosition = .imageLeading
     quickGenerateButton.contentTintColor = .systemIndigo
     quickGenerateButton.wantsLayer = true
-    quickGenerateButton.layer?.cornerRadius = 0
+    quickGenerateButton.layer?.cornerRadius = 6
     quickGenerateButton.target = self
     quickGenerateButton.action = #selector(startActiveRag)
-    quickGenerateButton.toolTip = "快速生成：使用 AX 上下文和 DS Flash 一次回复"
+    quickGenerateButton.toolTip = "快速生成：结合当前界面与相关记忆生成一次回复"
     quickGenerateButton.setAccessibilityLabel("文字生成")
     deepSearchButton.isBordered = false
     deepSearchButton.focusRingType = .none
@@ -391,11 +391,11 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     deepSearchButton.imagePosition = .imageLeading
     deepSearchButton.contentTintColor = .systemIndigo
     deepSearchButton.wantsLayer = true
-    deepSearchButton.layer?.cornerRadius = 0
+    deepSearchButton.layer?.cornerRadius = 6
     deepSearchButton.target = self
     deepSearchButton.action = #selector(startAgentDeepSearch)
-    deepSearchButton.toolTip = "深度查找：交给 Pi 连续会话和 Agent Loop"
-    deepSearchButton.setAccessibilityLabel("使用 Pi 深度查找")
+    deepSearchButton.toolTip = "深度查找：在连续会话中分步检索和处理"
+    deepSearchButton.setAccessibilityLabel("深度查找")
     updateActionGroupChrome()
     actionContainer.addSubview(quickGenerateButton)
     actionContainer.addSubview(actionDividerLeading)
@@ -412,8 +412,8 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     progressTitleLabel.font = RagImeAssistantTypography.resultHeader
     progressTitleLabel.textColor = .labelColor
     progressContainer.wantsLayer = true
-    progressContainer.layer?.cornerRadius = 6
-    progressContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.26).cgColor
+    progressContainer.layer?.cornerRadius = 7
+    progressContainer.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.12).cgColor
     progressRows.forEach(progressContainer.addSubview)
     progressHandoffLabel.font = RagImeAssistantTypography.diagnostic
     progressHandoffLabel.textColor = .secondaryLabelColor
@@ -659,7 +659,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
         replaceButton.isHidden = !canReplaceSelection
         replaceButton.isEnabled = canReplaceSelection
       }
-      resultHeader.stringValue = streaming ? "✦ 正在生成" : "✦"
+      resultHeader.stringValue = streaming ? "正在接收内容" : "生成结果"
       let result = candidates.first.map { $0.text.isEmpty ? $0.insertText : $0.text } ?? ""
       applyResultText(result, reduceMotion: reduceMotion, startFresh: previousState == .explicitGenerating)
       if contentChanged { animateExplicitResultIn(reduceMotion: reduceMotion) }
@@ -828,7 +828,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       result = result.replacingOccurrences(of: name, with: "")
     }
     let compact = result.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-    return compact.isEmpty ? "正在生成..." : compact
+    return compact.isEmpty ? "正在生成" : compact
   }
 
   private func stringValue(in maps: [[String: RagImeJSONValue]], keys: [String]) -> String {
@@ -872,28 +872,26 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     let qualityRetry = boolValue(in: [transaction], keys: ["contentRetryAttempted", "qualityRetry"]) == true
 
     switch stage {
-    case "quality_retry": progressTitleLabel.stringValue = "正在校正首轮结果"
-    case "streaming": progressTitleLabel.stringValue = "结果正在到达"
-    case "generating": progressTitleLabel.stringValue = "DS Flash 正在生成"
-    default: progressTitleLabel.stringValue = "正在准备回答"
+    case "quality_retry": progressTitleLabel.stringValue = "正在优化回答"
+    case "streaming": progressTitleLabel.stringValue = "正在接收内容"
+    case "generating": progressTitleLabel.stringValue = "正在生成"
+    default: progressTitleLabel.stringValue = "正在准备"
     }
 
     let contextDetail: String
     if windowNodes > 0 {
-      contextDetail = "AX \(windowNodes) 个节点 · 当前输入 \(foregroundChars) 字"
+      contextDetail = "已读取当前输入和界面信息"
     } else if foregroundChars > 0 {
-      contextDetail = "当前输入 \(foregroundChars) 字"
+      contextDetail = "已读取当前输入"
     } else {
       contextDetail = "等待可访问性上下文"
     }
 
     let historyDetail: String
     if recentCount > 0 {
-      historyDetail = recentUsed
-        ? "已选 \(recentCount) 条 · \(recentChars) 字"
-        : "找到 \(recentCount) 条，本次未注入"
+      historyDetail = recentUsed ? "已选取相关的近期内容" : "近期内容与本次问题无关"
     } else if recentChars > 0 {
-      historyDetail = recentUsed ? "补充 \(recentChars) 字" : "本次未注入历史"
+      historyDetail = recentUsed ? "已补充近期内容" : "本次无需补充"
     } else {
       historyDetail = retrievalAttempted ? "本次没有可用历史" : "正在选择最近输入"
     }
@@ -901,46 +899,46 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     let recalledTitles = payload.sourceCards.prefix(2).map(\.title).filter { !$0.isEmpty }
     let retrievalDetail: String
     if !recalledTitles.isEmpty {
-      retrievalDetail = recalledTitles.map { "「\($0)」" }.joined(separator: " · ")
+      retrievalDetail = "已找到 " + recalledTitles.prefix(2).joined(separator: "、")
     } else if evidenceCount > 0 {
-      retrievalDetail = "已召回 \(evidenceCount) 条可用依据"
+      retrievalDetail = "已找到相关记忆与资料"
     } else if retrievalAttempted {
       retrievalDetail = "没有额外依据，继续使用当前上下文"
     } else {
-      retrievalDetail = "个人记忆、计划与工具书"
+      retrievalDetail = "正在检索记忆、计划与资料"
     }
 
     let modelDetail: String
     if qualityRetry || stage == "quality_retry" {
-      modelDetail = "首轮内容与输入过近，正在重新生成"
+      modelDetail = "正在调整表达，避免重复原文"
     } else if firstTokenMs > 0 {
-      modelDetail = String(format: "首字 %.1f 秒 · 正在接收正文", Double(firstTokenMs) / 1000)
+      modelDetail = "首段内容已到达，正在继续"
     } else {
-      modelDetail = "低思考 · 无工具 · 不保存会话"
+      modelDetail = "等待首段内容"
     }
 
     let modelActive = ["generating", "quality_retry", "streaming"].contains(stage)
     let retrievalActive = stage == "retrieving" || stage == "retrieval_complete"
     progressRows[0].apply(
-      title: "读取当前界面",
+      title: "理解当前内容",
       detail: contextDetail,
       completed: foregroundChars > 0 || windowNodes > 0,
       active: stage == "capturing_context"
     )
     progressRows[1].apply(
-      title: "整理近期输入",
+      title: "补充近期上下文",
       detail: historyDetail,
       completed: retrievalAttempted || recentCount > 0 || recentChars > 0,
       active: stage == "retrieving" && recentCount == 0
     )
     progressRows[2].apply(
-      title: "召回相关内容",
+      title: "查找相关记忆",
       detail: retrievalDetail,
       completed: retrievalAttempted,
       active: retrievalActive
     )
     progressRows[3].apply(
-      title: qualityRetry ? "质量检查后再生成" : "生成一次回复",
+      title: qualityRetry ? "优化回答" : "组织回答",
       detail: modelDetail,
       completed: stage == "ready",
       active: modelActive || (!retrievalActive && retrievalAttempted)
@@ -1110,20 +1108,14 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
 
   private func layoutActionBar(frame: NSRect, compact: Bool) {
     actionContainer.frame = frame
-    let dividerWidth: CGFloat = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
-    let segment = max(0, floor((frame.width - dividerWidth) / 2))
-    let dividerInset: CGFloat = compact ? 5 : 4
+    let gap: CGFloat = compact ? 4 : 6
+    let segment = max(0, floor((frame.width - gap) / 2))
     quickGenerateButton.frame = NSRect(x: 0, y: 0, width: segment, height: frame.height)
-    actionDividerLeading.frame = NSRect(
-      x: segment,
-      y: dividerInset,
-      width: dividerWidth,
-      height: max(0, frame.height - dividerInset * 2)
-    )
+    actionDividerLeading.frame = .zero
     deepSearchButton.frame = NSRect(
-      x: segment + dividerWidth,
+      x: segment + gap,
       y: 0,
-      width: max(0, frame.width - segment - dividerWidth),
+      width: max(0, frame.width - segment - gap),
       height: frame.height
     )
     quickGenerateButton.alignment = .center
@@ -1132,19 +1124,20 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
 
   private func updateActionGroupChrome() {
     let increaseContrast = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-    actionContainer.layer?.borderWidth = increaseContrast ? 1 : 0.5
-    actionContainer.layer?.borderColor = NSColor.separatorColor
-      .withAlphaComponent(increaseContrast ? 0.95 : 0.58)
+    actionContainer.layer?.borderWidth = 0
+    actionContainer.layer?.backgroundColor = NSColor.clear.cgColor
+    actionDividerLeading.layer?.backgroundColor = NSColor.clear.cgColor
+    let fill = NSColor.controlBackgroundColor
+      .withAlphaComponent(increaseContrast ? 0.98 : 0.74)
       .cgColor
-    actionContainer.layer?.backgroundColor = NSColor.controlBackgroundColor
-      .withAlphaComponent(increaseContrast ? 0.95 : 0.72)
+    let stroke = NSColor.separatorColor
+      .withAlphaComponent(increaseContrast ? 0.92 : 0.46)
       .cgColor
-    let dividerColor = NSColor.separatorColor
-      .withAlphaComponent(increaseContrast ? 0.88 : 0.48)
-      .cgColor
-    actionDividerLeading.layer?.backgroundColor = dividerColor
-    quickGenerateButton.layer?.backgroundColor = NSColor.clear.cgColor
-    deepSearchButton.layer?.backgroundColor = NSColor.clear.cgColor
+    for button in [quickGenerateButton, deepSearchButton] {
+      button.layer?.borderWidth = increaseContrast ? 1 : 0.5
+      button.layer?.borderColor = stroke
+      button.layer?.backgroundColor = fill
+    }
   }
 
   private func configureActionButton(_ button: NSButton, action: Selector, symbol: String, toolTip: String) {

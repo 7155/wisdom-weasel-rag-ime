@@ -233,6 +233,10 @@ export function ActivityTimeline() {
             </dl>
           </div>
 
+          {tasks.length ? (
+            <ActivityDayMap date={date} onSelect={setSelectedTaskId} tasks={tasks} />
+          ) : null}
+
           {taskGroups.length ? (
             <div className="activity-timeline__periods" aria-label={`${date} 语义任务`}>
               {taskGroups.map((group) => (
@@ -392,6 +396,62 @@ export function ActivityTimeline() {
       </Dialog>
     </section>
   );
+}
+
+function ActivityDayMap({
+  date,
+  onSelect,
+  tasks,
+}: {
+  date: string;
+  onSelect: (taskId: string) => void;
+  tasks: SemanticTimelineTask[];
+}) {
+  const bounds = dayBounds(date);
+  return (
+    <section className="activity-day-map" aria-label={`${date} 活动分布`}>
+      <header>
+        <div>
+          <Clock3 aria-hidden="true" size={15} />
+          <strong>一天的活动分布</strong>
+        </div>
+        <span>按开始时间和持续跨度定位，点击可展开证据</span>
+      </header>
+      <div className="activity-day-map__axis" aria-hidden="true">
+        {[0, 6, 12, 18, 24].map((hour) => <span key={hour}>{String(hour).padStart(2, '0')}:00</span>)}
+      </div>
+      <div className="activity-day-map__rows">
+        {tasks.map((task) => {
+          const start = percentInDay(task.startMs, bounds.start, bounds.end);
+          const end = percentInDay(Math.max(task.startMs + 60_000, task.endMs), bounds.start, bounds.end);
+          const width = Math.max(1.8, end - start);
+          return (
+            <div className="activity-day-map__row" key={task.id}>
+              <button
+                aria-label={`${task.title}，${formatTimeRange(task.startMs, task.endMs)}`}
+                data-period={task.period}
+                onClick={() => onSelect(task.id)}
+                style={{ left: `${start}%`, width: `${Math.min(width, 100 - start)}%` }}
+                title={`${formatTimeRange(task.startMs, task.endMs)} · ${task.title}`}
+                type="button"
+              >
+                <span>{task.title}</span>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function dayBounds(date: string): { start: number; end: number } {
+  const start = new Date(`${date}T00:00:00`).getTime();
+  return { start, end: start + 24 * 60 * 60 * 1000 };
+}
+
+function percentInDay(value: number, start: number, end: number): number {
+  return Math.max(0, Math.min(100, ((value - start) / (end - start)) * 100));
 }
 
 function TimelinePeriodBand({

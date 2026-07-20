@@ -19,6 +19,8 @@ export type LexiconReviewEntry = {
   reviewSource: string;
   reviewReason: string;
   selected: boolean;
+  defaultSelected?: boolean;
+  riskLabel?: string;
 };
 
 export type LexiconReview = {
@@ -30,6 +32,8 @@ export type LexiconReview = {
   confirmText: string;
   applySupported: boolean;
   reviewRequired: boolean;
+  filteredEntryCount?: number;
+  selectionPolicy?: string;
 };
 
 export type LexiconMutationReceipt = {

@@ -18,6 +18,51 @@ from rag_ime.text_utils import now_ms
 
 
 class RimeLexiconReviewTests(unittest.TestCase):
+    def test_model_candidates_need_repeat_evidence_and_are_not_selected_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "rag-ime.sqlite"
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                apply_database_migrations(conn)
+                timestamp = now_ms()
+                for memory_id, text, pinyin, source_ids in (
+                    ("phrase:safe", "输入法", "shu ru fa", [1, 2]),
+                    ("phrase:rare", "龘", "da", [3, 4, 5]),
+                    ("phrase:once", "冷门术语", "leng men shu yu", [6]),
+                ):
+                    upsert_memory_item(
+                        conn,
+                        memory_id=memory_id,
+                        kind="phrase",
+                        text=text,
+                        normalized_text=text,
+                        summary="model phrase candidate",
+                        source_event_id=None,
+                        project="",
+                        app="",
+                        confidence=0.9,
+                        quality_score=0.9,
+                        status="approved",
+                        privacy_class="local",
+                        created_at_ms=timestamp,
+                        updated_at_ms=timestamp,
+                        metadata={
+                            "reviewSource": "dsv4",
+                            "pinyin": pinyin,
+                            "sourceEventIds": source_ids,
+                        },
+                        tags=(),
+                        embedding_provider=None,
+                    )
+                conn.commit()
+
+            review = review_rime_lexicon(db_path)
+
+            self.assertEqual([entry["text"] for entry in review["entries"]], ["输入法"])
+            self.assertFalse(review["entries"][0]["selected"])
+            self.assertEqual(review["entries"][0]["riskLabel"], "模型建议，需人工确认")
+            self.assertEqual(review["filteredEntryCount"], 2)
+
     def test_dsv4_memory_phrase_enters_review_but_not_dictionary_without_approval(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

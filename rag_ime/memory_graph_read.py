@@ -351,14 +351,53 @@ def _read_tag_graph(conn: sqlite3.Connection, query: MemoryGraphQuery) -> dict[s
     node_map = _load_tag_nodes(conn, selected, project=query.project)
     nodes = [node_map[tag_id] for tag_id in selected if tag_id in node_map]
     edge_rows = _tag_edges_between(conn, query, selected, limit=query.edge_limit + 1)
-    edge_truncated = len(edge_rows) > query.edge_limit
-    edges = [_tag_edge(row) for row in edge_rows[: query.edge_limit]]
+    cooccurrence_rows = _tag_cooccurrence_edges_between(
+        conn,
+        query,
+        selected,
+        limit=query.edge_limit + 1,
+    )
+    explicit_edges = [_tag_edge(row) for row in edge_rows]
+    explicit_pairs = {
+        frozenset((str(edge["sourceId"]), str(edge["targetId"])))
+        for edge in explicit_edges
+    }
+    derived_edges = [
+        _tag_edge(row)
+        for row in cooccurrence_rows
+        if frozenset(
+            (
+                _node_id("tag", str(row["src_tag_id"])),
+                _node_id("tag", str(row["dst_tag_id"])),
+            )
+        ) not in explicit_pairs
+    ]
+    combined_edges = sorted(
+        [*explicit_edges, *derived_edges],
+        key=lambda item: (
+            -float(item["weight"]),
+            -int(item["evidenceCount"]),
+            str(item["id"]),
+        ),
+    )
+    edge_truncated = (
+        len(edge_rows) > query.edge_limit
+        or len(cooccurrence_rows) > query.edge_limit
+        or len(combined_edges) > query.edge_limit
+    )
+    edges = combined_edges[: query.edge_limit]
     visible_ids = {str(node["id"]) for node in nodes}
     edges = [
         edge
         for edge in edges
         if str(edge["sourceId"]) in visible_ids and str(edge["targetId"]) in visible_ids
     ]
+    visible_edge_counts = {node_id: 0 for node_id in visible_ids}
+    for edge in edges:
+        visible_edge_counts[str(edge["sourceId"])] += 1
+        visible_edge_counts[str(edge["targetId"])] += 1
+    for node in nodes:
+        node["edgeCount"] = visible_edge_counts.get(str(node["id"]), 0)
     return {
         "nodes": nodes,
         "edges": edges,
@@ -577,6 +616,64 @@ def _tag_edges_between(
         LIMIT ?
         """,
         (*tag_ids, *tag_ids, query.min_weight, limit),
+    ).fetchall()
+
+
+def _tag_cooccurrence_edges_between(
+    conn: sqlite3.Connection,
+    query: MemoryGraphQuery,
+    tag_ids: Sequence[str],
+    *,
+    limit: int,
+) -> list[sqlite3.Row]:
+    """Derive bounded tag relations from shared, visible memory atoms.
+
+    These edges are read-time projections rather than invented semantic facts:
+    every edge carries the number of atoms that actually contain both tags.
+    Persisted tag relations still win when the same pair already has one.
+    """
+    if not tag_ids:
+        return []
+    placeholders = ", ".join("?" for _ in tag_ids)
+    return conn.execute(
+        f"""
+        SELECT left_tag.tag_id AS src_tag_id,
+               right_tag.tag_id AS dst_tag_id,
+               'co_occurs' AS edge_type,
+               MIN(1.0, 0.35 + COUNT(DISTINCT left_tag.memory_atom_id) * 0.15) AS weight,
+               0.0 AS direction_bias,
+               COUNT(DISTINCT left_tag.memory_atom_id) AS evidence_count,
+               MAX(atom.updated_at_ms) AS updated_at_ms,
+               '{{"source":"atom_cooccurrence"}}' AS metadata_json
+        FROM memory_atom_tags left_tag
+        JOIN memory_atom_tags right_tag
+          ON right_tag.memory_atom_id = left_tag.memory_atom_id
+         AND CAST(left_tag.tag_id AS TEXT) < CAST(right_tag.tag_id AS TEXT)
+        JOIN memory_atoms atom ON atom.id = left_tag.memory_atom_id
+        JOIN memory_tags src ON CAST(src.id AS TEXT) = CAST(left_tag.tag_id AS TEXT)
+        JOIN memory_tags dst ON CAST(dst.id AS TEXT) = CAST(right_tag.tag_id AS TEXT)
+        WHERE CAST(left_tag.tag_id AS TEXT) IN ({placeholders})
+          AND CAST(right_tag.tag_id AS TEXT) IN ({placeholders})
+          AND atom.status = 'active'
+          AND atom.privacy_level != 'sensitive'
+          AND (? = '' OR COALESCE(atom.scope_project, '') = '' OR atom.scope_project = ?)
+          AND src.source IN ('dsv4', 'user') AND dst.source IN ('dsv4', 'user')
+          AND (? = 'all' OR (src.status = ? AND dst.status = ?))
+        GROUP BY left_tag.tag_id, right_tag.tag_id
+        ORDER BY evidence_count DESC, weight DESC, updated_at_ms DESC,
+                 src_tag_id ASC, dst_tag_id ASC
+        LIMIT ?
+        """,
+        (
+            *tag_ids,
+            *tag_ids,
+            query.project,
+            query.project,
+            query.status,
+            query.status,
+            query.status,
+            limit,
+        ),
     ).fetchall()
 
 

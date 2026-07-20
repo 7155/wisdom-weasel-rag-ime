@@ -97,6 +97,11 @@ export function LexiconWorkflow({
         <Button leadingIcon={<RefreshCw size={15} />} loading={isFetching} onClick={onRefresh} size="small">刷新审阅</Button>
       </div>
 
+      <InlineNotice title="常用词质量门" tone="info">
+        {review.selectionPolicy || '重复使用的常用词才进入审阅；模型建议默认不勾选。'}
+        {review.filteredEntryCount ? ` 本轮已拦截 ${review.filteredEntryCount} 条单字、生僻噪声或证据不足的候选。` : ''}
+      </InlineNotice>
+
       {stage === 'select' ? (
         <div className="mgmt-list">
           {review.entries.map((entry) => (
@@ -109,7 +114,7 @@ export function LexiconWorkflow({
               />
               <span className="mgmt-list__content">
                 <strong>{entry.text}</strong>
-                <span>{entry.pinyin || '无拼音'} · 正向 {entry.positiveCount} · 负向 {entry.negativeCount}</span>
+                <span>{entry.pinyin || '无拼音'} · 正向 {entry.positiveCount} · 负向 {entry.negativeCount} · {entry.riskLabel || '待人工确认'}</span>
               </span>
               <StatusBadge label={reviewSourceLabel(entry.reviewSource)} tone="info" />
             </label>

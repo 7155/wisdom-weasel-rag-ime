@@ -27,7 +27,7 @@ class AssistantOverlayTests(unittest.TestCase):
 
         self.assertTrue(payload["visible"])
         self.assertEqual(payload["animation"]["kind"], "none")
-        self.assertEqual(payload["statusText"], "AI 建议")
+        self.assertEqual(payload["statusText"], "智能建议")
 
     def test_partial_model_candidate_keeps_thinking_animation(self) -> None:
         payload = build_assistant_overlay_payload(
