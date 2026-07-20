@@ -2,9 +2,12 @@ import {
   BookOpen,
   Bot,
   BrainCircuit,
+  BriefcaseBusiness,
   Check,
   Cpu,
+  Database,
   Gauge,
+  Rabbit,
   LockKeyhole,
   MessageCirclePlus,
   Plus,
@@ -13,10 +16,12 @@ import {
   Save,
   Sparkles,
   UserRoundPlus,
+  UsersRound,
   Wrench,
+  Zap,
   X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import {
@@ -38,17 +43,26 @@ import { previewPersonas, previewTemplates } from '@/features/agent/preview-data
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { roleItems } from '@/features/agent/types';
 import { publicErrorText } from '@/features/overview/management-ui';
+import {
+  collaborationProfileCatalog,
+  collaborationRoleFixtures,
+  type CollaborationProfileCatalogItem,
+  type CollaborationRoleFixture,
+} from './agent-definition-fixtures';
+import { CollaborationProfileGovernancePanel } from './CollaborationProfileGovernancePanel';
 import './roles.css';
 
 export function RolesFeature() {
   const transport = useControlTransport();
   const navigate = useNavigate();
-  const [view, setView] = useState<'personas' | 'roleBook' | 'templates'>('personas');
+  const [view, setView] = useState<RoleView>('personas');
   const [personas, setPersonas] = useState<AgentPersonaV1[]>(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas : []);
   const [templates, setTemplates] = useState<AgentTemplateV1[]>(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewTemplates : []);
   const [modelCatalog, setModelCatalog] = useState<RoleModelCatalog>({ providers: [] });
   const [selectedPersona, setSelectedPersona] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas[0]?.roleId ?? '' : '');
   const [selectedTemplate, setSelectedTemplate] = useState(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewTemplates[0]?.templateId ?? '' : '');
+  const [selectedCollaborationRole, setSelectedCollaborationRole] = useState('researcher');
+  const [selectedCollaborationProfile, setSelectedCollaborationProfile] = useState('evidence-review');
   const [sessionCreating, setSessionCreating] = useState(false);
   const [roleCreating, setRoleCreating] = useState(false);
   const [roleDefaultsSaving, setRoleDefaultsSaving] = useState(false);
@@ -99,6 +113,8 @@ export function RolesFeature() {
   }, [transport]);
   const persona = personas.find((item) => item.roleId === selectedPersona);
   const template = templates.find((item) => item.templateId === selectedTemplate);
+  const collaborationRole = collaborationRoleFixtures.find((item) => item.roleId === selectedCollaborationRole);
+  const collaborationProfile = collaborationProfileCatalog.find((item) => item.profileId === selectedCollaborationProfile);
   const notice = [catalogNotice, actionNotice].filter(Boolean).join('；');
 
   async function startPersonaSession(): Promise<void> {
@@ -222,14 +238,30 @@ export function RolesFeature() {
 
   return <>
     <main className="roles-feature" data-route-id="roles">
-      <header className="roles-header"><span><h2>角色与 Agent 模板</h2><p>角色决定陪伴方式，模板决定任务能力</p></span><SegmentedControl aria-label="角色视图" value={view} onValueChange={(value) => setView(value as 'personas' | 'roleBook' | 'templates')} items={[{ value: 'personas', label: '角色' }, { value: 'roleBook', label: '角色书' }, { value: 'templates', label: 'Agent 模板' }]} />{view !== 'templates' ? <div className="roles-header-actions"><IconButton label="创建角色" icon={<UserRoundPlus size={16} />} onClick={beginRoleCreation} tooltip /><Button variant="primary" size="small" disabled={!persona} loading={sessionCreating} leadingIcon={<MessageCirclePlus size={15} />} onClick={() => void startPersonaSession()}>开始对话</Button></div> : null}</header>
+      <header className="roles-header"><span><h2>角色与 Agent 定义</h2><p>表达、协作职责、组合规则和运行能力彼此独立</p></span><SegmentedControl aria-label="角色视图" value={view === 'personaGrowth' ? 'personas' : view} onValueChange={(value) => setView(value as RoleView)} items={[{ value: 'personas', label: '角色' }, { value: 'collaborationRoles', label: '协作岗位' }, { value: 'profiles', label: '角色书' }, { value: 'templates', label: 'Agent 模板' }]} />{view === 'personas' ? <div className="roles-header-actions"><IconButton label="创建角色" icon={<UserRoundPlus size={16} />} onClick={beginRoleCreation} tooltip /><Button variant="primary" size="small" disabled={!persona} loading={sessionCreating} leadingIcon={<MessageCirclePlus size={15} />} onClick={() => void startPersonaSession()}>开始对话</Button></div> : null}</header>
       {notice ? <p className="roles-notice" role="status">{notice}</p> : null}
-      {view !== 'templates' ? (
+      {view === 'personas' || view === 'personaGrowth' ? (
         <div className="roles-layout">
-          <section className="persona-grid" aria-label="角色列表">{personas.length ? personas.map((item) => <button type="button" key={`${item.roleId}:${item.version}`} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setActionNotice(''); }}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}</strong><small>{item.tagline}</small></span><div><b aria-label="角色阶段">{personaPhase(item).label}</b>{personaExpressionTraits(item).map((trait) => <i key={trait}>{trait}</i>)}</div></button>) : <p className="roles-empty">本机还没有可用角色。</p>}</section>
-          {persona && view === 'personas' ? <PersonaInspector catalog={modelCatalog} persona={persona} saving={roleDefaultsSaving} onSave={saveRoleRuntimeDefaults} /> : null}
-          {persona && view === 'roleBook' ? <RoleBookInspector persona={persona} /> : null}
+          <section className="persona-grid" aria-label="角色列表">{personas.length ? personas.map((item) => <button type="button" key={`${item.roleId}:${item.version}`} data-accent={item.visualProfile.accentToken} aria-current={item.roleId === selectedPersona} onClick={() => { setSelectedPersona(item.roleId); setActionNotice(''); }}><PersonaAvatar persona={item} size="large" /><span><strong>{item.displayName}{item.runtimeCharacteristics.isDefault ? <em>默认</em> : null}</strong><small>{item.tagline}</small></span><div><b aria-label="角色阶段">{personaPhase(item).label}</b><i>{modelDisplayName(item.defaults.modelProfile)}</i><i>{item.runtimeCharacteristics.speed}</i></div></button>) : <p className="roles-empty">本机还没有可用角色。</p>}</section>
+          {persona && view === 'personas' ? <PersonaInspector catalog={modelCatalog} persona={persona} saving={roleDefaultsSaving} onSave={saveRoleRuntimeDefaults} onOpenGrowth={() => setView('personaGrowth')} /> : null}
+          {persona && view === 'personaGrowth' ? <PersonaGrowthInspector persona={persona} onBack={() => setView('personas')} /> : null}
         </div>
+      ) : view === 'collaborationRoles' ? (
+        <DefinitionCatalogLayout
+          ariaLabel="协作岗位列表"
+          icon="role"
+          items={collaborationRoleFixtures.map((item) => ({ id: item.roleId, name: item.displayName, summary: item.summary }))}
+          selectedId={selectedCollaborationRole}
+          onSelect={setSelectedCollaborationRole}
+        >{collaborationRole ? <CollaborationRoleInspector role={collaborationRole} /> : null}</DefinitionCatalogLayout>
+      ) : view === 'profiles' ? (
+        <DefinitionCatalogLayout
+          ariaLabel="角色书列表"
+          icon="profile"
+          items={collaborationProfileCatalog.map((item) => ({ id: item.profileId, name: item.displayName, summary: item.summary }))}
+          selectedId={selectedCollaborationProfile}
+          onSelect={setSelectedCollaborationProfile}
+        >{collaborationProfile ? <CollaborationProfileInspector profile={collaborationProfile} /> : null}</DefinitionCatalogLayout>
       ) : (
         <div className="roles-layout">
           <section className="template-list" aria-label="Agent 模板列表">{templates.length ? templates.map((item) => <button type="button" key={item.templateId} aria-current={item.templateId === selectedTemplate} onClick={() => setSelectedTemplate(item.templateId)}><span><Bot size={17} /></span><div><strong>{item.displayName}</strong><small>{item.summary}</small></div></button>) : <p className="roles-empty">本机还没有可用的任务模板。</p>}</section>
@@ -258,6 +290,7 @@ export function RolesFeature() {
 }
 
 type TimelineModel = 'luna' | 'terra' | 'sol';
+type RoleView = 'personas' | 'personaGrowth' | 'collaborationRoles' | 'profiles' | 'templates';
 
 const timelineOptions: ReadonlyArray<{ value: TimelineModel; label: string; caption: string }> = [
   { value: 'luna', label: '初识阶段', caption: '好奇、轻快，侧重认识与记录' },
@@ -270,11 +303,13 @@ function PersonaInspector({
   onSave,
   persona,
   saving,
+  onOpenGrowth,
 }: {
   catalog: RoleModelCatalog;
   onSave: (modelProfile: string, thinkingLevel: string) => Promise<void>;
   persona: AgentPersonaV1;
   saving: boolean;
+  onOpenGrowth: () => void;
 }) {
   const phase = personaPhase(persona);
   const expressionTraits = personaExpressionTraits(persona);
@@ -289,7 +324,8 @@ function PersonaInspector({
   const selectedModel = models.find((model) => `${model.provider}/${model.id}` === modelProfile);
   const thinkingLevels = selectedModel?.thinkingLevels?.length ? selectedModel.thinkingLevels : ['off'];
   const changed = modelProfile !== initialProfile || thinkingLevel !== (persona.defaults.thinkingLevel ?? 'off');
-  return <aside className="role-inspector" data-accent={persona.visualProfile.accentToken}><div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>角色</small><h3>{persona.displayName}</h3><p>{persona.summary}</p></span></div><dl><div><dt><Gauge size={15} />陪伴阶段</dt><dd>{phase.label}</dd></div><div><dt><Sparkles size={15} />表达特征</dt><dd>{expressionTraits.length ? expressionTraits.join(' · ') : '自然'}</dd></div><div><dt><LockKeyhole size={15} />可用方式</dt><dd>{persona.selectableModes.map(modeLabel).join(' · ')}</dd></div><div><dt><ShieldCheck size={15} />操作确认</dt><dd>敏感操作由你确认</dd></div><div><dt><Wrench size={15} />工具使用</dt><dd>按任务调用已连接工具</dd></div></dl><section className="role-runtime-defaults" aria-label="角色运行默认设置"><header><span><Cpu size={15} /><strong>默认模型</strong></span><small>新对话自动使用</small></header>{models.length ? <><label><span>模型</span><Select aria-label="角色默认模型" value={modelProfile} onValueChange={(value) => { setModelProfile(value); const next = models.find((model) => `${model.provider}/${model.id}` === value); const levels = next?.thinkingLevels?.length ? next.thinkingLevels : ['off']; if (!levels.includes(thinkingLevel)) setThinkingLevel(levels[0] ?? 'off'); }} options={models.map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name }))} /></label><label><span>推理强度</span><Select aria-label="角色默认推理强度" value={thinkingLevel} onValueChange={setThinkingLevel} options={thinkingLevels.map((level) => ({ value: level, label: thinkingLabel(level) }))} /></label><Button variant="primary" size="small" leadingIcon={<Save size={14} />} loading={saving} disabled={!changed || !modelProfile} onClick={() => void onSave(modelProfile, thinkingLevel)}>保存默认设置</Button></> : <p><BrainCircuit size={15} />当前 Pi 模型目录不可用，请先在配置页完成模型配置。</p>}</section></aside>;
+  const fixed = persona.defaults.modelPolicy === 'fixed';
+  return <aside className="role-inspector" data-accent={persona.visualProfile.accentToken}><div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>{persona.runtimeCharacteristics.isDefault ? '默认角色' : '角色'}</small><h3>{persona.displayName}</h3><p>{persona.summary}</p></span></div><dl><div><dt><Gauge size={15} />陪伴阶段</dt><dd>{phase.label}</dd></div><div><dt><BrainCircuit size={15} />智能</dt><dd>{persona.runtimeCharacteristics.intelligence}</dd></div><div><dt><Rabbit size={15} />速度</dt><dd>{persona.runtimeCharacteristics.speed}</dd></div><div><dt><Database size={15} />上下文</dt><dd>{persona.runtimeCharacteristics.context}</dd></div><div><dt><Sparkles size={15} />适合</dt><dd>{persona.runtimeCharacteristics.suitableTasks.join(' · ')}</dd></div><div><dt><ShieldCheck size={15} />不适合</dt><dd>{persona.runtimeCharacteristics.unsuitableTasks.join(' · ')}</dd></div><div><dt><LockKeyhole size={15} />可用方式</dt><dd>{persona.selectableModes.map(modeLabel).join(' · ')}</dd></div><div><dt><Wrench size={15} />工具使用</dt><dd>按任务调用已连接工具，敏感操作由你确认</dd></div></dl><DefinitionAudit kind="角色 Prompt" summary={`${persona.tagline}；${persona.summary}`} version={persona.version} source="内置 Persona 目录" /><Button variant="quiet" size="small" leadingIcon={<BookOpen size={14} />} onClick={onOpenGrowth}>查看成长档案</Button><section className="role-runtime-defaults" aria-label="角色运行默认设置"><header><span>{persona.roleId === 'flash-v1' ? <Zap size={15} /> : <Cpu size={15} />}<strong>{fixed ? '固定运行配置' : '默认模型'}</strong></span><small>新对话自动使用</small></header>{fixed ? <div className="role-runtime-fixed"><span><b>{modelDisplayName(modelProfile)}</b><small>{modelProfile}</small></span><span><b>推理强度</b><small>{thinkingLabel(thinkingLevel)}</small></span></div> : models.length ? <><label><span>模型</span><Select aria-label="角色默认模型" value={modelProfile} onValueChange={(value) => { setModelProfile(value); const next = models.find((model) => `${model.provider}/${model.id}` === value); const levels = next?.thinkingLevels?.length ? next.thinkingLevels : ['off']; if (!levels.includes(thinkingLevel)) setThinkingLevel(levels[0] ?? 'off'); }} options={models.map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name }))} /></label><label><span>推理强度</span><Select aria-label="角色默认推理强度" value={thinkingLevel} onValueChange={setThinkingLevel} options={thinkingLevels.map((level) => ({ value: level, label: thinkingLabel(level) }))} /></label><Button variant="primary" size="small" leadingIcon={<Save size={14} />} loading={saving} disabled={!changed || !modelProfile} onClick={() => void onSave(modelProfile, thinkingLevel)}>保存默认设置</Button></> : <p><BrainCircuit size={15} />当前 Pi 模型目录不可用，请先在配置页完成模型配置。</p>}</section></aside>;
 }
 
 type RoleBookProposal = {
@@ -337,7 +373,7 @@ type RoleBookDiffSection = {
   }>;
 };
 
-function RoleBookInspector({ persona }: { persona: AgentPersonaV1 }) {
+function PersonaGrowthInspector({ persona, onBack }: { persona: AgentPersonaV1; onBack: () => void }) {
   const transport = useControlTransport();
   const [catalog, setCatalog] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
@@ -486,7 +522,8 @@ function RoleBookInspector({ persona }: { persona: AgentPersonaV1 }) {
   const previewSummary = record(pendingPreview?.summary);
   const previewDiff = roleBookDiffSections(previewSummary.diff);
   return <aside className="role-inspector role-book-inspector" data-accent={persona.visualProfile.accentToken}>
-    <div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>角色书</small><h3>{persona.displayName}</h3><p>{loading ? '正在读取…' : `Revision ${numberValue(activeRevision.revisionNumber) || 1}`}</p></span></div>
+    <div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>成长档案</small><h3>{persona.displayName}</h3><p>{loading ? '正在读取…' : `Revision ${numberValue(activeRevision.revisionNumber) || 1}`}</p></span></div>
+    <Button variant="quiet" size="small" onClick={onBack}>返回角色</Button>
     {error ? <p className="role-book-error" role="alert">{error}</p> : null}
     {!loading && catalog ? <>
       <section className="role-book-active" aria-label="当前角色书">
@@ -516,7 +553,7 @@ function RoleBookInspector({ persona }: { persona: AgentPersonaV1 }) {
     </> : null}
     <Dialog open={Boolean(pendingPreview)} onOpenChange={(open) => { if (!open && !mutationPending) { setPendingPreview(null); setPendingSelection(null); } }}>
       <DialogContent>
-        <DialogHeader><DialogTitle>启用角色书修订</DialogTitle><DialogDescription>R1 确认 · 已核验 {numberValue(previewSummary.evidenceCount)} 条证据</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>启用成长档案修订</DialogTitle><DialogDescription>R1 确认 · 已核验 {numberValue(previewSummary.evidenceCount)} 条证据</DialogDescription></DialogHeader>
         <ul className="role-book-preview-items">{arrayValue(previewSummary.items).map((item, index) => <li key={`${textValue(item)}:${index}`}>{textValue(item)}</li>)}</ul>
         <div className="role-book-preview-diff" aria-label="角色书逐项差异">
           {previewDiff.map((section) => <section key={section.section}>
@@ -532,8 +569,51 @@ function RoleBookInspector({ persona }: { persona: AgentPersonaV1 }) {
   </aside>;
 }
 
+function DefinitionCatalogLayout({
+  ariaLabel,
+  children,
+  icon,
+  items,
+  onSelect,
+  selectedId,
+}: {
+  ariaLabel: string;
+  children: ReactNode;
+  icon: 'role' | 'profile';
+  items: Array<{ id: string; name: string; summary: string }>;
+  onSelect: (id: string) => void;
+  selectedId: string;
+}) {
+  return <div className="roles-layout">
+    <section className="definition-list" aria-label={ariaLabel}>{items.map((item) => <button type="button" key={item.id} aria-current={item.id === selectedId} onClick={() => onSelect(item.id)}><span>{icon === 'role' ? <BriefcaseBusiness size={17} /> : <UsersRound size={17} />}</span><div><strong>{item.name}</strong><small>{item.summary}</small></div></button>)}</section>
+    {children}
+  </div>;
+}
+
+function CollaborationRoleInspector({ role }: { role: CollaborationRoleFixture }) {
+  return <aside className="role-inspector definition-inspector">
+    <div className="template-inspector__title"><span><BriefcaseBusiness size={23} /></span><div><small>协作岗位 · 只读基线</small><h3>{role.displayName}</h3><p>{role.summary}</p></div></div>
+    <dl><div><dt>进入条件</dt><dd>{role.entryConditions.join(' · ')}</dd></div><div><dt>退出条件</dt><dd>{role.exitConditions.join(' · ')}</dd></div><div><dt>允许承诺</dt><dd>{role.allowedCommitDecisions.map(commitDecisionLabel).join(' · ')}</dd></div></dl>
+    <section className="definition-responsibilities" aria-label="岗位职责"><header><strong>明确职责</strong><small>只约束行为，不能授予工具</small></header>{role.responsibilities.map((item) => <p key={item}>{item}</p>)}</section>
+    <DefinitionAudit kind="岗位 Prompt" summary={`${role.summary}；进入与退出条件均为显式规则`} version="control-center-safe-v1" source="内置协作岗位目录" />
+    <div className="template-capabilities">{role.capabilityRestrictions.map((capability) => <span key={capability}>{capabilityLabel(capability as AgentTemplateV1['capabilities'][number])}</span>)}</div>
+  </aside>;
+}
+
+function CollaborationProfileInspector({ profile }: { profile: CollaborationProfileCatalogItem }) {
+  return <aside className="role-inspector definition-inspector">
+    <div className="template-inspector__title"><span><UsersRound size={23} /></span><div><small>角色书 · canonical runtime</small><h3>{profile.displayName}</h3><p>{profile.summary}</p></div></div>
+    <CollaborationProfileGovernancePanel profileId={profile.profileId} />
+    <DefinitionAudit kind="角色书 Prompt" summary={`${profile.summary}；仅激活经治理确认的修订`} version="control-center-safe-v1" source="canonical role-book projection" />
+  </aside>;
+}
+
 function TemplateInspector({ template }: { template: AgentTemplateV1 }) {
-  return <aside className="role-inspector template-inspector"><div className="template-inspector__title"><span><Bot size={25} /></span><div><small>Agent 模板</small><h3>{template.displayName}</h3><p>{template.summary}</p></div></div><dl><div><dt><Wrench size={15} />工具范围</dt><dd>{toolBoundaryLabel(template.toolProfileVersion)}</dd></div><div><dt><Gauge size={15} />任务推进</dt><dd>按任务持续执行 · 可随时停止</dd></div><div><dt><LockKeyhole size={15} />任务上下文</dt><dd>{template.contextModes.map(contextModeLabel).join(' · ')}</dd></div></dl><div className="template-capabilities">{template.capabilities.map((capability) => <span key={capability}>{capabilityLabel(capability)}</span>)}</div></aside>;
+  return <aside className="role-inspector template-inspector"><div className="template-inspector__title"><span><Bot size={25} /></span><div><small>Agent 模板</small><h3>{template.displayName}</h3><p>{template.summary}</p></div></div><dl><div><dt><Wrench size={15} />工具范围</dt><dd>{toolBoundaryLabel(template.toolProfileVersion)}</dd></div><div><dt><Gauge size={15} />任务推进</dt><dd>按任务持续执行 · 可随时停止</dd></div><div><dt><LockKeyhole size={15} />任务上下文</dt><dd>{template.contextModes.map(contextModeLabel).join(' · ')}</dd></div></dl><DefinitionAudit kind="Agent 模板 Prompt" summary={template.summary} version={template.version} source="内置 Agent 模板目录" /><div className="template-capabilities">{template.capabilities.map((capability) => <span key={capability}>{capabilityLabel(capability)}</span>)}</div></aside>;
+}
+
+function DefinitionAudit({ kind, source, summary, version }: { kind: string; source: string; summary: string; version: string }) {
+  return <details className="definition-audit"><summary><ShieldCheck size={14} /><span><strong>Prompt 摘要与审计</strong><small>已审计 · 无占位符</small></span></summary><dl><div><dt>类型</dt><dd>{kind}</dd></div><div><dt>版本</dt><dd>{version}</dd></div><div><dt>来源</dt><dd>{source}</dd></div><div><dt>摘要</dt><dd>{summary}</dd></div></dl><p>这里只展示可解释摘要。完整系统 Prompt 由 Runtime 按版本装配，不在角色目录中泄露或临时拼接。</p></details>;
 }
 
 function templateItems(value: unknown): AgentTemplateV1[] { const source = record(value); const items = Array.isArray(source.items) ? source.items : Array.isArray(source.templates) ? source.templates : []; return items.filter((item) => record(item).schemaVersion === 'rag-ime.agent-template.v1') as AgentTemplateV1[]; }
@@ -655,13 +735,19 @@ function thinkingLabel(level: string): string {
   return ({ off: '不启用推理', minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '极高', max: 'Max' } as Record<string, string>)[level] ?? level;
 }
 
-function personaPhase(persona: AgentPersonaV1): { id: TimelineModel | ''; label: string } {
+function personaPhase(persona: AgentPersonaV1): { id: TimelineModel | 'flash' | ''; label: string } {
   const assetId = persona.visualProfile.avatarAssetId.toLowerCase();
   const policy = persona.defaults.modelPolicy.toLowerCase();
   if (assetId.includes('present') || policy.includes('terra')) return { id: 'terra', label: '此刻阶段' };
   if (assetId.includes('past') || policy.includes('luna')) return { id: 'luna', label: '初识阶段' };
   if (assetId.includes('future') || policy.includes('sol')) return { id: 'sol', label: '构筑阶段' };
+  if (assetId.includes('flash')) return { id: 'flash', label: '闪念阶段' };
   return { id: '', label: '自定义阶段' };
+}
+
+function modelDisplayName(profile?: string): string {
+  const model = String(profile ?? '').split('/').at(-1) ?? '';
+  return (({ 'gpt-5.6-sol': 'GPT-5.6 Sol', 'gpt-5.6-terra': 'GPT-5.6 Terra', 'gpt-5.6-luna': 'GPT-5.6 Luna', 'deepseek-v4-flash': 'DeepSeek V4 Flash' } as Record<string, string>)[model] ?? model) || 'Session 选择';
 }
 
 function personaExpressionTraits(persona: AgentPersonaV1): string[] {
@@ -708,4 +794,8 @@ function capabilityLabel(value: AgentTemplateV1['capabilities'][number]): string
     delegation: '任务委派',
   };
   return labels[value];
+}
+
+function commitDecisionLabel(value: CollaborationRoleFixture['allowedCommitDecisions'][number]): string {
+  return { dispatch: '交接', wait: '等待', blocked: '报告阻塞', complete: '完成' }[value];
 }

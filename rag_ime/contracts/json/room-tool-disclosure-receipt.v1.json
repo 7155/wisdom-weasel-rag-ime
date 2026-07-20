@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "wisdom-weasel.room-tool-disclosure-receipt.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "receiptId", "manifestId", "manifestHash", "kind", "query", "toolName", "schemaHash", "items", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.room-tool-disclosure-receipt.v1"},
+    "receiptId": {"type": "string", "minLength": 1},
+    "manifestId": {"type": "string", "minLength": 1},
+    "manifestHash": {"type": "string", "minLength": 64, "maxLength": 64},
+    "kind": {"enum": ["search", "load"]},
+    "query": {"type": "string"},
+    "toolName": {"type": "string"},
+    "schemaHash": {"type": "string"},
+    "items": {"type": "array", "items": {"type": "object"}},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

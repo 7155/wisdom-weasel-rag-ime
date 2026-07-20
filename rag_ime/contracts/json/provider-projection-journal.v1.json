@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/provider-projection-journal.v1.json",
+  "title": "Provider-only append and seal journal",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "journalId",
+    "rootId",
+    "roomId",
+    "bindingId",
+    "sessionId",
+    "sessionEpoch",
+    "contextEpoch",
+    "generation",
+    "sealedThroughSequence",
+    "revision"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.provider-projection-journal.v1"},
+    "journalId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "roomId": {"type": "string", "minLength": 1},
+    "bindingId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "sessionEpoch": {"type": "integer", "minimum": 1},
+    "contextEpoch": {"type": "integer", "minimum": 1},
+    "generation": {"type": "integer", "minimum": 0},
+    "sealedThroughSequence": {"type": "integer", "minimum": 0},
+    "revision": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

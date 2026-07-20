@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.collaboration-profile-projection.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "profileId", "routeHash", "requiredReadScopes", "requiredWriteScopes", "guardEpoch", "normalAgentFallback", "inspection", "recentReceipts"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.collaboration-profile-projection.v1"},
+    "profileId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"},
+    "routeHash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "requiredReadScopes": {"type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": true, "items": {"type": "string", "enum": ["agent.read"]}},
+    "requiredWriteScopes": {"type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": {"type": "string", "enum": ["agent.write", "agent.approve"]}},
+    "guardEpoch": {"type": "integer", "minimum": 0},
+    "normalAgentFallback": {"type": "boolean", "const": true},
+    "inspection": {"type": "object"},
+    "recentReceipts": {"type": "array", "maxItems": 50, "items": {"type": "object"}}
+  }
+}

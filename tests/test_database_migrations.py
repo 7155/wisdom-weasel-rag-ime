@@ -12,6 +12,7 @@ from rag_ime.db.migration_runner import (
     DEFAULT_MIGRATIONS_DIR,
     MigrationChecksumError,
     apply_database_migrations,
+    load_migrations,
     migration_status,
 )
 
@@ -32,11 +33,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
                     41, 42, 43, 44, 45, 46, 47,
                     51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                    61, 62, 63, 64, 65, 66,
+                    61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 66)
+            self.assertEqual(status["currentVersion"], 94)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -46,6 +47,33 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("runtime_config_state", tables)
             self.assertIn("management_settings", tables)
             self.assertIn("input_events", tables)
+            self.assertIn("collaboration_profile_versions", tables)
+            self.assertIn("collaboration_profile_active_pointers", tables)
+            self.assertIn("room_v2_prompt_compile_receipts", tables)
+            self.assertIn("room_v2_prompt_compare_diffs", tables)
+            self.assertIn("room_v2_capability_manifests", tables)
+            self.assertIn("room_v2_tool_disclosure_receipts", tables)
+            self.assertIn("room_v2_tool_invocation_receipts", tables)
+            self.assertIn("room_v2_requirement_anchors", tables)
+            self.assertIn("room_v2_requirement_catalog_revisions", tables)
+            self.assertIn("room_v2_verification_receipts", tables)
+            self.assertIn("room_v2_delivery_gate_receipts", tables)
+            self.assertIn("room_v2_peer_judgment_rounds", tables)
+            self.assertIn("room_v2_peer_judgments", tables)
+            self.assertIn("room_v2_conflict_matrix_revisions", tables)
+            self.assertIn("room_v2_delivery_gate_preview_receipts", tables)
+            self.assertIn("room_v2_incidents", tables)
+            self.assertIn("room_v2_lesson_candidates", tables)
+            self.assertIn("room_v2_guard_candidates", tables)
+            self.assertIn("room_v2_guard_activation_receipts", tables)
+            self.assertIn("room_v2_promotion_candidates", tables)
+            self.assertIn("room_v2_knowledge_claim_versions", tables)
+            self.assertIn("room_v2_knowledge_retrieval_receipts", tables)
+            self.assertIn("room_v2_external_import_intakes", tables)
+            self.assertIn("room_v2_reflection_dead_letters", tables)
+            self.assertIn("room_v2_guard_materialization_receipts", tables)
+            self.assertIn("room_v2_knowledge_eval_fixture_datasets", tables)
+            self.assertIn("room_v2_knowledge_search_use_eval_runs", tables)
             self.assertIn("memory_items", tables)
             self.assertIn("memory_books", tables)
             self.assertIn("memory_group_overrides", tables)
@@ -112,6 +140,16 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("memory_legacy_atom_migration_audit", tables)
             self.assertIn("agent_lifecycle_hook_policies", tables)
             self.assertIn("agent_lifecycle_hook_events", tables)
+            self.assertIn("room_v2_shadow_observations", tables)
+            self.assertIn("room_v2_shadow_legacy_refs", tables)
+            self.assertIn("room_v2_shadow_quarantine", tables)
+            self.assertIn("room_v2_context_entries", tables)
+            self.assertIn("room_v2_posts", tables)
+            self.assertIn("room_v2_provider_projection_journals", tables)
+            self.assertIn("room_v2_provider_projection_items", tables)
+            self.assertIn("room_v2_provider_projection_receipts", tables)
+            self.assertIn("agent_message_block_sidecars", tables)
+            self.assertIn("agent_block_message_envelopes", tables)
             room_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(agent_rooms)")
             }
@@ -143,6 +181,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     "role_version",
                 }.issubset(memory_source_columns)
             )
+
             self.assertIn("project_context_enabled", session_columns)
             self.assertIn("pi_skills_enabled", session_columns)
             self.assertIn("codex_skills_enabled", session_columns)
@@ -183,6 +222,59 @@ class DatabaseMigrationTests(unittest.TestCase):
                 }.issubset(persona_columns)
             )
 
+    def test_applied_0093_checksum_upgrades_to_0094_without_history_rewrite(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0093-") as temporary:
+            migrations_0093 = Path(temporary) / "migrations"
+            migrations_0093.mkdir()
+            for migration in load_migrations():
+                if migration.version <= 93:
+                    shutil.copy2(migration.path, migrations_0093 / migration.path.name)
+
+            migration_0093 = next(migrations_0093.glob("0093_*.sql"))
+            self.assertEqual(
+                hashlib.sha256(migration_0093.read_bytes()).hexdigest(),
+                "8e862454a44a180e5712465dfca55b15de15bd2d5e1e74f15fbcee55f39c79a1",
+            )
+            with closing(sqlite3.connect(":memory:")) as conn:
+                initial = apply_database_migrations(conn, migrations_dir=migrations_0093)
+                self.assertEqual(initial.current_version, 93)
+                conn.execute(
+                    """
+                    INSERT INTO agent_message_block_sidecars(
+                        block_ref, block_id, message_id, session_id, root_id,
+                        generation, block_type, visibility, lifecycle_status,
+                        digest, summary, raw_json, raw_bytes,
+                        created_at_ms, updated_at_ms
+                    ) VALUES (
+                        'block:1', 'table:1', 'message:1', 'session:1', 'root:1',
+                        1, 'table', 'private_session', 'active',
+                        ?, 'summary', '{}', 2, 10, 10
+                    )
+                    """,
+                    ("a" * 64,),
+                )
+
+                upgraded = apply_database_migrations(conn)
+
+                self.assertEqual(upgraded.applied_versions, (94,))
+                self.assertEqual(upgraded.current_version, 94)
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT checksum FROM schema_migrations WHERE version=93"
+                    ).fetchone()[0],
+                    "8e862454a44a180e5712465dfca55b15de15bd2d5e1e74f15fbcee55f39c79a1",
+                )
+                conn.execute(
+                    "UPDATE agent_message_block_sidecars SET lifecycle_status='completed' WHERE block_ref='block:1'"
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT lifecycle_status FROM agent_message_block_sidecars WHERE block_ref='block:1'"
+                    ).fetchone()[0],
+                    "completed",
+                )
+                self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
+
     def test_production_0062_history_stays_immutable_and_workflow_migrations_append(self) -> None:
         expected_history = {
             61: (
@@ -217,12 +309,12 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
 
                 appended = apply_database_migrations(conn)
-                self.assertEqual(appended.applied_versions, (63, 64, 65, 66))
+                self.assertEqual(appended.applied_versions, (63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94))
                 self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 66)
+                self.assertEqual(status["currentVersion"], 94)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -310,7 +402,10 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
                 }
 
-            self.assertEqual(result.applied_versions, (59, 60, 61, 62, 63, 64, 65, 66))
+            self.assertEqual(
+                result.applied_versions,
+                (59, 60, 61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94),
+            )
             self.assertEqual(
                 rows["atom:legacy-old"],
                 (
@@ -438,7 +533,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 (
                     39, 40, 41, 42, 43, 44, 45, 46, 47,
                     51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                    61, 62, 63, 64, 65, 66,
+                    61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94,
                 ),
             )
             self.assertEqual(
@@ -501,7 +596,10 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 result = apply_database_migrations(conn)
 
-                self.assertEqual(result.applied_versions, (61, 62, 63, 64, 65, 66))
+                self.assertEqual(
+                    result.applied_versions,
+                    (61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94),
+                )
                 self.assertEqual(
                     conn.execute(
                         """
@@ -590,7 +688,10 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 result = apply_database_migrations(conn)
 
-                self.assertEqual(result.applied_versions, (62, 63, 64, 65, 66))
+                self.assertEqual(
+                    result.applied_versions,
+                    (62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94),
+                )
                 self.assertEqual(
                     conn.execute(
                         """
@@ -684,7 +785,10 @@ class DatabaseMigrationTests(unittest.TestCase):
                     """
                 ).fetchall()
 
-                self.assertEqual(result.applied_versions, (66,))
+                self.assertEqual(
+                    result.applied_versions,
+                    (66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94),
+                )
                 self.assertEqual(
                     rows,
                     [

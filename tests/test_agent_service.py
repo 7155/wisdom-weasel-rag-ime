@@ -11,8 +11,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.agent_protocol import AgentEventEnvelope
+from rag_ime.agent_blocks import normalize_trusted_agent_blocks, provider_block_projection
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
+from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
 
@@ -145,10 +147,10 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(runtime["schemaVersion"], "rag-ime.agent-runtime.v1")
         self.assertEqual(runtime["status"], "disabled")
         roles = self.service.list_roles()
-        self.assertEqual(roles["items"][0]["displayName"], "智鼬·此刻")
+        self.assertEqual(roles["items"][0]["displayName"], "智鼬·未来")
         self.assertEqual(
             [item["roleId"] for item in roles["items"]],
-            ["zhiyou-v1", "hermes-v1", "vcp-v1"],
+            ["vcp-v1", "zhiyou-v1", "hermes-v1", "flash-v1"],
         )
         self.assertNotIn("systemPrompt", roles["items"][0])
 
@@ -198,6 +200,7 @@ class AgentServiceTests(unittest.TestCase):
         )["session"]
         self.assertEqual(restored_profile["toolProfileVersion"], "control-center-v1")
         self.assertEqual(restored_profile["toolAllowlistMode"], "profile")
+
         self.assertEqual(restored_profile["allowedTools"], [])
         context_disabled = self.service.update_session(
             session_id,
@@ -266,6 +269,69 @@ class AgentServiceTests(unittest.TestCase):
         deleted = self.service.delete_session(session_id)
         self.assertTrue(deleted["ok"])
         self.assertEqual(self.service.list_sessions()["items"], [])
+
+    def test_rich_history_hydrates_from_sidecar_after_restart_and_compacted_snapshot(self) -> None:
+        session = self.service.create_session({"title": "Rich restart"})["session"]
+        session_id = str(session["id"])
+        rich = list(normalize_trusted_agent_blocks(
+            [{
+                "id": "table:restart",
+                "type": "table",
+                "data": {
+                    "title": "重启恢复",
+                    "columns": ["状态"],
+                    "rows": [["raw-restart-secret"]],
+                },
+            }],
+            source_kind="pi_runtime_event",
+            source_ref=f"{session_id}:message:rich",
+        ))
+        message = {
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "message:rich",
+            "sessionId": session_id,
+            "turnId": "turn:rich",
+            "role": "assistant",
+            "status": "completed",
+            "blocks": [
+                {
+                    "id": "text:rich", "type": "text", "status": "completed",
+                    "presentationKind": "markdown", "data": {"text": "可读交付"},
+                },
+                *rich,
+            ],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 10,
+            "completedAtMs": 10,
+        }
+        self.service.agent_blocks.persist_message(message, created_at_ms=10)
+        db_path = self.root / "rag-ime.sqlite"
+        self.service.close()
+        self.service = AgentService(
+            db_path=db_path,
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config",
+                session_dir=self.root / "sessions",
+                logs_dir=self.root / "logs",
+            ),
+            process_id_provider=lambda: self.process_id,
+        )
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value={"messages": [], "telemetry": None, "messageQueue": None},
+        ):
+            recovered = self.service.messages(session_id)["items"]
+
+        self.assertEqual([block["type"] for block in recovered[0]["blocks"]], ["text", "table"])
+        self.assertEqual(recovered[0]["blocks"][1]["data"]["rows"], [["raw-restart-secret"]])
+        provider_text = provider_block_projection("可读交付", recovered[0]["blocks"][1:])
+        self.assertIn("表格：重启恢复，1 行 1 列", provider_text)
+        self.assertNotIn("raw-restart-secret", provider_text)
 
     def test_delete_stops_a_runtime_that_still_has_the_session_open(self) -> None:
         session = self.service.create_session({"title": "打开中的会话"})["session"]
@@ -647,10 +713,18 @@ class AgentServiceTests(unittest.TestCase):
             compacted["contextRefresh"]["result"]["status"],
             "runtime_applied",
         )
-        digest = compacted["result"]["memoryCheckpoint"]["conversationDigest"]
-        self.assertTrue(digest["stored"])
-        self.assertEqual(digest["evidence"]["sourceKind"], "session_digest")
-        self.assertEqual(digest["evidence"]["text"], "压缩后摘要")
+        checkpoint = compacted["result"]["memoryCheckpoint"]
+        self.assertFalse(checkpoint["stored"])
+        self.assertEqual(checkpoint["status"], "session_context_only")
+        self.assertFalse(checkpoint["longTermMemoryEligible"])
+        with sqlite3.connect(self.service.db_path) as conn:
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM agent_memory_sources WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()[0],
+                0,
+            )
 
     def test_room_work_item_drives_start_and_compaction_context(self) -> None:
         room = self.service.create_room(
@@ -681,16 +755,26 @@ class AgentServiceTests(unittest.TestCase):
         )["workItem"]
         session_id = str(owner["sessionId"])
 
-        started = self.service.refresh_session_context(
-            {
-                "sessionId": session_id,
-                "trigger": "session_start",
-                "queryText": "@Hermes 继续处理",
-                "recentMessages": [
-                    {"role": "user", "text": "@Hermes 继续处理"},
-                ],
-            }
-        )
+        with patch.object(
+            self.service.memory_bootstrap,
+            "build",
+            wraps=self.service.memory_bootstrap.build,
+        ) as start_build:
+            started = self.service.refresh_session_context(
+                {
+                    "sessionId": session_id,
+                    "trigger": "session_start",
+                    "queryText": "@Hermes 继续处理",
+                    "recentMessages": [
+                        {"role": "user", "text": "@Hermes 继续处理"},
+                    ],
+                }
+            )
+        start_query = start_build.call_args.kwargs["query_text"]
+        self.assertNotIn("@Hermes", start_query)
+        self.assertIn("继续处理", start_query)
+        self.assertIn(str(work["objective"]), start_query)
+        self.assertEqual(start_build.call_args.kwargs["vector_context_weight"], 0.0)
         start_context = started["result"]["sessionContext"]
         self.assertEqual(started["result"]["trigger"], "room_task")
         self.assertIn(str(work["objective"]), start_context)
@@ -702,17 +786,25 @@ class AgentServiceTests(unittest.TestCase):
             title="核验 Room Provider Payload",
             status="in_progress",
         )
-        compacted = self.service.refresh_session_context(
-            {
-                "sessionId": session_id,
-                "trigger": "compaction",
-                "summary": "已完成 Room 任务检索设计，正在核验真实载荷。",
-                "recentMessages": [
-                    {"role": "user", "text": "按 WorkItem 继续"},
-                    {"role": "assistant", "text": "已经完成第一阶段"},
-                ],
-            }
-        )
+        with patch.object(
+            self.service.memory_bootstrap,
+            "build",
+            wraps=self.service.memory_bootstrap.build,
+        ) as compact_build:
+            compacted = self.service.refresh_session_context(
+                {
+                    "sessionId": session_id,
+                    "trigger": "compaction",
+                    "summary": "已完成 Room 任务检索设计，正在核验真实载荷。",
+                    "recentMessages": [
+                        {"role": "user", "text": "按 WorkItem 继续"},
+                        {"role": "assistant", "text": "已经完成第一阶段"},
+                    ],
+                }
+            )
+        self.assertEqual(compact_build.call_args.kwargs["vector_context_weight"], 0.2)
+        self.assertIn("按 WorkItem 继续", compact_build.call_args.kwargs["query_text"])
+        self.assertIn(str(work["objective"]), compact_build.call_args.kwargs["query_text"])
         compacted_context = compacted["result"]["sessionContext"]
         self.assertEqual(compacted["result"]["trigger"], "compaction")
         self.assertIn(str(work["objective"]), compacted_context)
@@ -723,7 +815,7 @@ class AgentServiceTests(unittest.TestCase):
             compacted["result"]["itemId"],
         )
 
-    def test_subagent_task_is_the_primary_recall_query(self) -> None:
+    def test_subagent_task_is_combined_with_live_user_query(self) -> None:
         session = self.service.create_session({"title": "受管子任务"})["session"]
         session_id = str(session["id"])
         delegated_run = {
@@ -755,13 +847,45 @@ class AgentServiceTests(unittest.TestCase):
             )
 
         self.assertEqual(refreshed["result"]["trigger"], "subagent_task")
-        self.assertEqual(
-            build.call_args.kwargs["query_text"],
-            delegated_run["task"],
-        )
+        recall_query = build.call_args.kwargs["query_text"]
+        self.assertIn("帮忙看一下", recall_query)
+        self.assertIn(delegated_run["task"], recall_query)
+        self.assertEqual(build.call_args.kwargs["vector_context_weight"], 0.0)
         self.assertIn(
             delegated_run["task"],
             refreshed["result"]["sessionContext"],
+        )
+
+    def test_session_context_refresh_fails_closed_on_room_generation_change(self) -> None:
+        session = self.service.create_session({"title": "召回代际栅栏"})["session"]
+        session_id = str(session["id"])
+        before = {
+            "manifestId": "manifest:1",
+            "manifestHash": "a" * 64,
+            "capabilityEpoch": 3,
+            "state": "active",
+        }
+        after = {**before, "capabilityEpoch": 4, "state": "revoked"}
+
+        with patch.object(
+            self.service.room_capabilities,
+            "runtime_binding",
+            side_effect=[before, after],
+        ):
+            with self.assertRaisesRegex(RoomKernelFenceError, "changed"):
+                self.service.refresh_session_context(
+                    {
+                        "sessionId": session_id,
+                        "trigger": "compaction",
+                        "queryText": "继续当前任务",
+                        "summary": "旧代际压缩摘要",
+                    }
+                )
+
+        self.assertIsNone(
+            self.service.context_runtime.active_item(
+                session_id, source_kind="memory_bootstrap"
+            )
         )
 
     def test_next_prompt_repairs_first_query_bootstrap_failure(self) -> None:
@@ -908,7 +1032,7 @@ class AgentServiceTests(unittest.TestCase):
                 "mode": "assistant",
                 "roleId": "hermes-v1",
                 "roleVersion": "1",
-                "modelProfile": "gpt/test-model",
+                "modelProfile": "gpt/gpt-5.6-luna",
                 "toolProfileVersion": "subagent-readonly-v1",
             }
         )["session"]
@@ -1079,7 +1203,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         session = self.service.create_session({"title": "默认角色"})["session"]
         self.assertEqual(session["roleId"], "hermes-v1")
-        self.assertEqual(session["modelProfile"], "deepseek/deepseek-chat")
+        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-luna")
 
         runtime = self.service.update_configuration(
             {
@@ -1108,7 +1232,7 @@ class AgentServiceTests(unittest.TestCase):
 
             self.assertEqual(runtime["runtimeKind"], "gateway_http")
             self.assertEqual(runtime["driverId"], "test-gateway")
-            self.assertEqual(session["modelProfile"], "gateway/default")
+            self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-sol")
             self.assertEqual(factory.created_for, ["interactive"])
         finally:
             service.close()
@@ -1126,7 +1250,7 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(created["roleId"], "hermes-v1")
         self.assertEqual(created["roleVersion"], "1")
-        self.assertEqual(created["modelProfile"], "pi/default")
+        self.assertEqual(created["modelProfile"], "gpt/gpt-5.6-luna")
         self.assertEqual(created["toolProfileVersion"], "control-center-v1")
         renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
         self.assertEqual(renamed["roleId"], "hermes-v1")
@@ -1331,8 +1455,8 @@ class AgentServiceTests(unittest.TestCase):
         source, target = room["participants"]
         source_session = self.service.sessions.get(str(source["sessionId"]))
         target_session = self.service.sessions.get(str(target["sessionId"]))
-        self.assertEqual(source_session["modelProfile"], "pi/default")
-        self.assertEqual(target_session["modelProfile"], "pi/default")
+        self.assertEqual(source_session["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(target_session["modelProfile"], "gpt/gpt-5.6-sol")
         item = {
             "id": "room-message:test",
             "kind": "ask",
@@ -1677,7 +1801,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             initial_roles["hermes-v1"],
             {
-                "modelPolicy": "runtime-default",
+                "modelPolicy": "fixed",
                 "memoryPolicy": "personal-evidence-v1",
                 "toolProfileVersion": "control-center-v1",
                 "modelProfile": "gpt/gpt-5.6-luna",
@@ -1687,43 +1811,28 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(initial_roles["zhiyou-v1"]["modelProfile"], "gpt/gpt-5.6-terra")
         self.assertEqual(initial_roles["zhiyou-v1"]["thinkingLevel"], "max")
         self.assertEqual(initial_roles["vcp-v1"]["modelProfile"], "gpt/gpt-5.6-sol")
-        self.assertEqual(initial_roles["vcp-v1"]["thinkingLevel"], "xhigh")
+        self.assertEqual(initial_roles["vcp-v1"]["thinkingLevel"], "max")
+        self.assertEqual(initial_roles["flash-v1"]["modelProfile"], "deepseek/deepseek-v4-flash")
         with patch.object(service.runtime, "available_models", return_value=available_models):
             catalog = service.role_model_catalog()
         self.assertEqual(catalog["providers"][0]["models"][0]["name"], "GPT-5.6 Luna")
         with patch.object(service.runtime, "available_models", return_value=available_models):
-            response = service.update_role_runtime_defaults(
-                {
-                    "roleId": "zhiyou-v1",
-                    "roleVersion": "1",
-                    "provider": "gpt",
-                    "modelId": "gpt-5.6-luna",
-                    "thinkingLevel": "max",
-                }
-            )
-        self.assertEqual(response["role"]["defaults"]["thinkingLevel"], "max")
-        self.assertEqual(
-            service.list_roles()["items"][0]["defaults"]["modelProfile"],
-            "gpt/gpt-5.6-luna",
-        )
+            with self.assertRaisesRegex(ValueError, "fixed"):
+                service.update_role_runtime_defaults(
+                    {"roleId": "zhiyou-v1", "roleVersion": "1", "provider": "gpt",
+                     "modelId": "gpt-5.6-terra", "thinkingLevel": "max"}
+                )
         with patch.object(service.runtime, "set_thinking_level") as set_thinking:
             session = service.create_session(
                 {"title": "继承角色默认", "roleId": "zhiyou-v1", "roleVersion": "1"}
             )["session"]
-        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-terra")
         self.assertEqual(session["thinkingLevel"], "max")
         set_thinking.assert_not_called()
 
-        explicit = service.create_session(
-            {
-                "title": "本轮显式模型",
-                "roleId": "zhiyou-v1",
-                "roleVersion": "1",
-                "modelProfile": "gpt/gpt-5.6-sol",
-            }
-        )["session"]
-        self.assertEqual(explicit["modelProfile"], "gpt/gpt-5.6-sol")
-        self.assertEqual(explicit["thinkingLevel"], "")
+        with self.assertRaisesRegex(ValueError, "cannot be overridden"):
+            service.create_session({"title": "本轮显式模型", "roleId": "zhiyou-v1",
+                                    "roleVersion": "1", "modelProfile": "gpt/gpt-5.6-sol"})
 
     def test_command_catalog_exposes_only_pi_prompt_commands_and_degrades_cleanly(self) -> None:
         session = self.service.create_session({"title": "命令目录"})["session"]

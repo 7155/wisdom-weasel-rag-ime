@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
+from rag_ime.agent_service import agent_service_from_settings
 from rag_ime.settings_schema import default_settings, flatten_settings, settings_schema, unflatten_settings
 
 
@@ -59,6 +62,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["context"]["reservedOutputTokens"], 1024)
         self.assertFalse(defaults["agent"]["pi"]["enabled"])
         self.assertEqual(defaults["agent"]["pi"]["idleTimeoutSeconds"], 900)
+        self.assertEqual(defaults["agent"]["pi"]["defaultRoleId"], "vcp-v1")
         self.assertTrue(defaults["memory"]["automaticOrganization"]["enabled"])
         self.assertEqual(
             defaults["memory"]["automaticOrganization"]["model"],
@@ -80,6 +84,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(fields["interaction.postCommit.panelTtlMs"]["default"], 5000)
         self.assertEqual(fields["models.hot"]["default"], "minimind_ime_v2")
         self.assertEqual(fields["context.tokenBudget"]["default"], 4096)
+        self.assertEqual(fields["agent.pi.defaultRoleId"]["default"], "vcp-v1")
         self.assertEqual(fields["activeRag.quickModel"]["type"], "pi-model")
         self.assertEqual(
             fields["activeRag.quickThinkingLevel"]["options"],
@@ -102,6 +107,28 @@ class SettingsSchemaTests(unittest.TestCase):
         original = {"interaction": {"postCommit": {"panelTtlMs": 4200}}, "display": {"badges": {"model": "模"}}}
 
         self.assertEqual(unflatten_settings(flatten_settings(original)), original)
+
+    def test_agent_default_is_future_but_an_explicit_legacy_role_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-role-default-") as temporary:
+            default_service = agent_service_from_settings(
+                Path(temporary) / "default.sqlite",
+                {"agent": {"pi": {}}},
+                wake_scheduler_enabled=False,
+            )
+            legacy_service = agent_service_from_settings(
+                Path(temporary) / "legacy.sqlite",
+                {"agent": {"pi": {"defaultRoleId": "zhiyou-v1"}}},
+                wake_scheduler_enabled=False,
+            )
+
+            self.assertEqual(
+                default_service.configuration()["configuration"]["configuration"]["sessionDefaults"]["roleId"],
+                "vcp-v1",
+            )
+            self.assertEqual(
+                legacy_service.configuration()["configuration"]["configuration"]["sessionDefaults"]["roleId"],
+                "zhiyou-v1",
+            )
 
     def test_every_field_declares_runtime_application_metadata(self) -> None:
         schema = settings_schema()

@@ -2092,7 +2092,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(created["ok"])
         self.assertEqual(listed["items"][0]["id"], session_id)
         self.assertEqual(runtime["status"], "disabled")
-        self.assertEqual(roles["items"][0]["displayName"], "智鼬·此刻")
+        self.assertEqual(roles["items"][0]["displayName"], "智鼬·未来")
         self.assertNotIn("systemPrompt", roles["items"][0])
         self.assertEqual(maintenance["policy"], "auto_governed")
         self.assertTrue(maintenance["autoApply"])

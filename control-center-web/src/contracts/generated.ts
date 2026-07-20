@@ -52,9 +52,17 @@ import type { AgentToolResultV1 } from './generated/agent-tool-result.v1';
 import type { AgentWorkflowStateV1 } from './generated/agent-workflow-state.v1';
 import type { AssistantCandidateActionV1 } from './generated/assistant-candidate-action.v1';
 import type { AssistantOverlayV1 } from './generated/assistant-overlay.v1';
+import type { CollaborationProfileCommandReceiptV1 } from './generated/collaboration-profile-command-receipt.v1';
+import type { CollaborationProfileCommandV1 } from './generated/collaboration-profile-command.v1';
+import type { CollaborationProfileCompileReceiptV1 } from './generated/collaboration-profile-compile-receipt.v1';
+import type { CollaborationProfileProjectionV1 } from './generated/collaboration-profile-projection.v1';
+import type { CollaborationProfileV1 } from './generated/collaboration-profile.v1';
+import type { CollaborationRoleV1 } from './generated/collaboration-role.v1';
+import type { CompiledAgentRuntimeProfileV1 } from './generated/compiled-agent-runtime-profile.v1';
 import type { ControlToolManifestV1 } from './generated/control-tool-manifest.v1';
 import type { DailyActivityTimelineV1 } from './generated/daily-activity-timeline.v1';
 import type { DailyConversationDigestV1 } from './generated/daily-conversation-digest.v1';
+import type { DeliveryGateObservationV1 } from './generated/delivery-gate-observation.v1';
 import type { ForegroundCommitV1 } from './generated/foreground-commit.v1';
 import type { ForegroundContextV2 } from './generated/foreground-context.v2';
 import type { FrontendCapabilitiesV1 } from './generated/frontend-capabilities.v1';
@@ -62,10 +70,20 @@ import type { FrontendSelectionResponseV1 } from './generated/frontend-selection
 import type { FrontendSelectionV1 } from './generated/frontend-selection.v1';
 import type { FrontendSuggestRequestV1 } from './generated/frontend-suggest-request.v1';
 import type { FrontendSuggestResponseV1 } from './generated/frontend-suggest-response.v1';
+import type { GuardActivationProjectionV1 } from './generated/guard-activation-projection.v1';
+import type { GuardActivePointerProjectionV1 } from './generated/guard-active-pointer-projection.v1';
+import type { GuardApprovalProjectionV1 } from './generated/guard-approval-projection.v1';
+import type { GuardCandidateProjectionV1 } from './generated/guard-candidate-projection.v1';
+import type { GuardEvalRunProjectionV1 } from './generated/guard-eval-run-projection.v1';
+import type { GuardMaterializationStatusProjectionV1 } from './generated/guard-materialization-status-projection.v1';
+import type { GuardRollbackProjectionV1 } from './generated/guard-rollback-projection.v1';
+import type { IncidentOccurrenceProjectionV1 } from './generated/incident-occurrence-projection.v1';
 import type { KnowledgeDocumentDetailV1 } from './generated/knowledge-document-detail.v1';
 import type { KnowledgeDocumentImportV1 } from './generated/knowledge-document-import.v1';
 import type { KnowledgeGraphV1 } from './generated/knowledge-graph.v1';
 import type { KnowledgeLibraryV1 } from './generated/knowledge-library.v1';
+import type { KnowledgeSearchUseEvalRunV1 } from './generated/knowledge-search-use-eval-run.v1';
+import type { LessonCandidateProjectionV1 } from './generated/lesson-candidate-projection.v1';
 import type { ManagementWorkErrorV1 } from './generated/management-work-error.v1';
 import type { ManagementWorkPreviewV1 } from './generated/management-work-preview.v1';
 import type { ManagementWorkReceiptV1 } from './generated/management-work-receipt.v1';
@@ -80,13 +98,47 @@ import type { ObservationEventV1 } from './generated/observation-event.v1';
 import type { ObservationSnapshotV1 } from './generated/observation-snapshot.v1';
 import type { OverlayConfigV1 } from './generated/overlay-config.v1';
 import type { PiRuntimeManifestV1 } from './generated/pi-runtime-manifest.v1';
+import type { PromptCompileReceiptV1 } from './generated/prompt-compile-receipt.v1';
+import type { PromptPlanV1 } from './generated/prompt-plan.v1';
+import type { ProviderProjectionJournalV1 } from './generated/provider-projection-journal.v1';
+import type { ProviderProjectionReceiptV1 } from './generated/provider-projection-receipt.v1';
+import type { ReflectionDeadLetterProjectionV1 } from './generated/reflection-dead-letter-projection.v1';
+import type { RequirementAnchorV1 } from './generated/requirement-anchor.v1';
+import type { RequirementCatalogRevisionV1 } from './generated/requirement-catalog-revision.v1';
 import type { RimeRankSelectionV1 } from './generated/rime-rank-selection.v1';
 import type { RimeSelectV1 } from './generated/rime-select.v1';
 import type { RimeSuggestRequestV1 } from './generated/rime-suggest-request.v1';
 import type { RimeSuggestResponseV1 } from './generated/rime-suggest-response.v1';
 import type { RoleBookCurationV1 } from './generated/role-book-curation.v1';
 import type { RoleBookRevisionDraftV1 } from './generated/role-book-revision-draft.v1';
+import type { RoomBindingV2 } from './generated/room-binding.v2';
+import type { RoomCapabilityManifestV1 } from './generated/room-capability-manifest.v1';
+import type { RoomCommitV2 } from './generated/room-commit.v2';
+import type { RoomContextEntryV1 } from './generated/room-context-entry.v1';
+import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.v2';
+import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
+import type { RoomKernelCommandV1 } from './generated/room-kernel-command.v1';
+import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
+import type { RoomLegacyRefV1 } from './generated/room-legacy-ref.v1';
+import type { RoomParticipantBindingV2 } from './generated/room-participant-binding.v2';
+import type { RoomPostV2 } from './generated/room-post.v2';
+import type { RoomRolloutPolicyV1 } from './generated/room-rollout-policy.v1';
+import type { RoomRolloutReceiptV1 } from './generated/room-rollout-receipt.v1';
+import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
+import type { RoomSettleReceiptV1 } from './generated/room-settle-receipt.v1';
+import type { RoomSettleResultV1 } from './generated/room-settle-result.v1';
+import type { RoomShadowObservationV1 } from './generated/room-shadow-observation.v1';
+import type { RoomSkillLoadReceiptV1 } from './generated/room-skill-load-receipt.v1';
+import type { RoomSkillPolicyV1 } from './generated/room-skill-policy.v1';
+import type { RoomSkillRecoveryV1 } from './generated/room-skill-recovery.v1';
+import type { RoomSkillSelectionV1 } from './generated/room-skill-selection.v1';
+import type { RoomTaskV2 } from './generated/room-task.v2';
+import type { RoomToolDisclosureReceiptV1 } from './generated/room-tool-disclosure-receipt.v1';
+import type { RoomToolInvocationReceiptV1 } from './generated/room-tool-invocation-receipt.v1';
+import type { RunnerVerificationReceiptV2 } from './generated/runner-verification-receipt.v2';
 import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1';
+import type { SessionRecallEffectReceiptV1 } from './generated/session-recall-effect-receipt.v1';
+import type { TypedVerificationReceiptV1 } from './generated/typed-verification-receipt.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
 
 export type {
@@ -138,9 +190,17 @@ export type {
   AgentWorkflowStateV1,
   AssistantCandidateActionV1,
   AssistantOverlayV1,
+  CollaborationProfileCommandReceiptV1,
+  CollaborationProfileCommandV1,
+  CollaborationProfileCompileReceiptV1,
+  CollaborationProfileProjectionV1,
+  CollaborationProfileV1,
+  CollaborationRoleV1,
+  CompiledAgentRuntimeProfileV1,
   ControlToolManifestV1,
   DailyActivityTimelineV1,
   DailyConversationDigestV1,
+  DeliveryGateObservationV1,
   ForegroundCommitV1,
   ForegroundContextV2,
   FrontendCapabilitiesV1,
@@ -148,10 +208,20 @@ export type {
   FrontendSelectionV1,
   FrontendSuggestRequestV1,
   FrontendSuggestResponseV1,
+  GuardActivationProjectionV1,
+  GuardActivePointerProjectionV1,
+  GuardApprovalProjectionV1,
+  GuardCandidateProjectionV1,
+  GuardEvalRunProjectionV1,
+  GuardMaterializationStatusProjectionV1,
+  GuardRollbackProjectionV1,
+  IncidentOccurrenceProjectionV1,
   KnowledgeDocumentDetailV1,
   KnowledgeDocumentImportV1,
   KnowledgeGraphV1,
   KnowledgeLibraryV1,
+  KnowledgeSearchUseEvalRunV1,
+  LessonCandidateProjectionV1,
   ManagementWorkErrorV1,
   ManagementWorkPreviewV1,
   ManagementWorkReceiptV1,
@@ -166,13 +236,47 @@ export type {
   ObservationSnapshotV1,
   OverlayConfigV1,
   PiRuntimeManifestV1,
+  PromptCompileReceiptV1,
+  PromptPlanV1,
+  ProviderProjectionJournalV1,
+  ProviderProjectionReceiptV1,
+  ReflectionDeadLetterProjectionV1,
+  RequirementAnchorV1,
+  RequirementCatalogRevisionV1,
   RimeRankSelectionV1,
   RimeSelectV1,
   RimeSuggestRequestV1,
   RimeSuggestResponseV1,
   RoleBookCurationV1,
   RoleBookRevisionDraftV1,
+  RoomBindingV2,
+  RoomCapabilityManifestV1,
+  RoomCommitV2,
+  RoomContextEntryV1,
+  RoomDispatchEnvelopeV2,
+  RoomEventEnvelopeV2,
+  RoomKernelCommandV1,
+  RoomKernelReceiptV1,
+  RoomLegacyRefV1,
+  RoomParticipantBindingV2,
+  RoomPostV2,
+  RoomRolloutPolicyV1,
+  RoomRolloutReceiptV1,
+  RoomRootExecutionV2,
+  RoomSettleReceiptV1,
+  RoomSettleResultV1,
+  RoomShadowObservationV1,
+  RoomSkillLoadReceiptV1,
+  RoomSkillPolicyV1,
+  RoomSkillRecoveryV1,
+  RoomSkillSelectionV1,
+  RoomTaskV2,
+  RoomToolDisclosureReceiptV1,
+  RoomToolInvocationReceiptV1,
+  RunnerVerificationReceiptV2,
   SessionMemoryRecallV1,
+  SessionRecallEffectReceiptV1,
+  TypedVerificationReceiptV1,
   UserMemoryDraftV1,
 };
 
@@ -225,9 +329,17 @@ export interface ContractTypeMap {
   'agent-workflow-state.v1': AgentWorkflowStateV1;
   'assistant-candidate-action.v1': AssistantCandidateActionV1;
   'assistant-overlay.v1': AssistantOverlayV1;
+  'collaboration-profile-command-receipt.v1': CollaborationProfileCommandReceiptV1;
+  'collaboration-profile-command.v1': CollaborationProfileCommandV1;
+  'collaboration-profile-compile-receipt.v1': CollaborationProfileCompileReceiptV1;
+  'collaboration-profile-projection.v1': CollaborationProfileProjectionV1;
+  'collaboration-profile.v1': CollaborationProfileV1;
+  'collaboration-role.v1': CollaborationRoleV1;
+  'compiled-agent-runtime-profile.v1': CompiledAgentRuntimeProfileV1;
   'control-tool-manifest.v1': ControlToolManifestV1;
   'daily-activity-timeline.v1': DailyActivityTimelineV1;
   'daily-conversation-digest.v1': DailyConversationDigestV1;
+  'delivery-gate-observation.v1': DeliveryGateObservationV1;
   'foreground-commit.v1': ForegroundCommitV1;
   'foreground-context.v2': ForegroundContextV2;
   'frontend-capabilities.v1': FrontendCapabilitiesV1;
@@ -235,10 +347,20 @@ export interface ContractTypeMap {
   'frontend-selection.v1': FrontendSelectionV1;
   'frontend-suggest-request.v1': FrontendSuggestRequestV1;
   'frontend-suggest-response.v1': FrontendSuggestResponseV1;
+  'guard-activation-projection.v1': GuardActivationProjectionV1;
+  'guard-active-pointer-projection.v1': GuardActivePointerProjectionV1;
+  'guard-approval-projection.v1': GuardApprovalProjectionV1;
+  'guard-candidate-projection.v1': GuardCandidateProjectionV1;
+  'guard-eval-run-projection.v1': GuardEvalRunProjectionV1;
+  'guard-materialization-status-projection.v1': GuardMaterializationStatusProjectionV1;
+  'guard-rollback-projection.v1': GuardRollbackProjectionV1;
+  'incident-occurrence-projection.v1': IncidentOccurrenceProjectionV1;
   'knowledge-document-detail.v1': KnowledgeDocumentDetailV1;
   'knowledge-document-import.v1': KnowledgeDocumentImportV1;
   'knowledge-graph.v1': KnowledgeGraphV1;
   'knowledge-library.v1': KnowledgeLibraryV1;
+  'knowledge-search-use-eval-run.v1': KnowledgeSearchUseEvalRunV1;
+  'lesson-candidate-projection.v1': LessonCandidateProjectionV1;
   'management-work-error.v1': ManagementWorkErrorV1;
   'management-work-preview.v1': ManagementWorkPreviewV1;
   'management-work-receipt.v1': ManagementWorkReceiptV1;
@@ -253,13 +375,47 @@ export interface ContractTypeMap {
   'observation-snapshot.v1': ObservationSnapshotV1;
   'overlay-config.v1': OverlayConfigV1;
   'pi-runtime-manifest.v1': PiRuntimeManifestV1;
+  'prompt-compile-receipt.v1': PromptCompileReceiptV1;
+  'prompt-plan.v1': PromptPlanV1;
+  'provider-projection-journal.v1': ProviderProjectionJournalV1;
+  'provider-projection-receipt.v1': ProviderProjectionReceiptV1;
+  'reflection-dead-letter-projection.v1': ReflectionDeadLetterProjectionV1;
+  'requirement-anchor.v1': RequirementAnchorV1;
+  'requirement-catalog-revision.v1': RequirementCatalogRevisionV1;
   'rime-rank-selection.v1': RimeRankSelectionV1;
   'rime-select.v1': RimeSelectV1;
   'rime-suggest-request.v1': RimeSuggestRequestV1;
   'rime-suggest-response.v1': RimeSuggestResponseV1;
   'role-book-curation.v1': RoleBookCurationV1;
   'role-book-revision-draft.v1': RoleBookRevisionDraftV1;
+  'room-binding.v2': RoomBindingV2;
+  'room-capability-manifest.v1': RoomCapabilityManifestV1;
+  'room-commit.v2': RoomCommitV2;
+  'room-context-entry.v1': RoomContextEntryV1;
+  'room-dispatch-envelope.v2': RoomDispatchEnvelopeV2;
+  'room-event-envelope.v2': RoomEventEnvelopeV2;
+  'room-kernel-command.v1': RoomKernelCommandV1;
+  'room-kernel-receipt.v1': RoomKernelReceiptV1;
+  'room-legacy-ref.v1': RoomLegacyRefV1;
+  'room-participant-binding.v2': RoomParticipantBindingV2;
+  'room-post.v2': RoomPostV2;
+  'room-rollout-policy.v1': RoomRolloutPolicyV1;
+  'room-rollout-receipt.v1': RoomRolloutReceiptV1;
+  'room-root-execution.v2': RoomRootExecutionV2;
+  'room-settle-receipt.v1': RoomSettleReceiptV1;
+  'room-settle-result.v1': RoomSettleResultV1;
+  'room-shadow-observation.v1': RoomShadowObservationV1;
+  'room-skill-load-receipt.v1': RoomSkillLoadReceiptV1;
+  'room-skill-policy.v1': RoomSkillPolicyV1;
+  'room-skill-recovery.v1': RoomSkillRecoveryV1;
+  'room-skill-selection.v1': RoomSkillSelectionV1;
+  'room-task.v2': RoomTaskV2;
+  'room-tool-disclosure-receipt.v1': RoomToolDisclosureReceiptV1;
+  'room-tool-invocation-receipt.v1': RoomToolInvocationReceiptV1;
+  'runner-verification-receipt.v2': RunnerVerificationReceiptV2;
   'session-memory-recall.v1': SessionMemoryRecallV1;
+  'session-recall-effect-receipt.v1': SessionRecallEffectReceiptV1;
+  'typed-verification-receipt.v1': TypedVerificationReceiptV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
 }
 

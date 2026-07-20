@@ -10,6 +10,15 @@ export interface AgentMemoryEvidenceV1 {
   project: string;
   roleId: string;
   sessionId: string;
+  ownerKind: string;
+  ownerId: string;
+  knowledgeDomain: string;
+  scopeKind: string;
+  scopeId: string;
+  visibility: string;
+  authorizationRevision: string;
+  bindingId: string;
+  scopeMode: 'legacy' | 'authoritative' | 'quarantined';
   sourceKind:
     | 'user_message'
     | 'assistant_message'

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from collections.abc import Mapping
 from typing import Any
 
 from .knowledge_library import AssetBlob, KnowledgeLibraryError
+from .agent_knowledge_promotion import KnowledgePromotionStore
 from .knowledge_worker_supervisor import KnowledgeWorkerSupervisor
 from .management_work_contract import ManagementWorkContract, ManagementWorkError, WorkExecution
 
@@ -21,6 +23,8 @@ class KnowledgeControlFacade:
     ) -> None:
         self.worker = worker
         self.work_contract = work_contract
+        self.knowledge_intake = KnowledgePromotionStore(work_contract.db_path)
+        self.knowledge_intake.initialize()
 
     def list_bases(self) -> dict[str, object]:
         result = self.worker.management_call("management_list_bases")
@@ -130,6 +134,20 @@ class KnowledgeControlFacade:
         mime_type: str,
         parser_provider: str = "auto",
     ) -> dict[str, object]:
+        import_id = "document-intake:" + hashlib.sha256(
+            b"\0".join((str(kb_id).encode(), file_name.encode(), bytes(data)))
+        ).hexdigest()[:32]
+        intake = self.knowledge_intake.scan_external_before_copy(
+            import_id=import_id,
+            source_name=file_name,
+            raw_bytes=bytes(data),
+            created_at_ms=int(time.time() * 1000),
+        )
+        if intake["scanStatus"] != "allowed":
+            raise KnowledgeLibraryError(
+                "document was quarantined before managed copy",
+                code="secret_quarantine",
+            )
         return self.worker.management_call(
             "management_import_document",
             _identifier(kb_id, "kbId"),
@@ -137,6 +155,8 @@ class KnowledgeControlFacade:
             file_name=_required_text(file_name, "fileName", maximum=512),
             mime_type=_required_text(mime_type, "mimeType", maximum=200),
             parser_mode=_parser_mode(parser_provider),
+            intake_receipt_id=import_id,
+            intake_content_hash=str(intake["contentHash"]),
         )
 
     def retry_document(

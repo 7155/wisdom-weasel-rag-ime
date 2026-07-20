@@ -1,7 +1,7 @@
 import type { GeneratedContractName } from '@/contracts/generated';
 
 export type ControlHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
-export type ControlStreamKind = 'agent' | 'room' | 'control' | 'observation';
+export type ControlStreamKind = 'agent' | 'room' | 'kernel' | 'control' | 'observation';
 
 export interface ControlRouteDefinition {
   method: ControlHttpMethod;
@@ -419,6 +419,85 @@ export const CONTROL_ROUTES = {
     query: ['lastEventId'],
     requiredQuery: ['lastEventId'],
     subscription: 'room',
+  },
+  'agent.room.kernel.snapshot': {
+    method: 'GET',
+    path: '/api/agent/rooms/:roomId/kernel/snapshot',
+    params: { roomId: null },
+  },
+  'agent.room.kernel.events': {
+    method: 'GET',
+    path: '/api/agent/rooms/:roomId/kernel/events',
+    params: { roomId: null },
+    query: ['lastEventId'],
+    requiredQuery: ['lastEventId'],
+    subscription: 'kernel',
+  },
+  'agent.room.kernel.command': {
+    method: 'POST',
+    path: '/api/agent/rooms/:roomId/kernel/commands',
+    params: { roomId: null },
+    body: ['schemaVersion', 'commandId', 'rootId', 'roomId', 'commandKind', 'targetKind', 'targetId', 'sourceKind', 'sourceId', 'idempotencyKey', 'generation', 'payload', 'createdAtMs'],
+    requiredBody: ['schemaVersion', 'commandId', 'roomId', 'commandKind', 'sourceKind', 'sourceId', 'idempotencyKey', 'generation', 'payload', 'createdAtMs'],
+    responseContract: 'room-kernel-receipt.v1',
+  },
+  'agent.room.kernel.settle': {
+    method: 'POST',
+    path: '/api/agent/rooms/:roomId/kernel/settle',
+    params: { roomId: null },
+    body: ['settleReceipt', 'commit', 'invocationReceiptId'],
+    requiredBody: ['settleReceipt'],
+    responseContract: 'room-settle-result.v1',
+  },
+  'agent.room.kernel.create': {
+    method: 'POST', path: '/api/agent/rooms/:roomId/kernel/create', params: { roomId: null },
+    body: ['rootExecution', 'task', 'budget', 'maxHops', 'maxDepth', 'acceptanceCriteria'],
+    requiredBody: ['rootExecution', 'task', 'budget', 'maxHops', 'maxDepth'],
+  },
+  'agent.room.kernel.dispatch': {
+    method: 'POST', path: '/api/agent/rooms/:roomId/kernel/dispatch', params: { roomId: null },
+    body: ['schemaVersion', 'dispatchId', 'rootId', 'taskId', 'parentDispatchId', 'generation', 'hopCount', 'depth', 'budgetCost', 'targetSessionId', 'targetParticipantId', 'triggerId', 'intentKind', 'idempotencyKey', 'attempt', 'capabilityEpoch', 'runtimeProfileRevision', 'state'],
+    requiredBody: ['schemaVersion', 'dispatchId', 'rootId', 'taskId', 'generation', 'hopCount', 'depth', 'budgetCost', 'targetSessionId', 'targetParticipantId', 'triggerId', 'intentKind', 'idempotencyKey', 'attempt', 'capabilityEpoch', 'runtimeProfileRevision', 'state'],
+  },
+  'agent.room.kernel.finalize': {
+    method: 'POST', path: '/api/agent/rooms/:roomId/kernel/finalize', params: { roomId: null },
+    body: ['rootId', 'catalogRevisionId', 'targetCommit', 'blindReviewStatus', 'deliveryGatePreviewReceiptId'], requiredBody: ['rootId'],
+  },
+  'agent.collaborationProfile.get': {
+    method: 'GET',
+    path: '/api/agent/collaboration-profiles/:profileId',
+    params: { profileId: null },
+    responseContract: 'collaboration-profile-projection.v1',
+  },
+  'agent.collaborationProfile.command': {
+    method: 'POST',
+    path: '/api/agent/collaboration-profiles/commands',
+    body: ['schemaVersion', 'commandId', 'action', 'idempotencyKey', 'actorRef', 'profileId', 'candidateId', 'contentHash', 'expectedPointerRevision', 'activationScope', 'adminConfirmation', 'payload', 'createdAtMs'],
+    requiredBody: ['schemaVersion', 'commandId', 'action', 'idempotencyKey', 'actorRef', 'payload', 'createdAtMs'],
+    responseContract: 'collaboration-profile-command-receipt.v1',
+  },
+  'agent.knowledge.search': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/knowledge-search',
+    params: { sessionId: null },
+    body: ['query', 'limit', 'retrievalReceiptId', 'createdAtMs'],
+    requiredBody: ['query'],
+  },
+  'agent.governance.read': {
+    method: 'GET',
+    path: '/api/agent/governance',
+    query: ['scopeKey'],
+  },
+  'agent.knowledgeGovernance.read': {
+    method: 'GET',
+    path: '/api/agent/knowledge-governance',
+  },
+  'agent.knowledge.read': {
+    method: 'POST',
+    path: '/api/agent/sessions/:sessionId/knowledge-read',
+    params: { sessionId: null },
+    body: ['retrievalReceiptId', 'claimRef', 'expectedHash'],
+    requiredBody: ['retrievalReceiptId', 'claimRef', 'expectedHash'],
   },
   'agent.room.topics': {
     method: 'GET',

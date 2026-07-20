@@ -31,10 +31,19 @@ describe('generated JSON contracts', () => {
   });
 
   it('builds a stable schema index for every source contract', () => {
-    expect(Object.keys(contractSchemas)).toHaveLength(84);
+    expect(Object.keys(contractSchemas)).toHaveLength(136);
     expect(contractSchemas['agent-event.v1'].$id).toBe('rag-ime.contract.agent-event.v1');
     expect(contractSchemas['agent-room-snapshot.v1'].$id).toBe(
       'rag-ime.contract.agent-room-snapshot.v1',
+    );
+    expect(contractSchemas['collaboration-role.v1'].$id).toBe(
+      'rag-ime.contract.collaboration-role.v1',
+    );
+    expect(contractSchemas['collaboration-profile.v1'].$id).toBe(
+      'rag-ime.contract.collaboration-profile.v1',
+    );
+    expect(contractSchemas['compiled-agent-runtime-profile.v1'].$id).toBe(
+      'rag-ime.contract.compiled-agent-runtime-profile.v1',
     );
     expect(contractSchemas['memory-reference.v1'].$id).toBe(
       'rag-ime.contract.memory-reference.v1',
@@ -109,5 +118,36 @@ describe('generated JSON contracts', () => {
       rawType: 'interactive_chart',
       data: { series: [1, 2, 3] },
     });
+  });
+
+  it('normalizes canonical typed block metadata without exposing sidecar JSON', () => {
+    const message = parseAgentMessage({
+      ...messageFixture,
+      blocks: [{
+        schemaVersion: 'rag-ime.agent-block.v1',
+        id: 'check:1',
+        type: 'checklist',
+        status: 'completed',
+        presentationKind: 'checklist.v1',
+        data: { title: '发布', items: [{ text: '测试', checked: true }] },
+        summary: '清单：发布，1/1 完成',
+        source: { kind: 'pi_session_message', ref: 'message:1' },
+        visibility: 'private_session',
+        digest: 'a'.repeat(64),
+        ref: 'block:check:1:aaaaaaaaaaaaaaaa',
+        generation: 0,
+        raw_json: '<script>never project me</script>',
+      }],
+    });
+
+    expect(message.blocks[0]).toMatchObject({
+      type: 'checklist',
+      presentationKind: 'checklist.v1',
+      summary: '清单：发布，1/1 完成',
+      source: { kind: 'pi_session_message', ref: 'message:1' },
+      visibility: 'private_session',
+      ref: 'block:check:1:aaaaaaaaaaaaaaaa',
+    });
+    expect(message.blocks[0]).not.toHaveProperty('raw_json');
   });
 });

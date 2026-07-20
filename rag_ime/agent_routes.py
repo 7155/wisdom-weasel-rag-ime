@@ -34,6 +34,8 @@ def agent_session_route(path: str) -> tuple[str, str]:
         "workflow",
         "plan",
         "goal",
+        "knowledge-search",
+        "knowledge-read",
     }:
         return "", ""
     return session_id, action
@@ -136,6 +138,30 @@ def agent_room_route(path: str) -> tuple[str, str]:
     }:
         return "", ""
     return room_id, action
+
+
+def agent_room_kernel_route(path: str) -> tuple[str, str]:
+    prefix = "/api/agent/rooms/"
+    if not path.startswith(prefix):
+        return "", ""
+    parts = path[len(prefix) :].strip("/").split("/")
+    if len(parts) != 3 or parts[1] != "kernel":
+        return "", ""
+    room_id = unquote(parts[0]).strip()
+    action = parts[2]
+    if not room_id or action not in {"snapshot", "events", "commands", "settle", "create", "dispatch", "finalize"}:
+        return "", ""
+    return room_id, action
+
+
+def agent_collaboration_profile_route(path: str) -> str:
+    prefix = "/api/agent/collaboration-profiles/"
+    if not path.startswith(prefix):
+        return ""
+    profile_id = unquote(path[len(prefix) :].strip("/")).strip()
+    if not profile_id or "/" in profile_id or profile_id == "commands":
+        return ""
+    return profile_id
 
 
 def agent_room_work_route(path: str) -> tuple[str, str, str]:

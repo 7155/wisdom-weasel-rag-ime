@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-commit.v2.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "commitId", "dispatchId", "action", "contentHash", "postProposal", "evidenceRefs", "requirementCoverage", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "wisdom-weasel.room-commit.v2"},
+    "commitId": {"type": "string", "minLength": 1},
+    "dispatchId": {"type": "string", "minLength": 1},
+    "action": {"type": "string", "enum": ["post", "dispatch", "wait", "complete", "block"]},
+    "contentHash": {"type": "string", "minLength": 1},
+    "postProposal": {"type": ["object", "null"]},
+    "continuation": {"type": ["object", "null"]},
+    "evidenceRefs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "requirementCoverage": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

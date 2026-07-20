@@ -1,5 +1,7 @@
 import {
+  Activity,
   Check,
+  CheckCircle2,
   Clipboard,
   Code2,
   Download,
@@ -7,7 +9,10 @@ import {
   File,
   FileAudio,
   Image as ImageIcon,
+  ListChecks,
+  PackageOpen,
   ShieldAlert,
+  Table2,
   TriangleAlert,
 } from 'lucide-react';
 import { memo, useMemo, useState, type ReactNode } from 'react';
@@ -54,10 +59,16 @@ export const AgentBlock = memo(function AgentBlock({
   streamingTail?: boolean;
 }) {
   const data = block.data;
-  if (!agentRendererPolicy(block.type)) return <UnknownBlock />;
+  if (!agentRendererPolicy(block.type)) return <UnknownBlock block={block} />;
   switch (block.type) {
     case 'text':
       return <MarkdownBody streamingTail={streamingTail} text={text(data.text ?? data.markdown)} />;
+    case 'card':
+      return <CardBlock data={data} />;
+    case 'checklist':
+      return <ChecklistBlock data={data} />;
+    case 'table':
+      return <TableBlock data={data} />;
     case 'code':
       return (
         <CodeBlock
@@ -66,6 +77,12 @@ export const AgentBlock = memo(function AgentBlock({
           fileName={text(data.fileName ?? data.title)}
         />
       );
+    case 'artifact':
+      return <ArtifactBlock data={data} />;
+    case 'reference':
+      return <CitationBlock data={data} />;
+    case 'status':
+      return <StatusBlock data={data} />;
     case 'citation':
       return <CitationBlock data={data} />;
     case 'image':
@@ -109,7 +126,7 @@ export const AgentBlock = memo(function AgentBlock({
     case 'tool_result':
       return <StructuredSummaryBlock type={block.type} data={data} />;
     case 'unknown':
-      return <UnknownBlock />;
+      return <UnknownBlock block={block} />;
   }
 });
 
@@ -151,6 +168,7 @@ function MarkdownFragment({
 }) {
   return (
     <ReactMarkdown
+      skipHtml
       remarkPlugins={streamingTail ? [remarkGfm, remarkStreamingTail] : [remarkGfm]}
       components={{
         a: ({ href, children }) => {
@@ -265,12 +283,91 @@ function isSafeMarkdownFragmentStart(
   return !/^(?:[-+*][ \t]+|\d+[.)][ \t]+|>|:{1,3}[ \t]|\[[^\]]+\]:)/u.test(line);
 }
 
-function UnknownBlock() {
+function UnknownBlock({ block }: { block: UiAgentBlock }) {
+  const label = text(block.rawType) || text(block.presentationKind) || 'unknown';
+  const summary = text(block.summary);
   return (
     <details className="agent-unknown-block">
-      <summary>暂时无法展示这项内容</summary>
-      <p>可以继续对话，或稍后刷新后重试。</p>
+      <summary>暂不支持的内容 · {label}</summary>
+      <p>{summary || '内容已安全保留，可以继续对话或在审计区查看原始记录。'}</p>
     </details>
+  );
+}
+
+function CardBlock({ data }: { data: Record<string, unknown> }) {
+  const title = text(data.title) || '信息卡片';
+  const tone = ['info', 'success', 'warning', 'danger'].includes(text(data.tone)) ? text(data.tone) : 'info';
+  const fields = safeLabelValuePairs(data.fields);
+  return (
+    <section className="agent-rich-card" data-tone={tone} aria-label={title}>
+      <header><strong>{title}</strong></header>
+      {text(data.bodyMarkdown) ? <MarkdownBody text={text(data.bodyMarkdown)} /> : null}
+      {fields.length ? <dl>{fields.map((field, index) => <div key={`${field.label}:${index}`}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl> : null}
+    </section>
+  );
+}
+
+function ChecklistBlock({ data }: { data: Record<string, unknown> }) {
+  const items = (Array.isArray(data.items) ? data.items : []).map((item, index) => {
+    const value = record(item);
+    return {
+      id: text(value.id) || String(index),
+      label: text(value.text ?? value.label) || `项目 ${index + 1}`,
+      checked: value.checked === true || ['done', 'completed', 'passed'].includes(text(value.status)),
+    };
+  }).slice(0, 100);
+  const title = text(data.title) || '检查清单';
+  const content = <ul>{items.map((item) => <li key={item.id} data-checked={item.checked}><span aria-hidden="true">{item.checked ? <CheckCircle2 size={16} /> : <span className="agent-rich-checklist__empty" />}</span><span>{item.label}</span></li>)}</ul>;
+  return (
+    <details className="agent-rich-checklist agent-rich-collapsible" open={items.length <= 8}>
+      <summary><ListChecks size={16} />{title}<small>{items.filter((item) => item.checked).length}/{items.length}</small></summary>
+      {items.length ? content : <p>暂无清单项。</p>}
+    </details>
+  );
+}
+
+function TableBlock({ data }: { data: Record<string, unknown> }) {
+  const columns = (Array.isArray(data.columns) ? data.columns : []).map((column, index) => {
+    const value = record(column);
+    return { key: text(value.key) || text(column) || String(index), label: text(value.label ?? value.title) || text(column) || `列 ${index + 1}` };
+  }).slice(0, 12);
+  const rows = (Array.isArray(data.rows) ? data.rows : []).slice(0, 100);
+  const title = text(data.title ?? data.caption) || '数据表';
+  return (
+    <details className="agent-rich-table agent-rich-collapsible" open={rows.length <= 8}>
+      <summary><Table2 size={16} />{title}<small>{rows.length} 行</small></summary>
+      {columns.length ? <div><table><thead><tr>{columns.map((column) => <th scope="col" key={column.key}>{column.label}</th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => {
+        const rowRecord = record(row);
+        const rowArray = Array.isArray(row) ? row : [];
+        return <tr key={rowIndex}>{columns.map((column, columnIndex) => <td key={column.key}>{displayScalar(rowArray[columnIndex] ?? rowRecord[column.key])}</td>)}</tr>;
+      })}</tbody></table></div> : <p>表格缺少可展示的列。</p>}
+    </details>
+  );
+}
+
+function ArtifactBlock({ data }: { data: Record<string, unknown> }) {
+  const href = safeArtifactLink(text(data.receiptUrl ?? data.href ?? data.url));
+  const name = text(data.title ?? data.name ?? data.fileName) || '任务产物';
+  return (
+    <section className="agent-rich-artifact" aria-label={name}>
+      <PackageOpen size={18} />
+      <span><strong>{name}</strong><small>{text(data.summary) || fileMeta(data)}</small></span>
+      {href ? <IconButton label="打开产物回执" icon={<ExternalLink size={16} />} onClick={() => window.open(href, '_blank', 'noopener,noreferrer')} tooltip /> : null}
+    </section>
+  );
+}
+
+function StatusBlock({ data }: { data: Record<string, unknown> }) {
+  const state = text(data.state ?? data.status) || 'recorded';
+  const tone = ['failed', 'blocked', 'danger'].includes(state) ? 'danger' : ['done', 'completed', 'success'].includes(state) ? 'success' : 'info';
+  const title = text(data.title) || '状态更新';
+  const fields = safeLabelValuePairs(data.fields);
+  return (
+    <section className="agent-rich-status" data-tone={tone} aria-label={title}>
+      <Activity size={17} />
+      <span><strong>{title}</strong><small>{text(data.detail ?? data.summary ?? data.label) || publicStructuredValue(state)}</small></span>
+      {fields.length ? <dl>{fields.map((field, index) => <div key={`${field.label}:${index}`}><dt>{field.label}</dt><dd>{field.value}</dd></div>)}</dl> : null}
+    </section>
   );
 }
 
@@ -291,7 +388,7 @@ function CodeBlock({
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1_500);
   }
-  return (
+  const figure = (
     <figure className="agent-code-block">
       <figcaption>
         <span>
@@ -315,6 +412,11 @@ function CodeBlock({
       </pre>
     </figure>
   );
+  const lineCount = code ? code.split('\n').length : 0;
+  if (!streamingTail && (lineCount > 32 || code.length > 4_000)) {
+    return <details className="agent-code-collapse agent-rich-collapsible"><summary><Code2 size={15} />{fileName || language}<small>{lineCount} 行</small></summary>{figure}</details>;
+  }
+  return figure;
 }
 
 function StreamingCursor({ active }: { active: boolean }) {
@@ -582,6 +684,22 @@ function safeFieldValue(value: unknown): string {
   return '';
 }
 
+function safeLabelValuePairs(value: unknown): Array<{ label: string; value: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    const field = record(item);
+    return { label: text(field.label ?? field.name), value: displayScalar(field.value) };
+  }).filter((field) => field.label && field.value).slice(0, 24);
+}
+
+function displayScalar(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (value === null) return '—';
+  return '';
+}
+
 function publicStructuredValue(value: string): string {
   const normalized = value.trim();
   const known = ({
@@ -595,6 +713,7 @@ function publicStructuredValue(value: string): string {
 
 function safeLink(value: string | undefined): string | undefined {
   if (!value) return undefined;
+  if (value.includes('\\') || value.startsWith('//')) return undefined;
   if (value.startsWith('#/') || value.startsWith('/')) return value;
   try {
     const url = new URL(value);
@@ -609,6 +728,13 @@ function safeMediaSource(value: string, kind: 'image' | 'audio' | 'file'): strin
   if (value.startsWith('/companions/') && kind === 'image') return value;
   if (value.startsWith('/api/agent/') || value.startsWith('/media/') || value.startsWith('blob:')) return value;
   return null;
+}
+
+function safeArtifactLink(value: string): string | null {
+  const managed = safeMediaSource(value, 'file');
+  if (managed) return managed;
+  const external = safeLink(value);
+  return external?.startsWith('https://') ? external : null;
 }
 
 function fileMeta(data: Record<string, unknown>): string {

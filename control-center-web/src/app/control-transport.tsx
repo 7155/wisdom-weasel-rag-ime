@@ -32,6 +32,10 @@ export function useControlTransport(): ControlTransport {
   return transport;
 }
 
+export function useOptionalControlTransport(): ControlTransport | null {
+  return useContext(ControlTransportContext);
+}
+
 export function createConfiguredControlTransport(): ControlTransport {
   const requested = import.meta.env.VITE_CONTROL_TRANSPORT ?? detectTransport();
   if (requested === 'native') {
@@ -278,7 +282,7 @@ function createPreviewTransport(): MockControlTransport {
     const session = previewSession(
       `session-persona-${nextSessionId++}`,
       stringValue(body.title) || '新对话',
-      stringValue(body.roleId) || 'zhiyou-v1',
+      stringValue(body.roleId) || 'vcp-v1',
       Date.now(),
       stringValue(body.roleVersion) || '1',
     );
@@ -2268,6 +2272,18 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
         { name: 'read', description: 'Read a local file', parameters: { type: 'object', properties: { path: { type: 'string' } } } },
         { name: 'memory_search', description: 'Search approved memory', parameters: { type: 'object', properties: { query: { type: 'string' } } } },
       ],
+      cacheEvidence: [{
+        requestIndex: 2,
+        prefixSha256: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        prefixBytes: 18_240,
+        deltaBytes: 2_180,
+        duplicateBytes: 18_240,
+        inputTokens: 7_200,
+        outputTokens: 3_562,
+        cacheReadTokens: 64_800,
+        cacheWriteTokens: 0,
+        capability: 'reported',
+      }],
       contextWindows: [{
         index: 1,
         capturedAtMs: now + 80,

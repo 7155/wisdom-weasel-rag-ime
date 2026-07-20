@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "rag-ime.pi-room-runtime-host-contract.v1",
+  "sourceRepository": "https://github.com/earendil-works/pi.git",
+  "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
+  "protocolVersion": "2",
+  "minimumHandlersCommit": "c4752416150b715b5079549024efd0299fa259e5",
+  "requiredMethods": [
+    "room.dispatch",
+    "room.cancel"
+  ],
+  "handlerSources": {
+    "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
+    "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
+    "providerContextHook": "packages/coding-agent/src/core/sdk.ts",
+    "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts"
+  }
+}

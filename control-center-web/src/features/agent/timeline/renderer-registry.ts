@@ -21,7 +21,13 @@ type TrustedAgentBlockType = Exclude<KnownAgentBlockType, 'unknown'>;
  */
 export const TRUSTED_AGENT_RENDERERS = Object.freeze({
   text: policy('native-sanitized', 'incremental'),
+  card: policy('native-sanitized', 'replace'),
+  checklist: policy('native-sanitized', 'replace'),
+  table: policy('native-sanitized', 'replace'),
   code: policy('native-sanitized', 'replace', true),
+  artifact: policy('managed-receipt', 'replace', true),
+  reference: policy('native-sanitized', 'replace', true),
+  status: policy('native-sanitized', 'replace'),
   reasoning_summary: policy('native-sanitized', 'replace', true),
   progress: policy('native-sanitized', 'replace', true),
   tool_call: policy('native-sanitized', 'replace', true),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -60,6 +61,9 @@ def _validate(
         minimum_length = schema.get("minLength")
         if isinstance(minimum_length, int) and len(value) < minimum_length:
             errors.append(f"{path}: string is shorter than {minimum_length}")
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str) and re.search(pattern, value) is None:
+            errors.append(f"{path}: string does not match required pattern")
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         minimum = schema.get("minimum")
         if isinstance(minimum, (int, float)) and value < minimum:
@@ -72,6 +76,10 @@ def _validate(
                     errors.append(f"{path}: missing required field {key}")
         properties = schema.get("properties")
         if isinstance(properties, Mapping):
+            if schema.get("additionalProperties") is False:
+                for key in value:
+                    if key not in properties:
+                        errors.append(f"{path}: unsupported field {key}")
             for key, child_schema in properties.items():
                 if key in value and isinstance(child_schema, Mapping):
                     _validate(value[key], child_schema, root=root, path=f"{path}.{key}", errors=errors)

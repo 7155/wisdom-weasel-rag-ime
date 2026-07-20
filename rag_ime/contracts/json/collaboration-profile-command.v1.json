@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.collaboration-profile-command.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "commandId", "action", "idempotencyKey", "actorRef", "payload", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.collaboration-profile-command.v1"},
+    "commandId": {"type": "string", "pattern": "^profile-command:[A-Za-z0-9._:-]{1,96}$"},
+    "action": {"type": "string", "enum": ["inspect", "validate", "compile", "dry_run", "stage", "activate", "rollback", "revoke"]},
+    "idempotencyKey": {"type": "string", "minLength": 1, "maxLength": 160},
+    "actorRef": {"type": "string", "minLength": 1, "maxLength": 160},
+    "profileId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"},
+    "candidateId": {"type": "string", "minLength": 1, "maxLength": 160},
+    "contentHash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "expectedPointerRevision": {"type": "integer", "minimum": 0},
+    "activationScope": {"type": "string", "enum": ["immediate", "new_roots_only"]},
+    "adminConfirmation": {"type": "string", "maxLength": 80},
+    "payload": {"type": "object"},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

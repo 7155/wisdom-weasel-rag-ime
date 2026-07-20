@@ -1,0 +1,436 @@
+{
+  "schemaVersion": "rag-ime.session-recall-effect-receipt.v1",
+  "fixtureSha256": "7a9fbdb4f493ee91c7b3e6c51b47b7bff00c5a9f59166ae65c847f4fe25586f4",
+  "candidateWeights": [
+    {
+      "queryWeight": 1.0,
+      "summaryWeight": 0.0,
+      "score": 240,
+      "metrics": {
+        "factHit": 1,
+        "preferenceHit": 1,
+        "projectHit": 1,
+        "taskHit": 1,
+        "irrelevantInjection": 2,
+        "crossScopeLeak": 0,
+        "duplicateBytes": 0,
+        "tokenBytes": 192,
+        "compactionForgettingRecovery": 0,
+        "wrongOldTopic": 0
+      },
+      "selections": [
+        {
+          "caseId": "fact-current",
+          "selected": [
+            "fact"
+          ],
+          "fusion": {
+            "applied": false,
+            "queryWeight": 1.0,
+            "contextWeight": 0.0
+          }
+        },
+        {
+          "caseId": "preference-current",
+          "selected": [
+            "preference"
+          ],
+          "fusion": {
+            "applied": false,
+            "queryWeight": 1.0,
+            "contextWeight": 0.0
+          }
+        },
+        {
+          "caseId": "project-current",
+          "selected": [
+            "project"
+          ],
+          "fusion": {
+            "applied": false,
+            "queryWeight": 1.0,
+            "contextWeight": 0.0
+          }
+        },
+        {
+          "caseId": "task-current",
+          "selected": [
+            "task"
+          ],
+          "fusion": {
+            "applied": false,
+            "queryWeight": 1.0,
+            "contextWeight": 0.0
+          }
+        },
+        {
+          "caseId": "compaction-recovery-a",
+          "selected": [
+            "query-only-distractor"
+          ],
+          "fusion": {
+            "applied": false,
+            "queryWeight": 1.0,
+            "contextWeight": 0.0
+          }
+        },
+        {
+          "caseId": "compaction-recovery-b",
+          "selected": [
+            "query-only-distractor"
+          ],
+          "fusion": {
+            "applied": false,
+            "queryWeight": 1.0,
+            "contextWeight": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "queryWeight": 0.9,
+      "summaryWeight": 0.1,
+      "score": 240,
+      "metrics": {
+        "factHit": 1,
+        "preferenceHit": 1,
+        "projectHit": 1,
+        "taskHit": 1,
+        "irrelevantInjection": 2,
+        "crossScopeLeak": 0,
+        "duplicateBytes": 0,
+        "tokenBytes": 192,
+        "compactionForgettingRecovery": 0,
+        "wrongOldTopic": 0
+      },
+      "selections": [
+        {
+          "caseId": "fact-current",
+          "selected": [
+            "fact"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.9,
+            "contextWeight": 0.1
+          }
+        },
+        {
+          "caseId": "preference-current",
+          "selected": [
+            "preference"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.9,
+            "contextWeight": 0.1
+          }
+        },
+        {
+          "caseId": "project-current",
+          "selected": [
+            "project"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.9,
+            "contextWeight": 0.1
+          }
+        },
+        {
+          "caseId": "task-current",
+          "selected": [
+            "task"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.9,
+            "contextWeight": 0.1
+          }
+        },
+        {
+          "caseId": "compaction-recovery-a",
+          "selected": [
+            "query-only-distractor"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.9,
+            "contextWeight": 0.1
+          }
+        },
+        {
+          "caseId": "compaction-recovery-b",
+          "selected": [
+            "query-only-distractor"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.9,
+            "contextWeight": 0.1
+          }
+        }
+      ]
+    },
+    {
+      "queryWeight": 0.8,
+      "summaryWeight": 0.2,
+      "score": 600,
+      "metrics": {
+        "factHit": 1,
+        "preferenceHit": 1,
+        "projectHit": 1,
+        "taskHit": 1,
+        "irrelevantInjection": 0,
+        "crossScopeLeak": 0,
+        "duplicateBytes": 0,
+        "tokenBytes": 264,
+        "compactionForgettingRecovery": 2,
+        "wrongOldTopic": 0
+      },
+      "selections": [
+        {
+          "caseId": "fact-current",
+          "selected": [
+            "fact"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.8,
+            "contextWeight": 0.2
+          }
+        },
+        {
+          "caseId": "preference-current",
+          "selected": [
+            "preference"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.8,
+            "contextWeight": 0.2
+          }
+        },
+        {
+          "caseId": "project-current",
+          "selected": [
+            "project"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.8,
+            "contextWeight": 0.2
+          }
+        },
+        {
+          "caseId": "task-current",
+          "selected": [
+            "task"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.8,
+            "contextWeight": 0.2
+          }
+        },
+        {
+          "caseId": "compaction-recovery-a",
+          "selected": [
+            "recovery"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.8,
+            "contextWeight": 0.2
+          }
+        },
+        {
+          "caseId": "compaction-recovery-b",
+          "selected": [
+            "recovery"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.8,
+            "contextWeight": 0.2
+          }
+        }
+      ]
+    },
+    {
+      "queryWeight": 0.7,
+      "summaryWeight": 0.3,
+      "score": -920,
+      "metrics": {
+        "factHit": 0,
+        "preferenceHit": 0,
+        "projectHit": 0,
+        "taskHit": 0,
+        "irrelevantInjection": 4,
+        "crossScopeLeak": 0,
+        "duplicateBytes": 0,
+        "tokenBytes": 244,
+        "compactionForgettingRecovery": 2,
+        "wrongOldTopic": 4
+      },
+      "selections": [
+        {
+          "caseId": "fact-current",
+          "selected": [
+            "wrong-old-topic"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.7,
+            "contextWeight": 0.3
+          }
+        },
+        {
+          "caseId": "preference-current",
+          "selected": [
+            "wrong-old-topic"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.7,
+            "contextWeight": 0.3
+          }
+        },
+        {
+          "caseId": "project-current",
+          "selected": [
+            "wrong-old-topic"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.7,
+            "contextWeight": 0.3
+          }
+        },
+        {
+          "caseId": "task-current",
+          "selected": [
+            "wrong-old-topic"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.7,
+            "contextWeight": 0.3
+          }
+        },
+        {
+          "caseId": "compaction-recovery-a",
+          "selected": [
+            "recovery"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.7,
+            "contextWeight": 0.3
+          }
+        },
+        {
+          "caseId": "compaction-recovery-b",
+          "selected": [
+            "recovery"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.7,
+            "contextWeight": 0.3
+          }
+        }
+      ]
+    },
+    {
+      "queryWeight": 0.5,
+      "summaryWeight": 0.5,
+      "score": -920,
+      "metrics": {
+        "factHit": 0,
+        "preferenceHit": 0,
+        "projectHit": 0,
+        "taskHit": 0,
+        "irrelevantInjection": 4,
+        "crossScopeLeak": 0,
+        "duplicateBytes": 0,
+        "tokenBytes": 244,
+        "compactionForgettingRecovery": 2,
+        "wrongOldTopic": 4
+      },
+      "selections": [
+        {
+          "caseId": "fact-current",
+          "selected": [
+            "wrong-old-topic"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.5,
+            "contextWeight": 0.5
+          }
+        },
+        {
+          "caseId": "preference-current",
+          "selected": [
+            "wrong-old-topic"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.5,
+            "contextWeight": 0.5
+          }
+        },
+        {
+          "caseId": "project-current",
+          "selected": [
+            "wrong-old-topic"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.5,
+            "contextWeight": 0.5
+          }
+        },
+        {
+          "caseId": "task-current",
+          "selected": [
+            "wrong-old-topic"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.5,
+            "contextWeight": 0.5
+          }
+        },
+        {
+          "caseId": "compaction-recovery-a",
+          "selected": [
+            "recovery"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.5,
+            "contextWeight": 0.5
+          }
+        },
+        {
+          "caseId": "compaction-recovery-b",
+          "selected": [
+            "recovery"
+          ],
+          "fusion": {
+            "applied": true,
+            "queryWeight": 0.5,
+            "contextWeight": 0.5
+          }
+        }
+      ]
+    }
+  ],
+  "selected": {
+    "queryWeight": 0.8,
+    "summaryWeight": 0.2,
+    "reason": "highest deterministic task-hit score after leak, stale-topic, and duplicate penalties"
+  }
+}

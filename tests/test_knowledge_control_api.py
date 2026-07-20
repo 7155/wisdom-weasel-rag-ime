@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.knowledge_control import KnowledgeControlFacade
 from rag_ime.knowledge_library import HttpKnowledgeClient, KnowledgeLibraryConfig, KnowledgeLibraryService
-from rag_ime.knowledge_library.worker import KnowledgeWorkerServer
+from rag_ime.knowledge_library.worker import KnowledgeWorkerServer, _database_intake_validator
 
 
 class _DirectWorker:
@@ -33,7 +33,11 @@ class KnowledgeControlApiTests(unittest.TestCase):
         root = Path(self.temporary.name)
 
         library = KnowledgeLibraryService(KnowledgeLibraryConfig(root / "Knowledge"))
-        self.worker_server = KnowledgeWorkerServer(("127.0.0.1", 0), library)
+        intake_db = root / "control.sqlite"
+        self.worker_server = KnowledgeWorkerServer(
+            ("127.0.0.1", 0), library,
+            intake_validator=_database_intake_validator(intake_db),
+        )
         self.worker_thread = threading.Thread(target=self.worker_server.serve_forever, daemon=True)
         self.worker_thread.start()
         worker_client = HttpKnowledgeClient(f"http://127.0.0.1:{self.worker_server.server_port}")

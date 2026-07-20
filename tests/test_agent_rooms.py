@@ -940,12 +940,6 @@ class AgentRoomServiceTests(unittest.TestCase):
         )
 
     def test_service_creates_fresh_sessions_routes_one_speaker_and_mirrors_events(self) -> None:
-        self.service.personas.set_runtime_defaults(
-            "vcp-v1",
-            "1",
-            model_profile="openai/gpt-5.4",
-            thinking_level="max",
-        )
         created = self.service.create_room(
             {
                 "title": "产品讨论",
@@ -974,7 +968,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(hermes_session["mode"], "coordinator")
         self.assertEqual(hermes_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(current_session["toolProfileVersion"], "control-center-v1")
-        self.assertEqual(future_session["modelProfile"], "openai/gpt-5.4")
+        self.assertEqual(future_session["modelProfile"], "gpt/gpt-5.6-sol")
         self.assertEqual(future_session["thinkingLevel"], "max")
         self.assertEqual(future_session["workspaceRoots"], [str(self.root.resolve())])
 
@@ -1304,7 +1298,12 @@ class AgentRoomServiceTests(unittest.TestCase):
                 "data": {
                     "message": {
                         "role": "assistant",
-                        "blocks": [{"type": "text", "text": "先坐一会儿，慢慢说。"}],
+                        "blocks": [
+                            {
+                                "type": "text",
+                                "data": {"text": "先坐一会儿，慢慢说。"},
+                            }
+                        ],
                     }
                 }
             },

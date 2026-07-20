@@ -28,11 +28,18 @@ export interface AgentToolCallV1 {
     | 'workspace_read'
     | 'workspace_search'
     | 'workspace_patch'
-    | 'workspace_shell';
+    | 'workspace_shell'
+    | 'room_state'
+    | 'room_post'
+    | 'room_commit';
   toolCallId: string;
   args: {
     [k: string]: unknown;
   };
+  roomCapability?: {
+    [k: string]: unknown;
+  };
+  loadReceiptId?: string;
   runtimeContext?: {
     schemaVersion: 'rag-ime.agent-runtime-context.v1';
     /**

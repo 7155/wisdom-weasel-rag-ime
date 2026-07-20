@@ -3,7 +3,7 @@
   width: 100%;
   height: calc(100dvh - var(--topbar-height));
   min-height: 620px;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   margin: 0;
   padding: 0;
   overflow: hidden;
@@ -87,6 +87,30 @@
 }
 .context-debug-notice[data-tone='warning'] { color: var(--color-warning); background: var(--color-warning-soft); }
 .context-debug-notice[data-tone='danger'] { color: var(--color-danger); background: var(--color-danger-soft); }
+
+.context-xray-summary { display: grid; gap: 11px; padding: 14px var(--space-4); border-bottom: 1px solid var(--color-border-strong); background: var(--color-surface-subtle); }
+.context-xray-summary > header { align-items: center; display: flex; justify-content: space-between; gap: 10px; }
+.context-xray-summary > header > span { align-items: center; display: flex; gap: 8px; }
+.context-xray-summary > header small, .context-xray-summary > p { color: var(--color-text-tertiary); font-size: 11px; }
+.context-xray-summary > dl { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 0; border: 1px solid var(--color-border); }
+.context-xray-summary > dl > div { display: grid; gap: 3px; min-width: 0; padding: 9px 10px; border-right: 1px solid var(--color-border); }
+.context-xray-summary > dl > div:last-child { border-right: 0; }
+.context-xray-summary dt { color: var(--color-text-tertiary); font-size: 10px; }
+.context-xray-summary dd { margin: 0; font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
+.context-xray-summary [data-available='false'] dd { color: var(--color-warning); font-weight: 600; }
+.context-xray-summary__states { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.context-xray-summary__states > span { display: grid; gap: 2px; min-width: 0; }
+.context-xray-summary__states strong { font-size: 10px; }
+.context-xray-summary__states small { color: var(--color-text-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.context-xray-summary > p { margin: 0; }
+
+.context-debug-audit { display: grid; min-height: 0; overflow: hidden; }
+.context-debug-audit > summary { align-items: center; cursor: pointer; display: flex; gap: 8px; list-style: none; padding: 10px var(--space-4); border-bottom: 1px solid var(--color-border); }
+.context-debug-audit > summary::-webkit-details-marker { display: none; }
+.context-debug-audit > summary > span { display: grid; gap: 2px; }
+.context-debug-audit > summary strong { font-size: 12px; }
+.context-debug-audit > summary small { color: var(--color-text-tertiary); font-size: 10px; }
+.context-debug-audit[open] { grid-template-rows: auto minmax(0, 1fr); }
 
 .context-debug-workspace {
   display: grid;
@@ -426,6 +450,10 @@
   .context-debug-select--session,
   .context-debug-select--turn { width: min(100%, 320px); flex: 1 1 220px; }
   .context-debug-workspace { display: block; overflow: visible; }
+  .context-xray-summary > dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .context-xray-summary > dl > div { border-bottom: 1px solid var(--color-border); }
+  .context-xray-summary__states { grid-template-columns: 1fr; }
+  .context-debug-audit { overflow: visible; }
   .context-debug-call-rail { max-height: 260px; border-right: 0; border-bottom: 1px solid var(--color-border-strong); }
   .context-debug-main { display: block; overflow: visible; }
   .context-debug-payload { min-height: 620px; }

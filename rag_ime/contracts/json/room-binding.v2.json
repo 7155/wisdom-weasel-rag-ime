@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-binding.v2.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "bindingId", "rootId", "roomId", "participantId", "taskId", "generation", "protocolRevision", "capabilityRevision", "access"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "wisdom-weasel.room-binding.v2"},
+    "bindingId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "roomId": {"type": "string", "minLength": 1},
+    "participantId": {"type": "string", "minLength": 1},
+    "taskId": {"type": ["string", "null"]},
+    "generation": {"type": "integer", "minimum": 0},
+    "protocolRevision": {"type": "string", "minLength": 1},
+    "capabilityRevision": {"type": "string", "minLength": 1},
+    "access": {"type": "string", "enum": ["read", "write"]}
+  }
+}

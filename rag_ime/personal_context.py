@@ -19,6 +19,11 @@ from .contracts.json_schema import validate_contract
 from .daily_planner import planning_context
 from .db import apply_database_migrations
 from .memory_ingest import normalize_text
+from .knowledge_scope import (
+    quarantine_scope_issue,
+    room_public_scope,
+    session_knowledge_scope,
+)
 from .sensitive_content import (
     contains_sensitive_content,
     is_sensitive_mapping_key,
@@ -453,6 +458,48 @@ class AgentMemoryEvidenceStore:
         metadata_json = _json_object_text(safe_metadata, "metadata")
 
         with self._connect(immediate=True) as conn:
+            scope_columns = {
+                "owner_kind": "user", "owner_id": "default",
+                "knowledge_domain": "legacy", "scope_kind": "legacy", "scope_id": "",
+                "visibility": "legacy", "authorization_revision": "", "binding_id": "",
+                "scope_mode": "legacy",
+            }
+            room_id = compact_whitespace(str(safe_provenance.get("roomId") or ""))
+            try:
+                if room_id and kind in {"room_event", "work_receipt"}:
+                    scope_status, _, scope_reason = session_knowledge_scope(conn, session)
+                    if scope_status == "quarantined":
+                        raise ValueError(scope_reason)
+                    if scope_status == "authoritative":
+                        scope_columns = room_public_scope(
+                            conn,
+                            room_id=room_id,
+                            session_id=session,
+                        ).columns()
+                elif session:
+                    scope_status, scope, scope_reason = session_knowledge_scope(conn, session)
+                    if scope_status == "quarantined":
+                        raise ValueError(scope_reason)
+                    if scope is not None:
+                        scope_columns = scope.columns()
+            except ValueError as exc:
+                quarantine_id = quarantine_scope_issue(
+                    conn,
+                    source_table="agent_memory_evidence",
+                    source_id=evidence_id,
+                    reason_code="invalid_server_binding",
+                    observed_scope={"roomId": room_id, "sessionId": session, "error": str(exc)},
+                    observed_at_ms=recorded,
+                )
+                return {
+                    "schemaVersion": "rag-ime.agent-memory-evidence-write.v1",
+                    "ok": True,
+                    "stored": False,
+                    "status": "quarantined",
+                    "quarantineId": quarantine_id,
+                    "sourceKind": kind,
+                    "sourceId": source,
+                }
             existing = conn.execute(
                 """
                 SELECT * FROM agent_memory_evidence
@@ -482,8 +529,11 @@ class AgentMemoryEvidenceStore:
                     evidence_id, project, role_id, session_id, source_kind,
                     source_id, idempotency_key, content_text, content_sha256,
                     provenance_json, metadata_json, privacy_class, status,
-                    occurred_at_ms, recorded_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                    occurred_at_ms, recorded_at_ms, owner_kind, owner_id,
+                    knowledge_domain, scope_kind, scope_id, visibility,
+                    authorization_revision, binding_id, scope_mode
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?,
+                          ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     evidence_id,
@@ -500,6 +550,11 @@ class AgentMemoryEvidenceStore:
                     privacy,
                     occurred,
                     recorded,
+                    scope_columns["owner_kind"], scope_columns["owner_id"],
+                    scope_columns["knowledge_domain"], scope_columns["scope_kind"],
+                    scope_columns["scope_id"], scope_columns["visibility"],
+                    scope_columns["authorization_revision"], scope_columns["binding_id"],
+                    scope_columns["scope_mode"],
                 ),
             )
             row = conn.execute(
@@ -2600,6 +2655,15 @@ def _evidence_payload(row: sqlite3.Row) -> dict[str, object]:
         "project": str(row["project"]),
         "roleId": str(row["role_id"]),
         "sessionId": str(row["session_id"]),
+        "ownerKind": str(row["owner_kind"]),
+        "ownerId": str(row["owner_id"]),
+        "knowledgeDomain": str(row["knowledge_domain"]),
+        "scopeKind": str(row["scope_kind"]),
+        "scopeId": str(row["scope_id"]),
+        "visibility": str(row["visibility"]),
+        "authorizationRevision": str(row["authorization_revision"]),
+        "bindingId": str(row["binding_id"]),
+        "scopeMode": str(row["scope_mode"]),
         "sourceKind": str(row["source_kind"]),
         "sourceId": str(row["source_id"]),
         "idempotencyKey": str(row["idempotency_key"]),

@@ -23,6 +23,7 @@ export interface AgentMessageV1 {
 }
 export interface Block {
   id: string;
+  schemaVersion?: 'rag-ime.agent-block.v1';
   type:
     | 'text'
     | 'code'
@@ -39,12 +40,27 @@ export interface Block {
     | 'diff'
     | 'approval'
     | 'error'
+    | 'card'
+    | 'checklist'
+    | 'table'
+    | 'artifact'
+    | 'reference'
+    | 'status'
     | 'unknown';
   status: 'queued' | 'running' | 'completed' | 'failed' | 'aborted';
   presentationKind: string;
   data: {
     [k: string]: unknown;
   };
+  summary?: string;
+  source?: {
+    kind: string;
+    ref: string;
+  };
+  visibility?: 'private_session' | 'room_post' | 'root_post';
+  digest?: string;
+  ref?: string;
+  generation?: number;
   [k: string]: unknown;
 }
 export interface Usage {

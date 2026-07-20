@@ -1,0 +1,9 @@
+{"eventId":"generation-1","type":"generation_started","rootId":"root-alpha","generation":1}
+{"eventId":"post-1","type":"post_committed","rootId":"root-alpha","generation":1}
+{"eventId":"compaction-1","type":"compaction_started","rootId":"root-alpha","generation":1}
+{"eventId":"generation-2","type":"generation_started","rootId":"root-alpha","generation":2}
+{"eventId":"recovery-2","type":"recovery_packet","rootId":"root-alpha","generation":2}
+{"eventId":"old-generation","type":"continuation","rootId":"root-alpha","generation":1}
+{"eventId":"post-2","type":"post_committed","rootId":"root-alpha","generation":2}
+{"eventId":"post-2","type":"post_committed","rootId":"root-alpha","generation":2}
+{"eventId":"crash-tail","type":"post_committed"

@@ -31,6 +31,7 @@ class KnowledgeWorkerSupervisor:
         popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
         clock: Callable[[], float] = time.monotonic,
         allow_shared_owner: bool | None = None,
+        intake_db_path: Path | None = None,
     ) -> None:
         self.settings_provider = settings_provider
         self.root_dir = Path(root_dir or default_knowledge_root()).expanduser()
@@ -52,6 +53,7 @@ class KnowledgeWorkerSupervisor:
         self._process: subprocess.Popen[bytes] | None = None
         self._started_fingerprint = ""
         self._owner = f"sidecar:{secrets.token_hex(16)}"
+        self.intake_db_path = Path(intake_db_path).expanduser().resolve(strict=False) if intake_db_path else None
         self._adopted_owner = ""
         self._lock = RLock()
 
@@ -143,6 +145,8 @@ class KnowledgeWorkerSupervisor:
                 "--parent-pid",
                 str(os.getpid()),
             ]
+            if self.intake_db_path is not None:
+                command.extend(["--intake-db", str(self.intake_db_path)])
             if mineru_enabled:
                 command.append("--mineru-enabled")
             worker_env = _knowledge_worker_env(os.environ)

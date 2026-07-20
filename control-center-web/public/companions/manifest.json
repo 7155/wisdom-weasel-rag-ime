@@ -1,54 +1,86 @@
 {
-  "schemaVersion": "rag-ime.persona-assets.v2",
+  "schemaVersion": "rag-ime.persona-assets.v4",
   "fallbackAssetId": "rag-ime-timeline-present-v1",
+  "provenance": {
+    "generator": "OpenAI built-in image_gen",
+    "createdFor": "Wisdom Weasel RAG IME",
+    "externalCharacterReference": false
+  },
+  "budgets": {
+    "portraitMaxBytes": 65536,
+    "sceneMaxBytes": 98304,
+    "generatedPackMaxBytes": 262144
+  },
   "assets": {
     "rag-ime-companion-v1": {
       "personaId": "zhiyou-v1",
       "timeline": "legacy-state",
       "modelAffinity": "session-selected",
       "states": {
-        "idle": "./RagImeCompanionIdle.png",
-        "listening": "./RagImeCompanionListening.png",
-        "thinking": "./RagImeCompanionThinking.png",
-        "warning": "./RagImeCompanionWarning.png",
-        "done": "./RagImeCompanionDone.png"
+        "idle": "/companions/RagImeCompanionIdle.png",
+        "listening": "/companions/RagImeCompanionListening.png",
+        "thinking": "/companions/RagImeCompanionThinking.png",
+        "warning": "/companions/RagImeCompanionWarning.png",
+        "done": "/companions/RagImeCompanionDone.png"
       }
     },
     "rag-ime-timeline-past-v1": {
       "personaId": "hermes-v1",
       "timeline": "past",
-      "modelAffinity": "5.6 Luna",
-      "states": {
-        "idle": "./timeline-past.png",
-        "listening": "./timeline-past.png",
-        "thinking": "./timeline-past.png",
-        "warning": "./timeline-past.png",
-        "done": "./timeline-past.png"
-      }
+      "modelAffinity": "gpt-5.6-luna",
+      "source": "/companions/personas/wisdom-weasel-luna-v1.webp",
+      "width": 640,
+      "height": 640,
+      "bytes": 25756,
+      "sha256": "1ecff3b890ccb4171c9c61290b5268b3a42ab3ab85fdeac391c0670f409ad4e7"
     },
     "rag-ime-timeline-present-v1": {
       "personaId": "zhiyou-v1",
       "timeline": "present",
-      "modelAffinity": "5.6 Terra",
-      "states": {
-        "idle": "./timeline-present.png",
-        "listening": "./timeline-present.png",
-        "thinking": "./timeline-present.png",
-        "warning": "./timeline-present.png",
-        "done": "./timeline-present.png"
-      }
+      "modelAffinity": "gpt-5.6-terra",
+      "source": "/companions/personas/wisdom-weasel-terra-v1.webp",
+      "width": 640,
+      "height": 640,
+      "bytes": 34808,
+      "sha256": "03ae115e9acbb9d5d812fa8cfbf3cad0f79d8cd193eeff74a564f932142ee853"
     },
     "rag-ime-timeline-future-v1": {
       "personaId": "vcp-v1",
       "timeline": "future",
-      "modelAffinity": "5.6 Sol",
-      "states": {
-        "idle": "./timeline-future.png",
-        "listening": "./timeline-future.png",
-        "thinking": "./timeline-future.png",
-        "warning": "./timeline-future.png",
-        "done": "./timeline-future.png"
-      }
+      "modelAffinity": "gpt-5.6-sol",
+      "source": "/companions/personas/wisdom-weasel-sol-v1.webp",
+      "width": 640,
+      "height": 640,
+      "bytes": 33170,
+      "sha256": "79e1e29cb2a7499ac7dd30abe67a559b64544e75bbeb22d7cb71f6c972798f3b"
+    },
+    "rag-ime-timeline-flash-v1": {
+      "personaId": "flash-v1",
+      "timeline": "flash",
+      "modelAffinity": "deepseek-v4-flash",
+      "source": "/companions/personas/wisdom-weasel-flash-v1.webp",
+      "width": 640,
+      "height": 640,
+      "bytes": 42436,
+      "sha256": "36630f13593937581cf095989fc54123c5eb966d165d0e6bb2b2b6da829742f2"
+    }
+  },
+  "scenes": {
+    "memory-evidence-timeline": {
+      "source": "/companions/scenes/memory-evidence-timeline-v1.webp",
+      "width": 960,
+      "height": 640,
+      "bytes": 14526,
+      "sha256": "aecd38532da39c66f651ac4cd42ee7f5b18ebb0c46f5ffd0139e46721e313f80",
+      "intendedSlots": ["memory-overview", "memory-empty-state"]
+    },
+    "room-duoagent-handoff": {
+      "source": "/companions/scenes/room-duoagent-handoff-v1.webp",
+      "width": 960,
+      "height": 720,
+      "bytes": 50044,
+      "sha256": "9200d59edf444f03bc801c03c258dcb103620eddc9928fe0f109afe5b0d93e93",
+      "intendedSlots": ["room-empty-state", "room-onboarding"]
     }
   }
 }

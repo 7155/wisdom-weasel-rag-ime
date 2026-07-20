@@ -269,7 +269,15 @@ class PiRuntimeTests(unittest.TestCase):
         self.fake_pi.chmod(0o755)
         self.store = AgentSessionStore(self.root / "rag-ime.sqlite")
         self.store.initialize()
-        self.session = self.store.create(title="输入助手", created_at_ms=100)
+        # This RPC fixture only advertises DeepSeek V4. Pin the Session to that
+        # catalog entry so the default Sol persona/model policy is tested
+        # independently from the legacy protocol adapter.
+        self.session = self.store.create(
+            title="输入助手",
+            model_profile="deepseek/deepseek-v4",
+            thinking_level="off",
+            created_at_ms=100,
+        )
         self.events = AgentEventHub(
             sequence_loader=self.store.max_event_sequence,
             event_recorder=self._record_event,
@@ -305,7 +313,7 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn("bash", command)
         self.assertIn("--system-prompt", command)
         prompt = command[command.index("--system-prompt") + 1]
-        self.assertIn("你是“智鼬”", prompt)
+        self.assertIn("你是“智鼬·未来”", prompt)
         self.assertIn("词表相关操作必须经过预览", prompt)
 
         environment = self.config.child_environment()
@@ -359,7 +367,7 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertIn("pinned=role-book:zhiyou-v1:1:2", prompt)
         self.assertIn("能够维护个人记忆投影", prompt)
         self.assertLess(
-            prompt.index("你是“智鼬”"),
+            prompt.index("你是“智鼬·未来”"),
             prompt.index("<agent-role-book>"),
         )
 
@@ -534,7 +542,7 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn("maxTokens", imported_provider["models"][0])
         self.assertNotIn("reasoning", imported_provider["models"][0])
         self.assertNotIn("input", imported_provider["models"][0])
-        command = config.launch_command(session=self.session)
+        command = config.launch_command(session={**self.session, "modelProfile": ""})
         self.assertEqual(command[command.index("--provider") + 1], "gpt")
         self.assertEqual(command[command.index("--model") + 1], "gpt-5.6-luna")
 

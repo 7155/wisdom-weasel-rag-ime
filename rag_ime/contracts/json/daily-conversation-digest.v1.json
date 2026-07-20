@@ -57,7 +57,27 @@
         "deduplicatedEventCount": {"type": "integer", "minimum": 0},
         "redactedEventCount": {"type": "integer", "minimum": 0},
         "corroborationOnly": {"type": "boolean", "const": true},
-        "maySupportFacts": {"type": "boolean", "const": false}
+        "maySupportFacts": {"type": "boolean", "const": false},
+        "source": {"$ref": "#/$defs/activitySource"},
+        "ref": {"$ref": "#/$defs/activityRef"}
+      }
+    },
+    "activitySource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"type": "string", "const": "activity_timeline"},
+        "id": {"type": "string", "minLength": 1}
+      }
+    },
+    "activityRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"type": "string", "const": "timeline"},
+        "id": {"type": "string", "minLength": 1}
       }
     },
     "digestItem": {

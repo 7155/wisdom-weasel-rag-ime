@@ -8,6 +8,11 @@
     "runtimeVersion": {"type": "string", "minLength": 1},
     "piVersion": {"type": "string", "minLength": 1},
     "runtimeProtocolVersion": {"type": "string", "enum": ["1", "2"]},
+    "runtimeMethods": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
     "platform": {"type": "string", "minLength": 1},
     "architecture": {"type": "string", "minLength": 1},
     "launchKind": {"type": "string", "enum": ["node", "standalone"]},
@@ -25,7 +30,9 @@
       "properties": {
         "repository": {"type": "string", "minLength": 1},
         "commit": {"type": "string", "minLength": 1},
-        "package": {"type": "string", "minLength": 1}
+        "package": {"type": "string", "minLength": 1},
+        "sourceContractSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "handlersCommit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
       }
     },
     "files": {
@@ -41,5 +48,19 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"runtimeProtocolVersion": {"const": "2"}},
+        "required": ["runtimeProtocolVersion"]
+      },
+      "then": {
+        "required": ["runtimeMethods"],
+        "properties": {
+          "source": {"required": ["sourceContractSha256", "handlersCommit"]}
+        }
+      }
+    }
+  ]
 }

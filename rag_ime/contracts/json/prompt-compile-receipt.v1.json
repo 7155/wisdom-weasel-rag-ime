@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "wisdom-weasel.prompt-compile-receipt.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "receiptId", "plan", "omittedLayers", "producerAudit", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.prompt-compile-receipt.v1"},
+    "receiptId": {"type": "string", "minLength": 1},
+    "plan": {"type": "object"},
+    "omittedLayers": {"type": "array", "items": {"type": "string"}},
+    "producerAudit": {"type": "array", "items": {"type": "object"}},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

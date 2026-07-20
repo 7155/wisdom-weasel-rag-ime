@@ -13,6 +13,7 @@
     "traits",
     "visualProfile",
     "defaults",
+    "runtimeCharacteristics",
     "safetyPolicyVersion",
     "selectableModes"
   ],
@@ -53,6 +54,25 @@
           "type": "string",
           "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
         }
+      }
+    },
+    "runtimeCharacteristics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intelligence", "speed", "context", "suitableTasks", "unsuitableTasks", "isDefault"],
+      "properties": {
+        "intelligence": {"type": "string", "minLength": 1, "maxLength": 40},
+        "speed": {"type": "string", "minLength": 1, "maxLength": 40},
+        "context": {"type": "string", "minLength": 1, "maxLength": 80},
+        "suitableTasks": {
+          "type": "array", "minItems": 1, "maxItems": 6,
+          "items": {"type": "string", "minLength": 1, "maxLength": 80}
+        },
+        "unsuitableTasks": {
+          "type": "array", "minItems": 1, "maxItems": 6,
+          "items": {"type": "string", "minLength": 1, "maxLength": 80}
+        },
+        "isDefault": {"type": "boolean"}
       }
     },
     "safetyPolicyVersion": {"type": "string", "const": "control-center-safe-v1"},

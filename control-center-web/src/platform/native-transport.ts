@@ -447,6 +447,8 @@ function parseNativeEvent(streamKind: ControlStreamKind | undefined, value: unkn
       return parseAgentEvent(value);
     case 'room':
       return parseRoomEvent(value);
+    case 'kernel':
+      return value;
     case 'control':
       return value;
     case 'observation':

@@ -13,6 +13,7 @@ from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .embeddings import EmbeddingProvider, NullEmbeddingProvider
 from .hybrid_rag_models import HybridRagQuery
+from .knowledge_scope import session_knowledge_caller
 from .hybrid_rag_retriever import retrieve_hybrid_rag_candidates
 from .input_event_assembly import recent_complete_input_context
 from .memory_ownership import agent_visible_memory_owners
@@ -161,6 +162,7 @@ class SessionMemoryRecallBuilder:
         )
 
         with self._connect() as conn:
+            knowledge_caller = session_knowledge_caller(conn, session)
             recent = recent_complete_input_context(
                 conn,
                 project=self.project,
@@ -182,6 +184,7 @@ class SessionMemoryRecallBuilder:
                 top_k=max(24, bounded_items * 4),
                 latency_budget_ms=2_500,
                 visible_owners=visible_owners,
+                knowledge_caller=knowledge_caller,
                 vector_context_text=_tail_text(vector_context_text, 6_000),
                 vector_context_weight=vector_context_weight,
             )
@@ -473,15 +476,7 @@ def _select_hits(
                 "rank": len(selected) + 1,
                 "sourceType": f"memory_{doc_type}",
                 "sourceId": source_id,
-                "title": truncate_text(
-                    str(
-                        metadata.get("bookTitle")
-                        or metadata.get("timelineTitle")
-                        or metadata.get("kind")
-                        or source_id
-                    ),
-                    180,
-                ),
+                "title": _human_memory_title(doc_type, metadata),
                 "text": text,
                 "score": round(float(item.get("score") or 0.0), 6),
                 "confidence": round(float(item.get("confidence") or 0.0), 6),
@@ -507,6 +502,25 @@ def _select_hits(
         if len(selected) >= max_items:
             break
     return selected, max(0, eligible_count - len(selected))
+
+
+def _human_memory_title(doc_type: str, metadata: Mapping[str, object]) -> str:
+    explicit = compact_whitespace(
+        str(metadata.get("bookTitle") or metadata.get("timelineTitle") or "")
+    )
+    if explicit:
+        return truncate_text(explicit, 180)
+    kind = compact_whitespace(str(metadata.get("kind") or "")).casefold()
+    labels = {
+        "preference": "用户偏好",
+        "project_fact": "项目事实",
+        "project_requirement": "项目要求",
+        "decision": "已确认决定",
+        "constraint": "明确约束",
+    }
+    if kind in labels:
+        return labels[kind]
+    return {"book": "主题书", "timeline": "近期记录", "atom": "已治理事实"}[doc_type]
 
 
 def _preferred_book_source_ids(
@@ -801,6 +815,11 @@ def _normalized_task(value: Mapping[str, object] | None) -> dict[str, object]:
     criteria = _string_list(value.get("acceptanceCriteria"), 8)
     if criteria:
         result["acceptanceCriteria"] = [truncate_text(item, 300) for item in criteria]
+    original_requirements = _string_list(value.get("originalRequirements"), 4)
+    if original_requirements:
+        result["originalRequirements"] = [
+            truncate_text(item, 2_000) for item in original_requirements
+        ]
     return result
 
 

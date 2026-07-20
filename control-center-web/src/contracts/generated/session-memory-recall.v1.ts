@@ -1745,6 +1745,15 @@ export interface SessionMemoryRecallV1 {
       | [string, string, string, string, string, string]
       | [string, string, string, string, string, string, string]
       | [string, string, string, string, string, string, string, string];
+    /**
+     * @maxItems 4
+     */
+    originalRequirements?:
+      | []
+      | [string]
+      | [string, string]
+      | [string, string, string]
+      | [string, string, string, string];
   };
   sourceIds: string[];
   budget: {

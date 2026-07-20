@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-dispatch-envelope.v2.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "dispatchId", "rootId", "taskId", "parentDispatchId", "generation", "hopCount", "depth", "budgetCost", "targetSessionId", "targetParticipantId", "triggerId", "intentKind", "idempotencyKey", "attempt", "capabilityEpoch", "runtimeProfileRevision", "state"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "wisdom-weasel.room-dispatch-envelope.v2"},
+    "dispatchId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "taskId": {"type": "string", "minLength": 1},
+    "parentDispatchId": {"type": ["string", "null"]},
+    "generation": {"type": "integer", "minimum": 0},
+    "hopCount": {"type": "integer", "minimum": 0},
+    "depth": {"type": "integer", "minimum": 0},
+    "budgetCost": {"type": "integer", "minimum": 0},
+    "targetSessionId": {"type": "string", "minLength": 1},
+    "targetParticipantId": {"type": "string", "minLength": 1},
+    "triggerId": {"type": "string", "minLength": 1},
+    "intentKind": {"type": "string", "enum": ["execute", "review", "revise", "resume", "retry", "wake", "callback"]},
+    "idempotencyKey": {"type": "string", "minLength": 1},
+    "attempt": {"type": "integer", "minimum": 0},
+    "capabilityEpoch": {"type": "integer", "minimum": 0},
+    "runtimeProfileRevision": {"type": "string", "minLength": 1},
+    "state": {"type": "string", "enum": ["pending", "leased", "running", "retry_wait", "timer_wait", "committed", "unknown", "dead_letter", "failed", "cancelled"]}
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "rag-ime.pi-context-cache-canary-evidence.v1",
+  "capturedAt": "2026-07-20",
+  "sourceCommit": "c4752416150b715b5079549024efd0299fa259e5",
+  "stagedManifestSha256": "dab863ccdaed917c986855ee5fbf25e21f1342c9af116339be989676b608fab8",
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "lastCompletedStage": "cache-stable.turn-1.hard_gate_failed",
+  "providerContextAvailable": true,
+  "providerContextBytes": 43203,
+  "providerContextSha256": "ca1a39dcef7987641c72f255256db5ae7305e4f52fed082069c32da253dec7d2",
+  "systemPromptBytes": 40853,
+  "systemPromptSha256": "285bfd7f0de29c237b266dca57ce477f877ad1f0244178e86d8d41b3a8c9fbb3",
+  "usage": {
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "cacheReadTokens": 0,
+    "cacheWriteTokens": 0
+  },
+  "assistantStopReason": "error",
+  "assistantError": "Connection error.",
+  "providerUsageReported": false,
+  "providerCacheFieldsReported": false,
+  "stableHitProven": false,
+  "productionEnabled": false,
+  "verdict": "inconclusive_provider_unreachable"
+}

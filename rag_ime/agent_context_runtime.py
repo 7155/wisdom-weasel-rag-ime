@@ -936,6 +936,10 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
         objective = compact_whitespace(str(task.get("objective") or ""))
         expected = compact_whitespace(str(task.get("expectedOutput") or ""))
         criteria = _context_string_list(task.get("acceptanceCriteria"))
+        original_requirements = _context_string_list(task.get("originalRequirements"))
+        if original_requirements:
+            lines.append("原始需求（不可改写）：")
+            lines.extend(f"- {requirement}" for requirement in original_requirements)
         if objective:
             lines.append(objective)
         if expected:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
 import re
+import sqlite3
 import sys
 import tempfile
 import time
@@ -12,7 +14,7 @@ import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .client import LocalKnowledgeClient
 from .identity import knowledge_worker_fingerprint, normalized_knowledge_root
@@ -36,6 +38,7 @@ class KnowledgeWorkerServer(ThreadingHTTPServer):
         owner: str = "",
         idle_seconds: float = 900.0,
         parent_pid: int = 0,
+        intake_validator: Callable[[str, str], bool] | None = None,
     ):
         super().__init__(address, KnowledgeWorkerHandler)
         self.service = service
@@ -44,6 +47,7 @@ class KnowledgeWorkerServer(ThreadingHTTPServer):
         self.worker_root = normalized_knowledge_root(service.config.root_dir)
         self.worker_owner = owner or f"standalone:{os.getpid()}"
         self.parent_pid = max(0, int(parent_pid))
+        self.intake_validator = intake_validator
         self.config_fingerprint = knowledge_worker_fingerprint(
             service.config.root_dir,
             mineru_enabled=service.config.mineru_enabled,
@@ -332,6 +336,13 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
         kb_id = self.headers.get("X-Knowledge-Base-Id") or _first(query, "kbId")
         encoded_name = self.headers.get("X-Knowledge-File-Name") or _first(query, "fileName", default="document.bin")
         file_name = Path(urllib.parse.unquote(encoded_name)).name
+        intake_receipt_id = str(self.headers.get("X-Knowledge-Intake-Receipt") or "").strip()
+        intake_hash = str(self.headers.get("X-Knowledge-Intake-Hash") or "").strip()
+        intake_status = str(self.headers.get("X-Knowledge-Intake-Status") or "").strip()
+        if intake_status != "allowed" or not intake_receipt_id or len(intake_hash) != 64:
+            raise KnowledgeLibraryError("allowed intake receipt is required before import", code="intake_required")
+        if self.server.intake_validator is None or not self.server.intake_validator(intake_receipt_id, intake_hash):
+            raise KnowledgeLibraryError("intake receipt is unknown, quarantined, or stale", code="intake_invalid")
         if not file_name or file_name in {".", ".."}:
             raise KnowledgeLibraryError("file name is required", code="invalid_argument")
         incoming = self.server.service.config.root_dir / "incoming"
@@ -339,6 +350,7 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
         suffix = Path(file_name).suffix[:20]
         temporary_path: Path | None = None
         try:
+            intake_hasher = hashlib.sha256()
             with tempfile.NamedTemporaryFile(dir=incoming, suffix=suffix, delete=False) as target:
                 temporary_path = Path(target.name)
                 remaining = content_length
@@ -347,7 +359,10 @@ class KnowledgeWorkerHandler(BaseHTTPRequestHandler):
                     if not block:
                         raise KnowledgeLibraryError("request body ended before Content-Length", code="invalid_request")
                     target.write(block)
+                    intake_hasher.update(block)
                     remaining -= len(block)
+            if intake_hasher.hexdigest() != intake_hash:
+                raise KnowledgeLibraryError("intake receipt hash does not match upload", code="intake_hash_mismatch")
             secure_file(temporary_path)
             document = self.server.service.import_document(
                 kb_id,
@@ -428,6 +443,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--idle-seconds", type=float, default=900.0)
     parser.add_argument("--owner", default="")
     parser.add_argument("--parent-pid", type=int, default=0)
+    parser.add_argument("--intake-db", type=Path)
     return parser
 
 
@@ -454,6 +470,7 @@ def main(argv: list[str] | None = None) -> int:
         owner=args.owner,
         idle_seconds=args.idle_seconds,
         parent_pid=args.parent_pid,
+        intake_validator=_database_intake_validator(args.intake_db) if args.intake_db else None,
     )
     server.timeout = 0.5
     try:
@@ -469,6 +486,25 @@ def main(argv: list[str] | None = None) -> int:
         server.server_close()
         service.close(wait=True)
     return 0
+
+
+def _database_intake_validator(db_path: Path) -> Callable[[str, str], bool]:
+    path = Path(db_path).expanduser().resolve(strict=False)
+
+    def validate(import_id: str, content_hash: str) -> bool:
+        try:
+            with sqlite3.connect(path) as conn:
+                row = conn.execute(
+                    """SELECT 1 FROM room_v2_external_import_intakes
+                       WHERE import_id=? AND content_hash=? AND scan_status='allowed'
+                         AND data_only=1 AND raw_bytes_stored=0""",
+                    (import_id, content_hash),
+                ).fetchone()
+        except sqlite3.Error:
+            return False
+        return row is not None
+
+    return validate
 
 
 def _content_length(value: str | None) -> int:

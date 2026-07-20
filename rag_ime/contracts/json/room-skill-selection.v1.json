@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-skill-selection.v1.json",
+  "title": "Room stage to native Skill selection",
+  "type": "object",
+  "required": [
+    "schemaVersion", "stage", "selection", "skillId",
+    "candidateSkillIds", "risk"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.room-skill-selection.v1"},
+    "stage": {"type": "string", "minLength": 1},
+    "selection": {"enum": ["required", "suggested", "none"]},
+    "skillId": {"type": ["string", "null"]},
+    "candidateSkillIds": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "risk": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

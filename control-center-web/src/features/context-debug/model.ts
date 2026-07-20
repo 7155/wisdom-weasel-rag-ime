@@ -17,6 +17,24 @@ export interface DebugContextDelta {
   removedMessageCount: number;
   addedMessageCount: number;
   addedMessages: unknown[];
+  prefixBytes?: number;
+  prefixSha256?: string;
+  currentBytes?: number;
+  deltaBytes?: number;
+  duplicateBytes?: number;
+}
+
+export interface DebugCacheEvidence {
+  requestIndex: number;
+  prefixSha256: string;
+  prefixBytes: number;
+  deltaBytes: number;
+  duplicateBytes: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  capability: 'reported' | 'unsupported';
 }
 
 export interface DebugProviderExchange {
@@ -79,6 +97,7 @@ export interface DebugContextRecord {
   model: JsonRecord;
   activeTools: string[];
   toolSchemas: JsonRecord[];
+  cacheEvidence: DebugCacheEvidence[];
   modelCalls: DebugModelCall[];
   toolExecutions: DebugToolExecution[];
   toolBatches: DebugToolBatch[];
@@ -131,6 +150,7 @@ function normalizeContextRecord(value: JsonRecord): DebugContextRecord {
     model: record(value.model),
     activeTools: array(value.activeTools).map(text).filter(Boolean),
     toolSchemas: array(value.toolSchemas).map(record),
+    cacheEvidence: array(value.cacheEvidence).map(normalizeCacheEvidence),
     modelCalls,
     toolExecutions,
     toolBatches: suppliedBatches.length ? suppliedBatches : deriveToolBatches(toolExecutions),
@@ -153,9 +173,30 @@ function normalizeModelCall(value: JsonRecord, fallbackIndex: number): DebugMode
       removedMessageCount: number(delta.removedMessageCount),
       addedMessageCount: number(delta.addedMessageCount),
       addedMessages: array(delta.addedMessages),
+      prefixBytes: optionalNumber(delta.prefixBytes),
+      prefixSha256: text(delta.prefixSha256) || undefined,
+      currentBytes: optionalNumber(delta.currentBytes),
+      deltaBytes: optionalNumber(delta.deltaBytes),
+      duplicateBytes: optionalNumber(delta.duplicateBytes),
     },
     providerExchanges: array(value.providerExchanges).map((item, index) => normalizeProviderExchange(record(item), index)),
     assistantMessage: value.assistantMessage,
+  };
+}
+
+function normalizeCacheEvidence(value: unknown): DebugCacheEvidence {
+  const evidence = record(value);
+  return {
+    requestIndex: positive(evidence.requestIndex, 1),
+    prefixSha256: text(evidence.prefixSha256),
+    prefixBytes: number(evidence.prefixBytes),
+    deltaBytes: number(evidence.deltaBytes),
+    duplicateBytes: number(evidence.duplicateBytes),
+    inputTokens: number(evidence.inputTokens),
+    outputTokens: number(evidence.outputTokens),
+    cacheReadTokens: number(evidence.cacheReadTokens),
+    cacheWriteTokens: number(evidence.cacheWriteTokens),
+    capability: evidence.capability === 'reported' ? 'reported' : 'unsupported',
   };
 }
 

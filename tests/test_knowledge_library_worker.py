@@ -31,7 +31,10 @@ class KnowledgeWorkerTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         service = KnowledgeLibraryService(KnowledgeLibraryConfig(Path(self.temporary.name) / "Knowledge"))
         self.base = service.create_base("Worker documents", agent_enabled=True)
-        self.server = KnowledgeWorkerServer(("127.0.0.1", 0), service)
+        self.server = KnowledgeWorkerServer(
+            ("127.0.0.1", 0), service,
+            intake_validator=lambda receipt, content_hash: receipt.startswith("test-intake:") and len(content_hash) == 64,
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.addCleanup(self._stop_server)
@@ -42,10 +45,16 @@ class KnowledgeWorkerTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
 
+    def _import(self, data: bytes, *, file_name: str, mime_type: str = "text/markdown"):
+        return self.client.management_import_document(
+            self.base["id"], data, file_name=file_name, mime_type=mime_type,
+            intake_receipt_id="test-intake:" + hashlib.sha256(data).hexdigest()[:24],
+            intake_content_hash=hashlib.sha256(data).hexdigest(),
+        )
+
     def test_raw_import_receipt_and_agent_mapping_round_trip(self) -> None:
         data = b"# Worker import\n\nThe calving front advanced during the winter observation window."
-        imported = self.client.management_import_document(
-            self.base["id"],
+        imported = self._import(
             data,
             file_name="winter-notes.md",
             mime_type="text/markdown",
@@ -81,8 +90,7 @@ class KnowledgeWorkerTests(unittest.TestCase):
         self.assertRegex(payload["owner"], r"^standalone:\d+$")
 
     def test_management_jobs_find_and_status(self) -> None:
-        self.client.management_import_document(
-            self.base["id"],
+        self._import(
             b"# Inventory\n\nAnnual mass balance table.",
             file_name="mass-balance.md",
             mime_type="text/markdown",
@@ -95,8 +103,7 @@ class KnowledgeWorkerTests(unittest.TestCase):
         self.assertEqual(1, status["readyDocumentCount"])
 
     def test_management_knowledge_graph_round_trip(self) -> None:
-        imported = self.client.management_import_document(
-            self.base["id"],
+        imported = self._import(
             b"# Graph\n\nRAG links Agent Runtime to `SQLite` evidence chunks.",
             file_name="graph.md",
             mime_type="text/markdown",
@@ -117,8 +124,7 @@ class KnowledgeWorkerTests(unittest.TestCase):
         self.assertTrue(any("SQLite" in node["label"] for node in graph["nodes"]))
 
     def test_management_chunk_preview_and_job_cancel_round_trip(self) -> None:
-        imported = self.client.management_import_document(
-            self.base["id"],
+        imported = self._import(
             b"# Preview\n\nOne paragraph.\n\nTwo paragraphs.",
             file_name="preview.md",
             mime_type="text/markdown",
@@ -162,8 +168,7 @@ class KnowledgeWorkerTests(unittest.TestCase):
         self.assertEqual("cancelled", cancelled["job"]["status"])
 
     def test_document_detail_source_and_asset_binary_round_trip(self) -> None:
-        imported = self.client.management_import_document(
-            self.base["id"],
+        imported = self._import(
             b"# Material\n\nParsed artifact preview.",
             file_name="material.md",
             mime_type="text/markdown",
@@ -195,8 +200,7 @@ class KnowledgeWorkerTests(unittest.TestCase):
         self.assertEqual("text/markdown", source.media_type)
 
     def test_reindex_preview_and_rebuild_round_trip(self) -> None:
-        self.client.management_import_document(
-            self.base["id"],
+        self._import(
             b"# Rebuild\n\nConfiguration-sensitive chunks.",
             file_name="rebuild.md",
             mime_type="text/markdown",

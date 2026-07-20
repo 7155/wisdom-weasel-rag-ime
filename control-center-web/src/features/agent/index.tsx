@@ -325,8 +325,8 @@ function AgentWorkspace() {
   }, [ensure, selectedId, transport]);
 
   const session = sessions.find((item) => item.id === selectedId);
-  const defaultPersona = personas.find((item) => item.roleId === 'zhiyou-v1')
-    ?? personas.find((item) => item.visualProfile.avatarAssetId.includes('timeline-present'))
+  const defaultPersona = personas.find((item) => item.runtimeCharacteristics.isDefault)
+    ?? personas.find((item) => item.roleId === 'vcp-v1')
     ?? personas[0];
   const persona = personas.find((item) => item.roleId === session?.roleId) ?? defaultPersona;
   const busy = Boolean(activeTurnId);

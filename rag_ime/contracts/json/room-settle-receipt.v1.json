@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-settle-receipt.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "settleReceiptId", "eventKind", "status", "dispatchId", "sessionId", "generation", "capabilityEpoch", "createdAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "wisdom-weasel.room-settle-receipt.v1"},
+    "settleReceiptId": {"type": "string", "minLength": 1},
+    "eventKind": {"const": "agent_settled"},
+    "status": {"const": "settled"},
+    "dispatchId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "generation": {"type": "integer", "minimum": 0},
+    "capabilityEpoch": {"type": "integer", "minimum": 0},
+    "resourceUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inputTokens": {"type": "integer", "minimum": 0},
+        "outputTokens": {"type": "integer", "minimum": 0},
+        "toolCalls": {"type": "integer", "minimum": 0},
+        "toolCost": {"type": "integer", "minimum": 0},
+        "retryCount": {"type": "integer", "minimum": 0},
+        "repairCount": {"type": "integer", "minimum": 0}
+      }
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

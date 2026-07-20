@@ -51,6 +51,7 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
     const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    expect(screen.queryByAltText(/两位智鼬在私有工作区之间显式交接/)).not.toBeInTheDocument();
     const errorSlot = document.querySelector('.room-error-slot');
     expect(errorSlot).toBeInTheDocument();
     expect(errorSlot).toBeEmptyDOMElement();
@@ -148,7 +149,7 @@ describe('Rooms experience', () => {
         naturalJitter: 0,
         fallbackParticipantId: '',
       },
-      moderatorRoleId: userCreatedPersona.roleId,
+      moderatorRoleId: 'vcp-v1',
       workspaceRoots: ['/Volumes/work/learnA'],
     });
     expect(await screen.findByRole('button', { name: '打开 Room：发布前检查' })).toHaveAttribute('aria-current', 'true');
@@ -498,7 +499,12 @@ describe('Rooms experience', () => {
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.archive')).toBe(true));
     const request = transport.requests.find((call) => call.request.pathId === 'agent.room.archive')?.request;
     expect(request).toMatchObject({ params: { roomId: 'room-a' }, body: { archived: true } });
-    expect(await screen.findByText('选择一个 Room，或新建协作 Room。')).toBeInTheDocument();
+    expect(await screen.findByText('选择一个 Room')).toBeInTheDocument();
+    const scene = screen.getByAltText(/两位智鼬在私有工作区之间显式交接/);
+    expect(scene).toHaveAttribute('width', '960');
+    expect(scene).toHaveAttribute('height', '720');
+    expect(scene).toHaveAttribute('loading', 'lazy');
+    expect(screen.getByText('从 Rooms 列表选择，或新建协作 Room。')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '打开 Room：待归档 Room' })).not.toBeInTheDocument();
   });
 
@@ -566,7 +572,7 @@ describe('Rooms experience', () => {
     } });
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    expect(await screen.findByText('选择一个 Room，或新建协作 Room。')).toBeInTheDocument();
+    expect(await screen.findByText('选择一个 Room')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Room 消息' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '发送 Room 消息' })).toBeDisabled();
   });
@@ -579,7 +585,9 @@ describe('Rooms experience', () => {
     } });
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    expect(await screen.findByText('还没有对话，发一条消息开始协作。')).toBeInTheDocument();
+    expect(await screen.findByText('还没有公开 Post')).toBeInTheDocument();
+    expect(screen.getByText('发一条消息开始协作。')).toBeInTheDocument();
+    expect(screen.getByAltText(/两位智鼬在私有工作区之间显式交接/)).toHaveAttribute('src', '/companions/scenes/room-duoagent-handoff-v1.webp');
     expect(screen.getByRole('textbox', { name: 'Room 消息' })).toBeEnabled();
   });
 
@@ -592,8 +600,8 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await screen.findByText('还没有对话，发一条消息开始协作。');
-    await user.click(screen.getByRole('button', { name: '展开 Room 状态' }));
+    await screen.findByText('还没有公开 Post');
+    await user.click(screen.getByRole('button', { name: '展开 Room 证据' }));
     expect(screen.getByRole('complementary', { name: 'Room 状态' })).toHaveAttribute('data-open', 'true');
     expect(screen.getByText('协作成员上下文')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '收起 Room 状态' })).toBeInTheDocument();
@@ -719,8 +727,9 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: '配置 智鼬 的权限' }));
-    expect(await screen.findByRole('dialog', { name: '智鼬的运行权限' })).toBeInTheDocument();
+    await user.click(await screen.findByRole('radio', { name: 'Sessions' }));
+    await user.click((await screen.findAllByRole('button', { name: '检查 Session' }))[0]!);
+    expect(await screen.findByRole('dialog', { name: /智鼬 · 私有 Session Inspector/ })).toBeInTheDocument();
     expect(transport.requests.filter((call) => call.request.pathId === 'agent.sessions.list').at(-1)?.request.query).toEqual({ includeArchived: true, includeInternal: true, limit: 500 });
     expect(transport.requests.find((call) => call.request.pathId === 'agent.tools.list')?.request.query).toEqual({ sessionId: 'room-a:s1' });
     await user.click(screen.getByRole('radio', { name: '协调者' }));
@@ -782,7 +791,7 @@ describe('Rooms experience', () => {
     expect(screen.getByRole('link', { name: /立即审阅/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1');
   });
 
-  it('keeps group activity Persona avatars square on narrow layouts', () => {
+  it('keeps private activity rows out of the public Post timeline', () => {
     const room: RoomSummary = {
       id: 'room-a', title: '迁移作战室', status: 'active', routingPolicy: 'moderator',
       moderatorParticipantId: 'p1', updatedAtMs: Date.now(),
@@ -803,15 +812,11 @@ describe('Rooms experience', () => {
       kind: 'participant_activity', status: 'running', summary: '核对移动端布局', payload: {}, createdAtMs: 1,
     };
     render(<RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />);
-    const avatar = document.querySelector<HTMLElement>('.room-group-activity p > .agent-persona-avatar');
-    expect(avatar).toBeInTheDocument();
-    const style = getComputedStyle(avatar!);
-    expect(style.width).toBe('28px');
-    expect(style.height).toBe('28px');
-    expect(style.flex).toContain('0 0 28px');
+    expect(document.querySelector('.room-group-activity')).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent('核对移动端布局');
   });
 
-  it('turns internal Room event names into human-readable collaboration updates', () => {
+  it('shows only explicit Posts and hides internal Room execution events', () => {
     const room = roomSummary('room-a', '人类语言 Room');
     const projection = createRoomProjection(room.id);
     projection.turnOrder.push('turn-a');
@@ -830,6 +835,9 @@ describe('Rooms experience', () => {
         blocks: [
           { id: 'reasoning', type: 'reasoning_summary', status: 'completed', presentationKind: 'reasoning_summary', data: { text: '秘密思考摘要' } },
           { id: 'text', type: 'text', status: 'completed', presentationKind: 'markdown', data: { text: '公开回答' } },
+          { id: 'status', type: 'status', status: 'completed', presentationKind: 'status.v1', visibility: 'room_post', data: { title: '交付状态', state: 'completed', summary: '已通过刷新恢复' } },
+          { id: 'checklist', type: 'checklist', status: 'completed', presentationKind: 'checklist.v1', visibility: 'room_post', data: { title: '公开验收', items: [{ id: 'room-post', text: 'Room Post 可重渲染', checked: true }] } },
+          { id: 'private-card', type: 'card', status: 'completed', presentationKind: 'card.v1', visibility: 'private_session', data: { title: '私有 Session 中间稿', bodyMarkdown: '不应进入 Posts' } },
         ],
       },
     };
@@ -850,12 +858,12 @@ describe('Rooms experience', () => {
     };
 
     const { container } = render(<RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />);
-    expect(screen.getByText('智鼬 已接手')).toBeInTheDocument();
-    expect(screen.getByText('由主持人安排处理这轮任务')).toBeInTheDocument();
-    expect(screen.getByText('准备工作已经完成')).toBeInTheDocument();
-    expect(screen.getByText('智鼬 正在处理')).toBeInTheDocument();
     expect(screen.getByText('公开回答')).toBeInTheDocument();
-    expect(container.querySelector('.room-group-activity')).not.toHaveAttribute('open');
+    expect(screen.getByRole('region', { name: '交付状态' })).toHaveTextContent('已通过刷新恢复');
+    expect(screen.getByText('Room Post 可重渲染')).toBeInTheDocument();
+    expect(container).not.toHaveTextContent('私有 Session 中间稿');
+    expect(container).not.toHaveTextContent('不应进入 Posts');
+    expect(container.querySelector('.room-group-activity')).not.toBeInTheDocument();
     expect(container).not.toHaveTextContent('秘密思考摘要');
     expect(container).not.toHaveTextContent('participant_activity');
     expect(container).not.toHaveTextContent('route_decision');

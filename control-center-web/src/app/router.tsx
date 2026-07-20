@@ -6,6 +6,7 @@ import { ConfigurationFeature } from '@/features/configuration';
 import { ContextDebugFeature } from '@/features/context-debug';
 import { DiagnosticsFeature } from '@/features/diagnostics';
 import { HistoryFeature } from '@/features/history';
+import { GovernanceFeature } from '@/features/governance';
 import { InputMethodFeature } from '@/features/input-method';
 import { KnowledgeFeature } from '@/features/knowledge';
 import { MemoryFeature } from '@/features/memory';
@@ -30,6 +31,7 @@ export const router = createHashRouter([
   { path: '/planning', element: <PlanningFeature /> },
   { path: '/memory', element: <MemoryFeature /> },
   { path: '/knowledge', element: <KnowledgeFeature /> },
+  { path: '/governance', element: <GovernanceFeature /> },
   { path: '/history', element: <HistoryFeature /> },
   { path: '/observability', element: <ObservabilityFeature /> },
   { path: '/context-debug', element: <ContextDebugFeature /> },
