@@ -20,7 +20,7 @@ _ITEM_KINDS = frozenset(
     }
 )
 _ITEM_STATES = frozenset({"active", "needs_confirmation", "withdrawn", "superseded"})
-_RECEIPT_TYPES = frozenset({"test", "build", "install", "evidence"})
+_RECEIPT_TYPES = frozenset({"test", "build", "install", "browser", "evidence"})
 _TRUSTED_VERIFIERS = {
     "test": "managed-test-runner",
     "build": "managed-build-runner",
@@ -432,7 +432,8 @@ class RequirementGovernanceStore:
             if (
                 str(receipt["root_id"]) != root_id
                 or str(receipt["catalog_revision_id"]) != catalog_revision_id
-                or str(receipt["receipt_type"]) not in json.loads(str(criterion["expected_receipt_types_json"]))
+                or str(receipt["runner_receipt_type"] or receipt["receipt_type"])
+                not in json.loads(str(criterion["expected_receipt_types_json"]))
             ):
                 raise RequirementEvidenceError("proof receipt scope or type does not match criterion")
             conn.execute(
