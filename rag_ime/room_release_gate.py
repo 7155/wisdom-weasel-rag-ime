@@ -10,6 +10,10 @@ from pathlib import Path
 from .db import apply_database_migrations
 
 
+ROOM_V2_RELEASE_MIGRATION_VERSION = 94
+ROOM_V2_RELEASE_SCHEMA_COUNT = 136
+
+
 def stage_room_v2_canary(*, product_root: str | Path, pi_root: str | Path, source_db: str | Path,
                          frontend_dist: str | Path, output_dir: str | Path, pi_build: str | Path | None = None) -> dict[str, object]:
     """Stage and inspect a canary without mutating the source checkout, DB, or installed apps."""
@@ -30,9 +34,11 @@ def stage_room_v2_canary(*, product_root: str | Path, pi_root: str | Path, sourc
         "productClean": not _git(product, "status", "--porcelain"),
         "piClean": not _git(pi, "status", "--porcelain"),
         "migrationVersion": migration.current_version,
+        "expectedMigrationVersion": ROOM_V2_RELEASE_MIGRATION_VERSION,
         "databaseQuickCheck": quick_check,
         "databaseForeignKeyErrors": len(foreign_keys),
         "schemaCount": len(schema_paths),
+        "expectedSchemaCount": ROOM_V2_RELEASE_SCHEMA_COUNT,
         "frontendPresent": frontend.is_dir(),
         "defaultOff": os.environ.get("RAG_IME_ROOM_KERNEL_MODE", "off").strip().lower() == "off",
         "piBuildPresent": bool(pi_build_path and pi_build_path.exists()),
@@ -52,8 +58,10 @@ def stage_room_v2_canary(*, product_root: str | Path, pi_root: str | Path, sourc
         "frontend": _tree_hash([path for path in frontend.rglob("*") if path.is_file()]) if frontend.is_dir() else "missing",
     }
     remaining = []
-    if not all((checks["productClean"], checks["piClean"], checks["migrationVersion"] == 92, quick_check == "ok",
-                not foreign_keys, checks["schemaCount"] == 135, checks["frontendPresent"], checks["defaultOff"], checks["piBuildPresent"])):
+    if not all((checks["productClean"], checks["piClean"],
+                checks["migrationVersion"] == checks["expectedMigrationVersion"], quick_check == "ok",
+                not foreign_keys, checks["schemaCount"] == checks["expectedSchemaCount"],
+                checks["frontendPresent"], checks["defaultOff"], checks["piBuildPresent"])):
         remaining.append("local_provenance_or_dry_run")
     remaining.extend(("loopback_worker_control_e2e", "metal_runtime_e2e", "network_provider_e2e", "named_canary_metrics", "administrator_promotion_approval"))
     receipt = {

@@ -9,6 +9,7 @@ INCLUDE_VOICE=1
 INCLUDE_MAINTENANCE=1
 INCLUDE_MLX="auto"
 INCLUDE_PI="auto"
+PI_WORKTREE="${RAG_IME_PI_WORKTREE:-}"
 
 usage() {
   cat <<'EOF'
@@ -21,6 +22,7 @@ Options:
   --skip-maintenance    Do not install the Memory Book maintenance job.
   --skip-pi             Do not rebuild Pi; reuse an existing verified Runtime if present.
   --include-pi          Require rebuilding and installing the managed Pi Runtime.
+  --pi-worktree PATH    Build Pi from this verified worktree instead of auto-discovery.
   --skip-mlx            Do not reinstall the MLX predictor.
   --include-mlx         Require and reinstall the MLX predictor.
   -h, --help            Show this help.
@@ -38,6 +40,12 @@ while (($#)); do
     --skip-maintenance) INCLUDE_MAINTENANCE=0 ;;
     --skip-pi) INCLUDE_PI=0 ;;
     --include-pi) INCLUDE_PI=1 ;;
+    --pi-worktree)
+      shift
+      [[ $# -gt 0 ]] || { echo "--pi-worktree requires a path" >&2; exit 2; }
+      PI_WORKTREE="$1"
+      INCLUDE_PI=1
+      ;;
     --skip-mlx) INCLUDE_MLX=0 ;;
     --include-mlx) INCLUDE_MLX=1 ;;
     -h|--help) usage; exit 0 ;;
@@ -69,7 +77,8 @@ echo "Browser Co-pilot extension installed at $EXTENSION_DEST"
 required=(--require control --require sidecar --require squirrel)
 
 if [[ "$INCLUDE_PI" == "auto" ]]; then
-  if [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]] \
+  if [[ -n "$PI_WORKTREE" ]] \
+    || [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]] \
     || [[ -d "$ROOT/../pi/packages/rag-ime-runtime-host" ]] \
     || [[ -d "$ROOT/../pi-rag-ime-runtime/packages/rag-ime-runtime-host" ]]; then
     INCLUDE_PI=1
@@ -84,9 +93,11 @@ if [[ "$INCLUDE_PI" == "1" ]]; then
     echo "python executable not found for managed Pi Runtime packaging" >&2
     exit 1
   fi
-  "$PI_PYTHON" "$ROOT/scripts/build_managed_pi_runtime_v2.py" \
-    --output "$PI_BUILD_DIR" \
-    --force
+  pi_build_args=(--output "$PI_BUILD_DIR" --force)
+  if [[ -n "$PI_WORKTREE" ]]; then
+    pi_build_args+=(--pi-worktree "$PI_WORKTREE")
+  fi
+  "$PI_PYTHON" "$ROOT/scripts/build_managed_pi_runtime_v2.py" "${pi_build_args[@]}"
   "$PI_PYTHON" "$ROOT/scripts/install_managed_pi_runtime.py" \
     --payload "$PI_BUILD_DIR" \
     --app-support "$APP_SUPPORT_DIR"

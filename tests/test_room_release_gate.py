@@ -20,7 +20,7 @@ class RoomReleaseGateTests(unittest.TestCase):
             subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
             subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
         contracts = self.product / "rag_ime/contracts/json"; contracts.mkdir(parents=True)
-        for index in range(135):
+        for index in range(136):
             (contracts / f"contract-{index:03}.json").write_text("{}\n", encoding="utf-8")
         for relative in ("rag_ime/agent_knowledge_promotion.py", "rag_ime/collaboration_profile_control.py", "rag_ime/agent_governance_projection.py", "rag_ime/runtime_prompt.py"):
             path = self.product / relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(relative + "\n", encoding="utf-8")
@@ -43,7 +43,8 @@ class RoomReleaseGateTests(unittest.TestCase):
         self.assertEqual(before, self.db.read_bytes())
         self.assertEqual(reports[0]["receiptHash"], reports[1]["receiptHash"])
         self.assertEqual(reports[0]["checks"]["migrationVersion"], 94)
-        self.assertEqual(reports[0]["checks"]["schemaCount"], 135)
+        self.assertEqual(reports[0]["checks"]["schemaCount"], 136)
+        self.assertNotIn("local_provenance_or_dry_run", reports[0]["remainingGates"])
         self.assertFalse(reports[0]["productionCanaryEligible"])
         self.assertIn("loopback_worker_control_e2e", reports[0]["remainingGates"])
         self.assertFalse(reports[0]["installedAppsModified"])

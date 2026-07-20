@@ -55,6 +55,8 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("--require desktopBridge", installer)
         self.assertIn("install_agent_gateway_launch_agent.sh", installer)
         self.assertIn("build_managed_pi_runtime_v2.py", installer)
+        self.assertIn("--pi-worktree", installer)
+        self.assertIn("RAG_IME_PI_WORKTREE", installer)
         self.assertIn("../pi/packages/rag-ime-runtime-host", installer)
         self.assertIn("install_managed_pi_runtime.py", installer)
         self.assertIn("--require piSkills", installer)
