@@ -123,7 +123,10 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         room_skill_names = sorted(entry["skillId"] for entry in room_policy["skills"])
         self.assertEqual(
             skill_names,
-            sorted(["rag-ime-memory-curator", "rag-ime-plugin-creator", *room_skill_names]),
+            sorted([
+                "rag-ime-memory-curator", "rag-ime-plugin-creator",
+                "structured-result-presentation", *room_skill_names,
+            ]),
         )
         for name in skill_names:
             content = (skills_root / name / "SKILL.md").read_text(encoding="utf-8")
@@ -142,9 +145,10 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             "rag-ime.skill-routing-card-catalog.v1",
         )
         cards = routing_catalog["cards"]
-        self.assertEqual(len(cards), 40)
+        self.assertEqual(len(cards), 41)
         self.assertEqual(len({card["name"] for card in cards}), len(cards))
         self.assertTrue(set(room_skill_names).isdisjoint({card["name"] for card in cards}))
+        self.assertIn("structured-result-presentation", {card["name"] for card in cards})
         for card in cards:
             self.assertTrue(card["when"])
             self.assertTrue(card["does"])

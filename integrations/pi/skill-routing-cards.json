@@ -2,11 +2,11 @@
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
     "codexVisibleEntries": 48,
-    "piInstalledEntries": 2,
-    "canonicalCards": 40
+    "piInstalledEntries": 3,
+    "canonicalCards": 41
   },
   "coverage": {
-    "representedSourceEntries": 50,
+    "representedSourceEntries": 51,
     "duplicateSourceMultiplicity": {
       "openai-docs": 2,
       "codeagent": 2,
@@ -415,6 +415,18 @@
       "notFor": [
         "普通聊天、进度、失败或未完成工作",
         "直写 SQLite 或绕过审批"
+      ]
+    },
+    {
+      "name": "structured-result-presentation",
+      "when": [
+        "结果适合用卡片、清单、表格、产物、引用或状态扫读",
+        "用户需要可刷新、可复查的结构化交付"
+      ],
+      "does": "选最小内容块并优先受信任结构化通道，无工具时才用完整 fence。",
+      "notFor": [
+        "纯短文本或私有推理",
+        "HTML、小组件或脚本"
       ]
     }
   ]
