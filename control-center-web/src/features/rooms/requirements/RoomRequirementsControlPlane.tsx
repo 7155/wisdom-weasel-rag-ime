@@ -1,20 +1,11 @@
 import { CircleCheck, FileCheck2, GitCommitHorizontal, LockKeyhole, ShieldAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
-import {
-  assessReceipt,
-  type RequirementAnchorReadProjection,
-  type RoomRequirementsReadProjection,
-  verifyOriginalAnchor,
-} from './room-requirements-read-model';
+import type { RequirementAnchorReadProjection, RoomRequirementsReadProjection } from './room-requirements-read-model';
 import './room-requirements-control-plane.css';
 
 export function RoomRequirementsControlPlane({ projection }: { projection: RoomRequirementsReadProjection }) {
   const catalog = projection.catalog;
-  const receiptAssessments = useMemo(
-    () => projection.receipts.map((receipt) => assessReceipt(receipt, projection)),
-    [projection],
-  );
+  const receiptAssessments = projection.receiptAssessments;
   const catalogIsCurrent = !projection.deliveryGate
     || projection.deliveryGate.catalogRevisionId === catalog?.catalogRevisionId;
   return <section className="room-requirements" aria-label={`${projection.rootId} 需求、证明与审查`}>
@@ -89,8 +80,8 @@ export function RoomRequirementsControlPlane({ projection }: { projection: RoomR
         }))} />
         <ReadProjectionList title="Peer Round" empty="没有上报同伴审查轮次。" rows={projection.peerReviewRounds.map((round) => ({
           id: round.roundId,
-          primary: round.reviewerActorRef,
-          secondary: `${reviewStatusLabel(round.status)} · ${round.receiptRef || '无回执'}`,
+          primary: round.reviewerActorRefs.join('、') || '尚无审查者',
+          secondary: `${reviewStatusLabel(round.status)} · ${round.verdicts.join(' / ') || '待判断'} · ${round.receiptRef || '无回执'}`,
         }))} />
       </div>
     </section>
@@ -98,18 +89,10 @@ export function RoomRequirementsControlPlane({ projection }: { projection: RoomR
 }
 
 function OriginalRequirement({ value }: { value: RequirementAnchorReadProjection }) {
-  const [integrity, setIntegrity] = useState<'checking' | 'verified' | 'tampered'>('checking');
-  useEffect(() => {
-    let active = true;
-    setIntegrity('checking');
-    void verifyOriginalAnchor(value)
-      .then((result) => { if (active) setIntegrity(result); })
-      .catch(() => { if (active) setIntegrity('tampered'); });
-    return () => { active = false; };
-  }, [value]);
+  const integrity = value.integrityStatus;
   const legacy = value.anchor.authenticity === 'legacy_quarantined';
   return <article className="room-requirements__original" data-integrity={integrity}>
-    <header><span><strong>{value.anchor.anchorId}</strong><small>原始序号 {value.anchor.rootSequence} · {value.anchor.originalByteLength} bytes</small></span><b data-status={integrity === 'checking' || (integrity === 'verified' && !legacy) ? 'neutral' : 'warning'}>{legacy ? '历史文本隔离' : integrityLabel(integrity)}</b></header>
+    <header><span><strong>{value.anchor.anchorId}</strong><small>原始序号 {value.anchor.rootSequence} · {value.anchor.originalByteLength} bytes</small></span><b data-status={integrity === 'verified' && !legacy ? 'neutral' : 'warning'}>{legacy ? '历史文本隔离' : integrityLabel(integrity)}</b></header>
     <pre tabIndex={0} aria-label={`${value.anchor.anchorId} 原始需求只读文本`}>{value.originalText}</pre>
     <dl><div><dt>原文 SHA-256</dt><dd>{value.anchor.originalContentSha256}</dd></div><div><dt>来源</dt><dd>{formatRecord(value.anchor.provenance)}</dd></div></dl>
   </article>;
@@ -148,11 +131,11 @@ function SectionTitle({ detail, icon, title }: { title: string; detail: string; 
 
 function Empty({ children }: { children: ReactNode }) { return <p className="room-requirements__empty">{children}</p>; }
 function sourceLabel(value: RoomRequirementsReadProjection['projectionSource']) { return value === 'canonical_fixture' ? 'canonical fixture' : 'canonical read projection'; }
-function integrityLabel(value: 'checking' | 'verified' | 'tampered') { return ({ checking: '正在核验原文', verified: '原文哈希已核验', tampered: '原文校验失败' } as const)[value]; }
+function integrityLabel(value: 'verified' | 'tampered') { return ({ verified: '原文哈希已核验', tampered: '原文校验失败' } as const)[value]; }
 function receiptTypeLabel(value: string) { return ({ test: '测试', build: '构建', install: '安装', evidence: '证据' } as Record<string, string>)[value] ?? value; }
 function proofStatusLabel(value: string) { return ({ observed_pass: '已观察通过', failed: '执行失败', stale: '旧版或错误提交', tampered: '回执不可信' } as Record<string, string>)[value] ?? value; }
 function gateStatusLabel(value?: string) { return value === 'observed_pass' ? '已观察通过' : value === 'warn_blocked' ? '有警告 / 阻塞项' : '未知'; }
-function reviewStatusLabel(value: string) { return ({ pending: '待审查', passed: '已通过', failed: '未通过', unavailable: '不可用' } as Record<string, string>)[value] ?? value; }
+function reviewStatusLabel(value: string) { return ({ pending: '待审查', passed: '已通过', failed: '未通过', conflict: '存在冲突', unavailable: '不可用' } as Record<string, string>)[value] ?? value; }
 function conflictKindLabel(value: string) { return ({ contradiction: '矛盾', unknown: '未知', ambiguity: '歧义' } as Record<string, string>)[value] ?? value; }
 function reasonLabel(value: string) {
   const prefix = value.split(':', 1)[0];

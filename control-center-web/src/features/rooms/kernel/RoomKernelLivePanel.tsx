@@ -10,6 +10,7 @@ import {
 import { parseContract } from '@/contracts/validators';
 import { useOptionalControlTransport } from '@/app/control-transport';
 import { RoomKernelControlPlane } from './RoomKernelControlPlane';
+import { parseRoomRequirementsReadProjection, type RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
 import { createControlRoomKernelCommandTransport } from './room-kernel-command-transport';
 import { evaluateRoomKernelControlGate, type RoomKernelControlGate } from './room-kernel-control-gate';
 
@@ -18,6 +19,7 @@ type LiveState = 'loading' | 'synced' | 'reconnecting' | 'recovering' | 'denied'
 export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
   const transport = useOptionalControlTransport();
   const [projection, setProjection] = useState<RoomKernelProjection | null>(null);
+  const [requirementsByRootId, setRequirementsByRootId] = useState<Record<string, RoomRequirementsReadProjection>>({});
   const projectionRef = useRef<RoomKernelProjection | null>(null);
   const [controlGate, setControlGate] = useState<RoomKernelControlGate | null>(null);
   const [liveState, setLiveState] = useState<LiveState>('loading');
@@ -30,6 +32,7 @@ export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
   useEffect(() => {
     if (!transport) {
       setProjection(null);
+      setRequirementsByRootId({});
       projectionRef.current = null;
       setControlGate(null);
       setLiveState('denied');
@@ -67,6 +70,7 @@ export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
         });
         if (!active || currentRevision !== revision) return;
         const snapshot = parseSnapshot(raw, roomId);
+        setRequirementsByRootId(parseRequirementsByRootId(raw));
         const next = applyRoomKernelSnapshot(createRoomKernelProjection(roomId), snapshot);
         projectionRef.current = next;
         setProjection(next);
@@ -173,8 +177,18 @@ export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
       commandTransport={controlGate?.commandEnabled && commandTransport ? commandTransport : undefined}
       commandDisabledReason={controlGate?.reason}
       panicEnabled={controlGate?.panicEnabled === true}
+      requirementsByRootId={requirementsByRootId}
     /> : null}
   </section>;
+}
+
+function parseRequirementsByRootId(value: unknown): Record<string, RoomRequirementsReadProjection> {
+  const source = record(record(value).requirementsByRootId);
+  return Object.fromEntries(Object.entries(source).map(([rootId, projection]) => {
+    const parsed = parseRoomRequirementsReadProjection(projection);
+    if (parsed.rootId !== rootId) throw new TypeError('Requirements projection key does not match Root');
+    return [rootId, parsed];
+  }));
 }
 
 function capabilityReceipts(projection: RoomKernelProjection) {

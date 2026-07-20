@@ -49,6 +49,7 @@ from .agent_templates import agent_template
 from .agent_prompt_plans import PromptLayer, RoomPromptPlanStore
 from .agent_room_context import ProviderProjectionJournalStore
 from .agent_room_requirements import RequirementGovernanceStore
+from .agent_room_peer_review import RoomPeerReviewStore
 from .agent_room_route_owners import room_route_owner
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
@@ -121,6 +122,9 @@ class AgentService:
         wake_scheduler_enabled: bool = False,
         wake_scheduler_poll_seconds: float = 1.0,
         room_kernel_mode: KernelMode = "off",
+        room_runner_secrets: Mapping[str, bytes | str] | None = None,
+        room_delivery_gate_enforcement: bool = False,
+        room_artifact_hash_provider: Callable[[str], str] | None = None,
         room_kernel_poll_seconds: float = 0.25,
     ) -> None:
         self.db_path = Path(db_path)
@@ -204,7 +208,11 @@ class AgentService:
         self.rooms.initialize()
         self.room_work = AgentRoomWorkStore(db_path)
         self.room_work.initialize()
-        self.room_kernel = RoomKernelStore(db_path, mode=room_kernel_mode)
+        self.room_kernel = RoomKernelStore(
+            db_path,
+            mode=room_kernel_mode,
+            enforce_test_delivery_gate=room_delivery_gate_enforcement,
+        )
         self.room_kernel.initialize()
         self.room_kernel_projection = RoomKernelProjection(db_path)
         self.room_kernel_projection.initialize()
@@ -216,6 +224,9 @@ class AgentService:
         self.room_projection_journals.initialize()
         self.room_requirements = RequirementGovernanceStore(db_path)
         self.room_requirements.initialize()
+        self.room_peer_review = RoomPeerReviewStore(db_path, runner_secrets=room_runner_secrets)
+        self.room_peer_review.initialize()
+        self._room_artifact_hash_provider = room_artifact_hash_provider
         self.agent_definition_compiler = AgentDefinitionCompiler()
         self._room_kernel_poll_seconds = room_kernel_poll_seconds
         self.observations = ObservationHub(db_path)
@@ -1301,7 +1312,21 @@ class AgentService:
     def room_kernel_snapshot(self, room_id: str) -> dict[str, object]:
         self.rooms.get(room_id)
         self.room_kernel_projection.sync_room(room_id)
-        return self.room_kernel_projection.snapshot(room_id)
+        snapshot = self.room_kernel_projection.snapshot(room_id)
+        snapshot["requirementsByRootId"] = {
+            root_id: self.room_peer_review.read_projection(root_id)
+            for root_id in self.room_kernel.root_ids(room_id)
+        }
+        snapshot_material = {key: value for key, value in snapshot.items() if key != "snapshotHash"}
+        snapshot["snapshotHash"] = "sha256:" + hashlib.sha256(
+            json.dumps(
+                snapshot_material,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return snapshot
 
     def bind_room_capability_runtime(
         self,
@@ -1673,6 +1698,7 @@ class AgentService:
         catalog_revision_id: str = "",
         target_commit: str = "",
         blind_review_status: str = "unavailable",
+        delivery_gate_preview_receipt_id: str = "",
         now_ms: int | None = None,
     ) -> dict[str, object]:
         """Observe DeliveryGate, but never turn its warning into Kernel enforcement."""
@@ -1688,7 +1714,29 @@ class AgentService:
                 blind_review_status=blind_review_status,
                 created_at_ms=timestamp,
             )
-        receipt = self.room_kernel.finalize_root(root_id, now_ms=timestamp)
+        preview = None
+        if self.room_kernel.enforce_test_delivery_gate:
+            if not delivery_gate_preview_receipt_id:
+                preview = {
+                    "rootId": root_id,
+                    "generation": int(self.room_kernel.root(root_id)["generation"]),
+                    "environment": "room-v2-test",
+                    "mode": "room_v2_test_enforce_preview",
+                    "terminalAllowed": False,
+                    "valid": False,
+                    "validationReasons": ["delivery_gate_preview_missing"],
+                }
+            else:
+                current_artifact_hash = (
+                    self._room_artifact_hash_provider(root_id)
+                    if self._room_artifact_hash_provider is not None
+                    else ""
+                )
+                preview = self.room_peer_review.validate_delivery_gate_preview(
+                    delivery_gate_preview_receipt_id,
+                    current_artifact_hash=current_artifact_hash,
+                )
+        receipt = self.room_kernel.finalize_root(root_id, now_ms=timestamp, delivery_gate_preview=preview)
         root = self.room_kernel.root(root_id)
         self.room_kernel_projection.sync_room(str(root["roomId"]), now_ms=timestamp)
         return {"receipt": receipt, "deliveryGateObservation": observation}
@@ -5677,6 +5725,7 @@ def agent_service_from_environment(
     memory_embedding_provider: EmbeddingProvider | None = None,
     wake_scheduler_enabled: bool = True,
 ) -> AgentService:
+    room_kernel_mode = _room_kernel_mode_from_environment()
     return AgentService(
         db_path=db_path,
         runtime_config=PiRuntimeConfig.from_environment(),
@@ -5687,7 +5736,10 @@ def agent_service_from_environment(
         ),
         memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
-        room_kernel_mode=_room_kernel_mode_from_environment(),
+        room_kernel_mode=room_kernel_mode,
+        room_runner_secrets=_room_runner_secrets_from_provider(),
+        room_delivery_gate_enforcement=_room_delivery_gate_enforcement(room_kernel_mode),
+        room_artifact_hash_provider=_room_artifact_hash_provider_from_environment(),
     )
 
 
@@ -5721,6 +5773,7 @@ def agent_service_from_settings(
         if runtime_config.provider and runtime_config.model
         else "pi/default"
     )
+    room_kernel_mode = _room_kernel_mode_from_environment()
     return AgentService(
         db_path=db_path,
         runtime_config=runtime_config,
@@ -5741,7 +5794,10 @@ def agent_service_from_settings(
         ),
         memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
-        room_kernel_mode=_room_kernel_mode_from_environment(),
+        room_kernel_mode=room_kernel_mode,
+        room_runner_secrets=_room_runner_secrets_from_provider(),
+        room_delivery_gate_enforcement=_room_delivery_gate_enforcement(room_kernel_mode),
+        room_artifact_hash_provider=_room_artifact_hash_provider_from_environment(),
     )
 
 
@@ -5752,6 +5808,43 @@ def _room_kernel_mode_from_environment() -> KernelMode:
     if value == "cohort" and os.environ.get("RAG_IME_ROOM_KERNEL_COHORT_ID", "").strip() != "room-v2-test":
         return "shadow"
     return value  # type: ignore[return-value]
+
+
+def _room_delivery_gate_enforcement(mode: KernelMode) -> bool:
+    return (
+        mode == "cohort"
+        and os.environ.get("RAG_IME_ROOM_KERNEL_COHORT_ID", "").strip() == "room-v2-test"
+    )
+
+
+def _room_runner_secrets_from_provider() -> dict[str, str]:
+    """Load runner trust only from the service's file-based secret provider."""
+    provider_path = os.environ.get("RAG_IME_ROOM_RUNNER_SECRET_PROVIDER_FILE", "").strip()
+    if not provider_path:
+        return {}
+    value = json.loads(Path(provider_path).expanduser().read_text(encoding="utf-8"))
+    if not isinstance(value, Mapping) or not all(
+        isinstance(key, str) and isinstance(secret, str) and key and secret
+        for key, secret in value.items()
+    ):
+        raise ValueError("Room runner secret provider must contain a non-empty string map")
+    return dict(value)
+
+
+def _room_artifact_hash_provider_from_environment() -> Callable[[str], str] | None:
+    provider_path = os.environ.get("RAG_IME_ROOM_ARTIFACT_HASH_PROVIDER_FILE", "").strip()
+    if not provider_path:
+        return None
+    path = Path(provider_path).expanduser()
+
+    def current_hash(root_id: str) -> str:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, Mapping):
+            return ""
+        result = value.get(root_id)
+        return str(result) if isinstance(result, str) else ""
+
+    return current_hash
 
 
 def _room_event_projection(event: AgentEventEnvelope) -> tuple[str, dict[str, object]]:

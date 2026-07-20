@@ -1,8 +1,7 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { RoomRequirementsControlPlane } from './RoomRequirementsControlPlane';
 import {
-  assessReceipt,
   parseRoomRequirementsReadProjection,
   type RoomRequirementsReadProjection,
 } from './room-requirements-read-model';
@@ -24,13 +23,13 @@ describe('RoomRequirementsControlPlane', () => {
     expect(screen.getByText(/永久保留，不可修改/)).toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /编辑|保存|修改/ })).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText('原文校验失败')).toBeInTheDocument());
+    expect(screen.getByText('原文校验失败')).toBeInTheDocument();
   });
 
   it('cryptographically verifies the original text bytes without changing them', async () => {
     render(<RoomRequirementsControlPlane projection={fixture()} />);
     expect(screen.getByText('abc')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText('原文哈希已核验')).toBeInTheDocument());
+    expect(screen.getByText('原文哈希已核验')).toBeInTheDocument();
   });
 
   it('only paints observed_pass green and labels observe_warn separately from enforce preview', () => {
@@ -50,17 +49,14 @@ describe('RoomRequirementsControlPlane', () => {
   });
 
   it('fails closed for a tampered issuer, old revision, and wrong commit', () => {
-    const tampered = fixture({ verifier: 'agent-self-report' });
-    expect(assessReceipt(tampered.receipts[0]!, tampered)).toMatchObject({ status: 'tampered', reasons: ['untrusted_verifier'] });
+    const tampered = fixture({ proofStatus: 'tampered', proofReasons: ['untrusted_verifier'] });
     render(<RoomRequirementsControlPlane projection={tampered} />);
     const proof = screen.getByRole('region', { name: '证明矩阵' });
     expect(within(proof).getByText('回执不可信')).toHaveAttribute('data-status', 'tampered');
     expect(within(proof).getByText('签发者不可信')).toBeInTheDocument();
 
-    const stale = fixture({ receiptCatalogId: 'catalog-root-a-r1', receiptCommit: 'old-commit' });
-    expect(assessReceipt(stale.receipts[0]!, stale)).toMatchObject({
-      status: 'stale', reasons: ['old_catalog_revision', 'wrong_commit'],
-    });
+    const stale = fixture({ proofStatus: 'stale', proofReasons: ['old_catalog_revision', 'wrong_commit'] });
+    expect(stale.receiptAssessments[0]).toMatchObject({ status: 'stale', reasons: ['old_catalog_revision', 'wrong_commit'] });
   });
 
   it('keeps concurrent Root projections isolated and renders supplied Conflict/Peer records verbatim', () => {
@@ -72,12 +68,12 @@ describe('RoomRequirementsControlPlane', () => {
     expect(screen.getByRole('region', { name: 'root-b 需求、证明与审查' })).toHaveTextContent('anchor-root-b');
     expect(screen.getAllByText('item-a ↔ item-b')).toHaveLength(2);
     expect(screen.getAllByText('peer-reviewer')).toHaveLength(2);
-    expect(screen.getAllByText(/peer-round-1 · 已通过 · peer-receipt-1/)).toHaveLength(2);
+    expect(screen.getAllByText(/peer-round-1 · 已通过 · pass · peer-receipt-1/)).toHaveLength(2);
   });
 
   it('rejects malformed canonical input instead of turning Agent text into proof', () => {
     const raw = rawFixture();
-    raw.receipts[0] = { ...raw.receipts[0], outputHash: 'Agent says tests passed' };
+    raw.receiptAssessments[0].receipt = { ...raw.receiptAssessments[0].receipt, outputHash: 'Agent says tests passed' };
     expect(() => parseRoomRequirementsReadProjection(raw)).toThrow(/typed-verification-receipt/);
     const crossRoot = rawFixture();
     crossRoot.anchors[0] = { ...crossRoot.anchors[0], anchor: { ...crossRoot.anchors[0]!.anchor, rootId: 'root-other' } };
@@ -90,9 +86,8 @@ type FixtureOptions = {
   originalText?: string;
   originalHash?: string;
   originalBytes?: number;
-  verifier?: string;
-  receiptCatalogId?: string;
-  receiptCommit?: string;
+  proofStatus?: 'observed_pass' | 'failed' | 'stale' | 'tampered';
+  proofReasons?: string[];
   gateStatus?: 'observed_pass' | 'warn_blocked';
   reasons?: string[];
 };
@@ -117,6 +112,7 @@ function rawFixture(options: FixtureOptions = {}) {
         provenance: { requestId: 'request-1' }, createdAtMs: 1,
       },
       originalText,
+      integrityStatus: options.originalHash === '0'.repeat(64) ? 'tampered' : 'verified',
     }],
     catalog: {
       schemaVersion: 'wisdom-weasel.requirement-catalog-revision.v1', catalogRevisionId: catalogId, rootId, revision: 2,
@@ -126,12 +122,12 @@ function rawFixture(options: FixtureOptions = {}) {
       changeReason: '拆分验收条件', provenance: { source: 'requirement-review' }, payloadHash: 'c'.repeat(64),
       createdBy: 'requirements-governor', createdAtMs: 2,
     },
-    receipts: [{
+    receiptAssessments: [{ receipt: {
       schemaVersion: 'wisdom-weasel.typed-verification-receipt.v1', receiptId: `receipt-${rootId}`, rootId,
-      catalogRevisionId: options.receiptCatalogId ?? catalogId, receiptType: 'test', sourceCommit: options.receiptCommit ?? 'commit-current',
+      catalogRevisionId: catalogId, receiptType: 'test', sourceCommit: 'commit-current',
       environment: 'managed-ci', commandOrAction: 'pnpm test', exitStatus: 0, outputHash: 'd'.repeat(64),
-      artifactHash: 'e'.repeat(64), verifier: options.verifier ?? 'managed-test-runner', createdAtMs: 3,
-    }],
+      artifactHash: 'e'.repeat(64), verifier: 'managed-test-runner', createdAtMs: 3,
+    }, status: options.proofStatus ?? 'observed_pass', reasons: options.proofReasons ?? [] }],
     deliveryGate: {
       schemaVersion: 'wisdom-weasel.delivery-gate-observation.v1', gateReceiptId: `gate-${rootId}`, rootId,
       catalogRevisionId: catalogId, targetCommit: 'commit-current', mode: 'observe_warn', gateStatus: options.gateStatus ?? 'observed_pass',
@@ -139,6 +135,6 @@ function rawFixture(options: FixtureOptions = {}) {
       reasons: options.reasons ?? [], proofMatrix: [{ criterionId: 'criterion-a', criterionKind: 'user_journey', passed: true, receiptIds: [`receipt-${rootId}`] }], createdAtMs: 4,
     },
     conflicts: [{ conflictId: 'conflict-1', leftItemId: 'item-a', rightItemId: 'item-b', conflictKind: 'ambiguity', status: 'open', resolution: '' }],
-    peerReviewRounds: [{ roundId: 'peer-round-1', reviewerActorRef: 'peer-reviewer', status: 'passed', receiptRef: 'peer-receipt-1' }],
+    peerReviewRounds: [{ roundId: 'peer-round-1', reviewerActorRefs: ['peer-reviewer'], verdicts: ['pass'], status: 'passed', receiptRef: 'peer-receipt-1', conflictMatrixRevisionId: null }],
   };
 }

@@ -65,7 +65,7 @@ const requirementProjection = parseRoomRequirementsReadProjection({
       originalByteLength: 3, createdBy: 'user:fixture', authenticity: 'original_user_bytes',
       provenance: { requestId: 'fixture-request' }, createdAtMs: 1,
     },
-    originalText: 'abc',
+    originalText: 'abc', integrityStatus: 'verified',
   }],
   catalog: {
     schemaVersion: 'wisdom-weasel.requirement-catalog-revision.v1', catalogRevisionId: 'catalog-research-r2',
@@ -75,12 +75,12 @@ const requirementProjection = parseRoomRequirementsReadProjection({
     changeReason: '补充用户旅程验收', provenance: { source: 'canonical-fixture' }, payloadHash: 'c'.repeat(64),
     createdBy: 'requirements-governor', createdAtMs: 2,
   },
-  receipts: [{
+  receiptAssessments: [{ receipt: {
     schemaVersion: 'wisdom-weasel.typed-verification-receipt.v1', receiptId: 'receipt-research-test', rootId: requirementRootId,
     catalogRevisionId: 'catalog-research-r2', receiptType: 'test', sourceCommit: 'commit-current', environment: 'managed-ci',
     commandOrAction: 'pnpm test', exitStatus: 0, outputHash: 'd'.repeat(64), artifactHash: 'e'.repeat(64),
     verifier: 'managed-test-runner', createdAtMs: 3,
-  }],
+  }, status: 'observed_pass', reasons: [] }],
   deliveryGate: {
     schemaVersion: 'wisdom-weasel.delivery-gate-observation.v1', gateReceiptId: 'gate-research', rootId: requirementRootId,
     catalogRevisionId: 'catalog-research-r2', targetCommit: 'commit-current', mode: 'observe_warn', gateStatus: 'warn_blocked',
@@ -88,7 +88,7 @@ const requirementProjection = parseRoomRequirementsReadProjection({
     proofMatrix: [{ criterionId: 'criterion-original', criterionKind: 'user_journey', passed: true, receiptIds: ['receipt-research-test'] }], createdAtMs: 4,
   },
   conflicts: [{ conflictId: 'conflict-research', leftItemId: 'requirement-original', rightItemId: 'requirement-derived', conflictKind: 'unknown', status: 'open', resolution: '' }],
-  peerReviewRounds: [{ roundId: 'peer-round-research', reviewerActorRef: 'peer-reviewer', status: 'pending', receiptRef: null }],
+  peerReviewRounds: [{ roundId: 'peer-round-research', reviewerActorRefs: ['peer-reviewer'], verdicts: [], status: 'pending', receiptRef: null, conflictMatrixRevisionId: null }],
 });
 
 createRoot(document.getElementById('root')!).render(<RoomKernelControlPlane

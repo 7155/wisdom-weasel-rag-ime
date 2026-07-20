@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
+from .agent_room_requirements import _anchor_payload, _delivery_gate_payload, _verification_payload
 
 
 class PeerReviewFenceError(RuntimeError):
@@ -206,14 +207,17 @@ class RoomPeerReviewStore:
             conn.execute("INSERT INTO room_v2_conflict_resolution_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (resolution_receipt_id, round_id, resolved_matrix_revision_id, authority_kind, authority_ref, resolution_verdict, rationale, _hash_json(resolution), created_at_ms))
         return resolution
 
-    def preview_delivery_gate(self, *, preview_receipt_id: str, root_id: str, catalog_revision_id: str, peer_round_id: str, target_commit: str, environment: str, created_at_ms: int) -> dict[str, object]:
+    def preview_delivery_gate(self, *, preview_receipt_id: str, root_id: str, catalog_revision_id: str, peer_round_id: str, generation: int = 0, target_commit: str, current_artifact_hash: str | None = None, environment: str, created_at_ms: int) -> dict[str, object]:
         with self._connect(immediate=True) as conn:
+            artifact_hash = str(current_artifact_hash or "")
+            if not _is_sha256(artifact_hash):
+                raise ValueError("current_artifact_hash must be sha256 hex")
             current = conn.execute("SELECT catalog_revision_id FROM room_v2_requirement_catalog_revisions WHERE root_id = ? ORDER BY revision DESC LIMIT 1", (root_id,)).fetchone()
             reasons: list[str] = []
             if current is None or str(current[0]) != catalog_revision_id: reasons.append("stale_catalog_revision")
             round_row = conn.execute("SELECT * FROM room_v2_peer_judgment_rounds WHERE round_id = ?", (peer_round_id,)).fetchone()
             final = conn.execute("SELECT * FROM room_v2_peer_judgment_final_receipts WHERE round_id = ?", (peer_round_id,)).fetchone()
-            if round_row is None or str(round_row["root_id"]) != root_id or str(round_row["catalog_revision_id"]) != catalog_revision_id or str(round_row["target_commit"]) != target_commit: reasons.append("blind_review_scope_mismatch")
+            if round_row is None or str(round_row["root_id"]) != root_id or str(round_row["catalog_revision_id"]) != catalog_revision_id or str(round_row["target_commit"]) != target_commit or str(round_row["artifact_content_hash"]) != artifact_hash: reasons.append("blind_review_scope_mismatch")
             review_passed = final is not None and str(final["status"]) == "passed"
             if final is not None and str(final["status"]) == "conflict":
                 resolution = conn.execute("SELECT resolution_verdict FROM room_v2_conflict_resolution_receipts WHERE round_id = ? ORDER BY created_at_ms DESC LIMIT 1", (peer_round_id,)).fetchone()
@@ -222,7 +226,7 @@ class RoomPeerReviewStore:
             unsigned = conn.execute("""SELECT COUNT(*) FROM room_v2_criterion_proofs p JOIN room_v2_verification_receipts r ON r.receipt_id=p.receipt_id WHERE p.catalog_revision_id=? AND (r.issuer_trust!='runner_signed' OR r.source_commit!=?)""", (catalog_revision_id, target_commit)).fetchone()[0]
             criteria = conn.execute("SELECT criterion_id, criterion_kind FROM room_v2_acceptance_criteria WHERE catalog_revision_id = ?", (catalog_revision_id,)).fetchall()
             for criterion in criteria:
-                valid = conn.execute("""SELECT 1 FROM room_v2_criterion_proofs p JOIN room_v2_verification_receipts r ON r.receipt_id=p.receipt_id WHERE p.catalog_revision_id=? AND p.criterion_id=? AND r.issuer_trust='runner_signed' AND r.source_commit=? AND r.exit_status=0 LIMIT 1""", (catalog_revision_id, criterion[0], target_commit)).fetchone()
+                valid = conn.execute("""SELECT 1 FROM room_v2_criterion_proofs p JOIN room_v2_verification_receipts r ON r.receipt_id=p.receipt_id WHERE p.catalog_revision_id=? AND p.criterion_id=? AND r.issuer_trust='runner_signed' AND r.source_commit=? AND r.artifact_hash=? AND r.exit_status=0 LIMIT 1""", (catalog_revision_id, criterion[0], target_commit, artifact_hash)).fetchone()
                 if valid is None: reasons.append("criterion_without_signed_proof:" + str(criterion[0]))
             if not any(str(row[1]) == "user_journey" for row in criteria): reasons.append("user_journey_missing")
             obstacles = conn.execute("SELECT obstacle_kind FROM room_v2_delivery_obstacles WHERE catalog_revision_id=? AND status='open'", (catalog_revision_id,)).fetchall()
@@ -233,9 +237,102 @@ class RoomPeerReviewStore:
             enforce = environment == "room-v2-test"
             mode = "room_v2_test_enforce_preview" if enforce else "observe_warn"
             terminal_allowed = enforce and not reasons
-            material = {"previewReceiptId": preview_receipt_id, "rootId": root_id, "catalogRevisionId": catalog_revision_id, "peerRoundId": peer_round_id, "environment": environment, "mode": mode, "terminalAllowed": terminal_allowed, "reasons": list(dict.fromkeys(reasons)), "createdAtMs": created_at_ms}
-            conn.execute("INSERT INTO room_v2_delivery_gate_preview_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (preview_receipt_id, root_id, catalog_revision_id, peer_round_id, environment, mode, int(terminal_allowed), _json(material["reasons"]), _hash_json(material), created_at_ms))
+            material = {"previewReceiptId": preview_receipt_id, "rootId": root_id, "catalogRevisionId": catalog_revision_id, "peerRoundId": peer_round_id, "generation": int(generation), "targetCommit": target_commit, "currentArtifactHash": artifact_hash, "environment": environment, "mode": mode, "terminalAllowed": terminal_allowed, "reasons": list(dict.fromkeys(reasons)), "createdAtMs": created_at_ms}
+            conn.execute("INSERT INTO room_v2_delivery_gate_preview_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (preview_receipt_id, root_id, catalog_revision_id, peer_round_id, int(generation), target_commit, artifact_hash, environment, mode, int(terminal_allowed), _json(material["reasons"]), _hash_json(material), created_at_ms))
         return material
+
+    def validate_delivery_gate_preview(self, preview_receipt_id: str, *, current_artifact_hash: str) -> dict[str, object]:
+        """Revalidate every mutable fence immediately before the Kernel terminal transition."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM room_v2_delivery_gate_preview_receipts WHERE preview_receipt_id = ?", (preview_receipt_id,)).fetchone()
+            if row is None:
+                raise PeerReviewFenceError("DeliveryGatePreviewReceipt is missing")
+            reasons = json.loads(str(row["reasons_json"]))
+            material = {
+                "previewReceiptId": str(row["preview_receipt_id"]), "rootId": str(row["root_id"]),
+                "catalogRevisionId": str(row["catalog_revision_id"]), "peerRoundId": str(row["peer_round_id"]),
+                "generation": int(row["generation"]), "targetCommit": str(row["target_commit"]),
+                "currentArtifactHash": str(row["current_artifact_hash"]), "environment": str(row["environment"]),
+                "mode": str(row["mode"]), "terminalAllowed": bool(row["terminal_allowed"]),
+                "reasons": reasons, "createdAtMs": int(row["created_at_ms"]),
+            }
+            failures: list[str] = []
+            if not _is_sha256(current_artifact_hash) or current_artifact_hash != material["currentArtifactHash"]:
+                failures.append("current_artifact_hash_changed")
+            if _hash_json(material) != str(row["payload_hash"]): failures.append("preview_receipt_tampered")
+            if material["environment"] != "room-v2-test" or material["mode"] != "room_v2_test_enforce_preview": failures.append("preview_not_test_cohort")
+            current = conn.execute("SELECT catalog_revision_id FROM room_v2_requirement_catalog_revisions WHERE root_id=? ORDER BY revision DESC LIMIT 1", (material["rootId"],)).fetchone()
+            if current is None or str(current[0]) != material["catalogRevisionId"]: failures.append("stale_catalog_revision")
+            round_row = conn.execute("SELECT * FROM room_v2_peer_judgment_rounds WHERE round_id=?", (material["peerRoundId"],)).fetchone()
+            if round_row is None or any((str(round_row[key]) != str(material[target])) for key, target in (("root_id", "rootId"), ("catalog_revision_id", "catalogRevisionId"), ("target_commit", "targetCommit"), ("artifact_content_hash", "currentArtifactHash"))): failures.append("blind_review_scope_mismatch")
+            final = conn.execute("SELECT * FROM room_v2_peer_judgment_final_receipts WHERE round_id=?", (material["peerRoundId"],)).fetchone()
+            peer_passed = final is not None and str(final["status"]) == "passed"
+            if final is not None and str(final["status"]) == "conflict":
+                resolution = conn.execute("SELECT resolution_verdict FROM room_v2_conflict_resolution_receipts WHERE round_id=? ORDER BY created_at_ms DESC LIMIT 1", (material["peerRoundId"],)).fetchone()
+                peer_passed = resolution is not None and str(resolution[0]) == "pass"
+            if not peer_passed: failures.append("blind_review_not_passed")
+            criteria = conn.execute("SELECT criterion_id, criterion_kind FROM room_v2_acceptance_criteria WHERE catalog_revision_id=?", (material["catalogRevisionId"],)).fetchall()
+            if not any(str(item["criterion_kind"]) == "user_journey" for item in criteria): failures.append("user_journey_missing")
+            for criterion in criteria:
+                receipts = conn.execute("""SELECT r.* FROM room_v2_criterion_proofs p JOIN room_v2_verification_receipts r ON r.receipt_id=p.receipt_id WHERE p.catalog_revision_id=? AND p.criterion_id=?""", (material["catalogRevisionId"], criterion["criterion_id"])).fetchall()
+                if not any(self._runner_receipt_valid(receipt, material) for receipt in receipts): failures.append("criterion_without_signed_proof:" + str(criterion["criterion_id"]))
+            if conn.execute("SELECT 1 FROM room_v2_requirement_conflicts WHERE catalog_revision_id=? AND status='open' LIMIT 1", (material["catalogRevisionId"],)).fetchone(): failures.append("unresolved_conflict_or_unknown")
+            failures.extend("unresolved_" + str(item[0]) for item in conn.execute("SELECT obstacle_kind FROM room_v2_delivery_obstacles WHERE catalog_revision_id=? AND status='open'", (material["catalogRevisionId"],)).fetchall())
+            failures = list(dict.fromkeys([*reasons, *failures]))
+            return {**material, "valid": not failures and bool(material["terminalAllowed"]), "validationReasons": failures}
+
+    def read_projection(self, root_id: str) -> dict[str, object]:
+        """Canonical server-owned Requirements/Proof/Peer/Conflict projection for UI reads."""
+        with self._connect() as conn:
+            anchors = []
+            for row in conn.execute("SELECT * FROM room_v2_requirement_anchors WHERE root_id=? ORDER BY root_sequence", (root_id,)).fetchall():
+                original = bytes(row["original_bytes"])
+                anchors.append({"anchor": _anchor_payload(row), "originalText": original.decode("utf-8", errors="replace"), "integrityStatus": "verified" if hashlib.sha256(original).hexdigest() == str(row["original_sha256"]) else "tampered"})
+            catalog_row = conn.execute("SELECT * FROM room_v2_requirement_catalog_revisions WHERE root_id=? ORDER BY revision DESC LIMIT 1", (root_id,)).fetchone()
+            catalog = None
+            if catalog_row is not None:
+                catalog_id = str(catalog_row["catalog_revision_id"])
+                items = [{"itemId": str(row["item_id"]), "kind": str(row["kind"]), "statement": str(row["statement"]), "origin": str(row["origin"]), "state": str(row["state"]), "sourceSpans": json.loads(str(row["source_spans_json"])), "supersedes": json.loads(str(row["supersedes_json"])), "ambiguity": str(row["ambiguity"]), "confirmation": str(row["confirmation"])} for row in conn.execute("SELECT * FROM room_v2_requirement_items WHERE catalog_revision_id=? ORDER BY item_id", (catalog_id,)).fetchall()]
+                criteria = [{"criterionId": str(row["criterion_id"]), "itemId": str(row["item_id"]), "acceptanceCriterionFullNameZh": str(row["acceptance_criterion_full_name_zh"]), "criterionKind": str(row["criterion_kind"]), "expectedReceiptTypes": json.loads(str(row["expected_receipt_types_json"])), "statement": str(row["statement"])} for row in conn.execute("SELECT * FROM room_v2_acceptance_criteria WHERE catalog_revision_id=? ORDER BY criterion_id", (catalog_id,)).fetchall()]
+                catalog = {"schemaVersion": "wisdom-weasel.requirement-catalog-revision.v1", "catalogRevisionId": catalog_id, "rootId": root_id, "revision": int(catalog_row["revision"]), "supersedesRevisionId": str(catalog_row["supersedes_revision_id"]) if catalog_row["supersedes_revision_id"] else None, "anchorRefs": json.loads(str(catalog_row["anchor_refs_json"])), "items": items, "acceptanceCriteria": criteria, "changeReason": str(catalog_row["change_reason"]), "provenance": json.loads(str(catalog_row["provenance_json"])), "payloadHash": str(catalog_row["payload_hash"]), "createdBy": str(catalog_row["created_by"]), "createdAtMs": int(catalog_row["created_at_ms"])}
+                validate_contract(catalog, "requirement-catalog-revision.v1.json")
+            gate_row = conn.execute("SELECT * FROM room_v2_delivery_gate_receipts WHERE root_id=? ORDER BY created_at_ms DESC, gate_receipt_id DESC LIMIT 1", (root_id,)).fetchone()
+            delivery_gate = _delivery_gate_payload(gate_row) if gate_row is not None else None
+            receipt_rows = conn.execute("SELECT * FROM room_v2_verification_receipts WHERE root_id=? ORDER BY created_at_ms, receipt_id", (root_id,)).fetchall()
+            assessments = [self._receipt_assessment(row, catalog, delivery_gate) for row in receipt_rows]
+            conflicts = [{"conflictId": str(row["conflict_id"]), "leftItemId": str(row["left_item_id"]), "rightItemId": str(row["right_item_id"]), "conflictKind": str(row["conflict_kind"]), "status": str(row["status"]), "resolution": str(row["resolution"])} for row in conn.execute("SELECT * FROM room_v2_requirement_conflicts WHERE root_id=? ORDER BY created_at_ms, conflict_id", (root_id,)).fetchall()]
+            rounds = []
+            for row in conn.execute("SELECT * FROM room_v2_peer_judgment_rounds WHERE root_id=? ORDER BY created_at_ms, round_id", (root_id,)).fetchall():
+                judgments = conn.execute("SELECT reviewer_participant_id, verdict FROM room_v2_peer_judgments WHERE round_id=? ORDER BY judgment_id", (row["round_id"],)).fetchall()
+                final = conn.execute("SELECT * FROM room_v2_peer_judgment_final_receipts WHERE round_id=?", (row["round_id"],)).fetchone()
+                rounds.append({"roundId": str(row["round_id"]), "reviewerActorRefs": [str(item["reviewer_participant_id"]) for item in judgments], "verdicts": [str(item["verdict"]) for item in judgments], "status": "pending" if final is None else ("passed" if str(final["status"]) == "passed" else "failed" if str(final["status"]) == "failed" else "conflict"), "receiptRef": str(final["final_receipt_id"]) if final is not None else None, "conflictMatrixRevisionId": str(final["conflict_matrix_revision_id"]) if final is not None and final["conflict_matrix_revision_id"] else None})
+            return {"projectionSource": "canonical_read_projection", "rootId": root_id, "anchors": anchors, "catalog": catalog, "receiptAssessments": assessments, "deliveryGate": delivery_gate, "conflicts": conflicts, "peerReviewRounds": rounds}
+
+    def _receipt_assessment(self, row: sqlite3.Row, catalog: Mapping[str, object] | None, delivery_gate: Mapping[str, object] | None) -> dict[str, object]:
+        receipt = _verification_payload(row)
+        reasons: list[str] = []
+        if catalog is None or receipt["catalogRevisionId"] != catalog["catalogRevisionId"]: reasons.append("old_catalog_revision")
+        if delivery_gate is not None and receipt["sourceCommit"] != delivery_gate["targetCommit"]: reasons.append("wrong_commit")
+        trusted_legacy = {"test": "managed-test-runner", "build": "managed-build-runner", "install": "managed-install-verifier", "evidence": "managed-evidence-verifier"}
+        if str(row["issuer_trust"]) == "runner_signed":
+            gate = {"rootId": receipt["rootId"], "catalogRevisionId": receipt["catalogRevisionId"], "targetCommit": receipt["sourceCommit"], "currentArtifactHash": receipt["artifactHash"]}
+            if not self._runner_receipt_valid(row, gate): reasons.append("runner_signature_invalid")
+        elif receipt["verifier"] != trusted_legacy.get(str(receipt["receiptType"])):
+            reasons.append("untrusted_verifier")
+        if not _is_sha256(str(receipt["outputHash"])) or not _is_sha256(str(receipt["artifactHash"])): reasons.append("invalid_hash")
+        status = "tampered" if any(item in {"runner_signature_invalid", "untrusted_verifier", "invalid_hash"} for item in reasons) else "stale" if reasons else "failed" if int(receipt["exitStatus"]) != 0 else "observed_pass"
+        if status == "failed": reasons.append("non_zero_exit")
+        return {"receipt": receipt, "status": status, "reasons": list(dict.fromkeys(reasons))}
+
+    def _runner_receipt_valid(self, row: sqlite3.Row, gate: Mapping[str, object]) -> bool:
+        if str(row["issuer_trust"]) != "runner_signed" or int(row["exit_status"]) != 0:
+            return False
+        if str(row["root_id"]) != gate["rootId"] or str(row["catalog_revision_id"]) != gate["catalogRevisionId"] or str(row["source_commit"]) != gate["targetCommit"] or str(row["artifact_hash"]) != gate["currentArtifactHash"]:
+            return False
+        secret = self._runner_secrets.get(str(row["issuer_id"]))
+        unsigned = {"schemaVersion": str(row["receipt_schema_version"]), "receiptId": str(row["receipt_id"]), "rootId": str(row["root_id"]), "catalogRevisionId": str(row["catalog_revision_id"]), "receiptType": str(row["runner_receipt_type"]), "sourceCommit": str(row["source_commit"]), "environment": str(row["environment"]), "worktreeHash": str(row["worktree_hash"]), "commandOrAction": str(row["command_or_action"]), "exitStatus": int(row["exit_status"]), "outputHash": str(row["output_hash"]), "artifactHash": str(row["artifact_hash"]), "toolVersion": str(row["tool_version"]), "issuerId": str(row["issuer_id"]), "createdAtMs": int(row["created_at_ms"])}
+        digest = _hash_json(unsigned)
+        return secret is not None and hmac.compare_digest(digest, str(row["receipt_content_hash"])) and hmac.compare_digest(hmac.new(secret, digest.encode(), hashlib.sha256).hexdigest(), str(row["issuer_signature"]))
 
     @staticmethod
     def _eligible_binding(conn: sqlite3.Connection, session_id: str, room_id: str, root_id: str, *, role: str) -> dict[str, object]:
@@ -295,3 +392,7 @@ def _json(value: object) -> str:
 
 def _hash_json(value: object) -> str:
     return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
+
+
+def _is_sha256(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)

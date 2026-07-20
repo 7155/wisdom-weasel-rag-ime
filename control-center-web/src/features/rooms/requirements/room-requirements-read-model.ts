@@ -7,6 +7,7 @@ import { parseContract } from '@/contracts/validators';
 export type RequirementAnchorReadProjection = {
   anchor: RequirementAnchorV1;
   originalText: string;
+  integrityStatus: 'verified' | 'tampered';
 };
 
 export type RequirementConflictReadProjection = {
@@ -20,9 +21,11 @@ export type RequirementConflictReadProjection = {
 
 export type PeerReviewRoundReadProjection = {
   roundId: string;
-  reviewerActorRef: string;
-  status: 'pending' | 'passed' | 'failed' | 'unavailable';
+  reviewerActorRefs: string[];
+  verdicts: ('pass' | 'fail' | 'abstain')[];
+  status: 'pending' | 'passed' | 'failed' | 'conflict';
   receiptRef: string | null;
+  conflictMatrixRevisionId: string | null;
 };
 
 /**
@@ -34,7 +37,7 @@ export type RoomRequirementsReadProjection = {
   rootId: string;
   anchors: RequirementAnchorReadProjection[];
   catalog: RequirementCatalogRevisionV1 | null;
-  receipts: TypedVerificationReceiptV1[];
+  receiptAssessments: ReceiptAssessment[];
   deliveryGate: DeliveryGateObservationV1 | null;
   conflicts: RequirementConflictReadProjection[];
   peerReviewRounds: PeerReviewRoundReadProjection[];
@@ -45,46 +48,6 @@ export type ReceiptAssessment = {
   status: 'observed_pass' | 'failed' | 'stale' | 'tampered';
   reasons: string[];
 };
-
-const TRUSTED_VERIFIERS: Record<TypedVerificationReceiptV1['receiptType'], string> = {
-  test: 'managed-test-runner',
-  build: 'managed-build-runner',
-  install: 'managed-install-verifier',
-  evidence: 'managed-evidence-verifier',
-};
-
-export function assessReceipt(
-  receipt: TypedVerificationReceiptV1,
-  projection: RoomRequirementsReadProjection,
-): ReceiptAssessment {
-  const reasons: string[] = [];
-  const catalogId = projection.catalog?.catalogRevisionId;
-  const targetCommit = projection.deliveryGate?.targetCommit;
-  if (receipt.rootId !== projection.rootId) reasons.push('cross_root');
-  if (!catalogId || receipt.catalogRevisionId !== catalogId) reasons.push('old_catalog_revision');
-  if (projection.deliveryGate && projection.deliveryGate.catalogRevisionId !== catalogId) reasons.push('old_catalog_revision');
-  if (receipt.verifier !== TRUSTED_VERIFIERS[receipt.receiptType]) reasons.push('untrusted_verifier');
-  if (!/^[0-9a-f]{64}$/.test(receipt.outputHash) || !/^[0-9a-f]{64}$/.test(receipt.artifactHash)) {
-    reasons.push('invalid_hash');
-  }
-  if (targetCommit && receipt.sourceCommit !== targetCommit) reasons.push('wrong_commit');
-  if (reasons.some((reason) => ['cross_root', 'untrusted_verifier', 'invalid_hash'].includes(reason))) {
-    return { receipt, status: 'tampered', reasons };
-  }
-  if (reasons.length) return { receipt, status: 'stale', reasons: [...new Set(reasons)] };
-  if (receipt.exitStatus !== 0) return { receipt, status: 'failed', reasons: ['non_zero_exit'] };
-  return { receipt, status: 'observed_pass', reasons: [] };
-}
-
-export async function verifyOriginalAnchor(
-  projection: RequirementAnchorReadProjection,
-): Promise<'verified' | 'tampered'> {
-  const bytes = new TextEncoder().encode(projection.originalText);
-  if (bytes.byteLength !== projection.anchor.originalByteLength) return 'tampered';
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
-  const actual = Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('');
-  return actual === projection.anchor.originalContentSha256 ? 'verified' : 'tampered';
-}
 
 export function parseRoomRequirementsReadProjection(value: unknown): RoomRequirementsReadProjection {
   const item = record(value);
@@ -97,7 +60,7 @@ export function parseRoomRequirementsReadProjection(value: unknown): RoomRequire
     const raw = record(entry);
     const anchor = parseContract('requirement-anchor.v1', raw.anchor);
     if (anchor.rootId !== rootId) throw new TypeError('RequirementAnchor belongs to another Root');
-    return { anchor, originalText: requiredString(raw.originalText, 'originalText') };
+    return { anchor, originalText: requiredString(raw.originalText, 'originalText'), integrityStatus: oneOf(raw.integrityStatus, ['verified', 'tampered'] as const, 'integrityStatus') };
   });
   const catalog = item.catalog === null || item.catalog === undefined
     ? null
@@ -106,7 +69,14 @@ export function parseRoomRequirementsReadProjection(value: unknown): RoomRequire
   if (catalog && catalog.anchorRefs.some((ref) => !anchors.some(({ anchor }) => anchor.anchorId === ref))) {
     throw new TypeError('RequirementCatalog references an anchor missing from the read projection');
   }
-  const receipts = array(item.receipts).map((entry) => parseContract('typed-verification-receipt.v1', entry));
+  const receiptAssessments = array(item.receiptAssessments).map((entry) => {
+    const raw = record(entry);
+    return {
+      receipt: parseContract('typed-verification-receipt.v1', raw.receipt),
+      status: oneOf(raw.status, ['observed_pass', 'failed', 'stale', 'tampered'] as const, 'proof status'),
+      reasons: stringArray(raw.reasons),
+    };
+  });
   const deliveryGate = item.deliveryGate === null || item.deliveryGate === undefined
     ? null
     : parseContract('delivery-gate-observation.v1', item.deliveryGate);
@@ -116,7 +86,7 @@ export function parseRoomRequirementsReadProjection(value: unknown): RoomRequire
     rootId,
     anchors,
     catalog,
-    receipts,
+    receiptAssessments,
     deliveryGate,
     conflicts: array(item.conflicts).map(parseConflict),
     peerReviewRounds: array(item.peerReviewRounds).map(parsePeerReviewRound),
@@ -141,9 +111,11 @@ function parsePeerReviewRound(value: unknown): PeerReviewRoundReadProjection {
   const item = record(value);
   return {
     roundId: requiredString(item.roundId, 'roundId'),
-    reviewerActorRef: requiredString(item.reviewerActorRef, 'reviewerActorRef'),
-    status: oneOf(item.status, ['pending', 'passed', 'failed', 'unavailable'] as const, 'review status'),
+    reviewerActorRefs: stringArray(item.reviewerActorRefs),
+    verdicts: array(item.verdicts).map((value) => oneOf(value, ['pass', 'fail', 'abstain'] as const, 'peer verdict')),
+    status: oneOf(item.status, ['pending', 'passed', 'failed', 'conflict'] as const, 'review status'),
     receiptRef: item.receiptRef === null ? null : requiredString(item.receiptRef, 'receiptRef'),
+    conflictMatrixRevisionId: item.conflictMatrixRevisionId === null ? null : requiredString(item.conflictMatrixRevisionId, 'conflictMatrixRevisionId'),
   };
 }
 
@@ -158,6 +130,7 @@ function oneOf<const Values extends readonly string[]>(value: unknown, values: V
 }
 
 function array(value: unknown): unknown[] { return Array.isArray(value) ? value : []; }
+function stringArray(value: unknown): string[] { return array(value).filter((item): item is string => typeof item === 'string'); }
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }

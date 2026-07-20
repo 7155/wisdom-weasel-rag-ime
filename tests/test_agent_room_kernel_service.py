@@ -324,6 +324,10 @@ class RoomKernelServiceTests(unittest.TestCase):
         snapshot = self.service.room_kernel_snapshot(self.room_id)
         self.assertEqual([post["postId"] for post in snapshot["posts"]], ["post:service"])
         self.assertNotIn("This text", str(snapshot["sessions"]))
+        self.assertEqual(
+            snapshot["requirementsByRootId"]["root:service"]["projectionSource"],
+            "canonical_read_projection",
+        )
 
     def test_settle_rejects_invalid_post_before_persisting_commit(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)

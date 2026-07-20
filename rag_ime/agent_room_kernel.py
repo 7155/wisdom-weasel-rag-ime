@@ -33,11 +33,14 @@ class RoomKernelStore:
     become a second execution authority.
     """
 
-    def __init__(self, db_path: str | Path, *, mode: KernelMode = "shadow") -> None:
+    def __init__(self, db_path: str | Path, *, mode: KernelMode = "shadow", enforce_test_delivery_gate: bool = False) -> None:
         if mode not in {"off", "shadow", "cohort", "test"}:
             raise ValueError("Room Kernel mode must be off, shadow, cohort, or test")
         self.db_path = Path(db_path)
         self.mode = mode
+        self.enforce_test_delivery_gate = bool(enforce_test_delivery_gate)
+        if self.enforce_test_delivery_gate and self.mode != "cohort":
+            raise ValueError("DeliveryGate enforcement is only valid for the explicit cohort mode")
 
     def initialize(self) -> int:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -560,6 +563,16 @@ class RoomKernelStore:
                 ).fetchall()
             ]
 
+    def root_ids(self, room_id: str) -> list[str]:
+        with self._connect() as conn:
+            return [
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT root_id FROM room_kernel_roots WHERE room_id = ? ORDER BY root_id",
+                    (room_id,),
+                ).fetchall()
+            ]
+
     def mark_runtime_cancel_unknown(
         self,
         *,
@@ -857,7 +870,7 @@ class RoomKernelStore:
             )
         return len(ids)
 
-    def finalize_root(self, root_id: str, *, now_ms: int) -> dict[str, object]:
+    def finalize_root(self, root_id: str, *, now_ms: int, delivery_gate_preview: Mapping[str, object] | None = None) -> dict[str, object]:
         with self._connect(immediate=True) as conn:
             root = self._root_row(conn, root_id)
             if root["terminal_receipt_id"]:
@@ -880,6 +893,18 @@ class RoomKernelStore:
             missing = sorted(expected - covered)
             if active or unknown or open_outbox or active_leases or open_tasks or missing:
                 return self._receipt(conn, root_id=root_id, command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "root_not_quiescent", "activeDispatches": active, "unknownDispatches": unknown, "openOutbox": open_outbox, "activeLeases": active_leases, "openTasks": open_tasks, "missingAcceptanceCriteria": missing}, now_ms=now_ms)
+            if self.enforce_test_delivery_gate:
+                gate_preview = delivery_gate_preview or {}
+                if (
+                    gate_preview.get("rootId") != root_id
+                    or int(gate_preview.get("generation", -1)) != int(root["generation"])
+                    or gate_preview.get("environment") != "room-v2-test"
+                    or gate_preview.get("mode") != "room_v2_test_enforce_preview"
+                    or gate_preview.get("terminalAllowed") is not True
+                    or gate_preview.get("valid") is not True
+                    or bool(gate_preview.get("validationReasons"))
+                ):
+                    return self._receipt(conn, root_id=root_id, command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "delivery_gate_rejected", "previewReceiptId": gate_preview.get("previewReceiptId"), "validationReasons": list(gate_preview.get("validationReasons") or ["delivery_gate_preview_missing_or_invalid"])}, now_ms=now_ms)
             gate = conn.execute(
                 """SELECT * FROM room_v2_delivery_gate_receipts
                    WHERE root_id = ? ORDER BY created_at_ms DESC, gate_receipt_id DESC LIMIT 1""",
@@ -889,7 +914,7 @@ class RoomKernelStore:
                 "gateObservationRef": str(gate["gate_receipt_id"]) if gate is not None else None,
                 "gateStatus": str(gate["gate_status"]) if gate is not None else "not_observed",
                 "mode": str(gate["mode"]) if gate is not None else "observe_warn",
-                "enforcementApplied": False,
+                "enforcementApplied": self.enforce_test_delivery_gate,
                 "reasons": json.loads(str(gate["reasons_json"])) if gate is not None else ["delivery_gate_not_observed"],
             }
             conn.execute(

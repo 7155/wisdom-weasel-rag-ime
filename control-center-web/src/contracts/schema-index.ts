@@ -14456,6 +14456,104 @@ export const contractSchemas = {
       }
     }
   },
+  "runner-verification-receipt.v2": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "wisdom-weasel.runner-verification-receipt.v2",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "rootId",
+      "catalogRevisionId",
+      "receiptType",
+      "sourceCommit",
+      "environment",
+      "worktreeHash",
+      "commandOrAction",
+      "exitStatus",
+      "outputHash",
+      "artifactHash",
+      "toolVersion",
+      "issuerId",
+      "contentHash",
+      "issuerSignature",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "wisdom-weasel.runner-verification-receipt.v2"
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "catalogRevisionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "receiptType": {
+        "enum": [
+          "test",
+          "build",
+          "install",
+          "browser",
+          "evidence"
+        ]
+      },
+      "sourceCommit": {
+        "type": "string",
+        "minLength": 1
+      },
+      "environment": {
+        "type": "string",
+        "minLength": 1
+      },
+      "worktreeHash": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "commandOrAction": {
+        "type": "string",
+        "minLength": 1
+      },
+      "exitStatus": {
+        "type": "integer"
+      },
+      "outputHash": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "artifactHash": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "toolVersion": {
+        "type": "string",
+        "minLength": 1
+      },
+      "issuerId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "contentHash": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "issuerSignature": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "session-memory-recall.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.session-memory-recall.v1",

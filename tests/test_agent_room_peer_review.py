@@ -8,6 +8,8 @@ from pathlib import Path
 
 from rag_ime.agent_room_peer_review import PeerReviewFenceError, RoomPeerReviewStore, RunnerReceiptError
 from rag_ime.agent_room_requirements import RequirementGovernanceStore
+from rag_ime.agent_room_kernel import RoomKernelStore
+from rag_ime.agent_room_kernel_contracts import ROOT_EXECUTION_SCHEMA_VERSION
 
 
 class RoomPeerReviewTests(unittest.TestCase):
@@ -49,6 +51,11 @@ class RoomPeerReviewTests(unittest.TestCase):
             self.peer.resolve_conflict(resolution_receipt_id="resolution:bad", round_id="round:conflict", open_matrix_revision_id="matrix:1", resolved_matrix_revision_id="matrix:2bad", authority_kind="independent_arbiter", authority_ref="reviewer-a", resolution_verdict="pass", rationale="self", created_at_ms=6)
         resolved = self.peer.resolve_conflict(resolution_receipt_id="resolution:ok", round_id="round:conflict", open_matrix_revision_id="matrix:1", resolved_matrix_revision_id="matrix:2", authority_kind="independent_arbiter", authority_ref="arbiter", resolution_verdict="pass", rationale="evidence wins", created_at_ms=6)
         self.assertEqual(resolved["resolutionVerdict"], "pass")
+        receipt = self._signed_receipt("receipt:conflict")
+        self.peer.record_runner_receipt(receipt)
+        self.requirements.link_proof(proof_id="proof:conflict", root_id="root:1", catalog_revision_id="catalog:1", criterion_id="criterion:journey", receipt_id=receipt["receiptId"], linked_by="runner:test", created_at_ms=7)
+        preview = self.peer.preview_delivery_gate(preview_receipt_id="preview:conflict", root_id="root:1", catalog_revision_id="catalog:1", peer_round_id="round:conflict", generation=0, target_commit="commit:1", current_artifact_hash="c" * 64, environment="room-v2-test", created_at_ms=8)
+        self.assertTrue(self.peer.validate_delivery_gate_preview(str(preview["previewReceiptId"]), current_artifact_hash="c" * 64)["valid"])
 
     def test_runner_receipt_tamper_copy_replay_and_old_revision_fail_closed(self) -> None:
         receipt = self._signed_receipt("receipt:1")
@@ -67,12 +74,12 @@ class RoomPeerReviewTests(unittest.TestCase):
 
     def test_test_cohort_preview_blocks_unknown_and_production_never_enforces(self) -> None:
         self._complete_passing_round_and_proof("round:gate")
-        production = self.peer.preview_delivery_gate(preview_receipt_id="preview:prod", root_id="root:1", catalog_revision_id="catalog:1", peer_round_id="round:gate", target_commit="commit:1", environment="production", created_at_ms=8)
+        production = self.peer.preview_delivery_gate(preview_receipt_id="preview:prod", root_id="root:1", catalog_revision_id="catalog:1", peer_round_id="round:gate", generation=0, target_commit="commit:1", current_artifact_hash="c" * 64, environment="production", created_at_ms=8)
         self.assertEqual(production["mode"], "observe_warn"); self.assertFalse(production["terminalAllowed"])
-        preview = self.peer.preview_delivery_gate(preview_receipt_id="preview:test", root_id="root:1", catalog_revision_id="catalog:1", peer_round_id="round:gate", target_commit="commit:1", environment="room-v2-test", created_at_ms=8)
+        preview = self.peer.preview_delivery_gate(preview_receipt_id="preview:test", root_id="root:1", catalog_revision_id="catalog:1", peer_round_id="round:gate", generation=0, target_commit="commit:1", current_artifact_hash="c" * 64, environment="room-v2-test", created_at_ms=8)
         self.assertTrue(preview["terminalAllowed"])
         self.requirements.record_obstacle(obstacle_id="unknown:1", root_id="root:1", catalog_revision_id="catalog:1", obstacle_kind="unknown", statement="installation unknown", created_at_ms=9)
-        blocked = self.peer.preview_delivery_gate(preview_receipt_id="preview:blocked", root_id="root:1", catalog_revision_id="catalog:1", peer_round_id="round:gate", target_commit="commit:1", environment="room-v2-test", created_at_ms=10)
+        blocked = self.peer.preview_delivery_gate(preview_receipt_id="preview:blocked", root_id="root:1", catalog_revision_id="catalog:1", peer_round_id="round:gate", generation=0, target_commit="commit:1", current_artifact_hash="c" * 64, environment="room-v2-test", created_at_ms=10)
         self.assertFalse(blocked["terminalAllowed"]); self.assertIn("unresolved_unknown", blocked["reasons"])
 
     def test_preview_blocks_failed_blind_review_user_journey_and_blocker(self) -> None:
@@ -85,11 +92,61 @@ class RoomPeerReviewTests(unittest.TestCase):
         self.peer.record_runner_receipt(failed)
         self.requirements.link_proof(proof_id="proof:failed", root_id="root:1", catalog_revision_id="catalog:1", criterion_id="criterion:journey", receipt_id="receipt:failed", linked_by="runner:test", created_at_ms=7)
         self.requirements.record_obstacle(obstacle_id="blocker:1", root_id="root:1", catalog_revision_id="catalog:1", obstacle_kind="blocker", statement="installer failed", created_at_ms=7)
-        preview = self.peer.preview_delivery_gate(preview_receipt_id="preview:failed", root_id="root:1", catalog_revision_id="catalog:1", peer_round_id="round:failed", target_commit="commit:1", environment="room-v2-test", created_at_ms=8)
+        preview = self.peer.preview_delivery_gate(preview_receipt_id="preview:failed", root_id="root:1", catalog_revision_id="catalog:1", peer_round_id="round:failed", generation=0, target_commit="commit:1", current_artifact_hash="c" * 64, environment="room-v2-test", created_at_ms=8)
         self.assertFalse(preview["terminalAllowed"])
         self.assertIn("blind_review_not_passed", preview["reasons"])
         self.assertIn("criterion_without_signed_proof:criterion:journey", preview["reasons"])
         self.assertIn("unresolved_blocker", preview["reasons"])
+
+    def test_explicit_cohort_kernel_revalidates_preview_before_terminal_transition(self) -> None:
+        self._complete_passing_round_and_proof("round:terminal")
+        preview = self.peer.preview_delivery_gate(
+            preview_receipt_id="preview:terminal", root_id="root:1", catalog_revision_id="catalog:1",
+            peer_round_id="round:terminal", generation=0, target_commit="commit:1",
+            current_artifact_hash="c" * 64, environment="room-v2-test", created_at_ms=8,
+        )
+        validated = self.peer.validate_delivery_gate_preview(str(preview["previewReceiptId"]), current_artifact_hash="c" * 64)
+        self.assertTrue(validated["valid"])
+        changed = self.peer.validate_delivery_gate_preview(str(preview["previewReceiptId"]), current_artifact_hash="9" * 64)
+        self.assertFalse(changed["valid"])
+        self.assertIn("current_artifact_hash_changed", changed["validationReasons"])
+        kernel = self._seed_quiescent_kernel(enforce=True)
+        terminal = kernel.finalize_root("root:1", now_ms=9, delivery_gate_preview=validated)
+        self.assertEqual(terminal["receiptKind"], "terminal")
+        self.assertTrue(terminal["details"]["deliveryGateObservation"]["enforcementApplied"])
+
+    def test_explicit_cohort_kernel_rejects_missing_stale_or_newly_blocked_preview(self) -> None:
+        self._complete_passing_round_and_proof("round:blocked-terminal")
+        preview = self.peer.preview_delivery_gate(
+            preview_receipt_id="preview:blocked-terminal", root_id="root:1", catalog_revision_id="catalog:1",
+            peer_round_id="round:blocked-terminal", generation=0, target_commit="commit:1",
+            current_artifact_hash="c" * 64, environment="room-v2-test", created_at_ms=8,
+        )
+        self.requirements.record_obstacle(obstacle_id="blocker:terminal", root_id="root:1", catalog_revision_id="catalog:1", obstacle_kind="blocker", statement="late blocker", created_at_ms=9)
+        validated = self.peer.validate_delivery_gate_preview(str(preview["previewReceiptId"]), current_artifact_hash="c" * 64)
+        self.assertFalse(validated["valid"])
+        self.assertIn("unresolved_blocker", validated["validationReasons"])
+        kernel = self._seed_quiescent_kernel(enforce=True)
+        rejected = kernel.finalize_root("root:1", now_ms=10, delivery_gate_preview=validated)
+        self.assertEqual(rejected["details"]["reason"], "delivery_gate_rejected")
+        missing = self._seed_quiescent_kernel(root_id="root:missing", enforce=True).finalize_root("root:missing", now_ms=10)
+        self.assertEqual(missing["details"]["reason"], "delivery_gate_rejected")
+
+    def test_production_kernel_never_enforces_preview(self) -> None:
+        kernel = self._seed_quiescent_kernel(root_id="root:production", enforce=False)
+        terminal = kernel.finalize_root("root:production", now_ms=10, delivery_gate_preview={"terminalAllowed": False})
+        self.assertEqual(terminal["receiptKind"], "terminal")
+        self.assertFalse(terminal["details"]["deliveryGateObservation"]["enforcementApplied"])
+
+    def test_canonical_read_projection_owns_integrity_proof_peer_and_conflict_semantics(self) -> None:
+        self._complete_passing_round_and_proof("round:projection")
+        projection = self.peer.read_projection("root:1")
+        self.assertEqual(projection["projectionSource"], "canonical_read_projection")
+        self.assertEqual(projection["anchors"][0]["integrityStatus"], "verified")
+        self.assertEqual(projection["receiptAssessments"][0]["status"], "observed_pass")
+        self.assertEqual(projection["peerReviewRounds"][0]["status"], "passed")
+        serialized = json.dumps(projection)
+        self.assertNotIn("secret", serialized)
 
     def _seed_catalog(self) -> None:
         raw = "保留原始需求并验证用户旅程".encode()
@@ -120,7 +177,7 @@ class RoomPeerReviewTests(unittest.TestCase):
         return {"judgment_id": judgment, "round_id": round_id, "reviewer_participant_id": reviewer, "verdict": verdict, "findings": [] if verdict == "pass" else [{"severity": "high", "code": "journey-failed", "criterionId": "criterion:journey"}], "requirement_coverage": ["criterion:journey"], "created_at_ms": 4}
 
     def _signed_receipt(self, receipt_id: str, *, catalog="catalog:1"):
-        return self.peer.issue_runner_receipt({"receiptId": receipt_id, "rootId": "root:1", "catalogRevisionId": catalog, "receiptType": "browser", "sourceCommit": "commit:1", "environment": "room-v2-test", "worktreeHash": "d" * 64, "commandOrAction": "browser journey", "exitStatus": 0, "outputHash": "e" * 64, "artifactHash": "f" * 64, "toolVersion": "playwright-1", "issuerId": "runner:test", "createdAtMs": 3}, issuer_secret=b"secret")
+        return self.peer.issue_runner_receipt({"receiptId": receipt_id, "rootId": "root:1", "catalogRevisionId": catalog, "receiptType": "browser", "sourceCommit": "commit:1", "environment": "room-v2-test", "worktreeHash": "d" * 64, "commandOrAction": "browser journey", "exitStatus": 0, "outputHash": "e" * 64, "artifactHash": "c" * 64, "toolVersion": "playwright-1", "issuerId": "runner:test", "createdAtMs": 3}, issuer_secret=b"secret")
 
     def _complete_passing_round_and_proof(self, round_id: str) -> None:
         self.peer.open_round(**self._round_args(round_id))
@@ -129,6 +186,16 @@ class RoomPeerReviewTests(unittest.TestCase):
         self.peer.finalize_round(final_receipt_id="final:" + round_id, round_id=round_id, matrix_revision_id="unused:" + round_id, created_at_ms=6)
         receipt = self._signed_receipt("receipt:" + round_id); self.peer.record_runner_receipt(receipt)
         self.requirements.link_proof(proof_id="proof:" + round_id, root_id="root:1", catalog_revision_id="catalog:1", criterion_id="criterion:journey", receipt_id=receipt["receiptId"], linked_by="runner:test", created_at_ms=7)
+
+    def _seed_quiescent_kernel(self, *, root_id="root:1", enforce: bool) -> RoomKernelStore:
+        kernel = RoomKernelStore(self.db, mode="cohort", enforce_test_delivery_gate=enforce)
+        kernel.create_root(
+            {"schemaVersion": ROOT_EXECUTION_SCHEMA_VERSION, "rootId": root_id, "roomId": "room:1", "generation": 0,
+             "state": "running", "owner": "author", "requirementAnchorRef": "anchor:1", "createdByActorRef": "user:test",
+             "terminalReceiptId": None, "activeProfileRef": None, "budgetPolicyRef": "budget:test", "createdAtMs": 1},
+            budget=1, max_hops=1, max_depth=1, acceptance_criteria=(), now_ms=1,
+        )
+        return kernel
 
 
 if __name__ == "__main__": unittest.main()
