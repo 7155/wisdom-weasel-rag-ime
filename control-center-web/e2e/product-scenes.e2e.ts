@@ -95,7 +95,7 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
     if (isMobileViewport(page)) await roomsScene.getByRole('button', { name: '打开 Rooms 列表' }).click();
   } else {
     await expect(roomsScene.locator('.rooms-rail-empty')).toHaveText('还没有 Room');
-    await expect(roomsScene.locator('.room-empty')).toHaveText('选择一个 Room，或新建协作 Room。');
+    await expect(roomsScene.locator('.project-scene-empty')).toContainText('选择一个 Room');
     await expect(page.getByRole('textbox', { name: 'Room 消息' })).toBeDisabled();
     await expect(page.getByRole('button', { name: '发送 Room 消息' })).toBeDisabled();
   }

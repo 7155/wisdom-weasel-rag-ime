@@ -1,6 +1,7 @@
-import { BookOpenCheck, Cloud, Database, ExternalLink, Search, Sparkles } from 'lucide-react';
+import { Cloud, Database, ExternalLink, Search, Sparkles } from 'lucide-react';
 import { useMemo, useState, type CSSProperties } from 'react';
 import { EmptyState, Input } from '@/components/primitives';
+import { ProjectSceneEmptyState } from '@/features/agent/timeline/ProjectSceneEmptyState';
 import {
   asRecord,
   booleanValue,
@@ -86,7 +87,7 @@ export function KnowledgeEvidenceExplorer({ items }: { items: readonly Knowledge
   const largestSource = Math.max(1, ...sources.map((item) => item.count));
 
   if (!items.length) {
-    return <EmptyState description="当前任务没有返回可追溯证据；没有生成示例来源。" icon={BookOpenCheck} title="暂无证据" />;
+    return <ProjectSceneEmptyState sceneId="memory-evidence-timeline" title="暂无证据" description="当前任务没有返回可追溯证据；没有生成示例来源。" />;
   }
 
   return (

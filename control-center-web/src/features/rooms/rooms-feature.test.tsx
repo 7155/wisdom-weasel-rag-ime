@@ -51,6 +51,7 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
     const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    expect(screen.queryByAltText(/两位智鼬在私有工作区之间显式交接/)).not.toBeInTheDocument();
     const errorSlot = document.querySelector('.room-error-slot');
     expect(errorSlot).toBeInTheDocument();
     expect(errorSlot).toBeEmptyDOMElement();
@@ -498,7 +499,12 @@ describe('Rooms experience', () => {
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.archive')).toBe(true));
     const request = transport.requests.find((call) => call.request.pathId === 'agent.room.archive')?.request;
     expect(request).toMatchObject({ params: { roomId: 'room-a' }, body: { archived: true } });
-    expect(await screen.findByText('选择一个 Room，或新建协作 Room。')).toBeInTheDocument();
+    expect(await screen.findByText('选择一个 Room')).toBeInTheDocument();
+    const scene = screen.getByAltText(/两位智鼬在私有工作区之间显式交接/);
+    expect(scene).toHaveAttribute('width', '960');
+    expect(scene).toHaveAttribute('height', '720');
+    expect(scene).toHaveAttribute('loading', 'lazy');
+    expect(screen.getByText('从 Rooms 列表选择，或新建协作 Room。')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '打开 Room：待归档 Room' })).not.toBeInTheDocument();
   });
 
@@ -566,7 +572,7 @@ describe('Rooms experience', () => {
     } });
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    expect(await screen.findByText('选择一个 Room，或新建协作 Room。')).toBeInTheDocument();
+    expect(await screen.findByText('选择一个 Room')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Room 消息' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '发送 Room 消息' })).toBeDisabled();
   });
@@ -579,7 +585,9 @@ describe('Rooms experience', () => {
     } });
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    expect(await screen.findByText('还没有公开 Post，发一条消息开始协作。')).toBeInTheDocument();
+    expect(await screen.findByText('还没有公开 Post')).toBeInTheDocument();
+    expect(screen.getByText('发一条消息开始协作。')).toBeInTheDocument();
+    expect(screen.getByAltText(/两位智鼬在私有工作区之间显式交接/)).toHaveAttribute('src', '/companions/scenes/room-duoagent-handoff-v1.webp');
     expect(screen.getByRole('textbox', { name: 'Room 消息' })).toBeEnabled();
   });
 
@@ -592,7 +600,7 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await screen.findByText('还没有公开 Post，发一条消息开始协作。');
+    await screen.findByText('还没有公开 Post');
     await user.click(screen.getByRole('button', { name: '展开 Room 证据' }));
     expect(screen.getByRole('complementary', { name: 'Room 状态' })).toHaveAttribute('data-open', 'true');
     expect(screen.getByText('协作成员上下文')).toBeInTheDocument();

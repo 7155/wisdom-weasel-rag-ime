@@ -1,0 +1,10 @@
+.project-scene-empty { display: grid; width: min(100%, 560px); min-width: 0; justify-items: center; gap: 10px; margin: auto; padding: 16px; color: var(--color-text-secondary); text-align: center; }
+.project-scene-empty > img { display: block; width: min(100%, 420px); height: auto; max-height: min(34dvh, 300px); object-fit: contain; }
+.project-scene-empty > span { display: grid; gap: 3px; }
+.project-scene-empty strong { color: var(--color-text); font-size: 14px; }
+.project-scene-empty small { color: var(--color-text-tertiary); font-size: 13px; line-height: 1.45; }
+
+@media (max-width: 520px) {
+  .project-scene-empty { gap: 7px; padding: 10px; }
+  .project-scene-empty > img { width: min(100%, 300px); max-height: 210px; }
+}
