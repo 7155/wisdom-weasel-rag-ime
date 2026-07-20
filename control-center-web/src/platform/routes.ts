@@ -446,8 +446,22 @@ export const CONTROL_ROUTES = {
     path: '/api/agent/rooms/:roomId/kernel/settle',
     params: { roomId: null },
     body: ['settleReceipt', 'commit', 'invocationReceiptId'],
-    requiredBody: ['settleReceipt', 'commit'],
+    requiredBody: ['settleReceipt'],
     responseContract: 'room-settle-result.v1',
+  },
+  'agent.room.kernel.create': {
+    method: 'POST', path: '/api/agent/rooms/:roomId/kernel/create', params: { roomId: null },
+    body: ['rootExecution', 'task', 'budget', 'maxHops', 'maxDepth', 'acceptanceCriteria'],
+    requiredBody: ['rootExecution', 'task', 'budget', 'maxHops', 'maxDepth'],
+  },
+  'agent.room.kernel.dispatch': {
+    method: 'POST', path: '/api/agent/rooms/:roomId/kernel/dispatch', params: { roomId: null },
+    body: ['schemaVersion', 'dispatchId', 'rootId', 'taskId', 'parentDispatchId', 'generation', 'hopCount', 'depth', 'budgetCost', 'targetSessionId', 'targetParticipantId', 'triggerId', 'intentKind', 'idempotencyKey', 'attempt', 'capabilityEpoch', 'runtimeProfileRevision', 'state'],
+    requiredBody: ['schemaVersion', 'dispatchId', 'rootId', 'taskId', 'generation', 'hopCount', 'depth', 'budgetCost', 'targetSessionId', 'targetParticipantId', 'triggerId', 'intentKind', 'idempotencyKey', 'attempt', 'capabilityEpoch', 'runtimeProfileRevision', 'state'],
+  },
+  'agent.room.kernel.finalize': {
+    method: 'POST', path: '/api/agent/rooms/:roomId/kernel/finalize', params: { roomId: null },
+    body: ['rootId', 'catalogRevisionId', 'targetCommit', 'blindReviewStatus', 'deliveryGatePreviewReceiptId'], requiredBody: ['rootId'],
   },
   'agent.collaborationProfile.get': {
     method: 'GET',
@@ -468,6 +482,15 @@ export const CONTROL_ROUTES = {
     params: { sessionId: null },
     body: ['query', 'limit', 'retrievalReceiptId', 'createdAtMs'],
     requiredBody: ['query'],
+  },
+  'agent.governance.read': {
+    method: 'GET',
+    path: '/api/agent/governance',
+    query: ['scopeKey'],
+  },
+  'agent.knowledgeGovernance.read': {
+    method: 'GET',
+    path: '/api/agent/knowledge-governance',
   },
   'agent.knowledge.read': {
     method: 'POST',

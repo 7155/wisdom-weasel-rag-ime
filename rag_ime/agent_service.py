@@ -13,7 +13,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from threading import RLock
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from .agent_configuration import (
     AgentConfigurationStore,
@@ -46,10 +46,12 @@ from .agent_room_capabilities import (
 )
 from .agent_definition_compiler import AgentDefinitionCompiler
 from .collaboration_profile_control import CollaborationProfileControl
-from .agent_definitions import collaboration_role
+from .collaboration_profile_store import CollaborationProfileStore
+from .agent_definitions import CollaborationProfileManifest, collaboration_profile, collaboration_role
 from .agent_templates import agent_template
 from .agent_prompt_plans import PromptLayer, RoomPromptPlanStore
-from .agent_room_context import ProviderProjectionJournalStore
+from .agent_room_context import ProviderProjectionJournalStore, RoomContextLedgerStore
+from .agent_room_skills import RoomSkillPolicy, RoomSkillPolicyStore
 from .agent_room_requirements import RequirementGovernanceStore
 from .agent_room_peer_review import RoomPeerReviewStore
 from .agent_room_route_owners import room_route_owner
@@ -57,8 +59,9 @@ from .agent_room_work import AgentRoomWorkStore
 from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_contracts import validate_kernel_contract
 from .agent_room_kernel_projection import RoomKernelProjection
-from .agent_room_kernel_worker import RoomKernelWorker, RoomKernelWorkerLoop
+from .agent_room_kernel_worker import KernelCommandBus, RoomKernelWorker, RoomKernelWorkerLoop
 from .agent_room_learning_governance import RoomLearningGovernanceStore
+from .agent_governance_projection import GovernanceProjectionStore
 from .agent_room_learning_runtime import ReflectionProvider, RoomLearningRuntime
 from .agent_knowledge_promotion import KNOWLEDGE_ROUTE_HASH, KnowledgePromotionStore
 from .knowledge_scope import bound_session_knowledge_caller
@@ -232,6 +235,15 @@ class AgentService:
         self.room_prompt_plans.initialize()
         self.room_projection_journals = ProviderProjectionJournalStore(db_path)
         self.room_projection_journals.initialize()
+        self.room_context_ledger = RoomContextLedgerStore(db_path)
+        self.room_context_ledger.initialize()
+        room_skill_root = Path(__file__).resolve().parents[1] / "integrations" / "pi"
+        self.room_skill_policy = RoomSkillPolicy(
+            room_skill_root / "room-skill-policy.json",
+            room_skill_root / "skills",
+        )
+        self.room_skill_receipts = RoomSkillPolicyStore(db_path, self.room_skill_policy)
+        self.room_skill_receipts.initialize()
         self.room_requirements = RequirementGovernanceStore(db_path)
         self.room_requirements.initialize()
         self.room_peer_review = RoomPeerReviewStore(db_path, runner_secrets=room_runner_secrets)
@@ -242,6 +254,8 @@ class AgentService:
             config_secret=room_guard_config_secret,
         )
         self.room_learning.initialize()
+        self.governance_projection = GovernanceProjectionStore(db_path)
+        self.governance_projection.initialize()
         self.room_learning_runtime = RoomLearningRuntime(
             self.room_learning,
             reflection_provider=room_reflection_provider,
@@ -456,7 +470,15 @@ class AgentService:
                 }
             return {}
         manifest, binding = bound
-        return {
+        prompt = self.room_prompt_plans.provider_payload(
+            str(binding["promptCompileReceiptId"])
+        )
+        dispatch = self.room_kernel.dispatch(str(manifest["dispatchId"]))
+        root_limits = self.room_kernel.resource_limits(str(dispatch["rootId"]))
+        skill_selection = self.room_skill_policy.select_stage(
+            _room_skill_stage(dispatch)
+        )
+        result: dict[str, object] = {
             "roomCapability": {
                 "manifestId": manifest["manifestId"],
                 "manifestHash": manifest["manifestHash"],
@@ -464,8 +486,37 @@ class AgentService:
                 "promptPlanHash": binding["promptPlanHash"],
                 "compiledRuntimeProfileRef": binding["compiledRuntimeProfileRef"],
                 "capabilityEpoch": binding["capabilityEpoch"],
-            }
+            },
+            "managedSystemPrompt": prompt["stableSystemPrompt"],
+            "providerContext": prompt["providerContext"],
+            "roomProviderContext": {
+                "journalId": prompt["journalId"],
+                "throughSequence": prompt["throughSequence"],
+                "projectionHash": prompt["projectionHash"],
+                "generation": prompt["generation"],
+            },
+            "roomResourceLimits": {
+                "deadlineAtMs": root_limits["deadline_at_ms"],
+                "maxInputTokens": 64_000,
+                "maxOutputTokens": 16_000,
+                "maxToolCalls": 64,
+                "maxToolCost": 10_000,
+                "retryRemaining": max(0, int(root_limits["retry_limit"]) - int(root_limits["retry_used"])),
+                "repairRemaining": max(0, int(root_limits["repair_limit"]) - int(root_limits["repair_used"])),
+            },
         }
+        if skill_selection["selection"] == "required":
+            skill_id = str(skill_selection["skillId"])
+            result["roomSkillPolicy"] = {
+                **skill_selection,
+                "skillHash": self.room_skill_policy.skill_hash(skill_id),
+                "policyId": self.room_skill_policy.policy_id,
+                "policyVersion": self.room_skill_policy.version,
+                "nextCandidates": self.room_skill_receipts.next_candidates(skill_id),
+            }
+        else:
+            result["roomSkillPolicy"] = skill_selection
+        return result
 
     def runtime_status(self) -> dict[str, object]:
         payload = self.runtime.runtime_status()
@@ -1343,6 +1394,11 @@ class AgentService:
             root_id: self.room_peer_review.read_projection(root_id)
             for root_id in self.room_kernel.root_ids(room_id)
         }
+        snapshot["cancellationSurfaces"] = self.room_kernel.cancellation_surface_projection(room_id)
+        snapshot["pendingTargets"] = [
+            item for item in snapshot["cancellationSurfaces"]
+            if item["state"] in {"requested", "acknowledged", "unknown"}
+        ]
         snapshot_material = {key: value for key, value in snapshot.items() if key != "snapshotHash"}
         snapshot["snapshotHash"] = "sha256:" + hashlib.sha256(
             json.dumps(
@@ -1499,7 +1555,7 @@ class AgentService:
                 "rag", "memory", "planning", "review", "control", "delegation"
             ),
             binding_revision="room-v2-agent-definition-compiler-v1",
-            cancel_root=lambda root_id, _now_ms: self.room_kernel_worker.cancel_root(root_id),
+            cancel_root=lambda root_id, _now_ms: self.room_kernel_commands.cancel_root(root_id),
         )
 
     def bind_room_capability_runtime(
@@ -1590,6 +1646,10 @@ class AgentService:
             "reviewer": "reviewer",
         }.get(str(participant.get("collaborationRole") or ""), "worker")
         template = agent_template(template_id)
+        active_profile, profile_pin = self._resolve_room_collaboration_profile(
+            root,
+            pinned_at_ms=prepared_at_ms,
+        )
         capability_revision = _required_text(dispatch, "runtimeProfileRevision")
         generation = int(dispatch["generation"])
         capability_epoch = int(dispatch["capabilityEpoch"])
@@ -1631,7 +1691,7 @@ class AgentService:
             persona=persona,
             collaboration_role=role,
             template=template,
-            profile=None,
+            profile=active_profile,
             authorized_capabilities=("control", "delegation", "memory", "planning", "rag", "review"),
             capability_revision=capability_revision,
             capability_epoch=capability_epoch,
@@ -1656,10 +1716,46 @@ class AgentService:
             generation=generation,
             created_at_ms=prepared_at_ms,
         )
-        profile_overlay = (
-            json.dumps(guard_surfaces["prompt"], ensure_ascii=False, sort_keys=True)
-            if guard_surfaces is not None
-            else ""
+        task = self.room_kernel.task(str(dispatch["taskId"]))
+        context_entry, _ = self.room_context_ledger.append_entry(
+            root_id=str(dispatch["rootId"]),
+            room_id=room_id,
+            generation=generation,
+            entry_kind="dispatch_state",
+            source_ref=dispatch_id,
+            dedupe_key=f"dispatch:{dispatch_id}:provider-context",
+            content=json.dumps(
+                {
+                    "task": task,
+                    "dispatch": {
+                        key: dispatch[key]
+                        for key in (
+                            "dispatchId", "taskId", "intentKind", "generation",
+                            "hopCount", "depth", "targetParticipantId",
+                        )
+                    },
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            created_at_ms=prepared_at_ms,
+        )
+        self.room_projection_journals.append_entry(
+            journal_id,
+            str(context_entry["entryId"]),
+            dedupe_key=f"dispatch:{dispatch_id}:provider-context",
+            expected_generation=generation,
+            appended_at_ms=prepared_at_ms,
+        )
+        profile_overlay = json.dumps(
+            {
+                "profilePin": profile_pin,
+                "promptGuidance": list(active_profile.prompt_guidance),
+                "guardPrompt": guard_surfaces["prompt"] if guard_surfaces is not None else {},
+            },
+            ensure_ascii=False,
+            sort_keys=True,
         )
         layers = (
             PromptLayer("core_rails", "pi-core-safety", "pi-core-safety:v1", persona.safety_policy_prompt, ("safety", "authorization")),
@@ -1669,10 +1765,10 @@ class AgentService:
             PromptLayer(
                 "room_profile_overlay",
                 "guard-materialization" if guard_pin is not None else "profile-room-kernel-compiler",
-                str(guard_pin["configHash"]) if guard_pin is not None else "profile:none",
+                str(guard_pin["configHash"]) if guard_pin is not None else str(profile_pin["bundleContentHash"]),
                 profile_overlay,
                 ("room-overlay",),
-                "guard-active" if guard_pin is not None else "no-profile",
+                "guard-active" if guard_pin is not None else "profile-pinned",
             ),
             PromptLayer("provider_dynamic_facts", "room-context-compiler", journal_id, "", ("dynamic-facts",)),
         )
@@ -1728,9 +1824,124 @@ class AgentService:
             "manifestId": bound["manifest"]["manifestId"],
             "manifestHash": bound["manifest"]["manifestHash"],
             "promptCompileReceiptId": prompt["receipt"]["receiptId"],
+            "promptPlanHash": prompt["receipt"]["plan"]["planHash"],
             "requirementObservation": requirement_binding,
             "guardPin": guard_pin,
         }
+
+    def _accept_managed_room_runtime_context(
+        self, runtime_receipt: Mapping[str, object]
+    ) -> None:
+        dispatch_id = _required_text(runtime_receipt, "dispatchId")
+        dispatch = self.room_kernel.dispatch(dispatch_id)
+        now_ms = int(time.time() * 1000)
+        provider = runtime_receipt.get("providerContextReceipt")
+        if isinstance(provider, Mapping) and int(provider.get("throughSequence") or 0) > 0:
+            projection = self.room_projection_journals.projection(
+                str(provider.get("journalId") or ""),
+                expected_generation=int(dispatch["generation"]),
+            )
+            if int(provider["throughSequence"]) > int(projection["sealedThroughSequence"]):
+                self.room_projection_journals.record_provider_receipt(
+                    str(provider["journalId"]),
+                    receipt_id=f"provider-projection:{dispatch_id}",
+                    provider_request_id=_required_text(provider, "providerRequestId"),
+                    through_sequence=int(provider["throughSequence"]),
+                    projection_hash=_required_text(provider, "projectionHash"),
+                    expected_generation=int(dispatch["generation"]),
+                    created_at_ms=now_ms,
+                )
+        loaded = runtime_receipt.get("roomSkillLoad")
+        if isinstance(loaded, Mapping):
+            stage = _room_skill_stage(dispatch)
+            selection = self.room_skill_policy.select_stage(stage)
+            if selection["selection"] != "required" or loaded.get("name") != selection["skillId"]:
+                raise RoomKernelFenceError("Pi loaded a Skill outside the required Room policy")
+            self.room_skill_receipts.pin_skill(
+                receipt_id=f"room-skill-load:{dispatch_id}",
+                root_id=str(dispatch["rootId"]),
+                task_id=str(dispatch["taskId"]),
+                dispatch_id=dispatch_id,
+                session_id=str(dispatch["targetSessionId"]),
+                skill_id=str(loaded["name"]),
+                skill_hash=_required_text(loaded, "contentRevision"),
+                catalog_revision=_required_text(loaded, "catalogRevision"),
+                load_reason="stage_required",
+                capability_epoch=int(dispatch["capabilityEpoch"]),
+                idempotency_key=f"{dispatch_id}/{stage}",
+                created_at_ms=now_ms,
+            )
+
+    def _resolve_room_collaboration_profile(
+        self,
+        root: Mapping[str, object],
+        *,
+        pinned_at_ms: int,
+    ) -> tuple[CollaborationProfileManifest, dict[str, object]]:
+        """Pin one immutable CollaborationProfile for the lifetime of a Root."""
+
+        root_id = _required_text(root, "rootId")
+        requested = str(root.get("activeProfileRef") or "standard-room").strip()
+        parsed = urlparse(requested)
+        expected_hash = ""
+        if parsed.scheme:
+            if parsed.scheme != "rag-ime-definition" or parsed.netloc != "collaboration-profile":
+                raise RoomKernelFenceError("Root activeProfileRef is not a CollaborationProfile ref")
+            profile_id = unquote(parsed.path.lstrip("/"))
+            expected_hash = str(parse_qs(parsed.query).get("contentHash", [""])[0])
+        else:
+            profile_id = requested
+        if not profile_id:
+            raise RoomKernelFenceError("Root CollaborationProfile id is empty")
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT * FROM room_v2_root_profile_pins WHERE root_id=?", (root_id,)
+            ).fetchone()
+            if existing is not None:
+                if profile_id != str(existing["profile_id"]):
+                    raise RoomKernelFenceError("Root CollaborationProfile pin cannot hot-swap")
+                manifest = _collaboration_profile_manifest(json.loads(str(existing["manifest_json"])))
+                return manifest, _profile_pin_payload(existing)
+
+            store = CollaborationProfileStore(conn, trusted_signers={})
+            active = store.active_manifest(profile_id)
+            if active is None:
+                if profile_id != "standard-room":
+                    raise RoomKernelFenceError("requested CollaborationProfile has no active version")
+                manifest = collaboration_profile("standard-room", "1")
+                bundle_hash = _content_hash(manifest.to_payload())
+                pointer_revision = 0
+                guard_epoch = 0
+                compile_receipt_id = "builtin:standard-room@1"
+            else:
+                manifest = _collaboration_profile_manifest(active["manifest"])
+                bundle_hash = str(active["contentHash"])
+                pointer_revision = int(active["pointerRevision"])
+                guard_epoch = int(active["guardEpoch"])
+                compile_receipt_id = str(active["compileReceiptId"])
+            definition_hash = _content_hash(manifest.to_payload())
+            if expected_hash and expected_hash not in {bundle_hash, definition_hash}:
+                raise RoomKernelFenceError("Root CollaborationProfile ref does not match active content")
+            conn.execute(
+                """INSERT INTO room_v2_root_profile_pins(
+                   root_id,profile_id,profile_version,bundle_content_hash,
+                   definition_content_hash,pointer_revision,guard_epoch,
+                   compile_receipt_id,manifest_json,pinned_at_ms)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    root_id, manifest.profile_id, manifest.version, bundle_hash,
+                    definition_hash, pointer_revision, guard_epoch, compile_receipt_id,
+                    json.dumps(manifest.to_payload(), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                    int(pinned_at_ms),
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM room_v2_root_profile_pins WHERE root_id=?", (root_id,)
+            ).fetchone()
+            return manifest, _profile_pin_payload(row)
 
     def room_capability_tool_search(self, payload: Mapping[str, object]) -> dict[str, object]:
         receipt, _ = self.room_capabilities.runtime_tool_search(
@@ -1821,9 +2032,47 @@ class AgentService:
         self.rooms.get(room_id)
         if str(payload.get("roomId") or "") != room_id:
             raise RoomKernelFenceError("control command path Room does not match payload")
-        result = self.room_kernel_worker.apply_control_command(payload)
+        result = self.room_kernel_commands.control(payload)
         self.room_kernel_projection.sync_room(room_id)
         return dict(result["kernelReceipt"])
+
+    def create_room_kernel_root(self, room_id: str, payload: Mapping[str, object], *, caller_authorized: bool = False) -> dict[str, object]:
+        if not caller_authorized:
+            raise PermissionError("Room Kernel create requires an authorized caller")
+        self.rooms.get(room_id)
+        root = payload.get("rootExecution"); task = payload.get("task")
+        if not isinstance(root, Mapping) or not isinstance(task, Mapping) or root.get("roomId") != room_id or task.get("rootId") != root.get("rootId"):
+            raise RoomKernelFenceError("Root/Task creation payload does not match path Room")
+        created = self.room_kernel_commands.create_root_task(
+            root,
+            task,
+            budget=int(payload.get("budget") or 1),
+            max_hops=int(payload.get("maxHops") or 1),
+            max_depth=int(payload.get("maxDepth") or 1),
+            acceptance_criteria=tuple(str(item) for item in payload.get("acceptanceCriteria") or ()),
+            now_ms=int(root.get("createdAtMs") or int(time.time() * 1000)),
+        )
+        self.room_kernel_projection.sync_room(room_id)
+        return created
+
+    def dispatch_room_kernel(self, room_id: str, payload: Mapping[str, object], *, caller_authorized: bool = False) -> dict[str, object]:
+        if not caller_authorized:
+            raise PermissionError("Room Kernel dispatch requires an authorized caller")
+        root = self.room_kernel.root(str(payload.get("rootId") or ""))
+        if root.get("roomId") != room_id:
+            raise RoomKernelFenceError("Dispatch Root belongs to another Room")
+        dispatch, created = self.room_kernel_commands.dispatch(payload, now_ms=int(time.time() * 1000))
+        self.room_kernel_worker_loop.wake()
+        self.room_kernel_projection.sync_room(room_id)
+        return {"dispatch": dispatch, "created": created}
+
+    def finalize_room_kernel_route(self, room_id: str, payload: Mapping[str, object], *, caller_authorized: bool = False) -> dict[str, object]:
+        if not caller_authorized:
+            raise PermissionError("Room Kernel finalize requires an authorized caller")
+        root_id = str(payload.get("rootId") or "")
+        if self.room_kernel.root(root_id).get("roomId") != room_id:
+            raise RoomKernelFenceError("Finalize Root belongs to another Room")
+        return self.finalize_room_kernel_root(root_id, catalog_revision_id=str(payload.get("catalogRevisionId") or ""), target_commit=str(payload.get("targetCommit") or ""), blind_review_status=str(payload.get("blindReviewStatus") or "unavailable"), delivery_gate_preview_receipt_id=str(payload.get("deliveryGatePreviewReceiptId") or ""))
 
     def settle_room_kernel_dispatch(
         self,
@@ -1839,13 +2088,13 @@ class AgentService:
         self.rooms.get(room_id)
         settle = payload.get("settleReceipt")
         commit = payload.get("commit")
-        if not isinstance(settle, Mapping) or not isinstance(commit, Mapping):
-            raise ValueError("settleReceipt and commit are required")
+        if not isinstance(settle, Mapping):
+            raise ValueError("settleReceipt is required")
         if settle.get("eventKind") != "agent_settled" or settle.get("status") != "settled":
             raise RoomKernelFenceError("only an agent_settled receipt can bridge a RoomCommit")
         validate_kernel_contract("roomSettleReceipt", settle)
-        validate_kernel_contract("roomCommit", commit)
-        dispatch = self.room_kernel.dispatch(str(commit.get("dispatchId") or ""))
+        dispatch_id = str(commit.get("dispatchId") if isinstance(commit, Mapping) else settle.get("dispatchId") or "")
+        dispatch = self.room_kernel.dispatch(dispatch_id)
         root = self.room_kernel.root(str(dispatch["rootId"]))
         if (
             root.get("roomId") != room_id
@@ -1856,6 +2105,25 @@ class AgentService:
             or int(settle.get("capabilityEpoch", -1)) != int(dispatch["capabilityEpoch"])
         ):
             raise RoomKernelFenceError("settle receipt does not match Dispatch fences")
+        if not isinstance(commit, Mapping):
+            receipt = self.room_kernel.record_uncommitted_settle(
+                dispatch_id,
+                generation=int(settle["generation"]),
+                now_ms=int(settle.get("createdAtMs") or int(time.time() * 1000)),
+            )
+            if receipt["receiptKind"] == "settle_blocked":
+                self._revoke_room_runtime_capability(
+                    str(settle["sessionId"]),
+                    int(settle.get("createdAtMs") or int(time.time() * 1000)),
+                )
+            self.room_kernel_projection.sync_room(room_id)
+            return {
+                "schemaVersion": "wisdom-weasel.room-settle-guard.v1",
+                "receipt": receipt,
+                "retryRequired": receipt["receiptKind"] == "settle_retry_required",
+                "blocked": receipt["receiptKind"] == "settle_blocked",
+            }
+        validate_kernel_contract("roomCommit", commit)
         invocation_receipt_id = str(payload.get("invocationReceiptId") or "").strip()
         runtime_capability = self.room_capabilities.manifest_for_runtime(str(settle["sessionId"]))
         if runtime_capability is not None and not invocation_receipt_id:
@@ -1888,13 +2156,20 @@ class AgentService:
                 raise RoomKernelFenceError("RoomPost proposal does not match the settled Commit")
         elif proposal is not None:
             raise RoomKernelFenceError("non-post Commit cannot publish a RoomPost")
-        receipt = self.room_kernel.apply_commit(
+        receipt = self.room_kernel_commands.commit(
             commit,
             generation=int(settle["generation"]),
             now_ms=int(commit.get("createdAtMs") or int(time.time() * 1000)),
             post_proposal=proposal if isinstance(proposal, Mapping) else None,
             invocation_receipt_id=invocation_receipt_id,
+            resource_usage=(
+                settle.get("resourceUsage")
+                if isinstance(settle.get("resourceUsage"), Mapping)
+                else None
+            ),
         )
+        if receipt.get("details", {}).get("childDispatchId"):
+            self.room_kernel_worker_loop.wake()
         post = dict(proposal) if isinstance(proposal, Mapping) else None
         execution_receipt = (
             self.room_capabilities.execution_receipt(invocation_receipt_id)
@@ -1918,6 +2193,18 @@ class AgentService:
             result["executionReceipt"] = execution_receipt
         validate_kernel_contract("roomSettleResult", result)
         return result
+
+    def governance_read_model(self, *, scope_key: str | None = None) -> dict[str, object]:
+        return {
+            "schemaVersion": "wisdom-weasel.governance-read-model.v1",
+            "governance": self.governance_projection.snapshot(scope_key=scope_key),
+        }
+
+    def knowledge_governance_read_model(self) -> dict[str, object]:
+        return {
+            "schemaVersion": "wisdom-weasel.knowledge-governance-read-model.v1",
+            "knowledge": self.knowledge_promotion.governance_snapshot(),
+        }
 
     def finalize_room_kernel_root(
         self,
@@ -1964,7 +2251,7 @@ class AgentService:
                     delivery_gate_preview_receipt_id,
                     current_artifact_hash=current_artifact_hash,
                 )
-        receipt = self.room_kernel.finalize_root(root_id, now_ms=timestamp, delivery_gate_preview=preview)
+        receipt = self.room_kernel_commands.finalize(root_id, now_ms=timestamp, delivery_gate_preview=preview)
         root = self.room_kernel.root(root_id)
         self.room_kernel_projection.sync_room(str(root["roomId"]), now_ms=timestamp)
         return {"receipt": receipt, "deliveryGateObservation": observation}
@@ -4493,6 +4780,33 @@ class AgentService:
             if isinstance(specification.get("payload"), Mapping)
             else {}
         )
+        room_recovery: dict[str, object] | None = None
+        runtime_binding = self.room_capabilities.runtime_binding(session_id)
+        if runtime_binding is not None:
+            prompt = self.room_prompt_plans.provider_payload(
+                str(runtime_binding["promptCompileReceiptId"])
+            )
+            room_parts = [rendered, str(prompt["providerContext"])]
+            pinned = self.room_skill_receipts.active_for_session(session_id)
+            if pinned is not None:
+                requested = payload.get("roomSkillRecovery")
+                catalog_revision = (
+                    str(requested.get("catalogRevision") or "")
+                    if isinstance(requested, Mapping)
+                    else str(pinned["catalogRevision"])
+                )
+                room_recovery = self.room_skill_receipts.restore_for_compaction(
+                    str(pinned["receiptId"]),
+                    expected_capability_epoch=int(runtime_binding["capabilityEpoch"]),
+                    catalog_revision=catalog_revision,
+                )
+                skill_id = str(room_recovery["skillId"])
+                skill_body = self.room_skill_policy.skill_body(skill_id)
+                room_parts.append(
+                    f'<loaded_skill name="{skill_id}" revision="sha256:{room_recovery["skillHash"]}">\n'
+                    f"{skill_body}\n</loaded_skill>"
+                )
+            rendered = "\n\n".join(part for part in room_parts if part.strip())
         return {
             "schemaVersion": "rag-ime.agent-session-context-refresh.v1",
             "ok": True,
@@ -4504,6 +4818,7 @@ class AgentService:
                 "recallId": str(recall_payload.get("recallId") or ""),
                 "sourceCount": len(recall_payload.get("items") or []),
                 "recentConversationCount": len(recent_messages),
+                "roomContextRecovery": room_recovery,
             },
         }
 
@@ -5463,18 +5778,20 @@ class AgentService:
         prior = getattr(self, "room_kernel_worker_loop", None)
         if prior is not None:
             prior.close()
-        if self.room_kernel.mode == "cohort" and (
+        if self.room_kernel.mode in {"cohort", "kernel_only"} and (
             not callable(getattr(self.runtime, "dispatch_room", None))
             or not callable(getattr(self.runtime, "cancel_room", None))
         ):
-            raise RuntimeError("Room Kernel cohort requires typed Pi Room RPC")
+            raise RuntimeError("managed Room Kernel requires typed Pi Room RPC")
         self.room_kernel_worker = RoomKernelWorker(
             self.room_kernel,
             self.runtime,  # type: ignore[arg-type]
             prepare_dispatch=self._prepare_managed_room_dispatch,
+            accept_runtime_context=self._accept_managed_room_runtime_context,
             revoke_session=self._revoke_room_runtime_capability,
             learning_observer=self._record_room_learning_signal,
         )
+        self.room_kernel_commands = KernelCommandBus(self.room_kernel, self.room_kernel_worker)
         self.room_kernel_worker_loop = RoomKernelWorkerLoop(
             self.room_kernel_worker,
             on_change=self._sync_all_room_kernel_projections,
@@ -5567,7 +5884,7 @@ class AgentService:
             "payload": {"dispatchId": item.get("dispatch_id")},
             "createdAtMs": int(item["created_at_ms"]),
         }
-        return self.room_kernel_worker.apply_control_command(command)
+        return self.room_kernel_commands.control(command)
 
     def _run_room_learning_maintenance(self) -> None:
         now_ms = int(time.time() * 1000)
@@ -5597,9 +5914,19 @@ class AgentService:
         binding = self.room_capabilities.runtime_binding(session_id)
         if binding is None:
             return
+        next_epoch = int(binding["capabilityEpoch"]) + 1
+        manifest_id = str(binding["manifestId"])
+        if not manifest_id.startswith("capability-manifest:"):
+            raise RoomKernelFenceError("Room capability binding has no Dispatch lineage")
+        dispatch = self.room_kernel.dispatch(manifest_id.removeprefix("capability-manifest:"))
+        self.room_skill_receipts.revoke_before_epoch(
+            str(dispatch["rootId"]),
+            new_capability_epoch=next_epoch,
+            revoked_at_ms=now_ms,
+        )
         self.room_capabilities.revoke_runtime(
             session_id,
-            capability_epoch=int(binding["capabilityEpoch"]) + 1,
+            capability_epoch=next_epoch,
             now_ms=now_ms,
         )
 
@@ -5702,7 +6029,7 @@ class AgentService:
         if participant is None:
             return
         kernel_binding = self.room_kernel.session_binding(event.session_id)
-        if self.room_kernel.mode == "cohort" and kernel_binding is not None:
+        if self.room_kernel.mode in {"cohort", "kernel_only"} and kernel_binding is not None:
             # Canonical Room Sessions publish status metadata only. Text,
             # reasoning, tool traces, and audio remain private until a fenced
             # RoomCommit explicitly proposes a RoomPost.
@@ -6867,6 +7194,20 @@ def _compaction_summary(result: Mapping[str, object]) -> str:
     return ""
 
 
+def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
+    """Map a Kernel-owned intent to policy selection without letting Skills route."""
+
+    return {
+        "execute": "implementation",
+        "review": "review",
+        "revise": "feedback",
+        "retry": "debugging",
+        "resume": "implementation",
+        "wake": "implementation",
+        "callback": "handoff",
+    }.get(str(dispatch.get("intentKind") or ""), "implementation")
+
+
 def _required_text(payload: Mapping[str, object], key: str) -> str:
     value = str(payload.get(key) or "").strip()
     if not value:
@@ -7062,6 +7403,40 @@ def _signed_integer(value: object, *, default: int) -> int:
 def _sha256_json(value: object) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _content_hash(value: object) -> str:
+    return f"sha256:{_sha256_json(value)}"
+
+
+def _collaboration_profile_manifest(value: object) -> CollaborationProfileManifest:
+    if not isinstance(value, Mapping):
+        raise RoomKernelFenceError("pinned CollaborationProfile manifest is invalid")
+    return CollaborationProfileManifest(
+        profile_id=_required_text(value, "profileId"),
+        version=_required_text(value, "version"),
+        display_name=_required_text(value, "displayName"),
+        summary=_required_text(value, "summary"),
+        collaboration_role_refs=tuple(str(item) for item in value.get("collaborationRoleRefs") or ()),
+        capability_requests=tuple(str(item) for item in value.get("capabilityRequests") or ()),
+        required_gate_ids=tuple(str(item) for item in value.get("requiredGateIds") or ()),
+        prompt_guidance=tuple(str(item) for item in value.get("promptGuidance") or ()),
+        trust_tier=str(value.get("trustTier") or "signed"),
+    )
+
+
+def _profile_pin_payload(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "rootId": str(row["root_id"]),
+        "profileId": str(row["profile_id"]),
+        "version": str(row["profile_version"]),
+        "bundleContentHash": str(row["bundle_content_hash"]),
+        "definitionContentHash": str(row["definition_content_hash"]),
+        "pointerRevision": int(row["pointer_revision"]),
+        "guardEpoch": int(row["guard_epoch"]),
+        "compileReceiptId": str(row["compile_receipt_id"]),
+        "pinnedAtMs": int(row["pinned_at_ms"]),
+    }
 
 
 def _is_within(path: Path, root: Path) -> bool:

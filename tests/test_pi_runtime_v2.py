@@ -86,15 +86,28 @@ for line in sys.stdin:
     elif method == "completion.cancel":
         result(request, {"requestId": params["requestId"], "cancelled": True})
     elif method == "session.open":
+        room_skill = params.get("roomSkillPolicy") or {}
+        room_skill_load = ({
+            "schemaVersion": "rag-ime.skill-load.v1",
+            "name": room_skill["skillId"],
+            "catalogRevision": "c" * 64,
+            "contentRevision": room_skill["skillHash"],
+            "loadReason": "stage_required",
+        } if room_skill.get("selection") == "required" else None)
         session = sessions.setdefault(session_id, {
             "sessionId": session_id, "piSessionId": "pi-" + session_id,
             "sessionFile": str(pathlib.Path(os.environ["RAG_IME_PI_SESSION_DIR"]) / (session_id + ".jsonl")),
             "leafId": "", "messages": [], "thinkingLevel": params.get("thinkingLevel", "medium"),
             "model": model,
+            "roomCapability": params.get("roomCapability"),
+            "roomProviderContext": params.get("roomProviderContext"),
+            "roomSkillLoad": room_skill_load,
+            "isIdle": True,
             "messageQueue": {"steering": [], "followUp": [], "steeringMode": "one-at-a-time",
                              "followUpMode": "one-at-a-time"},
         })
-        result(request, {"snapshot": session, "evictedSessionId": None})
+        result(request, {"snapshot": session, "evictedSessionId": None,
+                         "roomSkillLoad": room_skill_load})
     elif method == "session.snapshot":
         result(request, sessions[session_id])
     elif method == "session.commands":
@@ -180,12 +193,18 @@ for line in sys.stdin:
     elif method == "room.dispatch":
         if params.get("message") == "crash-host-after-room-dispatch":
             os._exit(23)
+        room_provider = sessions[session_id].get("roomProviderContext") or {}
         result(request, {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
             "receiptKind": "dispatch_accepted", "status": "accepted",
             "rootId": params["rootId"], "dispatchId": params["dispatchId"],
             "generation": params["generation"], "sessionId": session_id,
             "delivery": "prompt", "turnId": "room-turn-" + params["dispatchId"],
+            **({"roomSkillLoad": sessions[session_id]["roomSkillLoad"]}
+               if sessions[session_id].get("roomSkillLoad") else {}),
+            "providerContextReceipt": ({**room_provider,
+                "providerRequestId": "room-turn-" + params["dispatchId"]}
+                if room_provider else None),
         })
     elif method == "room.cancel":
         result(request, {
@@ -194,6 +213,13 @@ for line in sys.stdin:
             "rootId": params["rootId"], "generation": params["generation"],
             "sessionId": session_id, "cancelledContinuationIds": [],
             "activeRunAborted": False,
+            "cancellationSurfaces": {name: {
+                "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
+                "surface": name, "state": "terminated", "targetIds": [],
+            } for name in (
+                "provider", "tool", "exec", "retry", "compaction",
+                "branch_summary", "timer", "continuation", "session")},
+            "pendingTargets": [],
         })
     elif method == "plugins.list":
         result(request, {"plugins": []})
@@ -267,7 +293,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             request_id="surface-one-shot-1",
             provider="deepseek",
             model_id="deepseek-v4-flash",
-            thinking_level="off",
+            thinking_level="high",
             message="只回复这一次",
             on_text_delta=deltas.append,
             timeout_seconds=15,
@@ -287,7 +313,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         params = requests[-1]["params"]
         self.assertEqual(params["provider"], "deepseek")
         self.assertEqual(params["modelId"], "deepseek-v4-flash")
-        self.assertEqual(params["thinkingLevel"], "off")
+        self.assertEqual(params["thinkingLevel"], "high")
         self.assertNotIn("sessionId", params)
         self.assertNotIn("images", params)
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])
@@ -329,7 +355,21 @@ class PiRuntimeV2Tests(unittest.TestCase):
             config=self.runtime.config,
             sessions=self.store,
             events=self.events,
-            session_context_provider=lambda _session: {"roomCapability": capability},
+            session_context_provider=lambda _session: {
+                "roomCapability": capability,
+                "managedSystemPrompt": "stable-room-prefix",
+                "providerContext": "dynamic-room-tail",
+                "roomProviderContext": {
+                    "journalId": "journal:1",
+                    "throughSequence": 1,
+                    "projectionHash": "c" * 64,
+                },
+                "roomSkillPolicy": {
+                    "selection": "required",
+                    "skillId": "room-test-driven-implementation",
+                    "skillHash": "d" * 64,
+                },
+            },
             tool_manifest_provider=lambda _session: [],
         )
         self.runtime.ensure(str(self.first["id"]))
@@ -339,6 +379,13 @@ class PiRuntimeV2Tests(unittest.TestCase):
         ]
         opened = [request for request in requests if request["method"] == "session.open"][-1]
         self.assertEqual(opened["params"]["roomCapability"], capability)
+        self.assertEqual(opened["params"]["systemPrompt"], "stable-room-prefix")
+        self.assertEqual(opened["params"]["sessionContext"], "dynamic-room-tail")
+        self.assertEqual(opened["params"]["roomProviderContext"]["journalId"], "journal:1")
+        self.assertEqual(
+            opened["params"]["roomSkillPolicy"]["skillId"],
+            "room-test-driven-implementation",
+        )
 
     def test_typed_room_rpc_is_negotiated_and_correlated_across_the_host_process(self) -> None:
         self.runtime.stop()
@@ -758,7 +805,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertIn("session.steer", [row["method"] for row in requests])
         self.assertIn("session.follow_up", [row["method"] for row in requests])
 
-    def test_abort_ack_without_agent_settled_retires_only_the_old_turn(self) -> None:
+    def test_abort_ack_without_agent_settled_escalates_to_durable_host_tree_kill(self) -> None:
         session_id = str(self.first["id"])
         accepted = self.runtime.prompt(session_id, "hang-without-settled")
         turn_id = str(accepted["turnId"])
@@ -775,7 +822,14 @@ class PiRuntimeV2Tests(unittest.TestCase):
         completed = [item for item in self.events.replay(session_id)[0] if item.event_type == "turn_completed"]
         self.assertEqual(completed[-1].turn_id, turn_id)
         self.assertEqual(completed[-1].payload["status"], "aborted")
-        self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout")
+        self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout_kill")
+        _wait_until(
+            lambda: self.runtime.runtime_status()["status"] == "faulted"
+            and self.runtime.runtime_status()["runtimeHostKillGate"]["lastKillReceipt"] is not None
+        )
+        kill_gate = self.runtime.runtime_status()["runtimeHostKillGate"]
+        self.assertEqual(kill_gate["lastKillReceipt"]["requestKind"], "cancel_timeout")
+        self.assertEqual(kill_gate["lastKillReceipt"]["state"], "terminated")
 
         completed_count = len(completed)
         self.runtime._handle_host_event({
@@ -789,8 +843,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             len([item for item in self.events.replay(session_id)[0] if item.event_type == "turn_completed"]),
             completed_count,
         )
-        with self.runtime._lock:
-            self.assertEqual(self.runtime._states[session_id].turn_id, "")
+        self.assertNotIn(session_id, self.runtime._states)
 
     def test_abort_settled_error_is_terminal_aborted_not_faulted(self) -> None:
         session_id = str(self.first["id"])

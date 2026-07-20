@@ -3169,6 +3169,7 @@ class DebugImeService:
                 self.core.db_path,
                 organizer=DeepSeekMemoryOrganizer(config),
                 project=project,
+                embedding_provider=self.core.embedding_provider,
             )
             curator.initialize()
             report = curator.run_due(
@@ -6317,6 +6318,20 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
+        if parsed.path == "/api/agent/governance":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.governance_read_model(
+                    scope_key=_query_first(query, "scopeKey") or None
+                ),
+            )
+            return
+        if parsed.path == "/api/agent/knowledge-governance":
+            self._write_json(
+                HTTPStatus.OK,
+                self.service.agent.knowledge_governance_read_model(),
+            )
+            return
         if collaboration_profile_id:
             self._write_json(
                 HTTPStatus.OK,
@@ -7470,6 +7485,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         kernel_room_id, payload, caller_authorized=True
                     ),
                 )
+            elif kernel_room_id and kernel_action == "create":
+                self._write_json(HTTPStatus.CREATED, self.service.agent.create_room_kernel_root(kernel_room_id, payload, caller_authorized=True))
+            elif kernel_room_id and kernel_action == "dispatch":
+                self._write_json(HTTPStatus.ACCEPTED, self.service.agent.dispatch_room_kernel(kernel_room_id, payload, caller_authorized=True))
+            elif kernel_room_id and kernel_action == "finalize":
+                self._write_json(HTTPStatus.OK, self.service.agent.finalize_room_kernel_route(kernel_room_id, payload, caller_authorized=True))
             elif kernel_room_id and kernel_action == "settle":
                 self._write_json(
                     HTTPStatus.OK,

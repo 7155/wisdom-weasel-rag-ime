@@ -135,11 +135,12 @@ describe('Configuration settings WorkContract UI', () => {
     await user.click(await screen.findByRole('option', { name: '深度生成' }));
 
     expect(await screen.findByRole('combobox', { name: '闪电生成模型' })).toHaveTextContent('DeepSeek V4 Flash');
-    expect(screen.getByRole('combobox', { name: '闪电生成思考' })).toHaveTextContent('关闭');
+    expect(screen.getByRole('combobox', { name: '闪电生成思考' })).toHaveTextContent('高');
 
     await user.click(screen.getByRole('combobox', { name: '闪电生成思考' }));
-    expect(await screen.findByRole('option', { name: '关闭' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: '低' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: '高' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '最高' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: '关闭' })).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
 
     expect(screen.queryByRole('combobox', { name: '看图模型' })).not.toBeInTheDocument();
@@ -269,7 +270,7 @@ function settingsPayload() {
       display: { maxWidth: 560 },
       activeRag: {
         quickModel: 'deepseek/deepseek-v4-flash',
-        quickThinkingLevel: 'off',
+        quickThinkingLevel: 'high',
       },
     },
     runtimeConfig: { runtimeRevision: 12, settingsRevision: 'sha256:settings' },
@@ -313,7 +314,7 @@ function schemaPayload() {
         key: 'activeRag.quickThinkingLevel',
         type: 'pi-thinking',
         label: '闪电生成思考',
-        description: '只允许关闭或低',
+        description: '必须启用模型支持的思考档',
         modelKey: 'activeRag.quickModel',
       }],
     }],

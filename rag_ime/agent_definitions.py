@@ -128,6 +128,18 @@ _COLLABORATION_ROLES = (
 
 _COLLABORATION_PROFILES = (
     CollaborationProfileManifest(
+        profile_id="standard-room",
+        version="1",
+        display_name="标准 Room 协作",
+        summary="所有 Room 角色共享的最小治理基线；自定义 Profile 只能进一步收紧。",
+        collaboration_role_refs=(
+            "coordinator@1", "researcher@1", "implementer@1", "reviewer@1", "specialist@1",
+        ),
+        capability_requests=_ALL_CAPABILITIES,
+        required_gate_ids=("settle-decision-required",),
+        prompt_guidance=("收工前必须明确交接、等待、阻塞或完成决定",),
+    ),
+    CollaborationProfileManifest(
         profile_id="evidence-review",
         version="1",
         display_name="证据研究与独立复核",

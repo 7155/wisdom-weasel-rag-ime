@@ -55,6 +55,18 @@ class RoomPromptPlanTests(unittest.TestCase):
         )
         self.assertNotEqual(first["dynamicTailBytes"], second["dynamicTailBytes"])
         self.assertEqual(len(second["receipt"]["plan"]["dynamicTailRefs"]), 2)
+        first_provider = self.store.provider_payload("receipt:1")
+        second_provider = self.store.provider_payload("receipt:2")
+        self.assertEqual(
+            first_provider["stableSystemPrompt"], second_provider["stableSystemPrompt"]
+        )
+        stable_prompt = str(first_provider["stableSystemPrompt"])
+        positions = [
+            stable_prompt.index(f'order="{order}"') for order in range(1, 6)
+        ]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("任务：实现 PromptPlan", first_provider["providerContext"])
+        self.assertIn("预算剩余 42", second_provider["providerContext"])
 
     def test_crash_before_provider_receipt_replays_same_pending_plan(self) -> None:
         entry = self._entry("room_post", "post:1", "未封口事实", 1)

@@ -13,7 +13,7 @@ class GovernanceProjectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="governance-projection-")
         self.db = Path(self.tmp.name) / "governance.sqlite"
-        self.store = GovernanceProjectionStore(self.db); self.assertEqual(self.store.initialize(), 87)
+        self.store = GovernanceProjectionStore(self.db); self.assertEqual(self.store.initialize(), 92)
         self._seed()
 
     def tearDown(self) -> None:

@@ -360,6 +360,13 @@ class CollaborationProfileStore:
             "bindingRevision": str(receipt[3]),
         }
 
+    def active_manifest(self, profile_id: object) -> dict[str, object] | None:
+        active = self.active_ref(profile_id)
+        if active is None:
+            return None
+        version = self._version(str(active["contentHash"]))
+        return {**active, "manifest": _json_object(version[3]), "guardEpoch": self.guard_epoch(profile_id)}
+
     def inspect_profile(self, profile_id: object) -> dict[str, object]:
         normalized_id = _required_text(profile_id, "profile_id")
         pointer = self._pointer(normalized_id)
@@ -414,15 +421,22 @@ class CollaborationProfileStore:
             return []
         marker = f"rag-ime-definition://collaboration-profile/{profile_id}"
         rows = self.conn.execute(
-            """SELECT DISTINCT d.root_id
+            """SELECT root_id FROM (
+                 SELECT DISTINCT d.root_id AS root_id
                FROM room_v2_capability_runtime_bindings b
                JOIN room_kernel_dispatches d ON d.target_session_id = b.session_id
                WHERE b.state IN ('prepared', 'active')
                  AND d.state IN ('pending', 'leased', 'running', 'retry_wait', 'timer_wait')
                  AND instr(b.participant_binding_json, ?) > 0
                  AND instr(b.participant_binding_json, ?) > 0
-               ORDER BY d.root_id""",
-            (marker, content_hash),
+                 UNION
+                 SELECT p.root_id
+                 FROM room_v2_root_profile_pins p
+                 JOIN room_kernel_roots r ON r.root_id=p.root_id
+                 WHERE p.profile_id=? AND p.bundle_content_hash=?
+                   AND r.state NOT IN ('completed','cancelled','failed')
+               ) ORDER BY root_id""",
+            (marker, content_hash, profile_id, content_hash),
         ).fetchall()
         return [str(row[0]) for row in rows]
 

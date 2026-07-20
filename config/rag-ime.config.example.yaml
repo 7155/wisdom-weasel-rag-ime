@@ -55,6 +55,8 @@ settings:
 
   activeRag:
     enabled: true
+    quickModel: deepseek/deepseek-v4-flash
+    quickThinkingLevel: high      # 闪电生成必须启用模型支持的思考档
     shortcut: "ctrl+."
     capture:
       accessibility: true

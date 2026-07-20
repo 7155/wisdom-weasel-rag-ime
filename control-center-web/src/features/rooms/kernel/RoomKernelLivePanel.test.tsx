@@ -64,6 +64,22 @@ describe('RoomKernelLivePanel production adapter', () => {
     expect(transport.subscriptionCalls.at(-1)?.request.lastEventId).toBe('room-a#5');
   });
 
+  it('keeps unknown cancellation non-final after reconnect and shows pending targets', async () => {
+    let unknown = false;
+    const snapshot = vi.fn(() => kernelSnapshot(unknown ? 8 : 1, unknown));
+    const transport = mockTransport({ snapshot });
+    renderPanel(transport);
+    await screen.findByText('实时同步');
+
+    unknown = true;
+    transport.emit('agent.room.kernel.events', rootEvent(3));
+    await waitFor(() => expect(snapshot).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('alert')).toHaveTextContent('仍有后台执行未确认终止');
+    expect(screen.getByRole('button', { name: '停止' })).toBeInTheDocument();
+    expect(screen.queryByText('终态已确认')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('providerunknownprovider:turn-1');
+  });
+
   it('keeps the command disabled when authorization or route hash does not match', async () => {
     const capabilities = capabilityValue();
     const raw = capabilities.raw as { routes: Array<Record<string, unknown>> };
@@ -143,10 +159,20 @@ function route(pathId: string, method: string, subscription: boolean, remoteScop
   return { pathId, method, remoteSafe: true, subscription, params: ['roomId'], query, remoteScopes };
 }
 
-function kernelSnapshot(lastSequence: number) {
+function kernelSnapshot(lastSequence: number, unknown = false) {
+  const rootValue = root();
+  if (unknown) {
+    rootValue.state = 'cancelled_with_unknowns';
+    rootValue.terminalReceiptId = 'terminal-stale';
+  }
   return {
     roomId: 'room-a', lastSequence, snapshotHash: `sha256:${'a'.repeat(64)}`,
-    roots: [root()], tasks: [], dispatches: [], posts: [], sessions: [], receipts: [],
+    roots: [rootValue], tasks: [], dispatches: [], posts: [], sessions: [],
+    receipts: unknown ? [kernelReceipt({ receiptId: 'terminal-stale', receiptKind: 'terminal', generation: 3 })] : [],
+    cancellationSurfaces: unknown ? [{
+      cancelId: 'cancel:1', rootId: 'root-a', dispatchId: 'dispatch:1', surface: 'provider', state: 'unknown',
+      targetRef: '', detail: { targetIds: ['provider:turn-1'] }, updatedAtMs: 8,
+    }] : [],
   };
 }
 

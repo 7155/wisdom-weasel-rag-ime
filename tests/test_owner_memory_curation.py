@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -420,6 +421,175 @@ class _ClaimAwareOrganizer:
                     }
                 ]
             ),
+        }
+
+
+class _BundleCaptureOrganizer:
+    provider_name = "fixture"
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def curate_owner_memory(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        owner_kind: str,
+        owner_id: str,
+        instruction: str = "",
+    ) -> dict[str, object]:
+        del project, owner_kind, owner_id, instruction
+        self.calls.append(bundle)
+        return {
+            "schemaVersion": "rag-ime.owner-memory-curation.v1",
+            "provider": "fixture",
+            "model": "fixture-memory",
+            "sourceDecisions": [
+                {
+                    "sourceRef": item["sourceRef"],
+                    "disposition": "not_for_memory",
+                    "reasonCode": "test_capture_only",
+                    "confidence": 0.99,
+                }
+                for item in bundle.get("inputs") or []
+                if isinstance(item, dict)
+            ],
+            "memoryAtoms": [],
+            "topicBooks": [],
+        }
+
+
+class _StressUpdateOrganizer:
+    provider_name = "fixture-stress"
+    _UPDATE_RE = re.compile(
+        r"输入法部署槽\s+(model-slot-\d{3})\s+当前版本更新为\s+v(\d+)"
+    )
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.missing_claim_keys: list[str] = []
+
+    def curate_owner_memory(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        owner_kind: str,
+        owner_id: str,
+        instruction: str = "",
+    ) -> dict[str, object]:
+        del project, owner_kind, owner_id, instruction
+        self.calls.append(bundle)
+        existing_by_claim = {
+            str(item.get("claimKey") or ""): dict(item)
+            for item in bundle.get("existingMemoryAtoms") or []
+            if isinstance(item, dict) and item.get("claimKey")
+        }
+        decisions: list[dict[str, object]] = []
+        atoms: list[dict[str, object]] = []
+        for raw in bundle.get("inputs") or []:
+            if not isinstance(raw, dict):
+                continue
+            match = self._UPDATE_RE.search(str(raw.get("text") or ""))
+            if match is None:
+                decisions.append(
+                    {
+                        "sourceRef": raw["sourceRef"],
+                        "disposition": "not_for_memory",
+                        "reasonCode": "stress_non_fact",
+                        "confidence": 0.99,
+                    }
+                )
+                continue
+            slot, version = match.groups()
+            claim_key = f"ime:{slot}:current-version"
+            if claim_key not in existing_by_claim:
+                self.missing_claim_keys.append(claim_key)
+                decisions.append(
+                    {
+                        "sourceRef": raw["sourceRef"],
+                        "disposition": "needs_review",
+                        "reasonCode": "stress_missing_previous_claim",
+                        "confidence": 0.99,
+                    }
+                )
+                continue
+            decisions.append(
+                {
+                    "sourceRef": raw["sourceRef"],
+                    "disposition": "remember",
+                    "reasonCode": "stress_version_update",
+                    "confidence": 0.99,
+                }
+            )
+            atoms.append(
+                {
+                    "canonicalText": f"输入法部署槽 {slot} 当前版本为 v{version}。",
+                    "summary": f"{slot} 当前版本",
+                    "kind": "project_fact",
+                    "claimKey": claim_key,
+                    "sourceEventIds": list(raw.get("sourceEventIds") or []),
+                    "confidence": 0.99,
+                    "qualityScore": 0.99,
+                    "directCandidateAllowed": False,
+                }
+            )
+        return {
+            "schemaVersion": "rag-ime.owner-memory-curation.v1",
+            "provider": self.provider_name,
+            "model": "deterministic-stress",
+            "sourceDecisions": decisions,
+            "memoryAtoms": atoms,
+            "topicBooks": [],
+            # Intentionally omit supersedes: the write gate must close the old
+            # current version from the reused claimKey atomically.
+            "supersedes": [],
+        }
+
+
+class _OverCapacityOrganizer:
+    provider_name = "fixture-over-capacity"
+
+    def curate_owner_memory(
+        self,
+        *,
+        bundle: dict[str, object],
+        project: str,
+        owner_kind: str,
+        owner_id: str,
+        instruction: str = "",
+    ) -> dict[str, object]:
+        del project, owner_kind, owner_id, instruction
+        source = dict(bundle["inputs"][0])
+        source_event_ids = list(source.get("sourceEventIds") or [])
+        return {
+            "schemaVersion": "rag-ime.owner-memory-curation.v1",
+            "provider": self.provider_name,
+            "model": "deterministic-over-capacity",
+            "sourceDecisions": [
+                {
+                    "sourceRef": source["sourceRef"],
+                    "disposition": "remember",
+                    "reasonCode": "dense_fact_batch",
+                    "confidence": 0.99,
+                }
+            ],
+            "memoryAtoms": [
+                {
+                    "canonicalText": f"密集输入中的长期事实 {index}。",
+                    "summary": f"事实 {index}",
+                    "kind": "project_fact",
+                    "claimKey": f"dense:fact:{index}",
+                    "sourceEventIds": source_event_ids,
+                    "confidence": 0.99,
+                    "qualityScore": 0.99,
+                    "directCandidateAllowed": False,
+                }
+                for index in range(7)
+            ],
+            "topicBooks": [],
+            "supersedes": [],
         }
 
 
@@ -1253,6 +1423,50 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             )
         )
 
+    def test_explicitly_transient_non_durable_context_is_filtered_before_model(self) -> None:
+        texts = [
+            "这轮演示先隐藏侧栏，产品默认布局没有变化。",
+            "今天试用了一个配色草稿，但没有决定采用它。",
+            "当前只为排查问题打开详细日志，排查结束后不保留这个选择。",
+            "本轮只是检查接口返回格式，没有产生新的项目事实。",
+        ]
+        sources = [
+            self.sources.checkpoint_user_message(
+                session_id=str(self.user_session["id"]),
+                pi_entry_id=f"entry:transient-context:{index}",
+                turn_id=f"turn:transient-context:{index}",
+                text=text,
+                created_at_ms=100 + index,
+            )
+            for index, text in enumerate(texts)
+        ]
+        organizer = _FakeOrganizer()
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+        )
+        curator.initialize()
+
+        report = curator.run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"])
+        self.assertEqual(organizer.calls, [])
+        result = report["results"][0]
+        self.assertEqual(result["modelSourceCount"], 0)
+        self.assertEqual(
+            [item["reasonCode"] for item in result["deterministicDecisions"]],
+            ["explicit_non_durable_context"] * len(texts),
+        )
+        self.assertTrue(
+            all(
+                self.sources.get(str(source["source"]["sourceId"]))["disposition"]
+                == "not_for_memory"
+                for source in sources
+            )
+        )
+
     def test_failed_tool_receipt_is_audit_only(self) -> None:
         source = self.sources.checkpoint_tool_receipt(
             {
@@ -1320,6 +1534,799 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         self.assertEqual(
             stored["dispositionReason"],
             "remember_without_durable_atom",
+        )
+
+    def test_verbatim_atomic_update_can_reuse_existing_claim(self) -> None:
+        old_atom_id = "atom:existing-context-policy"
+        claim_key = "desktop:context:source-priority"
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, scope_project,
+                    confidence, quality_score, status, created_at_ms,
+                    updated_at_ms, owner_kind, owner_id, claim_key,
+                    lineage_id, claim_state, valid_from_ms
+                ) VALUES (?, 'project_decision', ?, ?, ?, 0.99, 0.99,
+                          'active', 10, 10, 'user', 'default', ?, ?,
+                          'current', 10)
+                """,
+                (
+                    old_atom_id,
+                    "输入原文只取输入法自身记录的 committed text。",
+                    "输入原文只取输入法自身记录的 committed text。",
+                    "wisdom-weasel-rag-ime",
+                    claim_key,
+                    f"lineage:{claim_key}",
+                ),
+            )
+            conn.commit()
+
+        update_text = (
+            "按回车时优先读取输入框最终全文；AX 不可用或内容更短时回退到输入法提交记录，"
+            "密码框和 Secure Input 必须拒绝采集。"
+        )
+        source = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:verbatim-existing-update",
+            turn_id="turn:verbatim-existing-update",
+            text=update_text,
+            created_at_ms=100,
+        )
+
+        class _ExistingClaimVerbatimOrganizer:
+            provider_name = "fixture"
+
+            def curate_owner_memory(self, *, bundle, **_kwargs):
+                item = dict(bundle["inputs"][0])
+                return {
+                    "provider": "fixture",
+                    "model": "fixture-memory",
+                    "sourceDecisions": [
+                        {
+                            "sourceRef": item["sourceRef"],
+                            "disposition": "remember",
+                            "reasonCode": "stable_policy_update",
+                            "confidence": 0.99,
+                        }
+                    ],
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": update_text,
+                            # Deliberately change kind as a model can do; the
+                            # existing claim owns its stable category/lineage.
+                            "kind": "project_constraint",
+                            "claimKey": claim_key,
+                            "sourceEventIds": list(item["sourceEventIds"]),
+                            "confidence": 0.99,
+                            "qualityScore": 0.99,
+                            "directCandidateAllowed": False,
+                        }
+                    ],
+                    "topicBooks": [],
+                }
+
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_ExistingClaimVerbatimOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        )
+        report = curator.run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["results"][0]["runStatus"], "applied")
+        self.assertEqual(
+            self.sources.get(str(source["source"]["sourceId"]))["disposition"],
+            "consolidated",
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            rows = conn.execute(
+                """
+                SELECT kind, canonical_text, status, claim_state, lineage_id
+                FROM memory_atoms
+                WHERE claim_key = ?
+                ORDER BY valid_from_ms
+                """,
+                (claim_key,),
+            ).fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0][2:4], ("superseded", "superseded"))
+        self.assertEqual(rows[1][0], "project_decision")
+        self.assertEqual(rows[1][1], update_text)
+        self.assertEqual(rows[1][2:4], ("active", "current"))
+        self.assertEqual(rows[0][4], rows[1][4])
+
+    def test_high_confidence_recalled_slot_repairs_model_claim_key_split(self) -> None:
+        old_claim_key = "agent:capability:catalog-policy"
+        model_claim_key = "agent:context:resident-policy"
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.executemany(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, scope_project,
+                    confidence, quality_score, status, created_at_ms,
+                    updated_at_ms, owner_kind, owner_id, claim_key,
+                    lineage_id, claim_state, valid_from_ms
+                ) VALUES (?, 'project_decision', ?, ?, ?, 0.99, 0.99,
+                          'active', 10, 10, 'user', 'default', ?, ?,
+                          'current', 10)
+                """,
+                (
+                    (
+                        "atom:catalog-policy:v1",
+                        "Agent 启动时加载所有 Skill 正文和全部工具 Schema。",
+                        "Agent 启动时加载所有 Skill 正文和全部工具 Schema。",
+                        "wisdom-weasel-rag-ime",
+                        old_claim_key,
+                        f"lineage:{old_claim_key}",
+                    ),
+                    (
+                        "atom:session-memory:v1",
+                        "个人记忆只在 Session 首轮自动召回。",
+                        "个人记忆只在 Session 首轮自动召回。",
+                        "wisdom-weasel-rag-ime",
+                        "agent:session:memory-injection",
+                        "lineage:agent:session:memory-injection",
+                    ),
+                ),
+            )
+            conn.commit()
+
+        update_text = (
+            "Agent 常驻上下文只保留 Skill 路由卡和工具 name/does，"
+            "需要时再加载正文或 Schema。"
+        )
+        source = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:model-claim-split",
+            turn_id="turn:model-claim-split",
+            text=update_text,
+            created_at_ms=100,
+        )
+
+        class _ClaimSplitOrganizer:
+            provider_name = "fixture"
+
+            def curate_owner_memory(self, *, bundle, **_kwargs):
+                item = dict(bundle["inputs"][0])
+                return {
+                    "provider": "fixture",
+                    "model": "fixture-memory",
+                    "sourceDecisions": [
+                        {
+                            "sourceRef": item["sourceRef"],
+                            "disposition": "remember",
+                            "reasonCode": "stable_policy_update",
+                            "confidence": 0.99,
+                        }
+                    ],
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": update_text,
+                            "kind": "project_constraint",
+                            # This reproduces the real model error: it saw the
+                            # old Atom but renamed the same semantic slot.
+                            "claimKey": model_claim_key,
+                            "sourceEventIds": list(item["sourceEventIds"]),
+                            "confidence": 0.99,
+                            "qualityScore": 0.99,
+                            "directCandidateAllowed": False,
+                        }
+                    ],
+                    "topicBooks": [],
+                }
+
+        report = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_ClaimSplitOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        ).run_due(current_ms=1_000)
+
+        result = report["results"][0]
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(result["runStatus"], "applied")
+        self.assertEqual(result["claimKeyReconciliationCount"], 1)
+        self.assertEqual(
+            result["claimKeyReconciliations"][0]["toClaimKey"],
+            old_claim_key,
+        )
+        self.assertEqual(
+            self.sources.get(str(source["source"]["sourceId"]))["disposition"],
+            "consolidated",
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            original_rows = conn.execute(
+                """
+                SELECT kind, status, claim_state, canonical_text
+                FROM memory_atoms
+                WHERE claim_key = ?
+                ORDER BY valid_from_ms
+                """,
+                (old_claim_key,),
+            ).fetchall()
+            split_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_atoms WHERE claim_key = ?",
+                    (model_claim_key,),
+                ).fetchone()[0]
+            )
+            distractor = conn.execute(
+                """
+                SELECT status, claim_state
+                FROM memory_atoms
+                WHERE claim_key = 'agent:session:memory-injection'
+                """
+            ).fetchone()
+        self.assertEqual(len(original_rows), 2)
+        self.assertEqual(original_rows[0][1:3], ("superseded", "superseded"))
+        self.assertEqual(original_rows[1], ("project_decision", "active", "current", update_text))
+        self.assertEqual(split_count, 0)
+        self.assertEqual(distractor, ("active", "current"))
+
+    def test_mismatched_existing_claim_key_is_reassigned_by_source_semantics(self) -> None:
+        storage_claim = "memory:storage:atom-first"
+        external_claim = "memory:external-agent:ingestion-policy"
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.executemany(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, scope_project,
+                    confidence, quality_score, status, created_at_ms,
+                    updated_at_ms, owner_kind, owner_id, claim_key,
+                    lineage_id, claim_state, valid_from_ms
+                ) VALUES (?, 'project_constraint', ?, ?, ?, 0.99, 0.99,
+                          'active', 10, 10, 'user', 'default', ?, ?,
+                          'current', 10)
+                """,
+                (
+                    (
+                        "atom:storage-policy:v1",
+                        "历史输入片段可以直接进入 Agent 长期上下文。",
+                        "历史输入片段可以直接进入 Agent 长期上下文。",
+                        "wisdom-weasel-rag-ime",
+                        storage_claim,
+                        f"lineage:{storage_claim}",
+                    ),
+                    (
+                        "atom:external-policy:v1",
+                        "Codex 的全部历史会话原文会直接导入长期记忆。",
+                        "Codex 的全部历史会话原文会直接导入长期记忆。",
+                        "wisdom-weasel-rag-ime",
+                        external_claim,
+                        f"lineage:{external_claim}",
+                    ),
+                ),
+            )
+            conn.commit()
+
+        updates = (
+            (
+                "长期记忆已经改为 Atom-first；原始片段只作为可追溯证据，"
+                "不能直接进入 Agent 上下文。"
+            ),
+            (
+                "不再直接导入 Codex 原始会话，只接收近几个月由 Agent 汇总的"
+                "高密度 Session 摘要。"
+            ),
+        )
+        sources = [
+            self.sources.checkpoint_user_message(
+                session_id=str(self.user_session["id"]),
+                pi_entry_id=f"entry:mismatched-existing-claim:{index}",
+                turn_id=f"turn:mismatched-existing-claim:{index}",
+                text=text,
+                created_at_ms=100 + index,
+            )
+            for index, text in enumerate(updates)
+        ]
+
+        class _MismatchedExistingClaimOrganizer:
+            provider_name = "fixture"
+
+            def curate_owner_memory(self, *, bundle, **_kwargs):
+                inputs = [dict(item) for item in bundle["inputs"]]
+                return {
+                    "provider": "fixture",
+                    "model": "fixture-memory",
+                    "sourceDecisions": [
+                        {
+                            "sourceRef": item["sourceRef"],
+                            "disposition": "remember",
+                            "reasonCode": "stable_policy_update",
+                            "confidence": 0.99,
+                        }
+                        for item in inputs
+                    ],
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": updates[0],
+                            "kind": "project_fact",
+                            # Reproduce the live model bug: both unrelated
+                            # updates were assigned to the external-agent slot.
+                            "claimKey": external_claim,
+                            "sourceEventIds": list(inputs[0]["sourceEventIds"]),
+                            "confidence": 0.99,
+                            "qualityScore": 0.99,
+                            "directCandidateAllowed": False,
+                        },
+                        {
+                            "canonicalText": updates[1],
+                            "kind": "project_constraint",
+                            "claimKey": external_claim,
+                            "sourceEventIds": list(inputs[1]["sourceEventIds"]),
+                            "confidence": 0.99,
+                            "qualityScore": 0.99,
+                            "directCandidateAllowed": False,
+                        },
+                    ],
+                    "topicBooks": [],
+                }
+
+        report = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_MismatchedExistingClaimOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        ).run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        result = report["results"][0]
+        self.assertEqual(result["claimKeyReconciliationCount"], 1)
+        self.assertEqual(
+            result["claimKeyReconciliations"][0]["toClaimKey"],
+            storage_claim,
+        )
+        self.assertTrue(
+            all(
+                self.sources.get(str(source["source"]["sourceId"]))["disposition"]
+                == "consolidated"
+                for source in sources
+            )
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            rows = conn.execute(
+                """
+                SELECT claim_key, canonical_text, claim_state
+                FROM memory_atoms
+                ORDER BY claim_key, valid_from_ms
+                """
+            ).fetchall()
+        history = {
+            claim_key: [
+                (text, state)
+                for row_claim, text, state in rows
+                if row_claim == claim_key
+            ]
+            for claim_key in (storage_claim, external_claim)
+        }
+        self.assertEqual(len(history[storage_claim]), 2)
+        self.assertEqual(len(history[external_claim]), 2)
+        self.assertEqual(history[storage_claim][-1], (updates[0], "current"))
+        self.assertEqual(history[external_claim][-1], (updates[1], "current"))
+
+    def test_unique_existing_claim_key_is_not_overridden_by_related_wording(self) -> None:
+        screenshot_claim = "security:desktop:screenshot-policy"
+        context_claim = "desktop:context:source-priority"
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.executemany(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, scope_project,
+                    confidence, quality_score, status, created_at_ms,
+                    updated_at_ms, owner_kind, owner_id, claim_key,
+                    lineage_id, claim_state, valid_from_ms
+                ) VALUES (?, 'project_decision', ?, ?, ?, 0.99, 0.99,
+                          'active', 10, 10, 'user', 'default', ?, ?,
+                          'current', 10)
+                """,
+                (
+                    (
+                        "atom:screenshot-policy:v1",
+                        "桌面 Agent 默认每一步都截图。",
+                        "桌面 Agent 默认每一步都截图。",
+                        "wisdom-weasel-rag-ime",
+                        screenshot_claim,
+                        f"lineage:{screenshot_claim}",
+                    ),
+                    (
+                        "atom:context-priority:v1",
+                        "按回车时优先读取输入框最终全文；AX 不可用时回退到输入法记录。",
+                        "按回车时优先读取输入框最终全文；AX 不可用时回退到输入法记录。",
+                        "wisdom-weasel-rag-ime",
+                        context_claim,
+                        f"lineage:{context_claim}",
+                    ),
+                ),
+            )
+            conn.commit()
+
+        update_text = (
+            "桌面 Agent 默认不截图，优先读取 Accessibility Tree，"
+            "必要时才回退截图。"
+        )
+        self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:unique-existing-claim",
+            turn_id="turn:unique-existing-claim",
+            text=update_text,
+            created_at_ms=100,
+        )
+
+        class _CorrectExistingClaimOrganizer:
+            provider_name = "fixture"
+
+            def curate_owner_memory(self, *, bundle, **_kwargs):
+                item = dict(bundle["inputs"][0])
+                return {
+                    "provider": "fixture",
+                    "model": "fixture-memory",
+                    "sourceDecisions": [
+                        {
+                            "sourceRef": item["sourceRef"],
+                            "disposition": "remember",
+                            "reasonCode": "stable_policy_update",
+                            "confidence": 0.99,
+                        }
+                    ],
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": update_text,
+                            "kind": "security_constraint",
+                            "claimKey": screenshot_claim,
+                            "sourceEventIds": list(item["sourceEventIds"]),
+                            "confidence": 0.99,
+                            "qualityScore": 0.99,
+                            "directCandidateAllowed": False,
+                        }
+                    ],
+                    "topicBooks": [],
+                }
+
+        report = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_CorrectExistingClaimOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        ).run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["results"][0]["claimKeyReconciliationCount"], 0)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            current_rows = dict(
+                conn.execute(
+                    """
+                    SELECT claim_key, canonical_text
+                    FROM memory_atoms
+                    WHERE status = 'active' AND claim_state = 'current'
+                    """
+                ).fetchall()
+            )
+        self.assertEqual(current_rows[screenshot_claim], update_text)
+        self.assertIn("输入框", current_rows[context_claim])
+
+    def test_low_compatibility_same_source_fragment_merges_into_claim_anchor(self) -> None:
+        role_claim = "memory:role-book:write-policy"
+        external_claim = "memory:external-agent:ingestion-policy"
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.executemany(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, scope_project,
+                    confidence, quality_score, status, created_at_ms,
+                    updated_at_ms, owner_kind, owner_id, claim_key,
+                    lineage_id, claim_state, valid_from_ms
+                ) VALUES (?, 'project_decision', ?, ?, ?, 0.99, 0.99,
+                          'active', 10, 10, 'user', 'default', ?, ?,
+                          'current', 10)
+                """,
+                (
+                    (
+                        "atom:role-policy:v1",
+                        "角色书只在 Agent 完成功能或项目里程碑时调用工具写入。",
+                        "角色书只在 Agent 完成功能或项目里程碑时调用工具写入。",
+                        "wisdom-weasel-rag-ime",
+                        role_claim,
+                        f"lineage:{role_claim}",
+                    ),
+                    (
+                        "atom:external-ingestion:v1",
+                        "Codex 原始会话不直接导入，只接收高密度 Session 摘要。",
+                        "Codex 原始会话不直接导入，只接收高密度 Session 摘要。",
+                        "wisdom-weasel-rag-ime",
+                        external_claim,
+                        f"lineage:{external_claim}",
+                    ),
+                ),
+            )
+            conn.commit()
+
+        source_text = (
+            "角色书继续采用里程碑触发；空闲整理只处理高密度摘要，"
+            "不读取逐轮聊天。"
+        )
+        source = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:same-source-fragment",
+            turn_id="turn:same-source-fragment",
+            text=source_text,
+            created_at_ms=100,
+        )
+
+        class _SplitSameSourceOrganizer:
+            provider_name = "fixture"
+
+            def curate_owner_memory(self, *, bundle, **_kwargs):
+                item = dict(bundle["inputs"][0])
+                event_ids = list(item["sourceEventIds"])
+                return {
+                    "provider": "fixture",
+                    "model": "fixture-memory",
+                    "sourceDecisions": [
+                        {
+                            "sourceRef": item["sourceRef"],
+                            "disposition": "remember",
+                            "reasonCode": "stable_policy_update",
+                            "confidence": 0.99,
+                        }
+                    ],
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": "角色书继续采用里程碑触发写入。",
+                            "kind": "project_decision",
+                            "claimKey": role_claim,
+                            "sourceEventIds": event_ids,
+                            "confidence": 0.99,
+                            "qualityScore": 0.99,
+                            "directCandidateAllowed": False,
+                        },
+                        {
+                            "canonicalText": "空闲整理只处理高密度摘要，不读取逐轮聊天。",
+                            "kind": "project_decision",
+                            # Live model incorrectly attached this continuation
+                            # to an unrelated external-ingestion claim.
+                            "claimKey": external_claim,
+                            "sourceEventIds": event_ids,
+                            "confidence": 0.99,
+                            "qualityScore": 0.99,
+                            "directCandidateAllowed": False,
+                        },
+                    ],
+                    "topicBooks": [],
+                }
+
+        report = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_SplitSameSourceOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        ).run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        result = report["results"][0]
+        self.assertEqual(result["claimKeyReconciliationCount"], 1)
+        self.assertEqual(
+            result["claimKeyReconciliations"][0]["reason"],
+            "same_source_low_compatibility_merged_into_anchor",
+        )
+        self.assertEqual(
+            self.sources.get(str(source["source"]["sourceId"]))["disposition"],
+            "consolidated",
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            current_rows = dict(
+                conn.execute(
+                    """
+                    SELECT claim_key, canonical_text
+                    FROM memory_atoms
+                    WHERE status = 'active' AND claim_state = 'current'
+                    """
+                ).fetchall()
+            )
+            external_depth = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_atoms WHERE claim_key = ?",
+                    (external_claim,),
+                ).fetchone()[0]
+            )
+        self.assertIn("里程碑", current_rows[role_claim])
+        self.assertIn("高密度摘要", current_rows[role_claim])
+        self.assertEqual(external_depth, 1)
+
+    def test_concise_existing_claim_update_restores_dropped_source_clause(self) -> None:
+        claim_key = "browser:observation:protocol"
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, scope_project,
+                    confidence, quality_score, status, created_at_ms,
+                    updated_at_ms, owner_kind, owner_id, claim_key,
+                    lineage_id, claim_state, valid_from_ms
+                ) VALUES (
+                    'atom:browser-protocol:v1', 'project_decision', ?, ?, ?,
+                    0.99, 0.99, 'active', 10, 10, 'user', 'default', ?, ?,
+                    'current', 10
+                )
+                """,
+                (
+                    "浏览器插件使用增量 DOM 状态和批量命令。",
+                    "浏览器插件使用增量 DOM 状态和批量命令。",
+                    "wisdom-weasel-rag-ime",
+                    claim_key,
+                    f"lineage:{claim_key}",
+                ),
+            )
+            conn.commit()
+
+        source_text = (
+            "浏览器观察协议已从增量 DOM 状态改为紧凑快照桥接；"
+            "批量执行动作，失败后才回退截图。"
+        )
+        source = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:dropped-source-clause",
+            turn_id="turn:dropped-source-clause",
+            text=source_text,
+            created_at_ms=100,
+        )
+
+        class _ClauseDroppingOrganizer:
+            provider_name = "fixture"
+
+            def curate_owner_memory(self, *, bundle, **_kwargs):
+                item = dict(bundle["inputs"][0])
+                return {
+                    "provider": "fixture",
+                    "model": "fixture-memory",
+                    "sourceDecisions": [
+                        {
+                            "sourceRef": item["sourceRef"],
+                            "disposition": "remember",
+                            "reasonCode": "stable_protocol_update",
+                            "confidence": 0.99,
+                        }
+                    ],
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": (
+                                "浏览器观察协议从增量 DOM 状态改为紧凑快照桥接。"
+                            ),
+                            "kind": "project_decision",
+                            "claimKey": claim_key,
+                            "sourceEventIds": list(item["sourceEventIds"]),
+                            "confidence": 0.99,
+                            "qualityScore": 0.99,
+                            "directCandidateAllowed": False,
+                        }
+                    ],
+                    "topicBooks": [],
+                }
+
+        report = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_ClauseDroppingOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        ).run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        result = report["results"][0]
+        self.assertEqual(result["memoryAtomRepairCount"], 1)
+        self.assertEqual(
+            result["memoryAtomRepairs"][0]["reason"],
+            "concise_existing_claim_source_clause_restored",
+        )
+        self.assertEqual(
+            self.sources.get(str(source["source"]["sourceId"]))["disposition"],
+            "consolidated",
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            current_text = str(
+                conn.execute(
+                    """
+                    SELECT canonical_text FROM memory_atoms
+                    WHERE claim_key = ? AND status = 'active'
+                      AND claim_state = 'current'
+                    """,
+                    (claim_key,),
+                ).fetchone()[0]
+            )
+        self.assertEqual(current_text, source_text)
+
+    def test_related_new_claim_is_not_forced_into_recalled_slot(self) -> None:
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_atoms(
+                    id, kind, text, canonical_text, scope_project,
+                    confidence, quality_score, status, created_at_ms,
+                    updated_at_ms, owner_kind, owner_id, claim_key,
+                    lineage_id, claim_state, valid_from_ms
+                ) VALUES (
+                    'atom:catalog-policy:v1', 'project_decision',
+                    'Agent 启动时加载所有 Skill 正文和全部工具 Schema。',
+                    'Agent 启动时加载所有 Skill 正文和全部工具 Schema。',
+                    'wisdom-weasel-rag-ime', 0.99, 0.99, 'active', 10, 10,
+                    'user', 'default', 'agent:capability:catalog-policy',
+                    'lineage:agent:capability:catalog-policy', 'current', 10
+                )
+                """
+            )
+            conn.commit()
+
+        new_text = "Agent 当前并发执行上限更新为 4 个子任务。"
+        self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:new-agent-limit",
+            turn_id="turn:new-agent-limit",
+            text=new_text,
+            created_at_ms=100,
+        )
+
+        class _DistinctClaimOrganizer:
+            provider_name = "fixture"
+
+            def curate_owner_memory(self, *, bundle, **_kwargs):
+                item = dict(bundle["inputs"][0])
+                return {
+                    "provider": "fixture",
+                    "model": "fixture-memory",
+                    "sourceDecisions": [
+                        {
+                            "sourceRef": item["sourceRef"],
+                            "disposition": "remember",
+                            "reasonCode": "stable_runtime_limit",
+                            "confidence": 0.99,
+                        }
+                    ],
+                    "memoryAtoms": [
+                        {
+                            "canonicalText": new_text,
+                            "kind": "project_constraint",
+                            "claimKey": "agent:runtime:concurrency-limit",
+                            "sourceEventIds": list(item["sourceEventIds"]),
+                            "confidence": 0.99,
+                            "qualityScore": 0.99,
+                            "directCandidateAllowed": False,
+                        }
+                    ],
+                    "topicBooks": [],
+                }
+
+        report = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_DistinctClaimOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        ).run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["results"][0]["claimKeyReconciliationCount"], 0)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            current_claims = {
+                str(row[0])
+                for row in conn.execute(
+                    """
+                    SELECT claim_key FROM memory_atoms
+                    WHERE status = 'active' AND claim_state = 'current'
+                    """
+                ).fetchall()
+            }
+        self.assertEqual(
+            current_claims,
+            {
+                "agent:capability:catalog-policy",
+                "agent:runtime:concurrency-limit",
+            },
         )
 
     def test_rejecting_every_semantic_write_resolves_review_without_forgetting_evidence(
@@ -1598,6 +2605,506 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             json.loads(str(book["memory_atom_ids_json"])),
             [str(current["id"])],
         )
+
+    def test_each_new_fact_recalls_related_atoms_and_expands_topic_book_graph(self) -> None:
+        atoms = (
+            ("atom:qwen-primary", "输入法当前使用 Qwen 0.8B", "ime:primary-model"),
+            ("atom:hot-path", "100M 模型用于输入法热路径", "ime:hot-path-model"),
+            ("atom:fallback", "0.8B 模型作为离线回退", "ime:fallback-model"),
+            ("atom:cadence", "记忆整理每天运行一次", "memory:curation-cadence"),
+            ("atom:dark-ui", "用户长期偏好深色界面", "ui:theme"),
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            for atom_id, text, claim_key in atoms:
+                conn.execute(
+                    """
+                    INSERT INTO memory_atoms(
+                        id, kind, text, canonical_text, scope_project,
+                        confidence, quality_score, status, created_at_ms,
+                        updated_at_ms, owner_kind, owner_id, claim_key,
+                        lineage_id, claim_state, valid_from_ms
+                    ) VALUES (?, 'project_fact', ?, ?, ?, 0.95, 0.95,
+                              'active', 10, 10, 'user', 'default', ?, ?,
+                              'current', 10)
+                    """,
+                    (
+                        atom_id,
+                        text,
+                        text,
+                        "wisdom-weasel-rag-ime",
+                        claim_key,
+                        f"lineage:{claim_key}",
+                    ),
+                )
+            conn.execute(
+                """
+                INSERT INTO memory_books(
+                    book_id, book_type, book_key, title, summary,
+                    normalized_text, project, tags_json,
+                    query_expansions_json, memory_atom_ids_json, status,
+                    confidence, quality_score, created_at_ms, updated_at_ms,
+                    owner_kind, owner_id
+                ) VALUES (
+                    'book:ime-deployment', 'topic', 'ime-deployment',
+                    '输入法模型部署方案', '输入法在线模型、热路径和离线回退。',
+                    '输入法模型部署方案', ?, '["输入法","模型部署"]',
+                    '["100M","Qwen","离线回退"]',
+                    '["atom:qwen-primary","atom:hot-path","atom:fallback"]',
+                    'active', 0.95, 0.95, 10, 10, 'user', 'default'
+                )
+                """,
+                ("wisdom-weasel-rag-ime",),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_books(
+                    book_id, book_type, book_key, title, summary,
+                    normalized_text, project, memory_atom_ids_json, status,
+                    confidence, quality_score, created_at_ms, updated_at_ms,
+                    owner_kind, owner_id
+                ) VALUES (
+                    'book:memory-maintenance', 'topic', 'memory-maintenance',
+                    '记忆整理策略', '记忆整理周期和治理策略。',
+                    '记忆整理策略', ?, '["atom:cadence"]', 'active',
+                    0.95, 0.95, 10, 10, 'user', 'default'
+                )
+                """,
+                ("wisdom-weasel-rag-ime",),
+            )
+            conn.commit()
+
+        self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:multi-fact-recall",
+            turn_id="turn:multi-fact-recall",
+            text="输入法已经切换到 100M 自训练模型。记忆整理改为每天运行两次。",
+            created_at_ms=100,
+        )
+        organizer = _BundleCaptureOrganizer()
+        report = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            daily_interval_ms=60_000,
+        ).run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        bundle = organizer.calls[0]
+        recalled_atoms = {
+            str(item["atomId"])
+            for item in bundle["existingMemoryAtoms"]
+            if isinstance(item, dict)
+        }
+        self.assertTrue(
+            {
+                "atom:qwen-primary",
+                "atom:hot-path",
+                "atom:fallback",
+                "atom:cadence",
+            }.issubset(recalled_atoms)
+        )
+        self.assertNotIn("atom:dark-ui", recalled_atoms)
+        self.assertEqual(
+            {
+                str(item["bookId"])
+                for item in bundle["existingMemoryBooks"]
+                if isinstance(item, dict)
+            },
+            {"book:ime-deployment", "book:memory-maintenance"},
+        )
+        self.assertEqual(bundle["existingMemoryRecall"]["probeCount"], 2)
+        self.assertEqual(
+            bundle["existingMemoryRecall"]["strategy"],
+            "per_fact_hybrid_union_with_book_graph",
+        )
+
+    def test_large_mixed_batches_recall_and_replace_every_target_claim(self) -> None:
+        total_slots = 500
+        target_slots = 120
+        members_by_book: dict[int, list[str]] = {}
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            for slot_index in range(total_slots):
+                slot = f"model-slot-{slot_index:03d}"
+                atom_id = f"atom:stress:{slot}:v1"
+                book_index = slot_index // 10
+                members_by_book.setdefault(book_index, []).append(atom_id)
+                conn.execute(
+                    """
+                    INSERT INTO memory_atoms(
+                        id, kind, text, canonical_text, scope_project,
+                        confidence, quality_score, status, created_at_ms,
+                        updated_at_ms, owner_kind, owner_id, claim_key,
+                        lineage_id, claim_state, valid_from_ms
+                    ) VALUES (?, 'project_fact', ?, ?, ?, 0.99, 0.99,
+                              'active', 10, 10, 'user', 'default', ?, ?,
+                              'current', 10)
+                    """,
+                    (
+                        atom_id,
+                        f"输入法部署槽 {slot} 当前版本为 v1。",
+                        f"输入法部署槽 {slot} 当前版本为 v1。",
+                        "wisdom-weasel-rag-ime",
+                        f"ime:{slot}:current-version",
+                        f"lineage:ime:{slot}:current-version",
+                    ),
+                )
+            for book_index, member_ids in members_by_book.items():
+                conn.execute(
+                    """
+                    INSERT INTO memory_books(
+                        book_id, book_type, book_key, title, summary,
+                        normalized_text, project, tags_json,
+                        query_expansions_json, memory_atom_ids_json, status,
+                        confidence, quality_score, created_at_ms, updated_at_ms,
+                        owner_kind, owner_id
+                    ) VALUES (?, 'topic', ?, ?, ?, ?, ?, ?, ?, ?, 'active',
+                              0.99, 0.99, 10, 10, 'user', 'default')
+                    """,
+                    (
+                        f"book:stress:{book_index:02d}",
+                        f"stress-model-deployment-{book_index:02d}",
+                        f"输入法模型部署分组 {book_index:02d}",
+                        f"管理第 {book_index:02d} 组输入法部署槽。",
+                        f"输入法模型部署分组 {book_index:02d}",
+                        "wisdom-weasel-rag-ime",
+                        json.dumps(
+                            ["输入法", "模型部署", f"group-{book_index:02d}"],
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(
+                            [f"model-slot-{book_index * 10:03d}", "当前版本"],
+                            ensure_ascii=False,
+                        ),
+                        json.dumps(member_ids, ensure_ascii=False),
+                    ),
+                )
+            conn.commit()
+
+        organizer = _StressUpdateOrganizer()
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+            max_sources=64,
+        )
+        v2_order = [(index * 37) % target_slots for index in range(target_slots)]
+        v3_order = [(index * 17) % 60 for index in range(60)]
+        updates = [
+            (slot_index, 2) for slot_index in v2_order
+        ] + [
+            (slot_index, 3) for slot_index in v3_order
+        ]
+        batches = [updates[index : index + 6] for index in range(0, len(updates), 6)]
+        created_at_ms = 100
+        expected_noise_count = 0
+        for batch_index, batch in enumerate(batches):
+            # These unique protocol lines must be discarded before they can
+            # consume the bounded per-fact recall probe budget.
+            for noise_index in range(4):
+                self.sources.checkpoint_user_message(
+                    session_id=str(self.user_session["id"]),
+                    pi_entry_id=f"entry:stress-noise:{batch_index}:{noise_index}",
+                    turn_id=f"turn:stress-noise:{batch_index}:{noise_index}",
+                    text=(
+                        f"curation_prepare runId stress-{batch_index:02d}-"
+                        f"{noise_index:02d}，等待原生审阅。"
+                    ),
+                    created_at_ms=created_at_ms,
+                )
+                created_at_ms += 1
+                expected_noise_count += 1
+            for slot_index, version in batch:
+                slot = f"model-slot-{slot_index:03d}"
+                self.sources.checkpoint_user_message(
+                    session_id=str(self.user_session["id"]),
+                    pi_entry_id=f"entry:stress:{slot}:v{version}",
+                    turn_id=f"turn:stress:{slot}:v{version}",
+                    text=f"输入法部署槽 {slot} 当前版本更新为 v{version}。",
+                    created_at_ms=created_at_ms,
+                )
+                created_at_ms += 1
+
+        # Drain one large backlog through the real six-Atom transactional
+        # boundary. No caller-side batching is allowed to hide cursor bugs.
+        deferred_counts: list[int] = []
+        for batch_index, batch in enumerate(batches):
+            report = curator.run_due(
+                manual=True,
+                owner_kind="user",
+                owner_id="default",
+                current_ms=1_000_000 + batch_index,
+            )
+            self.assertTrue(report["ok"], report)
+            self.assertEqual(report["results"][0]["runStatus"], "applied")
+            self.assertEqual(report["results"][0]["modelSourceCount"], len(batch))
+            deferred_counts.append(
+                int(report["results"][0]["deferredModelInputCount"])
+            )
+            recall = organizer.calls[-1]["existingMemoryRecall"]
+            self.assertEqual(recall["probeCount"], len(batch))
+            self.assertLessEqual(recall["recalledAtomCount"], 20)
+
+        self.assertEqual(len(updates), 180)
+        self.assertEqual(expected_noise_count, 120)
+        self.assertEqual(len(organizer.calls), 30)
+        self.assertGreater(deferred_counts[0], 0)
+        self.assertEqual(deferred_counts[-1], 0)
+        self.assertEqual(organizer.missing_claim_keys, [])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            current_rows = conn.execute(
+                """
+                SELECT id, claim_key, canonical_text
+                FROM memory_atoms
+                WHERE claim_state = 'current' AND status = 'active'
+                """
+            ).fetchall()
+            superseded_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_atoms WHERE claim_state = 'superseded'"
+                ).fetchone()[0]
+            )
+            duplicate_current_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM (
+                        SELECT owner_kind, owner_id, claim_key, COUNT(*) AS n
+                        FROM memory_atoms
+                        WHERE claim_state = 'current' AND status = 'active'
+                        GROUP BY owner_kind, owner_id, claim_key
+                        HAVING n != 1
+                    )
+                    """
+                ).fetchone()[0]
+            )
+            noise_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM agent_memory_sources
+                    WHERE disposition = 'not_for_memory'
+                      AND disposition_reason = 'memory_workflow_instruction'
+                    """
+                ).fetchone()[0]
+            )
+            supersession_count = int(
+                conn.execute("SELECT COUNT(*) FROM memory_supersessions").fetchone()[0]
+            )
+            invalid_interval_count = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM memory_atoms AS newer
+                    JOIN memory_atoms AS older ON older.id = newer.supersedes_id
+                    WHERE older.claim_state != 'superseded'
+                       OR older.valid_to_ms IS NULL
+                       OR older.valid_to_ms != newer.valid_from_ms
+                       OR older.claim_key != newer.claim_key
+                    """
+                ).fetchone()[0]
+            )
+            source_dispositions = {
+                str(row["disposition"]): int(row["n"])
+                for row in conn.execute(
+                    """
+                    SELECT disposition, COUNT(*) AS n
+                    FROM agent_memory_sources
+                    GROUP BY disposition
+                    """
+                ).fetchall()
+            }
+            book_members = [
+                member_id
+                for row in conn.execute(
+                    """
+                    SELECT memory_atom_ids_json
+                    FROM memory_books
+                    WHERE book_type = 'topic' AND status = 'active'
+                    """
+                ).fetchall()
+                for member_id in json.loads(row["memory_atom_ids_json"] or "[]")
+            ]
+
+        current_by_claim = {
+            str(row["claim_key"]): str(row["canonical_text"])
+            for row in current_rows
+        }
+        self.assertEqual(len(current_by_claim), total_slots)
+        self.assertEqual(superseded_count, len(updates))
+        self.assertEqual(supersession_count, len(updates))
+        self.assertEqual(invalid_interval_count, 0)
+        self.assertEqual(duplicate_current_count, 0)
+        self.assertEqual(noise_count, expected_noise_count)
+        self.assertEqual(
+            source_dispositions,
+            {"consolidated": len(updates), "not_for_memory": expected_noise_count},
+        )
+        self.assertEqual(len(book_members), total_slots)
+        self.assertEqual(
+            set(book_members),
+            {str(row["id"]) for row in current_rows},
+        )
+        for slot_index in range(total_slots):
+            slot = f"model-slot-{slot_index:03d}"
+            expected_version = 3 if slot_index < 60 else 2 if slot_index < 120 else 1
+            self.assertEqual(
+                current_by_claim[f"ime:{slot}:current-version"],
+                f"输入法部署槽 {slot} 当前版本为 v{expected_version}。",
+            )
+
+    def test_compound_fact_source_reduces_batch_before_atom_capacity_gate(self) -> None:
+        texts = [
+            "主模型已更新为100M；延迟目标已更新为50ms；整理频率已更新为每天两次。",
+            "角色书已更新为里程碑触发。",
+            "会话记忆已更新为首轮注入。",
+            "Room预算已更新为最近8条。",
+            "浏览器观察已更新为紧凑快照。",
+        ]
+        sources = [
+            self.sources.checkpoint_user_message(
+                session_id=str(self.user_session["id"]),
+                pi_entry_id=f"entry:compound-capacity:{index}",
+                turn_id=f"turn:compound-capacity:{index}",
+                text=text,
+                created_at_ms=100 + index,
+            )
+            for index, text in enumerate(texts)
+        ]
+
+        class _CompoundFactOrganizer:
+            provider_name = "fixture"
+
+            def __init__(self) -> None:
+                self.calls: list[list[str]] = []
+
+            def curate_owner_memory(self, *, bundle, **_kwargs):
+                inputs = [dict(item) for item in bundle["inputs"]]
+                self.calls.append([str(item["text"]) for item in inputs])
+                atoms = []
+                for item in inputs:
+                    clauses = [
+                        part.strip().rstrip("。")
+                        for part in re.split(r"[；;]", str(item["text"]))
+                        if part.strip().rstrip("。")
+                    ]
+                    for clause_index, clause in enumerate(clauses):
+                        event_id = int(item["sourceEventIds"][0])
+                        atoms.append(
+                            {
+                                "canonicalText": clause,
+                                "kind": "project_decision",
+                                "claimKey": f"eval:{event_id}:{clause_index}",
+                                "sourceEventIds": list(item["sourceEventIds"]),
+                                "confidence": 0.99,
+                                "qualityScore": 0.99,
+                                "directCandidateAllowed": False,
+                            }
+                        )
+                return {
+                    "provider": "fixture",
+                    "model": "fixture-memory",
+                    "sourceDecisions": [
+                        {
+                            "sourceRef": item["sourceRef"],
+                            "disposition": "remember",
+                            "reasonCode": "stable_update",
+                            "confidence": 0.99,
+                        }
+                        for item in inputs
+                    ],
+                    "memoryAtoms": atoms,
+                    "topicBooks": [],
+                }
+
+        organizer = _CompoundFactOrganizer()
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        )
+        first = curator.run_due(
+            manual=True,
+            owner_kind="user",
+            owner_id="default",
+            current_ms=1_000,
+        )
+        second = curator.run_due(
+            manual=True,
+            owner_kind="user",
+            owner_id="default",
+            current_ms=2_000,
+        )
+
+        self.assertTrue(first["ok"], first)
+        self.assertTrue(second["ok"], second)
+        first_result = first["results"][0]
+        second_result = second["results"][0]
+        self.assertEqual(first_result["modelSourceCount"], 4)
+        self.assertEqual(first_result["modelFactProbeCount"], 6)
+        self.assertEqual(first_result["deferredModelInputCount"], 1)
+        self.assertEqual(second_result["modelSourceCount"], 1)
+        self.assertEqual(second_result["modelFactProbeCount"], 1)
+        self.assertEqual(second_result["deferredModelInputCount"], 0)
+        self.assertEqual([len(call) for call in organizer.calls], [4, 1])
+        self.assertTrue(
+            all(
+                self.sources.get(str(source["source"]["sourceId"]))["disposition"]
+                == "consolidated"
+                for source in sources
+            )
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            atom_count = int(
+                conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0]
+            )
+        self.assertEqual(atom_count, 7)
+
+    def test_dense_source_over_atom_capacity_fails_closed_without_partial_write(self) -> None:
+        source = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:dense-memory-source",
+            turn_id="turn:dense-memory-source",
+            text="。".join(f"需要长期保留的事实 {index}" for index in range(7)),
+            created_at_ms=100,
+        )
+        report = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_OverCapacityOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        ).run_due(
+            manual=True,
+            owner_kind="user",
+            owner_id="default",
+            current_ms=1_000,
+        )
+
+        self.assertTrue(report["ok"], report)
+        decision = report["results"][0]["modelDecisions"][0]
+        self.assertEqual(decision["disposition"], "needs_review")
+        self.assertEqual(decision["reasonCode"], "atom_batch_capacity_exceeded")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            atom_count = int(
+                conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0]
+            )
+            stored_source = conn.execute(
+                """
+                SELECT disposition, disposition_reason
+                FROM agent_memory_sources
+                WHERE source_id = ?
+                """,
+                (str(source["source"]["sourceId"]),),
+            ).fetchone()
+        self.assertEqual(atom_count, 0)
+        self.assertEqual(stored_source[0], "needs_review")
+        self.assertEqual(stored_source[1], "atom_batch_capacity_exceeded")
 
     def test_explicit_forget_auto_retracts_and_rollback_restores_atom(self) -> None:
         seed = self.sources.checkpoint_user_message(

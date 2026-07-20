@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import sqlite3
 from pathlib import Path
 
 from rag_ime.agent_room_kernel import RoomKernelFenceError, RoomKernelStore
@@ -19,7 +20,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-room-kernel-")
         self.db_path = Path(self.tmp.name) / "rag-ime.sqlite"
         self.store = RoomKernelStore(self.db_path, mode="test")
-        self.assertEqual(self.store.initialize(), 87)
+        self.assertEqual(self.store.initialize(), 92)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -57,6 +58,41 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(shadow.counts("root:1")["dispatches"], 1)
         self.assertEqual(shadow.counts("root:1")["outbox"], 1)
         self.assertIsNone(shadow.lease_next(now_ms=100, ttl_ms=10))
+
+    def test_product_root_and_initial_task_are_created_atomically(self) -> None:
+        created = self.store.create_root_with_task(
+            root("root:atomic"),
+            task("task:atomic", root_id="root:atomic"),
+            budget=10,
+            max_hops=3,
+            max_depth=2,
+            acceptance_criteria=(),
+            now_ms=1,
+        )
+        self.assertEqual(created["task"]["rootId"], created["root"]["rootId"])
+        replayed = self.store.create_root_with_task(
+            root("root:atomic"),
+            task("task:atomic", root_id="root:atomic"),
+            budget=10,
+            max_hops=3,
+            max_depth=2,
+            acceptance_criteria=(),
+            now_ms=2,
+        )
+        self.assertEqual(replayed, created)
+
+        with self.assertRaises(Exception):
+            self.store.create_root_with_task(
+                root("root:rollback"),
+                task("task:atomic", root_id="root:rollback"),
+                budget=10,
+                max_hops=3,
+                max_depth=2,
+                acceptance_criteria=(),
+                now_ms=2,
+            )
+        with self.assertRaises(KeyError):
+            self.store.root("root:rollback")
 
     def test_a_to_b_to_a_is_bounded_by_hop_and_depth_fences(self) -> None:
         self.seed(max_hops=2, max_depth=1)
@@ -99,6 +135,99 @@ class RoomKernelCoreTests(unittest.TestCase):
                 now_ms=13,
             )
 
+    def test_dispatch_commit_atomically_creates_bounded_a_to_b_to_a_continuation(self) -> None:
+        self.seed(max_hops=3, criteria=())
+        first, _ = self.store.enqueue_dispatch(
+            dispatch("dispatch:a1", key="a1", target="participant:a"), now_ms=10
+        )
+        self.store.set_dispatch_wait_state("dispatch:a1", "running", now_ms=11)
+        child_b = dispatch(
+            "dispatch:b1", key="b1", target="participant:b", hop=1,
+            parent=str(first["dispatchId"]),
+        )
+        first_commit = {
+            **commit("commit:a-to-b", "dispatch:a1"),
+            "action": "dispatch",
+            "continuation": {"decision": "dispatch", "childDispatch": child_b},
+        }
+
+        receipt = self.store.apply_commit(first_commit, generation=0, now_ms=12)
+
+        self.assertEqual(receipt["details"]["childDispatchId"], "dispatch:b1")
+        self.assertEqual(self.store.dispatch("dispatch:b1")["state"], "pending")
+        self.assertEqual(self.store.continuation("commit:a-to-b")["decision"], "dispatch")
+        self.store.set_dispatch_wait_state("dispatch:b1", "running", now_ms=13)
+        child_a = dispatch(
+            "dispatch:a2", key="a2", target="participant:a", hop=2,
+            parent="dispatch:b1",
+        )
+        second_commit = {
+            **commit("commit:b-to-a", "dispatch:b1"),
+            "action": "dispatch",
+            "continuation": {"decision": "dispatch", "childDispatch": child_a},
+        }
+        self.store.apply_commit(second_commit, generation=0, now_ms=14)
+        self.assertEqual(self.store.dispatch("dispatch:a2")["parentDispatchId"], "dispatch:b1")
+
+    def test_fifteen_agent_mentions_are_stopped_by_system_hop_ceiling(self) -> None:
+        self.seed(budget=100, max_hops=12, max_depth=4, criteria=())
+        first, _ = self.store.enqueue_dispatch(
+            dispatch("dispatch:hop-0", key="hop-0", target="participant:0"), now_ms=10
+        )
+        parent = str(first["dispatchId"])
+        for hop in range(1, 13):
+            self.store.set_dispatch_wait_state(parent, "running", now_ms=10 + hop)
+            child = dispatch(
+                f"dispatch:hop-{hop}", key=f"hop-{hop}",
+                target=f"participant:{hop % 15}", hop=hop, parent=parent,
+            )
+            self.store.apply_commit(
+                {
+                    **commit(f"commit:hop-{hop - 1}", parent),
+                    "action": "dispatch",
+                    "continuation": {"decision": "dispatch", "childDispatch": child},
+                },
+                generation=0,
+                now_ms=11 + hop,
+            )
+            parent = str(child["dispatchId"])
+        self.store.set_dispatch_wait_state(parent, "running", now_ms=29)
+        with self.assertRaisesRegex(RoomKernelFenceError, "hop limit"):
+            child = dispatch(
+                "dispatch:hop-13", key="hop-13", target="participant:13",
+                hop=13, parent=parent,
+            )
+            self.store.apply_commit(
+                {
+                    **commit("commit:hop-12", parent),
+                    "action": "dispatch",
+                    "continuation": {"decision": "dispatch", "childDispatch": child},
+                },
+                generation=0,
+                now_ms=30,
+            )
+
+    def test_missing_commit_retries_are_bounded_then_block_root(self) -> None:
+        self.seed(criteria=())
+        self.store.enqueue_dispatch(dispatch("dispatch:settle", key="settle"), now_ms=10)
+        self.store.set_dispatch_wait_state("dispatch:settle", "running", now_ms=11)
+
+        first = self.store.record_uncommitted_settle(
+            "dispatch:settle", generation=0, now_ms=12, max_attempts=3
+        )
+        second = self.store.record_uncommitted_settle(
+            "dispatch:settle", generation=0, now_ms=13, max_attempts=3
+        )
+        third = self.store.record_uncommitted_settle(
+            "dispatch:settle", generation=0, now_ms=14, max_attempts=3
+        )
+
+        self.assertEqual(first["receiptKind"], "settle_retry_required")
+        self.assertEqual(second["details"]["attempt"], 2)
+        self.assertEqual(third["receiptKind"], "settle_blocked")
+        self.assertEqual(self.store.root("root:1")["state"], "blocked")
+        self.assertEqual(self.store.task("task:1")["state"], "blocked")
+
     def test_budget_is_reserved_at_enqueue_and_released_by_cancel(self) -> None:
         self.seed(budget=10, criteria=())
         self.store.enqueue_dispatch(dispatch("dispatch:seven", key="seven", cost=7), now_ms=10)
@@ -114,6 +243,65 @@ class RoomKernelCoreTests(unittest.TestCase):
             dispatch("dispatch:four", key="four", cost=4), now_ms=13
         )
         self.assertTrue(was_created)
+
+    def test_hard_resource_limits_reserve_atomically_and_release_on_cancel(self) -> None:
+        self.seed(budget=100, criteria=())
+        for index in range(4):
+            self.store.enqueue_dispatch(
+                dispatch(f"dispatch:parallel-{index}", key=f"parallel-{index}"),
+                now_ms=10 + index,
+            )
+        with self.assertRaisesRegex(RoomKernelFenceError, "concurrency limit"):
+            self.store.enqueue_dispatch(
+                dispatch("dispatch:parallel-4", key="parallel-4"), now_ms=20
+            )
+
+        self.store.cancel_target(
+            root_id="root:1", target_kind="dispatch",
+            target_id="dispatch:parallel-0", now_ms=21,
+        )
+        _item, created = self.store.enqueue_dispatch(
+            dispatch("dispatch:parallel-4", key="parallel-4"), now_ms=22
+        )
+        self.assertTrue(created)
+        limits = self.store.resource_limits("root:1")
+        self.assertEqual(limits["concurrency_reserved"], 4)
+        self.assertEqual(limits["dispatch_reserved"], 4)
+
+    def test_resource_usage_consumes_actuals_without_overselling_other_reservations(self) -> None:
+        self.seed(budget=20, criteria=())
+        self.store.enqueue_dispatch(dispatch("dispatch:usage", key="usage"), now_ms=10)
+        self.store.set_dispatch_wait_state("dispatch:usage", "running", now_ms=11)
+        self.store.apply_commit(
+            commit("commit:usage", "dispatch:usage"), generation=0, now_ms=12,
+            resource_usage={
+                "inputTokens": 1200, "outputTokens": 300, "toolCalls": 2,
+                "toolCost": 40, "retryCount": 1, "repairCount": 0,
+            },
+        )
+        limits = self.store.resource_limits("root:1")
+        self.assertEqual(limits["dispatch_used"], 1)
+        self.assertEqual(limits["dispatch_reserved"], 0)
+        self.assertEqual(limits["input_token_used"], 1200)
+        self.assertEqual(limits["tool_call_used"], 2)
+
+    def test_deadline_and_dispatch_count_are_kernel_owned_hard_limits(self) -> None:
+        self.seed(budget=100, criteria=())
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_root_limits SET dispatch_limit=1 WHERE root_id='root:1'"
+            )
+        self.store.enqueue_dispatch(dispatch("dispatch:first", key="first"), now_ms=10)
+        with self.assertRaisesRegex(RoomKernelFenceError, "dispatch limit"):
+            self.store.enqueue_dispatch(dispatch("dispatch:second", key="second"), now_ms=11)
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_root_limits SET deadline_at_ms=12 WHERE root_id='root:1'"
+            )
+        receipts = self.store.cancel_expired_roots(now_ms=12)
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(self.store.root("root:1")["state"], "cancelled")
 
     def test_old_generation_commit_is_rejected_without_commit_or_outbox_writeback(self) -> None:
         self.seed()
@@ -251,11 +439,11 @@ def root(root_id: str) -> dict[str, object]:
     }
 
 
-def task(task_id: str) -> dict[str, object]:
+def task(task_id: str, *, root_id: str = "root:1") -> dict[str, object]:
     return {
         "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
         "taskId": task_id,
-        "rootId": "root:1",
+        "rootId": root_id,
         "parentTaskId": None,
         "ownerParticipantId": "participant:a",
         "assigneeParticipantId": "participant:a",

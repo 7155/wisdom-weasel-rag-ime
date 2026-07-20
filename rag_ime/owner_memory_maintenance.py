@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
+from .embeddings import embedding_provider_from_env
 from .memory_maintenance_settings import MemoryMaintenanceSettings
 from .owner_memory_curation import OwnerMemoryCurator
 
@@ -114,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         auto_apply=auto_apply,
         include_agent_dialogue=managed.include_agent_dialogue,
         daily_interval_ms=max(60, interval_seconds) * 1_000,
+        embedding_provider=embedding_provider_from_env(),
     )
     curator.initialize()
     report = curator.run_due(

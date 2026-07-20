@@ -44,6 +44,17 @@ export type RootProjection = RoomRootExecutionV2 & {
   updatedAtMs: number;
 };
 
+export type CancellationSurfaceProjection = {
+  cancelId: string;
+  rootId: string;
+  dispatchId: string;
+  surface: 'provider' | 'tool' | 'exec' | 'retry' | 'compaction' | 'branch_summary' | 'timer' | 'continuation' | 'session';
+  state: 'requested' | 'acknowledged' | 'terminated' | 'unknown';
+  targetRef: string;
+  detail: Record<string, unknown>;
+  updatedAtMs: number;
+};
+
 export type RoomKernelDiagnostic = {
   eventId: string;
   kind: 'legacy-private-event' | 'stale-generation' | 'invalid-event';
@@ -65,6 +76,7 @@ export type RoomKernelProjection = {
   receiptsById: Record<string, RoomKernelReceiptV1>;
   terminalReceiptByRootId: Record<string, RoomKernelReceiptV1>;
   cancelReceiptByRootId: Record<string, RoomKernelReceiptV1>;
+  cancellationSurfaces: CancellationSurfaceProjection[];
   diagnostics: RoomKernelDiagnostic[];
 };
 
@@ -78,6 +90,7 @@ export type RoomKernelSnapshot = {
   posts: RoomPostV2[];
   sessions: PrivateSessionProjection[];
   receipts: RoomKernelReceiptV1[];
+  cancellationSurfaces: CancellationSurfaceProjection[];
 };
 
 export type RoomKernelReduction = {
@@ -101,6 +114,7 @@ export function createRoomKernelProjection(roomId: string): RoomKernelProjection
     receiptsById: {},
     terminalReceiptByRootId: {},
     cancelReceiptByRootId: {},
+    cancellationSurfaces: [],
     diagnostics: [],
   };
 }
@@ -144,6 +158,7 @@ export function applyRoomKernelSnapshot(
   for (const post of snapshot.posts) applyPost(next, post);
   for (const session of snapshot.sessions) applySession(next, session, 'snapshot');
   for (const receipt of snapshot.receipts) applyReceipt(next, receipt, 'snapshot');
+  next.cancellationSurfaces = snapshot.cancellationSurfaces.map((item) => ({ ...item, detail: { ...item.detail } }));
   return next;
 }
 
@@ -274,7 +289,7 @@ function reconcileFinal(state: RoomKernelProjection, rootId: string): void {
       && receipt.status === 'applied'
       && receipt.generation === root.generation
       && root.terminalReceiptId === receipt.receiptId
-      && ['completed', 'failed', 'cancelled', 'cancelled_with_unknowns'].includes(root.state),
+      && ['completed', 'failed', 'cancelled'].includes(root.state),
   );
   state.rootsById[rootId] = { ...root, isFinal: terminal };
 }
@@ -358,6 +373,7 @@ function cloneProjection(state: RoomKernelProjection): RoomKernelProjection {
     receiptsById: { ...state.receiptsById },
     terminalReceiptByRootId: { ...state.terminalReceiptByRootId },
     cancelReceiptByRootId: { ...state.cancelReceiptByRootId },
+    cancellationSurfaces: state.cancellationSurfaces.map((item) => ({ ...item, detail: { ...item.detail } })),
     diagnostics: [...state.diagnostics],
   };
 }

@@ -280,14 +280,21 @@ class MemoryCompileStateTest(unittest.TestCase):
             ).split(":", 1)[1]
         )
 
-        def plan_for(atom_id: str, text: str, valid_from_ms: int) -> dict[str, object]:
+        def plan_for(
+            atom_id: str,
+            text: str,
+            valid_from_ms: int,
+            *,
+            kind: str = "project_fact",
+            owner_id: str = "default",
+        ) -> dict[str, object]:
             return memory_book_plan_from_compile_output(
                 {
                     "schemaVersion": "rag-ime.memory-book-compile.v1",
                     "memoryAtoms": [
                         {
                             "atomId": atom_id,
-                            "kind": "project_fact",
+                            "kind": kind,
                             "claimKey": "project:rag-ime.runtime-model",
                             "canonicalText": text,
                             "sourceEventIds": [event_id],
@@ -301,10 +308,18 @@ class MemoryCompileStateTest(unittest.TestCase):
                 project="ime",
                 provider="deepseek",
                 model="v4-flash",
+                owner_id=owner_id,
             )
 
         old_plan = plan_for("atom:model-0.8b", "输入法当前使用 Qwen 0.8B 模型。", 100)
-        new_plan = plan_for("atom:model-100m", "输入法当前使用 100M 自训练模型。", 200)
+        # The model may reclassify a fact as a decision. claimKey, not the
+        # mutable category label, is the version identity.
+        new_plan = plan_for(
+            "atom:model-100m",
+            "输入法当前使用 100M 自训练模型。",
+            200,
+            kind="project_decision",
+        )
         with self._connect() as conn:
             apply_memory_book_plan(conn, old_plan)
             apply_memory_book_plan(conn, new_plan)
@@ -346,6 +361,60 @@ class MemoryCompileStateTest(unittest.TestCase):
                     "SELECT id FROM memory_atoms WHERE id = 'atom:model-100m'"
                 ).fetchone()
             )
+
+    def test_same_claim_key_does_not_cross_owner_boundary(self) -> None:
+        event_id = int(
+            self.core.record_event(
+                self._event("两个 owner 可以各自维护同名事实槽。", "doc:owner")
+            ).split(":", 1)[1]
+        )
+
+        def plan_for(owner_id: str, atom_id: str, text: str) -> dict[str, object]:
+            return memory_book_plan_from_compile_output(
+                {
+                    "memoryAtoms": [
+                        {
+                            "atomId": atom_id,
+                            "kind": "project_fact",
+                            "claimKey": "shared-name:current-model",
+                            "canonicalText": text,
+                            "sourceEventIds": [event_id],
+                            "validFromMs": 100,
+                        }
+                    ]
+                },
+                project="ime",
+                provider="deepseek",
+                model="v4-flash",
+                owner_kind="agent",
+                owner_id=owner_id,
+            )
+
+        with self._connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                plan_for("role-a", "atom:role-a", "角色 A 使用模型 Alpha。"),
+            )
+            apply_memory_book_plan(
+                conn,
+                plan_for("role-b", "atom:role-b", "角色 B 使用模型 Beta。"),
+            )
+            rows = conn.execute(
+                """
+                SELECT owner_id, id, status, claim_state
+                FROM memory_atoms
+                WHERE claim_key = 'shared-name:current-model'
+                ORDER BY owner_id
+                """
+            ).fetchall()
+
+        self.assertEqual(
+            [tuple(row) for row in rows],
+            [
+                ("role-a", "atom:role-a", "active", "current"),
+                ("role-b", "atom:role-b", "active", "current"),
+            ],
+        )
 
     def test_validator_rejects_unplanned_semantic_group(self) -> None:
         event_id = int(self.core.record_event(self._event("合法 Group", "doc:a")).split(":", 1)[1])

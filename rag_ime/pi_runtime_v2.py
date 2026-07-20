@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import subprocess
 import threading
+import time
 import uuid
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -41,9 +43,15 @@ from .pi_runtime import (
     _redact_runtime_text,
     _ui_confirmation_value,
 )
+from .room_runtime_host_kill_gate import RuntimeHostKillGate, process_birth_token
 
 
 _PROTOCOL_VERSION = "2"
+_CANCELLATION_SURFACES = (
+    "provider", "tool", "exec", "retry", "compaction",
+    "branch_summary", "timer", "continuation", "session",
+)
+_CANCELLATION_SURFACE_STATES = {"requested", "acknowledged", "terminated", "unknown"}
 
 
 def _room_generation(value: object) -> int:
@@ -97,10 +105,16 @@ class PiRuntimeHostClient:
         *,
         on_event: Callable[[dict[str, object]], None],
         on_exit: Callable[[int | None, str], None],
+        kill_gate: RuntimeHostKillGate,
+        owner_instance_id: str,
     ) -> None:
         self.config = config
         self.on_event = on_event
         self.on_exit = on_exit
+        self.kill_gate = kill_gate
+        self.owner_instance_id = owner_instance_id
+        self.host_identity = f"pi-host:{uuid.uuid4()}"
+        self.job_identity = f"pi-job:{uuid.uuid4()}"
         self._lock = threading.RLock()
         self._write_lock = threading.Lock()
         self._pending: dict[str, queue.Queue[object]] = {}
@@ -124,17 +138,40 @@ class PiRuntimeHostClient:
             self.config.logs_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.config.prepare_agent_config()
             try:
+                environment = self.config.child_environment()
+                environment["RAG_IME_RUNTIME_HOST_IDENTITY"] = self.host_identity
+                environment["RAG_IME_RUNTIME_JOB_IDENTITY"] = self.job_identity
                 self._process = subprocess.Popen(
                     self.config.launch_host_command(),
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     cwd=self.config.agent_dir,
-                    env=self.config.child_environment(),
+                    env=environment,
                     bufsize=0,
+                    start_new_session=os.name == "posix",
                 )
             except OSError as exc:
                 raise PiRuntimeError(f"failed to start managed Pi Runtime Host: {exc}") from exc
+            process_group_id = (
+                os.getpgid(self._process.pid) if os.name == "posix" else self._process.pid
+            )
+            try:
+                self.kill_gate.register_process(
+                    host_identity=self.host_identity,
+                    owner_instance_id=self.owner_instance_id,
+                    pid=self._process.pid,
+                    process_group_id=process_group_id,
+                    job_identity=self.job_identity,
+                    process_birth_token=process_birth_token(self._process.pid),
+                    executable_ref=str(self.config.executable or ""),
+                    now_ms=int(time.time() * 1000),
+                )
+            except Exception:
+                self._process.kill()
+                self._process.wait(timeout=2)
+                self._process = None
+                raise
             self._stopping = False
             self._stdout_thread = threading.Thread(
                 target=self._read_stdout,
@@ -221,6 +258,7 @@ class PiRuntimeHostClient:
                 stream.close()
         with self._lock:
             self._process = None
+        self.kill_gate.mark_terminated(self.host_identity, now_ms=int(time.time() * 1000))
 
     def diagnostic_error(self) -> str:
         return _redact_runtime_text(self._stderr[-1] if self._stderr else "")
@@ -258,8 +296,11 @@ class PiRuntimeHostClient:
             except subprocess.TimeoutExpired:
                 exit_code = None
         error = protocol_error or self.diagnostic_error()
-        self._fail_pending(PiRuntimeError(error or "Pi Runtime Host exited"))
         self.on_exit(exit_code, error)
+        self.kill_gate.mark_terminated(self.host_identity, now_ms=int(time.time() * 1000))
+        # Wake RPC callers only after the manager and durable process registry
+        # agree the Host is terminal; callers must not observe a stale ready state.
+        self._fail_pending(PiRuntimeError(error or "Pi Runtime Host exited"))
         stderr_thread = self._stderr_thread
         if stderr_thread is not None and stderr_thread is not threading.current_thread():
             stderr_thread.join(timeout=1)
@@ -339,6 +380,15 @@ class PiRuntimeHostManager:
         self._host_capabilities: dict[str, object] = {}
         self._idle_timer: threading.Timer | None = None
         self._intentional_stop = False
+        self._owner_instance_id = f"runtime:{uuid.uuid4()}"
+        self._kill_gate = RuntimeHostKillGate(self.sessions.db_path)
+        self._kill_gate.initialize()
+        self._orphan_kill_receipts = self._kill_gate.reconcile_orphans(
+            owner_instance_id=self._owner_instance_id,
+            now_ms=int(time.time() * 1000),
+        )
+        self._last_kill_receipt: dict[str, object] | None = None
+        self._retired_host_turns: set[tuple[str, str]] = set()
 
     @property
     def runtime_kind(self) -> str:
@@ -361,6 +411,11 @@ class PiRuntimeHostManager:
 
     def runtime_status(self) -> dict[str, object]:
         installed = self.config.executable is not None and self.config.executable.expanduser().is_file()
+        latest_kill_receipt = None
+        if self._last_kill_receipt:
+            latest_kill_receipt = self._kill_gate.receipt(
+                str(self._last_kill_receipt["killReceiptId"])
+            )
         with self._lock:
             busy = sorted(session_id for session_id, state in self._states.items() if state.turn_id)
             open_sessions = sorted(self._open_sessions)
@@ -425,7 +480,40 @@ class PiRuntimeHostManager:
                 "coordinator": True,
                 "modelConfigured": self.config.model_configured,
             },
+            "runtimeHostKillGate": {
+                "ownerInstanceId": self._owner_instance_id,
+                "orphanReconcileReceipts": list(self._orphan_kill_receipts),
+                "lastKillReceipt": latest_kill_receipt,
+            },
         }
+
+    def panic_kill(self, *, requested_by: str, reason: str) -> dict[str, object]:
+        """Immediately kill the registered Host process tree after admin auth."""
+        with self._lifecycle_lock:
+            client = self._require_client()
+            receipt = self._kill_gate.request_kill(
+                client.host_identity,
+                request_kind="admin_panic",
+                requested_by=str(requested_by).strip(),
+                reason=str(reason).strip() or "administrator panic",
+                now_ms=int(time.time() * 1000),
+            )
+            with self._lock:
+                self._last_kill_receipt = dict(receipt)
+                if self._status != "faulted":
+                    self._status = "stopping"
+            return receipt
+
+    def reconcile_runtime_hosts(self) -> list[dict[str, object]]:
+        """Retry bounded orphan termination before a new Host is admitted."""
+        receipts = self._kill_gate.reconcile_orphans(
+            owner_instance_id=self._owner_instance_id,
+            now_ms=int(time.time() * 1000),
+            include_owner=True,
+        )
+        with self._lock:
+            self._orphan_kill_receipts.extend(receipts)
+        return receipts
 
     def _host(self) -> PiRuntimeHostClient:
         with self._lock:
@@ -435,10 +523,13 @@ class PiRuntimeHostManager:
             raise PiRuntimeError("Pi runtime is disabled")
         if self.config.executable is None:
             raise PiRuntimeError(self.config.installation_error or "managed Pi runtime is not installed")
+        self.reconcile_runtime_hosts()
         client = PiRuntimeHostClient(
             self.config,
             on_event=self._handle_host_event,
             on_exit=self._handle_host_exit,
+            kill_gate=self._kill_gate,
+            owner_instance_id=self._owner_instance_id,
         )
         with self._lock:
             self._client = client
@@ -465,10 +556,6 @@ class PiRuntimeHostManager:
             if not self.config.model_configured:
                 raise PiRuntimeError(self.config.model_configuration_error or "Pi model is not configured")
             client = self._host()
-            with self._lock:
-                if session_id in self._open_sessions:
-                    self._schedule_idle_locked()
-                    return {"state": client.send("session.snapshot", {"sessionId": session_id})}
             session = dict(self.sessions.get(session_id))
             binding = self.sessions.runtime_binding(session_id)
             if binding is not None:
@@ -477,14 +564,36 @@ class PiRuntimeHostManager:
                 session["_runtimeBinding"] = binding
             if self._session_context_provider is not None:
                 session.update(dict(self._session_context_provider(session)))
+            with self._lock:
+                already_open = session_id in self._open_sessions
+            if already_open:
+                snapshot = dict(client.send("session.snapshot", {"sessionId": session_id}))
+                current_room = _mapping(snapshot.get("roomCapability"))
+                desired_room = _mapping(session.get("roomCapability"))
+                if (
+                    not desired_room
+                    or current_room.get("promptPlanHash") == desired_room.get("promptPlanHash")
+                ):
+                    with self._lock:
+                        self._schedule_idle_locked()
+                    return {"state": snapshot}
+                if not bool(snapshot.get("isIdle")):
+                    raise PiRuntimeError("managed Room Session must settle before rebinding PromptPlan")
+                client.send("session.close", {"sessionId": session_id})
+                with self._lock:
+                    self._open_sessions.discard(session_id)
+                    self._states.pop(session_id, None)
             roots = [str(value) for value in session.get("workspaceRoots") or [] if str(value).strip()]
             cwd = roots[0] if roots else str(self.config.agent_dir)
             provider, model_id = self.config.resolved_model_reference(session)
             session_file = str((binding or {}).get("transcriptRef") or session.get("sessionFile") or "").strip()
+            managed_system_prompt = str(session.get("managedSystemPrompt") or "")
+            if isinstance(session.get("roomCapability"), Mapping) and not managed_system_prompt:
+                raise PiRuntimeError("managed Room Session has no live PromptPlan payload")
             params: dict[str, object] = {
                 "sessionId": session_id,
                 "cwd": cwd,
-                "systemPrompt": self.config.system_prompt_for_session(session),
+                "systemPrompt": managed_system_prompt or self.config.system_prompt_for_session(session),
                 "toolManifest": self.tool_catalog(session_id),
                 "noContextFiles": (
                     str(session.get("toolProfileVersion") or "")
@@ -496,6 +605,14 @@ class PiRuntimeHostManager:
             }
             if isinstance(session.get("roomCapability"), Mapping):
                 params["roomCapability"] = dict(session["roomCapability"])
+                params["sessionContext"] = str(session.get("providerContext") or "")
+                if isinstance(session.get("roomProviderContext"), Mapping):
+                    params["roomProviderContext"] = dict(session["roomProviderContext"])
+                if isinstance(session.get("roomResourceLimits"), Mapping):
+                    params["roomResourceLimits"] = dict(session["roomResourceLimits"])
+                room_skill = session.get("roomSkillPolicy")
+                if isinstance(room_skill, Mapping) and room_skill.get("selection") == "required":
+                    params["roomSkillPolicy"] = dict(room_skill)
             if provider and model_id:
                 params.update({"provider": provider, "modelId": model_id})
             thinking_level = str(session.get("thinkingLevel") or "").strip().lower()
@@ -531,7 +648,12 @@ class PiRuntimeHostManager:
                 self._status = "ready"
                 self._schedule_idle_locked()
             self.events.publish(session_id, "status_changed", {"status": "ready"})
-            return {"state": snapshot, "session": bound, "evictedSessionId": evicted or None}
+            return {
+                "state": snapshot,
+                "session": bound,
+                "evictedSessionId": evicted or None,
+                "roomSkillLoad": result.get("roomSkillLoad"),
+            }
 
     def prompt(
         self,
@@ -1009,8 +1131,8 @@ class PiRuntimeHostManager:
         normalized_provider = _model_reference_part(provider, field="provider", maximum=80)
         normalized_model = _model_reference_part(model_id, field="modelId", maximum=160)
         normalized_thinking = str(thinking_level or "").strip().lower()
-        if normalized_thinking not in {"off", "low"}:
-            raise ValueError("stateless Pi completion only supports off or low thinking")
+        if normalized_thinking not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("stateless Pi completion received an unsupported thinking level")
         normalized_message = str(message or "").strip()
         if not normalized_message:
             raise ValueError("stateless Pi completion message is required")
@@ -1151,7 +1273,7 @@ class PiRuntimeHostManager:
         generation = _integer(payload.get("generation"))
         if generation < 0:
             raise ValueError("Room dispatch generation must be non-negative")
-        self.ensure(session_id)
+        opened = self.ensure(session_id)
         client = self._require_client()
         with self._lock:
             negotiated = _runtime_primitive_capabilities(
@@ -1179,6 +1301,8 @@ class PiRuntimeHostManager:
             or result.get("status") != "accepted"
         ):
             raise PiRuntimeError("Pi Runtime Host returned an invalid Room dispatch receipt")
+        if "roomSkillLoad" not in result and isinstance(opened.get("roomSkillLoad"), Mapping):
+            result["roomSkillLoad"] = dict(opened["roomSkillLoad"])
         return dict(result)
 
     def cancel_room(
@@ -1195,20 +1319,60 @@ class PiRuntimeHostManager:
             )
         if not negotiated["roomTypes"]:
             raise PiRuntimeError("Pi Runtime Host did not negotiate typed Room RPC")
-        result = self._require_client().send(
-            "room.cancel",
-            {
-                "sessionId": session_id,
-                "rootId": str(root_id).strip(),
-                "generation": _room_generation(generation),
-            },
-        )
+        client = self._require_client()
+        try:
+            result = client.send(
+                "room.cancel",
+                {
+                    "sessionId": session_id,
+                    "rootId": str(root_id).strip(),
+                    "generation": _room_generation(generation),
+                },
+            )
+        except PiRuntimeError as exc:
+            if "timed out" in str(exc).lower():
+                receipt = self._kill_gate.request_kill(
+                    client.host_identity,
+                    request_kind="cancel_timeout",
+                    requested_by=f"session:{session_id}",
+                    reason=f"room.cancel timeout for {root_id}",
+                    now_ms=int(time.time() * 1000),
+                )
+                with self._lock:
+                    self._last_kill_receipt = dict(receipt)
+            raise
         if (
             result.get("schemaVersion") != "wisdom-weasel.room-runtime-receipt.v1"
             or result.get("receiptKind") != "cancel_applied"
             or result.get("rootId") != root_id
         ):
             raise PiRuntimeError("Pi Runtime Host returned an invalid Room cancellation receipt")
+        surfaces = dict(_mapping(result.get("cancellationSurfaces")))
+        if set(surfaces) != set(_CANCELLATION_SURFACES):
+            raise PiRuntimeError("Pi Runtime Host cancellation lacks typed per-surface proof")
+        typed_surfaces: dict[str, dict[str, object]] = {}
+        for surface in _CANCELLATION_SURFACES:
+            proof = dict(_mapping(surfaces.get(surface)))
+            if (
+                proof.get("schemaVersion")
+                != "wisdom-weasel.runtime-surface-termination-receipt.v1"
+                or proof.get("surface") != surface
+                or str(proof.get("state")) not in _CANCELLATION_SURFACE_STATES
+                or not isinstance(proof.get("targetIds", []), list)
+            ):
+                raise PiRuntimeError("Pi Runtime Host cancellation lacks typed per-surface proof")
+            typed_surfaces[surface] = proof
+        derived_pending = [
+            surface for surface in _CANCELLATION_SURFACES
+            if typed_surfaces[surface]["state"] in {"requested", "acknowledged", "unknown"}
+        ]
+        declared_pending = [
+            str(value) for value in result.get("pendingTargets") or [] if str(value).strip()
+        ]
+        if sorted(declared_pending) != sorted(derived_pending):
+            raise PiRuntimeError("Pi Runtime Host cancellation pendingTargets mismatch")
+        result["pendingTargets"] = derived_pending
+        result["cancellationSurfaces"] = typed_surfaces
         return dict(result)
 
     def compact(self, session_id: str, instructions: str = "") -> dict[str, object]:
@@ -1462,6 +1626,8 @@ class PiRuntimeHostManager:
         client_message_id = str(envelope.get("clientMessageId") or "")
         event_type = str(raw.get("type") or "")
         with self._lock:
+            if turn_id and (session_id, turn_id) in self._retired_host_turns:
+                return
             state = self._states.setdefault(session_id, _HostedSessionState())
             if turn_id and turn_id in state.retired_turn_ids:
                 return
@@ -1799,27 +1965,56 @@ class PiRuntimeHostManager:
             if state is None or state.turn_id != turn_id:
                 return
             state.abort_timer = None
-            if len(state.retired_turn_ids) >= 64:
-                state.retired_turn_ids.pop()
-            state.retired_turn_ids.add(turn_id)
-            state.turn_id = ""
-            state.client_message_id = ""
-            state.stream_pi_message_id = ""
-            state.last_agent_messages = []
-            state.final_error = ""
-            state.abort_requested_turn_id = ""
-            state.pending_approvals.clear()
-            state.pending_reviews.clear()
-            state.pending_ui_requests.clear()
-            self._status = "ready"
-            self._schedule_idle_locked()
-            self.sessions.set_status(session_id, "idle")
-            self.events.publish(
-                session_id,
-                "turn_completed",
-                {"status": "aborted", "aborted": True, "terminalEvent": "abort_timeout"},
-                turn_id=turn_id,
-            )
+            client = self._client
+        if client is None or not client.running:
+            return
+        with self._lock:
+            state = self._states.get(session_id)
+            if state is not None and state.turn_id == turn_id:
+                if len(state.retired_turn_ids) >= 64:
+                    state.retired_turn_ids.pop()
+                state.retired_turn_ids.add(turn_id)
+                if len(self._retired_host_turns) >= 256:
+                    self._retired_host_turns.pop()
+                self._retired_host_turns.add((session_id, turn_id))
+                state.turn_id = ""
+                state.client_message_id = ""
+                state.stream_pi_message_id = ""
+                state.last_agent_messages = []
+                state.final_error = ""
+                state.abort_requested_turn_id = ""
+                state.pending_approvals.clear()
+                state.pending_reviews.clear()
+                state.pending_ui_requests.clear()
+        self.sessions.set_status(session_id, "idle")
+        self.events.publish(
+            session_id,
+            "turn_completed",
+            {"status": "aborted", "aborted": True, "terminalEvent": "abort_timeout_kill"},
+            turn_id=turn_id,
+        )
+        receipt = self._kill_gate.request_kill(
+            client.host_identity,
+            request_kind="cancel_timeout",
+            requested_by=f"session:{session_id}",
+            reason=f"session.abort did not settle turn {turn_id}",
+            now_ms=int(time.time() * 1000),
+        )
+        with self._lock:
+            self._last_kill_receipt = dict(receipt)
+            if self._status != "faulted":
+                self._status = "stopping"
+        self.events.publish(
+            session_id,
+            "status_changed",
+            {
+                "status": "aborting",
+                "escalated": True,
+                "killReceiptId": receipt["killReceiptId"],
+                "pendingTargets": receipt["pendingTargets"],
+            },
+            turn_id=turn_id,
+        )
 
     def _schedule_idle_locked(self) -> None:
         self._cancel_idle_locked()

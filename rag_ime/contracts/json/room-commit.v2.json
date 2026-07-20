@@ -11,6 +11,7 @@
     "action": {"type": "string", "enum": ["post", "dispatch", "wait", "complete", "block"]},
     "contentHash": {"type": "string", "minLength": 1},
     "postProposal": {"type": ["object", "null"]},
+    "continuation": {"type": ["object", "null"]},
     "evidenceRefs": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "requirementCoverage": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "createdAtMs": {"type": "integer", "minimum": 0}

@@ -42,12 +42,7 @@ class PromptLayer:
 
 
 class RoomPromptPlanStore:
-    """Shadow-only six-layer PromptPlan compiler around the real Pi producer.
-
-    The live producer remains ``PiRuntimeConfig.system_prompt_for_session``.
-    This store compiles and audits one alternative plan, but never calls Pi,
-    a provider, a tool loader, or the projection receipt API.
-    """
+    """Durable six-layer PromptPlan compiler for canonically bound Room Sessions."""
 
     legacy_producer_ref = "rag_ime.pi_runtime.PiRuntimeConfig.system_prompt_for_session"
 
@@ -85,7 +80,7 @@ class RoomPromptPlanStore:
             {
                 "surface": "live_provider_system_prompt",
                 "producer": self.legacy_producer_ref,
-                "mode": "authoritative_unchanged",
+                "mode": "disabled_for_room_binding",
             },
             *audit,
         ]
@@ -161,7 +156,41 @@ class RoomPromptPlanStore:
             "stablePrefixBytes": stable_prefix,
             "dynamicTailBytes": dynamic_tail,
             "created": created,
-            "mode": "shadow_compare_only",
+            "mode": "live_room_binding",
+        }
+
+    def provider_payload(self, receipt_id: str) -> dict[str, object]:
+        """Rebuild the live cache-stable prefix and append-only Room tail."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM room_v2_prompt_compile_receipts WHERE receipt_id = ?",
+                (_required(receipt_id, "receipt_id"),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(receipt_id)
+        receipt = _receipt_payload(row)
+        plan = dict(receipt["plan"])
+        projection = self.projections.projection(
+            str(plan["journalId"]), expected_generation=int(plan["generation"])
+        )
+        stable_prompt = _provider_layer_prompt(plan["layers"])
+        sealed = _provider_projection_text(projection["sealedPrefix"], state="sealed")
+        dynamic = _provider_projection_text(projection["pendingTail"], state="pending")
+        return {
+            "schemaVersion": "wisdom-weasel.room-provider-context.v1",
+            "promptCompileReceiptId": receipt["receiptId"],
+            "promptPlanHash": plan["planHash"],
+            "stableSystemPrompt": stable_prompt + sealed,
+            "providerContext": dynamic,
+            "journalId": plan["journalId"],
+            "generation": plan["generation"],
+            "throughSequence": projection["throughSequence"],
+            "sealedThroughSequence": projection["sealedThroughSequence"],
+            "projectionHash": projection["projectionHash"],
+            "dynamicTailRefs": [
+                str(item["contextEntryId"]) for item in projection["pendingTail"]
+            ],
         }
 
     def record_compare_diff(
@@ -317,7 +346,10 @@ def _compile_layers(
     stable_parts: list[bytes] = []
     for order, name, expected_producer, optional in PROMPT_LAYER_SPECS:
         layer = by_name[name]
-        if layer.producer != expected_producer:
+        allowed_producers = {expected_producer}
+        if name == "room_profile_overlay":
+            allowed_producers.add("guard-materialization")
+        if layer.producer not in allowed_producers:
             raise PromptProducerConflict(f"{name} has an unregistered prompt producer")
         if name == "provider_dynamic_facts" and layer.content:
             raise ValueError("Room dynamic facts must come only from ProviderProjectionJournal")
@@ -341,6 +373,7 @@ def _compile_layers(
                 "ref": _required(layer.ref, "layer_ref"), "contentHash": content_hash,
                 "instructionDomains": list(_refs(layer.instruction_domains)),
                 "omitted": not bool(layer.content),
+                "content": layer.content,
             }
         )
         audit.append(
@@ -372,6 +405,37 @@ def _binding_identity(
         "capabilityRevision": str(room_binding["capabilityRevision"]),
         "capabilityEpoch": int(participant_binding["capabilityEpoch"]),
     }
+
+
+def _provider_layer_prompt(layers: object) -> str:
+    if not isinstance(layers, list):
+        raise PromptPlanConflict("PromptPlan layers are corrupt")
+    stable = [item for item in layers if isinstance(item, Mapping) and int(item.get("order", 0)) <= 5]
+    if [int(item.get("order", 0)) for item in stable] != [1, 2, 3, 4, 5]:
+        raise PromptPlanConflict("PromptPlan stable layer order changed")
+    parts = ["<room-prompt-plan schema=\"wisdom-weasel.prompt-plan.v1\">\n"]
+    for item in stable:
+        parts.extend(
+            (
+                f'<layer order="{item["order"]}" name="{item["layer"]}" ref="{item["ref"]}">\n',
+                str(item.get("content") or ""),
+                "\n</layer>\n",
+            )
+        )
+    parts.append("</room-prompt-plan>\n")
+    return "".join(parts)
+
+
+def _provider_projection_text(items: object, *, state: str) -> str:
+    if not isinstance(items, list) or not items:
+        return ""
+    lines = [f'<room-projection state="{state}">']
+    for item in items:
+        if not isinstance(item, Mapping):
+            raise PromptPlanConflict("Room projection item is corrupt")
+        lines.append(str(item.get("content") or ""))
+    lines.append("</room-projection>")
+    return "\n".join(lines) + "\n"
 
 
 def _receipt_payload(row: sqlite3.Row) -> dict[str, object]:

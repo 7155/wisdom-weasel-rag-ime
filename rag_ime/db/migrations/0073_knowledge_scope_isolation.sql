@@ -58,7 +58,7 @@ DROP INDEX IF EXISTS idx_memory_atoms_one_current_claim;
 CREATE UNIQUE INDEX idx_memory_atoms_one_current_claim
 ON memory_atoms(
     knowledge_domain, owner_kind, owner_id, scope_kind, scope_id,
-    claim_key, COALESCE(scope_project, ''), COALESCE(scope_app, ''), kind
+    claim_key, COALESCE(scope_project, ''), COALESCE(scope_app, '')
 )
 WHERE claim_key <> '' AND claim_state = 'current'
   AND status IN ('active', 'approved');

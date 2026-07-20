@@ -4,9 +4,10 @@ description: Governed workflow for reviewing evidence and proposing RAG-IME memo
 when:
   - 用户要求审阅、整理、应用或回滚智鼬记忆草案
   - 用户询问 ime_memory 草案审批流程
-does: 用 ime_memory 准备并受控应用记忆草案。
+  - 项目、功能、修复或迁移已完成，需要判断是否形成可复用记忆或角色能力记录
+does: 先过持久信息门，再用 ime_memory 或 agent_role_book 生成受控草案。
 notFor:
-  - 普通记忆查询或自动生成
+  - 普通聊天、进度播报、失败回执或未完成工作
   - 直接读写 SQLite
   - 绕过逐项审批
 ---
