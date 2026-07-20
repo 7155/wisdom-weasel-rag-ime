@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rich Blocks QA</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { min-width: 0; min-height: 100%; margin: 0; }
+      body { background: var(--color-surface); padding: 16px; }
+      #root { width: min(700px, 100%); min-width: 0; margin: 0 auto; }
+      @media (max-width: 520px) { body { padding: 8px; } }
+    </style>
+  </head>
+  <body>
+    <main id="root"></main>
+    <script type="module" src="./rich-blocks.tsx"></script>
+  </body>
+</html>

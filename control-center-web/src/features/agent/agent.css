@@ -336,6 +336,43 @@
 .agent-task-plan { margin: 10px 0; padding: 10px 12px; border-left: 3px solid var(--color-project); background: var(--color-project-soft); }
 .agent-task-plan strong { font-size: 13px; }
 .agent-task-plan ol { margin: 7px 0 0; padding-left: 20px; font-size: 13px; }
+.agent-rich-card, .agent-rich-artifact, .agent-rich-status, .agent-rich-collapsible { width: min(100%, 620px); max-width: 100%; box-sizing: border-box; margin: 9px 0; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface-subtle); }
+.agent-rich-card { padding: 11px 12px; border-left: 3px solid var(--color-info); }
+.agent-rich-card[data-tone='success'] { border-left-color: var(--color-success); }
+.agent-rich-card[data-tone='warning'] { border-left-color: var(--color-warning); }
+.agent-rich-card[data-tone='danger'] { border-left-color: var(--color-danger); }
+.agent-rich-card > header { margin-bottom: 6px; font-size: 14px; }
+.agent-rich-card > .agent-markdown { font-size: 13px; }
+.agent-rich-card dl, .agent-rich-status dl { display: grid; gap: 4px; margin: 8px 0 0; }
+.agent-rich-card dl > div, .agent-rich-status dl > div { display: grid; min-width: 0; grid-template-columns: minmax(76px, auto) minmax(0, 1fr); gap: 8px; }
+.agent-rich-card dt, .agent-rich-status dt { color: var(--color-text-tertiary); }
+.agent-rich-card dd, .agent-rich-status dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.agent-rich-collapsible { overflow: hidden; }
+.agent-rich-collapsible > summary { display: grid; min-height: 40px; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; list-style: none; font-size: 13px; font-weight: 700; }
+.agent-rich-collapsible > summary::-webkit-details-marker { display: none; }
+.agent-rich-collapsible > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.agent-rich-collapsible > summary > svg { color: var(--color-accent); }
+.agent-rich-collapsible > summary > small { color: var(--color-text-tertiary); font-size: 12px; font-weight: 500; }
+.agent-rich-checklist > ul { display: grid; gap: 0; margin: 0; padding: 0 10px 8px; list-style: none; }
+.agent-rich-checklist > p, .agent-rich-table > p { margin: 0; padding: 0 10px 10px; color: var(--color-text-tertiary); font-size: 13px; }
+.agent-rich-checklist li { display: grid; min-height: 34px; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 7px; border-top: 1px solid var(--color-border); font-size: 13px; }
+.agent-rich-checklist li > span:first-child { display: grid; place-items: center; color: var(--color-success); }
+.agent-rich-checklist li[data-checked='true'] > span:last-child { color: var(--color-text-secondary); text-decoration: line-through; }
+.agent-rich-checklist__empty { width: 13px; height: 13px; border: 1px solid var(--color-border-strong); border-radius: 3px; }
+.agent-rich-table > div { max-width: 100%; overflow-x: auto; border-top: 1px solid var(--color-border); }
+.agent-rich-table table { width: 100%; min-width: max-content; border-collapse: collapse; font-size: 13px; }
+.agent-rich-table th, .agent-rich-table td { max-width: 320px; padding: 7px 9px; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); text-align: left; overflow-wrap: anywhere; }
+.agent-rich-table th:last-child, .agent-rich-table td:last-child { border-right: 0; }
+.agent-rich-table th { background: var(--color-surface); color: var(--color-text-secondary); }
+.agent-rich-artifact, .agent-rich-status { display: grid; min-height: 52px; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 9px 10px; }
+.agent-rich-artifact > svg, .agent-rich-status > svg { color: var(--color-accent); }
+.agent-rich-artifact > span, .agent-rich-status > span { display: grid; min-width: 0; gap: 2px; }
+.agent-rich-artifact strong, .agent-rich-status strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-rich-artifact small, .agent-rich-status small { color: var(--color-text-tertiary); font-size: 13px; overflow-wrap: anywhere; }
+.agent-rich-status[data-tone='success'] > svg { color: var(--color-success); }
+.agent-rich-status[data-tone='danger'] > svg { color: var(--color-danger); }
+.agent-rich-status dl { grid-column: 2 / -1; }
+.agent-code-collapse > .agent-code-block { width: 100%; margin: 0; border: 0; border-top: 1px solid var(--color-border); border-radius: 0; }
 .agent-unknown-block, .agent-structured-block { margin: 8px 0; color: var(--color-text-secondary); font-size: 13px; }
 .agent-safe-fields { display: grid; gap: 3px; margin: 8px 0 0; }
 .agent-safe-fields > div { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 8px; }
@@ -345,6 +382,12 @@
 .agent-approval-block > span { display: grid; min-width: 0; }
 .agent-approval-block small { color: var(--color-text-secondary); }
 .agent-approval-block__actions { display: flex !important; min-width: max-content !important; flex: 0 0 auto !important; justify-content: flex-end; gap: 5px; }
+
+@media (max-width: 520px) {
+  .agent-rich-artifact, .agent-rich-status { grid-template-columns: 20px minmax(0, 1fr) auto; }
+  .agent-rich-status dl { grid-column: 1 / -1; }
+  .agent-rich-card dl > div, .agent-rich-status dl > div { grid-template-columns: 72px minmax(0, 1fr); }
+}
 
 .agent-activity-group { width: min(100%, 620px); max-width: 100%; min-width: 0; margin: 2px 0 11px; overflow: hidden; }
 .agent-activity { display: grid; width: 100%; min-height: 46px; grid-template-columns: 28px minmax(0, 1fr) 18px; align-items: center; gap: 9px; margin: 0; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: color-mix(in srgb, var(--color-surface-subtle) 48%, transparent); color: var(--color-text); font: inherit; text-align: left; cursor: pointer; transition: transform var(--duration-press) var(--ease-press), box-shadow var(--duration-enter) var(--ease-standard); }
