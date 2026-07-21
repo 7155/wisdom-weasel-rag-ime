@@ -1,42 +1,25 @@
 import { Navigate, createHashRouter } from 'react-router-dom';
-import { PrimitivesShowcase } from '@/components/primitives';
-import { AgentFeature } from '@/features/agent';
-import { BrowserFeature } from '@/features/browser';
-import { ConfigurationFeature } from '@/features/configuration';
-import { ContextDebugFeature } from '@/features/context-debug';
-import { DiagnosticsFeature } from '@/features/diagnostics';
-import { HistoryFeature } from '@/features/history';
-import { GovernanceFeature } from '@/features/governance';
-import { InputMethodFeature } from '@/features/input-method';
-import { KnowledgeFeature } from '@/features/knowledge';
-import { MemoryFeature } from '@/features/memory';
-import { ObservabilityFeature } from '@/features/observability';
-import { OverviewFeature } from '@/features/overview';
 import { PlanningFeature } from '@/features/planning';
-import { PluginsFeature } from '@/features/plugins';
-import { RolesFeature } from '@/features/roles';
-import { RoomsFeature } from '@/features/rooms';
-import { VoiceFeature } from '@/features/voice';
 
 export const router = createHashRouter([
   { path: '/', element: <Navigate replace to="/planning" /> },
-  { path: '/overview', element: <OverviewFeature /> },
-  { path: '/input', element: <InputMethodFeature /> },
-  { path: '/agent', element: <AgentFeature /> },
-  { path: '/rooms', element: <RoomsFeature /> },
-  { path: '/roles', element: <RolesFeature /> },
-  { path: '/plugins', element: <PluginsFeature /> },
-  { path: '/browser', element: <BrowserFeature /> },
-  { path: '/voice', element: <VoiceFeature /> },
+  { path: '/overview', lazy: async () => ({ Component: (await import('@/features/overview')).OverviewFeature }) },
+  { path: '/input', lazy: async () => ({ Component: (await import('@/features/input-method')).InputMethodFeature }) },
+  { path: '/agent', lazy: async () => ({ Component: (await import('@/features/agent')).AgentFeature }) },
+  { path: '/rooms', lazy: async () => ({ Component: (await import('@/features/rooms')).RoomsFeature }) },
+  { path: '/roles', lazy: async () => ({ Component: (await import('@/features/roles')).RolesFeature }) },
+  { path: '/plugins', lazy: async () => ({ Component: (await import('@/features/plugins')).PluginsFeature }) },
+  { path: '/browser', lazy: async () => ({ Component: (await import('@/features/browser')).BrowserFeature }) },
+  { path: '/voice', lazy: async () => ({ Component: (await import('@/features/voice')).VoiceFeature }) },
   { path: '/planning', element: <PlanningFeature /> },
-  { path: '/memory', element: <MemoryFeature /> },
-  { path: '/knowledge', element: <KnowledgeFeature /> },
-  { path: '/governance', element: <GovernanceFeature /> },
-  { path: '/history', element: <HistoryFeature /> },
-  { path: '/observability', element: <ObservabilityFeature /> },
-  { path: '/context-debug', element: <ContextDebugFeature /> },
-  { path: '/diagnostics', element: <DiagnosticsFeature /> },
-  { path: '/configuration', element: <ConfigurationFeature /> },
-  { path: '/_primitives', element: <PrimitivesShowcase /> },
+  { path: '/memory', lazy: async () => ({ Component: (await import('@/features/memory')).MemoryFeature }) },
+  { path: '/knowledge', lazy: async () => ({ Component: (await import('@/features/knowledge')).KnowledgeFeature }) },
+  { path: '/governance', lazy: async () => ({ Component: (await import('@/features/governance')).GovernanceFeature }) },
+  { path: '/history', lazy: async () => ({ Component: (await import('@/features/history')).HistoryFeature }) },
+  { path: '/observability', lazy: async () => ({ Component: (await import('@/features/observability')).ObservabilityFeature }) },
+  { path: '/context-debug', lazy: async () => ({ Component: (await import('@/features/context-debug')).ContextDebugFeature }) },
+  { path: '/diagnostics', lazy: async () => ({ Component: (await import('@/features/diagnostics')).DiagnosticsFeature }) },
+  { path: '/configuration', lazy: async () => ({ Component: (await import('@/features/configuration')).ConfigurationFeature }) },
+  { path: '/_primitives', lazy: async () => ({ Component: (await import('@/components/primitives')).PrimitivesShowcase }) },
   { path: '*', element: <Navigate replace to="/planning" /> },
 ]);

@@ -1,3 +1,5 @@
+import { LoaderCircle } from 'lucide-react';
+import { lazy, Suspense } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router-dom';
 import { queryClient } from '@/app/query-client';
@@ -9,13 +11,17 @@ import { AppShell } from '@/components/layout';
 import { ToastProvider, TooltipProvider } from '@/components/primitives';
 import { MotionProvider } from '@/design/motion';
 import { ThemeProvider } from '@/design/themes';
-import { FilePreviewHost } from '@/features/agent/file-preview/FilePreviewHost';
+import { useFilePreviewStore } from '@/features/agent/file-preview/file-preview-store';
 import '@/design/tokens.css';
 import '@/design/typography.css';
 import '@/components/primitives/primitives.css';
 import '@/components/primitives/showcase.css';
 import '@/components/feedback/feedback.css';
 import '@/components/layout/layout.css';
+
+const FilePreviewHost = lazy(async () => ({
+  default: (await import('@/features/agent/file-preview/FilePreviewHost')).FilePreviewHost,
+}));
 
 export function App() {
   return (
@@ -26,10 +32,12 @@ export function App() {
             <GlobalFeedbackProvider>
               <ControlTransportProvider>
                 <ControlConnectionMonitor />
-                <FilePreviewHost />
+                <FilePreviewLayer />
                 <QueryClientProvider client={queryClient}>
                   <AppShell>
-                    <RouterProvider router={router} />
+                    <Suspense fallback={<RouteLoading />}>
+                      <RouterProvider router={router} />
+                    </Suspense>
                   </AppShell>
                 </QueryClientProvider>
               </ControlTransportProvider>
@@ -38,5 +46,20 @@ export function App() {
         </TooltipProvider>
       </MotionProvider>
     </ThemeProvider>
+  );
+}
+
+function FilePreviewLayer() {
+  const open = useFilePreviewStore((state) => state.open);
+  if (!open) return null;
+  return <Suspense fallback={null}><FilePreviewHost /></Suspense>;
+}
+
+function RouteLoading() {
+  return (
+    <main className="shell-route-loading" aria-live="polite">
+      <LoaderCircle className="ui-spin" size={20} />
+      <span>正在打开工作台</span>
+    </main>
   );
 }
