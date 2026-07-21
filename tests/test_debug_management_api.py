@@ -2132,6 +2132,78 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(updated["session"]["title"], "深度检索")
         self.assertEqual(deleted["sessionId"], session_id)
 
+    def test_agent_file_preview_http_route_preserves_session_and_digest_authority(self) -> None:
+        session = self.service.agent.create_session({"title": "文件预览"})["session"]
+        session_id = str(session["id"])
+        other = self.service.agent.create_session({"title": "其他会话"})["session"]
+        other_session_id = str(other["id"])
+        markdown = "# 交付\n\n- 已验证".encode("utf-8")
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}/api/agent"
+        try:
+            request = Request(
+                f"{base_url}/media/import?sessionId={quote(session_id, safe='')}&fileName=handoff.md",
+                data=markdown,
+                headers={"Content-Type": "text/markdown"},
+                method="POST",
+            )
+            with urlopen(request, timeout=5) as response:
+                imported = json.loads(response.read().decode("utf-8"))
+            receipt = imported["media"]
+            media_id = str(receipt["mediaId"])
+            digest = str(receipt["sha256"])
+            preview_url = (
+                f"{base_url}/media/{quote(media_id, safe='')}/preview"
+                f"?sessionId={quote(session_id, safe='')}&sha256={digest}"
+            )
+            with urlopen(preview_url, timeout=5) as response:
+                preview = json.loads(response.read().decode("utf-8"))
+            with urlopen(
+                f"{base_url}/media/{quote(media_id, safe='')}/content"
+                f"?sessionId={quote(session_id, safe='')}",
+                timeout=5,
+            ) as response:
+                self.assertEqual(response.read(), markdown)
+                self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+                self.assertIn("sandbox", response.headers["Content-Security-Policy"])
+                self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+
+            with self.assertRaises(HTTPError) as wrong_session:
+                urlopen(
+                    f"{base_url}/media/{quote(media_id, safe='')}/preview"
+                    f"?sessionId={quote(other_session_id, safe='')}",
+                    timeout=5,
+                )
+            self.assertEqual(wrong_session.exception.code, 400)
+            wrong_session.exception.close()
+
+            with self.assertRaises(HTTPError) as wrong_digest:
+                urlopen(
+                    f"{base_url}/media/{quote(media_id, safe='')}/preview"
+                    f"?sessionId={quote(session_id, safe='')}&sha256={'f' * 64}",
+                    timeout=5,
+                )
+            self.assertEqual(wrong_digest.exception.code, 400)
+            wrong_digest.exception.close()
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(preview["schemaVersion"], "rag-ime.agent-file-preview.v1")
+        self.assertEqual(preview["descriptor"]["previewKind"], "markdown")
+        self.assertEqual(preview["descriptor"]["sessionId"], session_id)
+        self.assertEqual(preview["descriptor"]["sha256"], digest)
+        self.assertEqual(preview["content"], markdown.decode("utf-8"))
+
     def test_lifecycle_hook_http_routes_require_runtime_token_and_keep_policy_product_owned(self) -> None:
         class Handler(DebugRequestHandler):
             pass

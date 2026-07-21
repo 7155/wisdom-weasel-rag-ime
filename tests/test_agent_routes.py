@@ -131,6 +131,10 @@ class AgentRouteTests(unittest.TestCase):
             ("media_abc123456789", "content"),
         )
         self.assertEqual(
+            agent_media_route("/api/agent/media/media_abc123456789/preview"),
+            ("media_abc123456789", "preview"),
+        )
+        self.assertEqual(
             agent_media_route("/api/agent/media/media_abc123456789"),
             ("media_abc123456789", "receipt"),
         )

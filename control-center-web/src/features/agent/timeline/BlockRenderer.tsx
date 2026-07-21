@@ -4,9 +4,7 @@ import {
   CheckCircle2,
   Clipboard,
   Code2,
-  Download,
   ExternalLink,
-  File,
   FileAudio,
   Image as ImageIcon,
   ListChecks,
@@ -24,14 +22,17 @@ import { writeClipboardText } from '@/platform/clipboard';
 import { stickerAsset } from './PersonaAvatar';
 import { agentRendererPolicy } from './renderer-registry';
 import { publicAgentErrorText } from '../public-error';
+import { AgentFileBlock } from '../file-preview/AgentFileBlock';
 
 export function AgentBlocks({
   blocks,
   onApprovalDecision,
+  sessionId = '',
   streaming = false,
 }: {
   blocks: UiAgentBlock[];
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  sessionId?: string;
   streaming?: boolean;
 }) {
   const tailIndex = streaming ? findLastTextBlock(blocks) : -1;
@@ -42,6 +43,7 @@ export function AgentBlocks({
           key={block.id}
           block={block}
           onApprovalDecision={onApprovalDecision}
+          sessionId={sessionId}
           streamingTail={index === tailIndex}
         />
       ))}
@@ -52,10 +54,12 @@ export function AgentBlocks({
 export const AgentBlock = memo(function AgentBlock({
   block,
   onApprovalDecision,
+  sessionId = '',
   streamingTail = false,
 }: {
   block: UiAgentBlock;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
+  sessionId?: string;
   streamingTail?: boolean;
 }) {
   const data = block.data;
@@ -90,7 +94,7 @@ export const AgentBlock = memo(function AgentBlock({
     case 'audio':
       return <AudioBlock data={data} />;
     case 'file':
-      return <FileBlock data={data} />;
+      return <AgentFileBlock data={data} sessionId={sessionId} />;
     case 'sticker':
       return <StickerBlock data={data} />;
     case 'task_plan':
@@ -533,27 +537,6 @@ function AudioBlock({ data }: { data: Record<string, unknown> }) {
       <figcaption><FileAudio size={16} />{text(data.name) || '音频附件'}</figcaption>
       <audio controls preload="metadata" src={source} />
     </figure>
-  );
-}
-
-function FileBlock({ data }: { data: Record<string, unknown> }) {
-  const href = safeMediaSource(text(data.receiptUrl ?? data.href), 'file');
-  return (
-    <div className="agent-file-block">
-      <span className="agent-file-block__icon"><File size={18} /></span>
-      <span>
-        <strong>{text(data.name ?? data.fileName) || '文件产物'}</strong>
-        <small>{fileMeta(data)}</small>
-      </span>
-      {href ? (
-        <IconButton
-          label="打开文件回执"
-          icon={<Download size={16} />}
-          onClick={() => window.open(href, '_blank', 'noopener,noreferrer')}
-          tooltip
-        />
-      ) : null}
-    </div>
   );
 }
 

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-file-preview.v1",
+  "type": "object",
+  "required": ["schemaVersion", "descriptor", "content", "previewByteSize", "truncated"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-file-preview.v1"},
+    "descriptor": {
+      "type": "object",
+      "required": ["schemaVersion", "mediaId", "sessionId", "fileName", "mimeType", "byteSize", "sha256", "previewKind", "language", "contentUrl"],
+      "properties": {
+        "schemaVersion": {"type": "string", "const": "rag-ime.agent-file-descriptor.v1"},
+        "mediaId": {"type": "string", "pattern": "^media_[A-Za-z0-9_-]{12,80}$"},
+        "sessionId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "fileName": {"type": "string", "minLength": 1, "maxLength": 160},
+        "mimeType": {"type": "string", "minLength": 1, "maxLength": 120},
+        "byteSize": {"type": "integer", "minimum": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "previewKind": {"type": "string", "enum": ["markdown", "code", "diff", "image", "html", "unsupported"]},
+        "language": {"type": "string", "maxLength": 40},
+        "contentUrl": {"type": "string", "pattern": "^/api/agent/media/[^/]+/content\\?sessionId="}
+      },
+      "additionalProperties": false
+    },
+    "content": {"type": ["string", "null"]},
+    "previewByteSize": {"type": "integer", "minimum": 0, "maximum": 524288},
+    "truncated": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

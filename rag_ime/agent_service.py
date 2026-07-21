@@ -25,6 +25,7 @@ from .agent_events import AgentEventHub
 from .agent_event_projection import AgentEventProjectionService
 from .agent_block_store import AgentBlockStore
 from .agent_delegation import AgentDelegationCoordinator
+from .agent_file_preview import AgentFilePreviewReader
 from .agent_media import AgentMediaStore
 from .agent_memory_context import AgentMemoryContextService
 from .agent_memory_context_support import (
@@ -219,6 +220,7 @@ class AgentService:
         )
         self.media = AgentMediaStore(db_path)
         self.media.initialize()
+        self.file_previews = AgentFilePreviewReader(self.media)
         self.agent_blocks = AgentBlockStore(db_path)
         self.agent_blocks.initialize()
         self.memory_sources = AgentMemorySourceStore(db_path, project=project)
@@ -2018,6 +2020,20 @@ class AgentService:
         self.sessions.get(session_id)
         return self.media.read(media_id, session_id=session_id)
 
+    def file_preview(
+        self,
+        media_id: str,
+        *,
+        session_id: str,
+        expected_sha256: str = "",
+    ) -> dict[str, object]:
+        self.sessions.get(session_id)
+        return self.file_previews.read(
+            media_id,
+            session_id=session_id,
+            expected_sha256=expected_sha256,
+        )
+
     def prompt(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         return self.prompt_application.prompt(
             session_id,
@@ -2541,6 +2557,10 @@ class AgentService:
             wake_worker=self.room_kernel_worker_loop.wake,
             revoke_session=self.room_kernel_runtime.revoke_session,
             artifact_hash_provider=self._room_artifact_hash_provider,
+            media_receipt_provider=lambda media_id, session_id: self.media.receipt(
+                media_id,
+                session_id=session_id,
+            ),
         )
         self.room_settle_lifecycle = RoomSettleLifecycleService(
             rooms=self.rooms,

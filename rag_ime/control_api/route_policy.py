@@ -65,6 +65,7 @@ class ControlPathId(str, Enum):
     AGENT_SESSION_GOAL_MUTATE = "agent.session.goal.mutate"
     AGENT_ARTIFACT_GET = "agent.artifact.get"
     AGENT_MEDIA_LIST = "agent.media.list"
+    AGENT_MEDIA_PREVIEW = "agent.media.preview"
     AGENT_DEEP_SEARCH = "agent.deep-search"
     AGENT_ROOMS_LIST = "agent.rooms.list"
     AGENT_ROOMS_CREATE = "agent.rooms.create"
@@ -628,6 +629,7 @@ _ROOM_WORK_ITEM = {"roomId", "workItemId"}
 _APPROVAL = {"approvalId"}
 _RUN = {"runId"}
 _ARTIFACT = {"artifactId"}
+_MEDIA = {"mediaId"}
 _CONTEXT_ITEM = {"sessionId", "itemId"}
 _CONTEXT_TRACE = {"sessionId", "traceId"}
 _MEMORY_REFERENCE = {"kind", "referenceId"}
@@ -710,6 +712,7 @@ def default_route_policy() -> ControlRoutePolicy:
         _route(ControlPathId.AGENT_SESSION_GOAL_MUTATE, ControlMethod.POST, "/api/agent/sessions/{sessionId}/goal", "/control/v1/agent/sessions/{sessionId}/goal", scopes=[ControlScope.AGENT_WRITE], remote_safe=True, params=_SESSION, body={"action", "expectedRevision", "objective", "tokenBudget", "timeBudgetMs", "summary", "evidence"}, required_body={"action"}, remote_body={"action", "expectedRevision", "objective", "tokenBudget", "timeBudgetMs", "summary", "evidence"}),
         _route(ControlPathId.AGENT_ARTIFACT_GET, ControlMethod.GET, "/api/agent/artifacts/{artifactId}", "/control/v1/agent/artifacts/{artifactId}", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_ARTIFACT, query={"sessionId", "limit"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_MEDIA_LIST, ControlMethod.GET, "/api/agent/media", "/control/v1/agent/media", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"sessionId", "limit"}, required_query={"sessionId"}),
+        _route(ControlPathId.AGENT_MEDIA_PREVIEW, ControlMethod.GET, "/api/agent/media/{mediaId}/preview", "/control/v1/agent/media/{mediaId}/preview", scopes=[ControlScope.AGENT_READ], remote_safe=True, params=_MEDIA, query={"sessionId", "sha256"}, required_query={"sessionId"}),
         _route(ControlPathId.AGENT_DEEP_SEARCH, ControlMethod.POST, "/api/agent/deep-search", "/control/v1/agent/deep-search", body={"query", "privacyDisposition", "context", "frontAppBundleId", "contextSource", "evidence"}, required_body={"query", "privacyDisposition"}),
 
         _route(ControlPathId.AGENT_ROOMS_LIST, ControlMethod.GET, "/api/agent/rooms", "/control/v1/agent/rooms", scopes=[ControlScope.AGENT_READ], remote_safe=True, query={"includeArchived", "limit"}),

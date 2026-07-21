@@ -6,7 +6,9 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from rag_ime.agent_media import AgentMediaStore
 from rag_ime.agent_sessions import AgentSessionStore
+from rag_ime.agent_tool_artifacts import AgentToolArtifactProjector
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness, WorkspaceHarnessError
 
@@ -1172,6 +1174,11 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=3,
         )
+        media = AgentMediaStore(
+            Path(self.tmp.name) / "rag-ime.sqlite",
+            root=Path(self.tmp.name) / "tool-media",
+        )
+        self.gateway.artifact_projector = AgentToolArtifactProjector(media)
         self._approve_plan(str(coordinator["id"]))
         found = self.gateway.execute(
             {
@@ -1202,6 +1209,11 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         receipt = self.gateway.apply_approval(decided)
         self.assertEqual(receipt["replacementCount"], 1)
+        self.assertEqual(receipt["artifactProjection"], {"status": "available", "count": 2})
+        self.assertEqual(
+            [block["data"]["mimeType"] for block in receipt["agentBlocks"]],
+            ["text/plain", "text/x-diff"],
+        )
         self.assertEqual(target.read_text(encoding="utf-8"), "print('after')\n")
         self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "executing")
 

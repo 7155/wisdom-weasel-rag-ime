@@ -65,6 +65,7 @@ const canonicalPathIds = [
   'agent.knowledgeGovernance.read',
   'agent.knowledge.read',
   'agent.media.list',
+  'agent.media.preview',
   'agent.deep-search',
   'agent.rooms.list',
   'agent.rooms.create',

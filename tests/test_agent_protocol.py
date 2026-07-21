@@ -105,7 +105,12 @@ class AgentProtocolTests(unittest.TestCase):
             )
 
     def test_media_block_rejects_paths_and_remote_urls(self) -> None:
-        for media_id in ("/Users/undo/private.png", "../../private.png", "https://example.com/a.png"):
+        for media_id in (
+            "/Users/undo/private.png",
+            "../../private.png",
+            "https://example.com/a.png",
+            "plain-but-unmanaged-id",
+        ):
             with self.subTest(media_id=media_id), self.assertRaisesRegex(ValueError, "managed mediaId"):
                 AgentBlock.from_payload(
                     {

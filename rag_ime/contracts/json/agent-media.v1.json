@@ -8,7 +8,7 @@
     "mediaId": {"type": "string", "minLength": 1},
     "sessionId": {"type": "string", "minLength": 1},
     "fileName": {"type": "string", "maxLength": 160},
-    "mimeType": {"type": "string", "enum": ["image/png", "image/jpeg", "image/gif", "image/webp", "audio/mpeg", "audio/mp4", "audio/wav", "application/pdf", "text/plain"]},
+    "mimeType": {"type": "string", "enum": ["image/png", "image/jpeg", "image/gif", "image/webp", "audio/mpeg", "audio/mp4", "audio/wav", "application/pdf", "text/plain", "text/markdown", "text/html", "text/x-diff", "text/x-patch"]},
     "byteSize": {"type": "integer", "minimum": 0},
     "sha256": {"type": "string", "minLength": 64},
     "width": {"type": ["integer", "null"]},

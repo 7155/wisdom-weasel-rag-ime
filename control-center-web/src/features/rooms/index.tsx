@@ -1338,7 +1338,7 @@ export function RoomTurn({
           ));
           const needsReview = visibleBlocks?.some((block) => block.type === 'approval' && !['approved', 'rejected', 'applied'].includes(textValue(block.data.state)));
           return <div className="room-agent-lane__post" data-status={message.status} key={message.id}>
-            {visibleBlocks?.length ? <AgentBlocks blocks={visibleBlocks} /> : message.text ? <MarkdownBody text={message.text} /> : null}
+            {visibleBlocks?.length ? <AgentBlocks blocks={visibleBlocks} sessionId={message.message?.sessionId ?? message.sourceSessionId} /> : message.text ? <MarkdownBody text={message.text} /> : null}
             {message.status === 'streaming' ? <span className="room-stream-caret" aria-label="仍在生成" /> : null}
             {needsReview && sessionId ? <a className="room-review-link" href={agentSessionHref(sessionId)}><span><strong>需要在 Agent 对话中审阅</strong><small>打开对应参与者，批准或拒绝这项操作。</small></span><span>前往审阅 <ExternalLink size={13} /></span></a> : null}
           </div>;

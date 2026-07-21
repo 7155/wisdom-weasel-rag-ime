@@ -31,7 +31,7 @@ _RICH_BLOCK_INPUT_SCHEMA = {
         "properties": {
             "id": {"type": "string", "minLength": 1, "maxLength": 160},
             "type": {
-                "enum": ["card", "checklist", "table", "artifact", "reference", "status"]
+                "enum": ["card", "checklist", "table", "artifact", "reference", "status", "file"]
             },
             "data": {"type": "object"},
         },

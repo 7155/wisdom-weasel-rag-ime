@@ -37,6 +37,7 @@ _ROOM_RUNTIME_SOURCE_KEYS = (
     "skills",
     "discoveryTools",
     "toolBridge",
+    "toolArtifacts",
     "session",
 )
 
@@ -184,7 +185,7 @@ def _verified_room_runtime_contract(pi_root: Path) -> tuple[dict[str, object], s
     ):
         raise ManagedPiRuntimeError("Room runtime source contract schema is unsupported")
     if (
-        contract.get("sourceRepository") != "https://github.com/earendil-works/pi.git"
+        contract.get("sourceRepository") != "https://github.com/7155/pi.git"
         or contract.get("sourcePackage") != "@earendil-works/pi-rag-ime-runtime-host"
         or contract.get("protocolVersion") != "2"
     ):

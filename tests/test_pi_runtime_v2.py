@@ -543,6 +543,69 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("/Users/private", serialized)
         self.assertIn("[REDACTED_SECRET]", serialized)
 
+    def test_host_tool_artifact_is_carried_to_the_final_assistant_message(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-host-file-artifact"
+        file_block = {
+            "id": "tool-artifact:file:0123456789abcdef",
+            "type": "file",
+            "data": {
+                "mediaId": "media_abcdefghijklmnop",
+                "sessionId": session_id,
+                "fileName": "result.diff",
+                "mimeType": "text/x-diff",
+                "byteSize": 80,
+                "sha256": "b" * 64,
+                "receiptUrl": (
+                    "/api/agent/media/media_abcdefghijklmnop/content"
+                    f"?sessionId={session_id}"
+                ),
+            },
+        }
+
+        def send(payload: dict[str, object]) -> None:
+            self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+                {
+                    "protocolVersion": "2",
+                    "event": "agent.event",
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "payload": payload,
+                }
+            )
+
+        send({
+            "type": "tool_execution_end",
+            "toolCallId": "call-patch",
+            "toolName": "workspace_patch",
+            "result": {"details": {"agentBlocks": [file_block]}},
+            "isError": False,
+        })
+        send({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "timestamp": 101,
+                "content": [{"type": "toolCall", "id": "call-next", "name": "agent_plan"}],
+            },
+        })
+        send({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "timestamp": 102,
+                "content": [{"type": "text", "text": "变更已经交付。"}],
+            },
+        })
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        completed = [event.payload["message"] for event in events if event.event_type == "message_completed"]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual([block["type"] for block in completed[-1]["blocks"]], ["file", "text"])
+        self.assertEqual(completed[-1]["blocks"][0]["data"]["mimeType"], "text/x-diff")
+
     def test_manual_and_automatic_compaction_notify_memory_checkpoint_observer(self) -> None:
         session_id = str(self.first["id"])
 

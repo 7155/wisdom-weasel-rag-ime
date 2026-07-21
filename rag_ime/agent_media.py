@@ -28,9 +28,16 @@ ALLOWED_MEDIA_MIME_TYPES = frozenset(
         "audio/wav",
         "application/pdf",
         "text/plain",
+        "text/markdown",
+        "text/html",
+        "text/x-diff",
+        "text/x-patch",
     }
 )
 IMAGE_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+TEXT_MEDIA_MIME_TYPES = frozenset(
+    {"text/plain", "text/markdown", "text/html", "text/x-diff", "text/x-patch"}
+)
 
 _MAX_BYTES_BY_MIME = {
     "image/png": 20 * 1024 * 1024,
@@ -42,6 +49,10 @@ _MAX_BYTES_BY_MIME = {
     "audio/wav": 100 * 1024 * 1024,
     "application/pdf": 25 * 1024 * 1024,
     "text/plain": 2 * 1024 * 1024,
+    "text/markdown": 2 * 1024 * 1024,
+    "text/html": 2 * 1024 * 1024,
+    "text/x-diff": 2 * 1024 * 1024,
+    "text/x-patch": 2 * 1024 * 1024,
 }
 _MEDIA_ID_RE = re.compile(r"^media_[A-Za-z0-9_-]{12,80}$")
 
@@ -95,10 +106,11 @@ class AgentMediaStore:
         if len(raw) > maximum:
             raise ValueError(f"agent media exceeds {maximum} byte limit")
         detected = detect_media_mime(raw)
-        if detected != advertised:
+        if not media_mime_matches(advertised, detected):
             raise ValueError(f"agent media MIME mismatch: declared={advertised} detected={detected or 'unknown'}")
 
-        width, height = image_dimensions(raw, detected)
+        stored_mime = advertised if advertised in TEXT_MEDIA_MIME_TYPES else detected
+        width, height = image_dimensions(raw, stored_mime)
         media_id = f"media_{secrets.token_urlsafe(18)}"
         storage_name = f"{media_id}.blob"
         normalized_name = _safe_file_name(file_name, detected)
@@ -135,7 +147,7 @@ class AgentMediaStore:
                         session,
                         normalized_name,
                         storage_name,
-                        detected,
+                        stored_mime,
                         len(raw),
                         sha256,
                         width,
@@ -178,7 +190,7 @@ class AgentMediaStore:
             raise ValueError("agent media byte size no longer matches receipt")
         if hashlib.sha256(raw).hexdigest() != str(row["sha256"]):
             raise ValueError("agent media hash no longer matches receipt")
-        if detect_media_mime(raw) != str(row["mime_type"]):
+        if not media_mime_matches(str(row["mime_type"]), detect_media_mime(raw)):
             raise ValueError("agent media MIME no longer matches receipt")
         return _validated_receipt(row), raw
 
@@ -349,6 +361,16 @@ def detect_media_mime(data: bytes) -> str:
     return ""
 
 
+def media_mime_matches(declared: object, detected: object) -> bool:
+    """Treat valid UTF-8 text subtypes as one sniffed family, never as binary."""
+
+    advertised = _normalized_mime(declared)
+    sniffed = _normalized_mime(detected)
+    if advertised in TEXT_MEDIA_MIME_TYPES:
+        return sniffed == "text/plain"
+    return advertised == sniffed
+
+
 def image_dimensions(data: bytes, mime_type: str) -> tuple[int | None, int | None]:
     raw = bytes(data)
     try:
@@ -467,5 +489,9 @@ def _safe_file_name(value: object, mime_type: str) -> str:
         "audio/wav": ".wav",
         "application/pdf": ".pdf",
         "text/plain": ".txt",
+        "text/markdown": ".md",
+        "text/html": ".html",
+        "text/x-diff": ".diff",
+        "text/x-patch": ".patch",
     }
     return f"attachment{extensions.get(mime_type, '')}"

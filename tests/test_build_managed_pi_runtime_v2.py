@@ -29,6 +29,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "skills": Path("packages/coding-agent/src/core/skills.ts"),
                 "discoveryTools": Path("packages/rag-ime-runtime-host/src/discovery-tools.ts"),
                 "toolBridge": Path("packages/rag-ime-runtime-host/src/tool-bridge.ts"),
+                "toolArtifacts": Path("packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
                 "session": Path("packages/rag-ime-runtime-host/src/pi-session.ts"),
             }
             self.assertEqual(set(relative_sources), set(_ROOM_RUNTIME_SOURCE_KEYS))
@@ -74,7 +75,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schemaVersion": "rag-ime.pi-room-runtime-host-contract.v1",
-                        "sourceRepository": "https://github.com/earendil-works/pi.git",
+                        "sourceRepository": "https://github.com/7155/pi.git",
                         "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
                         "protocolVersion": "2",
                         "minimumHandlersCommit": commit,

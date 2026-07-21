@@ -934,6 +934,31 @@ async function callApprovalResult(approvalId: string, signal?: AbortSignal) {
   return payload.approval;
 }
 
+function toolAgentBlocks(...values: unknown[]): unknown[] | undefined {
+  for (const value of values) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    if (Array.isArray(record.agentBlocks)) return record.agentBlocks;
+    const receipt = record.receipt;
+    if (receipt && typeof receipt === "object" && !Array.isArray(receipt)) {
+      const blocks = (receipt as Record<string, unknown>).agentBlocks;
+      if (Array.isArray(blocks)) return blocks;
+    }
+  }
+  return undefined;
+}
+
+function modelVisibleResult(value: unknown, depth = 0): unknown {
+  if (depth >= 8) return "[bounded]";
+  if (Array.isArray(value)) return value.map((item) => modelVisibleResult(item, depth + 1));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== "agentBlocks")
+      .map(([key, item]) => [key, modelVisibleResult(item, depth + 1)]),
+  );
+}
+
 function parametersFor(spec: ToolSpec) {
   if (spec.parameterSchema) return spec.parameterSchema;
   const inputSettingKeys = [
@@ -1197,17 +1222,28 @@ export default function (pi: any) {
                 ? "受控操作已应用。"
                 : "用户拒绝、审批失效或操作失败，未应用变更。"),
           );
+          const agentBlocks = toolAgentBlocks(receipt, resolved);
           return {
             content: [{
               type: "text",
-              text: JSON.stringify({ summary, approvalState, receipt: receipt ?? null }),
+              text: JSON.stringify({
+                summary,
+                approvalState,
+                receipt: modelVisibleResult(receipt ?? null),
+              }),
             }],
-            details: { ...result, approvalState, approval: resolved ?? approval },
+            details: {
+              ...result,
+              approvalState,
+              approval: resolved ?? approval,
+              ...(agentBlocks ? { agentBlocks } : {}),
+            },
           };
         }
+        const agentBlocks = toolAgentBlocks(result);
         return {
-          content: [{ type: "text", text: JSON.stringify(result) }],
-          details: result,
+          content: [{ type: "text", text: JSON.stringify(modelVisibleResult(result)) }],
+          details: { ...result, ...(agentBlocks ? { agentBlocks } : {}) },
         };
       },
     });

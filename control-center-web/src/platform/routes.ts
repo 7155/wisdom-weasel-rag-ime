@@ -329,6 +329,14 @@ export const CONTROL_ROUTES = {
     query: ['sessionId', 'limit'],
     requiredQuery: ['sessionId'],
   },
+  'agent.media.preview': {
+    method: 'GET',
+    path: '/api/agent/media/:mediaId/preview',
+    params: { mediaId: null },
+    query: ['sessionId', 'sha256'],
+    requiredQuery: ['sessionId'],
+    responseContract: 'agent-file-preview.v1',
+  },
   'agent.deep-search': {
     method: 'POST',
     path: '/api/agent/deep-search',

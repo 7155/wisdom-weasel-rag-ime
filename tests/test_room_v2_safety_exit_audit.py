@@ -212,7 +212,12 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             contract["minimumHandlersCommit"],
-            "c4752416150b715b5079549024efd0299fa259e5",
+            "faefcf666f86ad6d1e7319fc9e789bec6ed182b7",
+        )
+        self.assertEqual(contract["sourceRepository"], "https://github.com/7155/pi.git")
+        self.assertEqual(
+            contract["handlerSources"]["toolArtifacts"],
+            "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
         )
         self.assertEqual(set(contract["requiredMethods"]), {"room.dispatch", "room.cancel"})
         build = (REPO / "scripts/build_managed_pi_runtime_v2.py").read_text(encoding="utf-8")

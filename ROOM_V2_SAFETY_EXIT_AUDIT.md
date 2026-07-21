@@ -2,6 +2,14 @@
 
 审计基线：产品 `a4c12fc`、Pi `692bb0e878772129766b9eb837a8caa57f48e0e7`（历史原始审计基线为 `feea050`）。审计日期：2026-07-20。
 
+## 2026-07-21 受管工具产物与前端文件预览增补
+
+本节只增加交付与展示链，不改变 Root final、取消或权限结论。产品不再让模型或浏览器传任意文件路径：`workspace_patch` 的已批准结果先核对授权根、普通文件、postimage digest 和批准 Diff，再导入 Session-scoped media store。工具回执中的 `agentBlocks` 不进入 Provider 文本；它们由独立缓冲器交给最终 assistant message，或在 Pi Host 中交给后续 `room_post/room_commit`。Room Kernel 会再次核对 Session、media receipt、MIME、大小、digest 和 canonical content URL，伪造或跨 Session 文件块 fail closed。
+
+前端只消费同一个受管 `file` Rich Block。Markdown、代码、统一/并排 Diff、图片和静态 HTML 由注册表选择 renderer；读取支持真实 AbortSignal、旧请求抑制和 8 项有界缓存。HTML 同时经过 DOM 清洗、空 iframe sandbox、无网络 CSP 与后端 `nosniff/sandbox/no-store` 响应头。这里参考 Cafe 的文件/Artifact 交互，但没有引入第二条协议；实现按 Pi 风格保持薄入口、明确状态 owner 和生命周期组合。
+
+Pi 最低审核提交更新为 `faefcf666f86ad6d1e7319fc9e789bec6ed182b7`，来源固定为用户 fork `https://github.com/7155/pi.git`，构建门禁新增 `tool-artifact-buffer.ts` 源码与标记校验。当前提交已在本地验证但受代理故障影响尚未推送；产品也仍未正式覆盖安装，因此本节状态是 `verified-not-installed`，不是发布声明。
+
 ## 2026-07-20 最终独立复审（待 P0 整改复测）
 
 本节覆盖前三批结论；后文保留每一轮当时的事实，不能用旧结论替代当前结论。本轮不只重跑原七项审计测试，还检查了 live 产品链、正式 Pi handler、进程 kill gate、九类 surface receipt、Root 资源账本、前端 reducer，以及 `/private/tmp` staged Runtime 的清单和离线 E2E。

@@ -451,6 +451,44 @@ class RoomKernelServiceTests(unittest.TestCase):
             "type": "table",
             "data": private[0]["data"],
         }]
+        media_receipt = self.service.media.import_bytes(
+            session_id=self.session_id,
+            data=b"# Managed Room delivery\n",
+            mime_type="text/markdown",
+            file_name="delivery.md",
+            origin="tool_result",
+            origin_tool="workspace_patch",
+            origin_receipt_id="approval:rich",
+        )
+        media_id = str(media_receipt["mediaId"])
+        file_block = {
+            "id": "file:delivery",
+            "type": "file",
+            "data": {
+                "mediaId": media_id,
+                "sessionId": self.session_id,
+                "fileName": media_receipt["fileName"],
+                "mimeType": media_receipt["mimeType"],
+                "byteSize": media_receipt["byteSize"],
+                "sha256": media_receipt["sha256"],
+                "receiptUrl": (
+                    f"/api/agent/media/{quote(media_id, safe='')}/content"
+                    f"?sessionId={quote(self.session_id, safe='')}"
+                ),
+            },
+        }
+        with self.assertRaisesRegex(RoomKernelFenceError, "another Session"):
+            self._room_tool_invocation(
+                "call:rich-forged-file",
+                "结构化交付",
+                blocks=[
+                    {
+                        **file_block,
+                        "data": {**file_block["data"], "sessionId": "session:other"},
+                    }
+                ],
+            )
+        tool_blocks.append(file_block)
         invocation = self._room_tool_invocation(
             "call:rich-structured", "结构化交付", blocks=tool_blocks
         )
@@ -467,6 +505,15 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(published["generation"], 0)
         self.assertTrue(str(published["ref"]).startswith("block:"))
         self.assertEqual(published["digest"], private[0]["digest"])
+        published_file = result["post"]["blocks"][1]
+        self.assertEqual(published_file["type"], "file")
+        self.assertEqual(published_file["data"]["mediaId"], media_id)
+        preview = self.service.file_previews.read(
+            media_id,
+            session_id=self.session_id,
+            expected_sha256=str(media_receipt["sha256"]),
+        )
+        self.assertEqual(preview["descriptor"]["previewKind"], "markdown")
         snapshot_block = self.service.room_kernel_snapshot(self.room_id)["posts"][0]["blocks"][0]
         self.assertEqual(snapshot_block["data"]["rows"][0][0], "raw-row-secret-9f31")
         self.assertEqual(snapshot_block, published)

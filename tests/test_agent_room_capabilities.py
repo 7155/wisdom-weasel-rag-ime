@@ -70,6 +70,10 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self.assertIn("inputSchema", loaded["items"][0])
         self.assertNotIn("room_commit", str(loaded["items"][0]["inputSchema"]))
 
+    def test_room_delivery_schema_accepts_managed_file_blocks(self) -> None:
+        schema = room_runtime_registry()["room_post"]["inputSchema"]
+        self.assertIn("file", str(schema))
+
     def test_disclosure_does_not_grant_authorization(self) -> None:
         manifest = self._compile(user=("room_state", "room_post"))
         loaded, _ = self.store.tool_load(

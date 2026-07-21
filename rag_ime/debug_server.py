@@ -49,6 +49,7 @@ from .agent_routes import (
     agent_subagent_route,
     agent_wake_schedule_route,
 )
+from .agent_tool_artifacts import AgentToolArtifactProjector
 from .agent_tools import ControlToolGateway
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
@@ -508,6 +509,7 @@ class DebugImeService:
             extensions=self.agent_extensions,
             scheduling=self.agent,
             browser_control=self.browser_control,
+            artifact_projector=AgentToolArtifactProjector(self.agent.media),
             workflow_publisher=lambda session_id, reason: self.agent.publish_workflow_state(
                 session_id,
                 reason=reason,
@@ -6574,6 +6576,15 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         content,
                         mime_type=str(receipt["mimeType"]),
                         etag=str(receipt["sha256"]),
+                    )
+                elif media_action == "preview":
+                    self._write_json(
+                        HTTPStatus.OK,
+                        self.service.agent.file_preview(
+                            media_id,
+                            session_id=session_id,
+                            expected_sha256=_query_first(query, "sha256"),
+                        ),
                     )
                 else:
                     self._write_json(

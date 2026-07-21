@@ -17,6 +17,7 @@ from urllib.parse import quote, urlsplit
 
 from .agent_events import AgentEventHub
 from .agent_blocks import extract_completed_agent_blocks, normalize_trusted_agent_blocks
+from .agent_tool_block_bridge import AgentToolBlockBuffer
 from .agent_tool_ids import (
     ASSISTANT_CONTROL_TOOL_IDS,
     CONTROL_TOOL_IDS,
@@ -826,6 +827,7 @@ class PiRuntimeManager:
         # Pi emits one assistant message before every tool call. The product UI
         # presents those messages as one Agent turn, not as a stack of avatars.
         self._stream_pi_message_id = ""
+        self._tool_blocks = AgentToolBlockBuffer()
 
     @property
     def runtime_kind(self) -> str:
@@ -1046,6 +1048,7 @@ class PiRuntimeManager:
             self._active_turn_id = turn_id
             self._active_client_message_id = str(client_message_id).strip()
             self._stream_pi_message_id = ""
+            self._tool_blocks.clear()
             self._status = "busy"
             self._cancel_idle_locked()
         self.sessions.set_status(session_id, "busy", last_message_preview=text)
@@ -1678,6 +1681,7 @@ class PiRuntimeManager:
             self._active_turn_id = ""
             self._active_client_message_id = ""
             self._stream_pi_message_id = ""
+            self._tool_blocks.clear()
             self._active_session_id = ""
             self._status = "stopped" if self.config.enabled else "disabled"
             self._pending_approval_requests.clear()
@@ -1742,6 +1746,12 @@ class PiRuntimeManager:
             if not _pi_message_is_public(raw_message):
                 return
             role = str(raw_message.get("role") or "assistant").lower()
+            trusted_blocks = raw.get("agentBlocks")
+            if role == "assistant":
+                trusted_blocks = self._tool_blocks.blocks_for_message(
+                    raw_message,
+                    trusted_blocks,
+                )
             # AgentService publishes the accepted user message immediately so
             # it can attach managed-media receipts and reconcile the Web
             # optimistic row. Pi echoes the same user message afterwards;
@@ -1754,7 +1764,7 @@ class PiRuntimeManager:
                 turn_id=turn_id,
                 media_resolver=self._media_resolver,
                 message_id=f"{turn_id}:assistant" if role == "assistant" else None,
-                trusted_blocks=raw.get("agentBlocks"),
+                trusted_blocks=trusted_blocks,
             )
             event_payload: dict[str, object] = {
                 "message": message.to_payload(),
@@ -1800,6 +1810,16 @@ class PiRuntimeManager:
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             if raw.get(result_key) is not None:
                 payload[result_key] = _redact_mapping(_mapping(raw.get(result_key)))
+            if event_type == "tool_execution_end" and not bool(raw.get("isError")):
+                captured = self._tool_blocks.capture(
+                    raw.get("result"),
+                    source_ref=(
+                        f"{session_id}:{turn_id}:"
+                        f"{str(raw.get('toolCallId') or '')}"
+                    ),
+                )
+                if captured:
+                    payload["agentBlocks"] = [dict(block) for block in captured]
             self.events.publish(session_id, mapped_type, payload, turn_id=turn_id)
             return
         if event_type == "extension_ui_request":
@@ -1922,6 +1942,7 @@ class PiRuntimeManager:
                 self._active_turn_id = ""
                 self._active_client_message_id = ""
                 self._stream_pi_message_id = ""
+                self._tool_blocks.clear()
                 self._pending_approval_requests.clear()
                 self._pending_review_requests.clear()
                 self._pending_ui_requests.clear()
@@ -2091,6 +2112,7 @@ class PiRuntimeManager:
             self._active_turn_id = ""
             self._active_client_message_id = ""
             self._stream_pi_message_id = ""
+            self._tool_blocks.clear()
             self._cancel_idle_locked()
             self._cancel_abort_locked()
             if intentional:
@@ -2119,6 +2141,7 @@ class PiRuntimeManager:
             self._active_turn_id = ""
             self._active_client_message_id = ""
             self._stream_pi_message_id = ""
+            self._tool_blocks.clear()
             self._last_error = safe_error
             self._pending_approval_requests.clear()
             self._pending_review_requests.clear()

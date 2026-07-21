@@ -320,12 +320,11 @@
 .agent-code-block figcaption > span { display: flex; align-items: center; gap: 6px; }
 .agent-code-block pre { max-height: 440px; margin: 0; padding: 13px; overflow: auto; font: 13px/1.55 var(--font-mono); white-space: pre; }
 .agent-code-block__content { display: block; width: max-content; min-width: 100%; padding: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; overflow-wrap: normal; }
-.agent-citation, .agent-file-block, .agent-inline-notice, .agent-audio-block { display: flex; width: min(100%, 620px); max-width: 620px; box-sizing: border-box; align-items: center; gap: 10px; margin: 8px 0; padding: 9px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-2); overflow: hidden; background: var(--color-surface-subtle); text-decoration: none; }
-.agent-citation > span:nth-child(2), .agent-file-block > span:nth-child(2) { display: grid; min-width: 0; flex: 1; gap: 2px; }
-.agent-citation strong, .agent-file-block strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.agent-citation small, .agent-file-block small, .agent-citation q { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-citation, .agent-inline-notice, .agent-audio-block { display: flex; width: min(100%, 620px); max-width: 620px; box-sizing: border-box; align-items: center; gap: 10px; margin: 8px 0; padding: 9px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-2); overflow: hidden; background: var(--color-surface-subtle); text-decoration: none; }
+.agent-citation > span:nth-child(2) { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.agent-citation strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-citation small, .agent-citation q { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .agent-citation__index { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 50%; background: var(--color-info-soft); color: var(--color-info); font: 700 13px var(--font-mono); }
-.agent-file-block__icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: var(--radius-2); background: var(--color-surface); color: var(--color-accent); }
 .agent-media-block { max-width: 420px; margin: 10px 0; }
 .agent-media-block img { display: block; width: 100%; height: auto; max-height: 340px; border-radius: var(--radius-2); object-fit: contain; background: var(--color-surface-subtle); }
 .agent-media-block figcaption { margin-top: 5px; color: var(--color-text-tertiary); font-size: 13px; }

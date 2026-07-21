@@ -4,6 +4,7 @@ import hashlib
 import json
 import time
 from collections.abc import Callable, Mapping
+from urllib.parse import quote
 
 from .agent_blocks import normalize_trusted_agent_blocks
 from .agent_room_capabilities import (
@@ -39,6 +40,7 @@ class RoomKernelApplicationService:
         wake_worker: Callable[[], None],
         revoke_session: Callable[[str, int], None],
         artifact_hash_provider: Callable[[str], str] | None = None,
+        media_receipt_provider: Callable[[str, str], Mapping[str, object]] | None = None,
     ) -> None:
         self.rooms = rooms
         self.kernel = kernel
@@ -52,6 +54,7 @@ class RoomKernelApplicationService:
         self.wake_worker = wake_worker
         self.revoke_session = revoke_session
         self.artifact_hash_provider = artifact_hash_provider
+        self.media_receipt_provider = media_receipt_provider
 
     def snapshot(self, room_id: str) -> dict[str, object]:
         self.rooms.get(room_id)
@@ -121,13 +124,19 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(
                 "Room tool invocation lost its Dispatch or capability fence"
             )
+        verified_args = _verified_room_media_args(
+            session_id=session_id,
+            tool_name=tool_name,
+            args=args,
+            receipt_provider=self.media_receipt_provider,
+        )
         invocation, created = self.capabilities.authorize_runtime_invocation(
             session_id=session_id,
             receipt_id=f"invoke:{tool_call_id}",
             invocation_key=tool_call_id,
             load_receipt_id=load_receipt_id,
             tool_name=tool_name,
-            arguments=dict(args),
+            arguments=verified_args,
             created_at_ms=int(time.time() * 1000),
         )
         canonical = str(invocation["canonicalCommand"]["tool"])
@@ -470,6 +479,54 @@ class RoomKernelApplicationService:
             "receipt": receipt,
             "deliveryGateObservation": observation,
         }
+
+
+def _verified_room_media_args(
+    *,
+    session_id: str,
+    tool_name: str,
+    args: Mapping[str, object],
+    receipt_provider: Callable[[str, str], Mapping[str, object]] | None,
+) -> dict[str, object]:
+    """Verify opaque file blocks before they enter an authorized Room command."""
+
+    result = dict(args)
+    if tool_name not in {"room_post", "room_commit"} or "blocks" not in result:
+        return result
+    blocks = result.get("blocks")
+    if not isinstance(blocks, list):
+        return result
+    for block in blocks:
+        if not isinstance(block, Mapping) or block.get("type") != "file":
+            continue
+        data = block.get("data")
+        if not isinstance(data, Mapping) or receipt_provider is None:
+            raise RoomKernelFenceError("Room file block has no managed media authority")
+        media_id = str(data.get("mediaId") or "")
+        declared_session_id = str(data.get("sessionId") or "")
+        if declared_session_id != session_id:
+            raise RoomKernelFenceError("Room file block belongs to another Session")
+        try:
+            receipt = receipt_provider(media_id, session_id)
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise RoomKernelFenceError("Room file block receipt is unavailable") from exc
+        expected = {
+            "fileName": str(receipt.get("fileName") or ""),
+            "mimeType": str(receipt.get("mimeType") or ""),
+            "byteSize": int(receipt.get("byteSize") or 0),
+            "sha256": str(receipt.get("sha256") or ""),
+        }
+        if any(data.get(key) != value for key, value in expected.items()):
+            raise RoomKernelFenceError(
+                "Room file block differs from its managed media receipt"
+            )
+        expected_url = (
+            f"/api/agent/media/{quote(media_id, safe='')}/content"
+            f"?sessionId={quote(session_id, safe='')}"
+        )
+        if data.get("receiptUrl") != expected_url:
+            raise RoomKernelFenceError("Room file block content URL is not canonical")
+    return result
 
 
 def _validated_post_proposal(

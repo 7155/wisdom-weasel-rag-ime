@@ -298,10 +298,11 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
           excerpt: '一次用户输入只渲染一个 Turn。',
         }),
         block('answer-file', 'file', {
-          name: 'control-center-fixture.json',
-          mimeType: 'application/json',
-          byteSize: 18_420,
-          receiptId: 'artifact-preview-1',
+          mediaId: 'media_previewdoc01',
+          name: 'room-runtime-handoff.md',
+          mimeType: 'text/markdown',
+          byteSize: 231,
+          sha256: 'c'.repeat(64),
         }),
       ], previewNow - 180_000),
       message(sessionId, mediaTurn, 'user-media', 'user', [

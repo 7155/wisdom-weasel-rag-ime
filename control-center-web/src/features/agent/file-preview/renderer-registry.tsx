@@ -1,0 +1,38 @@
+import { FileQuestion } from 'lucide-react';
+import type { ComponentType } from 'react';
+import type { AgentFilePreviewV1 } from '@/contracts/generated/agent-file-preview.v1';
+import { CodePreview } from './CodePreview';
+import { DiffPreview } from './DiffPreview';
+import { MarkdownPreview } from './MarkdownPreview';
+import { StaticHtmlPreview } from './StaticHtmlPreview';
+
+export type FilePreviewKind = AgentFilePreviewV1['descriptor']['previewKind'];
+export type FilePreviewRenderer = ComponentType<{ preview: AgentFilePreviewV1 }>;
+
+const renderers = new Map<FilePreviewKind, FilePreviewRenderer>();
+
+export function registerFilePreviewRenderer(kind: FilePreviewKind, renderer: FilePreviewRenderer): void {
+  renderers.set(kind, renderer);
+}
+
+export function FilePreviewRenderer({ preview }: { preview: AgentFilePreviewV1 }) {
+  const Renderer = renderers.get(preview.descriptor.previewKind) ?? UnsupportedPreview;
+  return <Renderer preview={preview} />;
+}
+
+registerFilePreviewRenderer('markdown', ({ preview }) => <MarkdownPreview content={preview.content ?? ''} />);
+registerFilePreviewRenderer('code', ({ preview }) => <CodePreview content={preview.content ?? ''} fileName={preview.descriptor.fileName} language={preview.descriptor.language || 'text'} />);
+registerFilePreviewRenderer('diff', ({ preview }) => <DiffPreview content={preview.content ?? ''} />);
+registerFilePreviewRenderer('html', ({ preview }) => <StaticHtmlPreview content={preview.content ?? ''} title={preview.descriptor.fileName} />);
+registerFilePreviewRenderer('image', ({ preview }) => <div className="agent-file-image-preview"><img alt={preview.descriptor.fileName} src={preview.descriptor.contentUrl} /></div>);
+registerFilePreviewRenderer('unsupported', UnsupportedPreview);
+
+function UnsupportedPreview({ preview }: { preview: AgentFilePreviewV1 }) {
+  return (
+    <div className="agent-file-preview__unsupported">
+      <FileQuestion size={28} />
+      <strong>暂不支持内嵌预览</strong>
+      <small>{preview.descriptor.mimeType}</small>
+    </div>
+  );
+}

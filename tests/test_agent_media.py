@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rag_ime.agent_media import AgentMediaStore, detect_media_mime, image_dimensions
+from rag_ime.agent_media import (
+    AgentMediaStore,
+    detect_media_mime,
+    image_dimensions,
+    media_mime_matches,
+)
 from rag_ime.agent_sessions import AgentSessionStore
 
 
@@ -119,6 +124,26 @@ class AgentMediaStoreTests(unittest.TestCase):
         self.assertEqual(image_dimensions(PNG_1X1, "image/png"), (1, 1))
         self.assertEqual(detect_media_mime(b"<script>alert(1)</script>"), "text/plain")
         self.assertEqual(detect_media_mime(b"\x00\x01\x02"), "")
+        self.assertTrue(media_mime_matches("text/markdown", "text/plain"))
+        self.assertFalse(media_mime_matches("text/html", "image/png"))
+
+    def test_utf8_text_subtypes_preserve_their_declared_mime(self) -> None:
+        for mime_type, file_name in (
+            ("text/markdown", "readme.md"),
+            ("text/html", "report.html"),
+            ("text/x-diff", "change.diff"),
+            ("text/x-patch", "change.patch"),
+        ):
+            with self.subTest(mime_type=mime_type):
+                receipt = self.store.import_bytes(
+                    session_id=self.first,
+                    data="标题\n正文".encode(),
+                    mime_type=mime_type,
+                    file_name=file_name,
+                )
+                stored, raw = self.store.read(str(receipt["mediaId"]), session_id=self.first)
+                self.assertEqual(stored["mimeType"], mime_type)
+                self.assertEqual(raw.decode(), "标题\n正文")
 
 
 if __name__ == "__main__":

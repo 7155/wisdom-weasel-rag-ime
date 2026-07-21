@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .agent_events import AgentEventHub
 from .agent_protocol import AgentEventEnvelope
+from .agent_tool_block_bridge import AgentToolBlockBuffer
 from .agent_runtime_driver import AgentRuntimeError, CompactionObserver
 from .agent_sessions import AgentSessionStore
 from .pi_runtime import (
@@ -337,6 +338,7 @@ class _HostedSessionState:
     turn_id: str = ""
     client_message_id: str = ""
     stream_pi_message_id: str = ""
+    tool_blocks: AgentToolBlockBuffer = field(default_factory=AgentToolBlockBuffer)
     last_agent_messages: list[object] = field(default_factory=list)
     final_error: str = ""
     pending_approvals: dict[str, str] = field(default_factory=dict)
@@ -712,6 +714,7 @@ class PiRuntimeHostManager:
                 raise PiRuntimeError("Pi 正在处理上一轮，请等待结束或停止完成后再发送")
             self._cancel_idle_locked()
             state.stream_pi_message_id = ""
+            state.tool_blocks.clear()
             state.last_agent_messages = []
             state.final_error = ""
             state.abort_requested_turn_id = ""
@@ -1732,13 +1735,19 @@ class PiRuntimeHostManager:
             if not _pi_message_is_public(raw_message) or str(raw_message.get("role") or "").lower() == "user":
                 return
             role = str(raw_message.get("role") or "assistant").lower()
+            trusted_blocks = raw.get("agentBlocks")
+            if role == "assistant":
+                trusted_blocks = state.tool_blocks.blocks_for_message(
+                    raw_message,
+                    trusted_blocks,
+                )
             message = _pi_message_payload(
                 raw_message,
                 session_id=session_id,
                 turn_id=turn_id,
                 media_resolver=self._media_resolver,
                 message_id=f"{turn_id}:assistant" if role == "assistant" else None,
-                trusted_blocks=raw.get("agentBlocks"),
+                trusted_blocks=trusted_blocks,
             )
             self.events.publish(
                 session_id,
@@ -1817,6 +1826,16 @@ class PiRuntimeHostManager:
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             if raw.get(result_key) is not None:
                 payload[result_key] = _redact_mapping(_mapping(raw.get(result_key)))
+            if event_type == "tool_execution_end" and not bool(raw.get("isError")):
+                captured = state.tool_blocks.capture(
+                    raw.get("result"),
+                    source_ref=(
+                        f"{session_id}:{turn_id}:"
+                        f"{str(raw.get('toolCallId') or '')}"
+                    ),
+                )
+                if captured:
+                    payload["agentBlocks"] = [dict(block) for block in captured]
             self.events.publish(session_id, mapped_type, payload, turn_id=turn_id)
             return
         if event_type == "extension_ui_request":
@@ -1847,6 +1866,7 @@ class PiRuntimeHostManager:
                     state.turn_id = ""
                     state.client_message_id = ""
                     state.stream_pi_message_id = ""
+                    state.tool_blocks.clear()
                     state.last_agent_messages = []
                     state.final_error = ""
                     state.abort_requested_turn_id = ""
@@ -1996,6 +2016,7 @@ class PiRuntimeHostManager:
             state.turn_id = ""
             state.client_message_id = ""
             state.stream_pi_message_id = ""
+            state.tool_blocks.clear()
             state.abort_requested_turn_id = ""
             state.pending_approvals.clear()
             state.pending_reviews.clear()
@@ -2049,6 +2070,7 @@ class PiRuntimeHostManager:
                 state.turn_id = ""
                 state.client_message_id = ""
                 state.stream_pi_message_id = ""
+                state.tool_blocks.clear()
                 state.last_agent_messages = []
                 state.final_error = ""
                 state.abort_requested_turn_id = ""

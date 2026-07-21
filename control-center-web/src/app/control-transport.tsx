@@ -409,6 +409,7 @@ function createPreviewTransport(): MockControlTransport {
     }
     return { ok: true, changed: true };
   };
+  routes['agent.media.preview'] = (request: ControlRequest) => previewManagedFile(request);
   return new MockControlTransport({
     routes,
     capabilities: { routeIds: Object.keys(routes) as ControlPathId[] },
@@ -423,6 +424,46 @@ function createPreviewTransport(): MockControlTransport {
       },
     ],
   });
+}
+
+function previewManagedFile(request: ControlRequest): Record<string, unknown> {
+  const mediaId = stringValue(record(request.params).mediaId);
+  const sessionId = stringValue(record(request.query).sessionId);
+  const sha256 = 'c'.repeat(64);
+  if (mediaId !== 'media_previewdoc01' || !sessionId) {
+    throw new Error('Preview file receipt is unavailable.');
+  }
+  const expectedSha256 = stringValue(record(request.query).sha256);
+  if (expectedSha256 && expectedSha256 !== sha256) {
+    throw new Error('Preview file digest changed.');
+  }
+  const content = [
+    '# Room Runtime 交接',
+    '',
+    '这份文件来自受控 `file` Rich Block，不会把整份产物塞进对话上下文。',
+    '',
+    '- Session 私有过程保持私有',
+    '- Room 只接收显式提交的 Post',
+    '- 文件内容按回执和摘要按需读取',
+  ].join('\n');
+  return {
+    schemaVersion: 'rag-ime.agent-file-preview.v1',
+    descriptor: {
+      schemaVersion: 'rag-ime.agent-file-descriptor.v1',
+      mediaId,
+      sessionId,
+      fileName: 'room-runtime-handoff.md',
+      mimeType: 'text/markdown',
+      byteSize: new TextEncoder().encode(content).byteLength,
+      sha256,
+      previewKind: 'markdown',
+      language: '',
+      contentUrl: `/api/agent/media/${mediaId}/content?sessionId=${encodeURIComponent(sessionId)}`,
+    },
+    content,
+    previewByteSize: new TextEncoder().encode(content).byteLength,
+    truncated: false,
+  };
 }
 
 function previewResponse(pathId: ControlPathId): unknown {

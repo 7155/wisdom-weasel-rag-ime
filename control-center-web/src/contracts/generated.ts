@@ -17,6 +17,8 @@ import type { AgentControlBootstrapV1 } from './generated/agent-control-bootstra
 import type { AgentControlEventV1 } from './generated/agent-control-event.v1';
 import type { AgentConversationContextV1 } from './generated/agent-conversation-context.v1';
 import type { AgentEventV1 } from './generated/agent-event.v1';
+import type { AgentFileDescriptorV1 } from './generated/agent-file-descriptor.v1';
+import type { AgentFilePreviewV1 } from './generated/agent-file-preview.v1';
 import type { AgentGoalMutationV1 } from './generated/agent-goal-mutation.v1';
 import type { AgentGoalUsageV1 } from './generated/agent-goal-usage.v1';
 import type { AgentMediaV1 } from './generated/agent-media.v1';
@@ -155,6 +157,8 @@ export type {
   AgentControlEventV1,
   AgentConversationContextV1,
   AgentEventV1,
+  AgentFileDescriptorV1,
+  AgentFilePreviewV1,
   AgentGoalMutationV1,
   AgentGoalUsageV1,
   AgentMediaV1,
@@ -294,6 +298,8 @@ export interface ContractTypeMap {
   'agent-control-event.v1': AgentControlEventV1;
   'agent-conversation-context.v1': AgentConversationContextV1;
   'agent-event.v1': AgentEventV1;
+  'agent-file-descriptor.v1': AgentFileDescriptorV1;
+  'agent-file-preview.v1': AgentFilePreviewV1;
   'agent-goal-mutation.v1': AgentGoalMutationV1;
   'agent-goal-usage.v1': AgentGoalUsageV1;
   'agent-media.v1': AgentMediaV1;

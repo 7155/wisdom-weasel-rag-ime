@@ -859,6 +859,76 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertFalse(gap)
         self.assertNotIn("message_completed", [event.event_type for event in events])
 
+    def test_tool_artifact_is_carried_to_the_final_assistant_message(self) -> None:
+        session_id = str(self.session["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            client = self.runtime._client
+            self.runtime._active_turn_id = "turn:file-artifact"
+        assert client is not None
+        file_block = {
+            "id": "tool-artifact:file:0123456789abcdef",
+            "type": "file",
+            "data": {
+                "mediaId": "media_abcdefghijklmnop",
+                "sessionId": session_id,
+                "fileName": "handoff.md",
+                "mimeType": "text/markdown",
+                "byteSize": 42,
+                "sha256": "a" * 64,
+                "receiptUrl": (
+                    "/api/agent/media/media_abcdefghijklmnop/content"
+                    f"?sessionId={session_id}"
+                ),
+            },
+        }
+
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {
+                "type": "tool_execution_end",
+                "toolCallId": "call-write",
+                "toolName": "workspace_patch",
+                "result": {"details": {"agentBlocks": [file_block]}},
+                "isError": False,
+            },
+        )
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "timestamp": 101,
+                    "content": [{"type": "toolCall", "id": "call-next", "name": "agent_plan"}],
+                },
+            },
+        )
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "timestamp": 102,
+                    "content": [{"type": "text", "text": "文件已经交付。"}],
+                },
+            },
+        )
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        completed = [event.payload["message"] for event in events if event.event_type == "message_completed"]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(
+            [block["type"] for block in completed[-1]["blocks"]],
+            ["file", "text"],
+        )
+        self.assertEqual(completed[-1]["blocks"][0]["data"]["fileName"], "handoff.md")
+
     def test_runtime_prompt_forwards_rpc_image_content(self) -> None:
         session_id = str(self.session["id"])
         accepted = self.runtime.prompt(

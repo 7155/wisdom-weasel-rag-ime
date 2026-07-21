@@ -45,7 +45,7 @@ class AgentPersonaStoreTests(unittest.TestCase):
         with sqlite3.connect(self.db_path) as conn:
             self.assertEqual(
                 conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0],
-                95,
+                97,
             )
             private = conn.execute(
                 """
@@ -55,7 +55,7 @@ class AgentPersonaStoreTests(unittest.TestCase):
                 (created.role_id,),
             ).fetchone()
         self.assertIn("智鼬·雨天", private[0])
-        self.assertIn("不能扩大工具", private[1])
+        self.assertIn("不能扩大文件、Shell、数据库、网络或审批范围", private[1])
         self.assertEqual(json.loads(private[2])["writes"], "structured-approval-only")
 
     def test_user_cannot_submit_prompt_or_internal_identifiers(self) -> None:

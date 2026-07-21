@@ -1,9 +1,9 @@
 {
   "schemaVersion": "rag-ime.pi-room-runtime-host-contract.v1",
-  "sourceRepository": "https://github.com/earendil-works/pi.git",
+  "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "ecb315d9875f5fbf5a5415e97125aaf480df8c0c",
+  "minimumHandlersCommit": "faefcf666f86ad6d1e7319fc9e789bec6ed182b7",
   "requiredMethods": [
     "room.dispatch",
     "room.cancel"
@@ -16,6 +16,7 @@
     "skills": "packages/coding-agent/src/core/skills.ts",
     "discoveryTools": "packages/rag-ime-runtime-host/src/discovery-tools.ts",
     "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
+    "toolArtifacts": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
     "session": "packages/rag-ime-runtime-host/src/pi-session.ts"
   },
   "requiredSourceMarkers": {
@@ -41,7 +42,13 @@
       "notFor?: string[];",
       "input?: string;",
       "output?: string;",
-      "does?: string;"
+      "does?: string;",
+      "const artifacts = new ToolArtifactBuffer();"
+    ],
+    "toolArtifacts": [
+      "export class ToolArtifactBuffer",
+      "export function modelVisibleResult",
+      "const ROOM_DELIVERY_TOOLS = new Set([\"room_post\", \"room_commit\"]);"
     ],
     "session": [
       "SKILL_REVISION_MISMATCH",

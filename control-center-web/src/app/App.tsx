@@ -9,6 +9,7 @@ import { AppShell } from '@/components/layout';
 import { ToastProvider, TooltipProvider } from '@/components/primitives';
 import { MotionProvider } from '@/design/motion';
 import { ThemeProvider } from '@/design/themes';
+import { FilePreviewHost } from '@/features/agent/file-preview/FilePreviewHost';
 import '@/design/tokens.css';
 import '@/design/typography.css';
 import '@/components/primitives/primitives.css';
@@ -25,6 +26,7 @@ export function App() {
             <GlobalFeedbackProvider>
               <ControlTransportProvider>
                 <ControlConnectionMonitor />
+                <FilePreviewHost />
                 <QueryClientProvider client={queryClient}>
                   <AppShell>
                     <RouterProvider router={router} />

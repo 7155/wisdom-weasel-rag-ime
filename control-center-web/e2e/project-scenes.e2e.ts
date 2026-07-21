@@ -16,12 +16,15 @@ test('governed project scenes fit empty slots without replacing normal data', as
     await expect(page.getByRole('region', { name: '记忆正常数据槽位' }).locator('.project-scene-empty')).toHaveCount(0);
 
     for (const scene of [roomScene, memoryScene]) {
-      const metrics = await scene.evaluate((image) => ({
-        naturalWidth: image.naturalWidth,
-        naturalHeight: image.naturalHeight,
-        left: image.getBoundingClientRect().left,
-        right: image.getBoundingClientRect().right,
-      }));
+      const metrics = await scene.evaluate((node) => {
+        const image = node as HTMLImageElement;
+        return {
+          naturalWidth: image.naturalWidth,
+          naturalHeight: image.naturalHeight,
+          left: image.getBoundingClientRect().left,
+          right: image.getBoundingClientRect().right,
+        };
+      });
       expect(metrics.naturalWidth).toBeGreaterThan(0);
       expect(metrics.naturalHeight).toBeGreaterThan(0);
       expect(metrics.left).toBeGreaterThanOrEqual(-1);

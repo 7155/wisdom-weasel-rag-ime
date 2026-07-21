@@ -14,6 +14,7 @@ from .agent_governed_memory_tools import (
     MemoryGovernanceProposalStore,
 )
 from .agent_role_book import AgentRoleBookStore
+from .agent_tool_artifacts import AgentToolArtifactProjector
 from .agent_tool_ids import CONTROL_TOOL_IDS, DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
 from .agent_sessions import AgentSessionStore
 from .agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
@@ -1146,6 +1147,7 @@ class ControlToolGateway:
         browser_control: BrowserControlService | None = None,
         desktop_client: object | None = None,
         role_books: object | None = None,
+        artifact_projector: AgentToolArtifactProjector | None = None,
         workflow_publisher: Callable[[str, str], object] | None = None,
     ) -> None:
         self.sessions = sessions
@@ -1162,6 +1164,7 @@ class ControlToolGateway:
         self.browser_control = browser_control
         self.desktop_client = desktop_client or DesktopBridgeClient()
         self.role_books = role_books
+        self.artifact_projector = artifact_projector
         self.workflow_publisher = workflow_publisher
         self._role_book_tool_adapter: AgentRoleBookToolAdapter | None = None
         self._memory_governance_store: MemoryGovernanceProposalStore | None = None
@@ -4094,13 +4097,22 @@ class ControlToolGateway:
             raise ValueError("approval payload no longer matches its preview")
         session = self.sessions.get(session_id)
         receipt = self.workspace_harness.apply_patch(session, action_payload, base_state)
-        return {
+        result = {
             **receipt,
             "approvalId": str(approval.get("approvalId") or ""),
             "toolId": "workspace_patch",
             "operation": "apply",
             "auditId": str(approval.get("approvalId") or ""),
         }
+        if self.artifact_projector is not None:
+            projection = self.artifact_projector.project_workspace_patch(
+                session=session,
+                approval_id=str(approval.get("approvalId") or ""),
+                receipt=result,
+                preview=preview,
+            )
+            result.update(projection.receipt_fields())
+        return result
 
     def _prepare_planning_undo(
         self,

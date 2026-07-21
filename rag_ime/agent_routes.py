@@ -100,7 +100,7 @@ def agent_media_route(path: str) -> tuple[str, str]:
         return "", ""
     media_id = unquote(parts[0]).strip()
     action = parts[1] if len(parts) == 2 else "receipt"
-    if not media_id or action not in {"receipt", "content"}:
+    if not media_id or action not in {"receipt", "content", "preview"}:
         return "", ""
     return media_id, action
 

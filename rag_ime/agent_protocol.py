@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -98,6 +99,8 @@ DEFAULT_PRESENTATION.update(
         "unknown": "unsupported",
     }
 )
+
+_MANAGED_MEDIA_ID = re.compile(r"^media_[A-Za-z0-9_-]{12,80}$")
 
 
 @dataclass(frozen=True)
@@ -346,4 +349,4 @@ def _trusted_action_payload(data: Mapping[str, object]) -> bool:
 
 def _trusted_media_payload(data: Mapping[str, object]) -> bool:
     media_id = str(data.get("mediaId") or "")
-    return bool(media_id and "/" not in media_id and "\\" not in media_id and "://" not in media_id)
+    return _MANAGED_MEDIA_ID.fullmatch(media_id) is not None

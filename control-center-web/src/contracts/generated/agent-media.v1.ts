@@ -18,7 +18,11 @@ export interface AgentMediaV1 {
     | 'audio/mp4'
     | 'audio/wav'
     | 'application/pdf'
-    | 'text/plain';
+    | 'text/plain'
+    | 'text/markdown'
+    | 'text/html'
+    | 'text/x-diff'
+    | 'text/x-patch';
   byteSize: number;
   sha256: string;
   width?: number | null;

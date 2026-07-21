@@ -482,7 +482,7 @@ function MessageView({
   return user ? (
     <div className="agent-user-message-shell" data-actions={canFork || canEdit || undefined} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
       <div className="agent-user-message" data-status={message.status}>
-        <AgentBlocks blocks={visibleBlocks} />
+        <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} />
         {delivery === 'steer' || delivery === 'followUp' ? (
           <small className="agent-user-message__delivery" data-delivery={delivery}>
             {delivery === 'steer' ? '干预当前执行' : '完成后接续'}
@@ -518,7 +518,7 @@ function MessageView({
   ) : (
     <div className="agent-assistant-message-shell" data-actions={canFork || undefined}>
       <div className="agent-assistant-message" data-status={visibleStatus} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
-        <AgentBlocks blocks={visibleBlocks} streaming={showStreaming} />
+        <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} streaming={showStreaming} />
         {showStreaming ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
       </div>
       {!showStreaming ? <AgentMessageUsage message={message} /> : null}
