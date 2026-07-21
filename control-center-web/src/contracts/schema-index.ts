@@ -3208,8 +3208,10 @@ export const contractSchemas = {
         "type": "string",
         "enum": [
           "coordinator",
-          "executor",
-          "researcher"
+          "researcher",
+          "implementer",
+          "reviewer",
+          "specialist"
         ]
       },
       "status": {
@@ -4240,8 +4242,10 @@ export const contractSchemas = {
             "type": "string",
             "enum": [
               "coordinator",
-              "executor",
-              "researcher"
+              "researcher",
+              "implementer",
+              "reviewer",
+              "specialist"
             ]
           },
           "status": {

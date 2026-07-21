@@ -19,6 +19,9 @@
 .rooms-rail button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-workspace { display: grid; min-width: 0; min-height: 0; grid-template-rows: 54px auto auto minmax(0, 1fr) auto; background: var(--color-surface); }
 .room-workspace > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 16px; border-bottom: 1px solid var(--color-border); }
+.room-workspace > header > span { flex: 1 1 auto; }
+.room-workspace > header > span strong,
+.room-workspace > header > span small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-header-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 6px; }
 .room-participants { display: flex; min-width: 0; gap: 6px; overflow-x: auto; scrollbar-width: none; }
 .room-participants::-webkit-scrollbar { display: none; }
@@ -193,13 +196,15 @@
 .room-create-form legend small { color: var(--color-text-tertiary); font-size: 13px; font-weight: 500; }
 .room-member-manager > p { margin: -1px 0 8px; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.5; }
 .room-member-manager > div { display: grid; max-height: 218px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; overflow-y: auto; }
-.room-member-manager article { display: grid; min-width: 0; min-height: 50px; grid-template-columns: 30px minmax(0, 1fr) 30px; align-items: center; gap: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-2); padding: 7px 8px; background: var(--color-surface); }
+.room-member-manager article { display: grid; min-width: 0; min-height: 50px; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-2); padding: 7px 8px; background: var(--color-surface); }
 .room-member-manager article[data-active='true'] { border-color: color-mix(in srgb, var(--color-accent) 56%, var(--color-border)); background: var(--color-accent-soft); }
 .room-member-manager article > span { display: grid; min-width: 0; gap: 2px; }
 .room-member-manager article strong,
 .room-member-manager article small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .room-member-manager article strong { font-size: 13px; }
 .room-member-manager article small { color: var(--color-text-tertiary); font-size: 12px; }
+.room-member-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 6px; }
+.room-member-actions [role='combobox'] { width: 116px; min-width: 116px; }
 .room-danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--color-border); padding-top: 13px; }
 .room-danger-zone > span { display: grid; min-width: 0; gap: 2px; }
 .room-danger-zone strong { color: var(--color-danger); font-size: 13px; }
@@ -275,6 +280,12 @@
 .room-participant-telemetry > header > span { display: grid; min-width: 0; gap: 1px; }
 .room-participant-telemetry > header strong { font-size: 13px; overflow-wrap: anywhere; }
 .room-participant-telemetry > header small { color: var(--color-text-tertiary); font-size: 13px; overflow-wrap: anywhere; }
+.room-status-panel { width: 100%; overflow: hidden; }
+.rooms-feature:not([data-status-open='true']) > .room-status-panel {
+  visibility: hidden;
+  border-left: 0;
+  transform: none;
+}
 .room-status-panel .agent-status-row strong,
 .room-status-panel .agent-status-row small,
 .room-status-panel .agent-status-turn strong,

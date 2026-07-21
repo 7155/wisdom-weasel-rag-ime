@@ -211,9 +211,25 @@ describe('management features', () => {
           settingsRevision: 'sha256:effective-settings',
         },
       },
+      'configuration.schema': {
+        ok: true,
+        schemaVersion: 'rag-ime.settings-schema.v1',
+        sections: [{
+          id: 'agent',
+          label: 'Agent',
+          fields: [{
+            key: 'agent.pi.enabled',
+            type: 'boolean',
+            label: '启用 Pi',
+            description: '启用 Agent 对话运行时',
+            applyMode: 'live',
+            expert: false,
+          }],
+        }],
+      },
     });
 
-    expect(await screen.findByText('已同步')).toBeInTheDocument();
+    expect(await screen.findByText('已与运行时同步')).toBeInTheDocument();
     expect(screen.queryByText('sha256:live-settings-hash')).not.toBeInTheDocument();
     expect(screen.queryByText('sha256:effective-settings')).not.toBeInTheDocument();
     expect(screen.queryByText('554')).not.toBeInTheDocument();

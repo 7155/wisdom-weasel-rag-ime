@@ -1,5 +1,6 @@
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { resolvePersonaAsset, type PersonaPresence } from './persona-assets';
+import './persona-avatar.css';
 
 export type { PersonaPresence } from './persona-assets';
 

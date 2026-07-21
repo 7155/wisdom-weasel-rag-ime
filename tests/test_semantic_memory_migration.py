@@ -363,7 +363,7 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
 
         self.assertEqual(input_after, input_before)
         self.assertTrue(report["verification"]["ok"])
-        self.assertEqual(report["migration"]["currentVersion"], 98)
+        self.assertEqual(report["migration"]["currentVersion"], 101)
         self.assertEqual(report["legacyItems"]["promoted"], 1)
         self.assertEqual(report["legacyItems"]["quarantined"], 1)
         self.assertFalse(report["verification"]["vectorGateRequired"])

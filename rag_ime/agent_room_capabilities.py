@@ -75,12 +75,25 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             },
         },
         "room_commit": {
-            "description": "Submit a governed continuation or completion proposal for the active Dispatch.",
-            "when": ("需要提交继续、交接、阻塞或完成提议",),
+            "description": (
+                "Submit a governed continuation or completion proposal exactly once "
+                "for the active Dispatch, then end the model turn immediately. "
+                "For deliver, copy acceptance.criteria[].criterionId exactly from "
+                "the provider-only Room task context into requirementCoverage."
+            ),
+            "when": (
+                "完成实现或修复后，需要提交验收覆盖与证据",
+                "需要继续、交接、等待、阻塞或完成当前责任",
+                "处理复核意见后，需要重新提交可复核结果",
+            ),
             "notFor": ("普通公开发言、私有进度或没有证据的完成声明",),
-            "input": "交付决定、结果摘要、证据、验收覆盖与可选交接目标",
-            "output": "受管 continuation 或 completion 提议回执",
-            "does": "提交当前 Dispatch 的受管状态提议。",
+            "input": (
+                "交付决定、结果摘要、证据、当前 Task 的验收条件 ID 与可选交接目标；"
+                "ID 只能原样复制 Room task context 的 acceptance.criteria[].criterionId；"
+                "没有 acceptanceCriterionIds 时 requirementCoverage 必须传空数组"
+            ),
+            "output": "受管提议已暂存回执；收到后必须立即结束本轮，不再调用任何工具",
+            "does": "提交当前 Dispatch 的受管状态提议，并明确触发本轮收工。",
             "risk": "R1",
             "operation": "room.commit",
             "inputSchema": {
@@ -104,6 +117,11 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     "requirementCoverage": {
                         "type": "array",
                         "maxItems": 64,
+                        "description": (
+                            "只能填写当前 Task.acceptanceCriterionIds；"
+                            "从 Room task context 的 acceptance.criteria[].criterionId 原样复制；"
+                            "不得填写 requirementItemIds，没有验收条件时传空数组。"
+                        ),
                         "items": {"type": "string", "minLength": 1},
                     },
                     "targetParticipantId": {"type": "string", "minLength": 1},
@@ -660,6 +678,78 @@ class RoomCapabilityManifestStore:
             runtime_registry=room_runtime_registry(),
             created_at_ms=created_at_ms,
         )
+
+    def restore_runtime_tool_disclosures(
+        self,
+        *,
+        session_id: str,
+        recovery: Mapping[str, object],
+        allow_revoked: bool = False,
+    ) -> dict[str, object]:
+        """Verify exact Tool load receipts after a managed Room compaction."""
+
+        binding = self.runtime_binding(
+            session_id,
+            active_only=not allow_revoked,
+        )
+        if binding is None:
+            raise ToolAuthorizationError(
+                "Session has no active Room Capability Manifest"
+            )
+        manifest = self._manifest(
+            str(binding["manifestId"]),
+            str(binding["manifestHash"]),
+        )
+        raw_items = recovery.get("items")
+        if not isinstance(raw_items, Sequence) or isinstance(
+            raw_items, (str, bytes)
+        ):
+            raise CapabilityManifestConflict(
+                "Room tool recovery items must be an array"
+            )
+        restored: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for raw_item in raw_items:
+            if not isinstance(raw_item, Mapping):
+                raise CapabilityManifestConflict(
+                    "Room tool recovery item must be an object"
+                )
+            name = _canonical_tool(raw_item.get("name"))
+            if name in seen:
+                raise CapabilityManifestConflict(
+                    "Room tool recovery contains a duplicate tool"
+                )
+            seen.add(name)
+            receipt_id = _required(
+                raw_item.get("receiptId"),
+                "receipt_id",
+            )
+            disclosure = self._disclosure(receipt_id)
+            tool = _manifest_tool(manifest, name)
+            if (
+                disclosure["kind"] != "load"
+                or disclosure["manifestId"] != manifest["manifestId"]
+                or disclosure["manifestHash"] != manifest["manifestHash"]
+                or disclosure["toolName"] != name
+                or disclosure["schemaHash"] != tool["schemaHash"]
+            ):
+                raise CapabilityManifestConflict(
+                    "Room tool recovery receipt is stale or belongs to another manifest"
+                )
+            restored.append(
+                {
+                    "name": name,
+                    "receiptId": receipt_id,
+                    "schemaHash": disclosure["schemaHash"],
+                }
+            )
+        return {
+            "schemaVersion": "wisdom-weasel.room-tool-recovery.v1",
+            "manifestId": manifest["manifestId"],
+            "manifestHash": manifest["manifestHash"],
+            "capabilityEpoch": manifest["capabilityEpoch"],
+            "items": restored,
+        }
 
     def authorize_runtime_invocation(
         self,

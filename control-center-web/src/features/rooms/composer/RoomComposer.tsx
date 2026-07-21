@@ -11,7 +11,7 @@ interface ComposerParticipant {
   roleId: string;
   roleVersion: string;
   displayName: string;
-  collaborationRole?: 'coordinator' | 'executor' | 'researcher';
+  collaborationRole?: 'coordinator' | 'researcher' | 'implementer' | 'reviewer' | 'specialist';
   status: string;
 }
 
@@ -193,7 +193,6 @@ export function RoomComposer({
           aria-label="Room 消息"
           aria-autocomplete="list"
           aria-controls={mention && mentionCandidates.length ? 'room-mention-menu' : undefined}
-          aria-expanded={Boolean(mention && mentionCandidates.length)}
           aria-activedescendant={mention && mentionCandidates.length
             ? `room-mention-${mentionCandidates[activeIndex]?.id}`
             : undefined}
@@ -265,9 +264,11 @@ function stripLeadingRoomMention(
 }
 
 function participantRoleLabel(participant: ComposerParticipant): string {
-  if (participant.collaborationRole === 'coordinator') return '调控者';
+  if (participant.collaborationRole === 'coordinator') return '协作主持';
   if (participant.collaborationRole === 'researcher') return '调研与核对';
-  if (participant.collaborationRole === 'executor') return '执行与交付';
+  if (participant.collaborationRole === 'implementer') return '实施与交付';
+  if (participant.collaborationRole === 'reviewer') return '独立验收';
+  if (participant.collaborationRole === 'specialist') return '领域专家';
   return '协作角色';
 }
 

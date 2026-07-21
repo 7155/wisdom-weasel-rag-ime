@@ -211,9 +211,11 @@ function fileName(data: Record<string, unknown>): string {
 function text(value: unknown): string { return typeof value === 'string' ? value : ''; }
 function pathName(path: string): string { return path.split('/').filter(Boolean).at(-1) ?? path; }
 function collaborationRoleLabel(role: string | undefined): string {
-  if (role === 'coordinator') return '调控者';
-  if (role === 'researcher') return '调研者';
-  return '执行者';
+  if (role === 'coordinator') return '协作主持';
+  if (role === 'researcher') return '调研与核对';
+  if (role === 'reviewer') return '独立验收';
+  if (role === 'specialist') return '领域专家';
+  return '实施与交付';
 }
 
 function roomWorkStateLabel(state: RoomWorkItem['state']): string {

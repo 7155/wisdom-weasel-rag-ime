@@ -13,7 +13,8 @@ test('runtime observation stays bounded and filters its causal trace', async ({
   const feature = page.locator('main[data-route-id="observability"]');
   await expect(feature).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
-  await expect(feature).toContainText('不采集原始思维链、提示词、消息正文或 Agent 私信内容');
+  await expect(feature).toContainText('观察数据库只保存状态、耗时、数量、ID 和指纹化元数据');
+  await expect(feature).toContainText('不持久化原始提示词或消息正文');
   await expect(page.getByRole('list', { name: '运行观察事件' }).getByRole('listitem')).toHaveCount(8);
 
   const bounds = await feature.evaluate((element) => ({

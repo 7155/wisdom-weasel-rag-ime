@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RoomV2ReadinessTests(unittest.TestCase):
-    def test_clean_upgrade_from_65_to_94(self) -> None:
+    def test_clean_upgrade_from_65_to_current(self) -> None:
         with tempfile.TemporaryDirectory(prefix="room-v2-upgrade-") as directory:
             old_migrations = Path(directory) / "migrations-65"
             old_migrations.mkdir()
@@ -32,7 +32,7 @@ class RoomV2ReadinessTests(unittest.TestCase):
                 baseline = apply_database_migrations(conn, migrations_dir=old_migrations, applied_at_ms=1)
                 upgraded = apply_database_migrations(conn, applied_at_ms=2)
                 self.assertEqual(baseline.current_version, 65)
-                self.assertEqual(upgraded.current_version, 98)
+                self.assertEqual(upgraded.current_version, 101)
                 self.assertEqual(
                     upgraded.applied_versions,
                     tuple(migration.version for migration in load_migrations() if migration.version > 65),
@@ -82,6 +82,9 @@ class RoomV2ReadinessTests(unittest.TestCase):
         ):
             self.assertEqual(_room_kernel_mode_from_environment(), "cohort")
             self.assertTrue(_room_delivery_gate_enforcement("cohort"))
+        with patch.dict(os.environ, {"RAG_IME_ROOM_KERNEL_MODE": "kernel_only"}, clear=True):
+            self.assertEqual(_room_kernel_mode_from_environment(), "kernel_only")
+            self.assertFalse(_room_delivery_gate_enforcement("kernel_only"))
         with patch.dict(os.environ, {"RAG_IME_ROOM_KERNEL_COHORT_ID": "production"}, clear=True):
             self.assertFalse(_room_delivery_gate_enforcement("cohort"))
         with tempfile.TemporaryDirectory(prefix="room-v2-off-") as directory:

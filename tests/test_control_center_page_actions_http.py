@@ -179,11 +179,34 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
                 "traits": ["清楚", "可靠"],
                 "timelineModel": "luna",
                 "selectableModes": ["assistant"],
+                "suitableTasks": ["页面验收", "公开元数据修改"],
+                "unsuitableTasks": ["高风险独立决定"],
             },
         )
         self.assertEqual(status, 201, created_role)
         self.assertTrue(created_role["ok"])
         role = created_role["role"]
+
+        update_status, updated_role = self._request(
+            "PATCH",
+            "/api/agent/roles",
+            {
+                "roleId": role["roleId"],
+                "roleVersion": role["version"],
+                "displayName": "智鼬·页面验收后",
+                "tagline": "确认自建伙伴可以编辑",
+                "summary": "只用于验证自建伙伴的公开元数据修改。",
+                "traits": ["清楚", "稳定"],
+                "timelineModel": "sol",
+                "selectableModes": ["assistant", "coordinator"],
+                "suitableTasks": ["页面验收", "Room 协作"],
+                "unsuitableTasks": ["高风险独立决定"],
+            },
+        )
+        self.assertEqual(update_status, 200, updated_role)
+        self.assertTrue(updated_role["ok"])
+        self.assertEqual(updated_role["role"]["displayName"], "智鼬·页面验收后")
+        self.assertNotIn("personaPrompt", updated_role["role"])
 
         status, created_session = self._request(
             "POST",
@@ -212,6 +235,20 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
         )
         self.assertEqual(status, 201, created_room)
         self.assertTrue(created_room["ok"])
+        participant = created_room["room"]["participants"][1]
+        participant_status, participant_update = self._request(
+            "PATCH",
+            f"/api/agent/rooms/{created_room['room']['id']}/participants",
+            {
+                "participantId": participant["id"],
+                "collaborationRole": "reviewer",
+            },
+        )
+        self.assertEqual(participant_status, 200, participant_update)
+        self.assertEqual(
+            participant_update["participant"]["collaborationRole"],
+            "reviewer",
+        )
 
         listed_status, listed = self._request("GET", "/api/agent/sessions?limit=20")
         room_status, rooms = self._request("GET", "/api/agent/rooms?limit=20")
@@ -220,6 +257,36 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
         self.assertTrue(any(item["id"] == created_session["session"]["id"] for item in listed["items"]))
         self.assertTrue(any(item["id"] == created_room["room"]["id"] for item in rooms["items"]))
         self.assertTrue(any(item["roleId"] == role["roleId"] for item in roles["items"]))
+
+        archive_status, archived = self._request(
+            "DELETE",
+            "/api/agent/roles",
+            {"roleId": role["roleId"], "roleVersion": role["version"]},
+        )
+        self.assertEqual(archive_status, 200, archived)
+        self.assertTrue(archived["ok"])
+        _, roles_after_archive = self._request("GET", "/api/agent/roles")
+        self.assertFalse(any(item["roleId"] == role["roleId"] for item in roles_after_archive["items"]))
+        _, sessions_after_archive = self._request("GET", "/api/agent/sessions?limit=20")
+        old_session = next(
+            item for item in sessions_after_archive["items"]
+            if item["id"] == created_session["session"]["id"]
+        )
+        self.assertEqual(old_session["roleId"], role["roleId"])
+        blocked_status, blocked = self._request(
+            "POST",
+            "/api/agent/sessions",
+            {"title": "不应创建", "roleId": role["roleId"], "roleVersion": role["version"]},
+        )
+        self.assertEqual(blocked_status, 400, blocked)
+        self.assertFalse(blocked["ok"])
+        builtin_status, builtin = self._request(
+            "DELETE",
+            "/api/agent/roles",
+            {"roleId": "companion-present-v1", "roleVersion": "1"},
+        )
+        self.assertEqual(builtin_status, 400, builtin)
+        self.assertFalse(builtin["ok"])
 
         denied_status, denied = self._request(
             "POST",

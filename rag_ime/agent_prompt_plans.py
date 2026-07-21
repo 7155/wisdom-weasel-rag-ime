@@ -206,22 +206,46 @@ class RoomPromptPlanStore:
         projection = self.projections.projection(
             str(plan["journalId"]), expected_generation=int(plan["generation"])
         )
-        stable_prompt = _provider_layer_prompt(plan["layers"])
+        static_prompt = _provider_layer_prompt(plan["layers"])
         sealed = _provider_projection_text(projection["sealedPrefix"], state="sealed")
         dynamic = _provider_projection_text(projection["pendingTail"], state="pending")
+        previously_sealed = self.projections.previously_sealed_entry_ids(
+            root_id=str(plan["rootId"]),
+            session_id=str(plan["sessionId"]),
+            generation=int(plan["generation"]),
+            context_epoch=int(plan["contextEpoch"]),
+            excluding_journal_id=str(plan["journalId"]),
+        )
+        delta_items = [
+            item
+            for item in projection["pendingTail"]
+            if str(item["contextEntryId"]) not in previously_sealed
+        ]
         return {
             "schemaVersion": "wisdom-weasel.room-provider-context.v1",
             "promptCompileReceiptId": receipt["receiptId"],
             "promptPlanHash": plan["planHash"],
-            "stableSystemPrompt": stable_prompt + sealed,
+            "stableSystemPrompt": static_prompt + sealed,
+            "staticSystemPromptHash": _sha256(static_prompt.encode("utf-8")),
             "providerContext": dynamic,
+            "providerContextDelta": _provider_projection_text(
+                delta_items,
+                state="pending",
+            ),
             "journalId": plan["journalId"],
             "generation": plan["generation"],
+            "sessionEpoch": plan["sessionEpoch"],
+            "contextEpoch": plan["contextEpoch"],
             "throughSequence": projection["throughSequence"],
             "sealedThroughSequence": projection["sealedThroughSequence"],
             "projectionHash": projection["projectionHash"],
             "dynamicTailRefs": [
                 str(item["contextEntryId"]) for item in projection["pendingTail"]
+            ],
+            "reusedSealedRefs": [
+                str(item["contextEntryId"])
+                for item in projection["pendingTail"]
+                if str(item["contextEntryId"]) in previously_sealed
             ],
         }
 

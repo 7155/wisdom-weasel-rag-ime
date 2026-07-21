@@ -375,6 +375,7 @@ class RoomSkillPolicyStore:
         *,
         expected_capability_epoch: int,
         catalog_revision: str,
+        allow_immediately_revoked: bool = False,
     ) -> dict[str, object]:
         receipt_id = _required_text(receipt_id, "receiptId")
         expected_capability_epoch = _non_negative_int(
@@ -390,12 +391,26 @@ class RoomSkillPolicyStore:
             if row is None:
                 raise ValueError(f"unknown Room Skill load receipt: {receipt_id}")
             current_epoch = self._current_epoch(conn, str(row["root_id"]))
+            newer_receipt_exists = conn.execute(
+                """SELECT 1 FROM room_v2_skill_load_receipts
+                   WHERE root_id = ? AND capability_epoch > ? LIMIT 1""",
+                (str(row["root_id"]), expected_capability_epoch),
+            ).fetchone() is not None
         receipt = _receipt_payload(row)
-        if (
-            receipt["state"] != "active"
-            or int(receipt["capabilityEpoch"]) != expected_capability_epoch
-            or expected_capability_epoch < current_epoch
-        ):
+        receipt_epoch = int(receipt["capabilityEpoch"])
+        active_epoch = (
+            receipt["state"] == "active"
+            and receipt_epoch == expected_capability_epoch
+            and current_epoch == expected_capability_epoch
+        )
+        sealed_epoch = (
+            allow_immediately_revoked
+            and receipt["state"] == "revoked"
+            and receipt_epoch == expected_capability_epoch
+            and current_epoch == expected_capability_epoch + 1
+            and not newer_receipt_exists
+        )
+        if not (active_epoch or sealed_epoch):
             raise RoomSkillEpochRevoked("Room Skill load receipt belongs to a revoked epoch")
         if receipt["catalogRevision"] != catalog_revision:
             raise SkillCatalogRevisionMismatch("native Pi Skill catalog revision changed")
@@ -433,8 +448,13 @@ class RoomSkillPolicyStore:
         revoked_at_ms = _non_negative_int(revoked_at_ms, "revokedAtMs")
         with self._connect(immediate=True) as conn:
             current = self._current_epoch(conn, root_id)
-            if new_capability_epoch <= current:
+            if new_capability_epoch < current:
                 raise ValueError("newCapabilityEpoch must advance monotonically")
+            if new_capability_epoch == current:
+                # Parallel Dispatches in one Root share a capability epoch.
+                # Each Session revokes its own runtime binding, while this
+                # Root-scoped Skill fence is an idempotent set operation.
+                return 0
             conn.execute(
                 """
                 INSERT INTO room_v2_skill_capability_epochs(root_id, capability_epoch, updated_at_ms)

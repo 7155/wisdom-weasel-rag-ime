@@ -138,10 +138,6 @@ DEFAULT_SETTINGS: dict[str, object] = {
             "toolProfile": "control-center-v1",
             "coordinatorEnabled": False,
         },
-        "ui": {
-            "deltaFlushMilliseconds": 40,
-            "showReasoningSummary": False,
-        },
     },
     "voice": {
         "provider": "native_streaming",
@@ -361,7 +357,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
         },
         {
             "id": "context",
-            "label": "Context",
+            "label": "上下文",
             "fields": [
                 {"key": "context.recentInputBaseline", "type": "integer", "label": "最近完整输入基线", "default": 20},
                 {"key": "context.recentInputMaximum", "type": "integer", "label": "最近完整输入上限", "default": 80},
@@ -372,7 +368,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
         },
         {
             "id": "planning",
-            "label": "Planning",
+            "label": "任务与规划",
             "fields": [
                 {"key": "planning.enabled", "type": "boolean", "label": "启用规划与任务", "default": True},
                 {"key": "planning.injectIntoContext", "type": "boolean", "label": "将今日计划注入上下文", "default": True},
@@ -381,22 +377,16 @@ SETTINGS_SCHEMA: dict[str, object] = {
         },
         {
             "id": "agent",
-            "label": "Agent",
+            "label": "Agent 运行时",
             "fields": [
                 {"key": "agent.pi.enabled", "type": "boolean", "label": "连接 Pi", "default": False},
-                {"key": "agent.pi.startup", "type": "enum", "label": "启动方式", "options": ["lazy"], "default": "lazy"},
                 {"key": "agent.pi.idleTimeoutSeconds", "type": "integer", "label": "空闲退出时间", "default": 900},
                 {"key": "agent.pi.resumeLastSession", "type": "boolean", "label": "恢复上次对话", "default": True},
-                {"key": "agent.pi.defaultRoleId", "type": "string", "label": "默认角色", "default": "companion-future-v1"},
-                {"key": "agent.pi.toolProfile", "type": "string", "label": "工具配置", "default": "control-center-v1"},
-                {"key": "agent.pi.coordinatorEnabled", "type": "boolean", "label": "允许运行协调模式", "default": False},
-                {"key": "agent.ui.deltaFlushMilliseconds", "type": "integer", "label": "流式刷新间隔", "default": 40},
-                {"key": "agent.ui.showReasoningSummary", "type": "boolean", "label": "显示可公开的分析摘要", "default": False},
             ],
         },
         {
             "id": "voice",
-            "label": "Voice",
+            "label": "语音输入",
             "fields": [
                 {"key": "voice.provider", "type": "enum", "label": "语音服务", "options": ["native_streaming", "realtime_websocket", "http_transcription"], "default": "native_streaming"},
                 {"key": "voice.hotkey", "type": "enum", "label": "按住说话", "options": ["middle_mouse", "right_option", "option_space"], "default": "middle_mouse"},
@@ -496,9 +486,6 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
     },
     "agent.pi.enabled": {"description": "按需启动受管理的 Pi RPC，不影响普通输入路径"},
     "agent.pi.idleTimeoutSeconds": {"description": "Pi 无活动后自动退出的等待时间", "min": 0, "max": 86400, "step": 60, "unit": "秒"},
-    "agent.pi.coordinatorEnabled": {"description": "允许显式创建受审批约束的运行协调会话", "risk": "sensitive", "expert": True},
-    "agent.ui.deltaFlushMilliseconds": {"description": "原生对话页合并流式文本更新的时间窗口", "min": 16, "max": 250, "step": 8, "unit": "ms"},
-    "agent.ui.showReasoningSummary": {"description": "只显示服务端明确标记可公开的分析摘要，不显示原始 thinking"},
     "voice.provider": {"description": "选择语音代理下一次连接使用的识别服务", "applyMode": "next_voice_session", "restartComponent": "voice"},
     "voice.hotkey": {"description": "选择全局按住说话快捷键", "applyMode": "next_voice_session", "restartComponent": "voice"},
     "voice.hotwordsEnabled": {"description": "仅在豆包/火山原生流式识别请求中发送已确认的热词", "applyMode": "next_voice_session", "restartComponent": "voice"},

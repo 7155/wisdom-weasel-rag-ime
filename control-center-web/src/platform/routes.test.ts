@@ -74,6 +74,7 @@ const canonicalPathIds = [
   'agent.room.archive',
   'agent.room.participant.add',
   'agent.room.participant.remove',
+  'agent.room.participant.update',
   'agent.room.delete',
   'agent.room.message',
   'agent.room.abort',
@@ -97,6 +98,8 @@ const canonicalPathIds = [
   'agent.room.workItem.reassign',
   'agent.roles.list',
   'agent.roles.create',
+  'agent.roles.update',
+  'agent.roles.archive',
   'agent.role.models',
   'agent.role.runtimeDefaults.update',
   'agent.roleBook.get',
@@ -486,6 +489,8 @@ describe('control route policy', () => {
       traits: ['温和', '复盘'],
       timelineModel: 'terra',
       selectableModes: ['assistant'],
+      suitableTasks: ['温和复盘', '整理下一步'],
+      unsuitableTasks: ['高风险独立决定'],
     };
     expect(() =>
       assertControlRequest({ pathId: 'agent.roles.create', body: publicBody }),

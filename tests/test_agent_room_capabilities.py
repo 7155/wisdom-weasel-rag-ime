@@ -223,7 +223,36 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             load_receipt_id=loaded["receiptId"], tool_name="room_state", arguments={}, created_at_ms=4,
         )
         self.assertEqual(invocation["canonicalCommand"]["capabilityEpoch"], 1)
+        recovered = self.store.restore_runtime_tool_disclosures(
+            session_id="session:1",
+            recovery={
+                "schemaVersion": "rag-ime.room-tool-recovery.v1",
+                "items": [
+                    {
+                        "name": "room_state",
+                        "receiptId": loaded["receiptId"],
+                    }
+                ],
+            },
+        )
+        self.assertEqual(
+            recovered["items"][0]["receiptId"],
+            loaded["receiptId"],
+        )
+        self.assertEqual(recovered["capabilityEpoch"], 1)
         self.store.revoke_runtime("session:1", capability_epoch=2, now_ms=5)
+        with self.assertRaises(ToolAuthorizationError):
+            self.store.restore_runtime_tool_disclosures(
+                session_id="session:1",
+                recovery={
+                    "items": [
+                        {
+                            "name": "room_state",
+                            "receiptId": loaded["receiptId"],
+                        }
+                    ]
+                },
+            )
         with self.assertRaises(ToolAuthorizationError):
             self.store.authorize_runtime_invocation(
                 session_id="session:1", receipt_id="invoke:stale", invocation_key="call:2",

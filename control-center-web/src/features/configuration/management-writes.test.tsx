@@ -25,24 +25,24 @@ describe('Configuration settings WorkContract UI', () => {
     const user = userEvent.setup();
     const transport = renderConfiguration(true);
     await screen.findByRole('heading', { name: '配置与迁移', level: 1 });
-    const input = await screen.findByRole('spinbutton', { name: '最大宽度' });
+    const input = await screen.findByRole('spinbutton', { name: '上下文容量' });
     expect(document.querySelector('.configuration-editor')).not.toBeNull();
     expect(document.querySelector('.configuration-portability')).not.toBeNull();
     await user.clear(input);
-    await user.type(input, '620');
+    await user.type(input, '4096');
     const workflow = screen.getByText('应用设置差异', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
 
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
     await waitFor(() => expect(findRequest(transport, 'configuration.settings.preview')).toMatchObject({
       body: {
-        changes: { 'display.maxWidth': 620 },
+        changes: { 'context.tokenBudget': 4096 },
         expectedRuntimeRevision: 12,
       },
     }));
     expect(await within(workflow as HTMLElement).findByText('应用这些设置？')).toBeInTheDocument();
-    expect(within(workflow as HTMLElement).getByText('最大宽度：560 → 620（重新载入输入法）')).toBeInTheDocument();
-    expect(within(workflow as HTMLElement).queryByText(/display\.maxWidth|squirrel|R2/)).not.toBeInTheDocument();
+    expect(within(workflow as HTMLElement).getByText('上下文容量：2048 → 4096（重启后台服务）')).toBeInTheDocument();
+    expect(within(workflow as HTMLElement).queryByText(/context\.tokenBudget|sidecar|R2/)).not.toBeInTheDocument();
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '进入确认' }));
     await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
@@ -50,7 +50,7 @@ describe('Configuration settings WorkContract UI', () => {
     expect(await within(workflow as HTMLElement).findByText('本机操作已记录')).toBeInTheDocument();
     expect(findRequest(transport, 'configuration.settings.apply')).toMatchObject({
       body: {
-        changes: { 'display.maxWidth': 620 },
+        changes: { 'context.tokenBudget': 4096 },
         expectedRuntimeRevision: 12,
         previewToken: 'preview-configuration-settings',
         payloadSha256: hash,
@@ -77,9 +77,9 @@ describe('Configuration settings WorkContract UI', () => {
     const user = userEvent.setup();
     const transport = renderConfiguration(false);
     await screen.findByRole('heading', { name: '配置与迁移', level: 1 });
-    const input = await screen.findByRole('spinbutton', { name: '最大宽度' });
+    const input = await screen.findByRole('spinbutton', { name: '上下文容量' });
     await user.clear(input);
-    await user.type(input, '620');
+    await user.type(input, '4096');
     const workflow = screen.getByText('应用设置差异', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
 
@@ -131,8 +131,7 @@ describe('Configuration settings WorkContract UI', () => {
     await screen.findByRole('heading', { name: '配置与迁移', level: 1 });
     await waitFor(() => expect(findRequest(transport, 'agent.role.models')).toBeDefined());
 
-    await user.click(screen.getByRole('combobox', { name: '设置分组' }));
-    await user.click(await screen.findByRole('option', { name: '深度生成' }));
+    await user.click(screen.getByRole('button', { name: /^深度生成/ }));
 
     expect(await screen.findByRole('combobox', { name: '闪电生成模型' })).toHaveTextContent('DeepSeek V4 Flash');
     expect(screen.getByRole('combobox', { name: '闪电生成思考' })).toHaveTextContent('高');
@@ -206,7 +205,7 @@ class ConfigurationTransport implements ControlTransport {
       requiredConfirm: 'apply',
       summary: {
         title: '应用控制中心设置',
-        items: ['更新 display.maxWidth', '需要重载: squirrel'],
+        items: ['更新 context.tokenBudget', '需要重启: sidecar'],
         risk: 'R2',
       },
     } as Response;
@@ -267,7 +266,7 @@ function settingsPayload() {
     ok: true,
     settingsHash: 'sha256:settings',
     settings: {
-      display: { maxWidth: 560 },
+      context: { tokenBudget: 2048 },
       activeRag: {
         quickModel: 'deepseek/deepseek-v4-flash',
         quickThinkingLevel: 'high',
@@ -282,18 +281,18 @@ function schemaPayload() {
     ok: true,
     schemaVersion: 'rag-ime.management-settings-schema.v3',
     sections: [{
-      id: 'display',
-      label: '显示',
+      id: 'context',
+      label: '上下文',
       fields: [{
-        key: 'display.maxWidth',
+        key: 'context.tokenBudget',
         type: 'integer',
-        label: '最大宽度',
-        description: '候选窗口最大宽度',
-        min: 320,
-        max: 760,
-        step: 20,
-        applyMode: 'restart_input_method',
-        restartComponent: 'squirrel',
+        label: '上下文容量',
+        description: '会话上下文容量',
+        min: 512,
+        max: 32768,
+        step: 512,
+        applyMode: 'restart_sidecar',
+        restartComponent: 'sidecar',
       }, {
         key: 'managementSecurity.token',
         type: 'password',
@@ -362,7 +361,7 @@ function receipt(
     auditId: 1,
     rollbackAvailable,
     rollbackToken,
-    rollbackAuthority: { settingKeys: ['display.maxWidth'] },
-    restartComponents: ['squirrel'],
+    rollbackAuthority: { settingKeys: ['context.tokenBudget'] },
+    restartComponents: ['sidecar'],
   };
 }

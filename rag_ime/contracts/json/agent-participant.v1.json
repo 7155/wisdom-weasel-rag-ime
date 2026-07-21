@@ -27,7 +27,7 @@
     "displayName": {"type": "string", "minLength": 1, "maxLength": 40},
     "collaborationRole": {
       "type": "string",
-      "enum": ["coordinator", "executor", "researcher"]
+      "enum": ["coordinator", "researcher", "implementer", "reviewer", "specialist"]
     },
     "status": {"type": "string", "enum": ["active", "muted", "removed"]},
     "ordinal": {"type": "integer", "minimum": 0, "maximum": 3},

@@ -1,22 +1,9 @@
 import { expect, type Page } from '@playwright/test';
+import { routeRegistry } from '../src/app/route-registry';
 
-export const routes = [
-  { id: 'overview', label: '总览' },
-  { id: 'input', label: '输入法' },
-  { id: 'agent', label: 'Agent' },
-  { id: 'rooms', label: 'Rooms' },
-  { id: 'roles', label: '角色' },
-  { id: 'plugins', label: '插件' },
-  { id: 'voice', label: '语音' },
-  { id: 'planning', label: '规划' },
-  { id: 'memory', label: '记忆' },
-  { id: 'knowledge', label: '知识库' },
-  { id: 'governance', label: '治理中心' },
-  { id: 'history', label: '历史' },
-  { id: 'observability', label: '运行观察' },
-  { id: 'diagnostics', label: '诊断' },
-  { id: 'configuration', label: '配置' },
-] as const;
+// E2E route assertions consume the same registry as the shell so product copy
+// changes cannot leave a second, stale navigation contract behind.
+export const routes = routeRegistry.map(({ id, label }) => ({ id, label }));
 
 export function isMobileViewport(page: Page): boolean {
   return (page.viewportSize()?.width ?? 0) <= 760;
@@ -77,10 +64,15 @@ async function armNavigationMeasurement(page: Page, routeId: string): Promise<vo
       document.removeEventListener('click', onClick, true);
       const started = performance.now();
       const poll = () => {
-        if (!document.querySelector(`main[data-route-id="${expectedRouteId}"]`)) {
+        const selected = document.querySelector(
+          `.shell-nav__link[data-route="${expectedRouteId}"][aria-current="page"]`,
+        );
+        if (!selected) {
           requestAnimationFrame(poll);
           return;
         }
+        // Route feedback is owned by the always-mounted shell. Heavy feature
+        // code may still be resolving behind the visible loading state.
         requestAnimationFrame(() => {
           Reflect.set(window, '__RAG_IME_NAV_LATENCY__', performance.now() - started);
         });

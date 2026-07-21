@@ -49,6 +49,17 @@ _ABORT_SURFACES = (
     "continuation",
     "session",
 )
+_RUNTIME_CANCEL_SURFACES = (
+    "provider",
+    "tool",
+    "exec",
+    "retry",
+    "compaction",
+    "branch_summary",
+    "timer",
+    "continuation",
+    "session",
+)
 
 
 class RoomKernelFenceError(RuntimeError):
@@ -661,10 +672,7 @@ class RoomKernelStore:
                 or int(runtime_receipt.get("generation", -1)) != int(row["generation"])):
                 raise RoomKernelFenceError("runtime cancel receipt does not match durable intent")
             surfaces = runtime_receipt.get("cancellationSurfaces")
-            required_surfaces = {
-                "provider", "tool", "exec", "retry", "compaction",
-                "branch_summary", "timer", "continuation", "session",
-            }
+            required_surfaces = set(_RUNTIME_CANCEL_SURFACES)
             if not isinstance(surfaces, Mapping) or set(surfaces) != required_surfaces:
                 raise RoomKernelFenceError("runtime cancel receipt lacks per-surface termination proof")
             allowed_surface_states = {"requested", "acknowledged", "terminated", "unknown"}
@@ -747,9 +755,40 @@ class RoomKernelStore:
 
     def fail_cancel(self, cancel_id: str, reason: str, *, now_ms: int) -> None:
         with self._connect(immediate=True) as conn:
-            row = conn.execute("SELECT attempt_count FROM room_kernel_cancel_outbox WHERE cancel_id=?", (cancel_id,)).fetchone()
-            attempts = int(row[0]) if row else 1; state = "dead_letter" if attempts >= 5 else "retry_wait"
-            conn.execute("UPDATE room_kernel_cancel_outbox SET state=?,available_at_ms=?,lease_until_ms=0,last_error=? WHERE cancel_id=?", (state, int(now_ms)+min(60_000,1000*(2**attempts)), reason[:500], cancel_id))
+            row = conn.execute(
+                "SELECT attempt_count,session_id FROM room_kernel_cancel_outbox WHERE cancel_id=?",
+                (cancel_id,),
+            ).fetchone()
+            attempts = int(row["attempt_count"]) if row else 1
+            state = "dead_letter" if attempts >= 5 else "retry_wait"
+            compact_reason = reason[:500]
+            conn.execute(
+                """UPDATE room_kernel_cancel_outbox
+                   SET state=?,available_at_ms=?,lease_until_ms=0,last_error=?
+                   WHERE cancel_id=?""",
+                (
+                    state,
+                    int(now_ms) + min(60_000, 1000 * (2**attempts)),
+                    compact_reason,
+                    cancel_id,
+                ),
+            )
+            if state == "dead_letter" and row is not None:
+                session_id = str(row["session_id"])
+                for surface in _RUNTIME_CANCEL_SURFACES:
+                    detail = {
+                        "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
+                        "surface": surface,
+                        "state": "unknown",
+                        "targetIds": [session_id],
+                        "errors": [compact_reason],
+                    }
+                    conn.execute(
+                        """UPDATE room_v2_runtime_cancel_surface_receipts
+                           SET state='unknown',detail_json=?,updated_at_ms=?
+                           WHERE cancel_id=? AND surface=?""",
+                        (_json(detail), int(now_ms), cancel_id, surface),
+                    )
 
     @staticmethod
     def _enqueue_cancel(
@@ -773,6 +812,19 @@ class RoomKernelStore:
             "UPDATE room_kernel_abort_scopes SET state='cancelling',updated_at_ms=? WHERE dispatch_id=? AND state!='cancelled'",
             (int(now_ms), dispatch_id),
         )
+        for surface in _RUNTIME_CANCEL_SURFACES:
+            detail = {
+                "schemaVersion": "wisdom-weasel.runtime-surface-termination-receipt.v1",
+                "surface": surface,
+                "state": "requested",
+                "targetIds": [session_id],
+            }
+            conn.execute(
+                """INSERT OR IGNORE INTO room_v2_runtime_cancel_surface_receipts(
+                   cancel_id,surface,state,target_ref,detail_json,updated_at_ms)
+                   VALUES (?,?,'requested',?,?,?)""",
+                (cancel_id, surface, session_id, _json(detail), int(now_ms)),
+            )
 
     def _terminal_cancel(
         self,
@@ -831,6 +883,13 @@ class RoomKernelStore:
             conn.execute(
                 "UPDATE room_kernel_outbox SET state = 'running', updated_at_ms = ? WHERE dispatch_id = ? AND state = 'leased'",
                 (int(now_ms), lease["dispatch_id"]),
+            )
+            # The 30-second lease fences delivery to Pi, not the lifetime of
+            # the Agent run. Once Pi has returned the typed dispatch ACK, the
+            # Root deadline and cancel scope own execution liveness.
+            conn.execute(
+                "UPDATE room_kernel_leases SET state = 'accepted', updated_at_ms = ? WHERE lease_id = ? AND state = 'active'",
+                (int(now_ms), lease["lease_id"]),
             )
             return self._receipt(
                 conn, root_id=str(lease["root_id"]), command_id=None,
@@ -1172,7 +1231,7 @@ class RoomKernelStore:
             )
             conn.execute("UPDATE room_kernel_dispatches SET state = 'committed', updated_at_ms = ? WHERE dispatch_id = ?", (int(now_ms), payload["dispatchId"]))
             conn.execute("UPDATE room_kernel_outbox SET state = 'committed', updated_at_ms = ? WHERE dispatch_id = ?", (int(now_ms), payload["dispatchId"]))
-            conn.execute("UPDATE room_kernel_leases SET state = 'completed', updated_at_ms = ? WHERE dispatch_id = ? AND state = 'active'", (int(now_ms), payload["dispatchId"]))
+            conn.execute("UPDATE room_kernel_leases SET state = 'completed', updated_at_ms = ? WHERE dispatch_id = ? AND state IN ('active','accepted')", (int(now_ms), payload["dispatchId"]))
             self._settle_dispatch_limits(
                 conn, str(payload["dispatchId"]), usage=resource_usage,
                 consumed=True, now_ms=now_ms,
@@ -1421,7 +1480,7 @@ class RoomKernelStore:
                 released_by_root[root_id] = released_by_root.get(root_id, 0) + int(row["budget_cost"])
             conn.execute("UPDATE room_kernel_dispatches SET state = 'cancelled', updated_at_ms = ? WHERE dispatch_id = ? AND state IN ('pending','leased','running','retry_wait','timer_wait')", (int(now_ms), dispatch_id))
             conn.execute("UPDATE room_kernel_outbox SET state = 'cancelled', updated_at_ms = ? WHERE dispatch_id = ? AND state NOT IN ('committed','dead_letter')", (int(now_ms), dispatch_id))
-            conn.execute("UPDATE room_kernel_leases SET state = 'cancelled', updated_at_ms = ? WHERE dispatch_id = ? AND state = 'active'", (int(now_ms), dispatch_id))
+            conn.execute("UPDATE room_kernel_leases SET state = 'cancelled', updated_at_ms = ? WHERE dispatch_id = ? AND state IN ('active','accepted')", (int(now_ms), dispatch_id))
         for root_id, released in released_by_root.items():
             conn.execute(
                 """UPDATE room_kernel_roots
@@ -1510,6 +1569,19 @@ class RoomKernelStore:
             payload = json.loads(str(row["payload_json"]))
             payload.update({"generation": int(row["generation"]), "state": str(row["state"]), "budgetRemaining": int(row["budget_remaining"]), "budgetReserved": int(row["budget_reserved"]), "terminalReceiptId": row["terminal_receipt_id"]})
             return payload
+
+    def is_root_terminal(self, root_id: str) -> bool:
+        """Return the durable Root fence without reopening execution state."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT state FROM room_kernel_roots WHERE root_id = ?",
+                (str(root_id),),
+            ).fetchone()
+        return row is not None and str(row["state"]) in {
+            "completed",
+            "cancelled",
+            "failed",
+        }
 
     def cancellation_surface_projection(self, room_id: str) -> list[dict[str, object]]:
         """Read-only per-surface cancellation evidence for control projections."""
@@ -1671,7 +1743,7 @@ class RoomKernelStore:
                     (int(now_ms), dispatch_id),
                 )
                 conn.execute(
-                    "UPDATE room_kernel_leases SET state='completed',updated_at_ms=? WHERE dispatch_id=? AND state='active'",
+                    "UPDATE room_kernel_leases SET state='completed',updated_at_ms=? WHERE dispatch_id=? AND state IN ('active','accepted')",
                     (int(now_ms), dispatch_id),
                 )
                 self._settle_dispatch_limits(

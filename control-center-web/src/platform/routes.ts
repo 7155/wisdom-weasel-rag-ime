@@ -406,6 +406,13 @@ export const CONTROL_ROUTES = {
     body: ['participantId'],
     requiredBody: ['participantId'],
   },
+  'agent.room.participant.update': {
+    method: 'PATCH',
+    path: '/api/agent/rooms/:roomId/participants',
+    params: { roomId: null },
+    body: ['participantId', 'collaborationRole'],
+    requiredBody: ['participantId', 'collaborationRole'],
+  },
   'agent.room.delete': {
     method: 'DELETE',
     path: '/api/agent/rooms/:roomId',
@@ -583,8 +590,20 @@ export const CONTROL_ROUTES = {
   'agent.roles.create': {
     method: 'POST',
     path: '/api/agent/roles',
-    body: ['displayName', 'tagline', 'summary', 'traits', 'timelineModel', 'selectableModes'],
-    requiredBody: ['displayName', 'tagline', 'summary', 'traits', 'timelineModel', 'selectableModes'],
+    body: ['displayName', 'tagline', 'summary', 'traits', 'timelineModel', 'selectableModes', 'suitableTasks', 'unsuitableTasks'],
+    requiredBody: ['displayName', 'tagline', 'summary', 'traits', 'timelineModel', 'selectableModes', 'suitableTasks', 'unsuitableTasks'],
+  },
+  'agent.roles.update': {
+    method: 'PATCH',
+    path: '/api/agent/roles',
+    body: ['roleId', 'roleVersion', 'displayName', 'tagline', 'summary', 'traits', 'timelineModel', 'selectableModes', 'suitableTasks', 'unsuitableTasks'],
+    requiredBody: ['roleId', 'roleVersion', 'displayName', 'tagline', 'summary', 'traits', 'timelineModel', 'selectableModes', 'suitableTasks', 'unsuitableTasks'],
+  },
+  'agent.roles.archive': {
+    method: 'DELETE',
+    path: '/api/agent/roles',
+    body: ['roleId', 'roleVersion'],
+    requiredBody: ['roleId', 'roleVersion'],
   },
   'agent.role.models': {
     method: 'GET',

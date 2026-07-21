@@ -215,7 +215,7 @@ class AgentWakeApplicationService:
                 session.get("title") or "Agent thread"
             )
         else:
-            role = self.personas.resolve(
+            role = self.personas.resolve_active(
                 normalized["targetRoleId"],
                 normalized["targetRoleVersion"],
             )

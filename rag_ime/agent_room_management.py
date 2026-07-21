@@ -168,6 +168,13 @@ class RoomManagementService:
     ) -> dict[str, object]:
         return self.participants.remove(room_id, payload)
 
+    def update_participant_role(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        return self.participants.update_role(room_id, payload)
+
     def delete_room(
         self,
         room_id: str,

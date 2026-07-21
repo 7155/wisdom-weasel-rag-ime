@@ -45,6 +45,15 @@ ROOM_EVENT_TYPES = frozenset(
 )
 
 ROOM_SNAPSHOT_EVENT_LIMIT = 2000
+ROOM_COLLABORATION_ROLES = frozenset(
+    {
+        "coordinator",
+        "researcher",
+        "implementer",
+        "reviewer",
+        "specialist",
+    }
+)
 
 
 class AgentRoomNotFound(KeyError):
@@ -143,15 +152,16 @@ class AgentRoomStore:
                 )
                 role_version = _required_text(value, "roleVersion")
                 display_name = " ".join(_required_text(value, "displayName").split())[:40]
-                collaboration_role = str(value.get("collaborationRole") or "executor").strip()
-                if collaboration_role not in {"coordinator", "executor", "researcher"}:
-                    raise ValueError("unsupported room collaboration role")
+                collaboration_role = normalize_collaboration_role(
+                    value.get("collaborationRole")
+                )
                 conn.execute(
                     """
                     INSERT INTO agent_room_participants(
                         id, room_id, session_id, role_id, role_version, display_name,
-                        collaboration_role, participant_status, ordinal, created_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                        collaboration_role, collaboration_role_key,
+                        participant_status, ordinal, created_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                     """,
                     (
                         participant_id,
@@ -160,6 +170,7 @@ class AgentRoomStore:
                         role_id,
                         role_version,
                         display_name,
+                        _legacy_collaboration_role(collaboration_role),
                         collaboration_role,
                         ordinal,
                         timestamp,
@@ -251,7 +262,7 @@ class AgentRoomStore:
         role_id: str,
         role_version: str,
         display_name: str,
-        collaboration_role: str = "executor",
+        collaboration_role: str = "implementer",
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
         """Join a participant without replaying the Room's pre-join transcript."""
@@ -280,9 +291,9 @@ class AgentRoomStore:
             for value in active
         ):
             raise ValueError("this role is already active in the Room")
-        normalized_collaboration_role = str(collaboration_role or "executor").strip()
-        if normalized_collaboration_role not in {"coordinator", "executor", "researcher"}:
-            raise ValueError("unsupported room collaboration role")
+        normalized_collaboration_role = normalize_collaboration_role(
+            collaboration_role
+        )
         participant_id = f"participant:{uuid.uuid4()}"
         timestamp = _timestamp(created_at_ms)
         with self._connect() as conn:
@@ -324,8 +335,9 @@ class AgentRoomStore:
                 """
                 INSERT INTO agent_room_participants(
                     id, room_id, session_id, role_id, role_version, display_name,
-                    collaboration_role, participant_status, ordinal, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                    collaboration_role, collaboration_role_key,
+                    participant_status, ordinal, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
                 (
                     participant_id,
@@ -334,6 +346,9 @@ class AgentRoomStore:
                     normalized_role_id,
                     normalized_role_version,
                     _required_text_value(display_name, "display_name", 40),
+                    _legacy_collaboration_role(
+                        normalized_collaboration_role
+                    ),
                     normalized_collaboration_role,
                     ordinal,
                     timestamp,
@@ -361,6 +376,65 @@ class AgentRoomStore:
                     """,
                     (room_id, participant_id, topic_id, sequence, timestamp),
                 )
+            conn.execute(
+                "UPDATE agent_rooms SET updated_at_ms = ? WHERE id = ?",
+                (timestamp, room_id),
+            )
+        return self.participant(participant_id)
+
+    def update_participant_role(
+        self,
+        room_id: str,
+        participant_id: str,
+        collaboration_role: str,
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Change future dispatch responsibility without rewriting history."""
+
+        normalized_role = normalize_collaboration_role(
+            collaboration_role
+        )
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            room_row = conn.execute(
+                "SELECT status FROM agent_rooms WHERE id = ?",
+                (room_id,),
+            ).fetchone()
+            if room_row is None:
+                raise AgentRoomNotFound(room_id)
+            if str(room_row["status"]) != "active":
+                raise ValueError("agent room is archived")
+            participant_row = conn.execute(
+                """
+                SELECT room_id, participant_status
+                FROM agent_room_participants
+                WHERE id = ?
+                """,
+                (participant_id,),
+            ).fetchone()
+            if participant_row is None:
+                raise AgentParticipantNotFound(participant_id)
+            if str(participant_row["room_id"]) != room_id:
+                raise ValueError(
+                    "participant does not belong to this Room"
+                )
+            if str(participant_row["participant_status"]) != "active":
+                raise ValueError("participant is not active")
+            conn.execute(
+                """
+                UPDATE agent_room_participants
+                SET collaboration_role = ?,
+                    collaboration_role_key = ?
+                WHERE id = ?
+                """,
+                (
+                    _legacy_collaboration_role(normalized_role),
+                    normalized_role,
+                    participant_id,
+                ),
+            )
             conn.execute(
                 "UPDATE agent_rooms SET updated_at_ms = ? WHERE id = ?",
                 (timestamp, room_id),
@@ -1741,7 +1815,11 @@ def _participant_payload(row: sqlite3.Row) -> dict[str, object]:
         "roleId": canonical_agent_role_id(row["role_id"]),
         "roleVersion": str(row["role_version"]),
         "displayName": str(row["display_name"]),
-        "collaborationRole": str(row["collaboration_role"] or "executor"),
+        "collaborationRole": str(
+            row["collaboration_role_key"]
+            or row["collaboration_role"]
+            or "implementer"
+        ),
         "status": str(row["participant_status"]),
         "ordinal": int(row["ordinal"]),
         "createdAtMs": int(row["created_at_ms"]),
@@ -1904,6 +1982,21 @@ def _required_text_value(value: object, field: str, maximum: int) -> str:
     if len(normalized) > maximum:
         raise ValueError(f"{field} must not exceed {maximum} characters")
     return normalized
+
+
+def normalize_collaboration_role(value: object) -> str:
+    normalized = str(value or "implementer").strip()
+    if normalized == "executor":
+        normalized = "implementer"
+    if normalized not in ROOM_COLLABORATION_ROLES:
+        raise ValueError("unsupported room collaboration role")
+    return normalized
+
+
+def _legacy_collaboration_role(value: str) -> str:
+    if value in {"coordinator", "researcher"}:
+        return value
+    return "executor"
 
 
 def _timestamp(value: int | None) -> int:

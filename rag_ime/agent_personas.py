@@ -36,26 +36,13 @@ class AgentPersonaStore:
         *,
         created_at_ms: int | None = None,
     ) -> PersonaManifest:
-        allowed = {
-            "displayName",
-            "tagline",
-            "summary",
-            "traits",
-            "timelineModel",
-            "selectableModes",
-        }
-        unexpected = sorted(str(key) for key in payload if key not in allowed)
-        if unexpected:
-            raise ValueError(f"unsupported persona fields: {', '.join(unexpected)}")
-
-        display_name = _public_text(payload.get("displayName"), field="displayName", maximum=40)
-        tagline = _public_text(payload.get("tagline"), field="tagline", maximum=80)
-        summary = _public_text(payload.get("summary"), field="summary", maximum=180)
-        traits = _traits(payload.get("traits"))
-        timeline_model = str(payload.get("timelineModel") or "").strip().lower()
-        if timeline_model not in {"luna", "terra", "sol"}:
-            raise ValueError("timelineModel must be luna, terra, or sol")
-        selectable_modes = _selectable_modes(payload.get("selectableModes"))
+        fields = _persona_fields(payload)
+        display_name = fields["display_name"]
+        tagline = fields["tagline"]
+        summary = fields["summary"]
+        traits = fields["traits"]
+        timeline_model = fields["timeline_model"]
+        selectable_modes = fields["selectable_modes"]
         role_id = f"persona-{uuid.uuid4().hex[:20]}"
         version = "1"
         timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
@@ -69,6 +56,8 @@ class AgentPersonaStore:
             traits=traits,
             timeline_model=timeline_model,
             selectable_modes=selectable_modes,
+            suitable_tasks=fields["suitable_tasks"],
+            unsuitable_tasks=fields["unsuitable_tasks"],
         )
         manifest.to_payload()
         tool_policy = _tool_policy(manifest)
@@ -77,12 +66,13 @@ class AgentPersonaStore:
                 """
                 INSERT INTO agent_personas(
                     role_id, version, display_name, tagline, summary, traits_json,
-                    timeline_model, selectable_modes_json, persona_prompt,
+                    timeline_model, selectable_modes_json, suitable_tasks_json,
+                    unsuitable_tasks_json, persona_prompt,
                     visual_profile_json, model_policy, memory_policy,
                     tool_profile_version, safety_policy_version,
                     safety_policy_prompt, tool_policy_json, status,
                     created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 """,
                 (
                     role_id,
@@ -93,6 +83,8 @@ class AgentPersonaStore:
                     json.dumps(list(traits), ensure_ascii=False, separators=(",", ":")),
                     timeline_model,
                     json.dumps(list(selectable_modes), ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(list(fields["suitable_tasks"]), ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(list(fields["unsuitable_tasks"]), ensure_ascii=False, separators=(",", ":")),
                     manifest.persona_prompt,
                     json.dumps(
                         manifest.visual_profile.to_payload(),
@@ -117,23 +109,150 @@ class AgentPersonaStore:
             )
         return manifest
 
+    def update(
+        self,
+        role_id: object,
+        version: object,
+        payload: Mapping[str, object],
+        *,
+        updated_at_ms: int | None = None,
+    ) -> PersonaManifest:
+        """Update user-owned presentation metadata without exposing prompt ownership.
+
+        Persona metadata is intentionally a living preference. Existing Sessions
+        remain pinned to this identity; later prompt assembly observes the revised
+        fields, while the server continues to own tool and safety policy.
+        """
+
+        current = self._user_manifest(
+            str(role_id or "").strip(),
+            str(version or "").strip(),
+            active_only=True,
+        )
+        fields = _persona_fields(payload)
+        manifest = user_persona_manifest(
+            role_id=current.role_id,
+            version=current.version,
+            **fields,
+        )
+        manifest.to_payload()
+        timestamp = int(updated_at_ms if updated_at_ms is not None else time.time() * 1000)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_personas
+                SET display_name = ?, tagline = ?, summary = ?, traits_json = ?,
+                    timeline_model = ?, selectable_modes_json = ?, suitable_tasks_json = ?,
+                    unsuitable_tasks_json = ?, persona_prompt = ?,
+                    visual_profile_json = ?, model_policy = ?, memory_policy = ?,
+                    tool_profile_version = ?, safety_policy_version = ?,
+                    safety_policy_prompt = ?, tool_policy_json = ?, updated_at_ms = ?
+                WHERE role_id = ? AND version = ? AND status = 'active'
+                """,
+                (
+                    manifest.display_name,
+                    manifest.tagline,
+                    manifest.summary,
+                    json.dumps(list(manifest.traits), ensure_ascii=False, separators=(",", ":")),
+                    fields["timeline_model"],
+                    json.dumps(list(manifest.selectable_modes), ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(list(manifest.runtime_characteristics.suitable_tasks), ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(list(manifest.runtime_characteristics.unsuitable_tasks), ensure_ascii=False, separators=(",", ":")),
+                    manifest.persona_prompt,
+                    json.dumps(
+                        manifest.visual_profile.to_payload(),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    manifest.defaults.model_policy,
+                    manifest.defaults.memory_policy,
+                    manifest.defaults.tool_profile_version,
+                    manifest.safety_policy_version,
+                    manifest.safety_policy_prompt,
+                    json.dumps(_tool_policy(manifest), ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                    timestamp,
+                    current.role_id,
+                    current.version,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise ValueError("user persona is no longer active")
+        return manifest
+
+    def archive(
+        self,
+        role_id: object,
+        version: object,
+        *,
+        archived_at_ms: int | None = None,
+    ) -> PersonaManifest:
+        """Hide a user-owned persona from new selection without breaking pinned Sessions."""
+
+        current = self._user_manifest(
+            str(role_id or "").strip(),
+            str(version or "").strip(),
+            active_only=True,
+        )
+        timestamp = int(
+            archived_at_ms if archived_at_ms is not None else time.time() * 1000
+        )
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_personas
+                SET status = 'archived', archived_at_ms = ?, updated_at_ms = ?
+                WHERE role_id = ? AND version = ? AND status = 'active'
+                """,
+                (timestamp, timestamp, current.role_id, current.version),
+            )
+        if cursor.rowcount != 1:
+            raise ValueError("user persona is no longer active")
+        return current
+
     def resolve(self, role_id: object, version: object) -> PersonaManifest:
+        """Resolve a pinned identity, including archived user personas.
+
+        Existing Sessions keep their original role reference after a user removes
+        the persona from the picker. New work must use ``resolve_active`` instead.
+        """
+
         try:
             return agent_role(role_id, version)
         except ValueError:
             pass
         key = (str(role_id or "").strip(), str(version or "").strip())
+        return self._user_manifest(*key)
+
+    def resolve_active(self, role_id: object, version: object) -> PersonaManifest:
+        """Resolve an identity that is still selectable for new work."""
+
+        try:
+            return agent_role(role_id, version)
+        except ValueError:
+            pass
+        key = (str(role_id or "").strip(), str(version or "").strip())
+        return self._user_manifest(*key, active_only=True)
+
+    def _user_manifest(
+        self,
+        role_id: str,
+        version: str,
+        *,
+        active_only: bool = False,
+    ) -> PersonaManifest:
+        status_clause = " AND status = 'active'" if active_only else ""
         with self._connect() as conn:
             row = conn.execute(
-                """
+                f"""
                 SELECT * FROM agent_personas
-                WHERE role_id = ? AND version = ? AND status = 'active'
+                WHERE role_id = ? AND version = ?{status_clause}
                 """,
-                key,
+                (role_id, version),
             ).fetchone()
         if row is None:
             raise ValueError(
-                f"unsupported agent role: {key[0] or '<empty>'}@{key[1] or '<empty>'}"
+                f"unsupported agent role: {role_id or '<empty>'}@{version or '<empty>'}"
             )
         return _manifest(row)
 
@@ -183,6 +302,7 @@ class AgentPersonaStore:
         role = self.resolve(role_id, version)
         if role.defaults.model_policy == "fixed":
             raise ValueError("builtin persona runtime defaults are fixed")
+        self._user_manifest(role.role_id, role.version, active_only=True)
         profile = _model_profile(model_profile)
         level = str(thinking_level or "").strip().lower()
         if level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
@@ -221,6 +341,8 @@ class AgentPersonaStore:
 def _manifest(row: sqlite3.Row) -> PersonaManifest:
     traits = _stored_text_array(row["traits_json"], field="traits")
     modes = _stored_text_array(row["selectable_modes_json"], field="selectableModes")
+    suitable_tasks = _stored_text_array(row["suitable_tasks_json"], field="suitableTasks")
+    unsuitable_tasks = _stored_text_array(row["unsuitable_tasks_json"], field="unsuitableTasks")
     visual_value = _stored_object(row["visual_profile_json"], field="visualProfile")
     tool_policy = _stored_object(row["tool_policy_json"], field="toolPolicy")
     tool_profile_version = str(row["tool_profile_version"])
@@ -250,14 +372,43 @@ def _manifest(row: sqlite3.Row) -> PersonaManifest:
             intelligence="由所选模型决定",
             speed="由所选模型决定",
             context="按 Session 模型与作用域配置",
-            suitable_tasks=("用户定义的陪伴与协作任务",),
-            unsuitable_tasks=("超出已连接工具、权限或证据范围的任务",),
+            suitable_tasks=suitable_tasks,
+            unsuitable_tasks=unsuitable_tasks,
         ),
         selectable_modes=modes,
         safety_policy_version=str(row["safety_policy_version"]),
         safety_policy_prompt=str(row["safety_policy_prompt"]),
         origin="user",
     )
+
+
+def _persona_fields(payload: Mapping[str, object]) -> dict[str, object]:
+    allowed = {
+        "displayName",
+        "tagline",
+        "summary",
+        "traits",
+        "timelineModel",
+        "selectableModes",
+        "suitableTasks",
+        "unsuitableTasks",
+    }
+    unexpected = sorted(str(key) for key in payload if key not in allowed)
+    if unexpected:
+        raise ValueError(f"unsupported persona fields: {', '.join(unexpected)}")
+    timeline_model = str(payload.get("timelineModel") or "").strip().lower()
+    if timeline_model not in {"luna", "terra", "sol"}:
+        raise ValueError("timelineModel must be luna, terra, or sol")
+    return {
+        "display_name": _public_text(payload.get("displayName"), field="displayName", maximum=40),
+        "tagline": _public_text(payload.get("tagline"), field="tagline", maximum=80),
+        "summary": _public_text(payload.get("summary"), field="summary", maximum=180),
+        "traits": _traits(payload.get("traits")),
+        "timeline_model": timeline_model,
+        "selectable_modes": _selectable_modes(payload.get("selectableModes")),
+        "suitable_tasks": _task_boundaries(payload.get("suitableTasks"), field="suitableTasks"),
+        "unsuitable_tasks": _task_boundaries(payload.get("unsuitableTasks"), field="unsuitableTasks"),
+    }
 
 
 def _public_text(value: object, *, field: str, maximum: int) -> str:
@@ -305,6 +456,17 @@ def _selectable_modes(value: object) -> tuple[str, ...]:
     if any(mode not in {"assistant", "coordinator"} for mode in modes):
         raise ValueError("selectableModes contains an unsupported mode")
     return modes
+
+
+def _task_boundaries(value: object, *, field: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"{field} must be an array")
+    items = tuple(_public_text(item, field=field, maximum=80) for item in value)
+    if not 1 <= len(items) <= 4:
+        raise ValueError(f"{field} must contain between 1 and 4 items")
+    if len(set(items)) != len(items):
+        raise ValueError(f"{field} must not contain duplicates")
+    return items
 
 
 def _tool_policy(manifest: PersonaManifest) -> dict[str, object]:

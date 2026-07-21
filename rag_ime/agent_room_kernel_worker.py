@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -241,9 +240,14 @@ class KernelCommandBus:
         )
 
 
-def _default_dispatch_message(dispatch: Mapping[str, object]) -> str:
-    return "[ROOM_DISPATCH_V2]\n" + json.dumps(
-        dict(dispatch), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+def _default_dispatch_message(_dispatch: Mapping[str, object]) -> str:
+    # Dispatch identity, requirements and Room facts are already carried by
+    # the fenced provider-only projection. The Session receives only a stable
+    # private trigger, never the transport envelope or its internal IDs.
+    return (
+        "执行当前受管 Room 任务；任务事实与责任以本轮 Room Context 为准。"
+        "提交 deliver 时，把 acceptance.criteria[].criterionId 原样放入 "
+        "requirementCoverage，禁止自造标签。"
     )
 
 

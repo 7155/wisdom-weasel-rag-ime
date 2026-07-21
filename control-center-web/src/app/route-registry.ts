@@ -31,7 +31,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
   { id: 'input', path: '/input', label: '输入法', shortLabel: '输入', group: 'work' },
   { id: 'agent', path: '/agent', label: 'Session 工作台', shortLabel: 'Session', group: 'work' },
   { id: 'rooms', path: '/rooms', label: 'Room 工作台', shortLabel: 'Room', group: 'work' },
-  { id: 'roles', path: '/roles', label: '角色与 Agent', shortLabel: '角色', group: 'work' },
+  { id: 'roles', path: '/roles', label: 'Agent 伙伴', shortLabel: '伙伴', group: 'work' },
   { id: 'plugins', path: '/plugins', label: '能力中心', shortLabel: '能力', group: 'capability' },
   { id: 'knowledge', path: '/knowledge', label: '知识库', shortLabel: '知识', group: 'capability' },
   { id: 'memory', path: '/memory', label: '记忆', shortLabel: '记忆', group: 'capability' },

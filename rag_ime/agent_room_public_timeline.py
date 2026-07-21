@@ -1,9 +1,28 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from .agent_protocol import AgentEventEnvelope
 from .agent_rooms import AgentRoomEventHub
+
+
+_ROOM_POST_PUBLIC_FIELDS = (
+    "schemaVersion",
+    "postId",
+    "roomId",
+    "rootId",
+    "generation",
+    "taskId",
+    "dispatchId",
+    "authorActorRef",
+    "kind",
+    "visibility",
+    "content",
+    "blocks",
+    "idempotencyKey",
+    "publicationSource",
+    "createdAtMs",
+)
 
 
 class RoomPublicTimelineProjector:
@@ -14,8 +33,14 @@ class RoomPublicTimelineProjector:
     explicit RoomPost publication, and terminal state.
     """
 
-    def __init__(self, events: AgentRoomEventHub) -> None:
+    def __init__(
+        self,
+        events: AgentRoomEventHub,
+        *,
+        root_is_terminal: Callable[[str], bool] | None = None,
+    ) -> None:
         self.events = events
+        self.root_is_terminal = root_is_terminal
 
     def publish_ingress(
         self,
@@ -98,6 +123,8 @@ class RoomPublicTimelineProjector:
         topic_id: str = "",
     ) -> dict[str, object] | None:
         root_id = str(binding["rootId"])
+        if self._after_root_terminal(root_id):
+            return None
         dispatch_id = str(binding["dispatchId"])
         data = {
             **dict(public_data),
@@ -128,16 +155,31 @@ class RoomPublicTimelineProjector:
         source_session_id: str,
         topic_id: str = "",
     ) -> dict[str, object] | None:
+        if self._after_root_terminal(str(post["rootId"])):
+            return None
+        public_post = {
+            field: post[field]
+            for field in _ROOM_POST_PUBLIC_FIELDS
+            if field in post
+        }
         return self.events.publish_projection(
             projection_key=f"room-post:{post['postId']}",
             room_id=str(post["roomId"]),
             event_type="room_post",
-            payload={"post": dict(post)},
+            # Context storage enriches a post with hashes and its journal
+            # entry. Those are private evidence, not part of RoomPostV2.
+            payload={"post": public_post},
             turn_id=str(post["rootId"]),
             participant_id=participant_id or None,
             source_session_id=source_session_id,
             topic_id=topic_id,
             created_at_ms=int(post["createdAtMs"]),
+        )
+
+    def _after_root_terminal(self, root_id: str) -> bool:
+        return bool(
+            self.root_is_terminal is not None
+            and self.root_is_terminal(root_id)
         )
 
     def publish_terminal(

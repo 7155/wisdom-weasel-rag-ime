@@ -239,8 +239,19 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             self.service.room_kernel.dispatch("dispatch:settle")["state"],
             "committed",
         )
+        root = self.service.room_kernel.root("root:settle")
+        self.assertEqual(root["state"], "completed")
+        self.assertTrue(root["terminalReceiptId"])
         posts = self.service.room_kernel_snapshot(self.room_id)["posts"]
         self.assertEqual([post["content"] for post in posts], ["result:deliver"])
+        public_events = self.service.room_snapshot(self.room_id)["events"]
+        terminal_events = [
+            event
+            for event in public_events
+            if event["eventType"] == "turn_completed"
+            and event["participantId"] is None
+        ]
+        self.assertEqual(len(terminal_events), 1)
         self.assertEqual(
             self.service.room_capabilities.runtime_binding(
                 self.session_id,
@@ -339,6 +350,11 @@ class RoomSettleLifecycleTests(unittest.TestCase):
 
         self.assertEqual(settled["state"], "repair")
         self.assertIn("outside the current Task", settled["reason"])
+        self.assertIn(
+            'acceptanceCriterionIds=["criterion:settle"]',
+            settled["message"],
+        )
+        self.assertIn("不得填写 requirementItemIds", settled["message"])
         self.assertEqual(
             self.service.room_kernel.dispatch("dispatch:settle")["state"],
             "running",

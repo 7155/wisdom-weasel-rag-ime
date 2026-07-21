@@ -56,6 +56,7 @@ export interface RoomTurnProjection {
   failedDispatchIds?: string[];
   abortedDispatchIds?: string[];
   dispatchParticipantIds?: Record<string, string>;
+  rootTerminalAtMs?: number;
   createdAtMs: number;
   updatedAtMs: number;
   failure?: string;
@@ -148,6 +149,18 @@ export function reduceRoomEvent(
   next.lastEventId = event.eventId;
   next.resumeToken = event.resumeToken;
   const payload = publicRoomPayload(event.payload);
+
+  if (isExecutionEventAfterRootTerminal(next, event, payload)) {
+    appendDiagnostic(next, {
+      id: `${event.eventId}:after-root-terminal`,
+      streamKind: 'room',
+      eventType: 'room_event_after_root_terminal',
+      summary: 'A late Room execution event was ignored after the Root terminal fence.',
+      sequence: event.sequence,
+      payload,
+    });
+    return { state: next, disposition: 'applied' };
+  }
 
   switch (event.eventType) {
     case 'user_message':
@@ -593,9 +606,57 @@ function applyRoomPost(
     .sort((left, right) => right.createdAtMs - left.createdAtMs)[0];
   if (provisional) {
     replaceProvisionalMessage(state, provisional.id, message);
-    return;
+  } else {
+    upsertMessage(state, message);
   }
-  upsertMessage(state, message);
+  markPublishedDispatchTerminal(state, event, post);
+}
+
+function markPublishedDispatchTerminal(
+  state: RoomProjectionState,
+  event: UiRoomEvent,
+  post: RoomPostV2,
+): void {
+  if (post.publicationSource.kind !== 'room_commit' || !post.dispatchId) return;
+
+  const participantId = event.participantId ?? '';
+  const turn = ensureTurn(state, post.rootId, post.createdAtMs);
+  turn.rootId = post.rootId;
+  turn.dispatchIds ??= [];
+  turn.terminalDispatchIds ??= [];
+  turn.dispatchParticipantIds ??= {};
+  if (!turn.dispatchIds.includes(post.dispatchId)) {
+    turn.dispatchIds.push(post.dispatchId);
+  }
+  if (participantId) {
+    turn.dispatchParticipantIds[post.dispatchId] = participantId;
+    if (!turn.participantIds.includes(participantId)) {
+      turn.participantIds.push(participantId);
+    }
+  }
+  if (!turn.terminalDispatchIds.includes(post.dispatchId)) {
+    turn.terminalDispatchIds.push(post.dispatchId);
+  }
+
+  if (participantId) {
+    const participantDispatches = turn.dispatchIds.filter(
+      (dispatchId) => turn.dispatchParticipantIds?.[dispatchId] === participantId,
+    );
+    if (
+      participantDispatches.length > 0
+      && participantDispatches.every(
+        (dispatchId) => turn.terminalDispatchIds?.includes(dispatchId),
+      )
+    ) {
+      turn.terminalParticipantIds ??= [];
+      if (!turn.terminalParticipantIds.includes(participantId)) {
+        turn.terminalParticipantIds.push(participantId);
+      }
+    }
+  }
+  // Publishing settles one Dispatch lane. Only the participant-less Root
+  // terminal event may unlock the whole turn.
+  turn.updatedAtMs = Math.max(turn.updatedAtMs, post.createdAtMs);
 }
 
 function replaceProvisionalMessage(
@@ -887,19 +948,9 @@ function completeParticipantTurn(
       completedAtMs: nowMs,
     };
   }
-  const allTerminal = turn.dispatchIds.length > 0
-    ? turn.dispatchIds.every((id) => turn.terminalDispatchIds?.includes(id))
-    : turn.participantIds.length > 0
-      && turn.participantIds.every((id) => turn.terminalParticipantIds?.includes(id));
-  if (allTerminal) {
-    turn.status = turn.failedDispatchIds.length > 0 || turn.failedParticipantIds.length > 0
-      ? 'failed'
-      : turn.abortedDispatchIds.length > 0 || turn.abortedParticipantIds.length > 0
-        ? 'aborted'
-        : 'completed';
-  } else {
-    turn.status = 'running';
-  }
+  // A participant/Dispatch terminal only settles its execution lane. The
+  // participant-less Root terminal remains the sole input-unlock authority.
+  turn.status = 'running';
 }
 
 function completeTurn(
@@ -911,6 +962,7 @@ function completeTurn(
 ): void {
   const turn = ensureTurn(state, turnId, nowMs);
   turn.status = status;
+  turn.rootTerminalAtMs = nowMs;
   turn.updatedAtMs = nowMs;
   turn.terminalParticipantIds = [...turn.participantIds];
   turn.failedParticipantIds = status === 'failed' ? [...turn.participantIds] : [];
@@ -1003,6 +1055,26 @@ function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function isExecutionEventAfterRootTerminal(
+  state: RoomProjectionState,
+  event: UiRoomEvent,
+  payload: Record<string, unknown>,
+): boolean {
+  if (![
+    'participant_delta',
+    'participant_message',
+    'room_post',
+    'route_decision',
+    'participant_status',
+    'participant_activity',
+    'turn_completed',
+    'turn_failed',
+  ].includes(event.eventType)) return false;
+  const post = record(payload.post);
+  const rootId = text(payload.rootId) || text(post.rootId) || event.turnId;
+  return state.turnsById[rootId]?.rootTerminalAtMs != null;
 }
 
 function publicRoomPayload(value: unknown): Record<string, unknown> {

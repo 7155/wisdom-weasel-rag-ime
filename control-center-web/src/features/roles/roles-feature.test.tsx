@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -11,58 +11,50 @@ import { RolesFeature } from './index';
 
 describe('Roles experience', () => {
   afterEach(cleanup);
-  it('keeps Persona visuals separate from Agent Template runtime limits', async () => {
-    const user = userEvent.setup();
+  it('keeps the partner page focused on identity instead of runtime task definitions', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.subagents.templates': { ok: true, items: previewTemplates },
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
     expect(await screen.findByText('此刻陪你输入，也陪你把事情想清楚')).toBeInTheDocument();
-    expect(screen.getAllByLabelText('角色阶段')[0]).toHaveTextContent('构筑阶段');
-    expect(screen.getByText('陪伴阶段')).toBeInTheDocument();
+    expect(screen.getByText('适合交给她')).toBeInTheDocument();
+    expect(screen.getByText('不建议交给她')).toBeInTheDocument();
     expect(screen.getAllByText('GPT-5.6 Sol').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('内置只读').length).toBeGreaterThan(0);
     expect(screen.getByText('默认')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '复制并自定义' })).toBeInTheDocument();
     expect(screen.queryByText('control-center-safe-v1')).not.toBeInTheDocument();
     expect(screen.queryByText('control-center-v1')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('radio', { name: 'Agent 模板' }));
-    expect(screen.getAllByText('研究员')).toHaveLength(2);
-    expect(screen.getByText('按任务持续执行 · 可随时停止')).toBeInTheDocument();
-    expect(screen.getByText('只读资料与审阅工具')).toBeInTheDocument();
-    expect(screen.getByText('独立上下文 · 继承当前上下文')).toBeInTheDocument();
-    expect(screen.queryByText('subagent-readonly-v1')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /执行者/ }));
-    expect(screen.getAllByText('执行者')).toHaveLength(2);
-    expect(screen.getByText('按任务持续执行 · 可随时停止')).toBeInTheDocument();
-    expect(screen.getByText('受控执行工具')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '开始对话' })).not.toBeInTheDocument();
-    await waitFor(() => expect(transport.requests.map((call) => call.request.pathId)).toEqual(expect.arrayContaining(['agent.roles.list', 'agent.subagents.templates'])));
+    expect(screen.queryByText('任务助手')).not.toBeInTheDocument();
+    expect(screen.queryByText('Room 岗位')).not.toBeInTheDocument();
+    expect(screen.queryByText('协作规则')).not.toBeInTheDocument();
+    await waitFor(() => expect(transport.requests.map((call) => call.request.pathId)).toEqual(expect.arrayContaining(['agent.roles.list', 'agent.role.models', 'agent.configuration.get'])));
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.subagents.templates')).toBe(false);
   });
 
-  it('separates the four Agent Definition layers and fails closed without a canonical Profile route', async () => {
-    const user = userEvent.setup();
+  it('makes Room membership a capability while keeping task jobs dynamic', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.subagents.templates': { ok: true, items: previewTemplates },
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    expect(await screen.findByRole('radio', { name: '角色' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '协作岗位' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '角色书' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: 'Agent 模板' })).toBeInTheDocument();
+    expect(await screen.findByText(/Room 成员、岗位和任务交接只在 Room 内管理/)).toBeInTheDocument();
+    expect(screen.queryByText('协作配置')).not.toBeInTheDocument();
+    expect(screen.queryByText('协作主持')).not.toBeInTheDocument();
+    expect(screen.getByText('内置伙伴 · 只读')).toBeInTheDocument();
+  });
 
-    await user.click(screen.getByRole('radio', { name: '协作岗位' }));
-    expect(screen.getAllByText('研究员')).not.toHaveLength(0);
-    expect(screen.getByText('提交发现、证据和未解决缺口')).toBeInTheDocument();
-    expect(screen.getByText(/协作岗位 · 只读基线/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /创建协作岗位/ })).not.toBeInTheDocument();
+  it('copies the selected built-in partner without changing her lifecycle phase', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: previewPersonas },
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    await user.click(screen.getByRole('radio', { name: '角色书' }));
-    expect(screen.getAllByText('证据研究与独立复核')).toHaveLength(2);
-    expect(screen.getByText(/角色书 · canonical runtime/)).toBeInTheDocument();
-    expect(await screen.findByText(/CollaborationProfile read route is unavailable or changed/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '启用' })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: '复制并自定义' }));
+
+    expect(screen.getByRole('dialog', { name: '添加伙伴' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /构筑阶段/ })).toBeChecked();
   });
 
   it('creates a Session with the selected Persona and navigates to it', async () => {
@@ -157,7 +149,7 @@ describe('Roles experience', () => {
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
     await screen.findByText(persona.tagline);
-    await user.click(screen.getByRole('button', { name: '查看成长档案' }));
+    await user.click(screen.getByRole('button', { name: '角色记忆与成长档案' }));
     const lesson = await screen.findByRole('checkbox', { name: /工具返回缺失字段时先验证边界契约/ });
     const previewButton = screen.getByRole('button', { name: '预览启用' });
     expect(previewButton).toBeDisabled();
@@ -230,7 +222,7 @@ describe('Roles experience', () => {
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
     expect((await screen.findAllByText('GPT-5.6 Sol')).length).toBeGreaterThan(0);
-    expect(screen.getByText('固定运行配置')).toBeInTheDocument();
+    expect(screen.getByText('内置模型')).toBeInTheDocument();
     expect(screen.getByText('Max')).toBeInTheDocument();
     expect(screen.queryByLabelText('角色默认模型')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '保存默认设置' })).not.toBeInTheDocument();
@@ -246,10 +238,10 @@ describe('Roles experience', () => {
 
     await user.click(await screen.findByRole('button', { name: /智鼬·闪念/ }));
     expect(screen.getAllByText('DeepSeek V4 Flash').length).toBeGreaterThan(0);
-    expect(screen.getByText('超长上下文，擅长高速扫描')).toBeInTheDocument();
-    expect(screen.getByText('普通')).toBeInTheDocument();
-    expect(screen.getByText('超长材料高速扫读与提取 · 归类、去重和格式转换')).toBeInTheDocument();
-    expect(screen.getByText('复杂推理 · 复杂实现 · 高风险决定 · 最终验收')).toBeInTheDocument();
+    expect(screen.getByText('超长材料高速扫读与提取')).toBeInTheDocument();
+    expect(screen.getByText('归类、去重和格式转换')).toBeInTheDocument();
+    expect(screen.getByText('复杂推理')).toBeInTheDocument();
+    expect(screen.getByText('最终验收')).toBeInTheDocument();
     expect(screen.getByText('不启用推理')).toBeInTheDocument();
   });
 
@@ -260,44 +252,37 @@ describe('Roles experience', () => {
     });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    expect(await screen.findByText('本机还没有可用角色。')).toBeInTheDocument();
+    expect(await screen.findByText('本机还没有可用伙伴。')).toBeInTheDocument();
     expect(screen.queryByText('此刻陪你输入，也陪你把事情想清楚')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '开始对话' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '开始对话' })).not.toBeInTheDocument();
   });
 
-  it('keeps the real Persona catalog usable when the template request fails', async () => {
+  it('does not make the partner catalog depend on task-template availability', async () => {
     const user = userEvent.setup();
     const transport = new StubControlTransport('native', {
       'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.subagents.templates': () => { throw new Error('template service unavailable'); },
     });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
     expect(await screen.findByText('此刻陪你输入，也陪你把事情想清楚')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '开始对话' })).toBeEnabled();
-    expect(screen.getByRole('status')).toHaveTextContent('Agent 模板：暂时无法读取，请稍后重试。');
     await user.click(screen.getByRole('button', { name: /智鼬·初识/ }));
-    expect(screen.getByRole('status')).toHaveTextContent('Agent 模板：暂时无法读取，请稍后重试。');
     expect(transport.requests.map((request) => request.pathId)).toEqual([
       'agent.roles.list',
-      'agent.subagents.templates',
       'agent.role.models',
+      'agent.configuration.get',
     ]);
   });
 
-  it('keeps real templates inspectable and disables the Persona action when roles fail', async () => {
-    const user = userEvent.setup();
+  it('makes a role catalog failure visible without inventing fallback partners', async () => {
     const transport = new StubControlTransport('native', {
       'agent.roles.list': () => { throw new Error('role service unavailable'); },
-      'agent.subagents.templates': { ok: true, items: previewTemplates },
     });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
     expect(await screen.findByRole('status')).toHaveTextContent('角色目录：暂时无法读取，请稍后重试。');
-    expect(screen.getByRole('button', { name: '开始对话' })).toBeDisabled();
-    await user.click(screen.getByRole('radio', { name: 'Agent 模板' }));
-    expect(screen.getAllByText('研究员')).toHaveLength(2);
-    expect(screen.getByText('按任务持续执行 · 可随时停止')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '开始对话' })).not.toBeInTheDocument();
+    expect(screen.getByText('本机还没有可用伙伴。')).toBeInTheDocument();
   });
 
   it('creates a user-defined role through the real role creation contract', async () => {
@@ -313,7 +298,13 @@ describe('Roles experience', () => {
         ...previewPersonas[2]!.defaults,
         modelPolicy: 'session-selected',
       },
+      visualProfile: previewPersonas[0]!.visualProfile,
       selectableModes: ['assistant', 'coordinator'] as ['assistant', 'coordinator'],
+      runtimeCharacteristics: {
+        ...previewPersonas[2]!.runtimeCharacteristics,
+        suitableTasks: ['整理早晨计划', '核对关键证据'] as ['整理早晨计划', '核对关键证据'],
+        unsuitableTasks: ['替用户做高风险决定'] as ['替用户做高风险决定'],
+      },
     };
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
@@ -329,23 +320,27 @@ describe('Roles experience', () => {
       </MemoryRouter>,
     );
 
-    await user.click(await screen.findByRole('button', { name: '创建角色' }));
+    await user.click(await screen.findByRole('button', { name: '添加伙伴' }));
     const name = screen.getByRole('textbox', { name: '角色名' });
     const tagline = screen.getByRole('textbox', { name: '角色一句话介绍' });
     const summary = screen.getByRole('textbox', { name: '角色说明' });
+    const suitableTasks = screen.getByRole('textbox', { name: '适合任务' });
+    const unsuitableTasks = screen.getByRole('textbox', { name: '不建议任务' });
     expect(name).toHaveAttribute('maxlength', '40');
     expect(tagline).toHaveAttribute('maxlength', '80');
     expect(summary).toHaveAttribute('maxlength', '180');
     await user.type(name, '智鼬·晨光');
     await user.type(tagline, '先看清今天，再稳稳向前');
     await user.type(summary, '适合陪我整理早晨计划与关键证据。');
-    expect(screen.getByText(/实际对话模型由 Agent 中的 Pi 模型目录选择/)).toBeInTheDocument();
+    await user.type(suitableTasks, '整理早晨计划{Enter}核对关键证据');
+    await user.type(unsuitableTasks, '替用户做高风险决定');
+    expect(screen.getByText(/模型和工具在运行设置中独立管理/)).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: /构筑阶段/ }));
     const trait = screen.getByRole('textbox', { name: '新增表达特征' });
     await user.type(trait, '清晰{Enter}');
     await user.type(trait, '温和');
-    await user.click(screen.getByRole('checkbox', { name: '协作主持' }));
-    await user.click(screen.getByRole('button', { name: '创建角色' }));
+    await user.click(screen.getByRole('checkbox', { name: '允许加入 Room' }));
+    await user.click(screen.getByRole('button', { name: '添加伙伴' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.roles.create')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.roles.create')?.request.body).toEqual({
@@ -355,12 +350,15 @@ describe('Roles experience', () => {
       traits: ['清晰', '温和'],
       timelineModel: 'sol',
       selectableModes: ['assistant', 'coordinator'],
+      suitableTasks: ['整理早晨计划', '核对关键证据'],
+      unsuitableTasks: ['替用户做高风险决定'],
     });
     expect(await screen.findByRole('button', { name: /智鼬·晨光/ })).toHaveAttribute('aria-current', 'true');
     expect(screen.getAllByText('构筑阶段')).not.toHaveLength(0);
-    expect(screen.getAllByText(/GPT-5\.6 (?:Luna|Terra|Sol)/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('我的伙伴').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: '编辑伙伴' })).toBeInTheDocument();
     expect(screen.getAllByText('智鼬·晨光').length).toBeGreaterThan(0);
-    expect(screen.queryByRole('dialog', { name: '创建角色' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '添加伙伴' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '开始对话' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/agent?session=session-morning-guide'));
@@ -373,6 +371,160 @@ describe('Roles experience', () => {
     });
   });
 
+  it('edits a user-owned companion while builtin companions stay read-only', async () => {
+    const user = userEvent.setup();
+    const customRole = {
+      ...previewPersonas[2]!,
+      roleId: 'persona-rain-v1',
+      displayName: '智鼬·雨天',
+      tagline: '陪你安静整理',
+      summary: '偏向温和复盘。',
+      traits: ['温和'] as ['温和'],
+      defaults: { ...previewPersonas[2]!.defaults, modelPolicy: 'session-selected' },
+      selectableModes: ['assistant'] as ['assistant'],
+      runtimeCharacteristics: {
+        ...previewPersonas[2]!.runtimeCharacteristics,
+        suitableTasks: ['温和复盘'] as ['温和复盘'],
+        unsuitableTasks: ['替用户做高风险决定'] as ['替用户做高风险决定'],
+      },
+    };
+    const updatedRole = {
+      ...customRole,
+      displayName: '智鼬·暮雨',
+      tagline: '先安静看清，再一起往前',
+      summary: '偏向温和复盘与明确下一步。',
+      traits: ['温和', '清楚'] as ['温和', '清楚'],
+      selectableModes: ['assistant', 'coordinator'] as ['assistant', 'coordinator'],
+      runtimeCharacteristics: {
+        ...customRole.runtimeCharacteristics,
+        suitableTasks: ['温和复盘', '明确下一步'] as ['温和复盘', '明确下一步'],
+        unsuitableTasks: ['未经证据的个人判断'] as ['未经证据的个人判断'],
+      },
+    };
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: [previewPersonas[0], customRole] },
+      'agent.subagents.templates': { ok: true, items: [] },
+      'agent.roles.update': { ok: true, role: updatedRole },
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    expect(await screen.findByRole('button', { name: '复制并自定义' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '编辑伙伴' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /智鼬·雨天/ }));
+    await user.click(screen.getByRole('button', { name: '编辑伙伴' }));
+    expect(screen.getByRole('dialog', { name: '编辑伙伴' })).toHaveTextContent('工具与安全边界仍由系统管理');
+    await user.clear(screen.getByRole('textbox', { name: '角色名' }));
+    await user.type(screen.getByRole('textbox', { name: '角色名' }), '智鼬·暮雨');
+    await user.clear(screen.getByRole('textbox', { name: '角色一句话介绍' }));
+    await user.type(screen.getByRole('textbox', { name: '角色一句话介绍' }), '先安静看清，再一起往前');
+    await user.clear(screen.getByRole('textbox', { name: '角色说明' }));
+    await user.type(screen.getByRole('textbox', { name: '角色说明' }), '偏向温和复盘与明确下一步。');
+    await user.clear(screen.getByRole('textbox', { name: '适合任务' }));
+    await user.type(screen.getByRole('textbox', { name: '适合任务' }), '温和复盘{Enter}明确下一步');
+    await user.clear(screen.getByRole('textbox', { name: '不建议任务' }));
+    await user.type(screen.getByRole('textbox', { name: '不建议任务' }), '未经证据的个人判断');
+    await user.type(screen.getByRole('textbox', { name: '新增表达特征' }), '清楚{Enter}');
+    await user.click(screen.getByRole('checkbox', { name: '允许加入 Room' }));
+    await user.click(screen.getByRole('button', { name: '保存伙伴' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.roles.update')).toBe(true));
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.roles.update')?.request.body).toEqual({
+      roleId: customRole.roleId,
+      roleVersion: customRole.version,
+      displayName: '智鼬·暮雨',
+      tagline: '先安静看清，再一起往前',
+      summary: '偏向温和复盘与明确下一步。',
+      traits: ['温和', '清楚'],
+      timelineModel: 'luna',
+      selectableModes: ['assistant', 'coordinator'],
+      suitableTasks: ['温和复盘', '明确下一步'],
+      unsuitableTasks: ['未经证据的个人判断'],
+    });
+    expect(await screen.findByRole('button', { name: /智鼬·暮雨/ })).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('button', { name: '编辑伙伴' })).toBeInTheDocument();
+  });
+
+  it('sets a real default companion and protects it from accidental removal', async () => {
+    const user = userEvent.setup();
+    const customRole = {
+      ...previewPersonas[2]!,
+      roleId: 'persona-default-v1',
+      displayName: '智鼬·灯塔',
+      tagline: '每次新对话都先帮你找到方向',
+      defaults: { ...previewPersonas[2]!.defaults, modelPolicy: 'session-selected' },
+    };
+    const configuration = (revision: number, roleId: string) => ({
+      ok: true,
+      configuration: {
+        revision,
+        configuration: {
+          sessionDefaults: { roleId, roleVersion: '1' },
+        },
+      },
+    });
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: [previewPersonas[0], customRole] },
+      'agent.subagents.templates': { ok: true, items: [] },
+      'agent.configuration.get': configuration(7, previewPersonas[0]!.roleId),
+      'agent.configuration.update': configuration(8, customRole.roleId),
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    await user.click(await screen.findByRole('button', { name: /智鼬·灯塔/ }));
+    await user.click(screen.getByRole('button', { name: '设为默认' }));
+
+    await waitFor(() => expect(screen.getByText('新对话默认伙伴')).toBeInTheDocument());
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.configuration.update')?.request.body).toEqual({
+      expectedRevision: 7,
+      changes: {
+        'sessionDefaults.roleId': customRole.roleId,
+        'sessionDefaults.roleVersion': customRole.version,
+      },
+      updatedBy: 'roles-ui',
+    });
+    expect(screen.getByRole('button', { name: '移除伙伴' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '移除伙伴' })).toHaveAttribute('title', '请先选择另一位默认伙伴');
+  });
+
+  it('removes a user companion from new selection without implying old conversations are deleted', async () => {
+    const user = userEvent.setup();
+    const customRole = {
+      ...previewPersonas[2]!,
+      roleId: 'persona-archive-v1',
+      displayName: '智鼬·旧页',
+      tagline: '陪你整理已经完成的章节',
+      defaults: { ...previewPersonas[2]!.defaults, modelPolicy: 'session-selected' },
+    };
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: [previewPersonas[0], customRole] },
+      'agent.subagents.templates': { ok: true, items: [] },
+      'agent.configuration.get': {
+        ok: true,
+        configuration: {
+          revision: 3,
+          configuration: {
+            sessionDefaults: { roleId: previewPersonas[0]!.roleId, roleVersion: '1' },
+          },
+        },
+      },
+      'agent.roles.archive': { ok: true, roleId: customRole.roleId, roleVersion: customRole.version },
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    await user.click(await screen.findByRole('button', { name: /智鼬·旧页/ }));
+    await user.click(screen.getByRole('button', { name: '移除伙伴' }));
+    const dialog = screen.getByRole('dialog', { name: '移除这个伙伴？' });
+    expect(dialog).toHaveTextContent('已有对话仍保留并可继续');
+    await user.click(within(dialog).getByRole('button', { name: '移除伙伴' }));
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: /智鼬·旧页/ })).not.toBeInTheDocument());
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.roles.archive')?.request.body).toEqual({
+      roleId: customRole.roleId,
+      roleVersion: customRole.version,
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('已有对话仍可继续');
+  });
+
   it('keeps a role creation failure visible inside the dialog without losing the draft', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({ routes: {
@@ -382,14 +534,16 @@ describe('Roles experience', () => {
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    await user.click(await screen.findByRole('button', { name: '创建角色' }));
+    await user.click(await screen.findByRole('button', { name: '添加伙伴' }));
     await user.type(screen.getByRole('textbox', { name: '角色名' }), '智鼬·晨光');
     await user.type(screen.getByRole('textbox', { name: '角色一句话介绍' }), '先看清今天');
     await user.type(screen.getByRole('textbox', { name: '角色说明' }), '陪我整理今天的重点。');
+    await user.type(screen.getByRole('textbox', { name: '适合任务' }), '整理今天重点');
+    await user.type(screen.getByRole('textbox', { name: '不建议任务' }), '高风险独立决定');
     await user.type(screen.getByRole('textbox', { name: '新增表达特征' }), '清晰');
-    await user.click(screen.getByRole('button', { name: '创建角色' }));
+    await user.click(screen.getByRole('button', { name: '添加伙伴' }));
 
-    const dialog = screen.getByRole('dialog', { name: '创建角色' });
+    const dialog = screen.getByRole('dialog', { name: '添加伙伴' });
     expect(await screen.findByRole('alert')).toHaveTextContent('角色名称已存在');
     expect(dialog).toContainElement(screen.getByRole('alert'));
     expect(screen.getByRole('textbox', { name: '角色名' })).toHaveValue('智鼬·晨光');

@@ -48,7 +48,14 @@
 }
 .context-debug-heading > span:last-child { align-items: flex-start; flex-direction: column; gap: 1px; }
 .context-debug-heading h1 { margin: 0; font-size: 15px; line-height: 1.25; }
-.context-debug-heading small { gap: 4px; color: var(--color-text-tertiary); font-size: 11px; white-space: nowrap; }
+.context-debug-heading small {
+  gap: 4px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
 
 .context-debug-controls { flex: 1 1 auto; justify-content: flex-end; gap: 7px; }
 .context-debug-select { min-width: 0; }

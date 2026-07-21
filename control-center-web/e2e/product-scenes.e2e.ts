@@ -1,6 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 import { expectNoHorizontalPageOverflow, isMobileViewport, percentile, settleAgentTimeline } from './helpers';
 
+// Screenshot encoding competes with the paint-latency probe on constrained CI runners.
+// Keep this product fixture serial so the 50 ms responsiveness budget measures the UI itself.
+test.describe.configure({ mode: 'serial' });
+
 test('production Agent scene preserves Turn aggregation and composer responsiveness', async ({
   page,
 }, testInfo) => {
@@ -37,6 +41,10 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   expect(visibleText).not.toMatch(/\{"(?:schemaVersion|eventType|payload)"/);
 
   const composer = page.getByRole('textbox', { name: '消息' });
+  await page.waitForFunction(() => [...document.images].every((image) => image.complete));
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
   await installTypingPaintProbe(page);
   const draft = 'stream paint must not block this production composer';
   await composer.pressSequentially(draft, { delay: 6 });
@@ -71,6 +79,8 @@ test('production Agent scene matches the desktop and mobile visual baselines', a
   await openAgentScene(page, testInfo.project.name);
   await page.waitForFunction(() => [...document.images].every((image) => image.complete));
   await settleAgentTimeline(page);
+  await page.mouse.move(1, 1);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await expectNoHorizontalPageOverflow(page);
   await expect(page).toHaveScreenshot('agent-preview.png', {
     fullPage: false,

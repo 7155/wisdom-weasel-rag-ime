@@ -1,5 +1,23 @@
-import { FileCheck2, KeyRound, RefreshCw, Settings2 } from 'lucide-react';
+import {
+  BrainCircuit,
+  Bot,
+  ChevronRight,
+  Database,
+  FileCheck2,
+  Gauge,
+  Keyboard,
+  Library,
+  Mic2,
+  PlugZap,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Settings2,
+  Sparkles,
+  UsersRound,
+} from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button, EmptyState, Field, Input, Select, Switch } from '@/components/primitives';
 import {
   configurationMutationPathIds,
@@ -14,10 +32,8 @@ import {
 } from '@/features/overview/management-mutation';
 import {
   DataTable,
-  InlineNotice,
   ManagementPage,
   ManagementSection,
-  MetricStrip,
   QueryState,
   StatusBadge,
   arrayRecords,
@@ -42,6 +58,7 @@ type PiModelOption = {
 };
 
 export function ConfigurationFeature() {
+  const navigate = useNavigate();
   const queries = useConfigurationQueries();
   const mutationBoundary = useConfigurationMutationBoundary();
   const settingsEnvelope = asRecord(queries.settings.data);
@@ -54,7 +71,8 @@ export function ConfigurationFeature() {
     ? rawRuntimeRevision
     : null;
   const schemaEnvelope = asRecord(queries.schema.data);
-  const sections = arrayRecords(schemaEnvelope.sections);
+  const schemaSections = arrayRecords(schemaEnvelope.sections);
+  const sections = runtimeSettingSections(schemaSections);
   const piModels = useMemo(
     () => parsePiModelOptions(queries.modelCatalog.data),
     [queries.modelCatalog.data],
@@ -64,7 +82,9 @@ export function ConfigurationFeature() {
   const [changes, setChanges] = useState<Record<string, DraftValue>>({});
 
   useEffect(() => {
-    if (!activeSection && sections.length) setActiveSection(stringValue(sections[0]?.id));
+    if (!sections.some((item) => stringValue(item.id) === activeSection)) {
+      setActiveSection(stringValue(sections[0]?.id));
+    }
   }, [activeSection, sections]);
 
   const section = sections.find((item) => stringValue(item.id) === activeSection) ?? sections[0];
@@ -145,31 +165,50 @@ export function ConfigurationFeature() {
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <PiProviderCredentials />
-        <ManagementSection title="配置快照">
-          <MetricStrip items={[
-            { label: '设置分组', value: sections.length, detail: '可编辑范围', icon: Settings2 },
-            { label: '当前设置', value: settingsEnvelope.ok === true ? '已加载' : '需刷新', detail: '来自本机', icon: FileCheck2 },
-            { label: '生效状态', value: runtimeRevision === null ? '需刷新' : '已同步', detail: '运行中设置', icon: RefreshCw },
-            { label: '安全存储', value: queries.capabilities.data?.native.keychain ? '可用' : '不可用', detail: '秘密不会回显', icon: KeyRound, tone: queries.capabilities.data?.native.keychain ? 'success' : 'warning' },
-          ]} />
-          <InlineNotice title="秘密字段" tone="success">已保存的秘密只显示是否配置。新值不会出现在差异、操作记录或日志中。</InlineNotice>
+        <ManagementSection title="功能设置">
+          <nav aria-label="功能设置入口" className="configuration-destinations">
+            {settingDestinations.map((destination) => {
+              const Icon = destination.icon;
+              return <button key={destination.path} onClick={() => navigate(destination.path)} type="button"><Icon size={18} /><span><strong>{destination.label}</strong><small>{destination.detail}</small></span><ChevronRight size={15} /></button>;
+            })}
+          </nav>
         </ManagementSection>
-
-        <ManagementSection title="设置表单" description="按分组逐项调整设置；开启高级设置可显示更多选项。">
+        <ManagementSection title="运行与上下文" description="只显示真正由当前运行时消费的设置；输入法、语音和知识库的专属设置留在对应功能页。">
           {sections.length ? (
             <div className="configuration-editor">
+              <nav aria-label="运行设置分组" className="configuration-section-nav">
+                {sections.map((item) => {
+                  const id = stringValue(item.id);
+                  const meta = runtimeSectionMeta[id] ?? runtimeSectionMeta.other;
+                  const Icon = meta.icon;
+                  const active = id === stringValue(section?.id);
+                  return (
+                    <button
+                      aria-current={active ? 'page' : undefined}
+                      key={id}
+                      onClick={() => setActiveSection(id)}
+                      type="button"
+                    >
+                      <Icon size={16} />
+                      <span>
+                        <strong>{publicSectionLabel(id, stringValue(item.label))}</strong>
+                        <small>{meta.description}</small>
+                      </span>
+                    </button>
+                  );
+                })}
+              </nav>
               <div className="configuration-editor__fields mgmt-stack">
-                <Field htmlFor="configuration-section" label="设置分组">
-                  <Select
-                    id="configuration-section"
-                    onValueChange={setActiveSection}
-                    options={sections.map((item) => ({
-                      value: stringValue(item.id),
-                      label: publicSectionLabel(stringValue(item.id), stringValue(item.label)),
-                    }))}
-                    value={stringValue(section?.id)}
+                <header className="configuration-editor__heading">
+                  <span>
+                    <strong>{publicSectionLabel(stringValue(section?.id), stringValue(section?.label))}</strong>
+                    <small>{(runtimeSectionMeta[stringValue(section?.id)] ?? runtimeSectionMeta.other).description}</small>
+                  </span>
+                  <StatusBadge
+                    label={runtimeRevision === null ? '状态待刷新' : '已与运行时同步'}
+                    tone={runtimeRevision === null ? 'warning' : 'success'}
                   />
-                </Field>
+                </header>
                 <div className="mgmt-list">
                   {fields.map((field) => (
                     <SettingField
@@ -273,15 +312,21 @@ export function ConfigurationFeature() {
           ) : <EmptyState description="当前没有可显示的设置分组。" icon={Settings2} title="设置为空" />}
         </ManagementSection>
 
-        <ManagementSection title="文件迁移" description="导入与恢复先校验和预览；备份只写入你在本机选择的目录。">
-          <PortabilityWorkflows
-            capabilities={queries.capabilities.data}
-            currentSettings={settings}
-            onConfigurationChanged={() => {
-              void Promise.all([queries.settings.refetch(), queries.schema.refetch()]);
-            }}
-            transport={queries.transport}
-          />
+        <ManagementSection title="迁移与恢复">
+          <details className="configuration-transfer">
+            <summary>
+              <span><strong>导入、备份与恢复</strong><small>低频操作默认收起；写入前始终校验并预览差异</small></span>
+              <ChevronRight size={16} />
+            </summary>
+            <PortabilityWorkflows
+              capabilities={queries.capabilities.data}
+              currentSettings={settings}
+              onConfigurationChanged={() => {
+                void Promise.all([queries.settings.refetch(), queries.schema.refetch()]);
+              }}
+              transport={queries.transport}
+            />
+          </details>
         </ManagementSection>
       </QueryState>
     </ManagementPage>
@@ -434,13 +479,56 @@ function previewDiffItems(rows: readonly { key: string; before: string; after: s
     : visible;
 }
 
-const sectionLabels: Record<string, string> = { interaction: '输入体验', display: '候选窗口', rag: '知识检索', models: '模型分工', activeRag: '深度生成', memory: '记忆', context: '上下文', planning: '规划', agent: 'Agent', voice: '语音', pinyin: '拼音', privacy: '隐私与安全' };
-const fieldLabels: Record<string, string> = { 'interaction.postCommit.numberKeys': '预测结果出现时的数字键', 'interaction.postCommit.tabAction': 'Tab 键行为', 'display.maxPostCommitCandidates': '续写候选数量', 'models.hot': '输入时即时预测模型', 'models.activeRag': '深度生成模型', 'models.offlineCleanup': '离线整理模型', 'activeRag.quickModel': '闪电生成模型', 'activeRag.quickThinkingLevel': '闪电生成思考', 'agent.ui.showReasoningSummary': '显示处理进度', 'managementSecurity.requireToken': '限制本机管理请求' };
+const sectionLabels: Record<string, string> = { interaction: '输入体验', display: '候选窗口', rag: '知识检索', models: '模型分工', activeRag: '深度生成', memory: '记忆', context: '上下文', planning: '任务与规划', agent: 'Agent 对话', voice: '语音', pinyin: '拼音', privacy: '隐私与安全' };
+const fieldLabels: Record<string, string> = { 'interaction.postCommit.numberKeys': '预测结果出现时的数字键', 'interaction.postCommit.tabAction': 'Tab 键行为', 'display.maxPostCommitCandidates': '续写候选数量', 'models.hot': '输入时即时预测模型', 'models.activeRag': '深度生成模型', 'models.offlineCleanup': '离线整理模型', 'activeRag.quickModel': '闪电生成模型', 'activeRag.quickThinkingLevel': '闪电生成思考', 'managementSecurity.requireToken': '限制本机管理请求' };
 
 function publicSectionLabel(id: string, label: string): string { return sectionLabels[id] ?? (/[\u3400-\u9fff]/.test(label) ? label : '其他设置'); }
 function publicFieldLabel(key: string, label: string): string { return fieldLabels[key] ?? (label && !/pathId|schema|revision|hash|receipt|provider/i.test(label) ? publicDescription(label) : '设置项'); }
 function publicDescription(value: string): string { return value.replace(/Sidecar/gi, '后台服务').replace(/SQLite FTS5/gi, '本机索引').replace(/BM25/gi, '关键词检索').replace(/Hybrid RAG/gi, '多路知识检索').replace(/Active RAG/gi, '深度生成').replace(/RAG/gi, '知识检索').replace(/fallback/gi, '备用方式').replace(/TTL/gi, '保留时间').replace(/token/gi, '容量').replace(/POST/gi, '管理请求').replace(/patch/gi, '配置'); }
 function optionLabel(key: string, value: string, _field: Record<string, unknown> = {}): string { return ({ pass_through: '按原数字键处理', select_prediction: '选择对应候选', accept_top_prediction: '接受首个预测', rime_default: '保持输入法默认', disabled: '不使用', compact: '紧凑', expanded: '展开', replace_selection: '替换选中内容', insert_after_selection: '插入到选中内容后', show_only: '只显示不插入', lazy: '使用时启动', 'sichuan-mild': '四川轻度模糊音', none: '关闭', off: '关闭', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '很高', max: '最高' } as Record<string, string>)[value] ?? value; }
+
+const dedicatedSettingSections = new Set([
+  'interaction',
+  'display',
+  'pinyin',
+  'voice',
+  'knowledgeLibrary',
+]);
+
+const runtimeSectionOrder = ['agent', 'context', 'rag', 'memory', 'models', 'activeRag', 'planning', 'privacy'] as const;
+
+const runtimeSectionMeta: Record<string, { description: string; icon: typeof Bot }> = {
+  agent: { description: 'Pi 启停、空闲回收与 Session 延续', icon: Bot },
+  context: { description: '近期输入、上下文容量与时间表达', icon: Gauge },
+  rag: { description: '检索通道与响应时间预算', icon: Search },
+  memory: { description: '记忆保留、整理与按需召回', icon: Database },
+  models: { description: '输入热路径与后台整理模型', icon: BrainCircuit },
+  activeRag: { description: '闪电生成与显式深度生成', icon: Sparkles },
+  planning: { description: '任务状态、计划注入与完成识别', icon: FileCheck2 },
+  privacy: { description: '远程使用、调试文本与本机治理边界', icon: ShieldCheck },
+  other: { description: '当前运行时提供的高级设置', icon: Settings2 },
+};
+
+function runtimeSettingSections(sections: Record<string, unknown>[]): Record<string, unknown>[] {
+  const order = new Map<string, number>(runtimeSectionOrder.map((id, index) => [id, index]));
+  return sections
+    .filter((item) => !dedicatedSettingSections.has(stringValue(item.id)))
+    .filter((item) => arrayRecords(item.fields).length > 0)
+    .sort((left, right) => (
+      (order.get(stringValue(left.id)) ?? runtimeSectionOrder.length)
+      - (order.get(stringValue(right.id)) ?? runtimeSectionOrder.length)
+    ));
+}
+
+const settingDestinations = [
+  { path: '/input', label: '输入与候选', detail: '运行方式、候选窗口与拼音', icon: Keyboard },
+  { path: '/voice', label: '语音输入', detail: '识别方式、快捷键与热词', icon: Mic2 },
+  { path: '/memory', label: '记忆', detail: '事实、关系与整理', icon: Database },
+  { path: '/knowledge', label: '知识库', detail: '材料、检索与图谱', icon: Library },
+  { path: '/plugins', label: 'Skills 与 Tools', detail: '能力披露、授权与加载', icon: PlugZap },
+  { path: '/roles', label: 'Agent 伙伴', detail: '身份、边界与默认模型', icon: Bot },
+  { path: '/rooms', label: 'Room', detail: '成员、任务与交接', icon: UsersRound },
+] as const;
 
 function parsePiModelOptions(value: unknown): PiModelOption[] {
   const envelope = asRecord(value);

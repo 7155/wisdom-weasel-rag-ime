@@ -104,6 +104,8 @@ struct NativeRoutePolicyTests {
                 "traits": ["温和", "复盘"],
                 "timelineModel": "terra",
                 "selectableModes": ["assistant"],
+                "suitableTasks": ["温和复盘", "整理下一步"],
+                "unsuitableTasks": ["高风险独立决定"],
             ],
             scope: .remote
         )

@@ -7911,6 +7911,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     self.service.agent_lifecycle_hooks.update_policy(self._read_json()),
                 )
                 return
+            if path == "/api/agent/roles":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.update_role(self._read_json()),
+                )
+                return
             if knowledge_parts is not None:
                 if len(knowledge_parts) != 1:
                     self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
@@ -7926,9 +7932,22 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.agent.update_room(room_id, self._read_json()))
                 return
             if room_id and room_action == "participants":
+                payload = self._read_json()
+                if "collaborationRole" in payload:
+                    result = (
+                        self.service.agent.update_room_participant_role(
+                            room_id,
+                            payload,
+                        )
+                    )
+                else:
+                    result = self.service.agent.remove_room_participant(
+                        room_id,
+                        payload,
+                    )
                 self._write_json(
                     HTTPStatus.OK,
-                    self.service.agent.remove_room_participant(room_id, self._read_json()),
+                    result,
                 )
                 return
             if room_id and room_action == "topics":
@@ -7978,6 +7997,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(
                     HTTPStatus.OK,
                     self.service.agent.delete_room(room_id, self._read_json()),
+                )
+                return
+            if path == "/api/agent/roles":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.archive_role(self._read_json()),
                 )
                 return
             session_id, action = agent_session_route(path)

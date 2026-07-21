@@ -52,6 +52,38 @@ class AgentRoleApplicationService:
             "role": self.role_payload(persona.to_payload()),
         }
 
+    def update_role(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        role_id = _required_text(payload, "roleId")
+        role_version = _required_text(payload, "roleVersion")
+        public_fields = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"roleId", "roleVersion"}
+        }
+        persona = self.personas.update(role_id, role_version, public_fields)
+        return {
+            "schemaVersion": "rag-ime.agent-role-update.v1",
+            "ok": True,
+            "role": self.role_payload(persona.to_payload()),
+        }
+
+    def archive_role(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        role_id = _required_text(payload, "roleId")
+        role_version = _required_text(payload, "roleVersion")
+        persona = self.personas.archive(role_id, role_version)
+        return {
+            "schemaVersion": "rag-ime.agent-role-archive.v1",
+            "ok": True,
+            "roleId": persona.role_id,
+            "roleVersion": persona.version,
+        }
+
     def model_catalog(self) -> dict[str, object]:
         try:
             available = self.runtime.available_models()

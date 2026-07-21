@@ -15,13 +15,15 @@
   --color-overlay: rgb(19 29 25 / 52%);
   --color-text: #18211d;
   --color-text-secondary: #4c5a55;
-  --color-text-tertiary: #66736d;
+  --color-text-tertiary: #5f6b66;
   --color-border: #cdd7d2;
   --color-border-strong: #a8b8b1;
-  --color-accent: #007f73;
+  --color-accent: #0b756c;
   --color-accent-hover: #006b61;
   --color-accent-pressed: #00564e;
   --color-accent-soft: #d9f1ed;
+  --color-accent-strong: #006b61;
+  --color-accent-subtle: #eef9f7;
   --color-accent-text: #ffffff;
   --color-info: #286db5;
   --color-info-soft: #e2eefb;
@@ -107,6 +109,8 @@
   --color-accent-hover: #6ac9bd;
   --color-accent-pressed: #81d8cd;
   --color-accent-soft: #183d38;
+  --color-accent-strong: #81d8cd;
+  --color-accent-subtle: #1b302c;
   --color-accent-text: #10231f;
   --color-info: #81a8d4;
   --color-info-soft: #22364c;

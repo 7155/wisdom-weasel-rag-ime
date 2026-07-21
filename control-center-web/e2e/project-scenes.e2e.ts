@@ -6,8 +6,8 @@ test('governed project scenes fit empty slots without replacing normal data', as
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 });
     await page.goto('/e2e/fixtures/project-scenes.html');
 
-    const roomScene = page.getByAltText(/两位智鼬在私有工作区之间显式交接/);
-    const memoryScene = page.getByAltText(/封存的历史证据/);
+    const roomScene = page.getByAltText(/带有任务、证据和验收条件的交接单/);
+    const memoryScene = page.getByAltText(/长期输入形成的时间线/);
     await expect(roomScene).toHaveAttribute('loading', 'lazy');
     await expect(memoryScene).toHaveAttribute('loading', 'lazy');
     await expect(roomScene).toHaveAttribute('width', '960');

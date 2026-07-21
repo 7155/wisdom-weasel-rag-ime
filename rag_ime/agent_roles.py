@@ -394,6 +394,8 @@ def user_persona_manifest(
     traits: tuple[str, ...],
     timeline_model: str,
     selectable_modes: tuple[str, ...],
+    suitable_tasks: tuple[str, ...],
+    unsuitable_tasks: tuple[str, ...],
 ) -> PersonaManifest:
     presets = {
         "luna": (
@@ -427,6 +429,8 @@ def user_persona_manifest(
             "summary": summary,
             "traits": list(traits),
             "timelineModel": timeline_model,
+            "suitableTasks": list(suitable_tasks),
+            "unsuitableTasks": list(unsuitable_tasks),
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -457,8 +461,8 @@ def user_persona_manifest(
             intelligence="由所选模型决定",
             speed="由所选模型决定",
             context="按 Session 模型与作用域配置",
-            suitable_tasks=("用户定义的陪伴与协作任务",),
-            unsuitable_tasks=("超出已连接工具、权限或证据范围的任务",),
+            suitable_tasks=suitable_tasks,
+            unsuitable_tasks=unsuitable_tasks,
         ),
         selectable_modes=selectable_modes,
         origin="user",

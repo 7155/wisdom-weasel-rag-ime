@@ -30,6 +30,18 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "discoveryTools": Path("packages/rag-ime-runtime-host/src/discovery-tools.ts"),
                 "toolBridge": Path("packages/rag-ime-runtime-host/src/tool-bridge.ts"),
                 "toolArtifacts": Path("packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
+                "providerContextJournal": Path(
+                    "packages/rag-ime-runtime-host/src/provider-context-journal.ts"
+                ),
+                "sessionContextRefresh": Path(
+                    "packages/rag-ime-runtime-host/src/session-context-refresh.ts"
+                ),
+                "cancellationReceipts": Path(
+                    "packages/rag-ime-runtime-host/src/cancellation-receipts.ts"
+                ),
+                "roomSettleLifecycle": Path(
+                    "packages/rag-ime-runtime-host/src/room-settle-lifecycle.ts"
+                ),
                 "session": Path("packages/rag-ime-runtime-host/src/pi-session.ts"),
             }
             self.assertEqual(set(relative_sources), set(_ROOM_RUNTIME_SOURCE_KEYS))
@@ -135,6 +147,15 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn('manifest["createdAtMs"] = product_commit_ms', script)
         self.assertIn("_verified_room_runtime_contract", script)
         self.assertIn("source_contract_sha256=room_runtime_contract_sha256", script)
+
+    def test_staged_smoke_uses_current_dispatch_and_continuation_contract(self) -> None:
+        script = (ROOT / "scripts" / "smoke_room_v2_staged_runtime.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(script.count('"capabilityEpoch": 1,'), 3)
+        self.assertEqual(script.count('"dispatchId": "dispatch:a"'), 2)
+        self.assertIn('"idempotencyKey": "root:staged-e2e/continuation-b"', script)
 
     def test_input_method_project_owns_all_managed_skills(self) -> None:
         skills_root = ROOT / "integrations" / "pi" / "skills"

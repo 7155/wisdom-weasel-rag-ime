@@ -38,6 +38,10 @@ _ROOM_RUNTIME_SOURCE_KEYS = (
     "discoveryTools",
     "toolBridge",
     "toolArtifacts",
+    "providerContextJournal",
+    "sessionContextRefresh",
+    "cancellationReceipts",
+    "roomSettleLifecycle",
     "session",
 )
 

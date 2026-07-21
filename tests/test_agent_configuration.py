@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,7 @@ from rag_ime.agent_configuration import (
     default_agent_configuration,
     runtime_policy_from_configuration,
 )
+from rag_ime.db import apply_database_migrations
 
 
 class AgentConfigurationTests(unittest.TestCase):
@@ -35,6 +37,39 @@ class AgentConfigurationTests(unittest.TestCase):
             configuration["sessionDefaults"]["modelProfile"],
             "gpt/gpt-5.6-sol",
         )
+        self.assertEqual(
+            default_agent_configuration(role_id="vcp-v1")["sessionDefaults"]["roleId"],
+            "companion-future-v1",
+        )
+
+    def test_startup_rewrites_a_persisted_legacy_role_id_once(self) -> None:
+        path = Path(self.tmp.name) / "legacy-agent.sqlite"
+        legacy = default_agent_configuration()
+        legacy["sessionDefaults"]["roleId"] = "zhiyou-v1"
+        with sqlite3.connect(path) as conn:
+            apply_database_migrations(conn)
+            conn.execute(
+                """
+                INSERT INTO agent_configuration_state(
+                    singleton_id, revision, configuration_json, applied_revision,
+                    sync_state, sync_error, updated_at_ms, updated_by
+                ) VALUES (1, 7, ?, 7, 'synchronized', '', 1, 'legacy-test')
+                """,
+                (json.dumps(legacy, ensure_ascii=False, sort_keys=True),),
+            )
+
+        store = AgentConfigurationStore(path)
+        store.initialize(default_agent_configuration())
+        snapshot = store.snapshot()
+
+        self.assertEqual(snapshot["configuration"]["sessionDefaults"]["roleId"], "companion-present-v1")
+        self.assertEqual(snapshot["revision"], 8)
+        self.assertEqual(snapshot["lastEventId"], "agent-control:1")
+        with sqlite3.connect(path) as conn:
+            stored = conn.execute(
+                "SELECT configuration_json FROM agent_configuration_state WHERE singleton_id = 1"
+            ).fetchone()[0]
+        self.assertNotIn("zhiyou-v1", stored)
 
     def test_configuration_is_revisioned_and_rejects_stale_writers(self) -> None:
         initial = self.store.snapshot()

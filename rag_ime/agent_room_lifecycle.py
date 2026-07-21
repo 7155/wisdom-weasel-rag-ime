@@ -8,11 +8,21 @@ from .agent_roles import PersonaManifest
 from .agent_room_participants import (
     RoomParticipantLifecycleService,
 )
-from .agent_rooms import AgentRoomEventHub, AgentRoomStore
+from .agent_rooms import (
+    AgentRoomEventHub,
+    AgentRoomStore,
+    normalize_collaboration_role,
+)
 from .agent_sessions import (
     AgentSessionNotFound,
     AgentSessionStore,
 )
+
+
+@dataclass(frozen=True)
+class RoomParticipantPlan:
+    persona: PersonaManifest
+    collaboration_role: str
 
 
 @dataclass(frozen=True)
@@ -22,7 +32,7 @@ class RoomCreationPlan:
     routing_policy: str
     moderator_ordinal: int
     workspace_roots: tuple[str, ...]
-    roles: tuple[PersonaManifest, ...]
+    participants: tuple[RoomParticipantPlan, ...]
 
 
 class RoomLifecycleService:
@@ -159,7 +169,8 @@ class RoomLifecycleService:
         created_session_ids: list[str] = []
         participants: list[dict[str, object]] = []
         try:
-            for role in plan.roles:
+            for participant_plan in plan.participants:
+                role = participant_plan.persona
                 session = self.create_session(
                     _participant_session_payload(
                         plan,
@@ -176,10 +187,7 @@ class RoomLifecycleService:
                         "roleVersion": role.version,
                         "displayName": role.display_name,
                         "collaborationRole": (
-                            _collaboration_role(
-                                plan.room_kind,
-                                role,
-                            )
+                            participant_plan.collaboration_role
                         ),
                     }
                 )
@@ -343,19 +351,28 @@ class RoomLifecycleService:
             payload,
             room_kind=room_kind,
         )
-        roles = self._roles(
-            raw_participants,
-            room_kind=room_kind,
-        )
         routing_policy = str(
             payload.get("routingPolicy") or "natural"
+        )
+        requested_moderator_role_id = str(
+            payload.get("moderatorRoleId") or ""
+        ).strip()
+        participants = self._participant_plans(
+            raw_participants,
+            room_kind=room_kind,
+            coordinator_role_id=(
+                requested_moderator_role_id
+                if routing_policy == "moderator"
+                else ""
+            ),
+        )
+        roles = tuple(
+            item.persona for item in participants
         )
         moderator_ordinal = _moderator_ordinal(
             roles,
             routing_policy=routing_policy,
-            requested_role_id=str(
-                payload.get("moderatorRoleId") or ""
-            ).strip(),
+            requested_role_id=requested_moderator_role_id,
         )
         return RoomCreationPlan(
             room_kind=room_kind,
@@ -367,28 +384,29 @@ class RoomLifecycleService:
             routing_policy=routing_policy,
             moderator_ordinal=moderator_ordinal,
             workspace_roots=workspace_roots,
-            roles=roles,
+            participants=participants,
         )
 
-    def _roles(
+    def _participant_plans(
         self,
         raw_participants: list[object],
         *,
         room_kind: str,
-    ) -> tuple[PersonaManifest, ...]:
-        roles: list[PersonaManifest] = []
+        coordinator_role_id: str,
+    ) -> tuple[RoomParticipantPlan, ...]:
+        participants: list[RoomParticipantPlan] = []
         seen: set[tuple[str, str]] = set()
         required_mode = (
             "coordinator"
             if room_kind == "collaboration"
             else "assistant"
         )
-        for raw in raw_participants:
+        for index, raw in enumerate(raw_participants):
             if not isinstance(raw, Mapping):
                 raise ValueError(
                     "each room participant must be an object"
                 )
-            role = self.personas.resolve(
+            role = self.personas.resolve_active(
                 raw.get("roleId"),
                 raw.get("roleVersion") or "1",
             )
@@ -404,8 +422,28 @@ class RoomLifecycleService:
                     "in the first room version"
                 )
             seen.add(key)
-            roles.append(role)
-        return tuple(roles)
+            default_role = (
+                "coordinator"
+                if room_kind == "collaboration"
+                and (
+                    role.role_id == coordinator_role_id
+                    or not coordinator_role_id
+                    and index == 0
+                )
+                else "implementer"
+            )
+            participants.append(
+                RoomParticipantPlan(
+                    persona=role,
+                    collaboration_role=(
+                        normalize_collaboration_role(
+                            raw.get("collaborationRole")
+                            or default_role
+                        )
+                    ),
+                )
+            )
+        return tuple(participants)
 
 
 def _workspace_roots(
@@ -479,20 +517,6 @@ def _participant_session_payload(
         ),
         "workspaceRoots": list(plan.workspace_roots),
     }
-
-
-def _collaboration_role(
-    room_kind: str,
-    role: PersonaManifest,
-) -> str:
-    if (
-        room_kind == "collaboration"
-        and role.role_id == "companion-future-v1"
-    ):
-        return "coordinator"
-    if role.role_id == "companion-firstlight-v1":
-        return "researcher"
-    return "executor"
 
 
 def _bool(value: object) -> bool:

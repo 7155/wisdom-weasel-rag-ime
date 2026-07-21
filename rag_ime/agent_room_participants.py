@@ -4,7 +4,11 @@ from collections.abc import Callable, Mapping
 from threading import RLock
 
 from .agent_personas import AgentPersonaStore
-from .agent_rooms import AgentRoomEventHub, AgentRoomStore
+from .agent_rooms import (
+    AgentRoomEventHub,
+    AgentRoomStore,
+    normalize_collaboration_role,
+)
 from .agent_sessions import (
     AgentSessionNotFound,
     AgentSessionStore,
@@ -104,7 +108,7 @@ class RoomParticipantLifecycleService:
         room = self.rooms.get(room_id)
         if room.get("status") != "active":
             raise ValueError("agent room is archived")
-        role = self.personas.resolve(
+        role = self.personas.resolve_active(
             payload.get("roleId"),
             payload.get("roleVersion") or "1",
         )
@@ -122,16 +126,10 @@ class RoomParticipantLifecycleService:
                 f"role {role.role_id}@{role.version} "
                 "cannot join this room kind"
             )
-        collaboration_role = str(
-            payload.get("collaborationRole") or ""
-        ).strip()
-        if not collaboration_role:
-            collaboration_role = (
-                "researcher"
-                if role.role_id
-                == "companion-firstlight-v1"
-                else "executor"
-            )
+        collaboration_role = normalize_collaboration_role(
+            payload.get("collaborationRole")
+            or "implementer"
+        )
         session = self.create_session(
             _session_payload(
                 room,
@@ -254,6 +252,81 @@ class RoomParticipantLifecycleService:
             ),
             "ok": True,
             "participant": removed,
+            "room": self.rooms.get(room_id),
+            "event": event,
+        }
+
+    def update_role(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        room = self.rooms.get(room_id)
+        self.restore_sessions(room)
+        participant_id = _required_text(
+            payload,
+            "participantId",
+        )
+        collaboration_role = _required_text(
+            payload,
+            "collaborationRole",
+        )
+        participant = self.rooms.participant(
+            participant_id
+        )
+        if participant.get("roomId") != room_id:
+            raise ValueError(
+                "participant does not belong to this Room"
+            )
+        session_id = str(
+            participant.get("sessionId") or ""
+        )
+        session = self.sessions.get(session_id)
+        active_session_ids = (
+            self.active_runtime_session_ids()
+        )
+        with self.turn_lock:
+            if self.session_is_busy(
+                session_id,
+                session,
+                active_session_ids=active_session_ids,
+            ):
+                raise ValueError(
+                    "wait for this participant's active "
+                    "Room turn to finish"
+                )
+            updated = self.rooms.update_participant_role(
+                room_id,
+                participant_id,
+                collaboration_role,
+            )
+        room = self.rooms.get(room_id)
+        event = self.events.publish(
+            room_id=room_id,
+            event_type="room_config_changed",
+            payload={
+                "status": "participant_role_updated",
+                "participantId": participant_id,
+                "displayName": updated["displayName"],
+                "previousCollaborationRole": (
+                    participant.get("collaborationRole")
+                ),
+                "collaborationRole": updated[
+                    "collaborationRole"
+                ],
+            },
+            participant_id=participant_id,
+            source_session_id=session_id,
+            topic_id=str(
+                room.get("activeTopicId") or ""
+            ),
+        )
+        return {
+            "schemaVersion": (
+                "rag-ime.agent-room-participant-update.v1"
+            ),
+            "ok": True,
+            "participant": updated,
             "room": self.rooms.get(room_id),
             "event": event,
         }

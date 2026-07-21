@@ -10,8 +10,15 @@ from tests.test_agent_room_kernel import dispatch, root, task
 
 
 class FakeRoomRuntime:
-    def __init__(self, *, fail_dispatch: bool = False, surface_state: str = "terminated") -> None:
+    def __init__(
+        self,
+        *,
+        fail_dispatch: bool = False,
+        fail_cancel: bool = False,
+        surface_state: str = "terminated",
+    ) -> None:
         self.fail_dispatch = fail_dispatch
+        self.fail_cancel = fail_cancel
         self.surface_state = surface_state
         self.dispatches: list[tuple[dict[str, object], str, str]] = []
         self.cancellations: list[dict[str, object]] = []
@@ -32,6 +39,8 @@ class FakeRoomRuntime:
         }
 
     def cancel_room(self, *, session_id: str, root_id: str, generation: int):
+        if self.fail_cancel:
+            raise ConnectionError("runtime cancellation unavailable")
         receipt = {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
             "receiptKind": "cancel_applied",
@@ -88,7 +97,33 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertEqual(receipt["receiptKind"], "runtime_accepted")
         self.assertEqual(self.store.dispatch("dispatch:1")["state"], "running")
         self.assertEqual(self.store.outbox("dispatch:1")["state"], "running")
-        self.assertIn("[ROOM_DISPATCH_V2]", runtime.dispatches[0][1])
+        private_trigger = runtime.dispatches[0][1]
+        self.assertEqual(
+            private_trigger,
+            (
+                "执行当前受管 Room 任务；任务事实与责任以本轮 Room Context 为准。"
+                "提交 deliver 时，把 acceptance.criteria[].criterionId 原样放入 "
+                "requirementCoverage，禁止自造标签。"
+            ),
+        )
+        for internal_id in ("root:1", "dispatch:1", "task:1", "session:1"):
+            self.assertNotIn(internal_id, private_trigger)
+
+    def test_runtime_ack_closes_delivery_lease_without_expiring_the_agent_run(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:long-run", key="worker:long-run"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime()
+        worker = RoomKernelWorker(self.store, runtime, clock_ms=self.clock)
+
+        worker.run_once(lease_ttl_ms=5)
+        self.now_ms = 20
+
+        self.assertEqual(worker.reconcile(), [])
+        self.assertEqual(self.store.dispatch("dispatch:long-run")["state"], "running")
+        self.assertEqual(self.store.root("root:1")["state"], "running")
+        self.assertEqual(runtime.cancellations, [])
 
     def test_worker_refreshes_generic_agent_rag_before_runtime(self) -> None:
         self.store.enqueue_dispatch(
@@ -187,6 +222,29 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertEqual(result["kernelReceipt"]["receiptKind"], "root_cancelled")
         self.assertEqual(self.store.root("root:1")["state"], "cancelling")
         self.assertIsNone(self.store.root("root:1")["terminalReceiptId"])
+
+    def test_cancel_delivery_failure_stays_visible_as_requested_instead_of_terminal(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:cancel-failure", key="worker:cancel-failure"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime(fail_cancel=True)
+        worker = RoomKernelWorker(self.store, runtime, clock_ms=self.clock)
+        worker.run_once()
+
+        result = worker.cancel_root("root:1")
+
+        self.assertEqual(result["runtimeReceipts"], [])
+        self.assertEqual(self.store.root("root:1")["state"], "cancelling")
+        surfaces = self.store.cancellation_surface_projection("room:1")
+        self.assertEqual(
+            {item["surface"] for item in surfaces},
+            {
+                "provider", "tool", "exec", "retry", "compaction",
+                "branch_summary", "timer", "continuation", "session",
+            },
+        )
+        self.assertEqual({item["state"] for item in surfaces}, {"requested"})
 
     def test_unknown_surface_proof_is_visible_in_terminal_outcome(self) -> None:
         self.store.enqueue_dispatch(dispatch("dispatch:unknown", key="worker:unknown"), now_ms=3)

@@ -356,6 +356,49 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertNotIn("room_post", [event["eventType"] for event in public])
 
+    def test_public_projection_rejects_a_post_after_the_durable_root_fence(self) -> None:
+        before = self.service.rooms.list_events(self.room_id, limit=500)
+        with sqlite3.connect(self.root / "rag-ime.sqlite") as connection:
+            connection.execute(
+                """
+                UPDATE room_kernel_roots
+                SET state = 'completed', terminal_receipt_id = ?, updated_at_ms = ?
+                WHERE root_id = ?
+                """,
+                ("receipt:terminal", 20, "root:service"),
+            )
+        late_post = {
+            "schemaVersion": "wisdom-weasel.room-post.v2",
+            "postId": "post:late-after-terminal",
+            "roomId": self.room_id,
+            "rootId": "root:service",
+            "generation": 0,
+            "taskId": "task:service",
+            "dispatchId": "dispatch:late",
+            "authorActorRef": str(self.participant["id"]),
+            "kind": "result",
+            "visibility": "room",
+            "content": "迟到公开结果",
+            "idempotencyKey": "post:late-after-terminal",
+            "publicationSource": {
+                "kind": "room_commit",
+                "ref": "commit:late-after-terminal",
+            },
+            "createdAtMs": 21,
+        }
+
+        projected = self.service.room_public_timeline.publish_post(
+            late_post,
+            participant_id=str(self.participant["id"]),
+            source_session_id=self.session_id,
+        )
+
+        self.assertIsNone(projected)
+        self.assertEqual(
+            self.service.rooms.list_events(self.room_id, limit=500),
+            before,
+        )
+
     def test_product_work_item_becomes_provider_only_kernel_task_context(self) -> None:
         objective = "检查 Room 增量上下文是否保持稳定前缀"
         expected_output = "给出前缀哈希与连续两轮缓存证据"
@@ -418,6 +461,172 @@ class RoomKernelServiceTests(unittest.TestCase):
                 for value in catalog["acceptanceCriteria"]
             ],
             criteria,
+        )
+
+    def test_compaction_recovers_room_requirements_and_exact_skill_tool_receipts(self) -> None:
+        original = "原始需求：压缩后继续交付；原因：用户要求跨回合保持责任。"
+        objective = "当前任务：验证 Room 压缩恢复"
+        criterion = "验收：原始需求、阻塞和交接不得遗忘"
+        blocker = "阻塞：等待正式安装环境"
+        work_item = self.service.create_room_work_item(
+            self.room_id,
+            {
+                "objective": objective,
+                "expectedOutput": "给出可复核的恢复证据",
+                "acceptanceCriteria": [criterion],
+                "currentOwnerParticipantId": self.participant["id"],
+                "clientMessageId": "work:compaction-recovery",
+            },
+        )["workItem"]
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": original,
+                "clientMessageId": "client:compaction-recovery",
+                "workItemId": work_item["id"],
+            },
+        )
+        dispatch = self.service.room_kernel.dispatch(
+            str(accepted["dispatches"][0]["dispatchId"])
+        )
+        catalog = accepted["requirementCatalog"]
+        self.service.room_requirements.record_obstacle(
+            obstacle_id="blocker:compaction",
+            root_id=str(accepted["rootId"]),
+            catalog_revision_id=str(catalog["catalogRevisionId"]),
+            obstacle_kind="blocker",
+            statement=blocker,
+            created_at_ms=10,
+        )
+
+        self.service.room_kernel_worker.run_once()
+        binding = self.service.room_capabilities.runtime_binding(
+            self.session_id
+        )
+        self.assertIsNotNone(binding)
+        room_context = self.service.room_prompt_plans.provider_payload(
+            str(binding["promptCompileReceiptId"])
+        )["providerContext"]
+        for expected in (original, objective, criterion, blocker):
+            self.assertIn(expected, room_context)
+        self.assertIn('"continuation"', room_context)
+        initial_recovery = self.service._runtime_session_context(
+            self.service.sessions.get(self.session_id)
+        )["roomRecoveryContext"]
+        for expected in (original, objective, criterion, blocker):
+            self.assertEqual(initial_recovery.count(expected), 1)
+
+        skill_id = "room-test-driven-implementation"
+        catalog_revision = "c" * 64
+        skill_receipt, _ = self.service.room_skill_receipts.pin_skill(
+            receipt_id="skill:compaction-recovery",
+            root_id=str(dispatch["rootId"]),
+            task_id=str(dispatch["taskId"]),
+            dispatch_id=str(dispatch["dispatchId"]),
+            session_id=self.session_id,
+            skill_id=skill_id,
+            skill_hash=self.service.room_skill_policy.skill_hash(skill_id),
+            catalog_revision=catalog_revision,
+            load_reason="stage_required",
+            capability_epoch=int(dispatch["capabilityEpoch"]),
+            idempotency_key="compaction-recovery/implementation",
+            created_at_ms=11,
+        )
+        tool_receipt = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:compaction-recovery:room_state",
+                "toolName": "room_state",
+                "createdAtMs": 12,
+            }
+        )["result"]
+
+        refreshed = self.service.refresh_session_context(
+            {
+                "sessionId": self.session_id,
+                "trigger": "compaction",
+                "compactionEntryId": "compaction:recovery:1",
+                "expectedContextEpoch": 1,
+                "summary": "上一轮完成了上下文管线检查，尚未正式安装。",
+                "recentMessages": [
+                    {"role": "user", "text": "继续完成压缩恢复测试"}
+                ],
+                "roomSkillRecovery": {
+                    "catalogRevision": catalog_revision,
+                },
+                "roomToolRecovery": {
+                    "schemaVersion": "rag-ime.room-tool-recovery.v1",
+                    "items": [
+                        {
+                            "name": "room_state",
+                            "receiptId": tool_receipt["receiptId"],
+                        }
+                    ],
+                },
+            }
+        )["result"]
+
+        self.assertEqual(
+            refreshed["roomContextRecovery"]["restoredFromReceiptId"],
+            skill_receipt["receiptId"],
+        )
+        self.assertEqual(
+            refreshed["roomToolRecovery"]["items"][0]["receiptId"],
+            tool_receipt["receiptId"],
+        )
+        recovery_context = refreshed["roomRecoveryContext"]
+        for expected in (original, objective, criterion, blocker):
+            self.assertEqual(recovery_context.count(expected), 1)
+        self.assertEqual(
+            recovery_context.count(skill_receipt["receiptId"]),
+            1,
+        )
+        self.assertEqual(
+            recovery_context.count(tool_receipt["receiptId"]),
+            1,
+        )
+        self.assertNotIn(original, refreshed["sessionContext"])
+        self.assertNotIn(criterion, refreshed["sessionContext"])
+
+        self.service.room_capabilities.revoke_runtime(
+            self.session_id,
+            capability_epoch=int(binding["capabilityEpoch"]) + 1,
+            now_ms=13,
+        )
+        sealed_refresh = self.service.refresh_session_context(
+            {
+                "sessionId": self.session_id,
+                "trigger": "compaction",
+                "compactionEntryId": "compaction:recovery:2",
+                "expectedContextEpoch": 2,
+                "summary": "Room 已结算，只允许从封存能力记录恢复上下文。",
+                "recentMessages": [
+                    {"role": "user", "text": "继续核对封存后的压缩恢复"}
+                ],
+                "roomSkillRecovery": {
+                    "catalogRevision": catalog_revision,
+                },
+                "roomToolRecovery": {
+                    "schemaVersion": "rag-ime.room-tool-recovery.v1",
+                    "items": [
+                        {
+                            "name": "room_state",
+                            "receiptId": tool_receipt["receiptId"],
+                        }
+                    ],
+                },
+            }
+        )["result"]
+        sealed_context = sealed_refresh["roomRecoveryContext"]
+        for expected in (original, objective, criterion, blocker):
+            self.assertEqual(sealed_context.count(expected), 1)
+        self.assertEqual(
+            sealed_context.count(skill_receipt["receiptId"]),
+            1,
+        )
+        self.assertEqual(
+            sealed_context.count(tool_receipt["receiptId"]),
+            1,
         )
 
     def _dispatch(
@@ -719,6 +928,14 @@ class RoomKernelServiceTests(unittest.TestCase):
             clear=True,
         ):
             self.assertEqual(_room_kernel_mode_from_environment(), "cohort")
+
+    def test_environment_accepts_kernel_only_without_a_cohort_gate(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"RAG_IME_ROOM_KERNEL_MODE": "kernel_only"},
+            clear=True,
+        ):
+            self.assertEqual(_room_kernel_mode_from_environment(), "kernel_only")
 
     def test_product_create_dispatch_and_finalize_use_command_bus(self) -> None:
         root_id = "root:product-route"
@@ -1161,6 +1378,11 @@ class RoomKernelServiceTests(unittest.TestCase):
             tool_call_id="call:service", load_receipt_id=str(loaded["receiptId"]),
         )
         self.assertFalse(canonical["result"]["executionPerformed"])
+        self.assertTrue(canonical["result"]["settlementStaged"])
+        self.assertEqual(
+            canonical["result"]["next"],
+            "room_commit_or_end_model_turn",
+        )
         commit = {
             "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
             "commitId": "commit:capability-service",
@@ -1239,6 +1461,40 @@ class RoomKernelServiceTests(unittest.TestCase):
                 session_id=self.session_id, receipt_id="invoke:revoked", invocation_key="call:revoked",
                 load_receipt_id=str(loaded["receiptId"]), tool_name="room_post", arguments={"content": "no"}, created_at_ms=7,
             )
+
+    def test_room_commit_receipt_is_an_explicit_model_turn_boundary(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:terminal-commit",
+                "toolName": "room_commit",
+                "createdAtMs": 5,
+            }
+        )["result"]
+
+        staged = self.service.execute_room_capability_tool(
+            self.session_id,
+            "room_commit",
+            {
+                "decision": "wait",
+                "result": "等待下一步输入",
+                "evidenceRefs": [],
+                "requirementCoverage": [],
+            },
+            tool_call_id="call:terminal-commit",
+            load_receipt_id=str(loaded["receiptId"]),
+        )["result"]
+
+        self.assertFalse(staged["executionPerformed"])
+        self.assertTrue(staged["settlementStaged"])
+        self.assertTrue(staged["terminalForModelTurn"])
+        self.assertEqual(
+            staged["next"],
+            "end_model_turn_for_before_agent_settle",
+        )
+        self.assertIn("立即结束本轮", staged["modelInstruction"])
 
     def test_managed_dispatch_preparation_replays_after_crash_before_lease(self) -> None:
         dispatch = self._dispatch()
@@ -1600,12 +1856,28 @@ class RoomKernelServiceTests(unittest.TestCase):
         methods = [str(request["method"]) for request in requests]
         self.assertEqual(methods[0], "hello")
         self.assertIn("session.open", methods)
+        # Capability and PromptPlan ownership can rotate inside one idle Room
+        # Session. Only a Product-owned context epoch transition may rebase the
+        # Provider prefix; a new Dispatch must not discard the resident journal.
+        self.assertEqual(methods.count("session.open"), 1)
+        self.assertEqual(methods.count("session.close"), 0)
         self.assertLess(methods.index("session.open"), methods.index("room.dispatch"))
         opened = next(request for request in requests if request["method"] == "session.open")
         self.assertIn("<room-prompt-plan", opened["params"]["systemPrompt"])
         self.assertNotIn("运行时工具渐进披露规则", opened["params"]["systemPrompt"])
         session_context = opened["params"]["sessionContext"]
         room_context = opened["params"]["roomContext"]
+        room_recovery = json.loads(
+            opened["params"]["roomRecoveryContext"]
+        )
+        self.assertEqual(
+            room_recovery["schemaVersion"],
+            "wisdom-weasel.room-compaction-recovery.v1",
+        )
+        self.assertEqual(
+            room_recovery["currentTask"]["objective"],
+            "Execute a bounded service test.",
+        )
         self.assertIn("Session 记忆", session_context)
         self.assertNotIn('"objective":"Execute a bounded service test."', session_context)
         self.assertIn('"objective":"Execute a bounded service test."', room_context)
@@ -1616,15 +1888,16 @@ class RoomKernelServiceTests(unittest.TestCase):
             "room-test-driven-implementation",
         )
         self.assertEqual(methods.count("room.dispatch"), 2)
-        self.assertEqual(
-            [request["params"]["dispatchId"] for request in requests if request["method"] == "room.dispatch"],
-            ["dispatch:service", "dispatch:complete"],
-        )
-        first_dispatch_request = next(
+        room_dispatches = [
             request
             for request in requests
             if request["method"] == "room.dispatch"
+        ]
+        self.assertEqual(
+            [request["params"]["dispatchId"] for request in room_dispatches],
+            ["dispatch:service", "dispatch:complete"],
         )
+        first_dispatch_request = room_dispatches[0]
         self.assertIn(
             "Session 记忆",
             first_dispatch_request["params"]["sessionContext"],
@@ -1632,6 +1905,23 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertIn(
             '"objective":"Execute a bounded service test."',
             first_dispatch_request["params"]["roomContext"],
+        )
+        self.assertEqual(
+            json.loads(
+                first_dispatch_request["params"]["roomRecoveryContext"]
+            )["currentTask"]["objective"],
+            "Execute a bounded service test.",
+        )
+        second_dispatch_request = room_dispatches[1]
+        self.assertEqual(
+            second_dispatch_request["params"]["roomCapability"]["contextEpoch"],
+            first_dispatch_request["params"]["roomCapability"]["contextEpoch"],
+        )
+        self.assertEqual(
+            json.loads(
+                second_dispatch_request["params"]["roomRecoveryContext"]
+            )["currentTask"]["objective"],
+            "Execute a bounded service test.",
         )
         skill_receipt = self.service.room_skill_receipts.latest_for_session(self.session_id)
         self.assertIsNotNone(skill_receipt)

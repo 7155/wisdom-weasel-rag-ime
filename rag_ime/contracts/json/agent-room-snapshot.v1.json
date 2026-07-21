@@ -65,7 +65,7 @@
         },
         "collaborationRole": {
           "type": "string",
-          "enum": ["coordinator", "executor", "researcher"]
+          "enum": ["coordinator", "researcher", "implementer", "reviewer", "specialist"]
         },
         "status": {
           "type": "string",

@@ -159,7 +159,7 @@ def main() -> int:
                 raise RuntimeError("staged Runtime Host loaded a different Skill body or revision")
             first = request("dispatch-a", "room.dispatch", {
                 "sessionId": "session:staged-e2e", "rootId": "root:staged-e2e",
-                "dispatchId": "dispatch:a", "generation": 1,
+                "dispatchId": "dispatch:a", "generation": 1, "capabilityEpoch": 1,
                 "idempotencyKey": "root:staged-e2e/a", "leaseToken": "lease:a",
                 "message": "Inspect package.json and keep the bounded run active.",
             })
@@ -202,8 +202,8 @@ def main() -> int:
                 raise RuntimeError("required Room Skill body did not enter the real system prompt")
             second = request("dispatch-b", "room.dispatch", {
                 "sessionId": "session:staged-e2e", "rootId": "root:staged-e2e",
-                "dispatchId": "dispatch:b", "generation": 1,
-                "idempotencyKey": "root:staged-e2e/b", "leaseToken": "lease:b",
+                "dispatchId": "dispatch:a", "generation": 1, "capabilityEpoch": 1,
+                "idempotencyKey": "root:staged-e2e/continuation-b", "leaseToken": "lease:a",
                 "message": "Continue the same bounded run.",
             })
             cancelled = request("cancel", "room.cancel", {

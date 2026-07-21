@@ -92,13 +92,16 @@ class AgentEventProjectionService:
         binding = self.room_kernel.session_binding(
             event.session_id
         )
-        if (
-            self.room_kernel.mode in {
-                "cohort",
-                "kernel_only",
-            }
-            and binding is not None
-        ):
+        if self.room_kernel.mode in {
+            "cohort",
+            "kernel_only",
+        }:
+            # A committed/revoked Dispatch may still emit trailing private
+            # Session deltas before agent_settled. Without a live Kernel
+            # binding they must not fall through to the legacy mapper, which
+            # would invent a second public Root from the private turn id.
+            if binding is None:
+                return
             mapped_type, public_data = room_event_projection(event)
             if event.event_type == "message_completed":
                 mapped_type = "participant_activity"

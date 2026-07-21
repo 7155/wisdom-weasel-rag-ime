@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "faefcf666f86ad6d1e7319fc9e789bec6ed182b7",
+  "minimumHandlersCommit": "58c7070348db40e0bf2442a66a1afe341a615e70",
   "requiredMethods": [
     "room.dispatch",
     "room.cancel"
@@ -17,6 +17,10 @@
     "discoveryTools": "packages/rag-ime-runtime-host/src/discovery-tools.ts",
     "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
     "toolArtifacts": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
+    "providerContextJournal": "packages/rag-ime-runtime-host/src/provider-context-journal.ts",
+    "sessionContextRefresh": "packages/rag-ime-runtime-host/src/session-context-refresh.ts",
+    "cancellationReceipts": "packages/rag-ime-runtime-host/src/cancellation-receipts.ts",
+    "roomSettleLifecycle": "packages/rag-ime-runtime-host/src/room-settle-lifecycle.ts",
     "session": "packages/rag-ime-runtime-host/src/pi-session.ts"
   },
   "requiredSourceMarkers": {
@@ -49,6 +53,25 @@
       "export class ToolArtifactBuffer",
       "export function modelVisibleResult",
       "const ROOM_DELIVERY_TOOLS = new Set([\"room_post\", \"room_commit\"]);"
+    ],
+    "providerContextJournal": [
+      "export class ProviderContextJournal",
+      "Provider context epoch transition is stale or non-monotonic",
+      "<rag-ime-context type=\"${entry.kind}\">"
+    ],
+    "sessionContextRefresh": [
+      "Managed Room compaction is missing compactionEntryId",
+      "roomRecoveryContext",
+      "expectedContextEpoch"
+    ],
+    "cancellationReceipts": [
+      "export function roomCancellationSurfaces",
+      "wisdom-weasel.runtime-surface-termination-receipt.v1",
+      "pendingRoomCancellationSurfaces"
+    ],
+    "roomSettleLifecycle": [
+      "origin: \"room_settle_guard\"",
+      "maxAttempts: 1"
     ],
     "session": [
       "SKILL_REVISION_MISMATCH",

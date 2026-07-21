@@ -120,6 +120,40 @@ class RoomPromptPlanTests(unittest.TestCase):
         self.assertEqual(sealed["dynamicTailBytes"], b"")
         self.assertNotEqual(pending["stablePrefixBytes"], sealed["stablePrefixBytes"])
 
+    def test_next_dispatch_sends_only_unseen_room_facts_when_pi_epoch_is_reused(self) -> None:
+        first_entry = self._entry("task_state", "task:shared", "已经投递的任务锚点", 1)
+        self._append("journal:1", first_entry, "task:shared", 10)
+        self._compile("receipt:first-dispatch")
+        first_projection = self.journals.projection("journal:1", expected_generation=3)
+        self.journals.record_provider_receipt(
+            "journal:1",
+            receipt_id="provider:first-dispatch",
+            provider_request_id="request:first-dispatch",
+            through_sequence=1,
+            projection_hash=first_projection["projectionHash"],
+            expected_generation=3,
+            created_at_ms=20,
+        )
+
+        self._open_journal("journal:2", context_epoch=1, binding_suffix="2")
+        second_entry = self._entry("dispatch_state", "dispatch:2", "本次新增的执行责任", 2)
+        self._append("journal:2", first_entry, "task:shared", 30)
+        self._append("journal:2", second_entry, "dispatch:2", 31)
+        self.store.compile(
+            **self._compile_args(
+                "receipt:second-dispatch",
+                journal_id="journal:2",
+                binding_suffix="2",
+            )
+        )
+
+        payload = self.store.provider_payload("receipt:second-dispatch")
+        self.assertIn("已经投递的任务锚点", payload["providerContext"])
+        self.assertIn("本次新增的执行责任", payload["providerContext"])
+        self.assertNotIn("已经投递的任务锚点", payload["providerContextDelta"])
+        self.assertIn("本次新增的执行责任", payload["providerContextDelta"])
+        self.assertEqual(payload["reusedSealedRefs"], [first_entry])
+
     def test_compaction_recovery_starts_new_context_epoch_without_changing_prefix(self) -> None:
         first_entry = self._entry("task_state", "task:1", "原始任务", 1)
         self._append("journal:1", first_entry, "task:1", 10)
@@ -249,8 +283,16 @@ class RoomPromptPlanTests(unittest.TestCase):
     def _compile(self, receipt_id: str, *, layers=None):
         return self.store.compile(**self._compile_args(receipt_id, layers=layers))
 
-    def _compile_args(self, receipt_id: str, *, journal_id="journal:1", context_epoch=1, layers=None):
-        room, participant = self._bindings()
+    def _compile_args(
+        self,
+        receipt_id: str,
+        *,
+        journal_id="journal:1",
+        context_epoch=1,
+        layers=None,
+        binding_suffix="1",
+    ):
+        room, participant = self._bindings(binding_suffix=binding_suffix)
         return {
             "receipt_id": receipt_id, "room_binding": room,
             "participant_binding": participant, "journal_id": journal_id,
@@ -259,9 +301,15 @@ class RoomPromptPlanTests(unittest.TestCase):
             "layers": tuple(layers or self._layers()), "created_at_ms": 100,
         }
 
-    def _bindings(self, *, capability_revision="cap-v1", capability_epoch=1):
+    def _bindings(
+        self,
+        *,
+        capability_revision="cap-v1",
+        capability_epoch=1,
+        binding_suffix="1",
+    ):
         room = {
-            "schemaVersion": "wisdom-weasel.room-binding.v2", "bindingId": "room-binding:1",
+            "schemaVersion": "wisdom-weasel.room-binding.v2", "bindingId": f"room-binding:{binding_suffix}",
             "rootId": "root:1", "roomId": "room:1", "participantId": "participant:1",
             "taskId": "task:1", "generation": 3, "protocolRevision": "room-v2",
             "capabilityRevision": capability_revision, "access": "write",
@@ -269,14 +317,14 @@ class RoomPromptPlanTests(unittest.TestCase):
         digest = "a" * 64
         participant = {
             "schemaVersion": "wisdom-weasel.room-participant-binding.v2",
-            "bindingId": "participant-binding:1", "sessionId": "session:1",
+            "bindingId": f"participant-binding:{binding_suffix}", "sessionId": "session:1",
             "personaRef": f"rag-ime-definition://persona/p?version=1&contentHash=sha256:{digest}",
             "collaborationRoleRef": f"rag-ime-definition://collaboration-role/r?version=1&contentHash=sha256:{digest}",
             "agentTemplateRef": f"rag-ime-definition://agent-template/t?version=1&contentHash=sha256:{digest}",
             "collaborationProfileRef": None,
             "compiledRuntimeProfileRef": {"profileId": "compiled:1", "revision": "1", "contentHash": "sha256:abcdef"},
             "capabilityRevision": capability_revision, "capabilityEpoch": capability_epoch,
-            "roomBindingRef": {"bindingId": "room-binding:1", "schemaVersion": "wisdom-weasel.room-binding.v2"},
+            "roomBindingRef": {"bindingId": f"room-binding:{binding_suffix}", "schemaVersion": "wisdom-weasel.room-binding.v2"},
         }
         return room, participant
 
@@ -291,10 +339,16 @@ class RoomPromptPlanTests(unittest.TestCase):
             PromptLayer("provider_dynamic_facts", "room-context-compiler", "journal:1", "", ("dynamic-facts",)),
         )
 
-    def _open_journal(self, journal_id: str, *, context_epoch: int):
+    def _open_journal(
+        self,
+        journal_id: str,
+        *,
+        context_epoch: int,
+        binding_suffix: str = "1",
+    ):
         self.journals.open_journal(
             journal_id=journal_id, root_id="root:1", room_id="room:1",
-            binding_id="participant-binding:1", session_id="session:1",
+            binding_id=f"participant-binding:{binding_suffix}", session_id="session:1",
             session_epoch=1, context_epoch=context_epoch, generation=3, created_at_ms=1,
         )
 

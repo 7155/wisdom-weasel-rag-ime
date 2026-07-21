@@ -12,7 +12,7 @@ export interface AgentParticipantV1 {
   roleId: string;
   roleVersion: string;
   displayName: string;
-  collaborationRole: 'coordinator' | 'executor' | 'researcher';
+  collaborationRole: 'coordinator' | 'researcher' | 'implementer' | 'reviewer' | 'specialist';
   status: 'active' | 'muted' | 'removed';
   ordinal: number;
   createdAtMs: number;

@@ -20,7 +20,9 @@ MAX_ROOM_RESPONDERS = 4
 _WORD_PATTERN = re.compile(r"[a-z0-9_+#.-]+|[\u3400-\u9fff]+", re.IGNORECASE)
 _RESEARCH_TERMS = frozenset({"查", "搜索", "检索", "调研", "核对", "证据", "资料", "分析", "研究"})
 _EXECUTION_TERMS = frozenset({"改", "写", "实现", "执行", "修复", "创建", "删除", "运行", "部署"})
-_COORDINATION_TERMS = frozenset({"计划", "规划", "协调", "拆分", "分工", "安排", "汇总", "审阅"})
+_COORDINATION_TERMS = frozenset({"计划", "规划", "协调", "拆分", "分工", "安排", "汇总"})
+_REVIEW_TERMS = frozenset({"审查", "复核", "验收", "检查", "评审", "review"})
+_SPECIALIST_TERMS = frozenset({"专业", "领域", "专家", "咨询", "判断"})
 
 
 def normalize_room_kind(value: object) -> str:
@@ -316,7 +318,9 @@ def _natural_candidate(
     descriptor_terms = _terms(" ".join(descriptors))
     overlap = query_terms & descriptor_terms
     tag_hits = [tag for tag in routing_tags if tag.casefold() in str(text).casefold()]
-    role = str(participant.get("collaborationRole") or "executor")
+    role = str(participant.get("collaborationRole") or "implementer")
+    if role == "executor":
+        role = "implementer"
     role_signal = 0.0
     signals: list[str] = []
     if overlap:
@@ -326,12 +330,18 @@ def _natural_candidate(
     if role == "researcher" and _contains_any(text, _RESEARCH_TERMS):
         role_signal = 0.24
         signals.append("role:research")
-    elif role == "executor" and _contains_any(text, _EXECUTION_TERMS):
+    elif role == "implementer" and _contains_any(text, _EXECUTION_TERMS):
         role_signal = 0.24
         signals.append("role:execution")
     elif role == "coordinator" and _contains_any(text, _COORDINATION_TERMS):
         role_signal = 0.24
         signals.append("role:coordination")
+    elif role == "reviewer" and _contains_any(text, _REVIEW_TERMS):
+        role_signal = 0.24
+        signals.append("role:review")
+    elif role == "specialist" and _contains_any(text, _SPECIALIST_TERMS):
+        role_signal = 0.24
+        signals.append("role:specialist")
     lexical = min(0.5, 0.1 * len(overlap))
     tag_score = min(0.35, 0.18 * len(tag_hits))
     jitter_limit = float(config.get("naturalJitter") or 0.0)

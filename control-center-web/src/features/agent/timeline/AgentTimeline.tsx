@@ -123,7 +123,7 @@ export function AgentTimeline({
   }, [jumpRequest?.messageId, jumpRequest?.requestId, sessionId]);
   if (turnOrder.length === 0) return <AgentWelcome persona={persona} onSuggestion={onSuggestion} />;
   return (
-    <div className="agent-timeline" aria-label="对话时间线">
+    <div className="agent-timeline" aria-label="对话时间线" role="log">
       <Virtuoso
         ref={virtuosoRef}
         key={sessionId}

@@ -96,7 +96,7 @@ class AgentSessionApplicationService:
         mode = str(payload.get("mode") or "assistant")
         configuration = self.configuration_store.snapshot()["configuration"]
         session_defaults = configuration["sessionDefaults"]
-        role = self.personas.resolve(
+        role = self.personas.resolve_active(
             payload.get("roleId") or session_defaults["roleId"],
             payload.get("roleVersion") or session_defaults["roleVersion"],
         )

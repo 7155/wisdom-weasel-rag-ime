@@ -540,6 +540,41 @@ class ProviderProjectionJournalStore:
             "projectionHash": _sha256(framed),
         }
 
+    def previously_sealed_entry_ids(
+        self,
+        *,
+        root_id: str,
+        session_id: str,
+        generation: int,
+        context_epoch: int,
+        excluding_journal_id: str,
+    ) -> frozenset[str]:
+        """Return facts already present in the live Pi epoch before this journal."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT item.context_entry_id
+                FROM room_v2_provider_projection_items AS item
+                JOIN room_v2_provider_projection_journals AS journal
+                  ON journal.journal_id = item.journal_id
+                WHERE journal.root_id = ?
+                  AND journal.session_id = ?
+                  AND journal.generation = ?
+                  AND journal.context_epoch = ?
+                  AND journal.journal_id <> ?
+                  AND item.state = 'sealed'
+                """,
+                (
+                    _required_text(root_id, "rootId"),
+                    _required_text(session_id, "sessionId"),
+                    _non_negative_int(generation, "generation"),
+                    _positive_int(context_epoch, "contextEpoch"),
+                    _required_text(excluding_journal_id, "excludingJournalId"),
+                ),
+            ).fetchall()
+        return frozenset(str(row["context_entry_id"]) for row in rows)
+
     def record_provider_receipt(
         self,
         journal_id: str,

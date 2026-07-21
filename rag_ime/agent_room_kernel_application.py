@@ -145,13 +145,33 @@ class RoomKernelApplicationService:
         canonical = str(invocation["canonicalCommand"]["tool"])
         if canonical == "room_state":
             result = self.snapshot(str(live["roomId"]))
+        elif canonical == "room_post":
+            result = {
+                "accepted": True,
+                "executionPerformed": False,
+                "settlementStaged": True,
+                "canonicalTool": canonical,
+                "invocationReceiptId": invocation["receiptId"],
+                "next": "room_commit_or_end_model_turn",
+                "modelInstruction": (
+                    "RoomPost 已暂存。若当前责任尚未提交，只调用 room_commit 一次；"
+                    "否则立即结束本轮。"
+                ),
+            }
         else:
             result = {
                 "accepted": True,
                 "executionPerformed": False,
+                "settlementStaged": True,
+                "terminalForModelTurn": True,
                 "canonicalTool": canonical,
                 "invocationReceiptId": invocation["receiptId"],
-                "next": "agent_settled_then_room_commit",
+                "next": "end_model_turn_for_before_agent_settle",
+                "modelInstruction": (
+                    "room_commit 已被受管层持久暂存。现在立即结束本轮；"
+                    "不要再调用 room_state、room_post、room_commit 或其他工具，"
+                    "before_agent_settle 会执行唯一提交。"
+                ),
             }
         return {
             "ok": True,
@@ -427,6 +447,24 @@ class RoomKernelApplicationService:
                 ),
             )
         self.projection.sync_room(room_id)
+        requirement_context = self.requirements.dispatch_context(
+            str(dispatch["dispatchId"])
+        )
+        if (
+            _receipt_completes_root_candidate(receipt)
+            and not _requires_explicit_delivery_finalization(
+                requirement_context
+            )
+        ):
+            # Reuse the canonical finalization authority. Parallel commits stay
+            # running until the last active Dispatch makes the Root quiescent.
+            self.finalize(
+                str(root["rootId"]),
+                now_ms=int(
+                    commit.get("createdAtMs")
+                    or int(time.time() * 1000)
+                ),
+            )
         result: dict[str, object] = {
             "schemaVersion": "wisdom-weasel.room-settle-result.v1",
             "receipt": receipt,
@@ -565,6 +603,27 @@ def _verified_room_media_args(
         if data.get("receiptUrl") != expected_url:
             raise RoomKernelFenceError("Room file block content URL is not canonical")
     return result
+
+
+def _receipt_completes_root_candidate(receipt: Mapping[str, object]) -> bool:
+    details = receipt.get("details")
+    return (
+        receipt.get("status") == "applied"
+        and isinstance(details, Mapping)
+        and details.get("settleDecision") == "complete"
+    )
+
+
+def _requires_explicit_delivery_finalization(
+    requirement_context: Mapping[str, object] | None,
+) -> bool:
+    if requirement_context is None:
+        return False
+    catalog = requirement_context.get("catalog")
+    return (
+        isinstance(catalog, Mapping)
+        and bool(catalog.get("acceptanceCriteria"))
+    )
 
 
 def _validated_post_proposal(

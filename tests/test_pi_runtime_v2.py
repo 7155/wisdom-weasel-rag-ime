@@ -6,6 +6,7 @@ import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
@@ -219,6 +220,10 @@ for line in sys.stdin:
     elif method == "room.dispatch":
         if params.get("message") == "crash-host-after-room-dispatch":
             os._exit(23)
+        if params.get("roomCapability") is not None:
+            sessions[session_id]["roomCapability"] = params["roomCapability"]
+        if params.get("roomProviderContext") is not None:
+            sessions[session_id]["roomProviderContext"] = params["roomProviderContext"]
         room_provider = sessions[session_id].get("roomProviderContext") or {}
         result(request, {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
@@ -446,11 +451,16 @@ class PiRuntimeV2Tests(unittest.TestCase):
             message="Execute the bounded Room task.",
             lease_token="lease-token:cross-process",
         )
-        cancelled = self.runtime.cancel_room(
-            session_id=session_id,
-            root_id="root:cross-process",
-            generation=5,
-        )
+        with patch.object(
+            self.runtime,
+            "ensure",
+            side_effect=AssertionError("Room cancellation must not rebind the active Session"),
+        ):
+            cancelled = self.runtime.cancel_room(
+                session_id=session_id,
+                root_id="root:cross-process",
+                generation=5,
+            )
 
         self.assertTrue(
             self.runtime.runtime_status()["capabilities"]["runtimePrimitives"]["roomTypes"]
@@ -480,6 +490,199 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 lease_token="lease-token:crashed-host",
             )
         self.assertEqual(self.runtime.runtime_status()["status"], "faulted")
+
+    def test_room_dispatch_reuses_session_for_delta_and_task_switch_epoch(self) -> None:
+        self.runtime.stop()
+        context_revision = {"value": 1}
+
+        def context_provider(_session):
+            revision = context_revision["value"]
+            root_id = "root:stable" if revision < 3 else "root:next"
+            context_epoch = 1 if revision < 3 else 2
+            return {
+                "roomCapability": {
+                    "manifestId": f"manifest:{revision}",
+                    "manifestHash": ("a" if revision == 1 else "b") * 64,
+                    "promptCompileReceiptId": f"prompt:{revision}",
+                    "promptPlanHash": ("c" if revision == 1 else "d") * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:stable",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "capabilityEpoch": 4,
+                    "rootId": root_id,
+                    "dispatchId": f"dispatch:{revision}",
+                    "generation": 0,
+                    "contextEpoch": context_epoch,
+                    "contextEpochReason": (
+                        "session_open" if revision < 3 else "task_switch"
+                    ),
+                    "runtimeBindingHash": ("e" if revision < 3 else "9") * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "sessionContext": f"generic-agent-rag-{revision}",
+                "providerContext": f"room-bootstrap-{revision}",
+                "providerContextDelta": f"room-delta-{revision}",
+                "roomRecoveryContext": f"room-recovery-{revision}",
+                "roomProviderContext": {
+                    "journalId": f"journal:{revision}",
+                    "throughSequence": revision,
+                    "projectionHash": ("f" if revision == 1 else "0") * 64,
+                },
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+
+        first = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:stable",
+                "dispatchId": "dispatch:1",
+                "generation": 0,
+                "capabilityEpoch": 4,
+                "idempotencyKey": "stable:1",
+            },
+            message="first bounded task",
+            lease_token="lease:1",
+        )
+        context_revision["value"] = 2
+        second = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:stable",
+                "dispatchId": "dispatch:2",
+                "generation": 0,
+                "capabilityEpoch": 4,
+                "idempotencyKey": "stable:2",
+            },
+            message="second bounded task",
+            lease_token="lease:2",
+        )
+        context_revision["value"] = 3
+        third = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:next",
+                "dispatchId": "dispatch:3",
+                "generation": 0,
+                "capabilityEpoch": 4,
+                "idempotencyKey": "next:3",
+            },
+            message="third task starts a new context epoch",
+            lease_token="lease:3",
+        )
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(sum(item["method"] == "session.open" for item in requests), 1)
+        self.assertFalse(any(item["method"] == "session.close" for item in requests))
+        delivered = [item for item in requests if item["method"] == "room.dispatch"]
+        self.assertEqual(len(delivered), 3)
+        self.assertEqual(delivered[1]["params"]["roomContext"], "room-delta-2")
+        self.assertEqual(
+            delivered[1]["params"]["roomRecoveryContext"],
+            "room-recovery-2",
+        )
+        self.assertEqual(
+            delivered[1]["params"]["roomProviderContext"]["journalId"],
+            "journal:2",
+        )
+        self.assertEqual(
+            delivered[1]["params"]["roomCapability"]["promptPlanHash"],
+            "d" * 64,
+        )
+        self.assertEqual(first["providerContextReceipt"]["journalId"], "journal:1")
+        self.assertEqual(second["providerContextReceipt"]["journalId"], "journal:2")
+        self.assertEqual(delivered[2]["params"]["roomContext"], "room-bootstrap-3")
+        self.assertEqual(delivered[2]["params"]["roomCapability"]["contextEpoch"], 2)
+        self.assertEqual(third["providerContextReceipt"]["journalId"], "journal:3")
+
+    def test_sealed_room_maintenance_reuses_idle_session_after_capability_revocation(self) -> None:
+        self.runtime.stop()
+        state = {"revoked": False}
+        manifest_id = "manifest:settled-compaction"
+        manifest_hash = "a" * 64
+
+        def context_provider(_session):
+            room_capability = {
+                "manifestId": manifest_id,
+                "manifestHash": manifest_hash,
+                "capabilityEpoch": 8 if state["revoked"] else 7,
+            }
+            if state["revoked"]:
+                return {
+                    "roomCapability": {
+                        **room_capability,
+                        "status": "revoked",
+                    }
+                }
+            return {
+                "roomCapability": {
+                    **room_capability,
+                    "promptCompileReceiptId": "prompt:settled-compaction",
+                    "promptPlanHash": "b" * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:settled-compaction",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "runtimeBindingHash": "c" * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+                "roomRecoveryContext": "sealed-room-recovery",
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=self.runtime.config,
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+            compaction_observer=self._observe_compaction,
+        )
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        state["revoked"] = True
+
+        self.assertEqual(self.runtime.debug_context(session_id), {})
+        compacted = self.runtime.compact(session_id, "保留受管恢复事实")
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        methods = [request["method"] for request in requests]
+        self.assertEqual(methods.count("session.open"), 1)
+        self.assertNotIn("session.close", methods)
+        self.assertEqual(
+            methods[-4:],
+            [
+                "session.snapshot",
+                "session.debug.context",
+                "session.snapshot",
+                "session.compact",
+            ],
+        )
+        self.assertTrue(compacted["memoryCheckpoint"]["stored"])
 
     def test_transcript_tool_messages_rebuild_a_redacted_durable_timeline(self) -> None:
         raw_messages = [
@@ -984,7 +1187,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
     def test_open_idle_session_can_list_fork_candidates(self) -> None:
         session_id = str(self.first["id"])
         self.runtime.ensure(session_id)
-        self.assertEqual(self.store.get(session_id)["status"], "active")
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
 
         self.assertEqual(self.runtime.fork_candidates(session_id), [])
         self.assertEqual(self.store.get(session_id)["status"], "idle")

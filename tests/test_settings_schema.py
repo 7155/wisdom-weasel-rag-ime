@@ -84,7 +84,12 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(fields["interaction.postCommit.panelTtlMs"]["default"], 5000)
         self.assertEqual(fields["models.hot"]["default"], "minimind_ime_v2")
         self.assertEqual(fields["context.tokenBudget"]["default"], 4096)
-        self.assertEqual(fields["agent.pi.defaultRoleId"]["default"], "companion-future-v1")
+        # Persona selection belongs to the Agent partner flow, not the generic
+        # runtime settings form. Keep the internal default without exposing a
+        # raw role id as a second, conflicting UI owner.
+        self.assertNotIn("agent.pi.defaultRoleId", fields)
+        self.assertNotIn("agent.pi.toolProfile", fields)
+        self.assertNotIn("agent.pi.startup", fields)
         self.assertEqual(fields["activeRag.quickModel"]["type"], "pi-model")
         self.assertEqual(
             fields["activeRag.quickThinkingLevel"]["options"],

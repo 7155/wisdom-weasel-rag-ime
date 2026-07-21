@@ -18,7 +18,7 @@ class AgentRoomWorkTests(unittest.TestCase):
         self.sessions = AgentSessionStore(self.db_path)
         self.sessions.initialize()
         self.coordinator = self.sessions.create(title="协调者")
-        self.worker = self.sessions.create(title="执行者")
+        self.worker = self.sessions.create(title="实施者")
         self.researcher = self.sessions.create(title="调研者")
         self.rooms = AgentRoomStore(self.db_path, room_dir=self.root / "rooms")
         self.rooms.initialize()
@@ -37,8 +37,8 @@ class AgentRoomWorkTests(unittest.TestCase):
                     "sessionId": self.worker["id"],
                     "roleId": "worker",
                     "roleVersion": "1",
-                    "displayName": "执行者",
-                    "collaborationRole": "executor",
+                    "displayName": "实施者",
+                    "collaborationRole": "implementer",
                 },
                 {
                     "sessionId": self.researcher["id"],

@@ -1412,6 +1412,8 @@ class AgentServiceTests(unittest.TestCase):
                 "traits": ["温和", "善于复盘"],
                 "timelineModel": "terra",
                 "selectableModes": ["assistant", "coordinator"],
+                "suitableTasks": ["温和复盘", "日常记录"],
+                "unsuitableTasks": ["高风险独立决定"],
             }
         )["role"]
 
@@ -1425,6 +1427,7 @@ class AgentServiceTests(unittest.TestCase):
         ):
             self.assertNotIn(internal_key, created_role)
         self.assertEqual(self.service.list_roles()["items"][-1], created_role)
+        self.assertEqual(created_role["runtimeCharacteristics"]["suitableTasks"], ["温和复盘", "日常记录"])
         private_role = self.service.personas.resolve(created_role["roleId"], created_role["version"])
         self.assertIn("智鼬·雨天", private_role.system_prompt)
         self.assertIn("只有受控审批回执有效", private_role.system_prompt)

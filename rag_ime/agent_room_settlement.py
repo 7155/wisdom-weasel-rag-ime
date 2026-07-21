@@ -190,8 +190,8 @@ class RoomSettleLifecycleService:
             receipt=result["receipt"],
         )
 
-    @staticmethod
     def _repair_result(
+        self,
         *,
         settle_receipt: Mapping[str, object],
         settle_attempt: int,
@@ -214,14 +214,30 @@ class RoomSettleLifecycleService:
             "settleAttempt": settle_attempt,
             "reason": _bounded(reason, 500),
             "repairKey": str(receipt["receiptId"]),
-            "message": (
-                "收工检查未通过。请调用 room_commit，明确选择 deliver、handoff、"
-                "wait 或 blocked，并填写 result、evidenceRefs 与 "
-                "requirementCoverage；handoff 还要填写 targetParticipantId 和 "
-                "nextTask。不要只在自然语言里声称完成。"
+            "message": self._repair_instruction(
+                dispatch_id=str(settle_receipt["dispatchId"]),
+                reason=reason,
             ),
             "guardReceipt": dict(receipt),
         }
+
+    def _repair_instruction(self, *, dispatch_id: str, reason: str) -> str:
+        task = self.kernel.task(str(self.kernel.dispatch(dispatch_id)["taskId"]))
+        criterion_ids = [
+            str(item)
+            for item in task.get("acceptanceCriterionIds", [])
+            if str(item).strip()
+        ]
+        allowed = json.dumps(criterion_ids, ensure_ascii=False)
+        return (
+            "收工检查未通过："
+            f"{_bounded(reason, 300)}。请重新调用 room_commit，明确选择 "
+            "deliver、handoff、wait 或 blocked，并填写 result、evidenceRefs 与 "
+            "requirementCoverage。requirementCoverage 只能使用当前 Task 的 "
+            f"acceptanceCriterionIds={allowed}；不得填写 requirementItemIds；"
+            "没有验收条件时必须传空数组。handoff 还要填写 "
+            "targetParticipantId 和 nextTask。不要只在自然语言里声称完成。"
+        )
 
     def _canonical_commit(
         self,

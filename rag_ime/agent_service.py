@@ -61,6 +61,7 @@ from .agent_room_prompt_context import (
     room_intercom_prompt as _room_intercom_prompt,
     room_participant_prompt as _room_participant_prompt,
 )
+from .agent_room_recovery_context import room_compaction_recovery_context
 from .agent_room_capabilities import (
     RoomCapabilityManifestStore,
     room_runtime_registry,
@@ -72,6 +73,7 @@ from .agent_definitions import CollaborationProfileManifest
 from .agent_task_context import AgentTaskContextResolver
 from .agent_prompt_plans import RoomPromptPlanStore
 from .agent_room_context import ProviderProjectionJournalStore, RoomContextLedgerStore
+from .agent_room_context_epochs import RoomSessionContextEpochStore
 from .agent_room_skills import RoomSkillPolicy, RoomSkillPolicyStore
 from .agent_room_requirements import RequirementGovernanceStore
 from .agent_room_peer_review import RoomPeerReviewStore
@@ -266,6 +268,8 @@ class AgentService:
         self.room_projection_journals.initialize()
         self.room_context_ledger = RoomContextLedgerStore(db_path)
         self.room_context_ledger.initialize()
+        self.room_context_epochs = RoomSessionContextEpochStore(db_path)
+        self.room_context_epochs.initialize()
         room_skill_root = Path(__file__).resolve().parents[1] / "integrations" / "pi"
         self.room_skill_policy = RoomSkillPolicy(
             room_skill_root / "room-skill-policy.json",
@@ -301,7 +305,8 @@ class AgentService:
         self.observations = ObservationHub(db_path)
         self.room_events = AgentRoomEventHub(self.rooms)
         self.room_public_timeline = RoomPublicTimelineProjector(
-            self.room_events
+            self.room_events,
+            root_is_terminal=self.room_kernel.is_root_terminal,
         )
         self._remove_observation_room_observer = self.room_events.add_observer(
             self.observations.enqueue_room_event
@@ -418,6 +423,10 @@ class AgentService:
                 task_context=self.task_context,
                 room_capabilities=self.room_capabilities,
                 room_skill_receipts=self.room_skill_receipts,
+                room_context_epochs=self.room_context_epochs,
+                room_recovery_context_provider=(
+                    self._room_compaction_recovery_context
+                ),
                 runtime_provider=lambda: self.runtime,
             )
         )
@@ -753,19 +762,60 @@ class AgentService:
         prompt = self.room_prompt_plans.provider_payload(
             str(binding["promptCompileReceiptId"])
         )
+        context_epoch = self.room_context_epochs.current(
+            str(session.get("id") or "")
+        )
+        if (
+            context_epoch is None
+            or int(context_epoch["contextEpoch"])
+            != int(prompt["contextEpoch"])
+        ):
+            raise RoomKernelFenceError(
+                "managed Room PromptPlan context epoch is not current"
+            )
         dispatch = self.room_kernel.dispatch(str(manifest["dispatchId"]))
         root_limits = self.room_kernel.resource_limits(str(dispatch["rootId"]))
         skill_selection = self.room_skill_policy.select_stage(
             _room_skill_stage(dispatch)
         )
+        room_skill_policy: dict[str, object]
+        if skill_selection["selection"] == "required":
+            skill_id = str(skill_selection["skillId"])
+            room_skill_policy = {
+                **skill_selection,
+                "skillHash": self.room_skill_policy.skill_hash(skill_id),
+                "policyId": self.room_skill_policy.policy_id,
+                "policyVersion": self.room_skill_policy.version,
+                "nextCandidates": self.room_skill_receipts.next_candidates(skill_id),
+            }
+        else:
+            room_skill_policy = dict(skill_selection)
+        runtime_binding_hash = _room_runtime_binding_hash(
+            root_id=str(dispatch["rootId"]),
+            generation=int(dispatch["generation"]),
+            capability_epoch=int(binding["capabilityEpoch"]),
+            static_system_prompt_hash=str(prompt["staticSystemPromptHash"]),
+            compiled_runtime_profile_ref=binding["compiledRuntimeProfileRef"],
+            tool_manifest=self._runtime_tool_manifest(session),
+            room_skill_policy=room_skill_policy,
+        )
         result: dict[str, object] = {
             "roomCapability": {
                 "manifestId": manifest["manifestId"],
                 "manifestHash": manifest["manifestHash"],
+                "rootId": dispatch["rootId"],
+                "dispatchId": dispatch["dispatchId"],
+                "generation": dispatch["generation"],
                 "promptCompileReceiptId": binding["promptCompileReceiptId"],
                 "promptPlanHash": binding["promptPlanHash"],
                 "compiledRuntimeProfileRef": binding["compiledRuntimeProfileRef"],
                 "capabilityEpoch": binding["capabilityEpoch"],
+                "contextEpoch": context_epoch["contextEpoch"],
+                "contextEpochReason": context_epoch["epochReason"],
+                # A PromptPlan is dispatch-specific because it audits the current
+                # projection tail. This hash changes only when the Provider-visible
+                # static surface must start a new cache/context epoch.
+                "runtimeBindingHash": runtime_binding_hash,
             },
             "managedSystemPrompt": prompt["stableSystemPrompt"],
             "sessionContext": (
@@ -774,11 +824,20 @@ class AgentService:
                 )
             ),
             "providerContext": prompt["providerContext"],
+            "providerContextDelta": prompt["providerContextDelta"],
+            "roomRecoveryContext": (
+                self._room_compaction_recovery_context(
+                    str(session.get("id") or "")
+                )
+            ),
             "roomProviderContext": {
                 "journalId": prompt["journalId"],
                 "throughSequence": prompt["throughSequence"],
                 "projectionHash": prompt["projectionHash"],
                 "generation": prompt["generation"],
+                "contextEpoch": context_epoch["contextEpoch"],
+                "contextEpochReason": context_epoch["epochReason"],
+                "reusedSealedCount": len(prompt["reusedSealedRefs"]),
             },
             "roomResourceLimits": {
                 "deadlineAtMs": root_limits["deadline_at_ms"],
@@ -790,18 +849,35 @@ class AgentService:
                 "repairRemaining": max(0, int(root_limits["repair_limit"]) - int(root_limits["repair_used"])),
             },
         }
-        if skill_selection["selection"] == "required":
-            skill_id = str(skill_selection["skillId"])
-            result["roomSkillPolicy"] = {
-                **skill_selection,
-                "skillHash": self.room_skill_policy.skill_hash(skill_id),
-                "policyId": self.room_skill_policy.policy_id,
-                "policyVersion": self.room_skill_policy.version,
-                "nextCandidates": self.room_skill_receipts.next_candidates(skill_id),
-            }
-        else:
-            result["roomSkillPolicy"] = skill_selection
+        result["roomSkillPolicy"] = room_skill_policy
         return result
+
+    def _room_compaction_recovery_context(
+        self,
+        session_id: str,
+        skill_receipt: Mapping[str, object] | None = None,
+        tool_receipt: Mapping[str, object] | None = None,
+    ) -> str:
+        bound = self.room_capabilities.manifest_for_runtime(session_id)
+        if bound is None:
+            bound = self.room_capabilities.manifest_for_runtime(
+                session_id,
+                active_only=False,
+            )
+        if bound is None:
+            return ""
+        manifest, _binding = bound
+        dispatch = self.room_kernel.dispatch(str(manifest["dispatchId"]))
+        task = self.room_kernel.task(str(dispatch["taskId"]))
+        task_context = self.room_kernel_runtime.task_context.render(
+            task,
+            dispatch,
+        )
+        return room_compaction_recovery_context(
+            task_context,
+            skill_receipt=skill_receipt,
+            tool_receipt=tool_receipt,
+        )
 
     def _prepare_room_memory_context(
         self,
@@ -871,7 +947,7 @@ class AgentService:
         if role_id is not None or role_version is not None:
             current = self.configuration_store.snapshot()["configuration"]
             defaults = current["sessionDefaults"]
-            self.personas.resolve(
+            self.personas.resolve_active(
                 role_id or defaults["roleId"],
                 role_version or defaults["roleVersion"],
             )
@@ -1010,6 +1086,17 @@ class AgentService:
 
     def create_role(self, payload: Mapping[str, object]) -> dict[str, object]:
         return self.role_application.create_role(payload)
+
+    def update_role(self, payload: Mapping[str, object]) -> dict[str, object]:
+        return self.role_application.update_role(payload)
+
+    def archive_role(self, payload: Mapping[str, object]) -> dict[str, object]:
+        role_id = str(payload.get("roleId") or "").strip()
+        role_version = str(payload.get("roleVersion") or "").strip()
+        defaults = self.configuration_store.snapshot()["configuration"]["sessionDefaults"]
+        if role_id == defaults["roleId"] and role_version == defaults["roleVersion"]:
+            raise ValueError("default companion cannot be removed; choose another default first")
+        return self.role_application.archive_role(payload)
 
     def role_model_catalog(self) -> dict[str, object]:
         return self.role_application.model_catalog()
@@ -1617,6 +1704,16 @@ class AgentService:
         payload: Mapping[str, object],
     ) -> dict[str, object]:
         return self.room_management.remove_participant(room_id, payload)
+
+    def update_room_participant_role(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        return self.room_management.update_participant_role(
+            room_id,
+            payload,
+        )
 
     def delete_room(
         self,
@@ -2268,6 +2365,8 @@ class AgentService:
                         "sessionId": session_id,
                         "trigger": "compaction",
                         "summary": _compaction_summary(result),
+                        "compactionEntryId": result.get("compactionEntryId"),
+                        "expectedContextEpoch": result.get("contextEpochBefore"),
                         "recentMessages": self._recent_recall_messages(session_id),
                     }
                 )
@@ -2507,6 +2606,7 @@ class AgentService:
             prompt_plans=self.room_prompt_plans,
             projection_journals=self.room_projection_journals,
             context_ledger=self.room_context_ledger,
+            context_epochs=self.room_context_epochs,
             skill_policy=self.room_skill_policy,
             skill_receipts=self.room_skill_receipts,
             requirements=self.room_requirements,
@@ -2999,7 +3099,7 @@ def agent_service_from_settings(
 
 def _room_kernel_mode_from_environment() -> KernelMode:
     value = os.environ.get("RAG_IME_ROOM_KERNEL_MODE", "off").strip().lower()
-    if value not in {"off", "shadow", "cohort", "test"}:
+    if value not in {"off", "shadow", "cohort", "test", "kernel_only"}:
         return "off"
     if value == "cohort" and os.environ.get("RAG_IME_ROOM_KERNEL_COHORT_ID", "").strip() != "room-v2-test":
         return "shadow"
@@ -3055,6 +3155,54 @@ def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
         "wake": "implementation",
         "callback": "handoff",
     }.get(str(dispatch.get("intentKind") or ""), "implementation")
+
+
+def _room_runtime_binding_hash(
+    *,
+    root_id: str,
+    generation: int,
+    capability_epoch: int,
+    static_system_prompt_hash: str,
+    compiled_runtime_profile_ref: object,
+    tool_manifest: Sequence[Mapping[str, object]],
+    room_skill_policy: Mapping[str, object],
+) -> str:
+    """Hash only surfaces that require a new Pi provider-context epoch."""
+
+    tools = [
+        {
+            key: tool.get(key)
+            for key in (
+                "name",
+                "description",
+                "parameters",
+                "when",
+                "notFor",
+                "input",
+                "output",
+                "does",
+                "profile",
+                "risk",
+            )
+        }
+        for tool in sorted(tool_manifest, key=lambda item: str(item.get("name") or ""))
+    ]
+    skill = {
+        key: room_skill_policy.get(key)
+        for key in ("selection", "skillId", "skillHash")
+        if room_skill_policy.get(key) is not None
+    }
+    return _sha256_json(
+        {
+            "rootId": root_id,
+            "generation": generation,
+            "capabilityEpoch": capability_epoch,
+            "staticSystemPromptHash": static_system_prompt_hash,
+            "compiledRuntimeProfileRef": compiled_runtime_profile_ref,
+            "toolSurface": tools,
+            "requiredSkill": skill,
+        }
+    )
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:

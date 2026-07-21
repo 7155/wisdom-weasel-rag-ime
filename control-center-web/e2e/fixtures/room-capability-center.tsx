@@ -12,19 +12,21 @@ import '../../src/components/primitives/primitives.css';
 const fixture = capabilityCenterFixture();
 const kernel = createRoomKernelProjection('room-kernel-qa');
 kernel.lastSequence = 218;
-kernel.rootsById['root-research'] = { rootId: 'root-research', generation: 3, state: 'running', ownerParticipantId: 'researcher', isFinal: false, updatedAtMs: 218 };
-kernel.rootsById['root-review'] = { rootId: 'root-review', generation: 1, state: 'waiting', ownerParticipantId: 'reviewer', isFinal: false, updatedAtMs: 217 };
-kernel.runtimeByRootId['root-research'] = { generation: 3, stopRequest: null };
-kernel.runtimeByRootId['root-review'] = { generation: 1, stopRequest: null };
+kernel.rootsById['root-research'] = root('root-research', 3, 'running', 'researcher', 218);
+kernel.rootsById['root-review'] = root('root-review', 1, 'waiting', 'reviewer', 217);
 kernel.postOrder.push('post-research', 'post-review');
 kernel.postsById['post-research'] = {
-  postId: 'post-research', roomId: kernel.roomId, rootId: 'root-research', sequence: 215,
-  authorParticipantId: 'researcher', kind: 'finding', visibility: 'room',
+  schemaVersion: 'wisdom-weasel.room-post.v2', postId: 'post-research', roomId: kernel.roomId,
+  rootId: 'root-research', generation: 3, authorActorRef: 'participant:researcher',
+  kind: 'finding', visibility: 'room', idempotencyKey: 'fixture:post-research',
+  publicationSource: { kind: 'room_commit', ref: 'commit:post-research' },
   content: '这是一条经过显式提交的公开 Post。私有 Session 的推理、工具调用细节和中间草稿不会自动进入 Room。', createdAtMs: 215,
 };
 kernel.postsById['post-review'] = {
-  postId: 'post-review', roomId: kernel.roomId, rootId: 'root-review', sequence: 216,
-  authorParticipantId: 'reviewer', kind: 'question', visibility: 'room',
+  schemaVersion: 'wisdom-weasel.room-post.v2', postId: 'post-review', roomId: kernel.roomId,
+  rootId: 'root-review', generation: 1, authorActorRef: 'participant:reviewer',
+  kind: 'question', visibility: 'room', idempotencyKey: 'fixture:post-review',
+  publicationSource: { kind: 'room_commit', ref: 'commit:post-review' },
   content: '等待独立复核，不把另一个 Root 的完成状态当作自己的终态。', createdAtMs: 216,
 };
 kernel.sessionsById['session-room-research'] = { sessionId: 'session-room-research', rootId: 'root-research', generation: 3, state: 'running', updatedAtMs: 218 };
@@ -50,3 +52,28 @@ createRoot(document.getElementById('root')!).render(<>
     <ParticipantBindingInspector binding={fixture.projection.bindingsBySessionId['session-room-research']!} />
   </div>
 </>);
+
+function root(
+  rootId: string,
+  generation: number,
+  state: 'running' | 'waiting',
+  owner: string,
+  updatedAtMs: number,
+) {
+  return {
+    schemaVersion: 'wisdom-weasel.room-root-execution.v2' as const,
+    rootId,
+    roomId: kernel.roomId,
+    generation,
+    state,
+    owner,
+    requirementAnchorRef: `requirement:${rootId}`,
+    createdByActorRef: 'user:fixture',
+    terminalReceiptId: null,
+    activeProfileRef: 'profile:fixture',
+    budgetPolicyRef: 'budget:fixture',
+    createdAtMs: updatedAtMs - 100,
+    isFinal: false,
+    updatedAtMs,
+  };
+}

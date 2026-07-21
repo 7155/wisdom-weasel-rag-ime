@@ -12,13 +12,13 @@ import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/primitives';
 import {
-  roomActivityLaneIdentity,
   type RoomActivityProjection,
   type RoomProjectionState,
 } from '@/contracts/room-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { AgentBlocks, MarkdownBody } from '@/features/agent/timeline/BlockRenderer';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
+import { selectRoomTurnExecution } from '../runtime/room-execution-lanes';
 
 interface TimelineParticipant {
   id: string;
@@ -43,16 +43,6 @@ interface RoomTurnProps {
   onAbortSession?: (sessionId: string) => void;
 }
 
-interface RoomExecutionLane {
-  key: string;
-  rootId: string;
-  dispatchId: string;
-  participantId: string | null;
-  sourceSessionId: string;
-  activities: RoomActivityProjection[];
-  messageIds: string[];
-}
-
 /** Render one Root as independent participant/dispatch execution lanes. */
 export function RoomTurn({
   turnId,
@@ -65,71 +55,13 @@ export function RoomTurn({
   onAbortSession,
 }: RoomTurnProps) {
   const turn = projection.turnsById[turnId];
-  if (!turn) return null;
-  const activities = turn.activityIds
-    .map((id) => projection.activitiesById[id])
-    .filter((activity): activity is RoomActivityProjection => Boolean(activity))
-    .filter(isUsefulRoomActivity);
-  const lanes = new Map<string, RoomExecutionLane>();
-  const participantLaneKeys = new Map<string, string[]>();
-  for (const activity of activities) {
-    const identity = roomActivityLaneIdentity(activity);
-    const lane = lanes.get(identity.key) ?? {
-      key: identity.key,
-      rootId: identity.rootId,
-      dispatchId: identity.dispatchId,
-      participantId: activity.participantId,
-      sourceSessionId: activity.sourceSessionId,
-      activities: [],
-      messageIds: [],
-    };
-    lane.activities.push(activity);
-    lanes.set(identity.key, lane);
-    const participantKey = `${activity.participantId ?? ''}\u001f${activity.sourceSessionId}`;
-    const keys = participantLaneKeys.get(participantKey) ?? [];
-    if (!keys.includes(identity.key)) keys.push(identity.key);
-    participantLaneKeys.set(participantKey, keys);
-  }
-  const userMessageIds: string[] = [];
-  for (const messageId of turn.messageIds) {
-    const message = projection.messagesById[messageId];
-    if (!message) continue;
-    if (message.role === 'user') {
-      userMessageIds.push(messageId);
-      continue;
-    }
-    const participantKey = `${message.participantId ?? ''}\u001f${message.sourceSessionId}`;
-    const exactKey = message.dispatchId
-      ? `${message.rootId || turn.rootId || turnId}\u001f${message.participantId ?? 'participant'}\u001f${message.dispatchId}`
-      : '';
-    const existingKey = exactKey && lanes.has(exactKey)
-      ? exactKey
-      : participantLaneKeys.get(participantKey)?.at(-1);
-    const laneKey = existingKey
-      ?? `${turnId}\u001f${message.participantId ?? 'participant'}\u001f${message.sourceSessionId || message.id}`;
-    const lane = lanes.get(laneKey) ?? {
-      key: laneKey,
-      rootId: message.rootId || turn.rootId || turnId,
-      dispatchId: message.dispatchId || '',
-      participantId: message.participantId,
-      sourceSessionId: message.sourceSessionId,
-      activities: [],
-      messageIds: [],
-    };
-    lane.messageIds.push(messageId);
-    lanes.set(laneKey, lane);
-  }
-  if (lanes.size === 0 && ['queued', 'running'].includes(turn.status)) {
-    lanes.set(`${turnId}\u001frouter\u001fpending`, {
-      key: `${turnId}\u001frouter\u001fpending`,
-      rootId: turn.rootId || turnId,
-      dispatchId: '',
-      participantId: null,
-      sourceSessionId: '',
-      activities: [],
-      messageIds: [],
-    });
-  }
+  // Room/session lifecycle events may legitimately have no public Root. They
+  // belong in the execution ledger, never as a synthetic Post in the chat.
+  if (!turnId || turnId === 'unscoped' || !turn) return null;
+  const { activities, lanes, userMessageIds } = selectRoomTurnExecution(
+    projection,
+    turnId,
+  );
   const reviewActivity = [...activities].reverse().find((activity) => {
     const requestKind = textValue(activity.payload.requestKind);
     const approvalId = textValue(activity.payload.approvalId);
@@ -163,7 +95,7 @@ export function RoomTurn({
         onClick={() => onAbortTurn(rootId)}
       >{rootStopping ? '停止中' : '停止全部'}</Button>
     </div> : null}
-    {[...lanes.values()].map((lane) => {
+    {lanes.map((lane) => {
       const participant = room?.participants.find((item) => item.id === lane.participantId);
       const persona = personas.find((item) => (
         item.roleId === participant?.roleId && item.version === participant.roleVersion
@@ -174,10 +106,8 @@ export function RoomTurn({
       const participantId = lane.participantId ?? '';
       const laneFailed = lane.dispatchId
         ? (turn.failedDispatchIds ?? []).includes(lane.dispatchId)
-          || lane.activities.some((activity) => roomActivityDisplayStatus(activity) === 'failed')
         : participantId
           ? (turn.failedParticipantIds ?? []).includes(participantId)
-          || lane.activities.some((activity) => roomActivityDisplayStatus(activity) === 'failed')
           : turn.status === 'failed';
       const laneAborted = lane.dispatchId
         ? (turn.abortedDispatchIds ?? []).includes(lane.dispatchId)
@@ -334,15 +264,6 @@ function formatElapsed(elapsedMs: number): string {
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}m ${seconds % 60}s`;
-}
-
-function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {
-  if (activity.kind !== 'participant_activity') return true;
-  const sourceEventType = textValue(activity.payload.sourceEventType);
-  if (['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) return true;
-  if (['intercom', 'work'].includes(textValue(activity.payload.activityKind))) return true;
-  if (textValue(activity.payload.requestKind) === 'memory_review') return true;
-  return Boolean(textValue(activity.payload.approvalId));
 }
 
 function roomActivityDisplayStatus(

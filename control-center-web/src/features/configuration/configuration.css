@@ -1,8 +1,133 @@
 main[data-route-id='configuration'] .configuration-editor {
   display: grid;
   min-width: 0;
-  gap: var(--space-5);
-  grid-template-columns: minmax(300px, .9fr) minmax(420px, 1.35fr);
+  gap: var(--space-4);
+  grid-template-columns: minmax(176px, .46fr) minmax(280px, .82fr) minmax(380px, 1.2fr);
+}
+
+main[data-route-id='configuration'] .configuration-section-nav {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-self: start;
+  border-block: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-section-nav button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 10px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  text-align: left;
+  cursor: pointer;
+}
+
+main[data-route-id='configuration'] .configuration-section-nav button:last-child {
+  border-bottom: 0;
+}
+
+main[data-route-id='configuration'] .configuration-section-nav button:hover,
+main[data-route-id='configuration'] .configuration-section-nav button:focus-visible {
+  background: var(--color-surface-subtle);
+  color: var(--color-text-secondary);
+}
+
+main[data-route-id='configuration'] .configuration-section-nav button[aria-current='page'] {
+  background: var(--color-accent-soft);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+  color: var(--color-accent);
+}
+
+main[data-route-id='configuration'] .configuration-section-nav span,
+main[data-route-id='configuration'] .configuration-editor__heading > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+main[data-route-id='configuration'] .configuration-section-nav strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+main[data-route-id='configuration'] .configuration-section-nav small,
+main[data-route-id='configuration'] .configuration-editor__heading small {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+main[data-route-id='configuration'] .configuration-editor__heading {
+  display: flex;
+  min-height: 38px;
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+main[data-route-id='configuration'] .configuration-editor__heading strong {
+  font-size: 14px;
+}
+
+main[data-route-id='configuration'] .configuration-destinations {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-block: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-destinations button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 20px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 13px var(--space-2);
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+main[data-route-id='configuration'] .configuration-destinations button:nth-child(odd) {
+  border-right: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-destinations button:hover,
+main[data-route-id='configuration'] .configuration-destinations button:focus-visible {
+  background: var(--color-surface-subtle);
+  color: var(--color-text-primary);
+}
+
+main[data-route-id='configuration'] .configuration-destinations button > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+main[data-route-id='configuration'] .configuration-destinations strong,
+main[data-route-id='configuration'] .configuration-destinations small {
+  overflow-wrap: anywhere;
+}
+
+main[data-route-id='configuration'] .configuration-destinations strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+main[data-route-id='configuration'] .configuration-destinations small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
 }
 
 main[data-route-id='configuration'] .configuration-editor > * {
@@ -75,15 +200,95 @@ main[data-route-id='configuration'] .configuration-portability .mgmt-workflow + 
   margin-top: 0;
 }
 
-@media (max-width: 960px) {
+main[data-route-id='configuration'] .configuration-transfer {
+  border-block: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-transfer > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 12px 2px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+
+main[data-route-id='configuration'] .configuration-transfer > summary::-webkit-details-marker {
+  display: none;
+}
+
+main[data-route-id='configuration'] .configuration-transfer > summary > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+main[data-route-id='configuration'] .configuration-transfer > summary strong {
+  color: var(--color-text-primary);
+  font-size: 13px;
+}
+
+main[data-route-id='configuration'] .configuration-transfer > summary small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+main[data-route-id='configuration'] .configuration-transfer > summary svg {
+  transition: transform 150ms ease;
+}
+
+main[data-route-id='configuration'] .configuration-transfer[open] > summary svg {
+  transform: rotate(90deg);
+}
+
+@media (max-width: 1180px) {
   main[data-route-id='configuration'] .configuration-editor {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(170px, .42fr) minmax(300px, 1fr);
+  }
+
+  main[data-route-id='configuration'] .configuration-editor__review {
+    grid-column: 1 / -1;
   }
 }
 
 @media (max-width: 860px) {
+  main[data-route-id='configuration'] .configuration-destinations {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  main[data-route-id='configuration'] .configuration-destinations button:nth-child(odd) {
+    border-right: 0;
+  }
+
   main[data-route-id='configuration'] .configuration-portability > .mgmt-grid-2 > .mgmt-workflow:first-child {
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
+  }
+}
+
+@media (max-width: 680px) {
+  main[data-route-id='configuration'] .configuration-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  main[data-route-id='configuration'] .configuration-section-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  main[data-route-id='configuration'] .configuration-section-nav button,
+  main[data-route-id='configuration'] .configuration-section-nav button:last-child {
+    border-right: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  main[data-route-id='configuration'] .configuration-section-nav button:nth-child(even) {
+    border-right: 0;
+  }
+
+  main[data-route-id='configuration'] .configuration-editor__review {
+    grid-column: auto;
   }
 }

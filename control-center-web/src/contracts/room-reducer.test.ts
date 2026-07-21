@@ -48,10 +48,10 @@ describe('RoomEventReducer', () => {
         delta: '已整理',
       }),
     ).state;
-    const completed = reduceRoomEvent(
-      reply,
-      roomEvent(3, 'turn_completed', { status: 'completed' }),
-    ).state;
+    const rootCompleted = roomEvent(3, 'turn_completed', { status: 'completed' });
+    rootCompleted.participantId = null;
+    rootCompleted.sourceSessionId = '';
+    const completed = reduceRoomEvent(reply, rootCompleted).state;
 
     expect(completed.turnOrder).toEqual(['room-turn-1']);
     expect(completed.turnsById['room-turn-1']).toMatchObject({
@@ -118,6 +118,49 @@ describe('RoomEventReducer', () => {
       status: 'completed',
     });
     expect(published.turnsById['room-turn-1'].messageIds).toEqual(['post-1']);
+    expect(published.turnsById['room-turn-1']).toMatchObject({
+      status: 'running',
+      terminalDispatchIds: ['dispatch-1'],
+      terminalParticipantIds: ['participant-1'],
+    });
+  });
+
+  it('settles published lanes without unlocking the Root before its terminal event', () => {
+    const events = [
+      roomEvent(1, 'route_decision', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        targetParticipantId: 'participant-1',
+      }),
+      roomEvent(2, 'route_decision', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-2',
+        targetParticipantId: 'participant-1',
+      }),
+      roomEvent(3, 'room_post', {
+        post: roomPost('post-1', '第一份交付', 'dispatch-1'),
+      }),
+      roomEvent(4, 'room_post', {
+        post: roomPost('post-2', '第二份交付', 'dispatch-2'),
+      }),
+    ];
+    let state = createRoomProjection('room-1');
+    for (const event of events) state = reduceRoomEvent(state, event).state;
+
+    expect(state.turnsById['room-turn-1']).toMatchObject({
+      status: 'running',
+      dispatchIds: ['dispatch-1', 'dispatch-2'],
+      terminalDispatchIds: ['dispatch-1', 'dispatch-2'],
+      terminalParticipantIds: ['participant-1'],
+    });
+
+    state = reduceRoomEvent(state, parseRoomEvent({
+      ...wireRoomEvent(5, 'turn_completed', { status: 'completed' }),
+      participantId: null,
+      sourceSessionId: '',
+    })).state;
+
+    expect(state.turnsById['room-turn-1'].status).toBe('completed');
   });
 
   it('keeps two concurrent dispatches from the same Agent in separate execution lanes', () => {
@@ -173,10 +216,16 @@ describe('RoomEventReducer', () => {
     expect(state.turnsById['room-turn-1'].terminalDispatchIds).toEqual(['dispatch-1']);
     state = reduceRoomEvent(state, secondDone).state;
     expect(state.turnsById['room-turn-1']).toMatchObject({
-      status: 'completed',
+      status: 'running',
       dispatchIds: ['dispatch-1', 'dispatch-2'],
       terminalDispatchIds: ['dispatch-1', 'dispatch-2'],
     });
+    state = reduceRoomEvent(state, parseRoomEvent({
+      ...wireRoomEvent(7, 'turn_completed', { status: 'completed' }),
+      participantId: null,
+      sourceSessionId: '',
+    })).state;
+    expect(state.turnsById['room-turn-1'].status).toBe('completed');
   });
 
   it('merges optimistic room input by clientMessageId and keeps unknown events', () => {
@@ -314,7 +363,7 @@ describe('RoomEventReducer', () => {
     ]);
   });
 
-  it('waits for every routed Agent before closing a multi-Agent root', () => {
+  it('keeps lane failures scoped until the Root terminal closes a multi-Agent turn', () => {
     const routeOne = roomEvent(1, 'route_decision', {
       rootId: 'room-turn-1',
       dispatchId: 'dispatch-1',
@@ -343,6 +392,13 @@ describe('RoomEventReducer', () => {
     const routedBoth = reduceRoomEvent(routedOne, routeTwo).state;
     const oneTerminal = reduceRoomEvent(routedBoth, firstDone).state;
     const allTerminal = reduceRoomEvent(oneTerminal, secondFailed).state;
+    const rootFailedEvent = roomEvent(5, 'turn_failed', {
+      rootId: 'room-turn-1',
+      error: '一条执行 lane 未完成',
+    });
+    rootFailedEvent.participantId = null;
+    rootFailedEvent.sourceSessionId = '';
+    const rootFailed = reduceRoomEvent(allTerminal, rootFailedEvent).state;
 
     expect(oneTerminal.turnsById['room-turn-1']).toMatchObject({
       status: 'running',
@@ -350,9 +406,13 @@ describe('RoomEventReducer', () => {
       terminalParticipantIds: ['participant-1'],
     });
     expect(allTerminal.turnsById['room-turn-1']).toMatchObject({
-      status: 'failed',
+      status: 'running',
       terminalParticipantIds: ['participant-1', 'participant-2'],
       failedParticipantIds: ['participant-2'],
+    });
+    expect(rootFailed.turnsById['room-turn-1']).toMatchObject({
+      status: 'failed',
+      rootTerminalAtMs: 50,
     });
   });
 
@@ -383,7 +443,14 @@ describe('RoomEventReducer', () => {
     });
     secondAborted.participantId = 'participant-2';
     secondAborted.sourceSessionId = 'session-room-2';
-    const lateCompleted = roomEvent(5, 'turn_completed', {
+    const rootAborted = roomEvent(5, 'turn_completed', {
+      status: 'aborted',
+      aborted: true,
+      rootId: 'room-turn-1',
+    });
+    rootAborted.participantId = null;
+    rootAborted.sourceSessionId = '';
+    const lateCompleted = roomEvent(6, 'turn_completed', {
       status: 'completed',
       rootId: 'room-turn-1',
       dispatchId: 'dispatch-1',
@@ -393,11 +460,12 @@ describe('RoomEventReducer', () => {
     const routedBoth = reduceRoomEvent(routedOne, routeTwo).state;
     const oneStopped = reduceRoomEvent(routedBoth, firstAborted).state;
     const allStopped = reduceRoomEvent(oneStopped, secondAborted).state;
-    const afterLate = reduceRoomEvent(allStopped, lateCompleted).state;
+    const stoppedRoot = reduceRoomEvent(allStopped, rootAborted).state;
+    const afterLate = reduceRoomEvent(stoppedRoot, lateCompleted).state;
 
     expect(oneStopped.turnsById['room-turn-1'].status).toBe('running');
     expect(allStopped.turnsById['room-turn-1']).toMatchObject({
-      status: 'aborted',
+      status: 'running',
       terminalParticipantIds: ['participant-1', 'participant-2'],
       abortedParticipantIds: ['participant-1', 'participant-2'],
     });
@@ -405,6 +473,50 @@ describe('RoomEventReducer', () => {
       status: 'aborted',
       abortedParticipantIds: ['participant-1', 'participant-2'],
     });
+  });
+
+  it('rejects late deltas, RoomPosts, and terminals after the Root fence', () => {
+    const events = [
+      roomEvent(1, 'route_decision', {
+        rootId: 'room-turn-1', dispatchId: 'dispatch-1', targetParticipantId: 'participant-1',
+      }),
+      roomEvent(2, 'participant_delta', {
+        rootId: 'room-turn-1', dispatchId: 'dispatch-1', messageId: 'draft-1', delta: '草稿',
+      }),
+      roomEvent(3, 'room_post', {
+        post: roomPost('post-1', '正式交付', 'dispatch-1'),
+      }),
+    ];
+    let state = createRoomProjection('room-1');
+    for (const event of events) state = reduceRoomEvent(state, event).state;
+    state = reduceRoomEvent(state, parseRoomEvent({
+      ...wireRoomEvent(4, 'turn_completed', { status: 'completed' }),
+      participantId: null,
+      sourceSessionId: '',
+    })).state;
+    state = reduceRoomEvent(state, roomEvent(5, 'participant_delta', {
+      rootId: 'room-turn-1', dispatchId: 'dispatch-1', messageId: 'late-draft', delta: '迟到草稿',
+    })).state;
+    state = reduceRoomEvent(state, roomEvent(6, 'room_post', {
+      post: roomPost('post-late', '迟到公开 Post', 'dispatch-1'),
+    })).state;
+    state = reduceRoomEvent(state, roomEvent(7, 'turn_failed', {
+      rootId: 'room-turn-1', error: '迟到失败',
+    })).state;
+
+    expect(state.lastSequence).toBe(7);
+    expect(state.messageOrder).toEqual(['post-1']);
+    expect(state.messagesById['post-1']).toMatchObject({
+      status: 'completed',
+      text: '正式交付',
+    });
+    expect(state.turnsById['room-turn-1']).toMatchObject({
+      status: 'completed',
+      rootTerminalAtMs: 40,
+    });
+    expect(state.diagnostics.filter(
+      (item) => item.eventType === 'room_event_after_root_terminal',
+    )).toHaveLength(3);
   });
 
   it('projects Room lifecycle events as completed instead of leaving a false running turn', () => {

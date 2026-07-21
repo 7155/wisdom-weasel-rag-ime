@@ -1,7 +1,7 @@
 {
   "schemaVersion": "rag-ime.native-bridge-contract.v1",
   "handlerName": "ragImeNativeBridge",
-  "routeCount": 213,
+  "routeCount": 216,
   "pathIds": [
     "control.bootstrap",
     "control.capabilities",
@@ -63,6 +63,7 @@
     "agent.room.archive",
     "agent.room.participant.add",
     "agent.room.participant.remove",
+    "agent.room.participant.update",
     "agent.room.delete",
     "agent.room.message",
     "agent.room.abort",
@@ -92,6 +93,8 @@
     "agent.room.artifact.update",
     "agent.roles.list",
     "agent.roles.create",
+    "agent.roles.update",
+    "agent.roles.archive",
     "agent.role.models",
     "agent.role.runtimeDefaults.update",
     "agent.roleBook.get",

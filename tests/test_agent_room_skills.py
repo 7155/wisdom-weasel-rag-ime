@@ -257,12 +257,33 @@ class RoomSkillReceiptTests(unittest.TestCase):
         )
 
         self.assertEqual(revoked, 1)
+        self.assertEqual(
+            self.store.revoke_before_epoch(
+                "root:1",
+                new_capability_epoch=5,
+                revoked_at_ms=201,
+            ),
+            0,
+        )
+        with self.assertRaisesRegex(ValueError, "advance monotonically"):
+            self.store.revoke_before_epoch(
+                "root:1",
+                new_capability_epoch=4,
+                revoked_at_ms=202,
+            )
         with self.assertRaises(RoomSkillEpochRevoked):
             self.store.restore_for_compaction(
                 str(receipt["receiptId"]),
                 expected_capability_epoch=4,
                 catalog_revision="a" * 64,
             )
+        sealed = self.store.restore_for_compaction(
+            str(receipt["receiptId"]),
+            expected_capability_epoch=4,
+            catalog_revision="a" * 64,
+            allow_immediately_revoked=True,
+        )
+        self.assertEqual(sealed["restoredFromReceiptId"], receipt["receiptId"])
         next_receipt, created = self._pin(
             receipt_id="skill-receipt:2",
             dispatch_id="dispatch:2",
@@ -272,6 +293,13 @@ class RoomSkillReceiptTests(unittest.TestCase):
         )
         self.assertTrue(created)
         self.assertEqual(next_receipt["capabilityEpoch"], 5)
+        with self.assertRaises(RoomSkillEpochRevoked):
+            self.store.restore_for_compaction(
+                str(receipt["receiptId"]),
+                expected_capability_epoch=4,
+                catalog_revision="a" * 64,
+                allow_immediately_revoked=True,
+            )
 
     def test_receipt_cannot_be_created_from_multi_candidate_suggestion(self) -> None:
         selection = self.policy.select_stage("review")

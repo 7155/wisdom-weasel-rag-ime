@@ -62,6 +62,38 @@ def _room_generation(value: object) -> int:
     return generation
 
 
+def _room_context_rebind(
+    current: Mapping[str, object],
+    desired: Mapping[str, object],
+) -> dict[str, object]:
+    """Validate one in-place managed Room binding transition."""
+
+    current_epoch = _integer(current.get("contextEpoch"))
+    desired_epoch = _integer(desired.get("contextEpoch"))
+    if current_epoch < 1 or desired_epoch < 1:
+        raise PiRuntimeError("managed Room binding has no positive context epoch")
+    if desired_epoch == current_epoch:
+        current_root = str(current.get("rootId") or "").strip()
+        desired_root = str(desired.get("rootId") or "").strip()
+        current_generation = _integer(current.get("generation"))
+        desired_generation = _integer(desired.get("generation"))
+        if (
+            not current_root
+            or current_root != desired_root
+            or current_generation != desired_generation
+        ):
+            raise PiRuntimeError(
+                "managed Room binding changed task without advancing context epoch"
+            )
+        return {"contextEpochChanged": False, "contextEpoch": desired_epoch}
+    if (
+        desired_epoch == current_epoch + 1
+        and str(desired.get("contextEpochReason") or "") == "task_switch"
+    ):
+        return {"contextEpochChanged": True, "contextEpoch": desired_epoch}
+    raise PiRuntimeError("managed Room context epoch transition is not monotonic")
+
+
 def _runtime_primitive_capabilities(value: object) -> dict[str, object]:
     source = _mapping(value)
     operations = _mapping(source.get("sessionCancelOperations"))
@@ -572,15 +604,49 @@ class PiRuntimeHostManager:
                 snapshot = dict(client.send("session.snapshot", {"sessionId": session_id}))
                 current_room = _mapping(snapshot.get("roomCapability"))
                 desired_room = _mapping(session.get("roomCapability"))
+                rebind = (
+                    _room_context_rebind(current_room, desired_room)
+                    if current_room and desired_room
+                    else None
+                )
+                current_binding_hash = str(
+                    current_room.get("runtimeBindingHash") or ""
+                )
+                desired_binding_hash = str(
+                    desired_room.get("runtimeBindingHash") or ""
+                )
                 if (
                     not desired_room
-                    or current_room.get("promptPlanHash") == desired_room.get("promptPlanHash")
+                    or (
+                        not bool(rebind and rebind["contextEpochChanged"])
+                        and
+                        bool(desired_binding_hash)
+                        and current_binding_hash == desired_binding_hash
+                    )
+                    or (
+                        not bool(rebind and rebind["contextEpochChanged"])
+                        and
+                        not desired_binding_hash
+                        and current_room.get("promptPlanHash")
+                        == desired_room.get("promptPlanHash")
+                    )
                 ):
+                    self._sync_idle_snapshot(session_id, snapshot)
                     with self._lock:
                         self._schedule_idle_locked()
-                    return {"state": snapshot}
+                    return {"state": snapshot, "reused": True}
                 if not bool(snapshot.get("isIdle")):
                     raise PiRuntimeError("managed Room Session must settle before rebinding PromptPlan")
+                if rebind is not None:
+                    self._sync_idle_snapshot(session_id, snapshot)
+                    with self._lock:
+                        self._schedule_idle_locked()
+                    return {
+                        "state": snapshot,
+                        "reused": True,
+                        "roomRebind": True,
+                        **rebind,
+                    }
                 client.send("session.close", {"sessionId": session_id})
                 with self._lock:
                     self._open_sessions.discard(session_id)
@@ -610,9 +676,18 @@ class PiRuntimeHostManager:
                 params["sessionContext"] = str(
                     session.get("sessionContext") or ""
                 )
-                params["roomContext"] = str(
+                room_bootstrap = str(
                     session.get("providerContext") or ""
                 )
+                room_recovery = str(
+                    session.get("roomRecoveryContext")
+                    or room_bootstrap
+                )
+                params["roomContext"] = room_bootstrap
+                # Provider delivery may use only a delta after the first
+                # Dispatch. Keep the current full bounded projection out of
+                # band so Pi can rebase a new context epoch after compaction.
+                params["roomRecoveryContext"] = room_recovery
                 if isinstance(session.get("roomProviderContext"), Mapping):
                     params["roomProviderContext"] = dict(session["roomProviderContext"])
                 if isinstance(session.get("roomResourceLimits"), Mapping):
@@ -643,6 +718,9 @@ class PiRuntimeHostManager:
                 metadata={"protocolVersion": _PROTOCOL_VERSION},
                 message_count=len(snapshot.get("messages") or []),
             )
+            idle_session = self._sync_idle_snapshot(session_id, snapshot)
+            if idle_session is not None:
+                bound = idle_session
             evicted = str(result.get("evictedSessionId") or "")
             with self._lock:
                 self._open_sessions.add(session_id)
@@ -660,7 +738,27 @@ class PiRuntimeHostManager:
                 "session": bound,
                 "evictedSessionId": evicted or None,
                 "roomSkillLoad": result.get("roomSkillLoad"),
+                "reused": False,
             }
+
+    def _sync_idle_snapshot(
+        self,
+        session_id: str,
+        snapshot: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        """Project Pi's run lifecycle into product status, not Host residency."""
+
+        if not bool(snapshot.get("isIdle")):
+            return None
+        with self._lock:
+            state = self._states.get(session_id)
+            if state is not None and state.turn_id:
+                return None
+        return self.sessions.set_status(
+            session_id,
+            "idle",
+            message_count=len(snapshot.get("messages") or []),
+        )
 
     def prompt(
         self,
@@ -791,7 +889,7 @@ class PiRuntimeHostManager:
         }
 
     def debug_context(self, session_id: str, turn_id: str = "") -> dict[str, object]:
-        self.ensure(session_id)
+        self._ensure_for_sealed_room_operation(session_id, operation="debug context")
         params: dict[str, object] = {"sessionId": session_id}
         if str(turn_id).strip():
             params["turnId"] = str(turn_id).strip()
@@ -1352,16 +1450,46 @@ class PiRuntimeHostManager:
         session_context = str(
             session.get("sessionContext") or ""
         ).strip()
-        room_context = str(
+        delta_available = "providerContextDelta" in session
+        full_room_context = str(
             session.get("providerContext") or ""
         ).strip()
+        use_delta = (
+            opened.get("reused") is True
+            and opened.get("contextEpochChanged") is not True
+            and delta_available
+        )
+        context_value = (
+            session.get("providerContextDelta")
+            if use_delta
+            else full_room_context
+        )
+        room_context = str(context_value or "").strip()
         if session_context:
             dispatch_params["sessionContext"] = session_context
-        if not room_context:
+        if not full_room_context:
+            raise PiRuntimeError(
+                "managed Room Dispatch has no provider-only task context"
+            )
+        if not room_context and not use_delta:
             raise PiRuntimeError(
                 "managed Room Dispatch has no provider-only task context"
             )
         dispatch_params["roomContext"] = room_context
+        dispatch_params["roomRecoveryContext"] = str(
+            session.get("roomRecoveryContext")
+            or full_room_context
+        ).strip()
+        if isinstance(session.get("roomProviderContext"), Mapping):
+            dispatch_params["roomProviderContext"] = dict(
+                session["roomProviderContext"]
+            )
+        if isinstance(session.get("roomCapability"), Mapping):
+            dispatch_params["roomCapability"] = dict(session["roomCapability"])
+        if isinstance(session.get("roomResourceLimits"), Mapping):
+            dispatch_params["roomResourceLimits"] = dict(
+                session["roomResourceLimits"]
+            )
         result = client.send("room.dispatch", dispatch_params)
         if (
             result.get("schemaVersion") != "wisdom-weasel.room-runtime-receipt.v1"
@@ -1383,7 +1511,9 @@ class PiRuntimeHostManager:
         root_id: str,
         generation: int,
     ) -> dict[str, object]:
-        self.ensure(session_id)
+        # Cancellation must target the already-running host Session exactly as
+        # it exists. Calling ensure() here can try to rebind a revoked Room
+        # PromptPlan before the active turn has settled, preventing abort.
         with self._lock:
             negotiated = _runtime_primitive_capabilities(
                 self._host_capabilities.get("runtimePrimitives")
@@ -1447,7 +1577,7 @@ class PiRuntimeHostManager:
         return dict(result)
 
     def compact(self, session_id: str, instructions: str = "") -> dict[str, object]:
-        self.ensure(session_id)
+        self._ensure_for_sealed_room_operation(session_id, operation="compaction")
         result = self._require_client().send(
             "session.compact",
             {"sessionId": session_id, "instructions": str(instructions).strip()[:2000]},
@@ -1457,6 +1587,75 @@ class PiRuntimeHostManager:
         if checkpoint:
             result["memoryCheckpoint"] = checkpoint
         return result
+
+    def _ensure_for_sealed_room_operation(
+        self,
+        session_id: str,
+        *,
+        operation: str,
+    ) -> dict[str, object]:
+        """Reuse an idle settled Room Session for a read/maintenance operation.
+
+        A successful Room Commit revokes the product capability before the user
+        can inspect or compact the sealed Session. Rebinding that tombstone as a
+        live Room capability would be unsafe, while closing the resident Pi
+        Session would discard the exact context and Skill/Tool receipts.
+        """
+
+        with self._lifecycle_lock:
+            if not self.config.model_configured:
+                raise PiRuntimeError(
+                    self.config.model_configuration_error
+                    or "Pi model is not configured"
+                )
+            client = self._host()
+            session = dict(self.sessions.get(session_id))
+            binding = self.sessions.runtime_binding(session_id)
+            if binding is not None:
+                if (
+                    binding.get("driverId") != self.driver_id
+                    or binding.get("runtimeKind") != self.runtime_kind
+                ):
+                    raise PiRuntimeError(
+                        "Agent session belongs to another runtime driver"
+                    )
+                session["_runtimeBinding"] = binding
+            if self._session_context_provider is not None:
+                session.update(dict(self._session_context_provider(session)))
+            desired_room = _mapping(session.get("roomCapability"))
+            with self._lock:
+                already_open = session_id in self._open_sessions
+            if str(desired_room.get("status") or "") != "revoked":
+                return self.ensure(session_id)
+            if not already_open:
+                raise PiRuntimeError(
+                    "settled managed Room Session is no longer resident; "
+                    f"its sealed {operation} context cannot be reopened as a live capability"
+                )
+            snapshot = dict(
+                client.send("session.snapshot", {"sessionId": session_id})
+            )
+            current_room = _mapping(snapshot.get("roomCapability"))
+            same_manifest = (
+                current_room.get("manifestId") == desired_room.get("manifestId")
+                and current_room.get("manifestHash")
+                == desired_room.get("manifestHash")
+            )
+            if not same_manifest:
+                raise PiRuntimeError(
+                    f"settled managed Room Session {operation} fence changed"
+                )
+            if not bool(snapshot.get("isIdle")):
+                raise PiRuntimeError(
+                    f"managed Room Session must be idle before {operation}"
+                )
+            with self._lock:
+                self._schedule_idle_locked()
+            return {
+                "state": snapshot,
+                "reused": True,
+                "sealedRoomOperation": operation,
+            }
 
     def has_pending_approval(self, session_id: str, approval_id: str) -> bool:
         with self._lock:

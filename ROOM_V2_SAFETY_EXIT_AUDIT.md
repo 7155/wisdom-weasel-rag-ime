@@ -8,7 +8,7 @@
 
 前端只消费同一个受管 `file` Rich Block。Markdown、代码、统一/并排 Diff、图片和静态 HTML 由注册表选择 renderer；读取支持真实 AbortSignal、旧请求抑制和 8 项有界缓存。HTML 同时经过 DOM 清洗、空 iframe sandbox、无网络 CSP 与后端 `nosniff/sandbox/no-store` 响应头。这里参考 Cafe 的文件/Artifact 交互，但没有引入第二条协议；实现按 Pi 风格保持薄入口、明确状态 owner 和生命周期组合。
 
-Pi 最低审核提交更新为 `faefcf666f86ad6d1e7319fc9e789bec6ed182b7`，来源固定为用户 fork `https://github.com/7155/pi.git`，构建门禁新增 `tool-artifact-buffer.ts` 源码与标记校验。当前提交已在本地验证但受代理故障影响尚未推送；产品也仍未正式覆盖安装，因此本节状态是 `verified-not-installed`，不是发布声明。
+Pi 最低审核提交更新为 `58c7070348db40e0bf2442a66a1afe341a615e70`，来源固定为用户 fork `https://github.com/7155/pi.git`。构建门禁除 `tool-artifact-buffer.ts` 外，还固定 Provider Context epoch、压缩恢复、取消回执和收工修复四个生命周期源码面；该 Pi 提交已推送到 `7155/pi` 的 `codex/rag-ime-runtime-host`。产品仍未正式覆盖安装，因此本节状态仍是 `verified-not-installed`，不是发布声明。
 
 ## 2026-07-20 最终独立复审（待 P0 整改复测）
 

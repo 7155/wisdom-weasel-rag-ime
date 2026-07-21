@@ -2290,6 +2290,8 @@ class DebugManagementApiTests(unittest.TestCase):
             "traits": ["温和", "复盘"],
             "timelineModel": "terra",
             "selectableModes": ["assistant"],
+            "suitableTasks": ["梳理复杂想法", "陪伴式复盘"],
+            "unsuitableTasks": ["高风险自动执行"],
         }
         try:
             create_request = Request(
@@ -2302,6 +2304,24 @@ class DebugManagementApiTests(unittest.TestCase):
                 created_status = response.status
                 created = json.loads(response.read().decode("utf-8"))
             role = created["role"]
+
+            update_request = Request(
+                f"{base_url}/roles",
+                data=json.dumps(
+                    {
+                        **persona_body,
+                        "roleId": role["roleId"],
+                        "roleVersion": role["version"],
+                        "displayName": "智鼬·暮雨",
+                        "tagline": "先安静看清，再一起往前",
+                    }
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="PATCH",
+            )
+            with urlopen(update_request, timeout=5) as response:
+                updated_status = response.status
+                updated_role = json.loads(response.read().decode("utf-8"))["role"]
 
             with urlopen(f"{base_url}/roles", timeout=5) as response:
                 listed = json.loads(response.read().decode("utf-8"))
@@ -2339,10 +2359,13 @@ class DebugManagementApiTests(unittest.TestCase):
             server.server_close()
 
         self.assertEqual(created_status, 201)
+        self.assertEqual(updated_status, 200)
         self.assertTrue(str(role["roleId"]).startswith("persona-"))
         self.assertNotIn("personaPrompt", role)
         self.assertNotIn("toolPolicy", role)
-        self.assertEqual(listed["items"][-1], role)
+        self.assertEqual(updated_role["displayName"], "智鼬·暮雨")
+        self.assertNotIn("personaPrompt", updated_role)
+        self.assertEqual(listed["items"][-1], updated_role)
         self.assertEqual(session["roleId"], role["roleId"])
         self.assertEqual(denied.exception.code, 400)
         self.assertIn("unsupported persona fields", denied_payload["error"])

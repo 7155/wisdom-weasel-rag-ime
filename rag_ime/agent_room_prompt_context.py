@@ -36,7 +36,7 @@ def room_participant_prompt(
         )
     role = (
         _bounded_text(target.get("collaborationRole"), maximum=40)
-        or "executor"
+        or "implementer"
     )
     room_kind = (
         _bounded_text(room.get("roomKind"), maximum=40)

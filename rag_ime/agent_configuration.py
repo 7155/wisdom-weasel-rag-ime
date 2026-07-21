@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from .agent_role_identity import canonical_agent_role_id
 from .agent_runtime_driver import AgentRuntimePolicy
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
@@ -65,7 +66,11 @@ def default_agent_configuration(
         },
         "sessionDefaults": {
             "resumeLastSession": bool(resume_last_session),
-            "roleId": _identifier(role_id, field="sessionDefaults.roleId", maximum=80),
+            "roleId": _identifier(
+                canonical_agent_role_id(role_id),
+                field="sessionDefaults.roleId",
+                maximum=80,
+            ),
             "roleVersion": _identifier(
                 role_version,
                 field="sessionDefaults.roleVersion",
@@ -120,7 +125,7 @@ class AgentConfigurationStore:
             with self._connect() as conn:
                 apply_database_migrations(conn)
                 row = conn.execute(
-                    "SELECT singleton_id FROM agent_configuration_state WHERE singleton_id = 1"
+                    "SELECT * FROM agent_configuration_state WHERE singleton_id = 1"
                 ).fetchone()
                 if row is None:
                     now = _now_ms()
@@ -134,7 +139,50 @@ class AgentConfigurationStore:
                         """,
                         (_json(configuration), now),
                     )
+                else:
+                    self._canonicalize_legacy_role_id(conn, row)
             self._initialized = True
+
+    def _canonicalize_legacy_role_id(
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> None:
+        configuration = _configuration_from_row(row, canonicalize_role_id=False)
+        defaults = configuration["sessionDefaults"]
+        if not isinstance(defaults, dict):
+            raise RuntimeError("agent session defaults are invalid")
+        previous = str(defaults.get("roleId") or "")
+        canonical = canonical_agent_role_id(previous)
+        if canonical == previous:
+            return
+        defaults["roleId"] = canonical
+        _validate_configuration(configuration)
+        revision = int(row["revision"]) + 1
+        synchronized = str(row["sync_state"]) == "synchronized"
+        applied_revision = revision if synchronized else int(row["applied_revision"])
+        now = _now_ms()
+        conn.execute(
+            """
+            UPDATE agent_configuration_state
+            SET revision = ?, configuration_json = ?, applied_revision = ?,
+                updated_at_ms = ?, updated_by = 'legacy-role-id-canonicalizer'
+            WHERE singleton_id = 1
+            """,
+            (revision, _json(configuration), applied_revision, now),
+        )
+        self._append_event(
+            conn,
+            "configuration_changed",
+            {
+                "revision": revision,
+                "revisionToken": _revision_token(revision),
+                "changedKeys": ["sessionDefaults.roleId"],
+                "updatedBy": "legacy-role-id-canonicalizer",
+                "syncState": str(row["sync_state"]),
+            },
+            created_at_ms=now,
+        )
 
     def snapshot(self) -> dict[str, object]:
         self._require_initialized()
@@ -525,10 +573,18 @@ def _event_sse(event: Mapping[str, object]) -> bytes:
     return f"id: {event_id}\nevent: {event_type}\ndata: {body}\n\n".encode("utf-8")
 
 
-def _configuration_from_row(row: sqlite3.Row) -> dict[str, object]:
+def _configuration_from_row(
+    row: sqlite3.Row,
+    *,
+    canonicalize_role_id: bool = True,
+) -> dict[str, object]:
     raw = json.loads(str(row["configuration_json"]))
     if not isinstance(raw, dict):
         raise RuntimeError("agent configuration row is invalid")
+    if canonicalize_role_id:
+        defaults = raw.get("sessionDefaults")
+        if isinstance(defaults, dict):
+            defaults["roleId"] = canonical_agent_role_id(defaults.get("roleId"))
     _validate_configuration(raw)
     return raw
 
@@ -558,7 +614,11 @@ def _normalize_changes(changes: Mapping[str, object]) -> dict[str, object]:
             "sessionDefaults.toolProfileVersion",
         }:
             maximum = 32 if key.endswith("roleVersion") else 80
-            normalized[key] = _identifier(value, field=key, maximum=maximum)
+            normalized[key] = _identifier(
+                canonical_agent_role_id(value) if key == "sessionDefaults.roleId" else value,
+                field=key,
+                maximum=maximum,
+            )
         elif key == "sessionDefaults.modelProfile":
             normalized[key] = _model_profile(value)
         else:

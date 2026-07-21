@@ -20,6 +20,7 @@ from .agent_room_context import (
     ProviderProjectionJournalStore,
     RoomContextLedgerStore,
 )
+from .agent_room_context_epochs import RoomSessionContextEpochStore
 from .agent_room_kernel import RoomKernelFenceError, RoomKernelStore
 from .agent_room_learning_governance import RoomLearningGovernanceStore
 from .agent_room_learning_runtime import RoomLearningRuntime
@@ -56,6 +57,7 @@ class RoomKernelRuntimeCoordinator:
         prompt_plans: RoomPromptPlanStore,
         projection_journals: ProviderProjectionJournalStore,
         context_ledger: RoomContextLedgerStore,
+        context_epochs: RoomSessionContextEpochStore,
         skill_policy: RoomSkillPolicy,
         skill_receipts: RoomSkillPolicyStore,
         requirements: RequirementGovernanceStore,
@@ -72,6 +74,7 @@ class RoomKernelRuntimeCoordinator:
         self.prompt_plans = prompt_plans
         self.projection_journals = projection_journals
         self.context_ledger = context_ledger
+        self.context_epochs = context_epochs
         self.skill_policy = skill_policy
         self.skill_receipts = skill_receipts
         self.requirements = requirements
@@ -161,6 +164,14 @@ class RoomKernelRuntimeCoordinator:
         )
         generation = int(dispatch["generation"])
         capability_epoch = int(dispatch["capabilityEpoch"])
+        context_epoch_transition = self.context_epochs.prepare_dispatch(
+            session_id=session_id,
+            root_id=str(dispatch["rootId"]),
+            generation=generation,
+            dispatch_id=dispatch_id,
+            now_ms=prepared_at_ms,
+        )
+        context_epoch = int(context_epoch_transition["toEpoch"])
         room_binding = {
             "schemaVersion": "wisdom-weasel.room-binding.v2",
             "bindingId": f"room-binding:{dispatch_id}",
@@ -227,7 +238,7 @@ class RoomKernelRuntimeCoordinator:
             binding_id=str(participant_binding["bindingId"]),
             session_id=session_id,
             session_epoch=max(1, generation + 1),
-            context_epoch=max(1, capability_epoch + 1),
+            context_epoch=context_epoch,
             generation=generation,
             created_at_ms=prepared_at_ms,
         )
@@ -312,7 +323,7 @@ class RoomKernelRuntimeCoordinator:
             participant_binding=participant_binding,
             journal_id=journal_id,
             session_epoch=max(1, generation + 1),
-            context_epoch=max(1, capability_epoch + 1),
+            context_epoch=context_epoch,
             skill_policy_revision=skill_policy_revision,
             context_policy_revision="room-context-policy-v1",
             layers=layers,
@@ -352,6 +363,7 @@ class RoomKernelRuntimeCoordinator:
             "manifestHash": bound["manifest"]["manifestHash"],
             "promptCompileReceiptId": prompt["receipt"]["receiptId"],
             "promptPlanHash": prompt["receipt"]["plan"]["planHash"],
+            "contextEpochTransition": context_epoch_transition,
             "requirementObservation": requirement_binding,
             "guardPin": guard_pin,
         }

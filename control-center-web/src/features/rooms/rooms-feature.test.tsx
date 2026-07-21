@@ -200,10 +200,11 @@ describe('Rooms experience', () => {
       avatar: 'briefcase',
       description: '',
       scenarioPrompt: '',
-      participants: roleCatalog.map((persona) => ({
+      participants: roleCatalog.map((persona, index) => ({
         roleId: persona.roleId,
         roleVersion: persona.version,
         displayName: persona.displayName,
+        collaborationRole: index === 0 ? 'coordinator' : 'implementer',
       })),
       routingConfig: {
         maxResponders: 1,
@@ -425,7 +426,7 @@ describe('Rooms experience', () => {
         title: '新名称',
         description: '新简介',
         scenarioPrompt: '新设定',
-        routingPolicy: 'natural',
+        routingPolicy: room.routingPolicy,
       },
     });
     expect(request?.body).not.toHaveProperty('roomKind');
@@ -436,7 +437,7 @@ describe('Rooms experience', () => {
     const futurePersona = previewPersonas.find((persona) => persona.roleId === 'companion-future-v1')!;
     const futureParticipant = {
       id: 'room-members:p3', sessionId: 'room-members:s3', roleId: 'companion-future-v1', roleVersion: '1',
-      displayName: '智鼬·未来', collaborationRole: 'executor' as const, status: 'active', ordinal: 2,
+      displayName: '智鼬·未来', collaborationRole: 'implementer' as const, status: 'active', ordinal: 2,
     };
     const withFuture = { ...initial, participants: [...initial.participants, futureParticipant] };
     const afterRemoval = {
@@ -466,7 +467,7 @@ describe('Rooms experience', () => {
     await waitFor(() => expect(addCompleted).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.participant.add')?.request).toMatchObject({
       params: { roomId: initial.id },
-      body: { roleId: 'companion-future-v1', roleVersion: '1', collaborationRole: 'executor' },
+      body: { roleId: 'companion-future-v1', roleVersion: '1', collaborationRole: 'implementer' },
     });
     const remove = await screen.findByRole('button', { name: '将 智鼬·未来 移出 Room' });
     expect(remove).toBeEnabled();
@@ -476,6 +477,35 @@ describe('Rooms experience', () => {
       params: { roomId: initial.id },
       body: { participantId: 'room-members:p3' },
     });
+  });
+
+  it('changes a collaboration member job for future dispatches', async () => {
+    const room = roomSummary('room-jobs', '岗位设置 Room');
+    const target = room.participants[1];
+    const updatedParticipant = { ...target, collaborationRole: 'reviewer' as const };
+    const updated = {
+      ...room,
+      participants: room.participants.map((item) => item.id === target.id ? updatedParticipant : item),
+    };
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot(room.id, [], room.title),
+      'agent.room.participant.update': { ok: true, room: updated, participant: updatedParticipant },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: 'Room 设置' }));
+    await user.click(screen.getByRole('combobox', { name: `${target.displayName} 的默认岗位` }));
+    await user.click(screen.getByRole('option', { name: '独立验收' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.update')).toBe(true));
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.room.participant.update')?.request).toMatchObject({
+      params: { roomId: room.id },
+      body: { participantId: target.id, collaborationRole: 'reviewer' },
+    });
+    expect(screen.getByRole('combobox', { name: `${target.displayName} 的默认岗位` })).toHaveTextContent('独立验收');
   });
 
   it('permanently deletes only an archived Room after exact-title confirmation', async () => {
@@ -950,6 +980,109 @@ describe('Rooms experience', () => {
     expect(onAbortSession).toHaveBeenCalledWith('room-a:s1');
   });
 
+  it('keeps a committed lane completed after an intermediate tool failure', () => {
+    const room = roomSummary('room-a', '可恢复工具失败 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-a');
+    projection.messageOrder.push('post-a');
+    projection.activityOrder.push('route-a', 'tool-failed-a');
+    projection.turnsById['turn-a'] = {
+      id: 'turn-a',
+      rootId: 'turn-a',
+      status: 'running',
+      messageIds: ['post-a'],
+      activityIds: ['route-a', 'tool-failed-a'],
+      participantIds: ['room-a:p1'],
+      dispatchIds: ['dispatch-a'],
+      terminalParticipantIds: ['room-a:p1'],
+      failedParticipantIds: [],
+      abortedParticipantIds: [],
+      terminalDispatchIds: ['dispatch-a'],
+      failedDispatchIds: [],
+      abortedDispatchIds: [],
+      dispatchParticipantIds: { 'dispatch-a': 'room-a:p1' },
+      createdAtMs: 1,
+      updatedAtMs: 4,
+    };
+    projection.messagesById['post-a'] = {
+      id: 'post-a',
+      roomId: room.id,
+      turnId: 'turn-a',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      role: 'assistant',
+      status: 'completed',
+      text: '最终交付',
+      projectionKind: 'post',
+      rootId: 'turn-a',
+      dispatchId: 'dispatch-a',
+      createdAtMs: 4,
+      completedAtMs: 4,
+    };
+    projection.activitiesById['route-a'] = {
+      id: 'route-a',
+      turnId: 'turn-a',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'route_decision',
+      status: 'completed',
+      summary: '智鼬 已接手',
+      payload: { rootId: 'turn-a', dispatchId: 'dispatch-a', targetParticipantId: 'room-a:p1' },
+      createdAtMs: 1,
+    };
+    projection.activitiesById['tool-failed-a'] = {
+      id: 'tool-failed-a',
+      turnId: 'turn-a',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity',
+      status: 'failed',
+      summary: '首次参数不完整，已由 Agent 修正后重试',
+      payload: {
+        rootId: 'turn-a',
+        dispatchId: 'dispatch-a',
+        sourceEventType: 'tool_finished',
+        toolName: 'room_state',
+        isError: true,
+      },
+      createdAtMs: 2,
+      updatedAtMs: 3,
+    };
+
+    const { container } = render(
+      <RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />,
+    );
+
+    expect(screen.getByText('最终交付')).toBeInTheDocument();
+    expect(screen.getByText('已完成')).toBeInTheDocument();
+    expect(screen.queryByText('未完成')).not.toBeInTheDocument();
+    expect(container.querySelector('.room-agent-lane')).toHaveAttribute('data-state', 'completed');
+    expect(container).toHaveTextContent('room_state 执行失败');
+  });
+
+  it('does not render Room lifecycle events without a public Root as a chat turn', () => {
+    const projection = createRoomProjection('room-a');
+    projection.turnOrder.push('unscoped');
+    projection.turnsById.unscoped = {
+      id: 'unscoped', status: 'completed', messageIds: [], activityIds: ['room-created'],
+      participantIds: [], createdAtMs: 1, updatedAtMs: 2,
+    };
+    projection.activitiesById['room-created'] = {
+      id: 'room-created', turnId: 'unscoped', participantId: null, sourceSessionId: '',
+      kind: 'participant_status', status: 'completed', summary: '协作空间已就绪',
+      payload: { status: 'room_created' }, createdAtMs: 1,
+    };
+
+    const { container } = render(<RoomTurn
+      turnId="unscoped"
+      projection={projection}
+      personas={previewPersonas}
+    />);
+
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText('Room 路由')).not.toBeInTheDocument();
+  });
+
   it('stops the whole server root through one Room cancellation command', async () => {
     const rootTurnId = 'room-turn:root-stop-1';
     const runningEvent = {
@@ -1124,7 +1257,7 @@ describe('Rooms experience', () => {
     expect(screen.getByText('责任边界')).toBeInTheDocument();
     expect(screen.getByText('A · 最终验收')).toBeInTheDocument();
     expect(screen.getByText('责任深度 3 · 根任务分派 6 · 最多返修 2 次')).toBeInTheDocument();
-    expect(screen.getByText('调研者 · 已加入')).toBeInTheDocument();
+    expect(screen.getByText('调研与核对 · 已加入')).toBeInTheDocument();
     expect(screen.queryByText(/只读调研/)).not.toBeInTheDocument();
   });
 });

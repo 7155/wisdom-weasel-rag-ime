@@ -5,6 +5,7 @@ import { CONTROL_ROUTES, controlRoute, type ControlPathId } from '@/platform/rou
 import type { ControlRequest, ControlTransport } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 import { previewPersonas } from '@/features/agent/preview-data';
+import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { AgentWorkflowStateV1 } from '@/contracts/generated/agent-workflow-state.v1';
 
 const ControlTransportContext = createContext<ControlTransport | null>(null);
@@ -60,6 +61,7 @@ function detectTransport(): 'native' | 'http' | 'mock' {
 
 function createPreviewTransport(): MockControlTransport {
   let nextSessionId = 1;
+  let nextRoleId = 1;
   let nextWakeScheduleId = 1;
   let previewEvidenceDisposition = 'not_for_memory';
   let previewMemoryRunStatus = 'draft';
@@ -73,6 +75,16 @@ function createPreviewTransport(): MockControlTransport {
     previewSession('session-preview', '控制中心迁移', 'companion-present-v1', Date.now()),
     previewSession('session-memory', '记忆整理', 'companion-present-v1', Date.now() - 360_000),
   ];
+  let personas: AgentPersonaV1[] = previewPersonas.map((persona) => ({
+    ...persona,
+    defaults: { ...persona.defaults },
+    runtimeCharacteristics: { ...persona.runtimeCharacteristics },
+  }));
+  let companionConfigurationRevision = 1;
+  let defaultCompanion = {
+    roleId: personas.find((persona) => persona.runtimeCharacteristics.isDefault)?.roleId ?? personas[0]?.roleId ?? '',
+    roleVersion: '1',
+  };
   const wakeSchedules: Record<string, unknown>[] = [];
   const routes = Object.fromEntries(
     (Object.keys(CONTROL_ROUTES) as ControlPathId[])
@@ -276,7 +288,63 @@ function createPreviewTransport(): MockControlTransport {
       record(request.query).includeArchived === true || stringValue(session.status) !== 'archived'
     )),
   });
-  routes['agent.roles.list'] = () => ({ ok: true, roles: previewPersonas });
+  routes['agent.roles.list'] = () => ({ ok: true, roles: personas });
+  routes['agent.roles.create'] = (request: ControlRequest) => {
+    const role = previewEditablePersona(
+      record(request.body),
+      personas[0],
+      `companion-custom-${nextRoleId++}`,
+    );
+    personas = [role, ...personas];
+    return { ok: true, role };
+  };
+  routes['agent.roles.update'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const roleId = stringValue(body.roleId);
+    const index = personas.findIndex((persona) => persona.roleId === roleId && persona.version === (stringValue(body.roleVersion) || '1'));
+    if (index < 0 || previewPersonas.some((persona) => persona.roleId === roleId)) throw new Error('Preview built-in companion is read-only.');
+    const role = previewEditablePersona(body, personas[index], roleId);
+    personas = personas.map((persona, ordinal) => ordinal === index ? role : persona);
+    return { ok: true, role };
+  };
+  routes['agent.roles.archive'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const roleId = stringValue(body.roleId);
+    if (previewPersonas.some((persona) => persona.roleId === roleId)) throw new Error('Preview built-in companion cannot be removed.');
+    personas = personas.filter((persona) => persona.roleId !== roleId || persona.version !== (stringValue(body.roleVersion) || '1'));
+    return { ok: true, roleId };
+  };
+  routes['agent.role.runtimeDefaults.update'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const roleId = stringValue(body.roleId);
+    const index = personas.findIndex((persona) => persona.roleId === roleId && persona.version === (stringValue(body.roleVersion) || '1'));
+    if (index < 0) throw new Error('Preview companion not found.');
+    const role = {
+      ...personas[index],
+      defaults: {
+        ...personas[index].defaults,
+        modelProfile: `${stringValue(body.provider)}/${stringValue(body.modelId)}`,
+        thinkingLevel: previewThinkingLevel(body.thinkingLevel),
+      },
+    };
+    personas = personas.map((persona, ordinal) => ordinal === index ? role : persona);
+    return { ok: true, role };
+  };
+  routes['agent.configuration.get'] = () => previewCompanionConfiguration(
+    companionConfigurationRevision,
+    defaultCompanion,
+  );
+  routes['agent.configuration.update'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    if (Number(body.expectedRevision) !== companionConfigurationRevision) throw new Error('Preview companion configuration changed.');
+    const changes = record(body.changes);
+    const roleId = stringValue(changes['sessionDefaults.roleId']);
+    const roleVersion = stringValue(changes['sessionDefaults.roleVersion']) || '1';
+    if (!personas.some((persona) => persona.roleId === roleId && persona.version === roleVersion)) throw new Error('Preview companion not found.');
+    defaultCompanion = { roleId, roleVersion };
+    companionConfigurationRevision += 1;
+    return previewCompanionConfiguration(companionConfigurationRevision, defaultCompanion);
+  };
   routes['agent.sessions.create'] = (request: ControlRequest) => {
     const body = record(request.body);
     const session = previewSession(
@@ -750,9 +818,9 @@ function previewResponse(pathId: ControlPathId): unknown {
     case 'browser.permission.decide':
       return { ok: true };
     case 'configuration.settings':
-      return { ok: true, configured: true, settings: {} };
+      return previewConfigurationSettings();
     case 'configuration.schema':
-      return { ok: true, sections: [] };
+      return previewConfigurationSchema();
     default:
       return { ok: true, schemaVersion: 'rag-ime.control-preview.v1' };
   }
@@ -2477,6 +2545,181 @@ function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function previewEditablePersona(
+  body: Record<string, unknown>,
+  base: AgentPersonaV1 | undefined,
+  roleId: string,
+): AgentPersonaV1 {
+  const source = base ?? previewPersonas[0]!;
+  const requestedModes = Array.isArray(body.selectableModes)
+    ? body.selectableModes.filter((value): value is 'assistant' | 'coordinator' => value === 'assistant' || value === 'coordinator')
+    : ['assistant'];
+  const selectableModes: AgentPersonaV1['selectableModes'] = requestedModes.includes('coordinator')
+    ? ['assistant', 'coordinator']
+    : ['assistant'];
+  const requestedTraits = Array.isArray(body.traits)
+    ? body.traits.map(stringValue).filter(Boolean).slice(0, 5)
+    : [...source.traits];
+  const traits = (requestedTraits.length ? requestedTraits : [source.traits[0]]) as AgentPersonaV1['traits'];
+  const requestedSuitableTasks = Array.isArray(body.suitableTasks)
+    ? body.suitableTasks.map(stringValue).filter(Boolean).slice(0, 4)
+    : [...source.runtimeCharacteristics.suitableTasks];
+  const requestedUnsuitableTasks = Array.isArray(body.unsuitableTasks)
+    ? body.unsuitableTasks.map(stringValue).filter(Boolean).slice(0, 4)
+    : [...source.runtimeCharacteristics.unsuitableTasks];
+  return {
+    ...source,
+    roleId,
+    version: '1',
+    displayName: stringValue(body.displayName) || source.displayName,
+    tagline: stringValue(body.tagline) || source.tagline,
+    summary: stringValue(body.summary) || source.summary,
+    traits,
+    visualProfile: {
+      ...source.visualProfile,
+      avatarAssetId: 'rag-ime-timeline-custom-v1',
+      accentToken: source.visualProfile.accentToken,
+    },
+    defaults: { ...source.defaults },
+    runtimeCharacteristics: {
+      ...source.runtimeCharacteristics,
+      suitableTasks: (requestedSuitableTasks.length ? requestedSuitableTasks : [stringValue(body.summary) || source.summary]) as AgentPersonaV1['runtimeCharacteristics']['suitableTasks'],
+      unsuitableTasks: (requestedUnsuitableTasks.length ? requestedUnsuitableTasks : ['未明确边界或需要独立高风险决策的任务']) as AgentPersonaV1['runtimeCharacteristics']['unsuitableTasks'],
+      isDefault: false,
+    },
+    selectableModes,
+  };
+}
+
+function previewConfigurationSettings(): Record<string, unknown> {
+  return {
+    ok: true,
+    configured: true,
+    settingsHash: 'sha256:preview-settings',
+    runtimeRevision: 12,
+    runtimeConfig: { runtimeRevision: 12, settingsRevision: 'sha256:preview-settings' },
+    settings: {
+      models: {
+        hot: 'minimind_ime_v2',
+        activeRag: 'deepseek/deepseek-v4',
+      },
+      activeRag: {
+        enabled: true,
+        quickModel: 'deepseek/deepseek-v4-flash',
+        quickThinkingLevel: 'off',
+      },
+      memory: {
+        enabled: true,
+        retentionDays: 30,
+        recall: { detailLevel: 'compact', timelineEnabled: true },
+      },
+      context: {
+        recentInputBaseline: 20,
+        tokenBudget: 4096,
+        temporalRecall: true,
+      },
+      planning: { enabled: true, injectIntoContext: true },
+      agent: { pi: { enabled: true, idleTimeoutSeconds: 900, resumeLastSession: true } },
+      privacy: { traceIncludeText: false, redactSecrets: true },
+    },
+  };
+}
+
+function previewConfigurationSchema(): Record<string, unknown> {
+  return {
+    ok: true,
+    schemaVersion: 'rag-ime.settings-schema.v3',
+    sections: [
+      {
+        id: 'models',
+        label: 'Models',
+        fields: [
+          { key: 'models.hot', type: 'string', label: '即时预测模型', applyMode: 'restart_predictor' },
+          { key: 'models.activeRag', type: 'pi-model', label: '深度生成模型', applyMode: 'live' },
+        ],
+      },
+      {
+        id: 'activeRag',
+        label: 'Active RAG',
+        fields: [
+          { key: 'activeRag.enabled', type: 'boolean', label: '启用深度生成', applyMode: 'live' },
+          { key: 'activeRag.quickModel', type: 'pi-model', label: '闪电生成模型', applyMode: 'live' },
+          { key: 'activeRag.quickThinkingLevel', type: 'pi-thinking', modelKey: 'activeRag.quickModel', label: '闪电生成思考', applyMode: 'live' },
+        ],
+      },
+      {
+        id: 'memory',
+        label: 'Memory',
+        fields: [
+          { key: 'memory.enabled', type: 'boolean', label: '启用长期记忆', applyMode: 'live' },
+          { key: 'memory.retentionDays', type: 'integer', label: '原始输入保留天数', min: 1, max: 3650, applyMode: 'live' },
+          { key: 'memory.recall.detailLevel', type: 'enum', label: '召回正文密度', options: ['compact', 'expanded'], applyMode: 'live' },
+          { key: 'memory.recall.timelineEnabled', type: 'boolean', label: '允许时间线召回', applyMode: 'live' },
+        ],
+      },
+      {
+        id: 'context',
+        label: 'Context',
+        fields: [
+          { key: 'context.recentInputBaseline', type: 'integer', label: '近期输入基线', min: 0, max: 80, applyMode: 'live' },
+          { key: 'context.tokenBudget', type: 'integer', label: '上下文容量', min: 512, max: 32768, applyMode: 'live' },
+          { key: 'context.temporalRecall', type: 'boolean', label: '理解时间表达', applyMode: 'live' },
+        ],
+      },
+      {
+        id: 'planning',
+        label: 'Planning',
+        fields: [
+          { key: 'planning.enabled', type: 'boolean', label: '启用任务规划', applyMode: 'live' },
+          { key: 'planning.injectIntoContext', type: 'boolean', label: '向 Agent 提供当前任务', applyMode: 'live' },
+        ],
+      },
+      {
+        id: 'agent',
+        label: 'Agent',
+        fields: [
+          { key: 'agent.pi.enabled', type: 'boolean', label: '连接 Pi', applyMode: 'live' },
+          { key: 'agent.pi.idleTimeoutSeconds', type: 'integer', label: '空闲退出时间', min: 0, max: 86400, applyMode: 'live' },
+          { key: 'agent.pi.resumeLastSession', type: 'boolean', label: '恢复上次对话', applyMode: 'live' },
+        ],
+      },
+      {
+        id: 'privacy',
+        label: 'Privacy',
+        fields: [
+          { key: 'privacy.traceIncludeText', type: 'boolean', label: '诊断记录包含正文', applyMode: 'live', expert: true },
+          { key: 'privacy.redactSecrets', type: 'boolean', label: '诊断中隐藏秘密', applyMode: 'live' },
+        ],
+      },
+    ],
+  };
+}
+
+function previewThinkingLevel(value: unknown): NonNullable<AgentPersonaV1['defaults']['thinkingLevel']> {
+  const level = stringValue(value);
+  return level === 'minimal' || level === 'low' || level === 'medium' || level === 'high' || level === 'xhigh' || level === 'max'
+    ? level
+    : 'off';
+}
+
+function previewCompanionConfiguration(
+  revision: number,
+  defaults: { roleId: string; roleVersion: string },
+): Record<string, unknown> {
+  return {
+    ok: true,
+    configuration: {
+      revision,
+      configuration: {
+        sessionDefaults: {
+          roleId: defaults.roleId,
+          roleVersion: defaults.roleVersion,
+        },
+      },
+    },
+  };
+}
+
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -2485,6 +2728,7 @@ function record(value: unknown): Record<string, unknown> {
 
 function previewRoomSnapshot(roomId: string) {
   const now = Date.now() - 60_000;
+  const rootId = `${roomId}:turn-1`;
   const participants = [
     previewParticipant(roomId, 'participant-present', 'session-preview', 'companion-present-v1', '智鼬·此刻', 0),
     previewParticipant(roomId, 'participant-firstlight', 'session-runtime', 'companion-firstlight-v1', '智鼬·初识', 1),
@@ -2499,23 +2743,105 @@ function previewRoomSnapshot(roomId: string) {
     eventId: `${roomId}:${sequence}`,
     roomId,
     sequence,
-    turnId: `${roomId}:turn-1`,
+    turnId: rootId,
     eventType,
     participantId,
-    sourceSessionId: '',
+    sourceSessionId: participantId === 'participant-present'
+      ? 'session-preview'
+      : participantId === 'participant-firstlight'
+        ? 'session-runtime'
+        : '',
     createdAtMs: now + sequence,
     payload,
     resumeToken: `${roomId}:${sequence}`,
   });
+  const roomPost = (
+    postId: string,
+    participantId: string,
+    dispatchId: string,
+    content: string,
+    createdAtMs: number,
+  ) => ({
+    schemaVersion: 'wisdom-weasel.room-post.v2',
+    postId,
+    roomId,
+    rootId,
+    generation: 0,
+    dispatchId,
+    authorActorRef: participantId,
+    kind: 'result',
+    visibility: 'room',
+    content,
+    idempotencyKey: postId,
+    publicationSource: { kind: 'room_commit', ref: `commit:${postId}` },
+    createdAtMs,
+  });
   const events = [
-    event(1, 'user_message', null, { messageId: 'room-user-1', text: '并行检查 Agent UI 与 Control API 的集成边界。' }),
-    event(2, 'route_decision', null, { summary: '2 位伙伴已分别接手' }),
-    event(3, 'participant_activity', 'participant-present', { requestId: 'activity-a', summary: '核对 Turn 聚合与流式投影', status: 'completed' }),
-    event(4, 'participant_activity', 'participant-firstlight', { requestId: 'activity-b', summary: '核对 route policy 与权限回执', status: 'completed' }),
-    event(5, 'participant_delta', 'participant-present', { messageId: 'room-assistant-1', delta: 'Agent 时间线已经复用统一 reducer 与 batcher，' }),
-    event(6, 'participant_delta', 'participant-present', { messageId: 'room-assistant-1', delta: '主时间线不会平铺每个工具结果。' }),
-    event(7, 'participant_delta', 'participant-firstlight', { messageId: 'room-assistant-2', delta: '权限切换只在服务端回执后更新。' }),
-    event(8, 'turn_completed', null, { summary: '协作检查完成' }),
+    event(1, 'user_message', null, {
+      messageId: 'room-user-1', rootId,
+      text: '并行检查 Agent UI 与 Control API 的集成边界。',
+    }),
+    event(2, 'route_decision', 'participant-present', {
+      rootId, dispatchId: 'dispatch-present',
+      targetParticipantId: 'participant-present', targetDisplayName: '智鼬·此刻',
+      reason: '负责前端时间线', summary: '智鼬·此刻已接手前端时间线',
+    }),
+    event(3, 'route_decision', 'participant-firstlight', {
+      rootId, dispatchId: 'dispatch-firstlight',
+      targetParticipantId: 'participant-firstlight', targetDisplayName: '智鼬·初识',
+      reason: '负责接口边界', summary: '智鼬·初识已接手接口边界',
+    }),
+    event(4, 'participant_activity', 'participant-present', {
+      rootId, dispatchId: 'dispatch-present', sourceEventId: 'tool-present-start',
+      sourceEventType: 'tool_started', toolCallId: 'tool-present', toolName: 'read_file',
+      summary: '读取 Room 时间线实现',
+    }),
+    event(5, 'participant_activity', 'participant-present', {
+      rootId, dispatchId: 'dispatch-present', sourceEventId: 'tool-present-finish',
+      sourceEventType: 'tool_finished', toolCallId: 'tool-present', toolName: 'read_file',
+      summary: '已核对流式投影与 Post 替换', isError: false,
+    }),
+    event(6, 'participant_delta', 'participant-present', {
+      rootId, dispatchId: 'dispatch-present', messageId: 'room-assistant-1',
+      delta: 'Agent 时间线复用统一 reducer，工具过程留在执行轨道，完成后原位替换为 Room Post。',
+    }),
+    event(7, 'room_post', 'participant-present', {
+      rootId, dispatchId: 'dispatch-present',
+      post: roomPost(
+        'room-post-present', 'participant-present', 'dispatch-present',
+        'Agent 时间线已按 Root、伙伴和 Dispatch 稳定聚合；流式消息完成后原位发布为 Room Post。',
+        now + 7,
+      ),
+    }),
+    event(8, 'turn_completed', 'participant-present', {
+      rootId, dispatchId: 'dispatch-present', summary: '前端时间线检查完成',
+    }),
+    event(9, 'participant_activity', 'participant-firstlight', {
+      rootId, dispatchId: 'dispatch-firstlight', sourceEventId: 'tool-firstlight-start',
+      sourceEventType: 'tool_started', toolCallId: 'tool-firstlight', toolName: 'control_api',
+      summary: '检查路由与权限回执',
+    }),
+    event(10, 'participant_delta', 'participant-firstlight', {
+      rootId, dispatchId: 'dispatch-firstlight', messageId: 'room-assistant-2',
+      delta: 'Control API 只在服务端确认后更新权限状态，失败回执不会伪装成已生效。',
+    }),
+    event(11, 'participant_activity', 'participant-firstlight', {
+      rootId, dispatchId: 'dispatch-firstlight', sourceEventId: 'tool-firstlight-finish',
+      sourceEventType: 'tool_finished', toolCallId: 'tool-firstlight', toolName: 'control_api',
+      summary: '路由与权限回执检查完成', isError: false,
+    }),
+    event(12, 'room_post', 'participant-firstlight', {
+      rootId, dispatchId: 'dispatch-firstlight',
+      post: roomPost(
+        'room-post-firstlight', 'participant-firstlight', 'dispatch-firstlight',
+        '路由与权限状态以服务端回执为准；客户端不会提前显示成功，也不会重复发布同一消息。',
+        now + 12,
+      ),
+    }),
+    event(13, 'turn_completed', 'participant-firstlight', {
+      rootId, dispatchId: 'dispatch-firstlight', summary: '接口边界检查完成',
+    }),
+    event(14, 'turn_completed', null, { rootId, summary: '协作检查完成' }),
   ];
   return {
     schemaVersion: 'rag-ime.agent-room-snapshot.v1',

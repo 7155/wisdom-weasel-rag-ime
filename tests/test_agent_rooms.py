@@ -493,6 +493,38 @@ class AgentRoomTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "authorized workspace"):
             self.store.add_artifact(room_id, path=str(outside))
 
+    def test_participant_collaboration_role_is_editable_without_rewriting_identity(
+        self,
+    ) -> None:
+        room = self.store.create(
+            title="交付岗位",
+            routing_policy="natural",
+            participants=[
+                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-firstlight-v1", "初识"),
+            ],
+            created_at_ms=10,
+        )
+        participant = room["participants"][1]
+
+        updated = self.store.update_participant_role(
+            str(room["id"]),
+            str(participant["id"]),
+            "reviewer",
+            updated_at_ms=20,
+        )
+
+        self.assertEqual(updated["id"], participant["id"])
+        self.assertEqual(updated["sessionId"], participant["sessionId"])
+        self.assertEqual(updated["collaborationRole"], "reviewer")
+        self.assertEqual(self.store.get(str(room["id"]))["updatedAtMs"], 20)
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            self.store.update_participant_role(
+                str(room["id"]),
+                str(participant["id"]),
+                "observer",
+            )
+
     def _participant(self, role_id: str, display_name: str) -> dict[str, str]:
         session = self.sessions.create(
             title=f"{display_name} room session",
@@ -1056,9 +1088,9 @@ class AgentRoomServiceTests(unittest.TestCase):
         hermes = next(item for item in room["participants"] if item["roleId"] == "companion-firstlight-v1")
         current = next(item for item in room["participants"] if item["roleId"] == "companion-present-v1")
         future = next(item for item in room["participants"] if item["roleId"] == "companion-future-v1")
-        self.assertEqual(hermes["collaborationRole"], "researcher")
-        self.assertEqual(current["collaborationRole"], "executor")
-        self.assertEqual(future["collaborationRole"], "coordinator")
+        self.assertEqual(hermes["collaborationRole"], "implementer")
+        self.assertEqual(current["collaborationRole"], "coordinator")
+        self.assertEqual(future["collaborationRole"], "implementer")
         hermes_session = self.service.sessions.get(str(hermes["sessionId"]))
         current_session = self.service.sessions.get(str(current["sessionId"]))
         future_session = self.service.sessions.get(str(future["sessionId"]))
@@ -1090,7 +1122,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(prompt_payload["message"], "@智鼬·初识 请先诊断状态")
         room_context = prompt_payload["_transientContext"]
         self.assertIn('visibility="provider-only"', room_context)
-        self.assertIn("当前岗位：researcher", room_context)
+        self.assertIn("当前岗位：implementer", room_context)
         self.assertNotIn(str(self.root.resolve()), room_context)
         self.assertNotIn("@智鼬·初识 请先诊断状态", room_context)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
@@ -1612,7 +1644,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertIn("当前岗位：coordinator", moderator_context)
         self.assertNotIn("ime_agents.room_ask", moderator_context)
         self.assertNotIn("role=researcher", moderator_context)
-        self.assertNotIn("role=executor", moderator_context)
+        self.assertNotIn("role=implementer", moderator_context)
 
         updated = self.service.update_room(room_id, {"archived": True})
         self.assertEqual(updated["room"]["status"], "archived")

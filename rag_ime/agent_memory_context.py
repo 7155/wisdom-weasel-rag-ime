@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping, Sequence
 from threading import RLock
 from typing import Any
@@ -31,6 +32,15 @@ class AgentMemoryContextService:
         task_context: Any,
         room_capabilities: Any,
         room_skill_receipts: Any,
+        room_context_epochs: Any,
+        room_recovery_context_provider: Callable[
+            [
+                str,
+                Mapping[str, object] | None,
+                Mapping[str, object] | None,
+            ],
+            str,
+        ],
         runtime_provider: Callable[[], Any],
     ) -> None:
         self.sessions = sessions
@@ -41,6 +51,10 @@ class AgentMemoryContextService:
         self.task_context = task_context
         self.room_capabilities = room_capabilities
         self.room_skill_receipts = room_skill_receipts
+        self.room_context_epochs = room_context_epochs
+        self.room_recovery_context_provider = (
+            room_recovery_context_provider
+        )
         self._runtime_provider = runtime_provider
         self._state_lock = RLock()
         self._last_query: dict[str, str] = {}
@@ -330,16 +344,52 @@ class AgentMemoryContextService:
             session_id,
             active_only=False,
         )
-        self._validate_room_fence(before, after)
+        self._validate_room_fence(
+            before,
+            after,
+            allow_revoked=is_compaction,
+        )
         item = self.context_runtime.replace_active(
             **specification
         )
         rendered = _render_specification(specification)
-        rendered, room_recovery = self._room_recovery(
+        rendered, room_recovery, room_tool_recovery = self._room_recovery(
             session_id,
             payload=payload,
             rendered=rendered,
+            allow_revoked=is_compaction,
         )
+        room_recovery_context = self.room_recovery_context_provider(
+            session_id,
+            room_recovery,
+            room_tool_recovery,
+        )
+        context_epoch_transition = None
+        current_context_epoch = self.room_context_epochs.current(session_id)
+        if is_compaction and current_context_epoch is not None:
+            compaction_entry_id = _required_text(
+                payload,
+                "compactionEntryId",
+            )
+            expected_context_epoch = payload.get("expectedContextEpoch")
+            if (
+                isinstance(expected_context_epoch, bool)
+                or not isinstance(expected_context_epoch, int)
+                or expected_context_epoch < 1
+            ):
+                raise ValueError(
+                    "expectedContextEpoch must be a positive integer"
+                )
+            context_epoch_transition = (
+                self.room_context_epochs.advance_compaction(
+                    session_id=session_id,
+                    compaction_entry_id=compaction_entry_id,
+                    expected_epoch=expected_context_epoch,
+                    room_recovery_context=room_recovery_context,
+                    session_context=rendered,
+                    now_ms=int(time.time() * 1000),
+                )
+            )
         recall_payload = (
             specification.get("payload")
             if isinstance(
@@ -366,6 +416,19 @@ class AgentMemoryContextService:
                 ),
                 "recentConversationCount": len(recent),
                 "roomContextRecovery": room_recovery,
+                "roomToolRecovery": room_tool_recovery,
+                "roomRecoveryContext": room_recovery_context,
+                "contextEpochTransition": context_epoch_transition,
+                "contextEpoch": (
+                    context_epoch_transition["toEpoch"]
+                    if context_epoch_transition is not None
+                    else None
+                ),
+                "contextEpochReason": (
+                    context_epoch_transition["epochReason"]
+                    if context_epoch_transition is not None
+                    else None
+                ),
             },
         }
 
@@ -506,6 +569,8 @@ class AgentMemoryContextService:
     def _validate_room_fence(
         before: Mapping[str, object] | None,
         after: Mapping[str, object] | None,
+        *,
+        allow_revoked: bool = False,
     ) -> None:
         if room_recall_fence(before) != room_recall_fence(
             after
@@ -517,6 +582,7 @@ class AgentMemoryContextService:
         if (
             after is not None
             and str(after.get("state") or "") == "revoked"
+            and not allow_revoked
         ):
             raise RoomKernelFenceError(
                 "Room Session context refresh was cancelled "
@@ -529,37 +595,78 @@ class AgentMemoryContextService:
         *,
         payload: Mapping[str, object],
         rendered: str,
-    ) -> tuple[str, dict[str, object] | None]:
-        binding = self.room_capabilities.runtime_binding(
-            session_id
+        allow_revoked: bool = False,
+    ) -> tuple[
+        str,
+        dict[str, object] | None,
+        dict[str, object] | None,
+    ]:
+        bound = self.room_capabilities.manifest_for_runtime(
+            session_id,
+            active_only=not allow_revoked,
         )
-        if binding is None:
-            return rendered, None
-        pinned = self.room_skill_receipts.active_for_session(
-            session_id
-        )
-        if pinned is None:
-            return rendered, None
-        requested = payload.get("roomSkillRecovery")
-        revision = (
-            str(requested.get("catalogRevision") or "")
-            if isinstance(requested, Mapping)
-            else str(pinned["catalogRevision"])
-        )
-        recovery = (
-            self.room_skill_receipts
-            .restore_for_compaction(
-                str(pinned["receiptId"]),
-                expected_capability_epoch=int(
-                    binding["capabilityEpoch"]
-                ),
-                catalog_revision=revision,
+        manifest, binding = bound if bound is not None else ({}, None)
+        requested_skill = payload.get("roomSkillRecovery")
+        requested_tools = payload.get("roomToolRecovery")
+        if requested_skill is not None and not isinstance(
+            requested_skill, Mapping
+        ):
+            raise RoomKernelFenceError(
+                "Room Skill recovery must be an object"
             )
+        if requested_tools is not None and not isinstance(
+            requested_tools, Mapping
+        ):
+            raise RoomKernelFenceError(
+                "Room Tool recovery must be an object"
+            )
+        if binding is None:
+            if requested_skill is not None or requested_tools is not None:
+                raise RoomKernelFenceError(
+                    "Room compaction recovery has no active capability binding"
+                )
+            return rendered, None, None
+        pinned = (
+            self.room_skill_receipts.latest_for_session(session_id)
+            if allow_revoked
+            else self.room_skill_receipts.active_for_session(session_id)
+        )
+        skill_recovery: dict[str, object] | None = None
+        if pinned is not None:
+            revision = (
+                str(requested_skill.get("catalogRevision") or "")
+                if isinstance(requested_skill, Mapping)
+                else str(pinned["catalogRevision"])
+            )
+            skill_recovery = (
+                self.room_skill_receipts
+                .restore_for_compaction(
+                    str(pinned["receiptId"]),
+                    expected_capability_epoch=int(
+                        manifest["capabilityEpoch"]
+                    ),
+                    catalog_revision=revision,
+                    allow_immediately_revoked=allow_revoked,
+                )
+            )
+        elif requested_skill is not None:
+            raise RoomKernelFenceError(
+                "Room compaction requested a Skill receipt that is not pinned"
+            )
+        tool_recovery = (
+            self.room_capabilities.restore_runtime_tool_disclosures(
+                session_id=session_id,
+                recovery=requested_tools,
+                allow_revoked=allow_revoked,
+            )
+            if isinstance(requested_tools, Mapping)
+            else None
         )
         # The exact Room Skill body is already pinned in the stable system
         # prompt. Recovery verifies that pin without duplicating the body in
-        # the generic RAG projection.
-        return rendered, recovery
+        # the generic RAG projection. Tool schemas likewise remain disclosed
+        # by Pi; only their current governed receipts are revalidated here.
+        return rendered, skill_recovery, tool_recovery
 
 
 def _memory_task_projection(
