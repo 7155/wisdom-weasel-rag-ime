@@ -220,6 +220,186 @@ class RequirementGovernanceStore:
             ).fetchone()
         return _dispatch_binding_payload(row) if row is not None else None
 
+    def dispatch_context(self, dispatch_id: str) -> dict[str, object] | None:
+        """Read the requirement snapshot frozen for one Dispatch.
+
+        This is a read projection only. The provider journal persists the
+        returned value once, so later catalog revisions cannot rewrite what an
+        already-running Agent observed.
+        """
+
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM room_v2_dispatch_requirement_bindings "
+                "WHERE dispatch_id = ?",
+                (_required(dispatch_id, "dispatch_id"),),
+            ).fetchone()
+            if row is None:
+                return None
+            binding = _dispatch_binding_payload(row)
+            anchor_ids = [
+                str(value)
+                for value in binding["anchorRefs"]
+            ]
+            anchors_by_id: dict[str, sqlite3.Row] = {}
+            if anchor_ids:
+                placeholders = ",".join("?" for _ in anchor_ids)
+                anchors_by_id = {
+                    str(anchor["anchor_id"]): anchor
+                    for anchor in conn.execute(
+                        f"SELECT * FROM room_v2_requirement_anchors "
+                        f"WHERE anchor_id IN ({placeholders})",
+                        anchor_ids,
+                    ).fetchall()
+                }
+            originals = [
+                {
+                    "anchorId": anchor_id,
+                    "text": bytes(anchors_by_id[anchor_id]["original_bytes"])
+                    .decode("utf-8", errors="replace"),
+                    "sha256": str(
+                        anchors_by_id[anchor_id]["original_sha256"]
+                    ),
+                    "authenticity": str(
+                        anchors_by_id[anchor_id]["authenticity"]
+                    ),
+                }
+                for anchor_id in anchor_ids
+                if anchor_id in anchors_by_id
+            ]
+            catalog_id = str(
+                binding.get("catalogRevisionId") or ""
+            )
+            catalog: dict[str, object] | None = None
+            if catalog_id:
+                catalog_row = self._catalog_row(conn, catalog_id)
+                items = conn.execute(
+                    "SELECT * FROM room_v2_requirement_items "
+                    "WHERE catalog_revision_id = ? ORDER BY item_id",
+                    (catalog_id,),
+                ).fetchall()
+                criteria = conn.execute(
+                    "SELECT * FROM room_v2_acceptance_criteria "
+                    "WHERE catalog_revision_id = ? ORDER BY criterion_id",
+                    (catalog_id,),
+                ).fetchall()
+                proof_refs = {
+                    str(value)
+                    for value in binding["proofReceiptRefs"]
+                }
+                proof_rows = conn.execute(
+                    """
+                    SELECT proof.criterion_id, receipt.*
+                    FROM room_v2_criterion_proofs proof
+                    JOIN room_v2_verification_receipts receipt
+                      ON receipt.receipt_id = proof.receipt_id
+                    WHERE proof.catalog_revision_id = ?
+                    ORDER BY proof.criterion_id, receipt.receipt_id
+                    """,
+                    (catalog_id,),
+                ).fetchall()
+                proofs_by_criterion: dict[
+                    str, list[dict[str, object]]
+                ] = {}
+                for proof in proof_rows:
+                    receipt_id = str(proof["receipt_id"])
+                    if receipt_id not in proof_refs:
+                        continue
+                    proofs_by_criterion.setdefault(
+                        str(proof["criterion_id"]), []
+                    ).append(
+                        {
+                            "receiptId": receipt_id,
+                            "receiptType": str(
+                                proof["receipt_type"]
+                            ),
+                            "sourceCommit": str(
+                                proof["source_commit"]
+                            ),
+                            "exitStatus": int(
+                                proof["exit_status"]
+                            ),
+                        }
+                    )
+                catalog = {
+                    "catalogRevisionId": catalog_id,
+                    "revision": int(catalog_row["revision"]),
+                    "changeReason": str(
+                        catalog_row["change_reason"]
+                    ),
+                    "items": [
+                        {
+                            "itemId": str(item["item_id"]),
+                            "kind": str(item["kind"]),
+                            "statement": str(item["statement"]),
+                            "state": str(item["state"]),
+                        }
+                        for item in items
+                    ],
+                    "acceptanceCriteria": [
+                        {
+                            "criterionId": str(
+                                criterion["criterion_id"]
+                            ),
+                            "itemId": str(criterion["item_id"]),
+                            "fullNameZh": str(
+                                criterion[
+                                    "acceptance_criterion_full_name_zh"
+                                ]
+                            ),
+                            "kind": str(
+                                criterion["criterion_kind"]
+                            ),
+                            "statement": str(
+                                criterion["statement"]
+                            ),
+                            "expectedReceiptTypes": json.loads(
+                                str(
+                                    criterion[
+                                        "expected_receipt_types_json"
+                                    ]
+                                )
+                            ),
+                            "proofs": proofs_by_criterion.get(
+                                str(criterion["criterion_id"]), []
+                            ),
+                        }
+                        for criterion in criteria
+                    ],
+                    "openConflicts": [
+                        {
+                            "conflictId": str(conflict["conflict_id"]),
+                            "kind": str(conflict["conflict_kind"]),
+                            "leftItemId": str(conflict["left_item_id"]),
+                            "rightItemId": str(conflict["right_item_id"]),
+                        }
+                        for conflict in conn.execute(
+                            "SELECT * FROM room_v2_requirement_conflicts "
+                            "WHERE catalog_revision_id = ? AND status = 'open' "
+                            "ORDER BY conflict_id",
+                            (catalog_id,),
+                        ).fetchall()
+                    ],
+                    "openObstacles": [
+                        {
+                            "obstacleId": str(obstacle["obstacle_id"]),
+                            "kind": str(obstacle["obstacle_kind"]),
+                            "statement": str(obstacle["statement"]),
+                        }
+                        for obstacle in conn.execute(
+                            "SELECT * FROM room_v2_delivery_obstacles "
+                            "WHERE catalog_revision_id = ? AND status = 'open' "
+                            "ORDER BY obstacle_id",
+                            (catalog_id,),
+                        ).fetchall()
+                    ],
+                }
+        return {
+            "binding": binding,
+            "originalRequirements": originals,
+            "catalog": catalog,
+        }
+
     def latest_gate_observation(self, root_id: str) -> dict[str, object] | None:
         with self._connect() as conn:
             row = conn.execute(

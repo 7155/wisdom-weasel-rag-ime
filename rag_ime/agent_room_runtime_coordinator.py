@@ -27,6 +27,7 @@ from .agent_room_profile_pins import RoomCollaborationProfilePins
 from .agent_room_requirements import RequirementGovernanceStore
 from .agent_room_runtime_capabilities import RoomRuntimeCapabilityService
 from .agent_room_skills import RoomSkillPolicy, RoomSkillPolicyStore
+from .agent_room_task_context import RoomTaskContextProjector
 from .agent_rooms import AgentRoomStore
 from .agent_roles import PersonaManifest
 from .agent_templates import agent_template
@@ -74,6 +75,7 @@ class RoomKernelRuntimeCoordinator:
         self.skill_policy = skill_policy
         self.skill_receipts = skill_receipts
         self.requirements = requirements
+        self.task_context = RoomTaskContextProjector(requirements)
         self.learning = learning
         self.learning_runtime = learning_runtime
         self.definition_compiler = definition_compiler
@@ -230,6 +232,17 @@ class RoomKernelRuntimeCoordinator:
             created_at_ms=prepared_at_ms,
         )
         task = self.kernel.task(str(dispatch["taskId"]))
+        requirement_binding, _ = self.requirements.prepare_dispatch_binding(
+            dispatch_id=dispatch_id,
+            root_id=str(dispatch["rootId"]),
+            task_id=str(dispatch["taskId"]),
+            session_id=session_id,
+            generation=generation,
+            requirement_anchor_ref=str(
+                root.get("requirementAnchorRef") or ""
+            ),
+            created_at_ms=prepared_at_ms,
+        )
         context_entry, _ = self.context_ledger.append_entry(
             root_id=str(dispatch["rootId"]),
             room_id=room_id,
@@ -237,7 +250,7 @@ class RoomKernelRuntimeCoordinator:
             entry_kind="dispatch_state",
             source_ref=dispatch_id,
             dedupe_key=f"dispatch:{dispatch_id}:provider-context",
-            content=_bounded_dispatch_context(task, dispatch),
+            content=self.task_context.render(task, dispatch),
             created_at_ms=prepared_at_ms,
         )
         replay = [
@@ -333,17 +346,6 @@ class RoomKernelRuntimeCoordinator:
                 config_hash=str(guard_pin["configHash"]),
                 now_ms=prepared_at_ms,
             )
-        requirement_binding, _ = self.requirements.prepare_dispatch_binding(
-            dispatch_id=dispatch_id,
-            root_id=str(dispatch["rootId"]),
-            task_id=str(dispatch["taskId"]),
-            session_id=session_id,
-            generation=generation,
-            requirement_anchor_ref=str(
-                root.get("requirementAnchorRef") or ""
-            ),
-            created_at_ms=prepared_at_ms,
-        )
         return {
             "sessionId": session_id,
             "manifestId": bound["manifest"]["manifestId"],
@@ -583,61 +585,6 @@ def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
     }.get(str(dispatch.get("intentKind") or ""), "implementation")
 
 
-def _bounded_dispatch_context(
-    task: Mapping[str, object],
-    dispatch: Mapping[str, object],
-) -> str:
-    task_projection = {
-        key: task.get(key)
-        for key in (
-            "taskId",
-            "rootId",
-            "parentTaskId",
-            "ownerParticipantId",
-            "assigneeParticipantId",
-            "revision",
-            "state",
-        )
-    }
-    task_projection.update(
-        objective=_bounded_text(task.get("objective"), maximum=4_000),
-        expectedOutput=_bounded_text(
-            task.get("expectedOutput"),
-            maximum=2_000,
-        ),
-        requirementItemIds=[
-            _bounded_text(value, maximum=240)
-            for value in list(task.get("requirementItemIds") or ())[:128]
-        ],
-        acceptanceCriterionIds=[
-            _bounded_text(value, maximum=240)
-            for value in list(
-                task.get("acceptanceCriterionIds") or ()
-            )[:128]
-        ],
-    )
-    return json.dumps(
-        {
-            "task": task_projection,
-            "dispatch": {
-                key: dispatch[key]
-                for key in (
-                    "dispatchId",
-                    "taskId",
-                    "intentKind",
-                    "generation",
-                    "hopCount",
-                    "depth",
-                    "targetParticipantId",
-                )
-            },
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
 def _bounded_provider_context_entries(
     entries: list[dict[str, object]],
     *,
@@ -669,7 +616,7 @@ def _bounded_provider_context_entries(
         entry
         for entry in entries
         if entry.get("entryId") != current_entry_id
-        and entry.get("entryKind") in {"requirement_anchor", "root_state"}
+        and entry.get("entryKind") == "root_state"
     ]
     recent = [
         entry
@@ -720,10 +667,6 @@ def _bounded_provider_context_entries(
 
 
 
-
-
-def _bounded_text(value: object, *, maximum: int) -> str:
-    return " ".join(str(value or "").split())[: max(0, maximum)]
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:

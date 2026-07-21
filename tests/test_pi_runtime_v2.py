@@ -386,6 +386,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             session_context_provider=lambda _session: {
                 "roomCapability": capability,
                 "managedSystemPrompt": "stable-room-prefix",
+                "sessionContext": "generic-agent-rag",
                 "providerContext": "dynamic-room-tail",
                 "roomProviderContext": {
                     "journalId": "journal:1",
@@ -408,7 +409,8 @@ class PiRuntimeV2Tests(unittest.TestCase):
         opened = [request for request in requests if request["method"] == "session.open"][-1]
         self.assertEqual(opened["params"]["roomCapability"], capability)
         self.assertEqual(opened["params"]["systemPrompt"], "stable-room-prefix")
-        self.assertEqual(opened["params"]["sessionContext"], "dynamic-room-tail")
+        self.assertEqual(opened["params"]["sessionContext"], "generic-agent-rag")
+        self.assertEqual(opened["params"]["roomContext"], "dynamic-room-tail")
         self.assertEqual(opened["params"]["roomProviderContext"]["journalId"], "journal:1")
         self.assertEqual(
             opened["params"]["roomSkillPolicy"]["skillId"],
@@ -424,6 +426,10 @@ class PiRuntimeV2Tests(unittest.TestCase):
             ),
             sessions=self.store,
             events=self.events,
+            session_context_provider=lambda _session: {
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+            },
             tool_manifest_provider=lambda _session: [],
         )
         session_id = str(self.first["id"])

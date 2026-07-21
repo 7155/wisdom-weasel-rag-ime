@@ -90,6 +90,37 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertEqual(self.store.outbox("dispatch:1")["state"], "running")
         self.assertIn("[ROOM_DISPATCH_V2]", runtime.dispatches[0][1])
 
+    def test_worker_refreshes_generic_agent_rag_before_runtime(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:rag", key="worker:rag"),
+            now_ms=3,
+        )
+        order: list[str] = []
+        runtime = FakeRoomRuntime()
+        dispatch_room = runtime.dispatch_room
+
+        def observed_dispatch(*args, **kwargs):
+            order.append("runtime")
+            return dispatch_room(*args, **kwargs)
+
+        runtime.dispatch_room = observed_dispatch
+        worker = RoomKernelWorker(
+            self.store,
+            runtime,
+            prepare_memory_context=lambda _dispatch, _now: (
+                order.append("generic_rag")
+                or {"ok": True, "status": "ready"}
+            ),
+            clock_ms=self.clock,
+        )
+
+        worker.run_once()
+
+        self.assertEqual(
+            order,
+            ["generic_rag", "runtime"],
+        )
+
     def test_host_exit_after_lease_is_cancelled_via_durable_reconciliation(self) -> None:
         self.store.enqueue_dispatch(dispatch("dispatch:crash", key="worker:crash"), now_ms=3)
         runtime = FakeRoomRuntime(fail_dispatch=True)

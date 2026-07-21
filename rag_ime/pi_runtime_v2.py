@@ -605,7 +605,12 @@ class PiRuntimeHostManager:
             }
             if isinstance(session.get("roomCapability"), Mapping):
                 params["roomCapability"] = dict(session["roomCapability"])
-                params["sessionContext"] = str(session.get("providerContext") or "")
+                params["sessionContext"] = str(
+                    session.get("sessionContext") or ""
+                )
+                params["roomContext"] = str(
+                    session.get("providerContext") or ""
+                )
                 if isinstance(session.get("roomProviderContext"), Mapping):
                     params["roomProviderContext"] = dict(session["roomProviderContext"])
                 if isinstance(session.get("roomResourceLimits"), Mapping):
@@ -1320,25 +1325,41 @@ class PiRuntimeHostManager:
             raise ValueError("Room dispatch capabilityEpoch must be non-negative")
         opened = self.ensure(session_id)
         client = self._require_client()
+        session = dict(self.sessions.get(session_id))
+        if self._session_context_provider is not None:
+            session.update(
+                dict(self._session_context_provider(session))
+            )
         with self._lock:
             negotiated = _runtime_primitive_capabilities(
                 self._host_capabilities.get("runtimePrimitives")
             )
         if not negotiated["roomTypes"]:
             raise PiRuntimeError("Pi Runtime Host did not negotiate typed Room RPC")
-        result = client.send(
-            "room.dispatch",
-            {
-                "sessionId": session_id,
-                "rootId": root_id,
-                "dispatchId": dispatch_id,
-                "generation": generation,
-                "capabilityEpoch": capability_epoch,
-                "idempotencyKey": idempotency_key,
-                "leaseToken": lease_token,
-                "message": message,
-            },
-        )
+        dispatch_params: dict[str, object] = {
+            "sessionId": session_id,
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+            "generation": generation,
+            "capabilityEpoch": capability_epoch,
+            "idempotencyKey": idempotency_key,
+            "leaseToken": lease_token,
+            "message": message,
+        }
+        session_context = str(
+            session.get("sessionContext") or ""
+        ).strip()
+        room_context = str(
+            session.get("providerContext") or ""
+        ).strip()
+        if session_context:
+            dispatch_params["sessionContext"] = session_context
+        if not room_context:
+            raise PiRuntimeError(
+                "managed Room Dispatch has no provider-only task context"
+            )
+        dispatch_params["roomContext"] = room_context
+        result = client.send("room.dispatch", dispatch_params)
         if (
             result.get("schemaVersion") != "wisdom-weasel.room-runtime-receipt.v1"
             or result.get("rootId") != root_id

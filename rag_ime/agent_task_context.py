@@ -86,16 +86,52 @@ class AgentTaskContextResolver:
             task = self.room_kernel.task(task_id)
         except (KeyError, ValueError):
             return {}
-        requirement_texts = self._original_requirements(
-            dispatch_id
+        requirement_context = (
+            self.room_requirements.dispatch_context(
+                dispatch_id
+            )
+            if dispatch_id
+            else None
         )
-        criteria = [
+        criterion_ids = [
             str(value)
             for value in task.get(
                 "acceptanceCriterionIds"
             )
             or []
             if str(value).strip()
+        ]
+        catalog = (
+            requirement_context.get("catalog")
+            if isinstance(requirement_context, Mapping)
+            and isinstance(
+                requirement_context.get("catalog"), Mapping
+            )
+            else {}
+        )
+        criteria_by_id = {
+            str(value.get("criterionId") or ""): value
+            for value in catalog.get("acceptanceCriteria") or []
+            if isinstance(value, Mapping)
+        }
+        criteria = [
+            str(
+                criteria_by_id.get(criterion_id, {}).get(
+                    "statement"
+                )
+                or criterion_id
+            )
+            for criterion_id in criterion_ids
+        ]
+        originals = [
+            bounded_text(value.get("text"), maximum=2_000)
+            for value in (
+                requirement_context.get("originalRequirements")
+                if isinstance(requirement_context, Mapping)
+                else []
+            )
+            if isinstance(value, Mapping)
+            and bounded_text(value.get("text"), maximum=2_000)
         ]
         return {
             "kind": "room_kernel_task",
@@ -104,41 +140,18 @@ class AgentTaskContextResolver:
                 task.get("expectedOutput") or ""
             ),
             "acceptanceCriteria": criteria,
-            "originalRequirements": requirement_texts,
+            "originalRequirements": originals,
+            "requirementCatalogRevisionId": str(
+                catalog.get("catalogRevisionId") or ""
+            ),
+            "blockers": [
+                str(value.get("statement") or "")
+                for value in catalog.get("openObstacles") or []
+                if isinstance(value, Mapping)
+                and str(value.get("statement") or "").strip()
+            ],
             "state": str(task.get("state") or ""),
         }
-
-    def _original_requirements(
-        self,
-        dispatch_id: str,
-    ) -> list[str]:
-        binding = (
-            self.room_requirements.dispatch_binding(
-                dispatch_id
-            )
-            if dispatch_id
-            else None
-        )
-        if not isinstance(binding, Mapping):
-            return []
-        result: list[str] = []
-        for anchor_id in binding.get("anchorRefs") or []:
-            try:
-                original = (
-                    self.room_requirements.original_bytes(
-                        str(anchor_id)
-                    ).decode("utf-8")
-                )
-            except (
-                KeyError,
-                UnicodeDecodeError,
-                ValueError,
-            ):
-                continue
-            text = bounded_text(original, maximum=2_000)
-            if text:
-                result.append(text)
-        return result
 
     def _legacy_room_work(
         self,

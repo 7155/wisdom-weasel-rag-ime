@@ -411,9 +411,7 @@ class AgentService:
                 context_runtime=self.context_runtime,
                 task_context=self.task_context,
                 room_capabilities=self.room_capabilities,
-                room_prompt_plans=self.room_prompt_plans,
                 room_skill_receipts=self.room_skill_receipts,
-                room_skill_policy=self.room_skill_policy,
                 runtime_provider=lambda: self.runtime,
             )
         )
@@ -763,6 +761,11 @@ class AgentService:
                 "capabilityEpoch": binding["capabilityEpoch"],
             },
             "managedSystemPrompt": prompt["stableSystemPrompt"],
+            "sessionContext": (
+                self.memory_context_application.provider_context(
+                    str(session.get("id") or "")
+                )
+            ),
             "providerContext": prompt["providerContext"],
             "roomProviderContext": {
                 "journalId": prompt["journalId"],
@@ -792,6 +795,30 @@ class AgentService:
         else:
             result["roomSkillPolicy"] = skill_selection
         return result
+
+    def _prepare_room_memory_context(
+        self,
+        dispatch: Mapping[str, object],
+        _prepared_at_ms: int,
+    ) -> Mapping[str, object]:
+        """Refresh generic Agent RAG before a Kernel Dispatch reaches Pi."""
+
+        session_id = str(
+            dispatch.get("targetSessionId") or ""
+        ).strip()
+        task_id = str(dispatch.get("taskId") or "").strip()
+        if not session_id or not task_id:
+            raise RoomKernelFenceError(
+                "Room Dispatch cannot refresh Agent RAG without Session and Task"
+            )
+        task = self.room_kernel.task(task_id)
+        query = str(task.get("objective") or "").strip()
+        if not query:
+            query = "继续当前 Room 任务"
+        return self.memory_context_application.refresh_for_turn(
+            self.sessions.get(session_id),
+            query_text=query,
+        )
 
     def runtime_status(self) -> dict[str, object]:
         payload = self.runtime.runtime_status()
@@ -2475,6 +2502,7 @@ class AgentService:
             self.room_kernel,
             self.runtime,  # type: ignore[arg-type]
             prepare_dispatch=self.room_kernel_runtime.prepare_dispatch,
+            prepare_memory_context=self._prepare_room_memory_context,
             accept_runtime_context=self.room_kernel_runtime.accept_runtime_context,
             revoke_session=self.room_kernel_runtime.revoke_session,
             learning_observer=self.room_kernel_runtime.record_learning_signal,

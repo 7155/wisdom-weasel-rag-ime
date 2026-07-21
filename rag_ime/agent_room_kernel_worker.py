@@ -37,6 +37,10 @@ class RoomKernelWorker:
         *,
         message_builder: Callable[[Mapping[str, object]], str] | None = None,
         prepare_dispatch: Callable[[Mapping[str, object], int], Mapping[str, object]] | None = None,
+        prepare_memory_context: Callable[
+            [Mapping[str, object], int], Mapping[str, object]
+        ]
+        | None = None,
         accept_runtime_context: Callable[[Mapping[str, object]], object] | None = None,
         revoke_session: Callable[[str, int], object] | None = None,
         learning_observer: Callable[[Mapping[str, object]], object] | None = None,
@@ -46,6 +50,7 @@ class RoomKernelWorker:
         self.runtime = runtime
         self.message_builder = message_builder or _default_dispatch_message
         self.prepare_dispatch = prepare_dispatch
+        self.prepare_memory_context = prepare_memory_context
         self.accept_runtime_context = accept_runtime_context
         self.revoke_session = revoke_session
         self.learning_observer = learning_observer
@@ -63,6 +68,11 @@ class RoomKernelWorker:
             prepared = self.prepare_dispatch(pending, now_ms)
             if not prepared.get("sessionId") or not prepared.get("manifestHash"):
                 raise RoomKernelFenceError("managed Dispatch preparation returned no capability fence")
+        if self.prepare_memory_context is not None:
+            # Generic RAG is an enhancement. Its application service preserves
+            # the last valid projection and may return an empty fail-open
+            # receipt when no memory source is currently available.
+            self.prepare_memory_context(pending, now_ms)
         lease = self.store.lease_next(
             now_ms=now_ms,
             ttl_ms=lease_ttl_ms,

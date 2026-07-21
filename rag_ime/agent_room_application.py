@@ -198,6 +198,58 @@ class RoomApplicationService:
                 },
                 created_at_ms=timestamp,
             )
+            requirement_catalog, _ = self.requirements.revise_catalog(
+                catalog_revision_id=(
+                    f"requirement-catalog:{identity}:1"
+                ),
+                root_id=root_id,
+                expected_current_revision=0,
+                anchor_refs=[anchor_id],
+                items=[
+                    {
+                        "itemId": requirement_item_id,
+                        "kind": "explicit_user_requirement",
+                        "statement": message,
+                        "origin": "room_user_message",
+                        "state": "active",
+                        "sourceSpans": [
+                            {
+                                "anchorId": anchor_id,
+                                "startByte": 0,
+                                "endByte": len(
+                                    message.encode("utf-8")
+                                ),
+                            }
+                        ],
+                        "confirmation": "captured_from_user",
+                    }
+                ],
+                acceptance_criteria=[
+                    {
+                        "criterionId": criterion_id,
+                        "itemId": requirement_item_id,
+                        "acceptanceCriterionFullNameZh": (
+                            f"用户验收条件 {ordinal + 1}"
+                        ),
+                        "criterionKind": "user_journey",
+                        "expectedReceiptTypes": ["evidence"],
+                        "statement": statement,
+                    }
+                    for ordinal, (
+                        criterion_id,
+                        statement,
+                    ) in enumerate(acceptance_criteria)
+                ],
+                change_reason="从本次 Room 用户请求建立初始需求目录",
+                provenance={
+                    "surface": "room",
+                    "clientMessageId": client_message_id,
+                    "derivedCatalog": True,
+                    "originalBytesRemainInAnchor": True,
+                },
+                created_by="room-ingress",
+                created_at_ms=timestamp,
+            )
             self.context.append_entry(
                 root_id=root_id,
                 room_id=room_id,
@@ -342,6 +394,7 @@ class RoomApplicationService:
             "task": created["task"],
             "post": user_post,
             "requirementAnchor": anchor,
+            "requirementCatalog": requirement_catalog,
         }
         if work_item is not None:
             response["workItem"] = work_item

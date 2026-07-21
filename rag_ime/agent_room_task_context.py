@@ -1,0 +1,284 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+from .agent_prompt_support import bounded_text
+from .agent_room_kernel import RoomKernelFenceError
+
+
+class RoomTaskContextProjector:
+    """Compose one immutable, bounded task packet for a Room Dispatch."""
+
+    def __init__(self, requirements: Any) -> None:
+        self.requirements = requirements
+
+    def render(
+        self,
+        task: Mapping[str, object],
+        dispatch: Mapping[str, object],
+    ) -> str:
+        snapshot = self.requirements.dispatch_context(
+            str(dispatch.get("dispatchId") or "")
+        )
+        if not isinstance(snapshot, Mapping):
+            raise RoomKernelFenceError(
+                "Room Dispatch has no frozen requirement observation"
+            )
+        binding = _mapping(snapshot.get("binding"))
+        self._validate_binding(task, dispatch, binding)
+        catalog = _mapping(snapshot.get("catalog"))
+        requirement_ids = _string_set(
+            task.get("requirementItemIds")
+        )
+        criterion_ids = _string_set(
+            task.get("acceptanceCriterionIds")
+        )
+        items = [
+            _requirement_item(item)
+            for item in _mappings(catalog.get("items"))
+            if not requirement_ids
+            or str(item.get("itemId") or "") in requirement_ids
+        ][:64]
+        criteria = [
+            _acceptance_criterion(criterion)
+            for criterion in _mappings(
+                catalog.get("acceptanceCriteria")
+            )
+            if not criterion_ids
+            or str(criterion.get("criterionId") or "")
+            in criterion_ids
+        ][:64]
+        originals = [
+            {
+                "anchorId": bounded_text(
+                    original.get("anchorId"), maximum=240
+                ),
+                "text": bounded_text(
+                    original.get("text"), maximum=4_000
+                ),
+                "sha256": bounded_text(
+                    original.get("sha256"), maximum=64
+                ),
+                "authenticity": bounded_text(
+                    original.get("authenticity"), maximum=40
+                ),
+            }
+            for original in _mappings(
+                snapshot.get("originalRequirements")
+            )[:8]
+        ]
+        packet = {
+            "schemaVersion": "wisdom-weasel.room-task-context.v1",
+            "rootId": str(dispatch["rootId"]),
+            "dispatchId": str(dispatch["dispatchId"]),
+            "generation": int(dispatch["generation"]),
+            "task": {
+                "taskId": str(task["taskId"]),
+                "parentTaskId": task.get("parentTaskId"),
+                "revision": int(task.get("revision") or 0),
+                "state": str(task.get("state") or ""),
+                "objective": bounded_text(
+                    task.get("objective"), maximum=4_000
+                ),
+                "expectedOutput": bounded_text(
+                    task.get("expectedOutput"), maximum=2_000
+                ),
+            },
+            "responsibility": {
+                "ownerParticipantId": task.get(
+                    "ownerParticipantId"
+                ),
+                "assigneeParticipantId": task.get(
+                    "assigneeParticipantId"
+                ),
+                "currentParticipantId": dispatch.get(
+                    "targetParticipantId"
+                ),
+            },
+            "requirements": {
+                "original": originals,
+                "catalogRevisionId": (
+                    catalog.get("catalogRevisionId") or None
+                ),
+                "catalogRevision": (
+                    int(catalog.get("revision") or 0)
+                    if catalog
+                    else None
+                ),
+                "items": items,
+                "missingItemIds": sorted(
+                    requirement_ids
+                    - {
+                        str(item.get("itemId") or "")
+                        for item in items
+                    }
+                ),
+                "observationWarnings": list(
+                    binding.get("observationWarnings") or []
+                )[:16],
+            },
+            "acceptance": {
+                "criteria": criteria,
+                "missingCriterionIds": sorted(
+                    criterion_ids
+                    - {
+                        str(criterion.get("criterionId") or "")
+                        for criterion in criteria
+                    }
+                ),
+            },
+            "blockers": {
+                "obstacles": [
+                    _obstacle(value)
+                    for value in _mappings(
+                        catalog.get("openObstacles")
+                    )[:32]
+                ],
+                "conflicts": [
+                    _conflict(value)
+                    for value in _mappings(
+                        catalog.get("openConflicts")
+                    )[:32]
+                ],
+            },
+            "continuation": {
+                "intentKind": str(
+                    dispatch.get("intentKind") or ""
+                ),
+                "parentDispatchId": dispatch.get(
+                    "parentDispatchId"
+                ),
+                "hopCount": int(dispatch.get("hopCount") or 0),
+                "depth": int(dispatch.get("depth") or 0),
+            },
+        }
+        return json.dumps(
+            packet,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @staticmethod
+    def _validate_binding(
+        task: Mapping[str, object],
+        dispatch: Mapping[str, object],
+        binding: Mapping[str, object],
+    ) -> None:
+        expected = (
+            ("dispatchId", dispatch.get("dispatchId")),
+            ("rootId", dispatch.get("rootId")),
+            ("taskId", task.get("taskId")),
+            ("sessionId", dispatch.get("targetSessionId")),
+            ("generation", dispatch.get("generation")),
+        )
+        for key, value in expected:
+            if binding.get(key) != value:
+                raise RoomKernelFenceError(
+                    f"Room task context binding mismatch: {key}"
+                )
+
+
+def _requirement_item(value: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "itemId": bounded_text(value.get("itemId"), maximum=240),
+        "kind": bounded_text(value.get("kind"), maximum=80),
+        "statement": bounded_text(
+            value.get("statement"), maximum=1_500
+        ),
+        "state": bounded_text(value.get("state"), maximum=40),
+    }
+
+
+def _acceptance_criterion(
+    value: Mapping[str, object],
+) -> dict[str, object]:
+    proofs = [
+        {
+            "receiptId": bounded_text(
+                proof.get("receiptId"), maximum=240
+            ),
+            "receiptType": bounded_text(
+                proof.get("receiptType"), maximum=40
+            ),
+            "sourceCommit": bounded_text(
+                proof.get("sourceCommit"), maximum=240
+            ),
+            "exitStatus": int(proof.get("exitStatus") or 0),
+        }
+        for proof in _mappings(value.get("proofs"))[:16]
+    ]
+    return {
+        "criterionId": bounded_text(
+            value.get("criterionId"), maximum=240
+        ),
+        "itemId": bounded_text(value.get("itemId"), maximum=240),
+        "fullNameZh": bounded_text(
+            value.get("fullNameZh"), maximum=240
+        ),
+        "kind": bounded_text(value.get("kind"), maximum=40),
+        "statement": bounded_text(
+            value.get("statement"), maximum=1_000
+        ),
+        "expectedReceiptTypes": list(
+            value.get("expectedReceiptTypes") or []
+        )[:8],
+        "proofs": proofs,
+        "passed": any(
+            int(proof.get("exitStatus") or 0) == 0
+            for proof in proofs
+        ),
+    }
+
+
+def _obstacle(value: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "obstacleId": bounded_text(
+            value.get("obstacleId"), maximum=240
+        ),
+        "kind": bounded_text(value.get("kind"), maximum=40),
+        "statement": bounded_text(
+            value.get("statement"), maximum=1_000
+        ),
+    }
+
+
+def _conflict(value: Mapping[str, object]) -> dict[str, object]:
+    return {
+        "conflictId": bounded_text(
+            value.get("conflictId"), maximum=240
+        ),
+        "kind": bounded_text(value.get("kind"), maximum=40),
+        "leftItemId": bounded_text(
+            value.get("leftItemId"), maximum=240
+        ),
+        "rightItemId": bounded_text(
+            value.get("rightItemId"), maximum=240
+        ),
+    }
+
+
+def _mapping(value: object) -> dict[str, object]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _mappings(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(
+        value, (str, bytes)
+    ):
+        return []
+    return [
+        dict(item) for item in value if isinstance(item, Mapping)
+    ]
+
+
+def _string_set(value: object) -> set[str]:
+    if not isinstance(value, Sequence) or isinstance(
+        value, (str, bytes)
+    ):
+        return set()
+    return {
+        str(item).strip() for item in value if str(item).strip()
+    }

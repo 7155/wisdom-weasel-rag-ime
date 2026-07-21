@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -10,6 +11,11 @@ from rag_ime.agent_room_requirements import (
     RequirementGovernanceStore,
     RequirementRevisionConflict,
 )
+from rag_ime.agent_room_kernel import RoomKernelStore
+from rag_ime.agent_room_task_context import (
+    RoomTaskContextProjector,
+)
+from tests.test_agent_room_kernel import dispatch, root, task
 
 
 class RequirementGovernanceTests(unittest.TestCase):
@@ -152,6 +158,102 @@ class RequirementGovernanceTests(unittest.TestCase):
         self.assertEqual(gate["gateStatus"], "observed_pass")
         self.assertEqual(gate["reasons"], [])
         self.assertFalse(gate["enforcementApplied"])
+
+    def test_dispatch_task_packet_freezes_original_catalog_proof_and_blocker(self) -> None:
+        kernel = RoomKernelStore(self.db_path, mode="test")
+        kernel.initialize()
+        kernel.create_root(
+            root("root:1"),
+            budget=8,
+            max_hops=3,
+            max_depth=2,
+            acceptance_criteria=("criterion:req",),
+            now_ms=1,
+        )
+        kernel.create_task(task("task:1"), now_ms=1)
+        kernel.enqueue_dispatch(
+            dispatch("dispatch:1", key="requirements:1"),
+            now_ms=1,
+        )
+        self._catalog("catalog:1", expected=0)
+        receipt = self._receipt("receipt:test", "catalog:1")
+        self.store.record_verification_receipt(receipt)
+        self.store.link_proof(
+            proof_id="proof:req",
+            root_id="root:1",
+            catalog_revision_id="catalog:1",
+            criterion_id="criterion:req",
+            receipt_id="receipt:test",
+            linked_by="runner",
+            created_at_ms=4,
+        )
+        self.store.record_obstacle(
+            obstacle_id="blocker:1",
+            root_id="root:1",
+            catalog_revision_id="catalog:1",
+            obstacle_kind="blocker",
+            statement="等待正式安装环境",
+            created_at_ms=4,
+        )
+        self.store.prepare_dispatch_binding(
+            dispatch_id="dispatch:1",
+            root_id="root:1",
+            task_id="task:1",
+            session_id="session:1",
+            generation=0,
+            requirement_anchor_ref="anchor:1@sha256:test",
+            created_at_ms=5,
+        )
+        snapshot = self.store.dispatch_context("dispatch:1")
+        self.assertEqual(
+            snapshot["originalRequirements"][0]["text"],
+            self.original.decode("utf-8"),
+        )
+        criterion = snapshot["catalog"]["acceptanceCriteria"][0]
+        self.assertEqual(criterion["proofs"][0]["receiptId"], "receipt:test")
+        self.assertEqual(
+            snapshot["catalog"]["openObstacles"][0]["statement"],
+            "等待正式安装环境",
+        )
+
+        rendered = RoomTaskContextProjector(self.store).render(
+            {
+                "taskId": "task:1",
+                "parentTaskId": None,
+                "ownerParticipantId": "participant:owner",
+                "assigneeParticipantId": "participant:target",
+                "objective": "完成有证据的交付",
+                "expectedOutput": "可复核结果",
+                "requirementItemIds": ["requirement:1"],
+                "acceptanceCriterionIds": ["criterion:req"],
+                "revision": 0,
+                "state": "active",
+            },
+            {
+                "dispatchId": "dispatch:1",
+                "rootId": "root:1",
+                "taskId": "task:1",
+                "targetSessionId": "session:1",
+                "targetParticipantId": "participant:target",
+                "parentDispatchId": None,
+                "generation": 0,
+                "intentKind": "execute",
+                "hopCount": 1,
+                "depth": 1,
+            },
+        )
+        packet = json.loads(rendered)
+        self.assertEqual(
+            packet["requirements"]["original"][0]["text"],
+            self.original.decode("utf-8"),
+        )
+        self.assertTrue(
+            packet["acceptance"]["criteria"][0]["passed"]
+        )
+        self.assertEqual(
+            packet["blockers"]["obstacles"][0]["statement"],
+            "等待正式安装环境",
+        )
 
     def test_concurrent_catalog_revision_fails_closed_and_old_revision_cannot_gate(self) -> None:
         self._catalog("catalog:1", expected=0)

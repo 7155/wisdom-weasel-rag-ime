@@ -303,6 +303,17 @@ class RoomKernelServiceTests(unittest.TestCase):
             ),
             "开始".encode("utf-8"),
         )
+        catalog = accepted["requirementCatalog"]
+        self.assertEqual(catalog["anchorRefs"], [
+            accepted["requirementAnchor"]["anchorId"]
+        ])
+        self.assertEqual(
+            [
+                value["statement"]
+                for value in catalog["acceptanceCriteria"]
+            ],
+            criteria,
+        )
 
     def _dispatch(
         self,
@@ -1125,8 +1136,19 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "recentMessages": [{"role": "user", "text": "继续自己的任务"}],
             }
         )
-        self.assertIn("原始需求（不可改写）", refreshed["result"]["sessionContext"])
-        self.assertIn(original, refreshed["result"]["sessionContext"])
+        generic_rag = refreshed["result"]["sessionContext"]
+        self.assertIn("## Session 记忆", generic_rag)
+        self.assertNotIn("原始需求（不可改写）", generic_rag)
+        self.assertNotIn(original, generic_rag)
+        binding = self.service.room_capabilities.runtime_binding(
+            self.session_id,
+            active_only=False,
+        )
+        room_context = self.service.room_prompt_plans.provider_payload(
+            str(binding["promptCompileReceiptId"])
+        )["providerContext"]
+        self.assertIn(original, room_context)
+        self.assertIn("Execute a bounded service test.", room_context)
 
     def test_room_binding_rejects_legacy_intercom_before_it_can_enqueue(self) -> None:
         dispatch = self._dispatch()
@@ -1410,9 +1432,12 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertIn("<room-prompt-plan", opened["params"]["systemPrompt"])
         self.assertNotIn("运行时工具渐进披露规则", opened["params"]["systemPrompt"])
         session_context = opened["params"]["sessionContext"]
-        self.assertIn('"objective":"Execute a bounded service test."', session_context)
+        room_context = opened["params"]["roomContext"]
+        self.assertIn("Session 记忆", session_context)
+        self.assertNotIn('"objective":"Execute a bounded service test."', session_context)
+        self.assertIn('"objective":"Execute a bounded service test."', room_context)
         for internal_label in ('"dispatchId"', '"taskId"', '"rootId"', '"receiptId"'):
-            self.assertNotIn(internal_label, session_context)
+            self.assertNotIn(internal_label, room_context)
         self.assertEqual(
             opened["params"]["roomSkillPolicy"]["skillId"],
             "room-test-driven-implementation",
@@ -1421,6 +1446,19 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(
             [request["params"]["dispatchId"] for request in requests if request["method"] == "room.dispatch"],
             ["dispatch:service", "dispatch:complete"],
+        )
+        first_dispatch_request = next(
+            request
+            for request in requests
+            if request["method"] == "room.dispatch"
+        )
+        self.assertIn(
+            "Session 记忆",
+            first_dispatch_request["params"]["sessionContext"],
+        )
+        self.assertIn(
+            '"objective":"Execute a bounded service test."',
+            first_dispatch_request["params"]["roomContext"],
         )
         skill_receipt = self.service.room_skill_receipts.latest_for_session(self.session_id)
         self.assertIsNotNone(skill_receipt)

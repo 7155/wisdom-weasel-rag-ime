@@ -30,9 +30,7 @@ class AgentMemoryContextService:
         context_runtime: Any,
         task_context: Any,
         room_capabilities: Any,
-        room_prompt_plans: Any,
         room_skill_receipts: Any,
-        room_skill_policy: Any,
         runtime_provider: Callable[[], Any],
     ) -> None:
         self.sessions = sessions
@@ -42,9 +40,7 @@ class AgentMemoryContextService:
         self.context_runtime = context_runtime
         self.task_context = task_context
         self.room_capabilities = room_capabilities
-        self.room_prompt_plans = room_prompt_plans
         self.room_skill_receipts = room_skill_receipts
-        self.room_skill_policy = room_skill_policy
         self._runtime_provider = runtime_provider
         self._state_lock = RLock()
         self._last_query: dict[str, str] = {}
@@ -159,7 +155,7 @@ class AgentMemoryContextService:
                 planning_context=self.sessions.agent_plan(
                     session_id
                 ),
-                task_context=task,
+                task_context=_memory_task_projection(task),
             )
             item = self.context_runtime.enqueue(
                 **specification
@@ -328,7 +324,7 @@ class AgentMemoryContextService:
             planning_context=self.sessions.agent_plan(
                 session_id
             ),
-            task_context=task,
+            task_context=_memory_task_projection(task),
         )
         after = self.room_capabilities.runtime_binding(
             session_id,
@@ -465,6 +461,25 @@ class AgentMemoryContextService:
                 self._last_query.pop(session_id, None)
                 self._recent_messages.pop(session_id, None)
 
+    def provider_context(self, session_id: str) -> str:
+        """Render the latest valid generic RAG projection for one Agent.
+
+        The same projection is used by ordinary prompts and Kernel-managed
+        Room dispatches. Room responsibility and task governance are owned by
+        the Room provider context and therefore never enter this channel.
+        """
+
+        materialized = self.context_runtime.materialize(
+            session_id
+        )
+        items = [
+            item
+            for item in materialized.get("items") or []
+            if isinstance(item, Mapping)
+            and item.get("sourceKind") == "memory_bootstrap"
+        ]
+        return render_context_items(items)
+
     def _refresh_query(
         self,
         session_id: str,
@@ -520,17 +535,11 @@ class AgentMemoryContextService:
         )
         if binding is None:
             return rendered, None
-        prompt = self.room_prompt_plans.provider_payload(
-            str(binding["promptCompileReceiptId"])
-        )
-        parts = [rendered, str(prompt["providerContext"])]
         pinned = self.room_skill_receipts.active_for_session(
             session_id
         )
         if pinned is None:
-            return "\n\n".join(
-                part for part in parts if part.strip()
-            ), None
+            return rendered, None
         requested = payload.get("roomSkillRecovery")
         revision = (
             str(requested.get("catalogRevision") or "")
@@ -547,16 +556,20 @@ class AgentMemoryContextService:
                 catalog_revision=revision,
             )
         )
-        skill_id = str(recovery["skillId"])
-        parts.append(
-            f'<loaded_skill name="{skill_id}" '
-            f'revision="sha256:{recovery["skillHash"]}">\n'
-            f"{self.room_skill_policy.skill_body(skill_id)}\n"
-            "</loaded_skill>"
-        )
-        return "\n\n".join(
-            part for part in parts if part.strip()
-        ), recovery
+        # The exact Room Skill body is already pinned in the stable system
+        # prompt. Recovery verifies that pin without duplicating the body in
+        # the generic RAG projection.
+        return rendered, recovery
+
+
+def _memory_task_projection(
+    task: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Keep retrieval task-aware without duplicating Room governance facts."""
+
+    if str(task.get("kind") or "") == "room_kernel_task":
+        return {}
+    return task
 
 
 def _ready_existing(
