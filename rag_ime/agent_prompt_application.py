@@ -223,11 +223,7 @@ class AgentPromptApplicationService:
         session = self.memory_context.ensure_role_book(
             session_id
         )
-        self.memory_context.remember_query(
-            session_id,
-            checkpoint_text,
-        )
-        bootstrap = self.memory_context.ensure_bootstrap(
+        bootstrap = self.memory_context.refresh_for_turn(
             session,
             query_text=checkpoint_text,
         )

@@ -459,11 +459,18 @@ class AgentServiceTests(unittest.TestCase):
                 "response": {"success": True},
             },
         ]
-        with patch.object(
-            self.service.runtime,
-            "prompt",
-            side_effect=accepted_values,
-        ) as runtime_prompt:
+        with (
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                side_effect=accepted_values,
+            ) as runtime_prompt,
+            patch.object(
+                self.service.memory_bootstrap,
+                "build",
+                wraps=self.service.memory_bootstrap.build,
+            ) as build_memory,
+        ):
             first = self.service.prompt(session_id, {"message": "第一轮"})
             second = self.service.prompt(session_id, {"message": "第二轮"})
 
@@ -473,6 +480,21 @@ class AgentServiceTests(unittest.TestCase):
             f"memory-bootstrap:{session_id}:v3",
         )
         self.assertEqual(second["contextItemsDelivered"], 1)
+        self.assertTrue(
+            first["memoryBootstrap"]["refreshedForCurrentTurn"]
+        )
+        self.assertTrue(
+            second["memoryBootstrap"]["refreshedForCurrentTurn"]
+        )
+        self.assertEqual(build_memory.call_count, 2)
+        self.assertIn(
+            "第一轮",
+            build_memory.call_args_list[0].kwargs["query_text"],
+        )
+        self.assertIn(
+            "第二轮",
+            build_memory.call_args_list[1].kwargs["query_text"],
+        )
         first_runtime_message = runtime_prompt.call_args_list[0].args[1]
         first_envelope = json.loads(
             first_runtime_message.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)

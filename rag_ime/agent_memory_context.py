@@ -188,6 +188,79 @@ class AgentMemoryContextService:
             "expiredLegacyItems": expired_legacy,
         }
 
+    def refresh_for_turn(
+        self,
+        session: Mapping[str, object],
+        *,
+        query_text: str,
+    ) -> dict[str, object]:
+        """Refresh the generic memory projection for one new user task.
+
+        Room and ordinary Agent Sessions share this lifecycle. Room-specific
+        responsibility context is composed elsewhere and never becomes a
+        prerequisite for personal-memory recall.
+        """
+
+        session_id = str(session.get("id") or "")
+        self.remember_query(session_id, query_text)
+        expired_legacy = 0
+        try:
+            expired_legacy = (
+                self.context_runtime
+                .expire_legacy_memory_bootstrap(
+                    session_id,
+                    current_dedupe_key=(
+                        self.memory_bootstrap.dedupe_key(
+                            session_id
+                        )
+                    ),
+                )
+            )
+            refreshed = self.refresh(
+                {
+                    "sessionId": session_id,
+                    "trigger": "turn_start",
+                    "queryText": query_text,
+                }
+            )
+        except RoomKernelFenceError:
+            raise
+        except Exception as exc:
+            existing = self.context_runtime.active_item(
+                session_id,
+                source_kind="memory_bootstrap",
+            )
+            if existing is not None:
+                receipt = _ready_existing(
+                    session_id,
+                    existing,
+                    expired_legacy=expired_legacy,
+                )
+                receipt["status"] = "ready_stale"
+                receipt["refreshError"] = _error_text(exc)
+                return receipt
+            return _bootstrap_failure(session_id, exc)
+
+        result = refreshed["result"]
+        return {
+            "schemaVersion": (
+                "rag-ime.memory-bootstrap-enqueue-result.v1"
+            ),
+            "ok": True,
+            "sessionId": session_id,
+            "status": "ready",
+            "itemId": str(result.get("itemId") or ""),
+            "dedupeKey": self.memory_bootstrap.dedupe_key(
+                session_id
+            ),
+            "sourceCount": int(result.get("sourceCount") or 0),
+            "queryAware": True,
+            "refreshedForCurrentTurn": True,
+            "priority": "developer",
+            "lifecycle": "session",
+            "expiredLegacyItems": expired_legacy,
+        }
+
     def refresh(
         self,
         payload: Mapping[str, object],
@@ -403,14 +476,16 @@ class AgentMemoryContextService:
         latest_user = last_user_recall_text(recent)
         if is_compaction and latest_user:
             return latest_user
-        query = self.recall_query(
-            session_id,
-            fallback=bounded_text(
-                payload.get("queryText"),
-                maximum=8_000,
-            ),
+        explicit_query = bounded_text(
+            payload.get("queryText"),
+            maximum=8_000,
         )
-        return query or latest_user
+        if explicit_query:
+            return explicit_query
+        return self.recall_query(
+            session_id,
+            fallback=latest_user,
+        )
 
     @staticmethod
     def _validate_room_fence(
@@ -520,11 +595,15 @@ def _bootstrap_failure(
         "queryAware": True,
         "priority": "developer",
         "lifecycle": "session",
-        "error": (
-            " ".join(str(error).split())[:240]
-            or error.__class__.__name__
-        ),
+        "error": _error_text(error),
     }
+
+
+def _error_text(error: BaseException) -> str:
+    return (
+        " ".join(str(error).split())[:240]
+        or error.__class__.__name__
+    )
 
 
 def _render_specification(
