@@ -274,6 +274,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_PI_ENABLED"], "0")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AGENT_GATEWAY_ENABLED"], "1")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_KNOWLEDGE_SHARED_WORKER"], "1")
+        self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_ROOM_KERNEL_MODE"], "kernel_only")
 
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_IDLE_MS"], "180")
         self.assertEqual(payload["EnvironmentVariables"]["RAG_IME_AUTO_PREDICT_MIN_DELTA_CHARS"], "3")
@@ -755,6 +756,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_PROFILE"], "qwen3_06b_ime_hot")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_STREAM_FIRST"], "0")
         self.assertEqual(env_vars["RAG_IME_POST_COMMIT_PRESENTATION_STREAM"], "0")
+        self.assertEqual(env_vars["RAG_IME_ROOM_KERNEL_MODE"], "kernel_only")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_ENV"], "/tmp/predictor.env")
         self.assertEqual(env_vars["RAG_IME_PREDICTOR_API_KEY"], "preserved-local-secret")
         self.assertNotIn("preserved-local-secret", result.stdout + result.stderr)

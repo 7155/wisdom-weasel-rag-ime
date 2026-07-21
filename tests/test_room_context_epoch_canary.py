@@ -26,6 +26,24 @@ REPORT_SPEC.loader.exec_module(REPORT)
 
 
 class RoomContextEpochCanaryTest(unittest.TestCase):
+    def test_message_acceptance_requires_the_v2_root_contract(self) -> None:
+        self.assertEqual(
+            CANARY.accepted_root_id(
+                {
+                    "schemaVersion": "wisdom-weasel.room-ingress-accepted.v1",
+                    "rootId": "room-root:1",
+                }
+            ),
+            "room-root:1",
+        )
+        with self.assertRaisesRegex(RuntimeError, "Room V2 is not active"):
+            CANARY.accepted_root_id(
+                {
+                    "schemaVersion": "rag-ime.agent-room-message.v1",
+                    "roomTurnId": "room-turn:legacy",
+                }
+            )
+
     def test_memory_check_is_scoped_to_the_session_memory_envelope(self) -> None:
         requests = [
             {

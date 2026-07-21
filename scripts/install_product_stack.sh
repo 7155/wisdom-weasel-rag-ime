@@ -74,7 +74,7 @@ rm -rf "$EXTENSION_DEST"
 ditto "$EXTENSION_SOURCE" "$EXTENSION_DEST"
 echo "Browser Co-pilot extension installed at $EXTENSION_DEST"
 
-required=(--require control --require sidecar --require squirrel)
+required=(--require control --require sidecar --require roomKernelMode --require squirrel)
 
 if [[ "$INCLUDE_PI" == "auto" ]]; then
   if [[ -n "$PI_WORKTREE" ]] \
@@ -112,7 +112,9 @@ fi
 # The stack owns launch order. Prevent the standalone Sidecar installer from
 # also refreshing the gateway, otherwise launchd sees two back-to-back
 # bootout/bootstrap cycles for the same label and can reject the second one.
-RAG_IME_INSTALL_AGENT_GATEWAY=0 "$ROOT/scripts/install_sidecar_launch_agent.sh"
+RAG_IME_INSTALL_AGENT_GATEWAY=0 \
+RAG_IME_ROOM_KERNEL_MODE=kernel_only \
+  "$ROOT/scripts/install_sidecar_launch_agent.sh"
 
 if [[ -f "$APP_SUPPORT_DIR/PiRuntime/current.json" ]]; then
   "$ROOT/scripts/install_agent_gateway_launch_agent.sh"

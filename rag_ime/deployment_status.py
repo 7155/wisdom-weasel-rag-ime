@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import plistlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -193,6 +194,10 @@ def audit_installed_product(
         installed_root=app_support / "app" / "integrations" / "pi",
         required="sidecar" in required or "roomRuntimeResources" in required,
     )
+    components["roomKernelMode"] = _room_kernel_mode_component(
+        plist_path=home / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist",
+        required="sidecar" in required or "roomKernelMode" in required,
+    )
 
     issues = [
         {"component": name, "code": item["code"], "detail": item["detail"]}
@@ -215,6 +220,47 @@ def audit_installed_product(
             if issues
             else "No canonical installed product commit was found."
         ),
+    }
+
+
+def _room_kernel_mode_component(*, plist_path: Path, required: bool) -> dict[str, Any]:
+    try:
+        with plist_path.open("rb") as source:
+            payload = plistlib.load(source)
+    except (FileNotFoundError, OSError, plistlib.InvalidFileException):
+        payload = None
+    environment = _mapping(
+        payload.get("EnvironmentVariables") if isinstance(payload, Mapping) else None
+    )
+    mode = _text(environment.get("RAG_IME_ROOM_KERNEL_MODE"))
+    installed = isinstance(payload, Mapping)
+    active = mode == "kernel_only"
+    if not installed:
+        ok = not required
+        code = "not_installed"
+        detail = "Room Kernel launch configuration is not installed."
+    elif not mode:
+        ok = False
+        code = "legacy_fallback"
+        detail = "Sidecar has no Room Kernel mode and will silently run the legacy Room route."
+    elif not active:
+        ok = False
+        code = "inactive_mode"
+        detail = f"Sidecar Room Kernel mode is {mode!r}; the release requires 'kernel_only'."
+    else:
+        ok = True
+        code = "ready"
+        detail = "Sidecar is pinned to the single production Room V2 Kernel route."
+    return {
+        "id": "roomKernelMode",
+        "ok": ok,
+        "code": code,
+        "detail": detail,
+        "required": required,
+        "installed": installed,
+        "current": active,
+        "plistPath": str(plist_path),
+        "mode": mode,
     }
 
 

@@ -843,10 +843,16 @@ class DebugImeService:
             if access_context is not None
             else bootstrap["routes"]
         )
+        room_kernel_mode = str(self.agent.room_kernel.mode)
         return {
             "schemaVersion": "rag-ime.control-capabilities.v1",
             "apiVersion": bootstrap["apiVersion"],
-            "features": {},
+            "features": {
+                "roomKernel": {
+                    "mode": room_kernel_mode,
+                    "v2Active": room_kernel_mode in {"cohort", "kernel_only"},
+                }
+            },
             "platform": bootstrap["platform"],
             "routes": routes,
         }

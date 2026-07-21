@@ -60,10 +60,10 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("../pi/packages/rag-ime-runtime-host", installer)
         self.assertIn("install_managed_pi_runtime.py", installer)
         self.assertIn("--require piSkills", installer)
-        self.assertIn(
-            'RAG_IME_INSTALL_AGENT_GATEWAY=0 "$ROOT/scripts/install_sidecar_launch_agent.sh"',
-            installer,
-        )
+        self.assertIn("--require roomKernelMode", installer)
+        self.assertIn("RAG_IME_INSTALL_AGENT_GATEWAY=0", installer)
+        self.assertIn("RAG_IME_ROOM_KERNEL_MODE=kernel_only", installer)
+        self.assertIn('"$ROOT/scripts/install_sidecar_launch_agent.sh"', installer)
         self.assertIn("install_voice_input_launch_agent.sh", installer)
         self.assertIn("check_installed_product_components.py", installer)
         self.assertIn("--require-current", installer)

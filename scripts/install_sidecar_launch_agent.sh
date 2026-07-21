@@ -28,6 +28,7 @@ CORE_COMMAND="${RAG_MEMORY_CORE_COMMAND:-}"
 NO_SEED="${RAG_IME_SIDECAR_NO_SEED:-0}"
 DRY_RUN="${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}"
 RUNTIME_PROFILE="${RAG_IME_RUNTIME_PROFILE:-foreground-rag-proof}"
+ROOM_KERNEL_MODE="${RAG_IME_ROOM_KERNEL_MODE:-kernel_only}"
 HEALTH_TIMEOUT_SECONDS="${RAG_IME_SIDECAR_HEALTH_TIMEOUT_SECONDS:-45}"
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf 'unknown')"
 SOURCE_DIRTY="false"
@@ -53,6 +54,14 @@ if [[ ! "$HEALTH_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || (( HEALTH_TIMEOUT_SECONDS < 
   echo "RAG_IME_SIDECAR_HEALTH_TIMEOUT_SECONDS must be a positive integer" >&2
   exit 1
 fi
+
+case "$ROOM_KERNEL_MODE" in
+  off|shadow|kernel_only) ;;
+  *)
+    echo "RAG_IME_ROOM_KERNEL_MODE must be off, shadow, or kernel_only" >&2
+    exit 1
+    ;;
+esac
 
 detect_python() {
   local candidate
@@ -321,6 +330,7 @@ DB_PATH="$DB_PATH" \
 PROJECT="$PROJECT" \
 HOST="$HOST" \
 PORT="$PORT" \
+ROOM_KERNEL_MODE="$ROOM_KERNEL_MODE" \
 CORE_MODE="$CORE_MODE" \
 CORE_COMMAND="$CORE_COMMAND" \
 NO_SEED="$NO_SEED" \
@@ -378,6 +388,11 @@ env_vars = {
     "RAG_IME_APP_SUPPORT_DIR": app_support_dir,
     "RAG_IME_DB_PATH": os.environ["DB_PATH"],
     "RAG_IME_CORE_MODE": os.environ["CORE_MODE"],
+    # The production installer owns Room cutover. AgentService itself keeps a
+    # fail-closed default for tests and ad-hoc embedding, while a formal install
+    # runs the single V2 Kernel route unless an operator explicitly requests a
+    # rollback mode.
+    "RAG_IME_ROOM_KERNEL_MODE": os.environ["ROOM_KERNEL_MODE"],
     "RAG_IME_RUNTIME_PROFILE": os.environ.get("RAG_IME_RUNTIME_PROFILE", "foreground-rag-proof"),
     "RAG_IME_KNOWLEDGE_PYTHON": os.environ["RAG_IME_KNOWLEDGE_PYTHON"],
     "RAG_IME_ENABLE_POST_COMMIT_ASYNC_COMPLETION": "1",
@@ -835,18 +850,27 @@ echo "Logs: $LOG_DIR/sidecar.out.log and $LOG_DIR/sidecar.err.log"
 
 health_deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
 while (( SECONDS < health_deadline )); do
-  if "$PYTHON_EXECUTABLE" - "$HOST" "$PORT" >/dev/null 2>&1 <<'PY'
+  if "$PYTHON_EXECUTABLE" - "$HOST" "$PORT" "$ROOM_KERNEL_MODE" >/dev/null 2>&1 <<'PY'
 import json
 import sys
 import urllib.request
 
 host = sys.argv[1]
 port = sys.argv[2]
+expected_room_kernel_mode = sys.argv[3]
 url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 with opener.open(f"http://{url_host}:{port}/health", timeout=1.0) as response:
     payload = json.loads(response.read().decode("utf-8"))
 if not payload.get("ok"):
+    raise SystemExit(1)
+with opener.open(
+    f"http://{url_host}:{port}/api/agent/control/capabilities",
+    timeout=1.0,
+) as response:
+    capabilities = json.loads(response.read().decode("utf-8"))
+room_kernel = (capabilities.get("features") or {}).get("roomKernel") or {}
+if room_kernel.get("mode") != expected_room_kernel_mode:
     raise SystemExit(1)
 PY
   then

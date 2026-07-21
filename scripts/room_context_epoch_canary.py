@@ -66,6 +66,17 @@ def encoded(value: str) -> str:
     return urllib.parse.quote(value, safe="")
 
 
+def accepted_root_id(response: dict[str, Any]) -> str:
+    root_id = str(response.get("rootId") or "")
+    if not root_id.startswith("room-root:"):
+        schema = str(response.get("schemaVersion") or "unknown")
+        raise RuntimeError(
+            "Room V2 is not active: message acceptance returned "
+            f"schema={schema!r}, rootId={root_id!r}"
+        )
+    return root_id
+
+
 def wait_for_terminal_dispatch(
     base_url: str,
     room_id: str,
@@ -374,7 +385,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "workItemId": work["id"],
             },
         )
-        root_id = str(accepted["rootId"])
+        root_id = accepted_root_id(accepted)
         try:
             settled = wait_for_terminal_dispatch(
                 args.base_url,

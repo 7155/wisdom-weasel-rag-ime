@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import plistlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,6 +29,7 @@ class InstalledProductAuditTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["expectedCommit"], commit)
         self.assertTrue(report["components"]["sidecar"]["current"])
+        self.assertEqual(report["components"]["roomKernelMode"]["mode"], "kernel_only")
         self.assertEqual(report["components"]["voice"]["code"], "not_installed")
 
     def test_detects_optional_component_from_another_product_commit(self) -> None:
@@ -72,6 +74,25 @@ class InstalledProductAuditTests(unittest.TestCase):
 
         self.assertFalse(report["ok"])
         self.assertEqual(report["components"]["sidecar"]["code"], "invalid_marker")
+
+    def test_detects_a_formal_sidecar_still_using_the_legacy_room_route(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-product-audit-room-mode-") as tmp:
+            root, home, support = self._layout(Path(tmp))
+            commit = "9" * 40
+            self._write_control(home, commit)
+            self._write_component(support / "app", "sidecar-runtime", commit)
+            self._write_squirrel(root, home)
+            self._write_sidecar_plist(home, mode="off")
+
+            report = audit_installed_product(
+                repo_root=root,
+                home=home,
+                app_support=support,
+                verify_pi_files=False,
+            )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["components"]["roomKernelMode"]["code"], "inactive_mode")
 
     def test_desktop_bridge_requires_semantics_without_screen_capture(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-product-audit-desktop-") as tmp:
@@ -242,7 +263,20 @@ class InstalledProductAuditTests(unittest.TestCase):
             source_skill.read_text(encoding="utf-8"),
             encoding="utf-8",
         )
+        self._write_sidecar_plist(home, mode="kernel_only")
         return root, home, support
+
+    def _write_sidecar_plist(self, home: Path, *, mode: str) -> None:
+        path = home / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as target:
+            plistlib.dump(
+                {
+                    "Label": "com.rag-ime.sidecar",
+                    "EnvironmentVariables": {"RAG_IME_ROOM_KERNEL_MODE": mode},
+                },
+                target,
+            )
 
     def _write_control(self, home: Path, commit: str) -> None:
         marker = (

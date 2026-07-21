@@ -132,6 +132,10 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
         self.assertEqual(capabilities_status, 200, capabilities)
         self.assertEqual(bootstrap["schemaVersion"], "rag-ime.agent-control-bootstrap.v1")
         self.assertEqual(capabilities["schemaVersion"], "rag-ime.control-capabilities.v1")
+        self.assertEqual(
+            capabilities["features"]["roomKernel"],
+            {"mode": "off", "v2Active": False},
+        )
         route_ids = {str(item["pathId"]) for item in capabilities["routes"]}
         self.assertIn("knowledgeBases.list", route_ids)
         self.assertIn("knowledgeBases.document.import", route_ids)
