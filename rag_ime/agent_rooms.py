@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import os
@@ -33,6 +34,7 @@ ROOM_EVENT_TYPES = frozenset(
         "participant_delta",
         "participant_activity",
         "participant_message",
+        "room_post",
         "room_config_changed",
         "topic_changed",
         "artifact_changed",
@@ -1070,7 +1072,7 @@ class AgentRoomStore:
         self.get(room_id)
         clauses = [
             "room_id = ?",
-            "event_type IN ('user_message', 'participant_message')",
+            "event_type IN ('user_message', 'participant_message', 'room_post')",
         ]
         params: list[object] = [room_id]
         if topic_id:
@@ -1126,7 +1128,7 @@ class AgentRoomStore:
             clauses = [
                 "room_id = ?",
                 "sequence > ?",
-                "event_type IN ('user_message', 'participant_message')",
+                "event_type IN ('user_message', 'participant_message', 'room_post')",
             ]
             params: list[object] = [room_id, after_sequence]
             if topic_id:
@@ -1213,12 +1215,110 @@ class AgentRoomStore:
         created_at_ms: int | None = None,
         retain_per_room: int = 2000,
     ) -> dict[str, object]:
+        event, created = self._append_event(
+            room_id=room_id,
+            event_type=event_type,
+            payload=payload,
+            turn_id=turn_id,
+            participant_id=participant_id,
+            source_session_id=source_session_id,
+            topic_id=topic_id,
+            created_at_ms=created_at_ms,
+            retain_per_room=retain_per_room,
+            projection_key="",
+        )
+        if not created or event is None:
+            raise RuntimeError("ordinary Room event append did not create an event")
+        return event
+
+    def append_projected_event(
+        self,
+        *,
+        projection_key: str,
+        room_id: str,
+        event_type: str,
+        payload: Mapping[str, object],
+        turn_id: str = "",
+        participant_id: str | None = None,
+        source_session_id: str = "",
+        topic_id: str = "",
+        created_at_ms: int | None = None,
+        retain_per_room: int = 2000,
+    ) -> tuple[dict[str, object] | None, bool]:
+        """Append one durable public projection exactly once.
+
+        The receipt outlives timeline retention, so a replayed runtime event
+        cannot reappear as a duplicate after its old display event is pruned.
+        """
+
+        normalized_key = str(projection_key or "").strip()
+        if not normalized_key:
+            raise ValueError("Room projection key must not be empty")
+        return self._append_event(
+            room_id=room_id,
+            event_type=event_type,
+            payload=payload,
+            turn_id=turn_id,
+            participant_id=participant_id,
+            source_session_id=source_session_id,
+            topic_id=topic_id,
+            created_at_ms=created_at_ms,
+            retain_per_room=retain_per_room,
+            projection_key=normalized_key,
+        )
+
+    def _append_event(
+        self,
+        *,
+        room_id: str,
+        event_type: str,
+        payload: Mapping[str, object],
+        turn_id: str,
+        participant_id: str | None,
+        source_session_id: str,
+        topic_id: str,
+        created_at_ms: int | None,
+        retain_per_room: int,
+        projection_key: str,
+    ) -> tuple[dict[str, object] | None, bool]:
         if event_type not in ROOM_EVENT_TYPES:
             raise ValueError(f"unsupported agent room event type: {event_type}")
         timestamp = _timestamp(created_at_ms)
         safe_payload = dict(payload)
         payload_json = json.dumps(safe_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        projection_hash = _room_projection_hash(
+            room_id=room_id,
+            event_type=event_type,
+            payload=safe_payload,
+            turn_id=turn_id,
+            participant_id=participant_id,
+            source_session_id=source_session_id,
+            topic_id=topic_id,
+        )
         with self._connect() as conn:
+            if projection_key:
+                receipt = conn.execute(
+                    """
+                    SELECT room_id, event_id, payload_hash
+                    FROM agent_room_public_projection_receipts
+                    WHERE projection_key = ?
+                    """,
+                    (projection_key,),
+                ).fetchone()
+                if receipt is not None:
+                    if (
+                        str(receipt["room_id"]) != room_id
+                        or str(receipt["payload_hash"]) != projection_hash
+                    ):
+                        raise ValueError("Room projection key was rebound")
+                    row = conn.execute(
+                        "SELECT * FROM agent_room_events WHERE event_id = ?",
+                        (str(receipt["event_id"]),),
+                    ).fetchone()
+                    return (
+                        _room_event_payload(row) if row is not None else None,
+                        False,
+                    )
             room = conn.execute("SELECT * FROM agent_rooms WHERE id = ?", (room_id,)).fetchone()
             if room is None:
                 raise AgentRoomNotFound(room_id)
@@ -1273,6 +1373,21 @@ class AgentRoomStore:
                 """,
                 (sequence, timestamp, room_id),
             )
+            if projection_key:
+                conn.execute(
+                    """
+                    INSERT INTO agent_room_public_projection_receipts(
+                        projection_key, room_id, event_id, payload_hash, created_at_ms
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        projection_key,
+                        room_id,
+                        event_id,
+                        projection_hash,
+                        timestamp,
+                    ),
+                )
             if participant_id and event_type in {"participant_message", "turn_completed"}:
                 conn.execute(
                     "UPDATE agent_room_participants SET last_spoke_at_ms = ? WHERE id = ?",
@@ -1283,7 +1398,7 @@ class AgentRoomStore:
                 (room_id, max(0, sequence - max(100, int(retain_per_room)))),
             )
             self._append_jsonl(Path(str(room["room_file"])), event)
-        return event
+        return event, True
 
     def list_events(
         self,
@@ -1462,7 +1577,31 @@ class AgentRoomEventHub:
     def publish(self, **values: object) -> dict[str, object]:
         with self._lock:
             event = self.store.append_event(**values)  # type: ignore[arg-type]
-            subscribers = tuple(self._subscribers.get(str(event["roomId"]), ()))
+        self._fanout(event)
+        return event
+
+    def publish_projection(
+        self,
+        *,
+        projection_key: str,
+        **values: object,
+    ) -> dict[str, object] | None:
+        with self._lock:
+            event, created = self.store.append_projected_event(
+                projection_key=projection_key,
+                **values,  # type: ignore[arg-type]
+            )
+        if created:
+            if event is None:
+                raise RuntimeError("created Room projection has no event")
+            self._fanout(event)
+        return event
+
+    def _fanout(self, event: dict[str, object]) -> None:
+        with self._lock:
+            subscribers = tuple(
+                self._subscribers.get(str(event["roomId"]), ())
+            )
         for subscriber in subscribers:
             try:
                 subscriber.put_nowait(event)
@@ -1481,7 +1620,6 @@ class AgentRoomEventHub:
                 # Room projections are diagnostic side effects and must never
                 # interrupt the primary conversation or intercom delivery.
                 pass
-        return event
 
     def add_observer(
         self,
@@ -1675,6 +1813,34 @@ def _room_event_payload(row: sqlite3.Row) -> dict[str, object]:
     }
     validate_contract(payload, "agent-room-event.v1.json")
     return payload
+
+
+def _room_projection_hash(
+    *,
+    room_id: str,
+    event_type: str,
+    payload: Mapping[str, object],
+    turn_id: str,
+    participant_id: str | None,
+    source_session_id: str,
+    topic_id: str,
+) -> str:
+    material = {
+        "roomId": room_id,
+        "eventType": event_type,
+        "turnId": str(turn_id or ""),
+        "participantId": participant_id,
+        "sourceSessionId": str(source_session_id or ""),
+        "topicId": str(topic_id or ""),
+        "payload": dict(payload),
+    }
+    encoded = json.dumps(
+        material,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _room_event_sse(event: Mapping[str, object]) -> bytes:

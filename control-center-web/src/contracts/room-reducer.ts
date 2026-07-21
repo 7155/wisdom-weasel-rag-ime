@@ -1,5 +1,5 @@
 import type { ProjectionDiagnostic, ProjectionGap, ProjectionReduction } from './agent-reducer';
-import type { AgentRoomSnapshotV1 } from './generated';
+import type { AgentRoomSnapshotV1, RoomPostV2 } from './generated';
 import type { UiAgentMessage, UiRoomEvent } from './ui-events';
 import { parseContract, parseRoomEvent, tryParseAgentMessage } from './validators';
 
@@ -14,6 +14,9 @@ export interface RoomMessageProjection {
   text: string;
   message?: UiAgentMessage;
   clientMessageId?: string;
+  projectionKind?: 'optimistic' | 'execution' | 'post';
+  rootId?: string;
+  dispatchId?: string;
   createdAtMs: number;
   completedAtMs?: number;
 }
@@ -40,6 +43,7 @@ export interface RoomActivityLaneIdentity {
 
 export interface RoomTurnProjection {
   id: string;
+  rootId?: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'aborted';
   messageIds: string[];
   activityIds: string[];
@@ -47,6 +51,11 @@ export interface RoomTurnProjection {
   terminalParticipantIds?: string[];
   failedParticipantIds?: string[];
   abortedParticipantIds?: string[];
+  dispatchIds?: string[];
+  terminalDispatchIds?: string[];
+  failedDispatchIds?: string[];
+  abortedDispatchIds?: string[];
+  dispatchParticipantIds?: Record<string, string>;
   createdAtMs: number;
   updatedAtMs: number;
   failure?: string;
@@ -150,6 +159,9 @@ export function reduceRoomEvent(
     case 'participant_message':
       applyParticipantMessage(next, event, payload);
       break;
+    case 'room_post':
+      applyRoomPost(next, event, payload);
+      break;
     case 'route_decision':
     case 'participant_status':
     case 'participant_activity':
@@ -159,6 +171,7 @@ export function reduceRoomEvent(
       completeParticipantTurn(
         next,
         event,
+        text(payload.dispatchId),
         text(payload.status) === 'aborted' || payload.aborted === true
           ? 'aborted'
           : 'completed',
@@ -169,6 +182,7 @@ export function reduceRoomEvent(
       completeParticipantTurn(
         next,
         event,
+        text(payload.dispatchId),
         'failed',
         event.createdAtMs,
         text(payload.error),
@@ -239,6 +253,8 @@ export function appendOptimisticRoomMessage(
     status: 'queued',
     text: input.text,
     clientMessageId: input.clientMessageId,
+    projectionKind: 'optimistic',
+    rootId: turnId,
     createdAtMs: input.nowMs,
   };
   next.messagesById[id] = message;
@@ -398,6 +414,7 @@ export function abortRoomParticipantTurn(
       turnId,
       participantId,
     },
+    '',
     'aborted',
     nowMs,
   );
@@ -419,6 +436,8 @@ function applyUserMessage(
     role: 'user',
     status: 'completed',
     text: text(payload.text ?? payload.message),
+    projectionKind: 'post',
+    rootId: text(payload.rootId) || event.turnId,
     ...(clientMessageId ? { clientMessageId } : {}),
     createdAtMs: event.createdAtMs,
     completedAtMs: event.createdAtMs,
@@ -431,8 +450,9 @@ function applyParticipantDelta(
   event: UiRoomEvent,
   payload: Record<string, unknown>,
 ): void {
-  const id =
-    text(payload.messageId) || `${event.turnId}:${event.participantId ?? 'participant'}:assistant`;
+  const rootId = text(payload.rootId) || event.turnId;
+  const dispatchId = text(payload.dispatchId);
+  const id = executionMessageId(event, payload);
   const existing = state.messagesById[id];
   const message: RoomMessageProjection = existing
     ? {
@@ -449,6 +469,9 @@ function applyParticipantDelta(
         role: 'assistant',
         status: 'streaming',
         text: text(payload.delta),
+        projectionKind: 'execution',
+        rootId,
+        ...(dispatchId ? { dispatchId } : {}),
         createdAtMs: event.createdAtMs,
       };
   upsertMessage(state, message);
@@ -482,14 +505,16 @@ function applyParticipantMessage(
     status: parsed.value.status,
     text: messageText(parsed.value),
     message: parsed.value,
+    projectionKind: 'post',
+    rootId: text(payload.rootId) || event.turnId,
+    ...(text(payload.dispatchId) ? { dispatchId: text(payload.dispatchId) } : {}),
     ...(clientMessageId ? { clientMessageId } : {}),
     createdAtMs: parsed.value.createdAtMs,
     ...(parsed.value.completedAtMs == null
       ? {}
       : { completedAtMs: parsed.value.completedAtMs }),
   };
-  const provisionalId =
-    `${event.turnId}:${event.participantId ?? 'participant'}:assistant`;
+  const provisionalId = executionMessageId(event, payload);
   if (
     provisionalId !== message.id &&
     state.messagesById[provisionalId]?.status === 'streaming'
@@ -498,6 +523,79 @@ function applyParticipantMessage(
     return;
   }
   upsertMessage(state, message, clientMessageId);
+}
+
+function applyRoomPost(
+  state: RoomProjectionState,
+  event: UiRoomEvent,
+  payload: Record<string, unknown>,
+): void {
+  let post: RoomPostV2;
+  try {
+    post = parseContract('room-post.v2', payload.post);
+  } catch {
+    appendDiagnostic(state, {
+      id: `${event.eventId}:invalid-room-post`,
+      streamKind: 'room',
+      eventType: 'room_post_invalid',
+      summary: 'A malformed RoomPost was skipped.',
+      sequence: event.sequence,
+      payload,
+    });
+    return;
+  }
+  const fallbackBlock: UiAgentMessage['blocks'][number] = {
+    schemaVersion: 'rag-ime.agent-block.v1',
+    id: `${post.postId}:text`,
+    type: 'text',
+    status: 'completed',
+    presentationKind: 'markdown',
+    data: { text: post.content },
+    source: { kind: post.publicationSource.kind, ref: post.publicationSource.ref },
+    visibility: post.visibility === 'room' ? 'room_post' : 'root_post',
+    generation: post.generation,
+  };
+  const message: RoomMessageProjection = {
+    id: post.postId,
+    roomId: event.roomId,
+    turnId: post.rootId,
+    participantId: event.participantId,
+    sourceSessionId: event.sourceSessionId,
+    role: post.publicationSource.kind === 'user' ? 'user' : 'assistant',
+    status: 'completed',
+    text: post.content,
+    projectionKind: 'post',
+    rootId: post.rootId,
+    ...(post.dispatchId ? { dispatchId: post.dispatchId } : {}),
+    message: {
+      schemaVersion: 'rag-ime.agent-message.v1',
+      id: post.postId,
+      sessionId: event.sourceSessionId || `room:${event.roomId}`,
+      turnId: post.rootId,
+      role: post.publicationSource.kind === 'user' ? 'user' : 'assistant',
+      status: 'completed',
+      blocks: (post.blocks?.length ? post.blocks : [fallbackBlock]) as UiAgentMessage['blocks'],
+      attachments: [],
+      citations: [],
+      createdAtMs: post.createdAtMs,
+      completedAtMs: post.createdAtMs,
+    },
+    createdAtMs: post.createdAtMs,
+    completedAtMs: post.createdAtMs,
+  };
+  const provisional = Object.values(state.messagesById)
+    .filter((candidate) => (
+      candidate.projectionKind === 'execution'
+      && candidate.rootId === post.rootId
+      && candidate.dispatchId === (post.dispatchId ?? '')
+      && candidate.participantId === event.participantId
+    ))
+    .sort((left, right) => right.createdAtMs - left.createdAtMs)[0];
+  if (provisional) {
+    replaceProvisionalMessage(state, provisional.id, message);
+    return;
+  }
+  upsertMessage(state, message);
 }
 
 function replaceProvisionalMessage(
@@ -615,6 +713,14 @@ function upsertActivity(
   if (!state.activitiesById[id]) state.activityOrder.push(id);
   state.activitiesById[id] = activity;
   const turn = ensureTurn(state, event.turnId, event.createdAtMs);
+  turn.rootId = text(payload.rootId) || turn.rootId || event.turnId;
+  const dispatchId = text(payload.dispatchId);
+  if (dispatchId) {
+    turn.dispatchIds ??= [];
+    turn.dispatchParticipantIds ??= {};
+    if (!turn.dispatchIds.includes(dispatchId)) turn.dispatchIds.push(dispatchId);
+    turn.dispatchParticipantIds[dispatchId] = event.participantId ?? '';
+  }
   if (!turn.activityIds.includes(id)) turn.activityIds.push(id);
   if (event.participantId && !turn.participantIds.includes(event.participantId)) {
     turn.participantIds.push(event.participantId);
@@ -626,6 +732,15 @@ function upsertActivity(
 
 function attachMessage(state: RoomProjectionState, message: RoomMessageProjection): void {
   const turn = ensureTurn(state, message.turnId, message.createdAtMs);
+  turn.rootId = message.rootId || turn.rootId || message.turnId;
+  if (message.dispatchId) {
+    turn.dispatchIds ??= [];
+    turn.dispatchParticipantIds ??= {};
+    if (!turn.dispatchIds.includes(message.dispatchId)) {
+      turn.dispatchIds.push(message.dispatchId);
+    }
+    turn.dispatchParticipantIds[message.dispatchId] = message.participantId ?? '';
+  }
   if (!turn.messageIds.includes(message.id)) turn.messageIds.push(message.id);
   if (message.participantId && !turn.participantIds.includes(message.participantId)) {
     turn.participantIds.push(message.participantId);
@@ -653,6 +768,7 @@ function ensureTurn(
   if (!turn) {
     turn = {
       id: turnId,
+      rootId: turnId,
       status: 'running',
       messageIds: [],
       activityIds: [],
@@ -660,6 +776,11 @@ function ensureTurn(
       terminalParticipantIds: [],
       failedParticipantIds: [],
       abortedParticipantIds: [],
+      dispatchIds: [],
+      terminalDispatchIds: [],
+      failedDispatchIds: [],
+      abortedDispatchIds: [],
+      dispatchParticipantIds: {},
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
     };
@@ -672,58 +793,108 @@ function ensureTurn(
 function completeParticipantTurn(
   state: RoomProjectionState,
   event: Pick<UiRoomEvent, 'turnId' | 'participantId'>,
+  dispatchId: string,
   status: Extract<RoomTurnProjection['status'], 'completed' | 'failed' | 'aborted'>,
   nowMs: number,
   failure = '',
 ): void {
   const participantId = event.participantId ?? '';
-  if (!participantId) {
+  if (!participantId && !dispatchId) {
     completeTurn(state, event.turnId, status, nowMs, failure);
     return;
   }
   const turn = ensureTurn(state, event.turnId, nowMs);
-  if (!turn.participantIds.includes(participantId)) {
+  turn.dispatchIds ??= [];
+  turn.terminalDispatchIds ??= [];
+  turn.failedDispatchIds ??= [];
+  turn.abortedDispatchIds ??= [];
+  turn.dispatchParticipantIds ??= {};
+  if (dispatchId) {
+    if (!turn.dispatchIds.includes(dispatchId)) turn.dispatchIds.push(dispatchId);
+    turn.dispatchParticipantIds[dispatchId] = participantId;
+    if (
+      turn.abortedDispatchIds.includes(dispatchId)
+      || (status === 'completed' && turn.failedDispatchIds.includes(dispatchId))
+    ) {
+      return;
+    }
+    if (!turn.terminalDispatchIds.includes(dispatchId)) {
+      turn.terminalDispatchIds.push(dispatchId);
+    }
+    if (status === 'failed' && !turn.failedDispatchIds.includes(dispatchId)) {
+      turn.failedDispatchIds.push(dispatchId);
+    }
+    if (status === 'aborted' && !turn.abortedDispatchIds.includes(dispatchId)) {
+      turn.abortedDispatchIds.push(dispatchId);
+    }
+  } else if (participantId) {
+    for (const id of turn.dispatchIds) {
+      if (turn.dispatchParticipantIds[id] !== participantId) continue;
+      if (!turn.terminalDispatchIds.includes(id)) turn.terminalDispatchIds.push(id);
+      if (status === 'failed' && !turn.failedDispatchIds.includes(id)) {
+        turn.failedDispatchIds.push(id);
+      }
+      if (status === 'aborted' && !turn.abortedDispatchIds.includes(id)) {
+        turn.abortedDispatchIds.push(id);
+      }
+    }
+  }
+  if (participantId && !turn.participantIds.includes(participantId)) {
     turn.participantIds.push(participantId);
   }
   turn.terminalParticipantIds ??= [];
   turn.failedParticipantIds ??= [];
   turn.abortedParticipantIds ??= [];
-  if (
-    turn.abortedParticipantIds.includes(participantId)
-    || (
-      status === 'completed'
-      && turn.failedParticipantIds.includes(participantId)
-    )
-  ) {
-    return;
-  }
-  if (!turn.terminalParticipantIds.includes(participantId)) {
-    turn.terminalParticipantIds.push(participantId);
-  }
-  if (status === 'failed' && !turn.failedParticipantIds.includes(participantId)) {
-    turn.failedParticipantIds.push(participantId);
-  }
-  if (status === 'aborted' && !turn.abortedParticipantIds.includes(participantId)) {
-    turn.abortedParticipantIds.push(participantId);
+  const participantDispatches = turn.dispatchIds.filter(
+    (id) => turn.dispatchParticipantIds?.[id] === participantId,
+  );
+  const participantTerminal = !dispatchId || participantDispatches.every(
+    (id) => turn.terminalDispatchIds?.includes(id),
+  );
+  if (participantId && participantTerminal) {
+    if (!turn.terminalParticipantIds.includes(participantId)) {
+      turn.terminalParticipantIds.push(participantId);
+    }
+    if (
+      participantDispatches.some((id) => turn.failedDispatchIds?.includes(id))
+      || (!dispatchId && status === 'failed')
+    ) {
+      if (!turn.failedParticipantIds.includes(participantId)) {
+        turn.failedParticipantIds.push(participantId);
+      }
+    }
+    if (
+      participantDispatches.some((id) => turn.abortedDispatchIds?.includes(id))
+      || (!dispatchId && status === 'aborted')
+    ) {
+      if (!turn.abortedParticipantIds.includes(participantId)) {
+        turn.abortedParticipantIds.push(participantId);
+      }
+    }
   }
   turn.updatedAtMs = Math.max(turn.updatedAtMs, nowMs);
   if (failure) turn.failure = failure;
   for (const messageId of turn.messageIds) {
     const message = state.messagesById[messageId];
-    if (!message || message.participantId !== participantId) continue;
+    if (
+      !message
+      || (participantId && message.participantId !== participantId)
+      || (dispatchId && message.dispatchId && message.dispatchId !== dispatchId)
+    ) continue;
     state.messagesById[messageId] = {
       ...message,
       status: status === 'completed' ? 'completed' : status,
       completedAtMs: nowMs,
     };
   }
-  if (
-    turn.participantIds.length > 0
-    && turn.participantIds.every((id) => turn.terminalParticipantIds?.includes(id))
-  ) {
-    turn.status = turn.failedParticipantIds.length > 0
+  const allTerminal = turn.dispatchIds.length > 0
+    ? turn.dispatchIds.every((id) => turn.terminalDispatchIds?.includes(id))
+    : turn.participantIds.length > 0
+      && turn.participantIds.every((id) => turn.terminalParticipantIds?.includes(id));
+  if (allTerminal) {
+    turn.status = turn.failedDispatchIds.length > 0 || turn.failedParticipantIds.length > 0
       ? 'failed'
-      : turn.abortedParticipantIds.length > 0
+      : turn.abortedDispatchIds.length > 0 || turn.abortedParticipantIds.length > 0
         ? 'aborted'
         : 'completed';
   } else {
@@ -744,6 +915,9 @@ function completeTurn(
   turn.terminalParticipantIds = [...turn.participantIds];
   turn.failedParticipantIds = status === 'failed' ? [...turn.participantIds] : [];
   turn.abortedParticipantIds = status === 'aborted' ? [...turn.participantIds] : [];
+  turn.terminalDispatchIds = [...(turn.dispatchIds ?? [])];
+  turn.failedDispatchIds = status === 'failed' ? [...(turn.dispatchIds ?? [])] : [];
+  turn.abortedDispatchIds = status === 'aborted' ? [...(turn.dispatchIds ?? [])] : [];
   if (failure) turn.failure = failure;
   for (const messageId of turn.messageIds) {
     const message = state.messagesById[messageId];
@@ -771,6 +945,27 @@ function messageText(message: UiAgentMessage): string {
     .join('\n');
 }
 
+function executionMessageId(
+  event: UiRoomEvent,
+  payload: Record<string, unknown>,
+): string {
+  const messageId = text(payload.messageId);
+  const dispatchId = text(payload.dispatchId);
+  if (!dispatchId) {
+    return messageId
+      || `${event.turnId}:${event.participantId ?? 'participant'}:assistant`;
+  }
+  const rootId = text(payload.rootId) || event.turnId;
+  const participantId = (event.participantId ?? event.sourceSessionId) || 'participant';
+  return [
+    'room-execution',
+    rootId,
+    participantId,
+    dispatchId,
+    messageId || 'assistant',
+  ].join('\u001f');
+}
+
 function cloneState(state: RoomProjectionState): RoomProjectionState {
   return {
     ...state,
@@ -789,6 +984,11 @@ function cloneState(state: RoomProjectionState): RoomProjectionState {
           terminalParticipantIds: [...(turn.terminalParticipantIds ?? [])],
           failedParticipantIds: [...(turn.failedParticipantIds ?? [])],
           abortedParticipantIds: [...(turn.abortedParticipantIds ?? [])],
+          dispatchIds: [...(turn.dispatchIds ?? [])],
+          terminalDispatchIds: [...(turn.terminalDispatchIds ?? [])],
+          failedDispatchIds: [...(turn.failedDispatchIds ?? [])],
+          abortedDispatchIds: [...(turn.abortedDispatchIds ?? [])],
+          dispatchParticipantIds: { ...(turn.dispatchParticipantIds ?? {}) },
         },
       ]),
     ),

@@ -69,6 +69,10 @@ const toolLabels: Record<string, string> = {
   workspace_shell: '受控命令',
 };
 
+export function publicToolLabel(toolId: string): string {
+  return toolLabels[toolId.trim().toLowerCase()] ?? '工具操作';
+}
+
 const toolDestinations: Record<string, { href: string; label: string }> = {
   ime_overview: { href: '#/overview', label: '打开总览' },
   ime_input: { href: '#/input', label: '打开输入法' },
@@ -193,7 +197,7 @@ export function publicToolResultView(activity: AgentActivityProjection): PublicT
     [payload, envelope, carrier],
     ['toolId', 'toolName', 'tool'],
   ).toLowerCase();
-  const toolLabel = toolLabels[toolId] ?? '工具操作';
+  const toolLabel = publicToolLabel(toolId);
   const fields: PublicToolResultField[] = [];
   const seen = new Set<string>();
   const append = (id: string, label: string, value: string) => {

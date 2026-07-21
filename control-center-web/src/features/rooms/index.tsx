@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, AtSign, BriefcaseBusiness, CheckCircle2, CircleStop, Clock3, ExternalLink, FilePlus2, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, MessagesSquare, PanelLeftOpen, PanelRightOpen, Plus, Route, Send, Settings2, ShieldCheck, Sparkles, Trash2, UserMinus, UserPlus, UsersRound, Wrench, X } from 'lucide-react';
+import { Archive, ArchiveRestore, BriefcaseBusiness, FilePlus2, FolderOpen, GitBranch, LoaderCircle, MessageSquarePlus, MessagesSquare, PanelLeftClose, PanelLeftOpen, PanelRightOpen, Plus, Settings2, ShieldCheck, Sparkles, Trash2, UserMinus, UserPlus, UsersRound, X } from 'lucide-react';
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
@@ -24,21 +24,23 @@ import {
   parseRoomEventSnapshot,
   reduceRoomEvent,
   replayRoomEventSnapshot,
-  roomActivityLaneIdentity,
-  type RoomActivityProjection,
   type RoomProjectionState,
 } from '@/contracts/room-reducer';
 import type { UiRoomEvent } from '@/contracts/ui-events';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
-import { AgentBlocks, MarkdownBody } from '@/features/agent/timeline/BlockRenderer';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { ProjectSceneEmptyState } from '@/features/agent/timeline/ProjectSceneEmptyState';
 import { roleItems } from '@/features/agent/types';
 import { publicErrorText } from '@/features/overview/management-ui';
 import { RoomStatusPanel } from './RoomStatusPanel';
+import { RoomComposer, roomMentionedParticipants } from './composer/RoomComposer';
 import { RoomKernelLivePanel } from './kernel/RoomKernelLivePanel';
 import { createRoomRuntimeLedger } from './room-runtime-ledger';
+import { mergeAcceptedRoomTimeline } from './runtime/accepted-room-timeline';
+import { RoomTurn } from './timeline/RoomTurn';
 import './rooms.css';
+
+export { RoomTurn } from './timeline/RoomTurn';
 
 export interface RoomParticipant { id: string; sessionId: string; roleId: string; roleVersion: string; displayName: string; collaborationRole?: 'coordinator' | 'executor' | 'researcher'; status: string; ordinal: number; }
 export type RoomKind = 'collaboration' | 'roleplay';
@@ -106,8 +108,9 @@ export function RoomsFeature() {
   const roomRailTriggerRef = useRef<HTMLButtonElement>(null);
   const roomRailCloseRef = useRef<HTMLButtonElement>(null);
   const roomRailRef = useRef<HTMLElement>(null);
-  const [roomRailOpen, setRoomRailOpen] = useState(false);
-  const [statusOpen, setStatusOpen] = useState(() => isWideRoomStatusViewport());
+  const [roomRailOpen, setRoomRailOpen] = useState(roomRailInitiallyOpen);
+  const roomRailOverlay = roomRailIsOverlay();
+  const [statusOpen, setStatusOpen] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<'posts' | 'execution' | 'sessions'>('posts');
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [draft, setDraft] = useState('');
@@ -165,9 +168,13 @@ export function RoomsFeature() {
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
 
   function closeRoomRail(restoreFocus = true): void {
-    if (!roomRailOpen) return;
+    if (!roomRailOpen || !roomRailOverlay) return;
     setRoomRailOpen(false);
     if (restoreFocus) requestAnimationFrame(() => roomRailTriggerRef.current?.focus());
+  }
+
+  function closeRoomRailIfOverlay(restoreFocus = true): void {
+    if (roomRailIsOverlay()) closeRoomRail(restoreFocus);
   }
 
   useEffect(() => {
@@ -195,7 +202,7 @@ export function RoomsFeature() {
     };
     document.addEventListener('keydown', closeOnEscape);
     return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [roomRailOpen]);
+  }, [roomRailOpen, roomRailOverlay]);
 
   useEffect(() => {
     let active = true;
@@ -365,7 +372,7 @@ export function RoomsFeature() {
     setDraft('');
     setError('');
     try {
-      await transport.request({
+      const response = await transport.request<Record<string, unknown>>({
         pathId: 'agent.room.message',
         params: { roomId: room.id },
         body: {
@@ -376,6 +383,10 @@ export function RoomsFeature() {
             : {}),
         },
       });
+      const current = runtimeLedger.getOrCreate(room.id).projection;
+      const accepted = mergeAcceptedRoomTimeline(current, response);
+      runtimeLedger.replace(room.id, accepted);
+      if (selectedId === room.id) setProjection(accepted);
     }
     catch (requestError) {
       const current = runtimeLedger.getOrCreate(room.id).projection;
@@ -866,13 +877,13 @@ export function RoomsFeature() {
   }
   return <>
     <main className="rooms-feature" data-route-id="rooms" data-rail-open={roomRailOpen} data-status-open={statusOpen}>
-      <aside ref={roomRailRef} className="rooms-rail" id="rooms-list-drawer" aria-label="Rooms 列表" role={roomRailOpen ? 'dialog' : undefined} aria-modal={roomRailOpen || undefined}>
-        <header><span><strong>Rooms</strong><small>多 Agent 协作</small></span><div className="rooms-rail-actions"><IconButton label={includeArchived ? '隐藏已归档 Room' : '显示已归档 Room'} icon={includeArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />} aria-pressed={includeArchived} onClick={() => setIncludeArchived((current) => !current)} tooltip /><IconButton disabled={catalogLoading || creating} label="新建 Room" icon={<MessageSquarePlus size={17} />} onClick={() => { closeRoomRail(false); beginCreateRoom(); }} tooltip /></div><IconButton ref={roomRailCloseRef} className="rooms-rail-mobile-close" label="关闭 Rooms 列表" icon={<X size={17} />} onClick={() => closeRoomRail()} tooltip /></header>
-        <div>{rooms.length ? rooms.map((item) => <button type="button" key={item.id} aria-label={`打开 Room：${item.title}`} aria-current={item.id === selectedId} onClick={() => { setSelectedId(item.id); setDraft(''); setError(''); closeRoomRail(); }}>{roomAvatarIcon(item)}<span><strong>{item.title}</strong><small>{item.status === 'archived' ? '已归档 · ' : ''}{item.participants.filter((participant) => participant.status === 'active').map((participant) => participant.displayName).join(' · ')}</small></span></button>) : !catalogLoading ? <p className="rooms-rail-empty">还没有 Room</p> : null}</div>
+      <aside ref={roomRailRef} className="rooms-rail" id="rooms-list-drawer" aria-label="Rooms 列表" role={roomRailOpen && roomRailOverlay ? 'dialog' : undefined} aria-modal={roomRailOpen && roomRailOverlay ? true : undefined}>
+        <header><span><strong>Rooms</strong><small>多 Agent 协作</small></span><div className="rooms-rail-actions"><IconButton label={includeArchived ? '隐藏已归档 Room' : '显示已归档 Room'} icon={includeArchived ? <ArchiveRestore size={16} /> : <Archive size={16} />} aria-pressed={includeArchived} onClick={() => setIncludeArchived((current) => !current)} tooltip /><IconButton disabled={catalogLoading || creating} label="新建 Room" icon={<MessageSquarePlus size={17} />} onClick={() => { closeRoomRailIfOverlay(false); beginCreateRoom(); }} tooltip /></div><IconButton ref={roomRailCloseRef} className="rooms-rail-mobile-close" label="关闭 Rooms 列表" icon={<X size={17} />} onClick={() => closeRoomRail()} tooltip /></header>
+        <div>{rooms.length ? rooms.map((item) => <button type="button" key={item.id} aria-label={`打开 Room：${item.title}`} aria-current={item.id === selectedId} onClick={() => { setSelectedId(item.id); setDraft(''); setError(''); closeRoomRailIfOverlay(); }}>{roomAvatarIcon(item)}<span><strong>{item.title}</strong><small>{item.status === 'archived' ? '已归档 · ' : ''}{item.participants.filter((participant) => participant.status === 'active').map((participant) => participant.displayName).join(' · ')}</small></span></button>) : !catalogLoading ? <p className="rooms-rail-empty">还没有 Room</p> : null}</div>
       </aside>
       <button className="rooms-rail-backdrop" aria-label="关闭 Rooms 列表" disabled={!roomRailOpen} onClick={() => closeRoomRail()} type="button" />
       <section className="room-workspace">
-        <header><IconButton ref={roomRailTriggerRef} className="rooms-rail-trigger" label="打开 Rooms 列表" icon={<PanelLeftOpen size={17} />} aria-controls="rooms-list-drawer" aria-expanded={roomRailOpen} onClick={() => setRoomRailOpen(true)} tooltip /><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建群聊' : room.status === 'archived' ? '已归档' : `${room.roomKind === 'roleplay' ? '角色群聊' : roomPathName(room)} · 自由对话与 @ 协作`}</small></span><SegmentedControl aria-label="Room 工作区" items={[{ value: 'posts', label: 'Posts' }, { value: 'execution', label: '执行' }, { value: 'sessions', label: 'Sessions' }]} onValueChange={(value) => setWorkspaceView(value as typeof workspaceView)} value={workspaceView} /><div className="room-header-actions">{room ? <IconButton label="Room 设置" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 证据栏' : '展开 Room 证据'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
+        <header><IconButton ref={roomRailTriggerRef} className="rooms-rail-trigger" label={roomRailOpen ? '收起 Rooms 列表' : '打开 Rooms 列表'} icon={roomRailOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} aria-controls="rooms-list-drawer" aria-expanded={roomRailOpen} onClick={() => setRoomRailOpen((current) => !current)} tooltip /><span><strong>{room?.title ?? 'Room'}</strong><small>{!room ? '选择或新建群聊' : room.status === 'archived' ? '已归档' : `${room.roomKind === 'roleplay' ? '角色群聊' : roomPathName(room)} · 自由对话与 @ 协作`}</small></span><SegmentedControl aria-label="Room 工作区" items={[{ value: 'posts', label: 'Posts' }, { value: 'execution', label: '执行' }, { value: 'sessions', label: 'Sessions' }]} onValueChange={(value) => setWorkspaceView(value as typeof workspaceView)} value={workspaceView} /><div className="room-header-actions">{room ? <IconButton label="Room 设置" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <IconButton label={room.status === 'archived' ? '恢复 Room' : '归档 Room'} icon={room.status === 'archived' ? <ArchiveRestore size={16} /> : <Archive size={16} />} onClick={() => { setError(''); setArchiveOpen(true); }} tooltip /> : null}<IconButton label={statusOpen ? '隐藏 Room 证据栏' : '展开 Room 证据'} icon={<PanelRightOpen size={17} />} onClick={() => setStatusOpen((current) => !current)} tooltip /></div></header>
         {room ? <div className="room-context-bar">
           <div className="room-topic-tabs" aria-label="Room 话题">
             <MessagesSquare size={14} />
@@ -890,7 +901,7 @@ export function RoomsFeature() {
           {!error && !roomCatalogError && roleCatalogError ? <p className="room-catalog-warning" role="status">{roleCatalogError}</p> : null}
         </div>
         {workspaceView === 'posts' ? <><div className="room-timeline" aria-label="Room Posts 时间线">
-          {room ? visibleTurnOrder.length ? <Virtuoso data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} personas={personas} abortingSessionIds={abortingSessionIds} abortingTurnIds={abortingTurnIds} onAbortTurn={() => void abortRootTurn(turnId)} onAbortSession={(sessionId) => void abortParticipantTurn(sessionId, turnId)} />} /> : snapshotLoading ? <p className="room-empty">正在读取 Room Posts…</p> : <ProjectSceneEmptyState sceneId="room-onboarding" title="还没有公开 Post" description="发一条消息，伙伴会立即接手并在这里持续显示进度。" /> : catalogLoading ? <p className="room-empty">正在读取 Rooms…</p> : <ProjectSceneEmptyState sceneId="room-onboarding" title="选择一个 Room" description="从 Rooms 列表选择，或新建协作 Room。" />}
+          {room ? visibleTurnOrder.length ? <Virtuoso data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} personas={personas} abortingSessionIds={abortingSessionIds} abortingTurnIds={abortingTurnIds} onAbortTurn={(rootId) => void abortRootTurn(rootId)} onAbortSession={(sessionId) => void abortParticipantTurn(sessionId, turnId)} />} /> : snapshotLoading ? <p className="room-empty">正在读取 Room Posts…</p> : <ProjectSceneEmptyState sceneId="room-onboarding" title="还没有公开 Post" description="发一条消息，伙伴会立即接手并在这里持续显示进度。" /> : catalogLoading ? <p className="room-empty">正在读取 Rooms…</p> : <ProjectSceneEmptyState sceneId="room-onboarding" title="选择一个 Room" description="从 Rooms 列表选择，或新建协作 Room。" />}
         </div><RoomComposer
           room={room}
           personas={personas}
@@ -988,488 +999,7 @@ export function RoomsFeature() {
   </>;
 }
 
-interface RoomMentionDraft {
-  start: number;
-  end: number;
-  query: string;
-}
 
-function RoomComposer({
-  room,
-  personas,
-  draft,
-  addressedParticipantId,
-  canSend,
-  onDraftChange,
-  onSend,
-}: {
-  room?: RoomSummary;
-  personas: AgentPersonaV1[];
-  draft: string;
-  addressedParticipantId: string;
-  canSend: boolean;
-  onDraftChange: (value: string) => void;
-  onSend: () => void;
-}) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const [mention, setMention] = useState<RoomMentionDraft>();
-  const [activeIndex, setActiveIndex] = useState(0);
-  const roomCanSend = room?.status === 'active';
-  const participants = room?.participants.filter((participant) => participant.status === 'active') ?? [];
-  const mentionCandidates = mention
-    ? participants.filter((participant) => roomMentionMatches(participant, mention.query))
-    : [];
-
-  useEffect(() => {
-    setMention(undefined);
-    setActiveIndex(0);
-  }, [room?.id]);
-
-  function syncMention(value: string, caret: number | null): void {
-    const next = activeRoomMention(value, caret ?? value.length);
-    setMention(next);
-    setActiveIndex(0);
-  }
-
-  function chooseParticipant(participant: RoomParticipant, currentMention = mention): void {
-    let next: string;
-    let caret: number;
-    if (currentMention) {
-      const inserted = `@${participant.displayName} `;
-      const suffix = draft.slice(currentMention.end).replace(/^ /, '');
-      next = `${draft.slice(0, currentMention.start)}${inserted}${suffix}`;
-      caret = currentMention.start + inserted.length;
-    } else {
-      const body = stripLeadingRoomMention(draft, participants);
-      next = `@${participant.displayName}${body ? ` ${body}` : ' '}`;
-      caret = `@${participant.displayName} `.length;
-    }
-    onDraftChange(next);
-    setMention(undefined);
-    setActiveIndex(0);
-    queueMicrotask(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(caret, caret);
-    });
-  }
-
-  function openMentionMenu(): void {
-    const spacer = draft && !/\s$/u.test(draft) ? ' ' : '';
-    const next = `${draft}${spacer}@`;
-    const start = next.length - 1;
-    onDraftChange(next);
-    setMention({ start, end: next.length, query: '' });
-    setActiveIndex(0);
-    queueMicrotask(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(next.length, next.length);
-    });
-  }
-
-  return <div className="room-composer-shell">
-    <div className="room-composer-wrap">
-      {mention && mentionCandidates.length ? <div id="room-mention-menu" className="room-mention-menu" role="listbox" aria-label="选择 Room 角色">
-        <header><AtSign size={14} /><span><strong>点名角色</strong><small>继续输入可筛选</small></span></header>
-        {mentionCandidates.map((participant, index) => <button
-          type="button"
-          id={`room-mention-${participant.id}`}
-          role="option"
-          aria-selected={index === activeIndex}
-          key={participant.id}
-          onMouseDown={(event) => { event.preventDefault(); chooseParticipant(participant); }}
-        >
-          <PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId && item.version === participant.roleVersion)} size="small" />
-          <span><strong>{participant.displayName}</strong><small>{roomParticipantRoleLabel(participant)}</small></span>
-          <kbd>{index === activeIndex ? 'Enter' : `@${participant.displayName}`}</kbd>
-        </button>)}
-      </div> : null}
-      <div className="room-composer">
-        {roomCanSend && participants.length ? <IconButton
-          label="点名 Room 角色"
-          icon={<AtSign size={16} />}
-          aria-pressed={Boolean(addressedParticipantId)}
-          onClick={openMentionMenu}
-          tooltip
-        /> : null}
-        <textarea
-          ref={textareaRef}
-          rows={2}
-          maxLength={8_000}
-          value={draft}
-          disabled={!roomCanSend}
-          onChange={(event) => {
-            onDraftChange(event.target.value);
-            syncMention(event.target.value, event.target.selectionStart);
-          }}
-          onClick={(event) => syncMention(event.currentTarget.value, event.currentTarget.selectionStart)}
-          onKeyUp={(event) => {
-            if (!['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(event.key)) {
-              syncMention(event.currentTarget.value, event.currentTarget.selectionStart);
-            }
-          }}
-          onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
-            if (mention && mentionCandidates.length) {
-              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault();
-                setActiveIndex((current) => (
-                  current + (event.key === 'ArrowDown' ? 1 : -1) + mentionCandidates.length
-                ) % mentionCandidates.length);
-                return;
-              }
-              if (event.key === 'Enter' || event.key === 'Tab') {
-                event.preventDefault();
-                chooseParticipant(mentionCandidates[activeIndex] ?? mentionCandidates[0]);
-                return;
-              }
-              if (event.key === 'Escape') {
-                event.preventDefault();
-                setMention(undefined);
-                return;
-              }
-            }
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              onSend();
-            }
-          }}
-          placeholder={roomComposerPlaceholder(room)}
-          aria-label="Room 消息"
-          aria-autocomplete="list"
-          aria-controls={mention && mentionCandidates.length ? 'room-mention-menu' : undefined}
-          aria-expanded={Boolean(mention && mentionCandidates.length)}
-          aria-activedescendant={mention && mentionCandidates.length ? `room-mention-${mentionCandidates[activeIndex]?.id}` : undefined}
-        />
-        <IconButton label="发送 Room 消息" icon={<Send size={17} />} disabled={!canSend} onClick={onSend} tooltip />
-      </div>
-    </div>
-  </div>;
-}
-
-interface RoomTurnProps {
-  turnId: string;
-  room?: RoomSummary;
-  projection: RoomProjectionState;
-  personas: AgentPersonaV1[];
-  abortingSessionIds?: ReadonlySet<string>;
-  abortingTurnIds?: ReadonlySet<string>;
-  onAbortTurn?: () => void;
-  onAbortSession?: (sessionId: string) => void;
-}
-
-interface RoomExecutionLane {
-  key: string;
-  participantId: string | null;
-  sourceSessionId: string;
-  activities: RoomActivityProjection[];
-  messageIds: string[];
-}
-
-export function RoomTurn({
-  turnId,
-  room,
-  projection,
-  personas,
-  abortingSessionIds = new Set(),
-  abortingTurnIds = new Set(),
-  onAbortTurn,
-  onAbortSession,
-}: RoomTurnProps) {
-  const turn = projection.turnsById[turnId];
-  if (!turn) return null;
-  const activities = turn.activityIds
-    .map((id) => projection.activitiesById[id])
-    .filter((activity): activity is RoomActivityProjection => Boolean(activity))
-    .filter(isUsefulRoomActivity);
-  const lanes = new Map<string, RoomExecutionLane>();
-  const participantLaneKeys = new Map<string, string[]>();
-  for (const activity of activities) {
-    const identity = roomActivityLaneIdentity(activity);
-    const lane = lanes.get(identity.key) ?? {
-      key: identity.key,
-      participantId: activity.participantId,
-      sourceSessionId: activity.sourceSessionId,
-      activities: [],
-      messageIds: [],
-    };
-    lane.activities.push(activity);
-    lanes.set(identity.key, lane);
-    const participantKey = `${activity.participantId ?? ''}\u001f${activity.sourceSessionId}`;
-    const keys = participantLaneKeys.get(participantKey) ?? [];
-    if (!keys.includes(identity.key)) keys.push(identity.key);
-    participantLaneKeys.set(participantKey, keys);
-  }
-  const userMessageIds: string[] = [];
-  for (const messageId of turn.messageIds) {
-    const message = projection.messagesById[messageId];
-    if (!message) continue;
-    if (message.role === 'user') {
-      userMessageIds.push(messageId);
-      continue;
-    }
-    const participantKey = `${message.participantId ?? ''}\u001f${message.sourceSessionId}`;
-    const existingKey = participantLaneKeys.get(participantKey)?.at(-1);
-    const laneKey = existingKey
-      ?? `${turnId}\u001f${message.participantId ?? 'participant'}\u001f${message.sourceSessionId || message.id}`;
-    const lane = lanes.get(laneKey) ?? {
-      key: laneKey,
-      participantId: message.participantId,
-      sourceSessionId: message.sourceSessionId,
-      activities: [],
-      messageIds: [],
-    };
-    lane.messageIds.push(messageId);
-    lanes.set(laneKey, lane);
-  }
-  if (lanes.size === 0 && ['queued', 'running'].includes(turn.status)) {
-    lanes.set(`${turnId}\u001frouter\u001fpending`, {
-      key: `${turnId}\u001frouter\u001fpending`,
-      participantId: null,
-      sourceSessionId: '',
-      activities: [],
-      messageIds: [],
-    });
-  }
-  const reviewActivity = [...activities].reverse().find((activity) => {
-    const requestKind = textValue(activity.payload.requestKind);
-    const approvalId = textValue(activity.payload.approvalId);
-    const state = textValue(activity.payload.state);
-    return requestKind === 'memory_review'
-      || Boolean(approvalId && !['approved', 'rejected', 'applied'].includes(state));
-  });
-  const reviewSessionId = reviewActivity?.sourceSessionId
-    || room?.participants.find((item) => item.id === reviewActivity?.participantId)?.sessionId
-    || '';
-  const rootActive = turnId.startsWith('room-turn:')
-    && ['queued', 'running'].includes(turn.status);
-  const rootStopping = abortingTurnIds.has(turnId);
-  return <article className="room-turn">
-    {userMessageIds.map((id) => {
-      const message = projection.messagesById[id];
-      if (!message) return null;
-      return <div key={id} className="room-user-message" data-status={message.status}><MarkdownBody text={message.text} />{message.status === 'queued' ? <small>正在发送</small> : null}</div>;
-    })}
-    {rootActive && onAbortTurn ? <div className="room-turn__root-control" role="status">
-      <span><CircleStop size={14} /><small>{rootStopping ? '正在停止所有 Agent 与后续任务' : '停止会覆盖本轮所有 Agent、工具与后续任务'}</small></span>
-      <Button
-        variant="danger"
-        size="small"
-        leadingIcon={rootStopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
-        disabled={rootStopping}
-        onClick={onAbortTurn}
-      >{rootStopping ? '停止中' : '停止全部'}</Button>
-    </div> : null}
-    {[...lanes.values()].map((lane) => {
-      const participant = room?.participants.find((item) => item.id === lane.participantId);
-      const persona = personas.find((item) => item.roleId === participant?.roleId && item.version === participant.roleVersion);
-      const messages = lane.messageIds.map((id) => projection.messagesById[id]).filter(Boolean);
-      const participantId = lane.participantId ?? '';
-      const laneFailed = participantId
-        ? (turn.failedParticipantIds ?? []).includes(participantId)
-          || lane.activities.some((activity) => roomActivityDisplayStatus(activity) === 'failed')
-        : turn.status === 'failed';
-      const laneAborted = participantId
-        ? (turn.abortedParticipantIds ?? []).includes(participantId)
-        : turn.status === 'aborted';
-      const laneTerminal = participantId
-        ? (turn.terminalParticipantIds ?? []).includes(participantId)
-        : ['completed', 'failed', 'aborted'].includes(turn.status);
-      const laneActive = !laneTerminal && !laneFailed && !laneAborted;
-      const laneComplete = laneTerminal && !laneFailed && !laneAborted
-        && messages.every((message) => message.status === 'completed');
-      const statusLabel = laneFailed
-        ? '未完成'
-        : laneComplete
-          ? '已完成'
-          : laneAborted
-            ? '已停止'
-            : participant
-              ? '执行中'
-              : '正在发送';
-      const sessionId = lane.sourceSessionId || participant?.sessionId || '';
-      const stopping = abortingSessionIds.has(sessionId);
-      const laneState = laneFailed
-        ? 'failed'
-        : laneAborted
-          ? 'aborted'
-          : laneActive
-            ? 'running'
-            : 'completed';
-      return <section className="room-agent-lane" data-state={laneState} key={lane.key}>
-        <header>
-          {participant
-            ? <PersonaAvatar persona={persona} size="small" presence={laneActive ? 'thinking' : 'done'} />
-            : <span className="room-agent-lane__route"><Route size={15} /></span>}
-          <span className="room-agent-lane__identity">
-            <strong>{participant?.displayName ?? 'Room 路由'}</strong>
-            <small>{statusLabel}</small>
-          </span>
-          <RoomElapsed startedAtMs={turn.createdAtMs} endedAtMs={laneActive ? undefined : turn.updatedAtMs} />
-          {laneActive && sessionId && onAbortSession ? <Button
-            variant="quiet"
-            size="small"
-            leadingIcon={stopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
-            disabled={stopping}
-            onClick={() => onAbortSession(sessionId)}
-          >{stopping ? '停止中' : '停止'}</Button> : null}
-        </header>
-        {lane.activities.length ? <details className="room-agent-lane__activity" open={laneActive}>
-          <summary><Wrench size={14} /><span>{laneActive ? '实时执行' : '执行记录'}</span><small>{lane.activities.length} 项</small></summary>
-          <div>{lane.activities.map((activity) => {
-            const displayStatus = roomActivityDisplayStatus(activity);
-            const description = describeRoomActivity(activity, participant?.displayName);
-            return <div className="room-agent-activity" data-state={displayStatus} key={activity.id}>
-              {displayStatus === 'running'
-                ? <LoaderCircle className="ui-spin" size={14} />
-                : displayStatus === 'failed'
-                  ? <X size={14} />
-                  : <CheckCircle2 size={14} />}
-              <span><strong>{description.title}</strong><small>{description.detail}</small></span>
-            </div>;
-          })}</div>
-        </details> : null}
-        {!lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting"><LoaderCircle className="ui-spin" size={14} /><span>{participant ? `${participant.displayName} 已接手，正在准备` : '消息已进入 Room，正在选择负责角色'}</span></div> : null}
-        {messages.map((message) => {
-          const visibleBlocks = message.message?.blocks.filter((block) => (
-            block.type !== 'reasoning_summary'
-            && block.type !== 'tool_call'
-            && block.type !== 'tool_result'
-            && block.visibility !== 'private_session'
-          ));
-          const needsReview = visibleBlocks?.some((block) => block.type === 'approval' && !['approved', 'rejected', 'applied'].includes(textValue(block.data.state)));
-          return <div className="room-agent-lane__post" data-status={message.status} key={message.id}>
-            {visibleBlocks?.length ? <AgentBlocks blocks={visibleBlocks} sessionId={message.message?.sessionId ?? message.sourceSessionId} /> : message.text ? <MarkdownBody text={message.text} /> : null}
-            {message.status === 'streaming' ? <span className="room-stream-caret" aria-label="仍在生成" /> : null}
-            {needsReview && sessionId ? <a className="room-review-link" href={agentSessionHref(sessionId)}><span><strong>需要在 Agent 对话中审阅</strong><small>打开对应参与者，批准或拒绝这项操作。</small></span><span>前往审阅 <ExternalLink size={13} /></span></a> : null}
-          </div>;
-        })}
-        {laneFailed && !messages.length ? <p className="room-agent-lane__failure">{turn.failure || '这轮协作没有完成，可以调整后重试。'}</p> : null}
-      </section>;
-    })}
-    {reviewSessionId ? <a className="room-review-link room-review-link--turn" href={agentSessionHref(reviewSessionId)}><span><strong>这轮协作正在等待审阅</strong><small>Agent 已暂停；打开对应会话处理后会自动继续。</small></span><span>立即审阅 <ExternalLink size={13} /></span></a> : null}
-  </article>;
-}
-
-function RoomElapsed({ startedAtMs, endedAtMs }: { startedAtMs: number; endedAtMs?: number }) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    if (endedAtMs != null) return;
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [endedAtMs]);
-  const elapsedMs = Math.max(0, (endedAtMs ?? nowMs) - startedAtMs);
-  return <time className="room-agent-lane__elapsed" dateTime={`PT${Math.round(elapsedMs / 1_000)}S`}><Clock3 size={12} />{formatElapsed(elapsedMs)}</time>;
-}
-
-function formatElapsed(elapsedMs: number): string {
-  const seconds = Math.floor(elapsedMs / 1_000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${seconds % 60}s`;
-}
-
-function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {
-  if (activity.kind !== 'participant_activity') return true;
-  const sourceEventType = textValue(activity.payload.sourceEventType);
-  if (['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) return true;
-  if (['intercom', 'work'].includes(textValue(activity.payload.activityKind))) return true;
-  if (textValue(activity.payload.requestKind) === 'memory_review') return true;
-  return Boolean(textValue(activity.payload.approvalId));
-}
-
-function roomActivityDisplayStatus(activity: RoomActivityProjection): RoomActivityProjection['status'] {
-  const status = textValue(activity.payload.status);
-  if (activity.kind === 'participant_status' && ['room_created', 'room_archived', 'room_restored'].includes(status)) return 'completed';
-  if (textValue(activity.payload.activityKind) === 'intercom') {
-    const phase = textValue(activity.payload.phase);
-    if (phase === 'delivered') return 'completed';
-    if (phase === 'failed' || phase === 'stale') return 'failed';
-  }
-  return activity.status;
-}
-
-function describeRoomActivity(activity: RoomActivityProjection, participantName = '协作成员'): { title: string; detail: string } {
-  const payload = activity.payload;
-  const status = textValue(payload.status);
-  const sourceEventType = textValue(payload.sourceEventType);
-  const toolName = textValue(payload.displayName) || textValue(payload.toolName) || '工具';
-  if (sourceEventType === 'tool_started') {
-    return {
-      title: `${participantName} 正在使用 ${toolName}`,
-      detail: publicActivitySummary(activity.summary, activity.kind) || '工具已开始执行',
-    };
-  }
-  if (sourceEventType === 'tool_progress') {
-    return {
-      title: `${toolName} 正在执行`,
-      detail: publicActivitySummary(activity.summary, activity.kind) || '正在等待新的工具进度',
-    };
-  }
-  if (sourceEventType === 'tool_finished') {
-    return {
-      title: activity.status === 'failed' ? `${toolName} 执行失败` : `${toolName} 已返回`,
-      detail: publicActivitySummary(activity.summary, activity.kind) || (activity.status === 'failed' ? '工具没有完成' : '工具结果已交给 Agent'),
-    };
-  }
-  if (activity.kind === 'route_decision') {
-    const target = textValue(payload.targetDisplayName) || participantName;
-    const reason = textValue(payload.reason);
-    const detailByReason: Record<string, string> = {
-      explicit_invite: '由用户直接邀请发言',
-      mention: '根据明确提及开始处理',
-      moderator: '由主持人负责这一轮',
-      sequential: '按成员顺序轮到该角色',
-      descriptor_match: '根据角色标签与消息内容匹配',
-      natural_fallback: '当前没有强匹配，由保底角色承接',
-      configured_fallback: '由群组配置的保底角色承接',
-    };
-    const policy = textValue(payload.routingPolicy) as RoomRoutingPolicy;
-    return {
-      title: `${target} 已接手`,
-      detail: detailByReason[reason] ?? (
-        policy === 'moderator'
-          ? '由主持人安排处理这轮任务'
-          : `${routingPolicyLabel(policy)}已确定负责角色`
-      ),
-    };
-  }
-  if (activity.kind === 'participant_status') {
-    if (status === 'room_created') return { title: '协作空间已就绪', detail: '参与角色已经加入，可以开始对话' };
-    if (status === 'room_archived') return { title: '协作空间已归档', detail: '历史对话已保留' };
-    if (status === 'room_restored') return { title: '协作空间已恢复', detail: '参与角色可以继续协作' };
-    return { title: `${participantName} 状态已更新`, detail: activity.status === 'running' ? '正在准备处理任务' : '当前步骤已经同步' };
-  }
-  if (activity.kind === 'turn_failed') {
-    return { title: '这轮协作未完成', detail: '可以调整消息后重新发送' };
-  }
-  if (textValue(payload.activityKind) === 'intercom') {
-    const phase = textValue(payload.phase);
-    const phaseCopy: Record<string, string> = {
-      queued: '协作消息正在等待接收',
-      delivered: '协作消息已经送达',
-      stale: '协作消息已过期',
-      failed: '协作消息未能送达',
-    };
-    return { title: `${participantName} 正在与其他角色协作`, detail: phaseCopy[phase] ?? '协作消息状态已更新' };
-  }
-  const summary = publicActivitySummary(activity.summary, activity.kind);
-  if (summary) return { title: `${participantName} 更新了进展`, detail: summary };
-  if (activity.status === 'failed') return { title: `${participantName} 未完成这一步`, detail: '可以稍后重试' };
-  if (activity.status === 'running') return { title: `${participantName} 正在处理`, detail: '有新进展时会在这里更新' };
-  return { title: `${participantName} 完成了一步`, detail: '协作进度已经同步' };
-}
-
-function publicActivitySummary(summary: string, kind: string): string {
-  const value = summary.trim();
-  if (!value || value === kind) return '';
-  if (/\b(?:participant|route|tool|turn)_[a-z_]+\b/i.test(value)) return '';
-  if (/control-center-(?:safe-)?v\d/i.test(value)) return '';
-  if (value.includes('内部工具步骤')) return '准备工作已经完成';
-  return value;
-}
-
-function textValue(value: unknown): string { return typeof value === 'string' ? value : ''; }
-function agentSessionHref(sessionId: string): string { return `#/agent?${new URLSearchParams({ session: sessionId })}`; }
 
 function roomItems(value: unknown): RoomSummary[] { const source = record(value); return (Array.isArray(source.items) ? source.items : Array.isArray(source.rooms) ? source.rooms : []).filter(isRoom); }
 function isRoom(value: unknown): value is RoomSummary { const item = record(value); return typeof item.id === 'string' && typeof item.title === 'string' && Array.isArray(item.participants); }
@@ -1477,63 +1007,11 @@ function agentSessionItems(value: unknown): AgentSessionPolicySummary[] { const 
 function agentSessionValue(value: unknown): AgentSessionPolicySummary | undefined { const item = record(value); if (typeof item.id !== 'string' || !['assistant', 'coordinator'].includes(String(item.mode))) return undefined; return { id: item.id, mode: item.mode as AgentSessionPolicySummary['mode'], status: String(item.status ?? ''), toolProfileVersion: String(item.toolProfileVersion || 'control-center-v1'), toolAllowlistMode: item.toolAllowlistMode === 'explicit' ? 'explicit' : 'profile', allowedTools: Array.isArray(item.allowedTools) ? item.allowedTools.map(String) : [], workspaceRoots: Array.isArray(item.workspaceRoots) ? item.workspaceRoots.map(String) : [] }; }
 function roomToolItems(value: unknown): RoomToolPolicyItem[] { const source = record(value); return (Array.isArray(source.items) ? source.items : []).flatMap((value) => { const item = record(value); if (typeof item.id !== 'string' || typeof item.displayName !== 'string') return []; const profileOperations = record(item.profileOperations); return [{ id: item.id, displayName: item.displayName, description: String(item.description ?? ''), sessionModes: Array.isArray(item.sessionModes) ? item.sessionModes.map(String) : [], operations: Array.isArray(item.operations) ? item.operations.map(String) : [], profileOperations: Object.fromEntries(Object.entries(profileOperations).map(([profile, operations]) => [profile, Array.isArray(operations) ? operations.map(String) : []])), enabled: item.enabled === true }]; }); }
 function toolAvailableForPolicy(tool: RoomToolPolicyItem, mode: string, profile: string): boolean { return tool.sessionModes.includes(mode) && (tool.profileOperations[profile] ?? []).length > 0; }
-function activeRoomMention(value: string, caret: number): RoomMentionDraft | undefined {
-  const boundedCaret = Math.max(0, Math.min(caret, value.length));
-  const beforeCaret = value.slice(0, boundedCaret);
-  const start = beforeCaret.lastIndexOf('@');
-  if (start < 0) return undefined;
-  const previous = start > 0 ? value[start - 1] : '';
-  if (previous && !/[\s([{（【「『，。！？、,:：；;]/u.test(previous)) return undefined;
-  const query = value.slice(start + 1, boundedCaret);
-  if (query.length > 80 || /\s/u.test(query)) return undefined;
-  return { start, end: boundedCaret, query };
-}
-function roomMentionMatches(participant: RoomParticipant, query: string): boolean {
-  const needle = query.trim().toLocaleLowerCase();
-  if (!needle) return true;
-  return participant.displayName.toLocaleLowerCase().includes(needle)
-    || participant.roleId.toLocaleLowerCase().includes(needle);
-}
-function roomMentionedParticipants(
-  participants: RoomParticipant[],
-  value: string,
-): RoomParticipant[] {
-  const matched: RoomParticipant[] = [];
-  for (const participant of participants) {
-    const token = `@${participant.displayName}`;
-    let offset = value.indexOf(token);
-    while (offset >= 0) {
-      const previous = offset > 0 ? value[offset - 1] : '';
-      const next = value[offset + token.length] ?? '';
-      const startsAtBoundary = !previous || /[\s([{（【「『，。！？、,:：；;]/u.test(previous);
-      const endsAtBoundary = !next || /[\s)\]}）】」』，。！？、,.!?:：；;]/u.test(next);
-      if (startsAtBoundary && endsAtBoundary) {
-        matched.push(participant);
-        break;
-      }
-      offset = value.indexOf(token, offset + token.length);
-    }
-  }
-  return matched;
-}
-function stripLeadingRoomMention(value: string, participants: RoomParticipant[]): string {
-  const body = value.trimStart();
-  for (const participant of participants) {
-    const token = `@${participant.displayName}`;
-    if (body.startsWith(token)) return body.slice(token.length).trimStart();
-  }
-  return body;
-}
 function roomParticipantRoleLabel(participant: RoomParticipant): string {
   if (participant.collaborationRole === 'coordinator') return '主持协调';
   if (participant.collaborationRole === 'researcher') return '调研与核对';
   if (participant.collaborationRole === 'executor') return '执行与交付';
   return '协作角色';
-}
-function roomComposerPlaceholder(room?: RoomSummary): string {
-  if (!room) return '先选择或新建 Room';
-  if (room.status === 'archived') return '恢复 Room 后继续交流';
-  return room.roomKind === 'roleplay' ? '向群聊发送消息，输入 @ 可点名…' : '向 Room 发消息，输入 @ 可点名…';
 }
 function cancellationTargetLabels(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -1557,6 +1035,17 @@ function cancellationTargetLabels(value: unknown): string[] {
     const label = labels[surface] ?? '后台任务';
     return [targetCount > 1 ? `${label}（${targetCount} 项）` : label];
   }))];
+}
+function textValue(value: unknown): string { return typeof value === 'string' ? value : ''; }
+function roomRailInitiallyOpen(): boolean {
+  return typeof window === 'undefined'
+    || typeof window.matchMedia !== 'function'
+    || !window.matchMedia('(max-width: 760px)').matches;
+}
+function roomRailIsOverlay(): boolean {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(max-width: 760px)').matches;
 }
 function record(value: unknown): Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function uniquePaths(values: string[]): string[] { return values.map((value) => value.trim()).filter((value, index, all) => value.startsWith('/') && all.indexOf(value) === index).slice(0, 12); }
@@ -1617,11 +1106,6 @@ function collaborationRoleLabel(role: RoomParticipant['collaborationRole']): str
   return '执行者';
 }
 
-function isWideRoomStatusViewport(): boolean {
-  return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    ? window.matchMedia('(min-width: 1361px)').matches
-    : false;
-}
 function isAbortError(value: unknown): boolean { return value instanceof DOMException && value.name === 'AbortError'; }
 
 export function removeOptimisticRoomMessage(

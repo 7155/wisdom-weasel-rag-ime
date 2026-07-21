@@ -96,6 +96,7 @@ export interface Event {
     | 'participant_delta'
     | 'participant_activity'
     | 'participant_message'
+    | 'room_post'
     | 'room_config_changed'
     | 'topic_changed'
     | 'artifact_changed'

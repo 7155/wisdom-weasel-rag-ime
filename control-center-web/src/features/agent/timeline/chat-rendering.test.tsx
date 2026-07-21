@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TooltipProvider } from '@/components/primitives';
 import type { UiAgentBlock, UiAgentMessage } from '@/contracts/ui-events';
@@ -185,6 +185,52 @@ describe('Agent chat rendering', () => {
     expect(container.querySelectorAll('.agent-code-block')).toHaveLength(3);
   });
 
+  it('renders inline unified diffs and lets the user switch to a split view', () => {
+    const diff = [
+      'diff --git a/src/runtime.ts b/src/runtime.ts',
+      'index 1111111..2222222 100644',
+      '--- a/src/runtime.ts',
+      '+++ b/src/runtime.ts',
+      '@@ -1,2 +1,2 @@',
+      '-const state = "queued";',
+      '+const state = "running";',
+      ' export { state };',
+    ].join('\n');
+    const { container } = render(
+      <TooltipProvider>
+        <AgentBlock block={{
+          id: 'diff-1',
+          type: 'diff',
+          status: 'completed',
+          presentationKind: 'diff.v1',
+          data: { fileName: 'src/runtime.ts', diff },
+        }} />
+      </TooltipProvider>,
+    );
+
+    expect(container.querySelector('.agent-inline-diff')).toHaveAttribute('open');
+    expect(screen.getAllByText('src/runtime.ts')).toHaveLength(2);
+    expect(container.querySelector('tr[data-kind="remove"]')).toHaveTextContent('const state = "queued";');
+    expect(container.querySelector('tr[data-kind="add"]')).toHaveTextContent('const state = "running";');
+
+    fireEvent.click(screen.getByRole('radio', { name: '并排' }));
+    expect(container.querySelectorAll('.agent-diff-split')).toHaveLength(4);
+  });
+
+  it('folds a completed long Markdown reply without hiding its readable prefix', () => {
+    const markdown = Array.from(
+      { length: 52 },
+      (_, index) => `第 ${index + 1} 段仍可按需查看。`,
+    ).join('\n\n');
+    const { container } = render(<MarkdownBody text={markdown} />);
+
+    expect(container.querySelector('.agent-markdown')).toHaveAttribute('data-collapsed', 'true');
+    expect(screen.getByText('第 1 段仍可按需查看。')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /展开全文/ }));
+    expect(container.querySelector('.agent-markdown')).not.toHaveAttribute('data-collapsed');
+    expect(screen.getByRole('button', { name: '收起长回复' })).toBeInTheDocument();
+  });
+
   it('renders the typed rich block allowlist without executing untrusted markup or links', () => {
     const blocks: UiAgentBlock[] = [
       { id: 'card', type: 'card', status: 'completed', presentationKind: 'card.v1', data: { title: '发布检查', tone: 'success', bodyMarkdown: '[安全链接](https://example.com) <img src=x onerror=alert(1)> [危险](javascript:alert(1))', fields: [{ label: '测试', value: '通过' }] } },
@@ -322,6 +368,7 @@ describe('Agent chat rendering', () => {
       streaming: 'incremental',
       executableContent: false,
     });
+    expect(agentRendererPolicy('diff')?.Renderer).toBeTypeOf('function');
     expect(agentRendererPolicy('image')).toMatchObject({
       isolation: 'managed-receipt',
       executableContent: false,

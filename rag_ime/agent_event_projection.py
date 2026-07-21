@@ -6,6 +6,7 @@ from typing import Any
 from .agent_blocks import bind_block_scope
 from .agent_prompt_support import bounded_text
 from .agent_protocol import AgentEventEnvelope
+from .agent_room_public_timeline import RoomPublicTimelineProjector
 
 
 class AgentEventProjectionService:
@@ -21,6 +22,7 @@ class AgentEventProjectionService:
         observations: Any,
         room_kernel_projection: Any,
         room_events: Any,
+        public_timeline: RoomPublicTimelineProjector,
         room_turns: Any,
         append_recent_message: Callable[
             [str, Mapping[str, object]],
@@ -39,6 +41,7 @@ class AgentEventProjectionService:
         self.observations = observations
         self.room_kernel_projection = room_kernel_projection
         self.room_events = room_events
+        self.public_timeline = public_timeline
         self.room_turns = room_turns
         self.append_recent_message = append_recent_message
         self.record_assistant_evidence = (
@@ -96,8 +99,25 @@ class AgentEventProjectionService:
             }
             and binding is not None
         ):
+            mapped_type, public_data = room_event_projection(event)
+            if event.event_type == "message_completed":
+                mapped_type = "participant_activity"
+                public_data = {
+                    "status": "draft_ready",
+                    "summary": "正在整理正式 Post",
+                }
+            room_id = str(binding["roomId"])
+            room = self.rooms.get(room_id)
+            self.public_timeline.publish_runtime(
+                event=event,
+                binding=binding,
+                participant=participant,
+                event_type=mapped_type,
+                public_data=public_data,
+                topic_id=str(room.get("activeTopicId") or ""),
+            )
             self.room_kernel_projection.sync_room(
-                str(binding["roomId"]),
+                room_id,
                 now_ms=event.created_at_ms,
             )
             return

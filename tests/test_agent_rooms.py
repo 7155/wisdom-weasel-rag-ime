@@ -158,6 +158,50 @@ class AgentRoomTests(unittest.TestCase):
         self.assertIn(b"room_event_replay_gap", snapshot_required)
         gap.close()
 
+    def test_public_projection_receipt_deduplicates_fanout_and_rejects_rebinding(self) -> None:
+        room = self.store.create(
+            title="公开投影去重",
+            routing_policy="natural",
+            participants=[
+                self._participant("companion-present-v1", "智鼬·此刻"),
+                self._participant("companion-firstlight-v1", "智鼬·初识"),
+            ],
+            created_at_ms=100,
+        )
+        room_id = str(room["id"])
+        hub = AgentRoomEventHub(self.store)
+        observed: list[dict[str, object]] = []
+        hub.add_observer(lambda event: observed.append(dict(event)))
+        values = {
+            "room_id": room_id,
+            "event_type": "user_message",
+            "payload": {"messageId": "post:user:1", "text": "只显示一次"},
+            "turn_id": "root:1",
+            "created_at_ms": 110,
+        }
+
+        first = hub.publish_projection(projection_key="room-post:post:user:1", **values)
+        replay = hub.publish_projection(projection_key="room-post:post:user:1", **values)
+
+        self.assertIsNotNone(first)
+        self.assertEqual(replay, first)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(
+            [event["eventType"] for event in self.store.list_events(room_id)],
+            ["user_message"],
+        )
+        with self.assertRaisesRegex(ValueError, "projection key was rebound"):
+            hub.publish_projection(
+                projection_key="room-post:post:user:1",
+                **{
+                    **values,
+                    "payload": {
+                        "messageId": "post:user:1",
+                        "text": "偷偷改写",
+                    },
+                },
+            )
+
     def test_route_target_uses_exact_longest_mention_and_rejects_real_ambiguity(self) -> None:
         room = self.store.create(
             title="时间线讨论",

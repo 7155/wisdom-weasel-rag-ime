@@ -37,7 +37,7 @@ export function RoomStatusPanel({
   const messages = turn?.messageIds.map((id) => projection.messagesById[id]).filter(Boolean) ?? [];
   const attachments = new Set(messages.flatMap((message) => message.message?.attachments ?? []));
   const files = messages.flatMap((message) => message.message?.blocks ?? []).filter((block) => block.type === 'file');
-  const deliveredArtifacts = messages.flatMap((message) => message.message?.blocks ?? []).filter((block) => block.type === 'diff' || (block.type === 'file' && Boolean(block.data.artifactId ?? block.data.receiptId)));
+  const deliveredArtifacts = messages.flatMap((message) => message.message?.blocks ?? []).filter((block) => block.type === 'diff' || (block.type === 'file' && Boolean(block.data.mediaId ?? block.data.artifactId ?? block.data.receiptId)));
   const sharedArtifacts = (room?.artifacts ?? []).filter((artifact) => artifact.status === 'active');
   const activeTopics = (room?.topics ?? []).filter((topic) => topic.status === 'active');
   const workItems = room?.workItems ?? [];

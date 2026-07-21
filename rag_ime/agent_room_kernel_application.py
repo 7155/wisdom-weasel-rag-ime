@@ -18,6 +18,7 @@ from .agent_room_kernel_projection import RoomKernelProjection
 from .agent_room_kernel_worker import KernelCommandBus
 from .agent_room_learning_governance import RoomLearningGovernanceStore
 from .agent_room_peer_review import RoomPeerReviewStore
+from .agent_room_public_timeline import RoomPublicTimelineProjector
 from .agent_room_requirements import RequirementGovernanceStore
 from .agent_rooms import AgentRoomStore
 
@@ -37,6 +38,7 @@ class RoomKernelApplicationService:
         requirements: RequirementGovernanceStore,
         peer_review: RoomPeerReviewStore,
         learning: RoomLearningGovernanceStore,
+        public_timeline: RoomPublicTimelineProjector,
         wake_worker: Callable[[], None],
         revoke_session: Callable[[str, int], None],
         artifact_hash_provider: Callable[[str], str] | None = None,
@@ -51,6 +53,7 @@ class RoomKernelApplicationService:
         self.requirements = requirements
         self.peer_review = peer_review
         self.learning = learning
+        self.public_timeline = public_timeline
         self.wake_worker = wake_worker
         self.revoke_session = revoke_session
         self.artifact_hash_provider = artifact_hash_provider
@@ -234,6 +237,21 @@ class RoomKernelApplicationService:
             in {"requested", "acknowledged", "unknown"}
         ]
         kernel_receipt = result["kernelReceipt"]
+        if not pending:
+            terminal_root = self.kernel.root(root_id)
+            self.public_timeline.publish_terminal(
+                room_id=room_id,
+                root_id=root_id,
+                generation=int(terminal_root["generation"]),
+                state=str(terminal_root["state"]),
+                receipt_id=str(
+                    terminal_root.get("terminalReceiptId") or ""
+                ),
+                created_at_ms=int(
+                    terminal_root.get("updatedAtMs")
+                    or int(time.time() * 1000)
+                ),
+            )
         return {
             "schemaVersion": "rag-ime.agent-room-abort.v1",
             "ok": not pending,
@@ -380,6 +398,13 @@ class RoomKernelApplicationService:
         post = proposal
         if post is not None and receipt.get("status") == "applied":
             post, _ = self.context.publish_post(post)
+            room = self.rooms.get(room_id)
+            self.public_timeline.publish_post(
+                post,
+                participant_id=str(dispatch["targetParticipantId"]),
+                source_session_id=str(dispatch["targetSessionId"]),
+                topic_id=str(room.get("activeTopicId") or ""),
+            )
         execution_receipt = (
             self.capabilities.execution_receipt(invocation_receipt_id)
             if invocation_receipt_id
@@ -475,6 +500,19 @@ class RoomKernelApplicationService:
             str(root["roomId"]),
             now_ms=timestamp,
         )
+        if str(root.get("state") or "") in {
+            "completed",
+            "cancelled",
+            "failed",
+        }:
+            self.public_timeline.publish_terminal(
+                room_id=str(root["roomId"]),
+                root_id=root_id,
+                generation=int(root["generation"]),
+                state=str(root["state"]),
+                receipt_id=str(root.get("terminalReceiptId") or ""),
+                created_at_ms=timestamp,
+            )
         return {
             "receipt": receipt,
             "deliveryGateObservation": observation,

@@ -37,6 +37,7 @@ export const knownRoomEventTypes = [
   'participant_delta',
   'participant_activity',
   'participant_message',
+  'room_post',
   'turn_completed',
   'turn_failed',
   'room_config_changed',

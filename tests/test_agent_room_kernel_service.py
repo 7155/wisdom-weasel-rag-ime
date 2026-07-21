@@ -214,6 +214,21 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(accepted["status"], "queued")
         self.assertEqual(accepted["executionOwner"], "kernel")
         self.assertEqual(len(accepted["dispatches"]), len(participant_ids))
+        self.assertEqual(
+            [event["eventType"] for event in accepted["timelineEvents"]],
+            ["user_message"] + ["route_decision"] * len(participant_ids),
+        )
+        self.assertEqual(
+            [
+                event["payload"].get("summary")
+                for event in accepted["timelineEvents"][1:]
+            ],
+            [
+                f"{participant['displayName']} 已接手"
+                for participant in room["participants"]
+                if str(participant["id"]) in participant_ids
+            ],
+        )
         self.assertEqual(self.factory.runtime.dispatched, [])
         self.assertEqual(
             {
@@ -246,10 +261,100 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertTrue(replay["idempotentReplay"])
         self.assertEqual(replay["rootId"], accepted["rootId"])
+        self.assertEqual(replay["timelineEvents"], accepted["timelineEvents"])
         self.assertEqual(
             len(self.service.room_kernel_snapshot(self.room_id)["posts"]),
             len(snapshot["posts"]),
         )
+
+    def test_managed_runtime_projects_live_text_and_tools_without_auto_publishing_a_post(self) -> None:
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "检查实时投影",
+                "clientMessageId": "client:live-projection",
+                "participantIds": [str(self.participant["id"])],
+            },
+        )
+        dispatch = accepted["dispatches"][0]
+        self.service.room_kernel_worker.run_once()
+        self.service.events.publish(
+            self.session_id,
+            "text_delta",
+            {"messageId": "draft:live", "delta": "正在检查"},
+            turn_id="turn:live",
+        )
+        self.service.events.publish(
+            self.session_id,
+            "tool_started",
+            {"toolCallId": "tool:live", "toolName": "workspace_read"},
+            turn_id="turn:live",
+        )
+        self.service.events.publish(
+            self.session_id,
+            "tool_finished",
+            {
+                "toolCallId": "tool:live",
+                "toolName": "workspace_read",
+                "result": {"summary": "已读取目标文件"},
+                "isError": False,
+            },
+            turn_id="turn:live",
+        )
+        self.service.events.publish(
+            self.session_id,
+            "message_completed",
+            {
+                "message": {
+                    "schemaVersion": "rag-ime.agent-message.v1",
+                    "id": "draft:live",
+                    "sessionId": self.session_id,
+                    "turnId": "turn:live",
+                    "role": "assistant",
+                    "status": "completed",
+                    "blocks": [],
+                    "attachments": [],
+                    "citations": [],
+                    "createdAtMs": 20,
+                    "completedAtMs": 21,
+                }
+            },
+            turn_id="turn:live",
+        )
+
+        public = [
+            event
+            for event in self.service.rooms.list_events(self.room_id)
+            if event["turnId"] == accepted["rootId"]
+        ]
+        self.assertEqual(
+            [event["eventType"] for event in public],
+            [
+                "user_message",
+                "route_decision",
+                "participant_delta",
+                "participant_activity",
+                "participant_activity",
+                "participant_activity",
+            ],
+        )
+        runtime_events = public[2:]
+        self.assertTrue(
+            all(
+                event["payload"]["data"]["dispatchId"]
+                == dispatch["dispatchId"]
+                for event in runtime_events
+            )
+        )
+        self.assertEqual(
+            runtime_events[-1]["payload"]["data"]["status"],
+            "draft_ready",
+        )
+        self.assertNotIn(
+            "participant_message",
+            [event["eventType"] for event in public],
+        )
+        self.assertNotIn("room_post", [event["eventType"] for event in public])
 
     def test_product_work_item_becomes_provider_only_kernel_task_context(self) -> None:
         objective = "检查 Room 增量上下文是否保持稳定前缀"
@@ -764,6 +869,13 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertIsNone(projected_root["terminalReceiptId"])
         self.assertEqual(len(snapshot["pendingTargets"]), 9)
         self.assertEqual({item["state"] for item in snapshot["pendingTargets"]}, {"unknown"})
+        root_events = [
+            event
+            for event in self.service.rooms.list_events(self.room_id)
+            if event["turnId"] == "root:service"
+            and event["eventType"] in {"turn_completed", "turn_failed"}
+        ]
+        self.assertEqual(root_events, [])
 
     def test_knowledge_caller_is_built_from_authenticated_live_participant_binding(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
@@ -872,6 +984,16 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(result["receipt"]["status"], "applied")
         snapshot = self.service.room_kernel_snapshot(self.room_id)
         self.assertEqual([post["postId"] for post in snapshot["posts"]], ["post:service"])
+        public_posts = [
+            event
+            for event in self.service.rooms.list_events(self.room_id)
+            if event["eventType"] == "room_post"
+        ]
+        self.assertEqual(len(public_posts), 1)
+        self.assertEqual(
+            public_posts[0]["payload"]["post"]["postId"],
+            "post:service",
+        )
         self.assertNotIn("This text", str(snapshot["sessions"]))
         self.assertEqual(
             snapshot["requirementsByRootId"]["root:service"]["projectionSource"],

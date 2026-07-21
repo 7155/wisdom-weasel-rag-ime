@@ -98,6 +98,7 @@ from .agent_runtime_driver import (
     ToolManifestProvider,
 )
 from .agent_rooms import AgentRoomEventHub, AgentRoomStore
+from .agent_room_public_timeline import RoomPublicTimelineProjector
 from .agent_roles import PersonaManifest
 from .agent_sessions import AgentSessionStore
 from .agent_wake_scheduler import AgentWakeScheduleStore, AgentWakeScheduler
@@ -299,6 +300,9 @@ class AgentService:
         self._room_kernel_poll_seconds = room_kernel_poll_seconds
         self.observations = ObservationHub(db_path)
         self.room_events = AgentRoomEventHub(self.rooms)
+        self.room_public_timeline = RoomPublicTimelineProjector(
+            self.room_events
+        )
         self._remove_observation_room_observer = self.room_events.add_observer(
             self.observations.enqueue_room_event
         )
@@ -470,6 +474,7 @@ class AgentService:
                     self.room_kernel_projection
                 ),
                 room_events=self.room_events,
+                public_timeline=self.room_public_timeline,
                 room_turns=self.room_turns,
                 append_recent_message=(
                     lambda session_id, message: (
@@ -2541,6 +2546,7 @@ class AgentService:
             context=self.room_context_ledger,
             requirements=self.room_requirements,
             capabilities=self.room_capabilities,
+            public_timeline=self.room_public_timeline,
             wake_worker=self.room_kernel_worker_loop.wake,
             restore_participant_sessions=self._restore_legacy_room_participant_sessions,
         )
@@ -2554,6 +2560,7 @@ class AgentService:
             requirements=self.room_requirements,
             peer_review=self.room_peer_review,
             learning=self.room_learning,
+            public_timeline=self.room_public_timeline,
             wake_worker=self.room_kernel_worker_loop.wake,
             revoke_session=self.room_kernel_runtime.revoke_session,
             artifact_hash_provider=self._room_artifact_hash_provider,
@@ -2574,6 +2581,10 @@ class AgentService:
     def _sync_all_room_kernel_projections(self) -> None:
         for room_id in self.room_kernel.room_ids():
             self.room_kernel_projection.sync_room(room_id)
+            for root_id in self.room_kernel.root_ids(room_id):
+                self.room_public_timeline.sync_terminal_root(
+                    self.room_kernel.root(root_id)
+                )
         self._run_room_learning_maintenance()
         self._consume_room_knowledge_cache_tombstones()
 

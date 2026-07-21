@@ -19,6 +19,7 @@ from .agent_room_kernel_contracts import (
 )
 from .agent_room_kernel_projection import RoomKernelProjection
 from .agent_room_kernel_worker import KernelCommandBus
+from .agent_room_public_timeline import RoomPublicTimelineProjector
 from .agent_room_requirements import RequirementGovernanceStore
 from .agent_room_work import AgentRoomWorkStore
 from .agent_rooms import AgentRoomStore
@@ -53,6 +54,7 @@ class RoomApplicationService:
         context: RoomContextLedgerStore,
         requirements: RequirementGovernanceStore,
         capabilities: RoomCapabilityManifestStore,
+        public_timeline: RoomPublicTimelineProjector,
         wake_worker: Callable[[], None],
         restore_participant_sessions: Callable[[Mapping[str, object]], None],
         clock_ms: Callable[[], int] | None = None,
@@ -68,6 +70,7 @@ class RoomApplicationService:
         self.context = context
         self.requirements = requirements
         self.capabilities = capabilities
+        self.public_timeline = public_timeline
         self.wake_worker = wake_worker
         self.restore_participant_sessions = restore_participant_sessions
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
@@ -184,6 +187,7 @@ class RoomApplicationService:
         )
 
         work_claimed = False
+        timeline_events: list[dict[str, object]] = []
         previous_accepted_turn_id = ""
         try:
             anchor, _ = self.requirements.append_anchor(
@@ -350,6 +354,13 @@ class RoomApplicationService:
                         "error": "",
                     }
                 )
+            timeline_events = self.public_timeline.publish_ingress(
+                room=room,
+                post=user_post,
+                client_message_id=client_message_id,
+                route_decisions=decisions,
+                dispatches=dispatch_results,
+            )
         except Exception as exc:
             if work_claimed and work_item is not None:
                 try:
@@ -395,6 +406,7 @@ class RoomApplicationService:
             "post": user_post,
             "requirementAnchor": anchor,
             "requirementCatalog": requirement_catalog,
+            "timelineEvents": timeline_events,
         }
         if work_item is not None:
             response["workItem"] = work_item

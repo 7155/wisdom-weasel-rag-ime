@@ -10,7 +10,7 @@ from pathlib import Path
 from .db import apply_database_migrations
 
 
-ROOM_V2_RELEASE_MIGRATION_VERSION = 97
+ROOM_V2_RELEASE_MIGRATION_VERSION = 98
 ROOM_V2_RELEASE_SCHEMA_COUNT = 138
 
 

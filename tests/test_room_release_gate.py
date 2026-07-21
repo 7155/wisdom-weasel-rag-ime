@@ -59,7 +59,7 @@ class RoomReleaseGateTests(unittest.TestCase):
             frontend_dist=self.frontend, output_dir=self.root / name, pi_build=self.pi_build) for name in ("out-a", "out-b")]
         self.assertEqual(before, self.db.read_bytes())
         self.assertEqual(reports[0]["receiptHash"], reports[1]["receiptHash"])
-        self.assertEqual(reports[0]["checks"]["migrationVersion"], 97)
+        self.assertEqual(reports[0]["checks"]["migrationVersion"], 98)
         self.assertEqual(reports[0]["checks"]["schemaCount"], 138)
         self.assertTrue(reports[0]["checks"]["piBuildManifestValid"])
         self.assertTrue(reports[0]["checks"]["piBuildProductCommitMatches"])

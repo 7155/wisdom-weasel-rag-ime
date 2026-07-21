@@ -237,6 +237,18 @@ def _context_line(
     if event.get("eventType") == "user_message":
         text = _bounded_text(payload.get("text"), maximum=420)
         return f"用户：{text}" if text else ""
+    if event.get("eventType") == "room_post":
+        post = payload.get("post")
+        if not isinstance(post, Mapping):
+            return ""
+        text = _bounded_text(post.get("content"), maximum=420)
+        if not text:
+            return ""
+        speaker = (
+            participant_names.get(str(event.get("participantId") or ""))
+            or "Agent"
+        )
+        return f"{speaker}：{text}"
     if event.get("eventType") != "participant_message":
         return ""
     data = payload.get("data")

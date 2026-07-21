@@ -1,9 +1,13 @@
-.shell-route-stage > main.rooms-feature { display: grid; width: 100%; height: calc(100dvh - var(--topbar-height)); min-height: 620px; grid-template-columns: 236px minmax(0, 1fr) 0; margin: 0; padding: 0; overflow: hidden; transition: grid-template-columns var(--duration-panel) var(--ease-standard); }
-.shell-route-stage > main.rooms-feature[data-status-open='true'] { grid-template-columns: 236px minmax(0, 1fr) 296px; }
+.shell-route-stage > main.rooms-feature { display: grid; width: 100%; height: calc(100dvh - var(--topbar-height)); min-height: 620px; grid-template-columns: 0 minmax(0, 1fr) 0; margin: 0; padding: 0; overflow: hidden; transition: grid-template-columns var(--duration-panel) var(--ease-standard); }
+.shell-route-stage > main.rooms-feature[data-rail-open='true'] { grid-template-columns: 236px minmax(0, 1fr) 0; }
+.shell-route-stage > main.rooms-feature[data-status-open='true'] { grid-template-columns: 0 minmax(0, 1fr) 296px; }
+.shell-route-stage > main.rooms-feature[data-rail-open='true'][data-status-open='true'] { grid-template-columns: 236px minmax(0, 1fr) 296px; }
 .rooms-rail { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); border-right: 1px solid var(--color-border); background: var(--color-surface-subtle); }
+.rooms-feature:not([data-rail-open='true']) > .rooms-rail { visibility: hidden; overflow: hidden; border-right: 0; }
 .rooms-rail > header { display: flex; height: 62px; align-items: center; justify-content: space-between; padding: 10px 12px 8px 16px; }
 .rooms-rail-actions { display: flex; align-items: center; gap: 3px; }
-.rooms-rail-mobile-close, .rooms-rail-trigger, .rooms-rail-backdrop { display: none; }
+.rooms-rail-mobile-close, .rooms-rail-backdrop { display: none; }
+.rooms-rail-trigger { display: inline-flex; }
 .rooms-rail > header > span, .rooms-rail button > span, .room-workspace > header > span { display: grid; gap: 2px; min-width: 0; }
 .rooms-rail small, .room-workspace > header small { color: var(--color-text-tertiary); font-size: 13px; }
 .rooms-rail > div { min-height: 0; overflow-y: auto; padding: 0 7px; }
@@ -57,6 +61,8 @@
 .room-turn__root-control > span > small { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .room-user-message { width: fit-content; max-width: 78%; margin: 0 0 16px auto; padding: 9px 12px; border-radius: 8px 8px 2px 8px; background: var(--color-surface-subtle); }
 .room-user-message, .room-participant-message, .room-group-activity { overflow-wrap: anywhere; }
+.room-agent-lane__post[data-projection='execution'] { border-left: 2px solid var(--color-accent); padding-left: 10px; }
+.room-agent-lane__projection-label { display: block; margin-bottom: 5px; color: var(--color-accent); font-size: 11px; font-weight: 700; }
 .room-user-message .agent-markdown p { margin: 0; }
 .room-user-message > small { display: block; margin-top: 4px; color: var(--color-text-tertiary); font-size: 11px; text-align: right; }
 .room-participant-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 9px; margin: 0 0 14px; }
@@ -252,8 +258,8 @@
 .room-status-work__item[data-state='blocked'] > svg,
 .room-status-work__item[data-state='failed'] > svg { color: var(--color-danger); }
 .room-status-work__item > span { display: grid; min-width: 0; gap: 2px; }
-.room-status-work__item strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.room-status-work__item small { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.room-status-work__item strong { font-size: 13px; overflow-wrap: anywhere; }
+.room-status-work__item small { color: var(--color-text-tertiary); font-size: 13px; overflow-wrap: anywhere; }
 .room-status-activity { display: grid; min-height: 48px; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 7px; border-top: 1px solid color-mix(in srgb, var(--color-border) 62%, transparent); }
 .room-status-activity:first-child { border-top: 0; }
 .room-status-activity > svg { color: var(--color-success); }
@@ -261,14 +267,20 @@
 .room-status-activity[data-state='failed'] > svg { color: var(--color-danger); }
 .room-status-activity > span { display: grid; min-width: 0; gap: 2px; }
 .room-status-activity strong { font-size: 13px; }
-.room-status-activity small { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.room-status-activity small { color: var(--color-text-tertiary); font-size: 13px; overflow-wrap: anywhere; }
 .room-status-activity i { color: var(--color-text-tertiary); font-size: 13px; font-style: normal; white-space: nowrap; }
 .room-participant-telemetry { display: grid; min-width: 0; gap: 8px; margin-top: 7px; padding: 9px 10px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface); box-shadow: var(--shadow-control); }
 .room-participant-telemetry:first-child { margin-top: 0; }
 .room-participant-telemetry > header { display: flex; min-width: 0; align-items: start; justify-content: space-between; gap: 7px; }
 .room-participant-telemetry > header > span { display: grid; min-width: 0; gap: 1px; }
-.room-participant-telemetry > header strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.room-participant-telemetry > header small { overflow: hidden; color: var(--color-text-tertiary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.room-participant-telemetry > header strong { font-size: 13px; overflow-wrap: anywhere; }
+.room-participant-telemetry > header small { color: var(--color-text-tertiary); font-size: 13px; overflow-wrap: anywhere; }
+.room-status-panel .agent-status-row strong,
+.room-status-panel .agent-status-row small,
+.room-status-panel .agent-status-turn strong,
+.room-status-panel .agent-status-turn small,
+.room-status-panel .agent-status-files strong,
+.room-status-panel .agent-status-files small { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
 .room-participant-telemetry > header i { flex: 0 0 auto; color: var(--color-success); font: normal 700 12px var(--font-mono); }
 .room-participant-telemetry[data-compacting] > header i { color: var(--color-warning); }
 .room-participant-telemetry__numbers { display: flex; min-width: 0; flex-wrap: wrap; gap: 3px 8px; color: var(--color-text-secondary); font: 500 13px var(--font-mono); }
@@ -282,7 +294,9 @@
 
 @media (max-width: 1360px) {
   .shell-route-stage > main.rooms-feature,
-  .shell-route-stage > main.rooms-feature[data-status-open='true'] { position: relative; grid-template-columns: 236px minmax(0, 1fr) 0; }
+  .shell-route-stage > main.rooms-feature[data-status-open='true'] { position: relative; grid-template-columns: 0 minmax(0, 1fr) 0; }
+  .shell-route-stage > main.rooms-feature[data-rail-open='true'],
+  .shell-route-stage > main.rooms-feature[data-rail-open='true'][data-status-open='true'] { grid-template-columns: 236px minmax(0, 1fr) 0; }
   .room-status-panel { position: absolute; z-index: 14; top: 0; right: 0; bottom: 0; width: min(340px, 90vw); grid-column: auto; grid-row: auto; box-shadow: var(--shadow-menu); }
   .room-status-panel:not([data-open='true']) { display: none; }
   .room-status-backdrop { position: absolute; z-index: 13; inset: 0; display: block; padding: 0; border: 0; background: color-mix(in srgb, var(--color-text) 16%, transparent); opacity: 0; pointer-events: none; transition: opacity var(--duration-enter) var(--ease-standard); }
