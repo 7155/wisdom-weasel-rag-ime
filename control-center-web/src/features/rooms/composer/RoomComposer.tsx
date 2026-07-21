@@ -265,7 +265,7 @@ function stripLeadingRoomMention(
 }
 
 function participantRoleLabel(participant: ComposerParticipant): string {
-  if (participant.collaborationRole === 'coordinator') return '主持协调';
+  if (participant.collaborationRole === 'coordinator') return '调控者';
   if (participant.collaborationRole === 'researcher') return '调研与核对';
   if (participant.collaborationRole === 'executor') return '执行与交付';
   return '协作角色';

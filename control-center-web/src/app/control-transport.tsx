@@ -2486,8 +2486,8 @@ function record(value: unknown): Record<string, unknown> {
 function previewRoomSnapshot(roomId: string) {
   const now = Date.now() - 60_000;
   const participants = [
-    previewParticipant(roomId, 'participant-zhiyou', 'session-preview', 'companion-present-v1', '智鼬·此刻', 0),
-    previewParticipant(roomId, 'participant-hermes', 'session-runtime', 'companion-firstlight-v1', '智鼬·初识', 1),
+    previewParticipant(roomId, 'participant-present', 'session-preview', 'companion-present-v1', '智鼬·此刻', 0),
+    previewParticipant(roomId, 'participant-firstlight', 'session-runtime', 'companion-firstlight-v1', '智鼬·初识', 1),
   ];
   const event = (
     sequence: number,
@@ -2509,12 +2509,12 @@ function previewRoomSnapshot(roomId: string) {
   });
   const events = [
     event(1, 'user_message', null, { messageId: 'room-user-1', text: '并行检查 Agent UI 与 Control API 的集成边界。' }),
-    event(2, 'route_decision', null, { summary: '主持人将任务分给 2 个 Agent' }),
-    event(3, 'participant_activity', 'participant-zhiyou', { requestId: 'activity-a', summary: '核对 Turn 聚合与流式投影', status: 'completed' }),
-    event(4, 'participant_activity', 'participant-hermes', { requestId: 'activity-b', summary: '核对 route policy 与权限回执', status: 'completed' }),
-    event(5, 'participant_delta', 'participant-zhiyou', { messageId: 'room-assistant-1', delta: 'Agent 时间线已经复用统一 reducer 与 batcher，' }),
-    event(6, 'participant_delta', 'participant-zhiyou', { messageId: 'room-assistant-1', delta: '主时间线不会平铺每个工具结果。' }),
-    event(7, 'participant_delta', 'participant-hermes', { messageId: 'room-assistant-2', delta: '权限切换只在服务端回执后更新。' }),
+    event(2, 'route_decision', null, { summary: '2 位伙伴已分别接手' }),
+    event(3, 'participant_activity', 'participant-present', { requestId: 'activity-a', summary: '核对 Turn 聚合与流式投影', status: 'completed' }),
+    event(4, 'participant_activity', 'participant-firstlight', { requestId: 'activity-b', summary: '核对 route policy 与权限回执', status: 'completed' }),
+    event(5, 'participant_delta', 'participant-present', { messageId: 'room-assistant-1', delta: 'Agent 时间线已经复用统一 reducer 与 batcher，' }),
+    event(6, 'participant_delta', 'participant-present', { messageId: 'room-assistant-1', delta: '主时间线不会平铺每个工具结果。' }),
+    event(7, 'participant_delta', 'participant-firstlight', { messageId: 'room-assistant-2', delta: '权限切换只在服务端回执后更新。' }),
     event(8, 'turn_completed', null, { summary: '协作检查完成' }),
   ];
   return {
@@ -2528,8 +2528,8 @@ function previewRoomSnapshot(roomId: string) {
       roomKind: 'collaboration',
       avatar: 'briefcase',
       description: '验证责任交接、流式投影与多端控制面板',
-      routingPolicy: 'moderator',
-      moderatorParticipantId: 'participant-zhiyou',
+      routingPolicy: 'natural',
+      moderatorParticipantId: 'participant-present',
       activeTopicId: 'topic-preview',
       workspaceRoots: ['/Volumes/work/wisdom-weasel-rag-ime'],
       topics: [{
@@ -2555,10 +2555,10 @@ function previewRoomSnapshot(roomId: string) {
         objective: '核对多端网关回放与责任闭环',
         expectedOutput: '测试证据和风险说明',
         acceptanceCriteria: ['目标回合接受后才转移 owner', '交付经过协调者验收'],
-        accountableParticipantId: 'participant-zhiyou',
-        currentOwnerParticipantId: 'participant-hermes',
+        accountableParticipantId: 'participant-present',
+        currentOwnerParticipantId: 'participant-firstlight',
         offeredToParticipantId: '',
-        createdByParticipantId: 'participant-zhiyou',
+        createdByParticipantId: 'participant-present',
         clientMessageId: 'preview-assignment',
         state: 'review',
         depth: 1,

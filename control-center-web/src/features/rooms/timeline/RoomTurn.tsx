@@ -394,20 +394,15 @@ function describeRoomActivity(
     const detailByReason: Record<string, string> = {
       explicit_invite: '由用户直接邀请发言',
       mention: '根据明确提及开始处理',
-      moderator: '由主持人负责这一轮',
-      sequential: '按成员顺序轮到该角色',
+      moderator: '协作调度已确定本轮负责角色',
+      sequential: '该角色已接续上一步工作',
       descriptor_match: '根据角色标签与消息内容匹配',
       natural_fallback: '当前没有强匹配，由保底角色承接',
       configured_fallback: '由群组配置的保底角色承接',
     };
-    const policy = textValue(payload.routingPolicy);
     return {
       title: `${target} 已接手`,
-      detail: detailByReason[reason] ?? (
-        policy === 'moderator'
-          ? '由主持人安排处理这轮任务'
-          : `${routingPolicyLabel(policy)}已确定负责角色`
-      ),
+      detail: detailByReason[reason] ?? '已确定本轮负责角色',
     };
   }
   if (activity.kind === 'participant_status') {
@@ -448,16 +443,6 @@ function publicActivitySummary(summary: string, kind: string): string {
   if (/control-center-(?:safe-)?v\d/i.test(value)) return '';
   if (value.includes('内部工具步骤')) return '准备工作已经完成';
   return value;
-}
-
-function routingPolicyLabel(policy: string): string {
-  return ({
-    moderator: '主持协调',
-    manual_mentions: '@ 指派',
-    sequential: '顺序轮流',
-    natural: '自然发言',
-    invite_only: '点名邀请',
-  } as Record<string, string>)[policy] ?? '结构化路由';
 }
 
 function textValue(value: unknown): string {

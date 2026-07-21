@@ -131,14 +131,12 @@ export function RoomsFeature() {
   const [workspaceRoots, setWorkspaceRoots] = useState<string[]>([]);
   const [workspacePicking, setWorkspacePicking] = useState(false);
   const [selectedRoleIds, setSelectedRoleIds] = useState<string[]>([]);
-  const [routingPolicy, setRoutingPolicy] = useState<RoomRoutingPolicy>('natural');
-  const [moderatorRoleId, setModeratorRoleId] = useState('');
+  const [coordinatorRoleId, setCoordinatorRoleId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTitle, setSettingsTitle] = useState('');
   const [settingsAvatar, setSettingsAvatar] = useState('members');
   const [settingsDescription, setSettingsDescription] = useState('');
   const [settingsScenarioPrompt, setSettingsScenarioPrompt] = useState('');
-  const [settingsRoutingPolicy, setSettingsRoutingPolicy] = useState<RoomRoutingPolicy>('natural');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState('');
   const [memberSavingRoleId, setMemberSavingRoleId] = useState('');
@@ -495,8 +493,7 @@ export function RoomsFeature() {
     setCreateScenarioPrompt('');
     setWorkspaceRoots(projectPaths.slice(0, 1));
     setSelectedRoleIds(defaults);
-    setModeratorRoleId(defaults.includes('companion-future-v1') ? 'companion-future-v1' : defaults[0] ?? '');
-    setRoutingPolicy('natural');
+    setCoordinatorRoleId(defaults.includes('companion-future-v1') ? 'companion-future-v1' : defaults[0] ?? '');
     setCreateOpen(true);
   }
   function updateCreateRoomKind(kind: RoomKind): void {
@@ -511,8 +508,7 @@ export function RoomsFeature() {
     setCreateRoomKind(kind);
     setCreateAvatar(kind === 'roleplay' ? 'sparkles' : 'briefcase');
     setSelectedRoleIds(defaults);
-    setModeratorRoleId(defaults.includes('companion-future-v1') ? 'companion-future-v1' : defaults[0] ?? '');
-    setRoutingPolicy('natural');
+    setCoordinatorRoleId(defaults.includes('companion-future-v1') ? 'companion-future-v1' : defaults[0] ?? '');
     setCreateError('');
   }
   async function pickWorkspaceRoot(): Promise<void> {
@@ -547,7 +543,7 @@ export function RoomsFeature() {
       const next = current.includes(roleId)
         ? current.filter((item) => item !== roleId)
         : current.length < 4 ? [...current, roleId] : current;
-      if (!next.includes(moderatorRoleId)) setModeratorRoleId(next[0] ?? '');
+      if (!next.includes(coordinatorRoleId)) setCoordinatorRoleId(next[0] ?? '');
       return next;
     });
   }
@@ -579,7 +575,7 @@ export function RoomsFeature() {
           description: createDescription.trim(),
           scenarioPrompt: createScenarioPrompt.trim(),
           participants,
-          routingPolicy,
+          routingPolicy: 'natural',
           workspaceRoots: createRoomKind === 'collaboration' ? workspaceRoots : [],
           routingConfig: { maxResponders: 1, naturalJitter: createRoomKind === 'roleplay' ? 0.04 : 0, fallbackParticipantId: '' },
         },
@@ -620,7 +616,6 @@ export function RoomsFeature() {
     setSettingsAvatar(room.avatar ?? (room.roomKind === 'roleplay' ? 'sparkles' : 'briefcase'));
     setSettingsDescription(room.description ?? '');
     setSettingsScenarioPrompt(room.scenarioPrompt ?? '');
-    setSettingsRoutingPolicy('natural');
     setSettingsError('');
     setSettingsOpen(true);
   }
@@ -637,7 +632,7 @@ export function RoomsFeature() {
           avatar: settingsAvatar,
           description: settingsDescription.trim(),
           scenarioPrompt: settingsScenarioPrompt.trim(),
-          routingPolicy: settingsRoutingPolicy,
+          routingPolicy: 'natural',
           routingConfig: room.routingConfig ?? { maxResponders: 1, naturalJitter: room.roomKind === 'roleplay' ? 0.04 : 0, fallbackParticipantId: '' },
         },
       });
@@ -941,7 +936,7 @@ export function RoomsFeature() {
             <label className="room-create-field"><span>头像</span><Select aria-label="Room 头像" onValueChange={setCreateAvatar} options={roomAvatarOptions()} value={createAvatar} /></label>
           </div>
           <label className="room-create-field"><span>简介</span><input maxLength={500} value={createDescription} onChange={(event) => setCreateDescription(event.target.value)} placeholder="一句话说明这个 Room 的用途" aria-label="Room 简介" /></label>
-          <fieldset><legend>参与角色 <small>{selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes(createRoomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}<em>{createRoomKind === 'roleplay' ? '群聊角色' : roomRoleLabel(persona.roleId, moderatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
+          <fieldset><legend>参与角色 <small>{selectedRoleIds.length}/4</small></legend><div className="room-role-options">{personas.filter((persona) => persona.selectableModes.includes(createRoomKind === 'roleplay' ? 'assistant' : 'coordinator')).map((persona) => { const checked = selectedRoleIds.includes(persona.roleId); return <label key={`${persona.roleId}:${persona.version}`}><input type="checkbox" checked={checked} disabled={!checked && selectedRoleIds.length >= 4} onChange={() => toggleParticipant(persona.roleId)} /><PersonaAvatar persona={persona} size="small" /><span><strong>{persona.displayName}<em>{createRoomKind === 'roleplay' ? '群聊角色' : roomRoleLabel(persona.roleId, coordinatorRoleId)}</em></strong><small>{persona.tagline}</small></span></label>; })}</div></fieldset>
           <label className="room-create-field"><span>共同设定</span><textarea maxLength={8000} rows={3} value={createScenarioPrompt} onChange={(event) => setCreateScenarioPrompt(event.target.value)} placeholder={createRoomKind === 'roleplay' ? '共同背景、关系和交流边界。它不会覆盖安全策略。' : '团队共同遵守的项目背景与交付约束。'} aria-label="Room 共同设定" /></label>
         </form>
         <DialogFooter><Button variant="quiet" disabled={creating || workspacePicking} onClick={() => setCreateOpen(false)}>取消</Button><Button type="submit" form="room-create-form" variant="primary" loading={creating} disabled={(createRoomKind === 'collaboration' && !workspaceRoots.length) || !createTitle.trim() || selectedRoleIds.length < 2 || workspacePicking}>创建 Room</Button></DialogFooter>
@@ -1008,7 +1003,7 @@ function agentSessionValue(value: unknown): AgentSessionPolicySummary | undefine
 function roomToolItems(value: unknown): RoomToolPolicyItem[] { const source = record(value); return (Array.isArray(source.items) ? source.items : []).flatMap((value) => { const item = record(value); if (typeof item.id !== 'string' || typeof item.displayName !== 'string') return []; const profileOperations = record(item.profileOperations); return [{ id: item.id, displayName: item.displayName, description: String(item.description ?? ''), sessionModes: Array.isArray(item.sessionModes) ? item.sessionModes.map(String) : [], operations: Array.isArray(item.operations) ? item.operations.map(String) : [], profileOperations: Object.fromEntries(Object.entries(profileOperations).map(([profile, operations]) => [profile, Array.isArray(operations) ? operations.map(String) : []])), enabled: item.enabled === true }]; }); }
 function toolAvailableForPolicy(tool: RoomToolPolicyItem, mode: string, profile: string): boolean { return tool.sessionModes.includes(mode) && (tool.profileOperations[profile] ?? []).length > 0; }
 function roomParticipantRoleLabel(participant: RoomParticipant): string {
-  if (participant.collaborationRole === 'coordinator') return '主持协调';
+  if (participant.collaborationRole === 'coordinator') return '调控者';
   if (participant.collaborationRole === 'researcher') return '调研与核对';
   if (participant.collaborationRole === 'executor') return '执行与交付';
   return '协作角色';
@@ -1051,8 +1046,8 @@ function record(value: unknown): Record<string, unknown> { return typeof value =
 function uniquePaths(values: string[]): string[] { return values.map((value) => value.trim()).filter((value, index, all) => value.startsWith('/') && all.indexOf(value) === index).slice(0, 12); }
 function pathName(path: string): string { return path.split('/').filter(Boolean).at(-1) ?? path; }
 function roomPathName(room: RoomSummary): string { return room.workspaceRoots?.[0] ? pathName(room.workspaceRoots[0]) : '未绑定项目'; }
-function roomRoleLabel(roleId: string, moderatorRoleId: string): string {
-  if (roleId === moderatorRoleId) return '调控者';
+function roomRoleLabel(roleId: string, coordinatorRoleId: string): string {
+  if (roleId === coordinatorRoleId) return '调控者';
   if (roleId === 'companion-firstlight-v1') return '调研者';
   if (roleId === 'companion-present-v1') return '执行者';
   return '协作角色';
@@ -1088,16 +1083,6 @@ function roomAvatarIcon(room: RoomSummary) {
   if (room.avatar === 'briefcase') return <BriefcaseBusiness size={16} />;
   if (room.avatar === 'messages') return <MessagesSquare size={16} />;
   return <UsersRound size={16} />;
-}
-
-function routingPolicyLabel(policy: RoomRoutingPolicy): string {
-  return ({
-    moderator: '主持协调',
-    manual_mentions: '@ 指派',
-    sequential: '顺序轮流',
-    natural: '自然发言',
-    invite_only: '点名邀请',
-  } as const)[policy] ?? '结构化路由';
 }
 
 function collaborationRoleLabel(role: RoomParticipant['collaborationRole']): string {

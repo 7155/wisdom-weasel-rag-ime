@@ -1095,7 +1095,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertIn("activePointers", governance["governance"])
         self.assertIn("promotionCandidates", knowledge["knowledge"])
 
-    def test_kernel_bound_message_completion_never_enters_legacy_room_timeline(self) -> None:
+    def test_kernel_bound_completion_projects_only_public_lifecycle_metadata(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
         before = len(self.service.rooms.list_events(self.room_id, limit=200))
         self.service.events.publish(
@@ -1106,7 +1106,11 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         after = self.service.rooms.list_events(self.room_id, limit=200)
 
-        self.assertEqual(len(after), before)
+        self.assertEqual(len(after), before + 1)
+        projected = after[-1]
+        self.assertEqual(projected["eventType"], "participant_activity")
+        self.assertEqual(projected["payload"]["data"]["status"], "draft_ready")
+        self.assertNotIn("private reasoning", str(projected))
         self.assertNotIn("private reasoning", str(self.service.room_kernel_snapshot(self.room_id)))
 
     def test_worker_lifecycle_is_stoppable(self) -> None:
