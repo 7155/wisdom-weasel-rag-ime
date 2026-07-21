@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rag_ime.db import latest_migration_version
 from rag_ime.knowledge_search_use_eval import KnowledgeEvalError, KnowledgeSearchUseEvalStore
 
 
@@ -14,7 +15,7 @@ class KnowledgeSearchUseEvalTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="knowledge-eval-")
         self.db = Path(self.tmp.name) / "eval.sqlite"
         self.store = KnowledgeSearchUseEvalStore(self.db, signer_secrets={"fixture-signer": b"fixture-secret"}, evaluator_secrets={"eval-runner": b"eval-secret"})
-        self.assertEqual(self.store.initialize(), 97)
+        self.assertEqual(self.store.initialize(), latest_migration_version())
         self._seed_binding_and_receipts()
         self.dataset = self.store.sign_dataset(dataset_id="dataset:1", dataset_version=1, signer_id="fixture-signer", fixtures=self._fixtures(), thresholds=self._thresholds(), created_at_ms=1, expires_at_ms=1000, signer_secret=b"fixture-secret")
         self.store.register_dataset(self.dataset)

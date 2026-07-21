@@ -121,6 +121,13 @@ def migration_status(
     }
 
 
+def latest_migration_version(
+    migrations_dir: str | Path = DEFAULT_MIGRATIONS_DIR,
+) -> int:
+    """Return the source-owned schema head without opening a database."""
+    return max((migration.version for migration in load_migrations(migrations_dir)), default=0)
+
+
 def load_migrations(migrations_dir: str | Path = DEFAULT_MIGRATIONS_DIR) -> tuple[Migration, ...]:
     root = Path(migrations_dir)
     migrations: list[Migration] = []

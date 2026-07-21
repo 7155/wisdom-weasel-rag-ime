@@ -9,6 +9,7 @@ import time
 import unittest
 from pathlib import Path
 
+from rag_ime.db import latest_migration_version
 from rag_ime.room_runtime_host_kill_gate import RuntimeHostKillGate, process_birth_token
 
 
@@ -23,7 +24,7 @@ class RuntimeHostKillGateTests(unittest.TestCase):
             signal_tree=self.signals.append,
             identity_probe=lambda pid: self.observed.get(pid),
         )
-        self.assertEqual(self.gate.initialize(), 97)
+        self.assertEqual(self.gate.initialize(), latest_migration_version())
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from rag_ime.agent_room_kernel import RoomKernelFenceError, RoomKernelStore
 from rag_ime.agent_room_rollout import READINESS_COMPONENTS, RoomRolloutError, RoomRolloutStore
+from rag_ime.db import latest_migration_version
 
 
 class RoomRolloutTests(unittest.TestCase):
@@ -13,7 +14,7 @@ class RoomRolloutTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="room-rollout-")
         self.db = Path(self.tmp.name) / "rollout.sqlite"
         self.store = RoomRolloutStore(self.db, admin_secrets={"admin:release": b"release-secret"})
-        self.assertEqual(self.store.initialize(), 97)
+        self.assertEqual(self.store.initialize(), latest_migration_version())
         self.readiness = {key: f"sha256:{key}" for key in READINESS_COMPONENTS}
         self.metrics = {"unknown": 0, "deadLetter": 0, "authorizationLeakage": 0, "canaryPassed": True}
 

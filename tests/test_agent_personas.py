@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from rag_ime.agent_personas import AgentPersonaStore
+from rag_ime.db import latest_migration_version
 
 
 class AgentPersonaStoreTests(unittest.TestCase):
@@ -45,7 +46,7 @@ class AgentPersonaStoreTests(unittest.TestCase):
         with sqlite3.connect(self.db_path) as conn:
             self.assertEqual(
                 conn.execute("SELECT max(version) FROM schema_migrations").fetchone()[0],
-                97,
+                latest_migration_version(),
             )
             private = conn.execute(
                 """

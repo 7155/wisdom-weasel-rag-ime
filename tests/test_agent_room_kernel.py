@@ -13,6 +13,7 @@ from rag_ime.agent_room_kernel_contracts import (
     ROOM_TASK_SCHEMA_VERSION,
     ROOT_EXECUTION_SCHEMA_VERSION,
 )
+from rag_ime.db import latest_migration_version
 
 
 class RoomKernelCoreTests(unittest.TestCase):
@@ -20,7 +21,7 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="rag-ime-room-kernel-")
         self.db_path = Path(self.tmp.name) / "rag-ime.sqlite"
         self.store = RoomKernelStore(self.db_path, mode="test")
-        self.assertEqual(self.store.initialize(), 97)
+        self.assertEqual(self.store.initialize(), latest_migration_version())
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

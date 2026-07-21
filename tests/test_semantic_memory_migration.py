@@ -19,7 +19,11 @@ from zoneinfo import ZoneInfo
 from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.activity_timeline import TIMELINE_SEGMENTATION_MODE
-from rag_ime.db.migration_runner import DEFAULT_MIGRATIONS_DIR, apply_database_migrations
+from rag_ime.db.migration_runner import (
+    DEFAULT_MIGRATIONS_DIR,
+    apply_database_migrations,
+    latest_migration_version,
+)
 from rag_ime.embeddings import HashingEmbeddingProvider
 from rag_ime.memory_projection import (
     RETRIEVAL_DOCS_PROJECTION,
@@ -460,7 +464,7 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
             current = int(conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0])
         with closing(sqlite3.connect(rollback)) as conn:
             previous = int(conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0])
-        self.assertEqual(current, 97)
+        self.assertEqual(current, latest_migration_version())
         self.assertEqual(previous, 58)
 
     def test_copy_cli_accepts_sidecars_materialized_by_read_only_wal_backup(self) -> None:

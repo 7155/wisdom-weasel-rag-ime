@@ -7,13 +7,15 @@ import unittest
 from pathlib import Path
 
 from rag_ime.agent_governance_projection import GovernanceProjectionStore
+from rag_ime.db import latest_migration_version
 
 
 class GovernanceProjectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="governance-projection-")
         self.db = Path(self.tmp.name) / "governance.sqlite"
-        self.store = GovernanceProjectionStore(self.db); self.assertEqual(self.store.initialize(), 97)
+        self.store = GovernanceProjectionStore(self.db)
+        self.assertEqual(self.store.initialize(), latest_migration_version())
         self._seed()
 
     def tearDown(self) -> None:
