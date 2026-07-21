@@ -79,6 +79,7 @@ from .agent_room_work import AgentRoomWorkStore
 from .agent_room_work_application import RoomWorkApplicationService
 from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_application import RoomKernelApplicationService
+from .agent_room_settlement import RoomSettleLifecycleService
 from .agent_room_kernel_projection import RoomKernelProjection
 from .agent_room_kernel_worker import KernelCommandBus, RoomKernelWorker, RoomKernelWorkerLoop
 from .agent_room_runtime_coordinator import RoomKernelRuntimeCoordinator
@@ -1454,6 +1455,17 @@ class AgentService:
             )
         return self.room_kernel_application.settle(room_id, payload)
 
+    def settle_room_runtime(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Bridge Pi's pre-settle lifecycle gate into the canonical Kernel."""
+
+        return {
+            "ok": True,
+            "result": self.room_settle_lifecycle.settle(payload),
+        }
+
     def governance_read_model(self, *, scope_key: str | None = None) -> dict[str, object]:
         return {
             "schemaVersion": "wisdom-weasel.governance-read-model.v1",
@@ -2501,6 +2513,12 @@ class AgentService:
             wake_worker=self.room_kernel_worker_loop.wake,
             revoke_session=self.room_kernel_runtime.revoke_session,
             artifact_hash_provider=self._room_artifact_hash_provider,
+        )
+        self.room_settle_lifecycle = RoomSettleLifecycleService(
+            rooms=self.rooms,
+            kernel=self.room_kernel,
+            capabilities=self.room_capabilities,
+            application=self.room_kernel_application,
         )
         if start_worker:
             self.room_kernel_worker_loop.start()

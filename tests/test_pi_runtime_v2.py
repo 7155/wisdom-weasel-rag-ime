@@ -224,7 +224,9 @@ for line in sys.stdin:
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
             "receiptKind": "dispatch_accepted", "status": "accepted",
             "rootId": params["rootId"], "dispatchId": params["dispatchId"],
-            "generation": params["generation"], "sessionId": session_id,
+            "generation": params["generation"],
+            "capabilityEpoch": params["capabilityEpoch"],
+            "sessionId": session_id,
             "delivery": "prompt", "turnId": "room-turn-" + params["dispatchId"],
             **({"roomSkillLoad": sessions[session_id]["roomSkillLoad"]}
                if sessions[session_id].get("roomSkillLoad") else {}),

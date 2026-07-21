@@ -65,6 +65,7 @@ class KernelRuntime:
             "rootId": payload["rootId"],
             "dispatchId": payload["dispatchId"],
             "generation": payload["generation"],
+            "capabilityEpoch": payload["capabilityEpoch"],
             "sessionId": payload["targetSessionId"],
             "turnId": "turn:kernel",
         }
@@ -889,9 +890,16 @@ class RoomKernelServiceTests(unittest.TestCase):
 
         results = [
             self.service.settle_room_kernel_dispatch(
-                self.room_id, {"settleReceipt": settle}, caller_authorized=True
+                self.room_id,
+                {
+                    "settleReceipt": {
+                        **settle,
+                        "settleReceiptId": f"settle:no-commit:{attempt}",
+                    }
+                },
+                caller_authorized=True,
             )
-            for _ in range(3)
+            for attempt in range(1, 4)
         ]
 
         self.assertTrue(results[0]["retryRequired"])
@@ -1274,7 +1282,12 @@ class RoomKernelServiceTests(unittest.TestCase):
         invoked = self.service.execute_room_capability_tool(
             self.session_id,
             "room_commit",
-            {"result": "完成"},
+            {
+                "decision": "deliver",
+                "result": "完成",
+                "evidenceRefs": ["verification:service"],
+                "requirementCoverage": ["criterion:service"],
+            },
             tool_call_id="call:e2e-complete",
             load_receipt_id=str(loaded["receiptId"]),
         )

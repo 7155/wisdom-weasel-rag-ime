@@ -20,7 +20,7 @@ class KnowledgePromotionTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="knowledge-promotion-")
         self.db = Path(self.tmp.name) / "knowledge.sqlite"
         self.store = KnowledgePromotionStore(self.db, authority_secrets={"user:1": b"user-secret", "admin:1": b"admin-secret"})
-        self.assertEqual(self.store.initialize(), 95)
+        self.assertEqual(self.store.initialize(), 96)
         self._seed_evidence()
         self.caller_a = self._caller("session:a", "participant:a", "binding:a", "auth:1")
         self.caller_b = self._caller("session:b", "participant:b", "binding:b", "auth:1")

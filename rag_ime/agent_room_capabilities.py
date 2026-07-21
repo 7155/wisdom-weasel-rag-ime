@@ -78,18 +78,51 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "description": "Submit a governed continuation or completion proposal for the active Dispatch.",
             "when": ("需要提交继续、交接、阻塞或完成提议",),
             "notFor": ("普通公开发言、私有进度或没有证据的完成声明",),
-            "input": "结果摘要、公开证据与可选结构化块",
+            "input": "交付决定、结果摘要、证据、验收覆盖与可选交接目标",
             "output": "受管 continuation 或 completion 提议回执",
             "does": "提交当前 Dispatch 的受管状态提议。",
             "risk": "R1",
             "operation": "room.commit",
             "inputSchema": {
                 "type": "object",
-                "required": ["result"],
+                "required": [
+                    "decision",
+                    "result",
+                    "evidenceRefs",
+                    "requirementCoverage",
+                ],
                 "properties": {
+                    "decision": {
+                        "enum": ["deliver", "handoff", "wait", "blocked"]
+                    },
                     "result": {"type": "string", "minLength": 1},
+                    "evidenceRefs": {
+                        "type": "array",
+                        "maxItems": 64,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "requirementCoverage": {
+                        "type": "array",
+                        "maxItems": 64,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                    "targetParticipantId": {"type": "string", "minLength": 1},
+                    "nextTask": {"type": "string", "minLength": 1},
                     "blocks": _RICH_BLOCK_INPUT_SCHEMA,
                 },
+                "allOf": [
+                    {
+                        "if": {
+                            "properties": {
+                                "decision": {"const": "handoff"}
+                            },
+                            "required": ["decision"],
+                        },
+                        "then": {
+                            "required": ["targetParticipantId", "nextTask"]
+                        },
+                    }
+                ],
                 "additionalProperties": False,
             },
         },
@@ -532,11 +565,49 @@ class RoomCapabilityManifestStore:
                 (int(capability_epoch), _non_negative(now_ms, "now_ms"), session_id, row["manifest_id"]),
             )
 
-    def manifest_for_runtime(self, session_id: str) -> tuple[dict[str, object], dict[str, object]] | None:
-        binding = self.runtime_binding(session_id)
+    def manifest_for_runtime(
+        self,
+        session_id: str,
+        *,
+        active_only: bool = True,
+    ) -> tuple[dict[str, object], dict[str, object]] | None:
+        binding = self.runtime_binding(session_id, active_only=active_only)
         if binding is None:
             return None
         return self._manifest(str(binding["manifestId"]), str(binding["manifestHash"])), binding
+
+    def latest_runtime_invocation(
+        self,
+        *,
+        session_id: str,
+        dispatch_id: str,
+        tool_name: str,
+    ) -> dict[str, object] | None:
+        """Return the newest authorized invocation for one fenced Dispatch."""
+
+        canonical = _canonical_tool(tool_name)
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT invocation.*
+                   FROM room_v2_tool_invocation_receipts invocation
+                   JOIN room_v2_capability_manifests manifest
+                     ON manifest.manifest_id = invocation.manifest_id
+                    AND manifest.manifest_hash = invocation.manifest_hash
+                   JOIN room_v2_capability_runtime_bindings binding
+                     ON binding.manifest_id = invocation.manifest_id
+                    AND binding.manifest_hash = invocation.manifest_hash
+                   WHERE binding.session_id = ?
+                     AND manifest.dispatch_id = ?
+                     AND invocation.canonical_tool_name = ?
+                   ORDER BY invocation.created_at_ms DESC, invocation.receipt_id DESC
+                   LIMIT 1""",
+                (
+                    _required(session_id, "session_id"),
+                    _required(dispatch_id, "dispatch_id"),
+                    canonical,
+                ),
+            ).fetchone()
+        return _invocation_payload(row) if row is not None else None
 
     def execution_receipt(self, invocation_receipt_id: str) -> dict[str, object] | None:
         with self._connect() as conn:

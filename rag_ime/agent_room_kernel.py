@@ -1584,6 +1584,9 @@ class RoomKernelStore:
         generation: int,
         now_ms: int,
         max_attempts: int = 3,
+        settle_receipt_id: str = "",
+        reason: str = "missing_room_commit",
+        resource_usage: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         """Bound missing-commit retries, then block instead of silently settling."""
 
@@ -1592,6 +1595,23 @@ class RoomKernelStore:
             root = self._root_row(conn, str(dispatch["root_id"]))
             if generation != int(dispatch["generation"]) or generation != int(root["generation"]):
                 raise RoomKernelFenceError("uncommitted settle generation is stale")
+            request_id = str(settle_receipt_id or "").strip()
+            if request_id:
+                replay = conn.execute(
+                    """SELECT dispatch_id, kernel_receipt_json
+                       FROM room_kernel_settle_attempt_receipts
+                       WHERE settle_receipt_id = ?""",
+                    (request_id,),
+                ).fetchone()
+                if replay is not None:
+                    if str(replay["dispatch_id"]) != dispatch_id:
+                        raise RoomKernelFenceError(
+                            "settle receipt was rebound to another Dispatch"
+                        )
+                    payload = json.loads(str(replay["kernel_receipt_json"]))
+                    if not isinstance(payload, dict):
+                        raise RuntimeError("settle attempt receipt is corrupt")
+                    return payload
             row = conn.execute(
                 "SELECT attempt_count,state FROM room_kernel_settle_guards WHERE dispatch_id=?",
                 (dispatch_id,),
@@ -1607,7 +1627,7 @@ class RoomKernelStore:
                 generation=generation,
                 details={
                     "dispatchId": dispatch_id,
-                    "reason": "missing_room_commit",
+                    "reason": str(reason or "missing_room_commit")[:500],
                     "attempt": attempts,
                     "maxAttempts": max(1, int(max_attempts)),
                 },
@@ -1629,10 +1649,73 @@ class RoomKernelStore:
                     (int(now_ms), dispatch["task_id"]),
                 )
                 conn.execute(
-                    "UPDATE room_kernel_roots SET state='blocked',updated_at_ms=? WHERE root_id=?",
-                    (int(now_ms), root["root_id"]),
+                    """UPDATE room_kernel_roots
+                       SET state='blocked',
+                           budget_remaining=MAX(0,budget_remaining-?),
+                           budget_reserved=MAX(0,budget_reserved-?),
+                           updated_at_ms=?
+                       WHERE root_id=?""",
+                    (
+                        int(dispatch["budget_cost"]),
+                        int(dispatch["budget_cost"]),
+                        int(now_ms),
+                        root["root_id"],
+                    ),
+                )
+                conn.execute(
+                    "UPDATE room_kernel_dispatches SET state='failed',updated_at_ms=? WHERE dispatch_id=?",
+                    (int(now_ms), dispatch_id),
+                )
+                conn.execute(
+                    "UPDATE room_kernel_outbox SET state='dead_letter',updated_at_ms=? WHERE dispatch_id=?",
+                    (int(now_ms), dispatch_id),
+                )
+                conn.execute(
+                    "UPDATE room_kernel_leases SET state='completed',updated_at_ms=? WHERE dispatch_id=? AND state='active'",
+                    (int(now_ms), dispatch_id),
+                )
+                self._settle_dispatch_limits(
+                    conn,
+                    dispatch_id,
+                    usage=resource_usage,
+                    consumed=True,
+                    now_ms=now_ms,
+                )
+            if request_id:
+                conn.execute(
+                    """INSERT INTO room_kernel_settle_attempt_receipts(
+                       settle_receipt_id, dispatch_id, kernel_receipt_json,
+                       created_at_ms
+                       ) VALUES (?, ?, ?, ?)""",
+                    (request_id, dispatch_id, _json(receipt), int(now_ms)),
                 )
             return receipt
+
+    def settle_attempt_receipt(
+        self,
+        settle_receipt_id: str,
+        *,
+        dispatch_id: str,
+    ) -> dict[str, object] | None:
+        """Read one exact pre-settle attempt without advancing its guard."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT dispatch_id, kernel_receipt_json
+                   FROM room_kernel_settle_attempt_receipts
+                   WHERE settle_receipt_id = ?""",
+                (settle_receipt_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        if str(row["dispatch_id"]) != dispatch_id:
+            raise RoomKernelFenceError(
+                "settle receipt was rebound to another Dispatch"
+            )
+        payload = json.loads(str(row["kernel_receipt_json"]))
+        if not isinstance(payload, dict):
+            raise RuntimeError("settle attempt receipt is corrupt")
+        return payload
 
     def outbox(self, dispatch_id: str) -> dict[str, object]:
         with self._connect() as conn:

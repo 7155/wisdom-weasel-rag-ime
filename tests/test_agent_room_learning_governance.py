@@ -16,7 +16,7 @@ class RoomLearningGovernanceTests(unittest.TestCase):
         self.db = Path(self.tmp.name) / "room.sqlite"
         self.requirements = RequirementGovernanceStore(self.db); self.requirements.initialize()
         self.peer = RoomPeerReviewStore(self.db, runner_secrets={"runner:test": b"runner-secret"}); self.peer.initialize()
-        self.store = RoomLearningGovernanceStore(self.db, authority_secrets={"admin:1": b"approval-secret", "user:1": b"user-secret"}, config_secret=b"config-secret", evidence_ttl_ms=1_000); self.assertEqual(self.store.initialize(), 95)
+        self.store = RoomLearningGovernanceStore(self.db, authority_secrets={"admin:1": b"approval-secret", "user:1": b"user-secret"}, config_secret=b"config-secret", evidence_ttl_ms=1_000); self.assertEqual(self.store.initialize(), 96)
         self._seed_runtime()
         self.incident, _ = self._incident("incident:1", "occurrence:1")
 

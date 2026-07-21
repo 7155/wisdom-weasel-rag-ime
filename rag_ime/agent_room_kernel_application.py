@@ -294,6 +294,17 @@ class RoomKernelApplicationService:
                 dispatch_id,
                 generation=int(settle["generation"]),
                 now_ms=timestamp,
+                settle_receipt_id=str(
+                    settle.get("settleReceiptId") or ""
+                ),
+                reason=str(
+                    payload.get("guardReason") or "missing_room_commit"
+                ),
+                resource_usage=(
+                    settle.get("resourceUsage")
+                    if isinstance(settle.get("resourceUsage"), Mapping)
+                    else None
+                ),
             )
             if receipt["receiptKind"] == "settle_blocked":
                 self.revoke_session(str(settle["sessionId"]), timestamp)

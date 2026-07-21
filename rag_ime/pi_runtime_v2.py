@@ -1315,6 +1315,9 @@ class PiRuntimeHostManager:
         generation = _integer(payload.get("generation"))
         if generation < 0:
             raise ValueError("Room dispatch generation must be non-negative")
+        capability_epoch = _integer(payload.get("capabilityEpoch"))
+        if capability_epoch < 0:
+            raise ValueError("Room dispatch capabilityEpoch must be non-negative")
         opened = self.ensure(session_id)
         client = self._require_client()
         with self._lock:
@@ -1330,6 +1333,7 @@ class PiRuntimeHostManager:
                 "rootId": root_id,
                 "dispatchId": dispatch_id,
                 "generation": generation,
+                "capabilityEpoch": capability_epoch,
                 "idempotencyKey": idempotency_key,
                 "leaseToken": lease_token,
                 "message": message,
@@ -1340,6 +1344,7 @@ class PiRuntimeHostManager:
             or result.get("rootId") != root_id
             or result.get("dispatchId") != dispatch_id
             or int(result.get("generation", -1)) != generation
+            or int(result.get("capabilityEpoch", -1)) != capability_epoch
             or result.get("status") != "accepted"
         ):
             raise PiRuntimeError("Pi Runtime Host returned an invalid Room dispatch receipt")

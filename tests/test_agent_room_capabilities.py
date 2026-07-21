@@ -109,7 +109,12 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self.assertEqual(canonical["canonicalCommand"]["tool"], "room_post")
         validated = validate_room_tool_command(
             "room_commit",
-            {"result": "done"},
+            {
+                "decision": "deliver",
+                "result": "done",
+                "evidenceRefs": ["artifact:test"],
+                "requirementCoverage": ["ac:1"],
+            },
         )
         self.assertEqual(validated["canonicalTool"], "room_commit")
         self.assertFalse(validated["executionPerformed"])
