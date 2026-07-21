@@ -46,7 +46,7 @@
 .room-catalog-warning { margin: 0; padding: 5px 16px; background: var(--color-warning-soft); color: var(--color-text-secondary); font-size: 13px; }
 .room-timeline { min-height: 0; }
 .room-timeline > div { height: 100%; }
-.room-timeline > .project-scene-empty { height: 100%; align-content: center; }
+.room-timeline > .ui-empty-state { height: 100%; align-content: center; }
 .room-execution-workspace, .room-session-workspace { min-height: 0; overflow: auto; padding: 14px 16px 24px; }
 .room-execution-workspace > .room-kernel-live { max-width: 1180px; margin: 0 auto; }
 .room-session-workspace { display: grid; align-content: start; gap: 14px; }

@@ -6,7 +6,7 @@ import { personaAssetManifest, resolvePersonaAsset } from './persona-assets';
 
 describe('Persona timeline assets', () => {
   it('maps all four fixed roles onto distinct portraits', () => {
-    expect(personaAssetManifest.schemaVersion).toBe('rag-ime.persona-assets.v5');
+    expect(personaAssetManifest.schemaVersion).toBe('rag-ime.persona-assets.v6');
     expect(personaAssetManifest.assets['rag-ime-timeline-past-v1'].timeline).toBe('past');
     expect(personaAssetManifest.assets['rag-ime-timeline-present-v1'].timeline).toBe('present');
     expect(personaAssetManifest.assets['rag-ime-timeline-future-v1'].timeline).toBe('future');

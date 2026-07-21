@@ -18,7 +18,7 @@ const portraitAssets = {
 } as const;
 
 export const personaAssetManifest = {
-  schemaVersion: 'rag-ime.persona-assets.v5',
+  schemaVersion: 'rag-ime.persona-assets.v6',
   fallbackAssetId: 'rag-ime-timeline-present-v1',
   assets: {
     'rag-ime-presence-v2': assetRecord('companion-present-v1', 'presence', '运行状态', singlePortrait(portraitAssets.terra)),

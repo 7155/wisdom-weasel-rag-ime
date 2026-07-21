@@ -18,31 +18,21 @@ class PersonaArtAssetTests(unittest.TestCase):
         self.manifest: dict[str, Any] = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
     def test_generated_assets_match_manifest_and_webp_dimensions(self) -> None:
+        self.assertEqual(self.manifest["schemaVersion"], "rag-ime.persona-assets.v6")
         portraits = [
             asset for asset in self.manifest["assets"].values()
             if isinstance(asset.get("source"), str)
         ]
-        scenes = list(self.manifest["scenes"].values())
         self.assertEqual(len(portraits), 4)
-        self.assertEqual(len(scenes), 6)
+        self.assertNotIn("scenes", self.manifest)
+        self.assertNotIn("contactSheet", self.manifest)
 
-        for asset in [*portraits, *scenes]:
+        for asset in portraits:
             path = PUBLIC_ROOT / asset["source"].lstrip("/")
             content = path.read_bytes()
             self.assertEqual(len(content), asset["bytes"], path)
             self.assertEqual(hashlib.sha256(content).hexdigest(), asset["sha256"], path)
             self.assertEqual(_webp_dimensions(content), (asset["width"], asset["height"]), path)
-
-        contact_sheet = self.manifest["contactSheet"]
-        contact_path = REPO_ROOT / contact_sheet["source"]
-        contact_content = contact_path.read_bytes()
-        self.assertEqual(len(contact_content), contact_sheet["bytes"], contact_path)
-        self.assertEqual(hashlib.sha256(contact_content).hexdigest(), contact_sheet["sha256"], contact_path)
-        self.assertEqual(
-            _webp_dimensions(contact_content),
-            (contact_sheet["width"], contact_sheet["height"]),
-            contact_path,
-        )
 
     def test_rejected_animal_pack_is_not_referenced(self) -> None:
         manifest_text = MANIFEST_PATH.read_text(encoding="utf-8")
@@ -50,17 +40,19 @@ class PersonaArtAssetTests(unittest.TestCase):
         self.assertNotIn("RagImeCompanion", manifest_text)
         self.assertFalse(any((PUBLIC_ROOT / "companions" / "personas").glob("wisdom-weasel-*.webp")))
 
+    def test_functional_empty_state_scene_pack_is_removed(self) -> None:
+        self.assertFalse((PUBLIC_ROOT / "companions" / "scenes").exists())
+        self.assertFalse((REPO_ROOT / "eval" / "room-v2" / "art").exists())
+
     def test_generated_pack_stays_within_delivery_budgets(self) -> None:
         budgets = self.manifest["budgets"]
         portraits = [
             asset for asset in self.manifest["assets"].values()
             if isinstance(asset.get("source"), str)
         ]
-        scenes = list(self.manifest["scenes"].values())
         self.assertTrue(all(asset["bytes"] <= budgets["portraitMaxBytes"] for asset in portraits))
-        self.assertTrue(all(asset["bytes"] <= budgets["sceneMaxBytes"] for asset in scenes))
         self.assertLessEqual(
-            sum(asset["bytes"] for asset in [*portraits, *scenes]),
+            sum(asset["bytes"] for asset in portraits),
             budgets["generatedPackMaxBytes"],
         )
 

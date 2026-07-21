@@ -4,14 +4,12 @@ import { KnowledgeEvidenceExplorer } from './KnowledgeVisualization';
 
 afterEach(cleanup);
 
-describe('Knowledge evidence project scene', () => {
-  it('uses the governed memory scene only for the real evidence empty state', () => {
+describe('Knowledge evidence empty state', () => {
+  it('uses a compact functional empty state without decorative artwork', () => {
     const { rerender } = render(<KnowledgeEvidenceExplorer items={[]} />);
-    const scene = screen.getByAltText(/长期输入形成的时间线/);
-    expect(scene).toHaveAttribute('src', '/companions/scenes/memory-evidence-timeline-v2.webp');
-    expect(scene).toHaveAttribute('width', '960');
-    expect(scene).toHaveAttribute('height', '640');
-    expect(scene).toHaveAttribute('loading', 'lazy');
+    const emptyState = screen.getByText('暂无证据').closest('.ui-empty-state');
+    expect(emptyState).not.toBeNull();
+    expect(emptyState?.querySelector('img')).toBeNull();
 
     rerender(<KnowledgeEvidenceExplorer items={[{
       id: 'evidence:1',
@@ -22,7 +20,7 @@ describe('Knowledge evidence project scene', () => {
       score: 0.91,
       url: '',
     }]} />);
-    expect(screen.queryByAltText(/长期输入形成的时间线/)).not.toBeInTheDocument();
+    expect(screen.queryByText('暂无证据')).not.toBeInTheDocument();
     expect(screen.getByRole('option', { name: /Room 路由审计/ })).toBeInTheDocument();
   });
 });

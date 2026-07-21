@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Functional Empty States QA</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { min-width: 0; min-height: 100%; margin: 0; }
+      body { background: var(--color-surface); }
+      #root { min-width: 0; }
+      .functional-empty-fixture { min-width: 0; min-height: 240px; display: grid; align-items: center; border-bottom: 1px solid var(--color-border); }
+      .functional-empty-demo { min-width: 0; padding: 16px; }
+      @media (max-width: 520px) { .functional-empty-fixture { min-height: 220px; } .functional-empty-demo { padding: 8px; } }
+    </style>
+  </head>
+  <body>
+    <main id="root"></main>
+    <script type="module" src="./functional-empty-states.tsx"></script>
+  </body>
+</html>
