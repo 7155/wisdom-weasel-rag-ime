@@ -41,6 +41,21 @@ class RoomPromptPlanTests(unittest.TestCase):
         with sqlite3.connect(self.db_path) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM room_v2_prompt_compile_receipts").fetchone()[0], 0)
 
+    def test_semantic_hard_rule_is_rejected_outside_its_single_owner(self) -> None:
+        layers = list(self._layers())
+        layers[1] = PromptLayer(
+            **{
+                **layers[1].__dict__,
+                "content": "PERSONA\n收工前必须选择已交付、已交接、等待或阻塞",
+            }
+        )
+
+        with self.assertRaisesRegex(
+            PromptProducerConflict,
+            "settle-decision rule belongs to collaboration_role",
+        ):
+            self._compile("receipt:semantic-owner", layers=layers)
+
     def test_stable_prefix_is_byte_identical_when_dynamic_tail_appends(self) -> None:
         first_entry = self._entry("task_state", "task:1", "任务：实现 PromptPlan", 1)
         self._append("journal:1", first_entry, "task:1", 10)
@@ -66,6 +81,8 @@ class RoomPromptPlanTests(unittest.TestCase):
             stable_prompt.index(f'order="{order}"') for order in range(1, 6)
         ]
         self.assertEqual(positions, sorted(positions))
+        self.assertNotIn(" ref=", stable_prompt)
+        self.assertNotIn("sha256:", stable_prompt)
         self.assertIn("任务：实现 PromptPlan", first_provider["providerContext"])
         self.assertIn("预算剩余 42", second_provider["providerContext"])
 

@@ -367,9 +367,28 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertIn("pinned=role-book:companion-present-v1:1:2", prompt)
         self.assertIn("能够维护个人记忆投影", prompt)
         self.assertLess(
+            prompt.index('name="core_rails"'),
+            prompt.index('name="persona"'),
+        )
+        self.assertLess(
             prompt.index("你是“智鼬·未来”"),
             prompt.index("<agent-role-book>"),
         )
+
+    def test_missing_role_book_adds_no_placeholder_or_negative_status_block(self) -> None:
+        config = replace(
+            self.config,
+            role_book_resolver=lambda _value: "",
+        )
+
+        prompt = config.system_prompt_for_session(
+            {**self.session, "roleBookRevisionId": ""}
+        )
+
+        self.assertNotIn("<agent-role-book>", prompt)
+        self.assertNotIn("RAG_IME_ROLE_BOOK_V1", prompt)
+        self.assertNotIn("revision_not_pinned", prompt)
+        self.assertNotIn("尚未安全固定", prompt)
 
     def test_environment_model_slot_is_scoped_to_the_pi_child(self) -> None:
         with mock.patch.dict(

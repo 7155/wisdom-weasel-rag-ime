@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from .agent_definition_compiler import AgentDefinitionCompiler
 from .agent_personas import AgentPersonaStore
-from .agent_prompt_plans import PromptLayer, RoomPromptPlanStore
+from .agent_prompt_plans import (
+    PromptLayer,
+    RoomPromptPlanStore,
+    compose_persona_layer,
+)
 from .agent_room_capabilities import (
     RoomCapabilityManifestStore,
     room_runtime_registry,
@@ -57,6 +61,7 @@ class RoomKernelRuntimeCoordinator:
         learning: RoomLearningGovernanceStore,
         learning_runtime: RoomLearningRuntime,
         definition_compiler: AgentDefinitionCompiler,
+        role_book_prompt_resolver: Callable[[str], str],
     ) -> None:
         self.db_path = Path(db_path)
         self.rooms = rooms
@@ -72,6 +77,7 @@ class RoomKernelRuntimeCoordinator:
         self.learning = learning
         self.learning_runtime = learning_runtime
         self.definition_compiler = definition_compiler
+        self.role_book_prompt_resolver = role_book_prompt_resolver
         self.profile_pins = RoomCollaborationProfilePins(self.db_path)
         self.runtime_capabilities = RoomRuntimeCapabilityService(
             kernel=kernel,
@@ -132,6 +138,7 @@ class RoomKernelRuntimeCoordinator:
             participant.get("roleId"),
             participant.get("roleVersion") or "1",
         )
+        role_book_prompt = self.role_book_prompt_resolver(session_id)
         role_id = str(participant.get("collaborationRole") or "implementer")
         if role_id == "executor":
             role_id = "implementer"
@@ -272,22 +279,13 @@ class RoomKernelRuntimeCoordinator:
                 expected_generation=generation,
                 appended_at_ms=prepared_at_ms,
             )
-        profile_overlay = json.dumps(
-            {
-                "profilePin": profile_pin,
-                "promptGuidance": list(active_profile.prompt_guidance),
-                "profilePrompt": active_profile.system_prompt,
-                "guardPrompt": (
-                    guard_surfaces["prompt"]
-                    if guard_surfaces is not None
-                    else {}
-                ),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
+        profile_overlay = _profile_overlay_prompt(
+            active_profile,
+            guard_surfaces["prompt"] if guard_surfaces is not None else None,
         )
         layers = _prompt_layers(
             persona=persona,
+            role_book_prompt=role_book_prompt,
             role=role,
             template=template,
             profile_pin=profile_pin,
@@ -484,6 +482,7 @@ class RoomKernelRuntimeCoordinator:
 def _prompt_layers(
     *,
     persona: PersonaManifest,
+    role_book_prompt: str,
     role: object,
     template: object,
     profile_pin: Mapping[str, object],
@@ -503,8 +502,11 @@ def _prompt_layers(
             "persona",
             "persona-compiler",
             f"persona:{persona.role_id}@{persona.version}",
-            persona.persona_prompt,
-            ("identity",),
+            compose_persona_layer(
+                persona.persona_prompt,
+                role_book_prompt,
+            ),
+            ("identity", "role-memory"),
         ),
         PromptLayer(
             "collaboration_role",
@@ -517,7 +519,7 @@ def _prompt_layers(
             "agent_template_policy",
             "template-capability-compiler",
             f"agent-template:{template.template_id}@{template.version}",
-            template.prompt,
+            template.runtime_prompt,
             ("tool-policy", "skill-policy"),
         ),
         PromptLayer(
@@ -544,6 +546,29 @@ def _prompt_layers(
             ("dynamic-facts",),
         ),
     )
+
+
+def _profile_overlay_prompt(
+    profile: CollaborationProfileManifest,
+    guard: object,
+) -> str:
+    parts = [profile.system_prompt.strip()]
+    if isinstance(guard, Mapping):
+        condition = guard.get("condition")
+        action = guard.get("action")
+        if isinstance(condition, Mapping) and isinstance(action, Mapping):
+            parts.extend(
+                (
+                    "已审核的 Room Guard 只在以下条件命中时进一步收紧行为：",
+                    json.dumps(
+                        {"condition": dict(condition), "action": dict(action)},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                )
+            )
+    return "\n".join(parts)
 
 
 def _room_skill_stage(dispatch: Mapping[str, object]) -> str:

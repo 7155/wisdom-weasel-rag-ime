@@ -23,6 +23,13 @@ PROMPT_LAYER_SPECS = (
     (6, "provider_dynamic_facts", "room-context-compiler", False),
 )
 
+_RULE_OWNER_SIGNATURES = (
+    ("authorization", "core_rails", ("只有受控审批回执有效", "原生控制中心")),
+    ("role-memory", "persona", ("<agent-role-book>",)),
+    ("settle-decision", "collaboration_role", ("收工前", "已交付、已交接")),
+    ("progressive-capability", "agent_template_policy", ("skill_load", "tool_load")),
+)
+
 
 class PromptProducerConflict(RuntimeError):
     """An instruction domain has more than one producer."""
@@ -40,6 +47,23 @@ class PromptLayer:
     content: str
     instruction_domains: tuple[str, ...]
     omitted_reason: str = ""
+
+
+def compose_persona_layer(persona_prompt: str, role_book_prompt: str = "") -> str:
+    """Attach only an exact pinned Role Book; absence is a literal no-op."""
+
+    persona = str(persona_prompt or "").strip()
+    if not persona:
+        raise ValueError("persona prompt must not be empty")
+    role_book = str(role_book_prompt or "").strip()
+    if not role_book:
+        return persona
+    return (
+        f"{persona}\n\n"
+        "<agent-role-book>\n"
+        f"{role_book}\n"
+        "</agent-role-book>"
+    )
 
 
 class RoomPromptPlanStore:
@@ -366,6 +390,7 @@ def _compile_layers(
         if optional and not layer.content:
             reason = _required(layer.omitted_reason, "omitted_reason")
             omitted.append(f"{name}:{reason}")
+        _assert_rule_ownership(layer)
         content_bytes = layer.content.encode("utf-8")
         for domain in _refs(layer.instruction_domains):
             previous = domain_owner.get(domain)
@@ -390,6 +415,18 @@ def _compile_layers(
         if order <= 5 and layer.content:
             stable_parts.append(content_bytes)
     return payloads, omitted, audit, _frame(stable_parts)
+
+
+def _assert_rule_ownership(layer: PromptLayer) -> None:
+    content = layer.content
+    for rule, owner, signatures in _RULE_OWNER_SIGNATURES:
+        if layer.layer == owner:
+            continue
+        matched = [signature for signature in signatures if signature in content]
+        if matched:
+            raise PromptProducerConflict(
+                f"{rule} rule belongs to {owner}, not {layer.layer}: {matched[0]}"
+            )
 
 
 def _binding_identity(
@@ -425,7 +462,7 @@ def _provider_layer_prompt(layers: object) -> str:
     for item in stable:
         parts.extend(
             (
-                f'<layer order="{item["order"]}" name="{item["layer"]}" ref="{item["ref"]}">\n',
+                f'<layer order="{item["order"]}" name="{item["layer"]}">\n',
                 str(item.get("content") or ""),
                 "\n</layer>\n",
             )

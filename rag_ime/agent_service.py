@@ -2453,6 +2453,11 @@ class AgentService:
             learning=self.room_learning,
             learning_runtime=self.room_learning_runtime,
             definition_compiler=self.agent_definition_compiler,
+            role_book_prompt_resolver=lambda session_id: (
+                self.role_books.prompt_block(
+                    self.sessions.get(session_id)
+                )
+            ),
         )
         self.room_kernel_worker = RoomKernelWorker(
             self.room_kernel,

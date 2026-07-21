@@ -60,8 +60,8 @@ class CollaborationProfileManifest:
         return (
             f"协作 Profile：{self.display_name}。{self.summary}\n"
             f"适用岗位：{', '.join(self.collaboration_role_refs)}。\n"
-            f"执行覆盖层：\n{guidance}\n"
-            "只使用已授权能力和可见证据；收工前明确已交付、已交接、等待或阻塞。"
+            f"Room 路由覆盖层：\n{guidance}\n"
+            "这个覆盖层只收紧当前 Room 的路由和公开信息边界，不改变 Persona、岗位职责、任务模板、能力授权或安全规则。"
         )
 
     def to_payload(self) -> dict[str, object]:
@@ -158,10 +158,10 @@ _COLLABORATION_PROFILES = (
         capability_requests=_ALL_CAPABILITIES,
         required_gate_ids=("settle-decision-required",),
         prompt_guidance=(
-            "原始需求永久保留，派生任务目录可以修订",
-            "每次交接写明任务编号、接收者、证据、产物与中文验收条件",
-            "使用已授权工具核对结果，Agent 自报完成不能替代验收",
-            "适合通用 Room；不用于绕过能力、审批、深度或取消边界",
+            "普通消息和自由 @ 只发起对话；只有结构化任务接收回执才能改变负责人",
+            "同一触发事件只生成一次路由决定，重连、快照和实时流不得重复开火",
+            "只把公开 Post、结构化任务状态和已确认资料投影进 Room；Session 私有过程保持私有",
+            "适合通用 Room；需要研究后独立复核时改用更严格的证据复核 Profile",
         ),
     ),
     CollaborationProfileManifest(
@@ -173,10 +173,10 @@ _COLLABORATION_PROFILES = (
         capability_requests=("delegation", "memory", "rag", "review"),
         required_gate_ids=("evidence-required", "peer-review-required"),
         prompt_guidance=(
-            "适用于证据研究后需要独立复核的任务，不用于直接写入或跳过实施",
-            "研究员先区分事实、推断、冲突和缺口，提交来源可追溯的证据包",
-            "审查员从原始需求独立复核，发现必须引用可见证据",
-            "研究充分后主动交审查员；未通过时带修复验收条件交回，不得静默断链",
+            "适用于研究结论需要第二视角复核的任务，不用于直接写入或跳过实施",
+            "缺少来源可追溯的研究产物时，不创建审查 Dispatch",
+            "研究者和审查者必须使用不同运行槽；审查输入固定为原始问题与公开证据包",
+            "审查未通过时保留原发现和复核证据，不覆盖或伪装为通过",
         ),
     ),
 )
