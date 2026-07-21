@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from scripts.build_managed_pi_runtime_v2 import (
     ROOT,
+    _ROOM_RUNTIME_SOURCE_KEYS,
     _copy_product_skills,
     _default_pi_worktree,
     _runtime_host_banner,
@@ -17,20 +18,33 @@ from scripts.build_managed_pi_runtime_v2 import (
 
 
 class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
-    def test_room_runtime_source_contract_pins_and_verifies_both_host_handlers(self) -> None:
+    def test_room_runtime_source_contract_pins_all_required_runtime_surfaces(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-room-host-contract-") as temporary:
             root = Path(temporary)
-            protocol = root / "packages" / "rag-ime-runtime-host" / "src" / "protocol.ts"
-            runtime_host = protocol.parent / "runtime-host.ts"
-            protocol.parent.mkdir(parents=True)
-            protocol.write_text(
-                'export type RuntimeMethod = | "room.dispatch" | "room.cancel";\n',
-                encoding="utf-8",
-            )
-            runtime_host.write_text(
-                'switch (method) { case "room.dispatch": break; case "room.cancel": break; }\n',
-                encoding="utf-8",
-            )
+            relative_sources = {
+                "protocol": Path("packages/rag-ime-runtime-host/src/protocol.ts"),
+                "runtimeHost": Path("packages/rag-ime-runtime-host/src/runtime-host.ts"),
+                "providerContextHook": Path("packages/coding-agent/src/core/sdk.ts"),
+                "contextInspection": Path("packages/rag-ime-runtime-host/src/debug-context.ts"),
+                "skills": Path("packages/coding-agent/src/core/skills.ts"),
+                "discoveryTools": Path("packages/rag-ime-runtime-host/src/discovery-tools.ts"),
+                "toolBridge": Path("packages/rag-ime-runtime-host/src/tool-bridge.ts"),
+                "session": Path("packages/rag-ime-runtime-host/src/pi-session.ts"),
+            }
+            self.assertEqual(set(relative_sources), set(_ROOM_RUNTIME_SOURCE_KEYS))
+            markers = {key: [f"marker:{key}"] for key in _ROOM_RUNTIME_SOURCE_KEYS}
+            for key, relative in relative_sources.items():
+                source = root / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                extra = ""
+                if key == "protocol":
+                    extra = 'export type RuntimeMethod = | "room.dispatch" | "room.cancel";\n'
+                elif key == "runtimeHost":
+                    extra = (
+                        'switch (method) { case "room.dispatch": break; '
+                        'case "room.cancel": break; }\n'
+                    )
+                source.write_text(f"// marker:{key}\n{extra}", encoding="utf-8")
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             subprocess.run(["git", "add", "."], cwd=root, check=True)
             subprocess.run(
@@ -66,9 +80,10 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                         "minimumHandlersCommit": commit,
                         "requiredMethods": ["room.dispatch", "room.cancel"],
                         "handlerSources": {
-                            "protocol": protocol.relative_to(root).as_posix(),
-                            "runtimeHost": runtime_host.relative_to(root).as_posix(),
+                            key: relative.as_posix()
+                            for key, relative in relative_sources.items()
                         },
+                        "requiredSourceMarkers": markers,
                     },
                     sort_keys=True,
                 ),
@@ -83,6 +98,15 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 patch("scripts.build_managed_pi_runtime_v2.ROOM_RUNTIME_ADAPTER", adapter_path),
             ):
                 contract, digest = _verified_room_runtime_contract(root)
+                (root / relative_sources["skills"]).write_text(
+                    "// required marker removed\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "source marker is missing: skills",
+                ):
+                    _verified_room_runtime_contract(root)
 
         self.assertEqual(contract["minimumHandlersCommit"], commit)
         self.assertEqual(len(digest), 64)

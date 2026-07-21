@@ -36,25 +36,40 @@ def _frontmatter(path: Path) -> dict[str, object]:
 class RoomNativeSkillTests(unittest.TestCase):
     def test_ten_room_skills_are_native_pi_skills_with_compact_routing_cards(self) -> None:
         policy = RoomSkillPolicy(POLICY_PATH, SKILLS_ROOT)
+        expected_keys = {"name", "when", "notFor", "input", "output", "does"}
 
         self.assertEqual(len(policy.skill_ids), 10)
-        for skill_id in policy.skill_ids:
+        for skill_id, routing in zip(policy.skill_ids, policy.catalog(), strict=True):
             with self.subTest(skill_id=skill_id):
                 path = SKILLS_ROOT / skill_id / "SKILL.md"
                 frontmatter = _frontmatter(path)
                 self.assertEqual(frontmatter["name"], skill_id)
                 self.assertTrue(frontmatter["description"])
                 self.assertTrue(frontmatter["when"])
-                self.assertTrue(frontmatter["does"])
                 self.assertTrue(frontmatter["notFor"])
-                routing = {
-                    "name": skill_id,
-                    "when": frontmatter["when"],
-                    "does": frontmatter["does"],
-                    "notFor": frontmatter["notFor"],
-                }
+                self.assertTrue(frontmatter["input"])
+                self.assertTrue(frontmatter["output"])
+                self.assertTrue(frontmatter["does"])
+                self.assertEqual(set(routing), expected_keys)
+                self.assertNotIn("body", routing)
                 encoded = json.dumps(routing, ensure_ascii=False, separators=(",", ":"))
-                self.assertLessEqual(len(encoded), 200, encoded)
+                self.assertLessEqual(len(encoded.encode()), 450, encoded)
+
+    def test_exact_load_adds_only_one_skill_body_and_revision(self) -> None:
+        policy = RoomSkillPolicy(POLICY_PATH, SKILLS_ROOT)
+        expected_catalog_keys = {"name", "when", "notFor", "input", "output", "does"}
+
+        catalog = policy.catalog()
+        loaded = policy.load_exact("room-structured-handoff")
+
+        self.assertTrue(all(set(item) == expected_catalog_keys for item in catalog))
+        self.assertEqual(set(loaded), expected_catalog_keys | {"body", "contentRevision"})
+        self.assertIn("## Output Contract", loaded["body"])
+        self.assertEqual(len(loaded["contentRevision"]), 64)
+        self.assertFalse(any("body" in item for item in catalog))
+        self.assertNotIn("nextCandidates", loaded)
+        self.assertNotIn("risk", loaded)
+        self.assertNotIn("stages", loaded)
 
     def test_policy_references_only_governance_metadata_not_skill_content(self) -> None:
         raw = json.loads(POLICY_PATH.read_text(encoding="utf-8"))

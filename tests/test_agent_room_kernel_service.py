@@ -935,10 +935,21 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertIsNotNone(bound)
         self.assertEqual(bound[0]["dispatchId"], "dispatch:service")
         self.assertEqual(bound[1]["promptCompileReceiptId"], "prompt-compile:dispatch:service")
+        runtime_tools = self.service._runtime_tool_manifest({"id": self.session_id})
         self.assertEqual(
-            [item["name"] for item in self.service._runtime_tool_manifest({"id": self.session_id})],
+            [item["name"] for item in runtime_tools],
             list(tools),
         )
+        for item in runtime_tools:
+            self.assertEqual(
+                set(item),
+                {
+                    "name", "description", "parameters", "when", "notFor",
+                    "input", "output", "does", "profile", "risk",
+                },
+            )
+            for key in ("when", "notFor", "input", "output", "does"):
+                self.assertTrue(item[key], f"{item['name']}.{key}")
         loaded = self.service.room_capability_tool_load(
             {"sessionId": self.session_id, "receiptId": "load:service", "toolName": "room_post", "createdAtMs": 5}
         )["result"]

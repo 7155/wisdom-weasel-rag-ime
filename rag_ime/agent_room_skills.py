@@ -17,6 +17,14 @@ _POLICY_ROOT_KEYS = frozenset(
 )
 _POLICY_ENTRY_KEYS = frozenset({"skillId", "stages", "risk", "nextCandidates"})
 _LOAD_REASONS = frozenset({"stage_required", "model_selected", "compaction_restore"})
+_MODEL_SKILL_CATALOG_KEYS = (
+    "name",
+    "when",
+    "notFor",
+    "input",
+    "output",
+    "does",
+)
 
 
 class RoomSkillPolicyConflict(RuntimeError):
@@ -136,18 +144,10 @@ class RoomSkillPolicy:
         )
         if metadata["name"] != skill_id:
             raise ValueError(f"native Skill name differs from policy: {skill_id}")
-        entry = self._by_id[skill_id]
-        return {
-            "name": skill_id,
-            "description": metadata["description"],
-            "when": metadata["when"],
-            "does": metadata["does"],
-            "output": metadata["output"],
-            "notFor": metadata["notFor"],
-            "stages": list(entry["stages"]),  # type: ignore[arg-type]
-            "risk": entry["risk"],
-            "nextCandidates": list(entry["nextCandidates"]),  # type: ignore[arg-type]
-        }
+        # Provider-facing discovery is deliberately smaller than governance.
+        # Stage/risk/continuation metadata stays in the policy and receipts so
+        # it cannot silently become model authority or bloat every turn.
+        return {key: metadata[key] for key in _MODEL_SKILL_CATALOG_KEYS}
 
     def select_stage(self, stage: str) -> dict[str, object]:
         """Select only explicit stages; semantic matching remains Pi's native job."""
@@ -520,7 +520,7 @@ def _native_skill_body(content: str) -> str:
 
 
 def _native_skill_metadata(content: str) -> dict[str, object]:
-    """Parse the deliberately small catalog subset of native Skill frontmatter."""
+    """Parse the exact six-field model catalog from native Skill frontmatter."""
 
     if not content.startswith("---"):
         raise ValueError("native Skill source is missing YAML frontmatter")
@@ -544,17 +544,17 @@ def _native_skill_metadata(content: str) -> dict[str, object]:
         current_array = key if key in arrays and not value else ""
         if value:
             scalar[key] = value.strip()
-    if any(not scalar.get(key) for key in ("name", "description", "does", "output")):
+    if any(not scalar.get(key) for key in ("name", "input", "output", "does")):
         raise ValueError("native Skill catalog metadata is incomplete")
     if not arrays["when"] or not arrays["notFor"]:
         raise ValueError("native Skill requires non-empty when and notFor metadata")
     return {
         "name": scalar["name"],
-        "description": scalar["description"],
-        "does": scalar["does"],
-        "output": scalar["output"],
         "when": arrays["when"],
         "notFor": arrays["notFor"],
+        "input": scalar["input"],
+        "output": scalar["output"],
+        "does": scalar["does"],
     }
 
 

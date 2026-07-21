@@ -99,10 +99,9 @@ def evaluate_room_task_effects(
         prompt_errors += len(missing_prompt_terms)
         broken = []
         for skill_id in actual_skills:
-            loaded = policy.load_exact(skill_id)
             broken.extend(
                 candidate
-                for candidate in _strings(loaded["nextCandidates"])
+                for candidate in policy.next_candidates(skill_id)
                 if candidate not in policy.skill_ids
             )
         chain_breaks += len(broken)

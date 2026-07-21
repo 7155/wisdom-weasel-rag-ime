@@ -13,6 +13,14 @@ import time
 from pathlib import Path
 
 
+def _skill_body(content: str) -> str:
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    if not normalized.startswith("---"):
+        return normalized.strip()
+    end_index = normalized.find("\n---", 3)
+    return (normalized if end_index < 0 else normalized[end_index + 4 :]).strip()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Exercise a staged Room V2 payload with the explicit offline test Provider"
@@ -28,6 +36,10 @@ def main() -> int:
     manifest = json.loads((payload / "manifest.json").read_text(encoding="utf-8"))
     if not node.is_file() or not entrypoint.is_file():
         raise SystemExit("staged Runtime Host payload is incomplete")
+    skill_name = "room-test-driven-implementation"
+    skill_source = payload / "runtime-host" / "skills" / skill_name / "SKILL.md"
+    skill_body = _skill_body(skill_source.read_text(encoding="utf-8"))
+    skill_hash = hashlib.sha256(skill_body.encode("utf-8")).hexdigest()
 
     with tempfile.TemporaryDirectory(prefix="room-v2-staged-runtime-") as state_root:
         env = {
@@ -93,7 +105,28 @@ def main() -> int:
                 "provider": "rag-ime-deterministic",
                 "modelId": "room-v2-test",
                 "noContextFiles": True,
-                "toolManifest": [],
+                "roomSkillPolicy": {
+                    "selection": "required",
+                    "skillId": skill_name,
+                    "skillHash": skill_hash,
+                },
+                "toolManifest": [{
+                    "name": "room_post",
+                    "description": "Publish one explicit Room Post.",
+                    "when": ["需要公开事实、进度或证据"],
+                    "notFor": ["私有推理或任务完成提议"],
+                    "input": "公开内容",
+                    "output": "Room Post 回执",
+                    "does": "发布一条受管 Room 消息。",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["content"],
+                        "properties": {"content": {"type": "string"}},
+                        "additionalProperties": False,
+                    },
+                    "profile": "room-kernel-v2",
+                    "risk": "R1",
+                }],
                 "roomCapability": {
                     "manifestId": "manifest:staged-e2e",
                     "manifestHash": prompt_hash,
@@ -115,12 +148,58 @@ def main() -> int:
             snapshot = opened.get("snapshot")
             if not isinstance(snapshot, dict) or snapshot.get("roomCapability", {}).get("promptPlanHash") != prompt_hash:
                 raise RuntimeError("staged Runtime Host did not preserve the PromptPlan cache-prefix hash")
+            room_skill_load = opened.get("roomSkillLoad")
+            if not isinstance(room_skill_load, dict) or room_skill_load != snapshot.get("roomSkillLoad"):
+                raise RuntimeError("staged Runtime Host did not return one authoritative Skill load receipt")
+            if (
+                room_skill_load.get("name") != skill_name
+                or room_skill_load.get("contentRevision") != skill_hash
+                or room_skill_load.get("loadReason") != "stage_required"
+            ):
+                raise RuntimeError("staged Runtime Host loaded a different Skill body or revision")
             first = request("dispatch-a", "room.dispatch", {
                 "sessionId": "session:staged-e2e", "rootId": "root:staged-e2e",
                 "dispatchId": "dispatch:a", "generation": 1,
                 "idempotencyKey": "root:staged-e2e/a", "leaseToken": "lease:a",
                 "message": "Inspect package.json and keep the bounded run active.",
             })
+            debug_context: dict[str, object] | None = None
+            for attempt in range(20):
+                inspected = request(
+                    f"debug-{attempt}",
+                    "session.debug.context",
+                    {"sessionId": "session:staged-e2e", "turnId": str(first.get("turnId") or "")},
+                )
+                if inspected.get("available") is True and isinstance(inspected.get("context"), dict):
+                    debug_context = inspected["context"]
+                    break
+                time.sleep(0.02)
+            if debug_context is None:
+                raise RuntimeError("staged Runtime Host did not expose the real Provider context")
+            system_prompt = str(debug_context.get("systemPrompt") or "")
+            marker = '<available_product_tools format="route-jsonl"'
+            if marker not in system_prompt or "</available_product_tools>" not in system_prompt:
+                raise RuntimeError("staged Runtime Host omitted the compact Tool catalog")
+            tool_catalog = system_prompt.split(marker, 1)[1].split("</available_product_tools>", 1)[0]
+            tool_lines = [
+                json.loads(line)
+                for line in tool_catalog.splitlines()
+                if line.strip().startswith("{")
+            ]
+            room_tool = next((item for item in tool_lines if item.get("name") == "room_post"), None)
+            six_fields = {"name", "when", "notFor", "input", "output", "does"}
+            if not isinstance(room_tool, dict) or set(room_tool) != six_fields:
+                raise RuntimeError("staged Runtime Host did not expose the exact six-field Tool route")
+            active_schemas = debug_context.get("toolSchemas")
+            if not isinstance(active_schemas, list) or any(
+                isinstance(item, dict) and item.get("name") == "room_post"
+                for item in active_schemas
+            ):
+                raise RuntimeError("Room tool schema entered Provider tools before tool_load")
+            if system_prompt.count('<loaded_skill name="room-test-driven-implementation"') != 1:
+                raise RuntimeError("required Room Skill was not injected exactly once")
+            if skill_body not in system_prompt:
+                raise RuntimeError("required Room Skill body did not enter the real system prompt")
             second = request("dispatch-b", "room.dispatch", {
                 "sessionId": "session:staged-e2e", "rootId": "root:staged-e2e",
                 "dispatchId": "dispatch:b", "generation": 1,
@@ -149,6 +228,10 @@ def main() -> int:
                 "sourceCommit": manifest.get("source", {}).get("commit"),
                 "protocolVersion": hello.get("protocolVersion"),
                 "cachePrefixHash": prompt_hash,
+                "roomSkillLoad": room_skill_load,
+                "toolCatalogFields": sorted(six_fields),
+                "toolSchemaInitiallyHidden": True,
+                "loadedSkillCount": 1,
                 "firstDelivery": first.get("delivery"),
                 "secondDelivery": second.get("delivery"),
                 "cancelledSurfaceCount": len(surfaces),

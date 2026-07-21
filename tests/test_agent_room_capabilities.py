@@ -52,12 +52,13 @@ class RoomCapabilityManifestTests(unittest.TestCase):
 
     def test_progressive_search_discloses_catalog_then_loads_exactly_one_schema(self) -> None:
         manifest = self._compile()
+        catalog_keys = {"name", "when", "notFor", "input", "output", "does"}
         searched, _ = self.store.tool_search(
             receipt_id="search:1", manifest_id=manifest["manifestId"],
             manifest_hash=manifest["manifestHash"], query="Room", created_at_ms=2,
         )
         self.assertGreaterEqual(len(searched["items"]), 1)
-        self.assertTrue(all("inputSchema" not in item for item in searched["items"]))
+        self.assertTrue(all(set(item) == catalog_keys for item in searched["items"]))
         loaded, _ = self.store.tool_load(
             receipt_id="load:post", manifest_id=manifest["manifestId"],
             manifest_hash=manifest["manifestHash"], tool_name="room_post",
@@ -65,6 +66,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         )
         self.assertEqual(len(loaded["items"]), 1)
         self.assertEqual(loaded["toolName"], "room_post")
+        self.assertEqual(set(loaded["items"][0]), catalog_keys | {"inputSchema"})
         self.assertIn("inputSchema", loaded["items"][0])
         self.assertNotIn("room_commit", str(loaded["items"][0]["inputSchema"]))
 
@@ -75,7 +77,9 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             manifest_hash=manifest["manifestHash"], tool_name="room_commit",
             runtime_registry=self._registry(), created_at_ms=3,
         )
-        self.assertFalse(loaded["items"][0]["authorized"])
+        tool = next(item for item in manifest["tools"] if item["name"] == "room_commit")
+        self.assertFalse(tool["authorized"])
+        self.assertNotIn("authorized", loaded["items"][0])
         with self.assertRaises(ToolAuthorizationError):
             self._invoke(manifest, tool="room_commit", load="load:commit")
 

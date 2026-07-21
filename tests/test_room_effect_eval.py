@@ -37,18 +37,11 @@ class RoomTaskEffectEvalTests(unittest.TestCase):
     def test_skill_catalog_has_no_body_and_load_is_exact(self) -> None:
         policy = RoomSkillPolicy(self.policy_path, self.skills_root)
         catalog = policy.catalog()
+        expected_keys = {"name", "when", "notFor", "input", "output", "does"}
         self.assertEqual(len(catalog), 10)
-        self.assertTrue(
-            all(
-                "body" not in item
-                and item["when"]
-                and item["notFor"]
-                and item["output"]
-                and "nextCandidates" in item
-                for item in catalog
-            )
-        )
+        self.assertTrue(all(set(item) == expected_keys for item in catalog))
         loaded = policy.load_exact("room-structured-handoff")
+        self.assertEqual(set(loaded), expected_keys | {"body", "contentRevision"})
         self.assertIn("## Output Contract", loaded["body"])
         self.assertNotIn("room-delivery-closure", loaded["body"])
         with self.assertRaises(ValueError):

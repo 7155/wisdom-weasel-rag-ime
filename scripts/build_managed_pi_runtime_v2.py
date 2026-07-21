@@ -29,6 +29,16 @@ from rag_ime.managed_pi_runtime import (
 
 ROOM_RUNTIME_CONTRACT = ROOT / "integrations" / "pi" / "room-runtime-host-contract.json"
 ROOM_RUNTIME_ADAPTER = ROOT / "integrations" / "pi" / "room-runtime-host.ts"
+_ROOM_RUNTIME_SOURCE_KEYS = (
+    "protocol",
+    "runtimeHost",
+    "providerContextHook",
+    "contextInspection",
+    "skills",
+    "discoveryTools",
+    "toolBridge",
+    "session",
+)
 
 
 def _run(command: list[str], *, cwd: Path) -> str:
@@ -199,23 +209,36 @@ def _verified_room_runtime_contract(pi_root: Path) -> tuple[dict[str, object], s
             "Pi source does not contain the reviewed Room runtime handler commit"
         )
     sources = contract.get("handlerSources")
-    if not isinstance(sources, dict):
+    if not isinstance(sources, dict) or set(sources) != set(_ROOM_RUNTIME_SOURCE_KEYS):
         raise ManagedPiRuntimeError("Room runtime handler source map is missing")
-    source_paths: list[Path] = []
-    for key in ("protocol", "runtimeHost"):
+    source_texts: dict[str, str] = {}
+    for key in _ROOM_RUNTIME_SOURCE_KEYS:
         relative = Path(str(sources.get(key) or ""))
         if not relative.parts or relative.is_absolute() or ".." in relative.parts:
             raise ManagedPiRuntimeError("Room runtime handler source path is unsafe")
         resolved = (pi_root / relative).resolve()
         if not resolved.is_relative_to(pi_root.resolve()):
             raise ManagedPiRuntimeError("Room runtime handler source escaped the Pi worktree")
-        source_paths.append(resolved)
-    protocol_path, runtime_host_path = source_paths
-    try:
-        protocol_source = protocol_path.read_text(encoding="utf-8")
-        runtime_host_source = runtime_host_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise ManagedPiRuntimeError(f"Room runtime handler source is missing: {exc}") from exc
+        try:
+            source_texts[key] = resolved.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ManagedPiRuntimeError(f"Room runtime handler source is missing: {exc}") from exc
+    required_markers = contract.get("requiredSourceMarkers")
+    if not isinstance(required_markers, dict) or set(required_markers) != set(
+        _ROOM_RUNTIME_SOURCE_KEYS
+    ):
+        raise ManagedPiRuntimeError("Room runtime source marker map is incomplete")
+    for key in _ROOM_RUNTIME_SOURCE_KEYS:
+        markers = required_markers.get(key)
+        if not isinstance(markers, list) or not markers:
+            raise ManagedPiRuntimeError(f"Room runtime source markers are missing: {key}")
+        for marker in markers:
+            if not isinstance(marker, str) or not marker or marker not in source_texts[key]:
+                raise ManagedPiRuntimeError(
+                    f"Pi Runtime Host source marker is missing: {key}:{marker}"
+                )
+    protocol_source = source_texts["protocol"]
+    runtime_host_source = source_texts["runtimeHost"]
     for method in methods:
         if f'| "{method}"' not in protocol_source or f'case "{method}"' not in runtime_host_source:
             raise ManagedPiRuntimeError(f"Pi Runtime Host does not implement {method}")

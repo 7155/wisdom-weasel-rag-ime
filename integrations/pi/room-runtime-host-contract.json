@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/earendil-works/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "c4752416150b715b5079549024efd0299fa259e5",
+  "minimumHandlersCommit": "ecb315d9875f5fbf5a5415e97125aaf480df8c0c",
   "requiredMethods": [
     "room.dispatch",
     "room.cancel"
@@ -12,6 +12,41 @@
     "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
     "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
     "providerContextHook": "packages/coding-agent/src/core/sdk.ts",
-    "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts"
+    "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
+    "skills": "packages/coding-agent/src/core/skills.ts",
+    "discoveryTools": "packages/rag-ime-runtime-host/src/discovery-tools.ts",
+    "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
+    "session": "packages/rag-ime-runtime-host/src/pi-session.ts"
+  },
+  "requiredSourceMarkers": {
+    "protocol": ["export const PROTOCOL_VERSION = \"2\" as const;"],
+    "runtimeHost": [
+      "case \"room.dispatch\"",
+      "case \"room.cancel\"",
+      "roomSkillPolicy: optionalRoomSkillPolicy(params)",
+      "roomSkillLoad: opened.session.roomSkillLoadReceipt()"
+    ],
+    "providerContextHook": ["before_provider_request"],
+    "contextInspection": ["pi.on(\"before_provider_request\""],
+    "skills": [
+      "input: routing?.input",
+      "Each JSON line contains only name, when[], notFor[], input, output, and does."
+    ],
+    "discoveryTools": [
+      "Use tool_load before calling a tool",
+      "tool: backendToolRouteEntry(loaded.tool)"
+    ],
+    "toolBridge": [
+      "when?: string[];",
+      "notFor?: string[];",
+      "input?: string;",
+      "output?: string;",
+      "does?: string;"
+    ],
+    "session": [
+      "SKILL_REVISION_MISMATCH",
+      "loadReason: \"stage_required\"",
+      "requiredRoomSkill(options.roomSkillPolicy)"
+    ]
   }
 }

@@ -13,6 +13,14 @@ from .db import apply_database_migrations
 
 ROOM_PUBLIC_TOOLS = ("room_state", "room_post", "room_commit")
 _SURFACES = frozenset({"prompt", "runtime", "gateway", "ui"})
+_MODEL_TOOL_CATALOG_KEYS = (
+    "name",
+    "when",
+    "notFor",
+    "input",
+    "output",
+    "does",
+)
 
 _RICH_BLOCK_INPUT_SCHEMA = {
     "type": "array",
@@ -226,13 +234,7 @@ class RoomCapabilityManifestStore:
         manifest = self._manifest(manifest_id, manifest_hash)
         needle = str(query or "").strip().casefold()
         items = [
-            {
-                "name": tool["name"], "description": tool["description"],
-                "when": tool["when"], "notFor": tool["notFor"],
-                "input": tool["input"], "output": tool["output"], "does": tool["does"],
-                "risk": tool["risk"], "schemaHash": tool["schemaHash"],
-                "available": tool["available"], "authorized": tool["authorized"],
-            }
+            {key: tool[key] for key in _MODEL_TOOL_CATALOG_KEYS}
             for tool in manifest["tools"]
             if not needle
             or needle in str(tool["name"]).casefold()
@@ -287,10 +289,7 @@ class RoomCapabilityManifestStore:
             schema_hash=str(tool["schemaHash"]),
             items=[
                 {
-                    "name": canonical, "description": tool["description"],
-                    "when": tool["when"], "notFor": tool["notFor"],
-                    "input": tool["input"], "output": tool["output"], "does": tool["does"],
-                    "risk": tool["risk"], "authorized": tool["authorized"],
+                    **{key: tool[key] for key in _MODEL_TOOL_CATALOG_KEYS},
                     "inputSchema": schema,
                 }
             ],
