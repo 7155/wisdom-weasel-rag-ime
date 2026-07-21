@@ -7,8 +7,8 @@ afterEach(cleanup);
 describe('Knowledge evidence project scene', () => {
   it('uses the governed memory scene only for the real evidence empty state', () => {
     const { rerender } = render(<KnowledgeEvidenceExplorer items={[]} />);
-    const scene = screen.getByAltText(/封存的历史证据/);
-    expect(scene).toHaveAttribute('src', '/companions/scenes/memory-evidence-timeline-v1.webp');
+    const scene = screen.getByAltText(/长期输入形成的时间线/);
+    expect(scene).toHaveAttribute('src', '/companions/scenes/memory-evidence-timeline-v2.webp');
     expect(scene).toHaveAttribute('width', '960');
     expect(scene).toHaveAttribute('height', '640');
     expect(scene).toHaveAttribute('loading', 'lazy');
@@ -22,7 +22,7 @@ describe('Knowledge evidence project scene', () => {
       score: 0.91,
       url: '',
     }]} />);
-    expect(screen.queryByAltText(/封存的历史证据/)).not.toBeInTheDocument();
+    expect(screen.queryByAltText(/长期输入形成的时间线/)).not.toBeInTheDocument();
     expect(screen.getByRole('option', { name: /Room 路由审计/ })).toBeInTheDocument();
   });
 });

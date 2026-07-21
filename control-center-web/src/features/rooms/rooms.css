@@ -280,10 +280,12 @@
 .room-participant-telemetry__bar > b { color: var(--color-text-tertiary); font: 650 12px var(--font-mono); text-align: right; }
 .room-participant-telemetry > p { margin: 0; color: var(--color-text-tertiary); font-size: 12px; }
 
-@media (max-width: 1100px) {
+@media (max-width: 1360px) {
   .shell-route-stage > main.rooms-feature,
   .shell-route-stage > main.rooms-feature[data-status-open='true'] { position: relative; grid-template-columns: 236px minmax(0, 1fr) 0; }
-  .room-status-panel { grid-column: auto; grid-row: auto; }
+  .room-status-panel { position: absolute; z-index: 14; top: 0; right: 0; bottom: 0; width: min(340px, 90vw); grid-column: auto; grid-row: auto; box-shadow: var(--shadow-menu); }
+  .room-status-panel:not([data-open='true']) { display: none; }
+  .room-status-backdrop { position: absolute; z-index: 13; inset: 0; display: block; padding: 0; border: 0; background: color-mix(in srgb, var(--color-text) 16%, transparent); opacity: 0; pointer-events: none; transition: opacity var(--duration-enter) var(--ease-standard); }
   .rooms-feature[data-status-open='true'] .room-status-backdrop { opacity: 1; pointer-events: auto; }
 }
 

@@ -39,6 +39,7 @@ import {
   StatusBadge,
   publicErrorText,
 } from '@/features/overview/management-ui';
+import { ProjectSceneEmptyState } from '@/features/agent/timeline/ProjectSceneEmptyState';
 import {
   chooseKnowledgeFiles,
   cancelKnowledgeJob,
@@ -391,10 +392,10 @@ export function KnowledgeFeature() {
                 </Tabs>
               </>
             ) : (
-              <EmptyState
+              <ProjectSceneEmptyState
                 action={<Button leadingIcon={<FolderPlus size={15} />} onClick={() => setCreateOpen(true)} variant="primary">新建知识库</Button>}
                 description="为项目资料、论文或产品文档建立独立知识库。"
-                icon={Database}
+                sceneId="knowledge-authorized-retrieval"
                 title="还没有文档知识库"
               />
             )}

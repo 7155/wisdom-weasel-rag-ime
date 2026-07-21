@@ -1,7 +1,7 @@
 export type PersonaPresence = 'idle' | 'listening' | 'thinking' | 'done' | 'warning';
 
 type PersonaAssetStates = Readonly<Record<PersonaPresence, string>>;
-type PersonaTimeline = 'legacy-state' | 'past' | 'present' | 'future' | 'flash';
+type PersonaTimeline = 'presence' | 'past' | 'present' | 'future' | 'flash';
 
 type PersonaAssetRecord = Readonly<{
   personaId: string;
@@ -10,26 +10,18 @@ type PersonaAssetRecord = Readonly<{
   states: PersonaAssetStates;
 }>;
 
-const legacyCompanionStates: PersonaAssetStates = {
-  idle: '/companions/RagImeCompanionIdle.png',
-  listening: '/companions/RagImeCompanionListening.png',
-  thinking: '/companions/RagImeCompanionThinking.png',
-  done: '/companions/RagImeCompanionDone.png',
-  warning: '/companions/RagImeCompanionWarning.png',
-};
-
 const portraitAssets = {
-  flash: '/companions/personas/wisdom-weasel-flash-v1.webp',
-  luna: '/companions/personas/wisdom-weasel-luna-v1.webp',
-  sol: '/companions/personas/wisdom-weasel-sol-v1.webp',
-  terra: '/companions/personas/wisdom-weasel-terra-v1.webp',
+  flash: '/companions/personas/companion-flash-v2.webp',
+  luna: '/companions/personas/companion-firstlight-v2.webp',
+  sol: '/companions/personas/companion-future-v2.webp',
+  terra: '/companions/personas/companion-present-v2.webp',
 } as const;
 
 export const personaAssetManifest = {
-  schemaVersion: 'rag-ime.persona-assets.v4',
+  schemaVersion: 'rag-ime.persona-assets.v5',
   fallbackAssetId: 'rag-ime-timeline-present-v1',
   assets: {
-    'rag-ime-companion-v1': assetRecord('companion-present-v1', 'legacy-state', '经典形象', legacyCompanionStates),
+    'rag-ime-presence-v2': assetRecord('companion-present-v1', 'presence', '运行状态', singlePortrait(portraitAssets.terra)),
     'rag-ime-timeline-past-v1': assetRecord('companion-firstlight-v1', 'past', '初识阶段', singlePortrait(portraitAssets.luna)),
     'rag-ime-timeline-present-v1': assetRecord('companion-present-v1', 'present', '此刻阶段', singlePortrait(portraitAssets.terra)),
     'rag-ime-timeline-future-v1': assetRecord('companion-future-v1', 'future', '构筑阶段', singlePortrait(portraitAssets.sol)),

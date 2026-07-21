@@ -311,13 +311,8 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
         block('media-answer', 'text', {
           text: '已完成。正文展示工具书内容，精确接口与参数继续留在右侧运行状态中。',
         }),
-        block('media-image', 'image', {
-          receiptUrl: '/companions/RagImeCompanionDone.png',
-          alt: '智鼬完成状态',
-          caption: '完成状态视觉回执',
-        }),
         block('media-sticker', 'sticker', {
-          assetId: 'done',
+          assetId: 'rag-ime-presence-done',
           alt: '完成贴纸',
         }),
       ], previewNow - 72_000),

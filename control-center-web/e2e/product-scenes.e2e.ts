@@ -16,7 +16,7 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   await expect(page.locator('.agent-markdown table')).toBeAttached();
   await expect(page.locator('.agent-code-block')).toBeAttached();
   await expect(page.locator('.agent-media-block')).toHaveCount(0);
-  await expect(page.locator('.agent-inline-notice', { hasText: '图片回执不可用' })).toBeVisible();
+  await expect(page.locator('.agent-inline-notice', { hasText: '图片回执不可用' })).toHaveCount(0);
   await expect(page.locator('.agent-sticker-block')).toBeAttached();
   await expect(page.locator('.agent-citation')).toBeAttached();
   await expect(page.locator('.agent-file-block')).toBeAttached();

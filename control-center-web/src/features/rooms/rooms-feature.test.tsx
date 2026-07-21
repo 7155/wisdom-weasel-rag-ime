@@ -595,9 +595,9 @@ describe('Rooms experience', () => {
     const request = transport.requests.find((call) => call.request.pathId === 'agent.room.archive')?.request;
     expect(request).toMatchObject({ params: { roomId: 'room-a' }, body: { archived: true } });
     expect(await screen.findByText('选择一个 Room')).toBeInTheDocument();
-    const scene = screen.getByAltText(/此刻与未来两种任务角色核对结构化产物/);
+    const scene = screen.getByAltText(/四位长期智能伙伴/);
     expect(scene).toHaveAttribute('width', '960');
-    expect(scene).toHaveAttribute('height', '720');
+    expect(scene).toHaveAttribute('height', '640');
     expect(scene).toHaveAttribute('loading', 'lazy');
     expect(screen.getByText('从 Rooms 列表选择，或新建协作 Room。')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '打开 Room：待归档 Room' })).not.toBeInTheDocument();
@@ -682,8 +682,8 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     expect(await screen.findByText('还没有公开 Post')).toBeInTheDocument();
-    expect(screen.getByText('发一条消息开始协作。')).toBeInTheDocument();
-    expect(screen.getByAltText(/此刻与未来两种任务角色核对结构化产物/)).toHaveAttribute('src', '/companions/scenes/room-duoagent-handoff-v1.webp');
+    expect(screen.getByText('发一条消息，伙伴会立即接手并在这里持续显示进度。')).toBeInTheDocument();
+    expect(screen.getByAltText(/四位长期智能伙伴/)).toHaveAttribute('src', '/companions/scenes/room-ensemble-onboarding-v2.webp');
     expect(screen.getByRole('textbox', { name: 'Room 消息' })).toBeEnabled();
   });
 

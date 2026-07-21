@@ -890,7 +890,7 @@ export function RoomsFeature() {
           {!error && !roomCatalogError && roleCatalogError ? <p className="room-catalog-warning" role="status">{roleCatalogError}</p> : null}
         </div>
         {workspaceView === 'posts' ? <><div className="room-timeline" aria-label="Room Posts 时间线">
-          {room ? visibleTurnOrder.length ? <Virtuoso data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} personas={personas} abortingSessionIds={abortingSessionIds} abortingTurnIds={abortingTurnIds} onAbortTurn={() => void abortRootTurn(turnId)} onAbortSession={(sessionId) => void abortParticipantTurn(sessionId, turnId)} />} /> : snapshotLoading ? <p className="room-empty">正在读取 Room Posts…</p> : <ProjectSceneEmptyState sceneId="room-agent-handoff" title="还没有公开 Post" description="发一条消息开始协作。" /> : catalogLoading ? <p className="room-empty">正在读取 Rooms…</p> : <ProjectSceneEmptyState sceneId="room-agent-handoff" title="选择一个 Room" description="从 Rooms 列表选择，或新建协作 Room。" />}
+          {room ? visibleTurnOrder.length ? <Virtuoso data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} personas={personas} abortingSessionIds={abortingSessionIds} abortingTurnIds={abortingTurnIds} onAbortTurn={() => void abortRootTurn(turnId)} onAbortSession={(sessionId) => void abortParticipantTurn(sessionId, turnId)} />} /> : snapshotLoading ? <p className="room-empty">正在读取 Room Posts…</p> : <ProjectSceneEmptyState sceneId="room-onboarding" title="还没有公开 Post" description="发一条消息，伙伴会立即接手并在这里持续显示进度。" /> : catalogLoading ? <p className="room-empty">正在读取 Rooms…</p> : <ProjectSceneEmptyState sceneId="room-onboarding" title="选择一个 Room" description="从 Rooms 列表选择，或新建协作 Room。" />}
         </div><RoomComposer
           room={room}
           personas={personas}
@@ -1619,7 +1619,7 @@ function collaborationRoleLabel(role: RoomParticipant['collaborationRole']): str
 
 function isWideRoomStatusViewport(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    ? window.matchMedia('(min-width: 1280px)').matches
+    ? window.matchMedia('(min-width: 1361px)').matches
     : false;
 }
 function isAbortError(value: unknown): boolean { return value instanceof DOMException && value.name === 'AbortError'; }

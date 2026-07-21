@@ -24,7 +24,7 @@ class PersonaArtAssetTests(unittest.TestCase):
         ]
         scenes = list(self.manifest["scenes"].values())
         self.assertEqual(len(portraits), 4)
-        self.assertEqual(len(scenes), 2)
+        self.assertEqual(len(scenes), 6)
 
         for asset in [*portraits, *scenes]:
             path = PUBLIC_ROOT / asset["source"].lstrip("/")
@@ -32,6 +32,23 @@ class PersonaArtAssetTests(unittest.TestCase):
             self.assertEqual(len(content), asset["bytes"], path)
             self.assertEqual(hashlib.sha256(content).hexdigest(), asset["sha256"], path)
             self.assertEqual(_webp_dimensions(content), (asset["width"], asset["height"]), path)
+
+        contact_sheet = self.manifest["contactSheet"]
+        contact_path = REPO_ROOT / contact_sheet["source"]
+        contact_content = contact_path.read_bytes()
+        self.assertEqual(len(contact_content), contact_sheet["bytes"], contact_path)
+        self.assertEqual(hashlib.sha256(contact_content).hexdigest(), contact_sheet["sha256"], contact_path)
+        self.assertEqual(
+            _webp_dimensions(contact_content),
+            (contact_sheet["width"], contact_sheet["height"]),
+            contact_path,
+        )
+
+    def test_rejected_animal_pack_is_not_referenced(self) -> None:
+        manifest_text = MANIFEST_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("wisdom-weasel-", manifest_text)
+        self.assertNotIn("RagImeCompanion", manifest_text)
+        self.assertFalse(any((PUBLIC_ROOT / "companions" / "personas").glob("wisdom-weasel-*.webp")))
 
     def test_generated_pack_stays_within_delivery_budgets(self) -> None:
         budgets = self.manifest["budgets"]

@@ -1,35 +1,39 @@
-# Room v2 persona art visual QA
+# Room v2 original anime companion art QA
 
-Artifact: `eval/room-v2/wisdom-weasel-art-contact-sheet-v1.webp`
+Artifact: `eval/room-v2/art/anime-companion-pack-v2-contact-sheet.webp`
 
-Contact-sheet order: Sol, Terra, Luna, Flash; Room/DuoAgent handoff; governed evidence timeline.
+Contact-sheet order: Firstlight, Present, Future, Flash, Room onboarding; structured handoff, memory timeline, authorized knowledge retrieval, task acceptance, safe recovery.
+
+The pack was generated for this product with OpenAI built-in `image_gen`. It is an original bright fantasy-comedy anime ensemble and does not use an external character reference.
 
 ## Delivery inventory
 
 | UI asset | Relative path | Dimensions | Bytes | SHA-256 | Intended slot |
 |---|---|---:|---:|---|---|
-| Sol / Future | `control-center-web/public/companions/personas/wisdom-weasel-sol-v1.webp` | 640 x 640 | 33,170 | `79e1e29cb2a7499ac7dd30abe67a559b64544e75bbeb22d7cb71f6c972798f3b` | Role card, details, Session/Room avatar |
-| Terra / Present | `control-center-web/public/companions/personas/wisdom-weasel-terra-v1.webp` | 640 x 640 | 34,808 | `03ae115e9acbb9d5d812fa8cfbf3cad0f79d8cd193eeff74a564f932142ee853` | Role card, details, Session/Room avatar |
-| Luna / First Meeting | `control-center-web/public/companions/personas/wisdom-weasel-luna-v1.webp` | 640 x 640 | 25,756 | `1ecff3b890ccb4171c9c61290b5268b3a42ab3ab85fdeac391c0670f409ad4e7` | Role card, details, Session/Room avatar |
-| DeepSeek Flash | `control-center-web/public/companions/personas/wisdom-weasel-flash-v1.webp` | 640 x 640 | 42,436 | `36630f13593937581cf095989fc54123c5eb966d165d0e6bb2b2b6da829742f2` | Role card, details, Session/Room avatar |
-| Room handoff | `control-center-web/public/companions/scenes/room-duoagent-handoff-v1.webp` | 960 x 720 | 50,044 | `9200d59edf444f03bc801c03c258dcb103620eddc9928fe0f109afe5b0d93e93` | Room empty state or onboarding |
-| Evidence timeline | `control-center-web/public/companions/scenes/memory-evidence-timeline-v1.webp` | 960 x 640 | 14,526 | `aecd38532da39c66f651ac4cd42ee7f5b18ebb0c46f5ffd0139e46721e313f80` | Memory overview or empty state |
+| Firstlight | `control-center-web/public/companions/personas/companion-firstlight-v2.webp` | 640 x 640 | 80,028 | `2740539c3623116521cff5052cd0b57c49dc34e954fe18ad006bf2ca8d8fff31` | Role card, details, Session/Room avatar |
+| Present | `control-center-web/public/companions/personas/companion-present-v2.webp` | 640 x 640 | 89,908 | `bda60bcc300fb6854e827e1db01739e7b76b4b5c1e339dcaa58483eb3b2604c1` | Role card, details, Session/Room avatar |
+| Future | `control-center-web/public/companions/personas/companion-future-v2.webp` | 640 x 640 | 83,490 | `071ef1f2119640edb8e13d1526f6331c90fbc3fc0dcbe64932c157c7cfe7a91a` | Role card, details, Session/Room avatar |
+| Flash | `control-center-web/public/companions/personas/companion-flash-v2.webp` | 640 x 640 | 90,180 | `29db94d978dcc6bb5764ad45dc6b5b446ec65451a2ae4ce5dfdaf860a98cdde5` | Role card, details, Session/Room avatar |
+| Room onboarding | `control-center-web/public/companions/scenes/room-ensemble-onboarding-v2.webp` | 960 x 640 | 147,394 | `46e29a6bca57b2397ad7b8a61b9fea414b880eb30ca4c450c8a71e2ad7d04cb1` | Room Posts empty state and onboarding |
+| Structured handoff | `control-center-web/public/companions/scenes/room-structured-handoff-v2.webp` | 960 x 640 | 128,086 | `347b848b7433a353f6443c9d8eea801359859a3373616aa926bf47efbaa3161a` | Room execution empty state and handoff |
+| Memory timeline | `control-center-web/public/companions/scenes/memory-evidence-timeline-v2.webp` | 960 x 640 | 86,918 | `5e816450437a2d40252c37845543c99076910649f5f18228fe6fceadc55f3b91` | Memory evidence empty state |
+| Knowledge retrieval | `control-center-web/public/companions/scenes/knowledge-authorized-retrieval-v2.webp` | 960 x 640 | 122,098 | `35ff43e002551abad2d97842ae10653d5e4c25c88c022d9ab08cecdfef0f8157` | Knowledge library empty state |
+| Task acceptance | `control-center-web/public/companions/scenes/task-evidence-acceptance-v2.webp` | 960 x 640 | 121,742 | `8ea61f5ab134cb35520cdd09f6b6d0b02107741856e474186ef4e0f7f65a2677` | Planning task empty state and acceptance |
+| Safe recovery | `control-center-web/public/companions/scenes/recovery-safe-resume-v2.webp` | 960 x 640 | 126,768 | `fc48bda14f6eac0b5e73c8e22fba80d2b5e5146194f8f18174f47562e293a111` | Room runtime error and recovery |
 
-Generated runtime pack: 200,740 bytes. Contact sheet is a QA artifact and is not shipped by the control-center build.
+Generated runtime pack: 1,076,612 bytes. The 223,562-byte contact sheet is a QA artifact and is not shipped by the Control Center build.
 
 ## Visual inspection
 
-- PASS: all four characters remain recognizable in a 320 px contact-sheet row and have strong face/ear silhouettes for circular avatar crops.
-- PASS: role identity is redundant across fur, accent color, gesture, and task metaphor; it does not depend on color alone.
-- PASS: the series is cohesive but the four portraits are not recolors of one image.
-- PASS: no readable words, accidental pseudo-logo, watermark, or garbled text is visible.
-- PASS: no microphone, speaker, headphones, speech bubble, camera, surveillance eye, TTS, or speaking-agent imagery is present.
-- PASS: all characters use adult proportions and restrained technical clothing; there is no child/chibi or sexualized treatment.
-- PASS: Room scene has two visibly separate work areas, one guarded central handoff, a bounded evidence artifact, and a cursor-ready public result. It does not expose a private transcript.
-- PASS: Memory scene keeps most history dim and sealed; exactly three selected fragments cross the bounded gate into a compact packet and cursor result. The lock control communicates governance rather than passive collection.
-- PASS: dark backgrounds retain sufficient subject separation, and no important face, ear, handoff, gate, or cursor is outside the central crop-safe area.
-- PASS: all delivered files are RGB lossy WebP. Automated tests verify dimensions, bytes, hashes, and pack budgets.
+- PASS: all four partners remain recognizable in circular avatar crops through hair color, silhouette, clothing accents, and task prop; identity is not carried by color alone.
+- PASS: portraits and scenes share the same bright workshop, archive, navy uniform, brass instrument, and daylight vocabulary without becoming recolors of one image.
+- PASS: no animal avatar, watermark, external logo, readable pseudo-interface, microphone, speaker, headphones, TTS, or speaking-agent imagery appears.
+- PASS: Room onboarding shows four distinct collaborators around one real task. Handoff visibly passes a bounded artifact from the current implementer to an independent reviewer.
+- PASS: memory and knowledge scenes show selection rather than indiscriminate dumping. History and library material remain in the background while a small useful set reaches the active task.
+- PASS: task acceptance separates implementation from review. Recovery contains the failure, preserves evidence and checkpoint material, and avoids a catastrophic visual state.
+- PASS: important faces, hands, artifacts, and evidence remain inside the central crop-safe area at desktop and mobile sizes.
+- PASS: all delivered files are RGB lossy WebP. The manifest records dimensions, byte budgets, SHA-256 hashes, intended slots, and the contact-sheet hash.
 
 ## Small-size residual risk
 
-At 28 px, the evidence gestures intentionally disappear before the face silhouette does. Runtime capability meaning must still be carried by the adjacent role name and text; the image is identity, not the only semantic label.
+At 28 px, props and evidence gestures disappear before the face silhouette does. Runtime meaning therefore remains in the adjacent role name and status text; art provides identity and tone, never the only semantic label.

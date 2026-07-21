@@ -10,6 +10,7 @@ import {
 } from '@/contracts/room-kernel-reducer';
 import { parseContract } from '@/contracts/validators';
 import { useOptionalControlTransport } from '@/app/control-transport';
+import { ProjectSceneEmptyState } from '@/features/agent/timeline/ProjectSceneEmptyState';
 import { RoomKernelControlPlane } from './RoomKernelControlPlane';
 import { parseRoomRequirementsReadProjection, type RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
 import { createControlRoomKernelCommandTransport } from './room-kernel-command-transport';
@@ -179,6 +180,14 @@ export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
       commandDisabledReason={controlGate?.reason}
       panicEnabled={controlGate?.panicEnabled === true}
       requirementsByRootId={requirementsByRootId}
+    /> : liveState === 'error' ? <ProjectSceneEmptyState
+      description="检查点仍保留。修复连接或运行时问题后，可以从已确认状态继续。"
+      sceneId="recovery-safe-resume"
+      title="执行状态暂时无法读取"
+    /> : projection ? <ProjectSceneEmptyState
+      description="发送任务后，每个 Agent 的接手、工具执行、交接和验收会在这里持续更新。"
+      sceneId="room-agent-handoff"
+      title="还没有根任务"
     /> : null}
   </section>;
 }

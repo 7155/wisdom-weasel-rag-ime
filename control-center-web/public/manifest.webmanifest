@@ -7,9 +7,9 @@
   "theme_color": "#f4f5f1",
   "icons": [
     {
-      "src": "./companions/RagImeCompanionIdle.png",
-      "sizes": "512x512",
-      "type": "image/png",
+      "src": "./companions/personas/companion-present-v2.webp",
+      "sizes": "640x640",
+      "type": "image/webp",
       "purpose": "any maskable"
     }
   ]

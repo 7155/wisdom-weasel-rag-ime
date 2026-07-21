@@ -1,86 +1,126 @@
 {
-  "schemaVersion": "rag-ime.persona-assets.v4",
+  "schemaVersion": "rag-ime.persona-assets.v5",
   "fallbackAssetId": "rag-ime-timeline-present-v1",
   "provenance": {
     "generator": "OpenAI built-in image_gen",
     "createdFor": "Wisdom Weasel RAG IME",
-    "externalCharacterReference": false
+    "externalCharacterReference": false,
+    "style": "original bright fantasy-comedy anime ensemble"
   },
   "budgets": {
-    "portraitMaxBytes": 65536,
-    "sceneMaxBytes": 98304,
-    "generatedPackMaxBytes": 262144
+    "portraitMaxBytes": 100000,
+    "sceneMaxBytes": 150000,
+    "generatedPackMaxBytes": 1200000
   },
   "assets": {
-    "rag-ime-companion-v1": {
+    "rag-ime-presence-v2": {
       "personaId": "companion-present-v1",
-      "timeline": "legacy-state",
+      "timeline": "presence",
       "modelAffinity": "session-selected",
       "states": {
-        "idle": "/companions/RagImeCompanionIdle.png",
-        "listening": "/companions/RagImeCompanionListening.png",
-        "thinking": "/companions/RagImeCompanionThinking.png",
-        "warning": "/companions/RagImeCompanionWarning.png",
-        "done": "/companions/RagImeCompanionDone.png"
+        "idle": "/companions/personas/companion-present-v2.webp",
+        "listening": "/companions/personas/companion-present-v2.webp",
+        "thinking": "/companions/personas/companion-present-v2.webp",
+        "warning": "/companions/personas/companion-present-v2.webp",
+        "done": "/companions/personas/companion-present-v2.webp"
       }
     },
     "rag-ime-timeline-past-v1": {
       "personaId": "companion-firstlight-v1",
       "timeline": "past",
       "modelAffinity": "gpt-5.6-luna",
-      "source": "/companions/personas/wisdom-weasel-luna-v1.webp",
+      "source": "/companions/personas/companion-firstlight-v2.webp",
       "width": 640,
       "height": 640,
-      "bytes": 25756,
-      "sha256": "1ecff3b890ccb4171c9c61290b5268b3a42ab3ab85fdeac391c0670f409ad4e7"
+      "bytes": 80028,
+      "sha256": "2740539c3623116521cff5052cd0b57c49dc34e954fe18ad006bf2ca8d8fff31"
     },
     "rag-ime-timeline-present-v1": {
       "personaId": "companion-present-v1",
       "timeline": "present",
       "modelAffinity": "gpt-5.6-terra",
-      "source": "/companions/personas/wisdom-weasel-terra-v1.webp",
+      "source": "/companions/personas/companion-present-v2.webp",
       "width": 640,
       "height": 640,
-      "bytes": 34808,
-      "sha256": "03ae115e9acbb9d5d812fa8cfbf3cad0f79d8cd193eeff74a564f932142ee853"
+      "bytes": 89908,
+      "sha256": "bda60bcc300fb6854e827e1db01739e7b76b4b5c1e339dcaa58483eb3b2604c1"
     },
     "rag-ime-timeline-future-v1": {
       "personaId": "companion-future-v1",
       "timeline": "future",
       "modelAffinity": "gpt-5.6-sol",
-      "source": "/companions/personas/wisdom-weasel-sol-v1.webp",
+      "source": "/companions/personas/companion-future-v2.webp",
       "width": 640,
       "height": 640,
-      "bytes": 33170,
-      "sha256": "79e1e29cb2a7499ac7dd30abe67a559b64544e75bbeb22d7cb71f6c972798f3b"
+      "bytes": 83490,
+      "sha256": "071ef1f2119640edb8e13d1526f6331c90fbc3fc0dcbe64932c157c7cfe7a91a"
     },
     "rag-ime-timeline-flash-v1": {
       "personaId": "companion-flash-v1",
       "timeline": "flash",
       "modelAffinity": "deepseek-v4-flash",
-      "source": "/companions/personas/wisdom-weasel-flash-v1.webp",
+      "source": "/companions/personas/companion-flash-v2.webp",
       "width": 640,
       "height": 640,
-      "bytes": 42436,
-      "sha256": "36630f13593937581cf095989fc54123c5eb966d165d0e6bb2b2b6da829742f2"
+      "bytes": 90180,
+      "sha256": "29db94d978dcc6bb5764ad45dc6b5b446ec65451a2ae4ce5dfdaf860a98cdde5"
     }
   },
   "scenes": {
-    "memory-evidence-timeline": {
-      "source": "/companions/scenes/memory-evidence-timeline-v1.webp",
+    "knowledge-authorized-retrieval": {
+      "source": "/companions/scenes/knowledge-authorized-retrieval-v2.webp",
       "width": 960,
       "height": 640,
-      "bytes": 14526,
-      "sha256": "aecd38532da39c66f651ac4cd42ee7f5b18ebb0c46f5ffd0139e46721e313f80",
+      "bytes": 122098,
+      "sha256": "35ff43e002551abad2d97842ae10653d5e4c25c88c022d9ab08cecdfef0f8157",
+      "intendedSlots": ["knowledge-library-empty-state", "knowledge-retrieval-empty-state"]
+    },
+    "memory-evidence-timeline": {
+      "source": "/companions/scenes/memory-evidence-timeline-v2.webp",
+      "width": 960,
+      "height": 640,
+      "bytes": 86918,
+      "sha256": "5e816450437a2d40252c37845543c99076910649f5f18228fe6fceadc55f3b91",
       "intendedSlots": ["memory-overview", "memory-empty-state"]
     },
-    "room-agent-handoff": {
-      "source": "/companions/scenes/room-duoagent-handoff-v1.webp",
+    "recovery-safe-resume": {
+      "source": "/companions/scenes/recovery-safe-resume-v2.webp",
       "width": 960,
-      "height": 720,
-      "bytes": 50044,
-      "sha256": "9200d59edf444f03bc801c03c258dcb103620eddc9928fe0f109afe5b0d93e93",
+      "height": 640,
+      "bytes": 126768,
+      "sha256": "fc48bda14f6eac0b5e73c8e22fba80d2b5e5146194f8f18174f47562e293a111",
+      "intendedSlots": ["room-runtime-error", "agent-recovery"]
+    },
+    "room-agent-handoff": {
+      "source": "/companions/scenes/room-structured-handoff-v2.webp",
+      "width": 960,
+      "height": 640,
+      "bytes": 128086,
+      "sha256": "347b848b7433a353f6443c9d8eea801359859a3373616aa926bf47efbaa3161a",
+      "intendedSlots": ["room-execution-empty-state", "room-handoff"]
+    },
+    "room-onboarding": {
+      "source": "/companions/scenes/room-ensemble-onboarding-v2.webp",
+      "width": 960,
+      "height": 640,
+      "bytes": 147394,
+      "sha256": "46e29a6bca57b2397ad7b8a61b9fea414b880eb30ca4c450c8a71e2ad7d04cb1",
       "intendedSlots": ["room-empty-state", "room-onboarding"]
+    },
+    "task-evidence-acceptance": {
+      "source": "/companions/scenes/task-evidence-acceptance-v2.webp",
+      "width": 960,
+      "height": 640,
+      "bytes": 121742,
+      "sha256": "8ea61f5ab134cb35520cdd09f6b6d0b02107741856e474186ef4e0f7f65a2677",
+      "intendedSlots": ["planning-task-empty-state", "task-acceptance"]
     }
+  },
+  "contactSheet": {
+    "source": "eval/room-v2/art/anime-companion-pack-v2-contact-sheet.webp",
+    "width": 1600,
+    "height": 426,
+    "bytes": 223562,
+    "sha256": "42dd011f74abb06fc7838a809988cfcf51a5033fa272819fee2f3f06c954d509"
   }
 }

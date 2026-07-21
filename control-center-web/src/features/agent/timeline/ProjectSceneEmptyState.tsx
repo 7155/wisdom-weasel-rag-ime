@@ -1,11 +1,14 @@
+import type { ReactNode } from 'react';
 import { resolveProjectScene, type ProjectSceneId } from './project-art';
 import './project-art.css';
 
 export function ProjectSceneEmptyState({
+  action,
   description,
   sceneId,
   title,
 }: {
+  action?: ReactNode;
   description: string;
   sceneId: ProjectSceneId;
   title: string;
@@ -20,7 +23,8 @@ export function ProjectSceneEmptyState({
         src={scene.source}
         width={scene.width}
       />
-      <span><strong>{title}</strong><small>{description}</small></span>
+      <span><h2>{title}</h2><small>{description}</small></span>
+      {action ? <div className="project-scene-empty__action">{action}</div> : null}
     </div>
   );
 }

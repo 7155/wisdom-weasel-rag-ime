@@ -17,6 +17,7 @@ import {
   TextArea,
 } from '@/components/primitives';
 import type { JsonValue } from '@/platform/transport';
+import { ProjectSceneEmptyState } from '@/features/agent/timeline/ProjectSceneEmptyState';
 import {
   ManagementMutationWorkflow,
   UnsupportedWorkflow,
@@ -309,7 +310,7 @@ export function PlanningFeature() {
                 selected: selectedTask === stringValue(task.id),
               }))} />
             </div>
-          ) : <EmptyState description="这一天还没有任务。" icon={CalendarDays} title="任务列表为空" />}
+          ) : <ProjectSceneEmptyState description="建立一个可验证的下一步，完成后会保留证据与验收状态。" sceneId="task-evidence-acceptance" title="任务列表为空" />}
         </ManagementSection>
 
         <AgentWakeSchedules tasks={tasks} />

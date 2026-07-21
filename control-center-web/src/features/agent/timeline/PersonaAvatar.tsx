@@ -31,11 +31,11 @@ export function PersonaAvatar({
 
 export function stickerAsset(assetId: string): string | null {
   const normalized = assetId.toLowerCase();
-  if (normalized.includes('done')) return resolvePersonaAsset('rag-ime-companion-v1', 'done');
-  if (normalized.includes('warning')) return resolvePersonaAsset('rag-ime-companion-v1', 'warning');
-  if (normalized.includes('thinking')) return resolvePersonaAsset('rag-ime-companion-v1', 'thinking');
-  if (normalized.includes('listening')) return resolvePersonaAsset('rag-ime-companion-v1', 'listening');
-  if (normalized.includes('idle')) return resolvePersonaAsset('rag-ime-companion-v1', 'idle');
+  if (normalized.includes('done')) return resolvePersonaAsset('rag-ime-presence-v2', 'done');
+  if (normalized.includes('warning')) return resolvePersonaAsset('rag-ime-presence-v2', 'warning');
+  if (normalized.includes('thinking')) return resolvePersonaAsset('rag-ime-presence-v2', 'thinking');
+  if (normalized.includes('listening')) return resolvePersonaAsset('rag-ime-presence-v2', 'listening');
+  if (normalized.includes('idle')) return resolvePersonaAsset('rag-ime-presence-v2', 'idle');
   return null;
 }
 
