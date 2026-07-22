@@ -50,6 +50,51 @@ def _transition_evidence(
     if row is None:
         raise RuntimeError(f"No context transition for {session_id} / {source_ref}")
     evidence = json.loads(row[3])
+    tool_receipt_ids = [
+        str(value)
+        for value in evidence.get("toolReceiptIds") or []
+        if str(value).strip()
+    ]
+    tool_receipts: list[dict[str, Any]] = []
+    skill_receipt = None
+    with sqlite3.connect(db_path) as connection:
+        if tool_receipt_ids:
+            placeholders = ",".join("?" for _ in tool_receipt_ids)
+            tool_rows = connection.execute(
+                f"""
+                SELECT receipt_id, tool_name, schema_hash, receipt_kind
+                FROM room_v2_tool_disclosure_receipts
+                WHERE receipt_id IN ({placeholders})
+                ORDER BY receipt_id
+                """,
+                tool_receipt_ids,
+            ).fetchall()
+            tool_receipts = [
+                {
+                    "receiptId": str(item[0]),
+                    "toolName": str(item[1]),
+                    "schemaHash": str(item[2]),
+                    "kind": str(item[3]),
+                }
+                for item in tool_rows
+            ]
+        skill_receipt_id = str(evidence.get("skillReceiptId") or "")
+        if skill_receipt_id:
+            skill_row = connection.execute(
+                """
+                SELECT receipt_id, skill_id, skill_hash, load_reason
+                FROM room_v2_skill_load_receipts
+                WHERE receipt_id = ?
+                """,
+                (skill_receipt_id,),
+            ).fetchone()
+            if skill_row is not None:
+                skill_receipt = {
+                    "receiptId": str(skill_row[0]),
+                    "skillId": str(skill_row[1]),
+                    "skillHash": str(skill_row[2]),
+                    "loadReason": str(skill_row[3]),
+                }
     return {
         "from": row[0],
         "to": row[1],
@@ -60,7 +105,10 @@ def _transition_evidence(
         "blockerCount": evidence.get("blockerCount"),
         "handoffPresent": evidence.get("handoffPresent"),
         "skillReceiptPresent": bool(evidence.get("skillReceiptId")),
-        "toolReceiptCount": len(evidence.get("toolReceiptIds") or []),
+        "skillReceipt": skill_receipt,
+        "toolReceiptCount": len(tool_receipt_ids),
+        "toolReceiptIds": tool_receipt_ids,
+        "toolReceipts": tool_receipts,
         "providerHashes": [
             evidence.get("roomProviderEntryHash"),
             evidence.get("sessionProviderEntryHash"),
@@ -236,6 +284,7 @@ def build_report(
                 "hashesMatch": hashes_match,
                 "positiveCacheRead": bool(before.get("positiveCacheRead")),
                 "pendingContinuations": before.get("pendingContinuations"),
+                "workspaceRead": item.get("workspaceRead") or {},
             }
         )
 
@@ -266,8 +315,31 @@ def build_report(
             and item["transition"]["acceptanceCount"] == 3
             and item["transition"]["blockerCount"] == 0
             and item["transition"]["handoffPresent"] is True
-            and item["transition"]["skillReceiptPresent"] is True
-            and item["transition"]["toolReceiptCount"] == 2
+            and item["transition"]["skillReceipt"] is not None
+            and len(item["transition"]["skillReceipt"]["skillHash"]) == 64
+            and {"workspace_read", "room_commit"}
+            <= {
+                receipt["toolName"]
+                for receipt in item["transition"]["toolReceipts"]
+            }
+            and len(item["transition"]["toolReceipts"])
+            == item["transition"]["toolReceiptCount"]
+            and all(
+                receipt["kind"] == "load"
+                and len(receipt["schemaHash"]) == 64
+                for receipt in item["transition"]["toolReceipts"]
+            )
+            for item in verified_epochs
+        ),
+        "workspaceReadWorkloadExact": all(
+            item["workspaceRead"].get("invocationCount") == 2
+            and item["workspaceRead"].get("appliedExecutionCount") == 2
+            and len(item["workspaceRead"].get("loadReceiptIds") or []) == 1
+            for item in verified_epochs
+        ),
+        "workspaceReadReceiptsRecovered": all(
+            set(item["workspaceRead"].get("loadReceiptIds") or [])
+            <= set(item["transition"]["toolReceiptIds"])
             for item in verified_epochs
         ),
         "roomMemoryIsBounded": all(

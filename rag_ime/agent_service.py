@@ -106,8 +106,6 @@ from .agent_sessions import AgentSessionStore
 from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
-    READONLY_TOOL_PROFILE,
-    WORKER_TOOL_PROFILE,
 )
 from .agent_wake_scheduler import AgentWakeScheduleStore, AgentWakeScheduler
 from .agent_wake_application import AgentWakeApplicationService
@@ -750,20 +748,17 @@ class AgentService:
     def _room_product_tool_manifests(
         self,
         session_id: str,
-        template_tool_profile: str,
     ) -> Mapping[str, Sequence[Mapping[str, object]]]:
         provider = self._tool_manifest_provider
         if provider is None:
             return {
                 "available": (),
                 "userAuthorized": (),
-                "templateAllowed": (),
                 "effective": (),
             }
         session = self.sessions.get(session_id)
         effective_profile = _room_effective_tool_profile(
             str(session.get("toolProfileVersion") or ""),
-            template_tool_profile,
         )
 
         def manifests(
@@ -795,12 +790,8 @@ class AgentService:
                 str(session.get("toolProfileVersion") or CONTROL_CENTER_TOOL_PROFILE),
                 preserve_user_allowlist=True,
             ),
-            "templateAllowed": manifests(
-                template_tool_profile,
-                preserve_user_allowlist=False,
-            ),
-            # The exact schema disclosed to Pi is produced by the strictest
-            # profile while retaining the user's explicit Tool allowlist.
+            # Room keeps the Session's complete Tool surface but never inherits
+            # dangerous automatic approval.
             "effective": manifests(
                 effective_profile,
                 preserve_user_allowlist=True,
@@ -3307,23 +3298,13 @@ def _room_runtime_binding_hash(
 
 def _room_effective_tool_profile(
     session_profile: str,
-    template_profile: str,
 ) -> str:
-    """Choose the stricter Session/Agent-template Tool profile for a Room Dispatch."""
+    """Keep Session permissions complete while disabling Room auto-approval."""
 
-    profiles = {str(session_profile or ""), str(template_profile or "")}
-    if READONLY_TOOL_PROFILE in profiles:
-        return READONLY_TOOL_PROFILE
-    trusted_write_profiles = {
-        CONTROL_CENTER_TOOL_PROFILE,
-        WORKER_TOOL_PROFILE,
-        DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
-    }
-    if profiles <= trusted_write_profiles:
-        # Room never inherits automatic approval. The worker profile still lets
-        # R1/R2 calls create the normal native approval proposal.
-        return WORKER_TOOL_PROFILE
-    return READONLY_TOOL_PROFILE
+    normalized = str(session_profile or CONTROL_CENTER_TOOL_PROFILE).strip()
+    if normalized == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE:
+        return CONTROL_CENTER_TOOL_PROFILE
+    return normalized
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:

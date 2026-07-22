@@ -34,6 +34,13 @@ _FORBIDDEN_MEMORY_METADATA = (
     "score：",
     "sha256:",
 )
+_DEFAULT_WORKLOAD_FILES = (
+    "rag_ime/agent_service.py",
+    "rag_ime/agent_room_kernel.py",
+)
+_LEARN_A_WORKLOAD_FILES = tuple(
+    f"wisdom-weasel-rag-ime/{path}" for path in _DEFAULT_WORKLOAD_FILES
+)
 
 
 def request_json(
@@ -64,6 +71,45 @@ def request_json(
 
 def encoded(value: str) -> str:
     return urllib.parse.quote(value, safe="")
+
+
+def resolve_workload_files(
+    workspace: Path,
+    configured: list[Path] | None = None,
+) -> tuple[Path, Path]:
+    root = workspace.expanduser().resolve(strict=True)
+    values: tuple[Path, ...]
+    if configured:
+        values = tuple(configured)
+    elif all((root / value).is_file() for value in _DEFAULT_WORKLOAD_FILES):
+        values = tuple(Path(value) for value in _DEFAULT_WORKLOAD_FILES)
+    elif all((root / value).is_file() for value in _LEARN_A_WORKLOAD_FILES):
+        values = tuple(Path(value) for value in _LEARN_A_WORKLOAD_FILES)
+    else:
+        raise RuntimeError(
+            "Cannot find the two default Room compaction workload files; "
+            "pass --workload-file twice"
+        )
+    if len(values) != 2:
+        raise RuntimeError("Room compaction canary requires exactly two workload files")
+    resolved: list[Path] = []
+    for value in values:
+        candidate = value.expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        path = candidate.resolve(strict=True)
+        try:
+            path.relative_to(root)
+        except ValueError as error:
+            raise RuntimeError(
+                f"Room compaction workload file is outside the workspace: {path}"
+            ) from error
+        if not path.is_file():
+            raise RuntimeError(f"Room compaction workload is not a file: {path}")
+        resolved.append(path)
+    if resolved[0] == resolved[1]:
+        raise RuntimeError("Room compaction workload files must be distinct")
+    return resolved[0], resolved[1]
 
 
 def accepted_root_id(response: dict[str, Any]) -> str:
@@ -318,15 +364,91 @@ def latest_transition(db_path: Path, session_id: str) -> dict[str, Any]:
             "acceptance": evidence.get("acceptanceCount"),
             "blockers": evidence.get("blockerCount"),
             "handoff": evidence.get("handoffPresent"),
-            "skillReceipt": bool(evidence.get("skillReceiptId")),
-            "toolReceipts": len(evidence.get("toolReceiptIds") or []),
+            "skillReceiptId": str(evidence.get("skillReceiptId") or ""),
+            "toolReceiptIds": [
+                str(value)
+                for value in evidence.get("toolReceiptIds") or []
+                if str(value).strip()
+            ],
             "providerHashes": hashes,
         },
     }
 
 
+def tool_receipt_evidence(
+    db_path: Path,
+    *,
+    session_id: str,
+    dispatch_ids: list[str],
+    tool_name: str,
+) -> dict[str, Any]:
+    identifiers = [str(value) for value in dispatch_ids if str(value).strip()]
+    if not identifiers:
+        raise RuntimeError("Room Tool receipt audit requires a Dispatch id")
+    placeholders = ",".join("?" for _ in identifiers)
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT invocation.receipt_id, invocation.load_receipt_id,
+                   disclosure.schema_hash, execution.execution_receipt_id,
+                   execution.status, execution.result_hash
+            FROM room_v2_tool_invocation_receipts invocation
+            JOIN room_v2_capability_manifests manifest
+              ON manifest.manifest_id = invocation.manifest_id
+             AND manifest.manifest_hash = invocation.manifest_hash
+            JOIN room_v2_capability_runtime_bindings binding
+              ON binding.manifest_id = manifest.manifest_id
+             AND binding.session_id = ?
+            JOIN room_v2_tool_disclosure_receipts disclosure
+              ON disclosure.receipt_id = invocation.load_receipt_id
+             AND disclosure.receipt_kind = 'load'
+             AND disclosure.tool_name = invocation.canonical_tool_name
+            LEFT JOIN room_v2_tool_execution_receipts execution
+              ON execution.invocation_receipt_id = invocation.receipt_id
+            WHERE manifest.dispatch_id IN ({placeholders})
+              AND invocation.canonical_tool_name = ?
+            ORDER BY invocation.created_at_ms, invocation.receipt_id
+            """,
+            (session_id, *identifiers, tool_name),
+        ).fetchall()
+    items = [
+        {
+            "invocationReceiptId": str(row[0]),
+            "loadReceiptId": str(row[1]),
+            "schemaHash": str(row[2]),
+            "executionReceiptId": str(row[3] or ""),
+            "status": str(row[4] or ""),
+            "resultHash": str(row[5] or ""),
+        }
+        for row in rows
+    ]
+    return {
+        "toolName": tool_name,
+        "loadReceiptIds": sorted({item["loadReceiptId"] for item in items}),
+        "invocationCount": len(items),
+        "appliedExecutionCount": sum(
+            item["status"] == "applied" and len(item["resultHash"]) == 64
+            for item in items
+        ),
+        "items": items,
+    }
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     stamp = int(time.time() * 1000)
+    workspace = args.workspace.expanduser().resolve(strict=True)
+    workload_files = resolve_workload_files(
+        workspace,
+        list(args.workload_file or []),
+    )
+    workload_metadata = [
+        {
+            "path": str(path.relative_to(workspace)),
+            "bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+        for path in workload_files
+    ]
     created = request_json(
         args.base_url,
         "POST",
@@ -334,7 +456,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         {
             "title": f"Context epoch canary {stamp}",
             "routingPolicy": "manual_mentions",
-            "workspaceRoots": [str(args.workspace.resolve())],
+            "workspaceRoots": [str(workspace)],
             "participants": [
                 {"roleId": "companion-future-v1", "roleVersion": "1"},
                 {"roleId": "companion-present-v1", "roleVersion": "1"},
@@ -362,12 +484,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "currentOwnerParticipantId": target["id"],
                 "createdByParticipantId": room["participants"][0]["id"],
                 "clientMessageId": f"epoch-canary-work-{stamp}-{index}",
-                "objective": f"确认第 {index} 个独立任务的 Room 上下文边界",
-                "expectedOutput": f"只提交 CANARY-{index}-OK，并结束本轮",
+                "objective": (
+                    f"完成第 {index} 个独立压缩任务：精确加载 workspace_read，"
+                    "读取两份真实源码后提交有界结果"
+                ),
+                "expectedOutput": (
+                    f"恰好读取两份指定文件，只公开 CANARY-{index}-OK，"
+                    "不复制文件内容，然后提交责任并结束本轮"
+                ),
                 "acceptanceCriteria": [
-                    f"回复包含 CANARY-{index}-OK",
-                    "责任提交覆盖全部验收条件",
-                    "通过收工检查后结束模型回合",
+                    "只精确加载一次 workspace_read，并分别读取两份指定文件，limit 均为 65536",
+                    f"公开回复只包含 CANARY-{index}-OK 和简短读取完成说明，不复制源码",
+                    "责任提交覆盖全部验收条件，通过收工检查后结束模型回合",
                 ],
                 "state": "active",
             },
@@ -378,8 +506,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             f"/api/agent/rooms/{encoded(room_id)}/messages",
             {
                 "message": (
-                    f"@{target['displayName']} 执行当前结构化任务。"
-                    f"发布 CANARY-{index}-OK 并提交责任；若收工检查要求修复，只修复一次。"
+                    f"@{target['displayName']} 执行当前结构化任务。先精确加载 workspace_read；"
+                    f"只调用两次，分别读取 {workload_files[0]} 和 {workload_files[1]}，"
+                    "两次 limit 都设为 65536。不要公开复制源码，也不要调用 room_state。"
+                    f"完成后只发布 CANARY-{index}-OK 和一句读取完成说明并提交责任；"
+                    "若收工检查要求修复，只修复一次。"
                 ),
                 "clientMessageId": f"epoch-canary-message-{stamp}-{index}",
                 "workItemId": work["id"],
@@ -396,6 +527,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         except BaseException:
             cancel_root(args.base_url, room_id, root_id)
             raise
+        workload_receipts = tool_receipt_evidence(
+            args.db_path,
+            session_id=session_id,
+            dispatch_ids=[str(value) for value in settled["dispatchIds"]],
+            tool_name="workspace_read",
+        )
         before = debug_evidence(args.base_url, session_id)
         compacted = request_json(
             args.base_url,
@@ -414,6 +551,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "index": index,
                 "rootId": root_id,
                 "dispatch": settled,
+                "workspaceRead": workload_receipts,
                 "beforeCompaction": before,
                 "compaction": {
                     "entryId": compact_result.get("compactionEntryId"),
@@ -456,6 +594,21 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "boundedRoomCommitCalls": all(
             1 <= item["beforeCompaction"]["roomCommitCalls"] <= 2 for item in epochs
         ),
+        "workspaceReadWorkloadExact": all(
+            item["workspaceRead"]["invocationCount"] == 2
+            and item["workspaceRead"]["appliedExecutionCount"] == 2
+            and len(item["workspaceRead"]["loadReceiptIds"]) == 1
+            for item in epochs
+        ),
+        "workspaceReadReceiptsRecovered": all(
+            set(item["workspaceRead"]["loadReceiptIds"])
+            <= set(item["productTransition"]["recovery"]["toolReceiptIds"])
+            for item in epochs
+        ),
+        "exactSkillReceiptRecovered": all(
+            bool(item["productTransition"]["recovery"]["skillReceiptId"])
+            for item in epochs
+        ),
         "settlementQueuesDrained": all(
             item["beforeCompaction"]["pendingContinuations"] == 0 for item in epochs
         ),
@@ -476,6 +629,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "schemaVersion": "wisdom-weasel.room-context-epoch-canary.v1",
         "roomId": room_id,
         "sessionId": session_id,
+        "workloadFiles": workload_metadata,
         "epochs": epochs,
         "transcript": final_transcript,
         "observations": {
@@ -491,6 +645,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default="http://127.0.0.1:18768")
     parser.add_argument("--db-path", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument(
+        "--workload-file",
+        type=Path,
+        action="append",
+        help="Relative or absolute workspace file; pass exactly twice",
+    )
     parser.add_argument("--pi-session-dir", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--turn-timeout", type=float, default=240)

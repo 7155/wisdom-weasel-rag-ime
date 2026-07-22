@@ -1490,7 +1490,14 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         names = [str(item["name"]) for item in runtime_tools]
         self.assertEqual(names[:3], ["room_state", "room_post", "room_commit"])
-        self.assertIn("workspace_read", names)
+        for name in (
+            "ime_planning",
+            "ime_configuration",
+            "workspace_read",
+            "workspace_patch",
+            "workspace_shell",
+        ):
+            self.assertIn(name, names)
         loaded = self.service.room_capability_tool_load(
             {
                 "sessionId": self.session_id,

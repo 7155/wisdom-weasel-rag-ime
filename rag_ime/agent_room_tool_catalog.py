@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from .agent_room_capabilities import ROOM_PUBLIC_TOOLS, room_runtime_registry
-from .agent_tool_ids import tool_capability
 
 
 @dataclass(frozen=True)
@@ -23,23 +22,17 @@ def compose_room_tool_catalog(
     *,
     available: Sequence[Mapping[str, object]],
     user_authorized: Sequence[Mapping[str, object]],
-    template_allowed: Sequence[Mapping[str, object]],
     effective: Sequence[Mapping[str, object]],
-    template_capabilities: Sequence[str],
-    role_capabilities: Sequence[str],
-    profile_capabilities: Sequence[str],
 ) -> RoomToolCatalogPlan:
-    """Merge Room protocol Tools with normal Agent Tools without widening policy.
+    """Merge Room protocol Tools with the Session's normal Agent Tool surface.
 
-    ``available`` describes backend capability. The other inputs are separately
-    derived from the user's Session policy, the Agent template Tool profile, and
-    their intersection. Collaboration role/Profile capabilities remain distinct
-    gates so the manifest can explain why a Tool is unavailable to this Dispatch.
+    Room roles and task templates describe responsibility and handoff behavior;
+    they are not a second Tool ACL. The Session policy remains the Tool owner,
+    while the Room manifest adds Dispatch fencing, revocation, and result receipts.
     """
 
     available_by_name = _by_name(available)
     user_names = set(_by_name(user_authorized))
-    template_names = set(_by_name(template_allowed))
     effective_by_name = _by_name(effective)
     room_registry = room_runtime_registry()
     collisions = set(room_registry) & set(available_by_name)
@@ -56,35 +49,15 @@ def compose_room_tool_catalog(
 
     room_names = tuple(ROOM_PUBLIC_TOOLS)
     product_names = tuple(sorted(available_by_name))
-    template_caps = _capabilities(template_capabilities)
-    role_caps = _capabilities(role_capabilities)
-    profile_caps = _capabilities(profile_capabilities)
-
-    def allowed_by_capability(capabilities: set[str]) -> tuple[str, ...]:
-        return (
-            *room_names,
-            *(
-                name
-                for name in product_names
-                if tool_capability(name) in capabilities
-            ),
-        )
+    complete_surface = (*room_names, *product_names)
 
     return RoomToolCatalogPlan(
         runtime_registry=runtime_registry,
         user_authorized=(*room_names, *(name for name in product_names if name in user_names)),
-        template_allowed=(
-            *room_names,
-            *(
-                name
-                for name in product_names
-                if name in template_names
-                and tool_capability(name) in template_caps
-            ),
-        ),
-        role_allowed=allowed_by_capability(role_caps),
-        profile_allowed=allowed_by_capability(profile_caps),
-        state_allowed=(*room_names, *product_names),
+        template_allowed=complete_surface,
+        role_allowed=complete_surface,
+        profile_allowed=complete_surface,
+        state_allowed=complete_surface,
     )
 
 
@@ -127,10 +100,6 @@ def _strings(value: object, field: str) -> list[str]:
     if not result:
         raise ValueError(f"{field} must not be empty")
     return result
-
-
-def _capabilities(values: Sequence[str]) -> set[str]:
-    return {str(value).strip() for value in values if str(value).strip()}
 
 
 def _required(value: object, field: str) -> str:

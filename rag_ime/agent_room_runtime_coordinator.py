@@ -66,7 +66,7 @@ class RoomKernelRuntimeCoordinator:
         definition_compiler: AgentDefinitionCompiler,
         role_book_prompt_resolver: Callable[[str], str],
         product_tool_manifest_provider: Callable[
-            [str, str], Mapping[str, Sequence[Mapping[str, object]]]
+            [str], Mapping[str, Sequence[Mapping[str, object]]]
         ],
     ) -> None:
         self.db_path = Path(db_path)
@@ -339,18 +339,11 @@ class RoomKernelRuntimeCoordinator:
             raise RoomKernelFenceError(
                 "managed Dispatch PromptCompile produced no receipt"
             )
-        product_tools = self.product_tool_manifest_provider(
-            session_id,
-            template.tool_profile_version,
-        )
+        product_tools = self.product_tool_manifest_provider(session_id)
         tool_plan = compose_room_tool_catalog(
             available=_manifest_group(product_tools, "available"),
             user_authorized=_manifest_group(product_tools, "userAuthorized"),
-            template_allowed=_manifest_group(product_tools, "templateAllowed"),
             effective=_manifest_group(product_tools, "effective"),
-            template_capabilities=template.capabilities,
-            role_capabilities=role.capability_restrictions,
-            profile_capabilities=active_profile.capability_requests,
         )
         bound = self.bind_capability_runtime(
             room_binding=room_binding,

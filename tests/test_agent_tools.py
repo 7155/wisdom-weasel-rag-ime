@@ -1163,6 +1163,87 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertTrue(response["result"]["autoApproved"])
         self.assertFalse(response["result"]["approvalRequired"])
 
+    def test_room_product_tool_keeps_native_approval_and_seals_a_receipt(self) -> None:
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-auto-approve-v1",
+            allowed_tools=None,
+        )
+        auto_approvals: list[dict[str, object]] = []
+        executions: list[dict[str, object]] = []
+
+        class _RoomCollaboration:
+            def authorize_room_product_tool(
+                self,
+                _session_id,
+                _tool,
+                _args,
+                *,
+                tool_call_id,
+                load_receipt_id,
+            ):
+                if not load_receipt_id:
+                    raise AssertionError("Room product Tool requires a load receipt")
+                return {
+                    "invocationReceipt": {
+                        "receiptId": f"invoke:{tool_call_id}",
+                    }
+                }
+
+            def record_room_product_tool_execution(
+                self,
+                session_id,
+                invocation_receipt_id,
+                *,
+                status,
+                result_hash,
+            ):
+                receipt = {
+                    "sessionId": session_id,
+                    "invocationReceiptId": invocation_receipt_id,
+                    "status": status,
+                    "resultHash": result_hash,
+                }
+                executions.append(receipt)
+                return {"executionReceipt": receipt}
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            collaboration=_RoomCollaboration(),
+        )
+        gateway.bind_auto_approval_executor(
+            lambda approval: auto_approvals.append(dict(approval))
+            or {"autoApproved": True}
+        )
+
+        response = gateway.execute(
+            {
+                **self._tool_call(
+                    "ime_planning",
+                    "task_action",
+                    taskId="task:1",
+                    action="complete",
+                    date="2026-07-13",
+                ),
+                "toolCallId": "tool:room-planning",
+                "loadReceiptId": "load:room-planning",
+            }
+        )
+
+        self.assertTrue(response["result"]["approvalRequired"])
+        self.assertEqual(auto_approvals, [])
+        self.assertEqual(executions[0]["status"], "applied")
+        self.assertEqual(len(str(executions[0]["resultHash"])), 64)
+        self.assertEqual(
+            response["roomExecutionReceipt"]["invocationReceiptId"],
+            "invoke:tool:room-planning",
+        )
+
     def test_coordinator_search_and_patch_require_native_hash_bound_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-patch"
         workspace.mkdir()
