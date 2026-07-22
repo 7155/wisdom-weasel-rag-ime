@@ -323,7 +323,7 @@ def _semantic_query_vector(
 
 
 _DEFAULT_LANE_WEIGHTS = {
-    "bm25_raw": 1.10,
+    "bm25_raw": 1.00,
     "bm25_tags": 1.15,
     "vector_raw": 1.05,
     "vector_tag_boost": 1.05,

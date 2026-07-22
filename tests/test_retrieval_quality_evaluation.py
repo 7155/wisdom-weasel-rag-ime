@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 import unittest
+from unittest.mock import patch
 
 from rag_ime.retrieval_quality_evaluation import (
     REFERENCE_LANE_WEIGHTS,
@@ -15,6 +17,7 @@ from rag_ime.retrieval_quality_evaluation import (
     _parameter_grid,
     _runtime_defaults_match,
     _split_for_key,
+    evaluate_retrieval_quality,
 )
 
 
@@ -51,6 +54,50 @@ def _score(*, quality: float, evidence_mrr: float) -> dict[str, object]:
 
 
 class RetrievalQualityEvaluationTests(unittest.TestCase):
+    def test_parameter_search_disables_wall_clock_time_decay(self) -> None:
+        score = {
+            "caseCount": 0,
+            "overall": {},
+            "bySuite": {},
+            "qualityScore": 0.0,
+            "maxMetadataFamilyAmplification": 1.0,
+            "selectionObjective": 0.0,
+        }
+        with (
+            sqlite3.connect(":memory:") as conn,
+            patch(
+                "rag_ime.retrieval_quality_evaluation.build_retrieval_evaluation_cases",
+                return_value=[],
+            ),
+            patch(
+                "rag_ime.retrieval_quality_evaluation._provider_gate",
+                return_value={},
+            ),
+            patch(
+                "rag_ime.retrieval_quality_evaluation._prepare_cases",
+                return_value=([], {"passed": True}),
+            ),
+            patch(
+                "rag_ime.retrieval_quality_evaluation._parameter_grid",
+                side_effect=lambda baseline: [baseline],
+            ),
+            patch(
+                "rag_ime.retrieval_quality_evaluation._score_parameter_set",
+                return_value=score,
+            ) as score_parameters,
+        ):
+            report = evaluate_retrieval_quality(
+                conn,
+                project="test",
+                embedding_provider=None,
+            )
+
+        self.assertTrue(score_parameters.call_args_list)
+        self.assertTrue(
+            all(call.kwargs["current_ms"] == 0 for call in score_parameters.call_args_list)
+        )
+        self.assertFalse(report["retrievalExecution"]["timeDecayEnabled"])
+
     def test_parameter_grid_is_deduplicated_and_contains_runtime_profile(self) -> None:
         candidates = _parameter_grid(_reference_parameters())
         signatures = {
@@ -67,7 +114,7 @@ class RetrievalQualityEvaluationTests(unittest.TestCase):
         self.assertEqual(len(signatures), len(candidates))
         self.assertEqual(
             [candidate.name for candidate in candidates if _runtime_defaults_match(candidate)],
-            ["grid-r1.10-v1.05-m1.00-k40-q0.30"],
+            ["grid-r1.00-v1.05-m1.00-k40-q0.30"],
         )
 
     def test_holdout_gate_rejects_evidence_mrr_regression(self) -> None:
@@ -75,7 +122,7 @@ class RetrievalQualityEvaluationTests(unittest.TestCase):
         selected = next(
             candidate
             for candidate in _parameter_grid(baseline)
-            if candidate.name == "grid-r1.10-v1.05-m1.00-k40-q0.30"
+            if candidate.name == "grid-r1.00-v1.05-m1.00-k40-q0.30"
         )
 
         accepted, reasons = _holdout_gate(

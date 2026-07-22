@@ -4,7 +4,6 @@ import hashlib
 import math
 import sqlite3
 import statistics
-import time
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -133,18 +132,21 @@ def evaluate_retrieval_quality(
         metadata_fusion=REFERENCE_METADATA_FUSION,
     )
     candidates = _parameter_grid(baseline)
-    evaluation_ms = int(time.time() * 1_000)
+    # This search tunes lexical, vector, and metadata evidence families. Keep
+    # age decay out of that comparison: using wall-clock time here made two
+    # otherwise identical runs flip between near-tied parameter sets.
+    ranking_reference_ms = 0
     baseline_tuning = _score_parameter_set(
         prepared,
         parameters=baseline,
         split="tuning",
-        current_ms=evaluation_ms,
+        current_ms=ranking_reference_ms,
     )
     baseline_holdout = _score_parameter_set(
         prepared,
         parameters=baseline,
         split="holdout",
-        current_ms=evaluation_ms,
+        current_ms=ranking_reference_ms,
     )
 
     best = baseline
@@ -156,7 +158,7 @@ def evaluate_retrieval_quality(
             prepared,
             parameters=candidate,
             split="tuning",
-            current_ms=evaluation_ms,
+            current_ms=ranking_reference_ms,
         )
         if _parameter_sort_key(scored, candidate) > _parameter_sort_key(
             best_tuning,
@@ -169,7 +171,7 @@ def evaluate_retrieval_quality(
         prepared,
         parameters=best,
         split="holdout",
-        current_ms=evaluation_ms,
+        current_ms=ranking_reference_ms,
     )
     accepted, reasons = _holdout_gate(
         baseline=baseline_holdout,
@@ -201,6 +203,7 @@ def evaluate_retrieval_quality(
                 [item.elapsed_ms for item in prepared]
             ),
             "timeLaneEnabled": False,
+            "timeDecayEnabled": False,
             "feedbackLaneEnabled": False,
         },
         "safety": retrieval_safety,

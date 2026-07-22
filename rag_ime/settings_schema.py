@@ -70,7 +70,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "weights": {
             "bm25Raw": 1.0,
             "bm25Tags": 1.15,
-            "vectorRaw": 0.95,
+            "vectorRaw": 1.05,
             "vectorTagBoost": 1.05,
             "tagMemo": 1.1,
             "timeDailyBook": 0.9,

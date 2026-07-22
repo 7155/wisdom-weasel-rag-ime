@@ -25,7 +25,7 @@ _RAG_LANES = tuple(_RAG_LANE_SETTING_NAMES)
 _DEFAULT_RAG_WEIGHTS = {
     "bm25_raw": 1.00,
     "bm25_tags": 1.15,
-    "vector_raw": 0.95,
+    "vector_raw": 1.05,
     "vector_tag_boost": 1.05,
     "tagmemo": 1.10,
     "time": 0.90,

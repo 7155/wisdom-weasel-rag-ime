@@ -40,6 +40,8 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["display"]["badges"]["action"], "生成")
         self.assertEqual(defaults["display"]["colors"]["action"], "blue")
         self.assertTrue(defaults["rag"]["lanes"]["bm25Raw"])
+        self.assertEqual(defaults["rag"]["weights"]["bm25Raw"], 1.0)
+        self.assertEqual(defaults["rag"]["weights"]["vectorRaw"], 1.05)
         self.assertEqual(defaults["rag"]["hybrid"]["budgetMs"], 400)
         self.assertEqual(defaults["activeRag"]["shortcut"], "ctrl+.")
         self.assertTrue(defaults["activeRag"]["capture"]["accessibility"])
