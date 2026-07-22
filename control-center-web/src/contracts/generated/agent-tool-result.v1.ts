@@ -60,6 +60,7 @@ export interface AgentToolResultV1 {
     | 'read'
     | 'recent'
     | 'trace'
+    | 'capture'
     | 'maintenance_status'
     | 'curation_prepare'
     | 'maintenance_preview'

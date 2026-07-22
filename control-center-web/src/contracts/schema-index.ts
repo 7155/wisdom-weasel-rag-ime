@@ -6282,6 +6282,7 @@ export const contractSchemas = {
           "read",
           "recent",
           "trace",
+          "capture",
           "maintenance_status",
           "curation_prepare",
           "maintenance_preview",
