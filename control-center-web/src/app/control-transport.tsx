@@ -75,6 +75,10 @@ function createPreviewTransport(): MockControlTransport {
     previewSession('session-preview', '控制中心迁移', 'companion-present-v1', Date.now()),
     previewSession('session-memory', '记忆整理', 'companion-present-v1', Date.now() - 360_000),
   ];
+  const roomSessions: Record<string, unknown>[] = [
+    previewRoomSession('session-room-present', '迁移作战室 · 智鼬·此刻', 'companion-present-v1'),
+    previewRoomSession('session-room-firstlight', '迁移作战室 · 智鼬·初识', 'companion-firstlight-v1'),
+  ];
   let personas: AgentPersonaV1[] = previewPersonas.map((persona) => ({
     ...persona,
     defaults: { ...persona.defaults },
@@ -284,7 +288,10 @@ function createPreviewTransport(): MockControlTransport {
   };
   routes['agent.sessions.list'] = (request: ControlRequest) => ({
     ok: true,
-    sessions: sessions.filter((session) => (
+    sessions: [
+      ...sessions,
+      ...(record(request.query).includeInternal === true ? roomSessions : []),
+    ].filter((session) => (
       record(request.query).includeArchived === true || stringValue(session.status) !== 'archived'
     )),
   });
@@ -618,13 +625,18 @@ function previewResponse(pathId: ControlPathId): unknown {
       return {
         ok: true,
         items: [
-          previewTool('control.overview', '控制中心概览', '查看输入法、模型、记忆和最近活动的整体状态', 'control', 'R0', ['status', 'capabilities', 'recent_activity']),
-          previewTool('ime.input', '输入法', '查看输入设置、方案与候选解释，并在批准后调整配置或词表', 'input', 'R1', ['get_settings', 'preview_settings', 'apply_settings', 'rollback_settings', 'profile', 'candidate_explain', 'lexicon_review', 'lexicon_apply', 'lexicon_rollback']),
-          previewTool('voice.input', '语音输入', '查看语音状态，并在批准后切换已配置的语音 Provider', 'voice', 'R1', ['status', 'privacy_policy', 'provider_status', 'provider_preview', 'provider_apply', 'provider_rollback']),
-          previewTool('planning.tasks', '规划与任务', '查看每日计划，并在确认后更新任务状态', 'planning', 'R1', ['dashboard', 'task_action', 'undo_task_event']),
-          previewTool('ime.memory', '个人上下文记忆', '查询 Evidence、Current Fact、Topic Book 与已批准 Timeline，并生成 Atom-first 可审阅草案', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'maintenance_status', 'curation_prepare', 'maintenance_preview', 'maintenance_review', 'maintenance_apply', 'maintenance_rollback', 'list', 'search']),
+          previewTool('ime_overview', '控制中心概览', '查看输入法、模型、记忆和最近活动的整体状态', 'control', 'R0', ['status', 'capabilities', 'recent_activity']),
+          previewTool('ime_input', '输入法', '查看输入设置、方案与候选解释，并在批准后调整配置或词表', 'input', 'R1', ['get_settings', 'preview_settings', 'apply_settings', 'rollback_settings', 'profile', 'candidate_explain', 'lexicon_review', 'lexicon_apply', 'lexicon_rollback']),
+          previewTool('ime_voice', '语音输入', '查看语音状态，并在批准后切换已配置的语音 Provider', 'voice', 'R1', ['status', 'privacy_policy', 'provider_status', 'provider_preview', 'provider_apply', 'provider_rollback']),
+          previewTool('ime_planning', '规划与任务', '查看每日计划，并在确认后更新任务状态', 'planning', 'R1', ['dashboard', 'task_action', 'undo_task_event']),
+          previewTool('ime_memory', '个人上下文记忆', '查询 Evidence、Current Fact、Topic Book 与已批准 Timeline，并生成 Atom-first 可审阅草案', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'maintenance_status', 'curation_prepare', 'maintenance_preview', 'maintenance_review', 'maintenance_apply', 'maintenance_rollback', 'list', 'search']),
           previewTool('ime_knowledge', '文档知识库', '检索用户明确启用的独立文档知识库', 'knowledge', 'R0', ['list_bases', 'search', 'find', 'open', 'status']),
           previewTool('ime_browser', '浏览器共驾', '读取已配对浏览器的页面，并在批准后执行可追踪操作', 'browser', 'R1', ['status', 'tabs', 'snapshot', 'screenshot', 'trace', 'navigate', 'click', 'type', 'scroll', 'wait', 'stop']),
+          previewTool('workspace_list', '项目文件', '列出已授权项目目录中的文件', 'workspace', 'R0', ['list']),
+          previewTool('workspace_read', '读取文件', '读取已授权项目目录中的文件内容', 'workspace', 'R0', ['read']),
+          previewTool('workspace_search', '搜索项目', '在已授权项目目录中检索文件与内容', 'workspace', 'R0', ['search']),
+          previewTool('workspace_patch', '修改文件', '在审批边界内修改已授权项目文件', 'workspace', 'R2', ['patch']),
+          previewTool('workspace_shell', '运行命令', '在审批边界内执行项目命令', 'workspace', 'R2', ['run']),
         ],
       };
     case 'agent.subagents.list':
@@ -2516,6 +2528,21 @@ function previewSession(
   };
 }
 
+function previewRoomSession(
+  id: string,
+  title: string,
+  roleId: string,
+): Record<string, unknown> {
+  return {
+    ...previewSession(id, title, roleId, Date.now()),
+    mode: 'coordinator',
+    toolProfileVersion: 'control-center-v1',
+    toolAllowlistMode: 'profile',
+    allowedTools: [],
+    workspaceRoots: ['/Volumes/work/wisdom-weasel-rag-ime'],
+  };
+}
+
 function previewTool(
   id: string,
   displayName: string,
@@ -2538,6 +2565,8 @@ function previewTool(
     resultPresentation: 'tool_result',
     availability: 'online',
     version: 'preview',
+    enabled: true,
+    effectiveOperations: operations,
   };
 }
 
@@ -2730,8 +2759,8 @@ function previewRoomSnapshot(roomId: string) {
   const now = Date.now() - 60_000;
   const rootId = `${roomId}:turn-1`;
   const participants = [
-    previewParticipant(roomId, 'participant-present', 'session-preview', 'companion-present-v1', '智鼬·此刻', 0),
-    previewParticipant(roomId, 'participant-firstlight', 'session-runtime', 'companion-firstlight-v1', '智鼬·初识', 1),
+    previewParticipant(roomId, 'participant-present', 'session-room-present', 'companion-present-v1', '智鼬·此刻', 0),
+    previewParticipant(roomId, 'participant-firstlight', 'session-room-firstlight', 'companion-firstlight-v1', '智鼬·初识', 1),
   ];
   const event = (
     sequence: number,
@@ -2747,9 +2776,9 @@ function previewRoomSnapshot(roomId: string) {
     eventType,
     participantId,
     sourceSessionId: participantId === 'participant-present'
-      ? 'session-preview'
+      ? 'session-room-present'
       : participantId === 'participant-firstlight'
-        ? 'session-runtime'
+        ? 'session-room-firstlight'
         : '',
     createdAtMs: now + sequence,
     payload,

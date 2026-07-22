@@ -720,6 +720,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertNotEqual(repaired["sessionId"], old_session_id)
         repaired_session = self.service.sessions.get(str(repaired["sessionId"]))
         self.assertEqual(repaired_session["roleId"], participant["roleId"])
+        self.assertEqual(repaired_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(repaired_session["status"], "idle")
 
     def test_active_room_restores_legacy_archived_participant_sessions(self) -> None:
@@ -740,6 +741,81 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.service.room_snapshot(str(room["id"]))
 
         self.assertEqual(self.service.sessions.get(session_id)["status"], "idle")
+
+    def test_active_room_restores_the_complete_participant_tool_surface(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room 权限归属",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        session_id = str(room["participants"][0]["sessionId"])
+        self.service.sessions.set_runtime_policy(
+            session_id,
+            mode="assistant",
+            tool_profile_version="subagent-readonly-v1",
+            allowed_tools=["ime_overview"],
+            workspace_roots=[],
+        )
+
+        self.service.room_snapshot(str(room["id"]))
+
+        session = self.service.sessions.get(session_id)
+        self.assertEqual(session["mode"], "coordinator")
+        self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(session["toolAllowlistMode"], "profile")
+        self.assertEqual(session["allowedTools"], [])
+        self.assertEqual(session["workspaceRoots"], [str(self.root.resolve())])
+
+    def test_archived_room_releases_policy_and_restore_reclaims_it(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room 权限生命周期",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        session_id = str(room["participants"][0]["sessionId"])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "runtime permissions are managed by the Room",
+        ):
+            self.service.update_session(
+                session_id,
+                {
+                    "mode": "assistant",
+                    "toolProfileVersion": "subagent-readonly-v1",
+                },
+            )
+
+        self.service.update_room(str(room["id"]), {"archived": True})
+        changed = self.service.update_session(
+            session_id,
+            {
+                "mode": "assistant",
+                "toolProfileVersion": "subagent-readonly-v1",
+                "allowedTools": ["ime_overview"],
+            },
+        )["session"]
+        self.assertEqual(changed["mode"], "assistant")
+        self.assertEqual(changed["toolProfileVersion"], "subagent-readonly-v1")
+
+        self.service.update_room(str(room["id"]), {"archived": False})
+        restored = self.service.sessions.get(session_id)
+        self.assertEqual(restored["mode"], "coordinator")
+        self.assertEqual(restored["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(restored["toolAllowlistMode"], "profile")
+        self.assertEqual(restored["workspaceRoots"], [str(self.root.resolve())])
 
     def test_removed_member_is_archived_and_not_restored_by_room_snapshot(self) -> None:
         room = self.service.create_room(
@@ -1097,6 +1173,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(hermes_session["mode"], "coordinator")
         self.assertEqual(hermes_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(current_session["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(future_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(future_session["modelProfile"], "gpt/gpt-5.6-sol")
         self.assertEqual(future_session["thinkingLevel"], "max")
         self.assertEqual(future_session["workspaceRoots"], [str(self.root.resolve())])
@@ -1169,16 +1246,18 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(snapshot["resumeToken"], events[-1]["resumeToken"])
         self.assertEqual(snapshot["room"]["id"], room["id"])
 
-        policy = self.service.update_session(
-            str(hermes["sessionId"]),
-            {
-                "mode": "assistant",
-                "toolProfileVersion": "subagent-readonly-v1",
-                "allowedTools": ["ime_overview", "ime_memory"],
-            },
-        )["session"]
-        self.assertEqual(policy["toolProfileVersion"], "subagent-readonly-v1")
-        self.assertEqual(policy["allowedTools"], ["ime_overview", "ime_memory"])
+        with self.assertRaisesRegex(
+            ValueError,
+            "runtime permissions are managed by the Room",
+        ):
+            self.service.update_session(
+                str(hermes["sessionId"]),
+                {
+                    "mode": "assistant",
+                    "toolProfileVersion": "subagent-readonly-v1",
+                    "allowedTools": ["ime_overview", "ime_memory"],
+                },
+            )
 
         with self.assertRaisesRegex(ValueError, "cannot be deleted directly"):
             self.service.delete_session(str(hermes["sessionId"]))

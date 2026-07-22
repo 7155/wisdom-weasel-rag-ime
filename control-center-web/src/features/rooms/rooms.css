@@ -157,17 +157,22 @@
 .room-policy-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .room-policy-form legend { display: flex; align-items: baseline; gap: 6px; margin-bottom: 7px; color: var(--color-text-secondary); font-size: 13px; font-weight: 700; }
 .room-policy-form legend small { color: var(--color-text-tertiary); font-size: 13px; font-weight: 500; }
-.room-policy-segments { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.room-policy-segments label { position: relative; min-width: 0; cursor: pointer; }
-.room-policy-segments input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.room-policy-segments span { display: grid; min-height: 36px; place-items: center; border: 1px solid var(--color-border); border-radius: var(--radius-2); color: var(--color-text-secondary); font-size: 13px; }
-.room-policy-segments input:checked + span { border-color: var(--color-accent); background: var(--color-accent-soft); color: var(--color-text-primary); }
-.room-policy-segments input:disabled + span { opacity: .45; cursor: not-allowed; }
+.room-policy-boundary { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 10px; padding: 12px; border: 1px solid color-mix(in srgb, var(--color-success) 32%, var(--color-border)); border-radius: var(--radius-2); background: var(--color-success-soft); color: var(--color-success); }
+.room-policy-boundary > span { display: grid; min-width: 0; gap: 3px; }
+.room-policy-boundary strong { color: var(--color-text-primary); font-size: 13px; }
+.room-policy-boundary small { color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
+.room-policy-roots { display: grid; gap: 6px; }
+.room-policy-roots > span { display: grid; min-width: 0; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 7px; color: var(--color-text-secondary); }
+.room-policy-roots small { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.room-policy-empty { margin: 0; color: var(--color-text-tertiary); font-size: 13px; }
+.room-policy-tools-disclosure { min-width: 0; }
+.room-policy-tools-disclosure > summary { cursor: pointer; color: var(--color-text-secondary); font-size: 13px; font-weight: 700; }
+.room-policy-tools-disclosure > summary small { color: var(--color-text-tertiary); font-weight: 500; }
 .room-policy-tools { display: grid; max-height: 280px; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; overflow-y: auto; }
-.room-policy-tools > label { display: grid; min-width: 0; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 7px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-2); cursor: pointer; }
-.room-policy-tools > label:has(input:checked) { border-color: var(--color-accent); background: var(--color-accent-soft); }
-.room-policy-tools > label[data-disabled='true'] { opacity: .52; cursor: not-allowed; }
-.room-policy-tools > label > span { display: grid; min-width: 0; gap: 2px; }
+.room-policy-tools-disclosure[open] .room-policy-tools { margin-top: 8px; }
+.room-policy-tools > div { display: grid; min-width: 0; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 7px; padding: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-2); }
+.room-policy-tools > div > svg { color: var(--color-success); }
+.room-policy-tools > div > span { display: grid; min-width: 0; gap: 2px; }
 .room-policy-tools strong { font-size: 13px; }
 .room-policy-tools small { color: var(--color-text-tertiary); font-size: 13px; }
 .room-create-form { display: grid; gap: 16px; }

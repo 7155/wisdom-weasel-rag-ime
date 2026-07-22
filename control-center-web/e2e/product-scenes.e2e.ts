@@ -106,6 +106,15 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
     await expect(roomsScene.locator('.room-execution-workspace')).toBeVisible();
     await page.getByRole('radio', { name: 'Sessions' }).click();
     await expect(roomsScene.locator('.room-session-workspace')).toBeVisible();
+    await roomsScene.getByRole('button', { name: '查看运行边界' }).first().click();
+    const boundary = page.getByRole('dialog', { name: /运行边界/ });
+    await expect(boundary).toContainText('完整工作权限');
+    await expect(boundary).toContainText('/Volumes/work/wisdom-weasel-rag-ime');
+    await expect(boundary.getByRole('radio', { name: '只读' })).toHaveCount(0);
+    await expect(boundary.getByRole('button', { name: '保存权限' })).toHaveCount(0);
+    await boundary.getByText(/查看当前工具目录/).click();
+    await expect(boundary).toContainText('运行命令');
+    await boundary.getByRole('button', { name: '完成' }).click();
     await page.getByRole('radio', { name: 'Posts' }).click();
     await expect(page.getByRole('textbox', { name: 'Room 消息' })).toBeEnabled();
     if (isMobileViewport(page)) await roomsScene.getByRole('button', { name: '打开 Rooms 列表' }).click();

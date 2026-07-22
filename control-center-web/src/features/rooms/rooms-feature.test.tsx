@@ -245,7 +245,7 @@ describe('Rooms experience', () => {
       multiple: false,
       maxFiles: 1,
     }]);
-    expect(screen.getByText('/Volumes/work/learnA')).toBeInTheDocument();
+    expect(screen.getAllByText('/Volumes/work/learnA').length).toBeGreaterThan(0);
   });
 
   it('creates a roleplay Room without forcing a workspace or coordinator mode', async () => {
@@ -828,16 +828,17 @@ describe('Rooms experience', () => {
     expect(transport.activeSubscriptionCount()).toBe(1);
   });
 
-  it('loads and saves each Room participant runtime and tool policy', async () => {
+  it('shows the complete Room working boundary without per-role permission switches', async () => {
     const room = roomSummary('room-a', '权限 Room');
     const session = {
-      id: 'room-a:s1', mode: 'assistant', status: 'idle',
+      id: 'room-a:s1', mode: 'coordinator', status: 'idle',
       toolProfileVersion: 'control-center-v1', toolAllowlistMode: 'profile', allowedTools: [],
+      workspaceRoots: ['/Volumes/work/learnA'],
     };
     const tools = [
       { id: 'ime_overview', displayName: '控制中心概览', description: '查看整体状态', sessionModes: ['assistant', 'coordinator'], operations: ['status'], profileOperations: { 'control-center-v1': ['status'], 'subagent-readonly-v1': ['status'] }, enabled: true },
       { id: 'ime_memory', displayName: '记忆与工具书', description: '检索记忆', sessionModes: ['assistant', 'coordinator'], operations: ['catalog'], profileOperations: { 'control-center-v1': ['catalog'], 'subagent-readonly-v1': ['catalog'] }, enabled: true },
-      { id: 'workspace_read', displayName: '工作区读取', description: '读取工作区', sessionModes: ['coordinator'], operations: ['read'], profileOperations: { 'control-center-v1': ['read'], 'subagent-readonly-v1': [] }, enabled: false },
+      { id: 'workspace_read', displayName: '工作区读取', description: '读取工作区', sessionModes: ['coordinator'], operations: ['read'], profileOperations: { 'control-center-v1': ['read'], 'subagent-readonly-v1': [] }, enabled: true },
     ];
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': { ok: true, items: [room] },
@@ -845,31 +846,24 @@ describe('Rooms experience', () => {
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.sessions.list': { ok: true, items: [session] },
       'agent.tools.list': { ok: true, items: tools },
-      'agent.session.mode.update': (request: ControlRequest) => ({ ok: true, session: { ...session, ...(request.body as Record<string, unknown>), toolAllowlistMode: 'explicit' } }),
     } });
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     await user.click(await screen.findByRole('radio', { name: 'Sessions' }));
-    await user.click((await screen.findAllByRole('button', { name: '检查 Session' }))[0]!);
-    expect(await screen.findByRole('dialog', { name: /智鼬 · 私有 Session Inspector/ })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Room 成员运行' })).toHaveTextContent('成员运行边界');
+    await user.click((await screen.findAllByRole('button', { name: '查看运行边界' }))[0]!);
+    expect(await screen.findByRole('dialog', { name: /智鼬 · 运行边界/ })).toBeInTheDocument();
     expect(transport.requests.filter((call) => call.request.pathId === 'agent.sessions.list').at(-1)?.request.query).toEqual({ includeArchived: true, includeInternal: true, limit: 500 });
     expect(transport.requests.find((call) => call.request.pathId === 'agent.tools.list')?.request.query).toEqual({ sessionId: 'room-a:s1' });
-    await user.click(screen.getByRole('radio', { name: '协调者' }));
-    await user.click(screen.getByRole('radio', { name: '只读' }));
-    await user.click(screen.getByRole('checkbox', { name: /记忆与工具书/ }));
-    await user.click(screen.getByRole('button', { name: '保存权限' }));
-
-    await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.session.mode.update')).toBe(true));
-    expect(transport.requests.find((call) => call.request.pathId === 'agent.session.mode.update')?.request).toMatchObject({
-      params: { sessionId: 'room-a:s1' },
-      body: {
-        mode: 'coordinator',
-        toolProfileVersion: 'subagent-readonly-v1',
-        allowedTools: ['ime_overview'],
-        workspaceRoots: ['/Volumes/work/learnA'],
-      },
-    });
+    expect(screen.getByText('完整工作权限')).toBeInTheDocument();
+    expect(screen.getAllByText('/Volumes/work/learnA').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('radio', { name: '只读' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '保存权限' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/私有 Session：/)).not.toBeInTheDocument();
+    await user.click(screen.getByText(/查看当前工具目录/));
+    expect(screen.getByText('工作区读取')).toBeInTheDocument();
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.session.mode.update')).toBe(false);
   });
 
   it('links Room approvals to the exact participant Agent session', () => {

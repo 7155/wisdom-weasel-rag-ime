@@ -190,6 +190,7 @@ class AgentSessionPolicyService:
                 archived=_bool(payload.get("archived")),
             )
         if _has_runtime_policy_update(payload):
+            self._validate_room_runtime_policy(session_id)
             session = self._update_runtime_policy(
                 session_id,
                 session,
@@ -209,6 +210,23 @@ class AgentSessionPolicyService:
             "session": session,
             "memoryMaintenance": maintenance,
         }
+
+    def _validate_room_runtime_policy(self, session_id: str) -> None:
+        participant = self.rooms.participant_for_session(
+            session_id,
+            active_only=False,
+        )
+        if (
+            participant is None
+            or str(participant.get("status") or "") != "active"
+        ):
+            return
+        room = self.rooms.get(str(participant["roomId"]))
+        if str(room.get("status") or "") != "active":
+            return
+        raise ValueError(
+            "Active Room participant runtime permissions are managed by the Room"
+        )
 
     def _validate_archive(
         self,

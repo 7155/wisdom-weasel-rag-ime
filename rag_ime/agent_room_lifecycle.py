@@ -17,6 +17,7 @@ from .agent_sessions import (
     AgentSessionNotFound,
     AgentSessionStore,
 )
+from .agent_tool_ids import CONTROL_CENTER_TOOL_PROFILE
 
 
 @dataclass(frozen=True)
@@ -512,9 +513,10 @@ def _participant_session_payload(
         ),
         "roleId": role.role_id,
         "roleVersion": role.version,
-        "toolProfileVersion": (
-            role.defaults.tool_profile_version
-        ),
+        # Room identity describes responsibility, not capability. Every member
+        # receives the ordinary working Agent surface; native approvals and the
+        # Dispatch fence still govern risky effects.
+        "toolProfileVersion": CONTROL_CENTER_TOOL_PROFILE,
         "workspaceRoots": list(plan.workspace_roots),
     }
 

@@ -13,6 +13,7 @@ from .agent_sessions import (
     AgentSessionNotFound,
     AgentSessionStore,
 )
+from .agent_tool_ids import CONTROL_CENTER_TOOL_PROFILE
 
 
 class RoomParticipantLifecycleService:
@@ -340,9 +341,11 @@ class RoomParticipantLifecycleService:
             participant.get("sessionId") or ""
         ).strip()
         try:
-            return self.sessions.get(old_session_id)
+            session = self.sessions.get(old_session_id)
         except AgentSessionNotFound:
-            pass
+            session = None
+        if session is not None:
+            return self._ensure_working_policy(room, session)
         role = self.personas.resolve(
             participant.get("roleId"),
             participant.get("roleVersion") or "1",
@@ -370,6 +373,41 @@ class RoomParticipantLifecycleService:
             self.sessions.delete(str(created["id"]))
             raise
         return created
+
+    def _ensure_working_policy(
+        self,
+        room: Mapping[str, object],
+        session: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Keep Room responsibility separate from Agent capability."""
+
+        mode = (
+            "coordinator"
+            if room.get("roomKind", "collaboration")
+            == "collaboration"
+            else "assistant"
+        )
+        workspace_roots = (
+            list(room.get("workspaceRoots") or [])
+            if mode == "coordinator"
+            else []
+        )
+        if (
+            session.get("mode") == mode
+            and session.get("toolProfileVersion")
+            == CONTROL_CENTER_TOOL_PROFILE
+            and session.get("toolAllowlistMode") == "profile"
+            and list(session.get("workspaceRoots") or [])
+            == workspace_roots
+        ):
+            return dict(session)
+        return self.sessions.set_runtime_policy(
+            str(session["id"]),
+            mode=mode,
+            tool_profile_version=CONTROL_CENTER_TOOL_PROFILE,
+            allowed_tools=None,
+            workspace_roots=workspace_roots,
+        )
 
     def active_runtime_session_ids(self) -> set[str]:
         return {
@@ -410,10 +448,7 @@ def _session_payload(
         "mode": mode,
         "roleId": getattr(role, "role_id"),
         "roleVersion": getattr(role, "version"),
-        "toolProfileVersion": getattr(
-            getattr(role, "defaults"),
-            "tool_profile_version",
-        ),
+        "toolProfileVersion": CONTROL_CENTER_TOOL_PROFILE,
         "workspaceRoots": list(
             room.get("workspaceRoots") or []
         ),

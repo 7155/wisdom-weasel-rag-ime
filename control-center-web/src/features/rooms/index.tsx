@@ -33,6 +33,7 @@ import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { roleItems } from '@/features/agent/types';
 import { publicErrorText } from '@/features/overview/management-ui';
 import { RoomStatusPanel } from './RoomStatusPanel';
+import { RoomMemberBoundaryDialog } from './RoomMemberBoundaryDialog';
 import { RoomComposer, roomMentionedParticipants } from './composer/RoomComposer';
 import { RoomKernelLivePanel } from './kernel/RoomKernelLivePanel';
 import { createRoomRuntimeLedger } from './room-runtime-ledger';
@@ -97,9 +98,6 @@ export interface RoomSummary {
   updatedAtMs: number;
   participants: RoomParticipant[];
 }
-interface AgentSessionPolicySummary { id: string; mode: 'assistant' | 'coordinator'; status: string; toolProfileVersion: string; toolAllowlistMode: 'profile' | 'explicit'; allowedTools: string[]; workspaceRoots: string[]; }
-interface RoomToolPolicyItem { id: string; displayName: string; description: string; sessionModes: string[]; operations: string[]; profileOperations: Record<string, string[]>; enabled: boolean; }
-
 export function RoomsFeature() {
   const transport = useControlTransport();
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
@@ -156,15 +154,7 @@ export function RoomsFeature() {
   const [artifactPicking, setArtifactPicking] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiving, setArchiving] = useState(false);
-  const [policyParticipant, setPolicyParticipant] = useState<RoomParticipant>();
-  const [policySession, setPolicySession] = useState<AgentSessionPolicySummary>();
-  const [policyTools, setPolicyTools] = useState<RoomToolPolicyItem[]>([]);
-  const [policyMode, setPolicyMode] = useState<'assistant' | 'coordinator'>('assistant');
-  const [policyProfile, setPolicyProfile] = useState('control-center-v1');
-  const [policyAllowedTools, setPolicyAllowedTools] = useState<string[]>([]);
-  const [policyLoading, setPolicyLoading] = useState(false);
-  const [policySaving, setPolicySaving] = useState(false);
-  const [policyError, setPolicyError] = useState('');
+  const [boundaryParticipant, setBoundaryParticipant] = useState<RoomParticipant>();
   const [abortingSessionIds, setAbortingSessionIds] = useState<Set<string>>(() => new Set());
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
 
@@ -231,12 +221,12 @@ export function RoomsFeature() {
       } else {
         setRoleCatalogError(publicErrorText(roleResult.reason, '角色目录暂时无法读取，请稍后重试。'));
       }
-      const loadedSessions = sessionResult.status === 'fulfilled'
-        ? agentSessionItems(sessionResult.value)
+      const loadedSessionRoots = sessionResult.status === 'fulfilled'
+        ? sessionWorkspaceRoots(sessionResult.value)
         : [];
       setProjectPaths(uniquePaths([
         ...loadedRooms.flatMap((item) => item.workspaceRoots ?? []),
-        ...loadedSessions.flatMap((item) => item.workspaceRoots),
+        ...loadedSessionRoots,
       ]));
     }).finally(() => { if (active) setCatalogLoading(false); });
     return () => { active = false; };
@@ -831,79 +821,6 @@ export function RoomsFeature() {
       setArtifactPicking(false);
     }
   }
-  async function openParticipantPolicy(participant: RoomParticipant): Promise<void> {
-    setPolicyParticipant(participant);
-    setPolicySession(undefined);
-    setPolicyTools([]);
-    setPolicyError('');
-    setPolicyLoading(true);
-    try {
-      const [sessionResponse, toolResponse] = await Promise.all([
-        transport.request({ pathId: 'agent.sessions.list', query: { includeArchived: true, includeInternal: true, limit: 500 } }),
-        transport.request({ pathId: 'agent.tools.list', query: { sessionId: participant.sessionId } }),
-      ]);
-      const session = agentSessionItems(sessionResponse).find((item) => item.id === participant.sessionId);
-      if (!session) throw new Error('没有找到这个参与者的 Agent Session。');
-      const tools = roomToolItems(toolResponse);
-      setPolicySession(session);
-      setPolicyTools(tools);
-      setPolicyMode(session.mode);
-      setPolicyProfile(session.toolProfileVersion);
-      setPolicyAllowedTools(session.toolAllowlistMode === 'explicit'
-        ? session.allowedTools
-        : tools.filter((tool) => tool.enabled).map((tool) => tool.id));
-    } catch (requestError) {
-      setPolicyError(publicErrorText(requestError, '参与者权限暂时无法读取，请稍后重试。'));
-    } finally {
-      setPolicyLoading(false);
-    }
-  }
-  function updatePolicyMode(mode: 'assistant' | 'coordinator'): void {
-    setPolicyMode(mode);
-    setPolicyAllowedTools((current) => current.filter((toolId) => {
-      const tool = policyTools.find((item) => item.id === toolId);
-      return Boolean(tool && toolAvailableForPolicy(tool, mode, policyProfile));
-    }));
-  }
-  function updatePolicyProfile(profile: string): void {
-    setPolicyProfile(profile);
-    setPolicyAllowedTools((current) => current.filter((toolId) => {
-      const tool = policyTools.find((item) => item.id === toolId);
-      return Boolean(tool && toolAvailableForPolicy(tool, policyMode, profile));
-    }));
-  }
-  function togglePolicyTool(toolId: string): void {
-    setPolicyAllowedTools((current) => current.includes(toolId)
-      ? current.filter((item) => item !== toolId)
-      : [...current, toolId]);
-  }
-  async function saveParticipantPolicy(): Promise<void> {
-    if (!policyParticipant || !policySession || policySaving) return;
-    setPolicySaving(true);
-    setPolicyError('');
-    try {
-      const response = await transport.request<Record<string, unknown>>({
-        pathId: 'agent.session.mode.update',
-        params: { sessionId: policyParticipant.sessionId },
-        body: {
-          mode: policyMode,
-          toolProfileVersion: policyProfile,
-          allowedTools: policyAllowedTools,
-          workspaceRoots: policyMode === 'coordinator'
-            ? room?.workspaceRoots ?? policySession.workspaceRoots
-            : [],
-        },
-      });
-      const updated = agentSessionValue(record(response).session);
-      if (!updated) throw new Error('服务端没有返回更新后的 Agent 权限。');
-      setPolicySession(updated);
-      setPolicyParticipant(undefined);
-    } catch (requestError) {
-      setPolicyError(publicErrorText(requestError, '参与者权限暂时无法保存，请稍后重试。'));
-    } finally {
-      setPolicySaving(false);
-    }
-  }
   return <>
     <main className="rooms-feature" data-route-id="rooms" data-rail-open={roomRailOpen} data-status-open={statusOpen}>
       <aside ref={roomRailRef} className="rooms-rail" id="rooms-list-drawer" aria-label="Rooms 列表" role={roomRailOpen && roomRailOverlay ? 'dialog' : undefined} aria-modal={roomRailOpen && roomRailOverlay ? true : undefined}>
@@ -941,9 +858,9 @@ export function RoomsFeature() {
           onSend={() => void send()}
         /></> : workspaceView === 'execution' ? <section className="room-execution-workspace" aria-label="Root、Task 与 Dispatch">
           {room ? <RoomKernelLivePanel roomId={room.id} /> : <p className="room-empty">请选择一个 Room。</p>}
-        </section> : <section className="room-session-workspace" aria-label="Room 私有 Sessions">
-          <header><span><strong>私有 Session Inspector</strong><small>Room 只接收显式 Post；思考、工具过程和 transcript 保留在各自 Session。</small></span></header>
-          <div>{activeParticipants.map((participant) => <article key={participant.id}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><span><strong>{participant.displayName}</strong><small>{collaborationRoleLabel(participant.collaborationRole)} · {participant.sessionId}</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => void openParticipantPolicy(participant)}>检查 Session</Button></article>)}</div>
+        </section> : <section className="room-session-workspace" aria-label="Room 成员运行">
+          <header><span><strong>成员运行边界</strong><small>每位伙伴拥有独立 Session；只有显式 Post 进入 Room，思考与工具细节保持私有。</small></span></header>
+          <div>{activeParticipants.map((participant) => <article key={participant.id}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><span><strong>{participant.displayName}</strong><small>{collaborationRoleLabel(participant.collaborationRole)} · 完整工作权限</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => setBoundaryParticipant(participant)}>查看运行边界</Button></article>)}</div>
           {!activeParticipants.length ? <p className="room-empty">当前没有绑定 Session。</p> : null}
         </section>}
       </section>
@@ -1030,18 +947,7 @@ export function RoomsFeature() {
     <Dialog open={archiveOpen} onOpenChange={(open) => { if (!archiving) setArchiveOpen(open); }}>
       <DialogContent><DialogHeader><DialogTitle>{room?.status === 'archived' ? '恢复这个 Room？' : '归档这个 Room？'}</DialogTitle><DialogDescription>{room?.status === 'archived' ? `“${room.title}”会恢复协作与消息输入。` : `“${room?.title}”会从当前列表移除，已有对话仍保留在本机。`}</DialogDescription></DialogHeader>{error ? <p className="room-dialog-error" role="alert">{error}</p> : null}<DialogFooter><Button variant="quiet" disabled={archiving} onClick={() => setArchiveOpen(false)}>取消</Button><Button variant={room?.status === 'archived' ? 'primary' : 'danger'} loading={archiving} onClick={() => void updateRoomArchiveState(room?.status !== 'archived')}>{room?.status === 'archived' ? '恢复' : '归档'}</Button></DialogFooter></DialogContent>
     </Dialog>
-    <Dialog open={Boolean(policyParticipant)} onOpenChange={(open) => { if (!open && !policySaving) { setPolicyParticipant(undefined); setPolicyError(''); } }}>
-      <DialogContent className="room-policy-dialog">
-        <DialogHeader><DialogTitle>{policyParticipant?.displayName ?? '参与者'} · 私有 Session Inspector</DialogTitle><DialogDescription>Transcript 不进入 Room。这里只读取并修改该 Session 的运行模式、工作区和工具边界。</DialogDescription></DialogHeader>
-        {policyError ? <p className="room-dialog-error" role="alert">{policyError}</p> : null}
-        {policyLoading ? <p className="room-policy-loading" role="status">正在读取 Agent 权限…</p> : policySession ? <div className="room-policy-form">
-          <fieldset><legend>运行模式</legend><div className="room-policy-segments">{(['assistant', 'coordinator'] as const).map((mode) => { const persona = personas.find((item) => item.roleId === policyParticipant?.roleId); const available = persona?.selectableModes.includes(mode) ?? mode === policySession.mode; return <label key={mode}><input type="radio" name="room-participant-mode" value={mode} checked={policyMode === mode} disabled={!available} onChange={() => updatePolicyMode(mode)} /><span>{mode === 'assistant' ? '助手' : '协调者'}</span></label>; })}</div></fieldset>
-          <fieldset><legend>工具策略</legend><div className="room-policy-segments"><label><input type="radio" name="room-tool-profile" checked={policyProfile === 'control-center-v1'} onChange={() => updatePolicyProfile('control-center-v1')} /><span>标准</span></label><label><input type="radio" name="room-tool-profile" checked={policyProfile === 'subagent-readonly-v1'} onChange={() => updatePolicyProfile('subagent-readonly-v1')} /><span>只读</span></label></div></fieldset>
-          <fieldset><legend>允许工具 <small>{policyAllowedTools.length} 项</small></legend><div className="room-policy-tools">{policyTools.map((tool) => { const available = toolAvailableForPolicy(tool, policyMode, policyProfile); return <label key={tool.id} data-disabled={!available}><input type="checkbox" checked={available && policyAllowedTools.includes(tool.id)} disabled={!available} onChange={() => togglePolicyTool(tool.id)} /><span><strong>{tool.displayName}</strong><small>{available ? tool.description : '当前模式或策略不可用'}</small></span></label>; })}</div></fieldset>
-        </div> : null}
-        <DialogFooter><Button variant="quiet" disabled={policySaving} onClick={() => setPolicyParticipant(undefined)}>取消</Button><Button variant="primary" loading={policySaving} disabled={policyLoading || !policySession} onClick={() => void saveParticipantPolicy()}>保存权限</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <RoomMemberBoundaryDialog participant={boundaryParticipant} onClose={() => setBoundaryParticipant(undefined)} />
   </>;
 }
 
@@ -1049,10 +955,16 @@ export function RoomsFeature() {
 
 function roomItems(value: unknown): RoomSummary[] { const source = record(value); return (Array.isArray(source.items) ? source.items : Array.isArray(source.rooms) ? source.rooms : []).filter(isRoom); }
 function isRoom(value: unknown): value is RoomSummary { const item = record(value); return typeof item.id === 'string' && typeof item.title === 'string' && Array.isArray(item.participants); }
-function agentSessionItems(value: unknown): AgentSessionPolicySummary[] { const source = record(value); const items = Array.isArray(source.items) ? source.items : Array.isArray(source.sessions) ? source.sessions : []; return items.map(agentSessionValue).filter((item): item is AgentSessionPolicySummary => Boolean(item)); }
-function agentSessionValue(value: unknown): AgentSessionPolicySummary | undefined { const item = record(value); if (typeof item.id !== 'string' || !['assistant', 'coordinator'].includes(String(item.mode))) return undefined; return { id: item.id, mode: item.mode as AgentSessionPolicySummary['mode'], status: String(item.status ?? ''), toolProfileVersion: String(item.toolProfileVersion || 'control-center-v1'), toolAllowlistMode: item.toolAllowlistMode === 'explicit' ? 'explicit' : 'profile', allowedTools: Array.isArray(item.allowedTools) ? item.allowedTools.map(String) : [], workspaceRoots: Array.isArray(item.workspaceRoots) ? item.workspaceRoots.map(String) : [] }; }
-function roomToolItems(value: unknown): RoomToolPolicyItem[] { const source = record(value); return (Array.isArray(source.items) ? source.items : []).flatMap((value) => { const item = record(value); if (typeof item.id !== 'string' || typeof item.displayName !== 'string') return []; const profileOperations = record(item.profileOperations); return [{ id: item.id, displayName: item.displayName, description: String(item.description ?? ''), sessionModes: Array.isArray(item.sessionModes) ? item.sessionModes.map(String) : [], operations: Array.isArray(item.operations) ? item.operations.map(String) : [], profileOperations: Object.fromEntries(Object.entries(profileOperations).map(([profile, operations]) => [profile, Array.isArray(operations) ? operations.map(String) : []])), enabled: item.enabled === true }]; }); }
-function toolAvailableForPolicy(tool: RoomToolPolicyItem, mode: string, profile: string): boolean { return tool.sessionModes.includes(mode) && (tool.profileOperations[profile] ?? []).length > 0; }
+function sessionWorkspaceRoots(value: unknown): string[] {
+  const source = record(value);
+  const items = Array.isArray(source.items)
+    ? source.items
+    : Array.isArray(source.sessions) ? source.sessions : [];
+  return items.flatMap((value) => {
+    const roots = record(value).workspaceRoots;
+    return Array.isArray(roots) ? roots.map(String) : [];
+  });
+}
 function roomParticipantRoleLabel(participant: RoomParticipant): string {
   if (participant.collaborationRole === 'coordinator') return '协作主持';
   if (participant.collaborationRole === 'researcher') return '调研与核对';
