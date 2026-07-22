@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from typing import Any
 
 from .input_quality import MEMORY_CONTEXT_OPT_IN_TAG
@@ -31,6 +32,7 @@ def rebuild_retrieval_docs(
     include_timelines: bool = True,
     include_legacy_items: bool = False,
     include_items: bool | None = None,
+    source_refs: Iterable[tuple[str, str]] | None = None,
 ) -> dict[str, object]:
     """Rebuild governed retrieval projections and retire legacy item docs.
 
@@ -41,6 +43,19 @@ def rebuild_retrieval_docs(
 
     ensure_memory_v2_schema(conn)
     consistency_repair = repair_superseded_memory_residuals(conn)
+    targeted_refs = (
+        {
+            (
+                compact_whitespace(str(doc_type)).lower(),
+                compact_whitespace(str(source_id)),
+            )
+            for doc_type, source_id in source_refs
+            if compact_whitespace(str(doc_type))
+            and compact_whitespace(str(source_id))
+        }
+        if source_refs is not None
+        else None
+    )
     if include_items is not None:
         include_legacy_items = bool(include_items)
     # Read every projection type owned by this rebuild, not only enabled types.
@@ -64,6 +79,16 @@ def rebuild_retrieval_docs(
               AND doc_type IN ({type_placeholders})""",
         (project, project, *managed_doc_types),
     ).fetchall()
+    if targeted_refs is not None:
+        existing_rows = [
+            row
+            for row in existing_rows
+            if (
+                compact_whitespace(str(row["doc_type"])).lower(),
+                compact_whitespace(str(row["source_id"])),
+            )
+            in targeted_refs
+        ]
     existing = {
         str(row["doc_id"]): {
             "signature": tuple(str(row[key] or "") for key in (
@@ -89,6 +114,16 @@ def rebuild_retrieval_docs(
         include_timelines=include_timelines,
         include_legacy_items=include_legacy_items,
     )
+    if targeted_refs is not None:
+        docs = [
+            doc
+            for doc in docs
+            if (
+                compact_whitespace(str(doc["doc_type"])).lower(),
+                compact_whitespace(str(doc["source_id"])),
+            )
+            in targeted_refs
+        ]
     timestamp = now_ms()
     counts = {"item": 0, "phrase": 0, "atom": 0, "book": 0, "timeline": 0}
     active_doc_ids: set[str] = set()
@@ -251,6 +286,8 @@ def rebuild_retrieval_docs(
         "includeLegacyItems": bool(include_legacy_items),
         # Retain the old result field while callers migrate to the precise name.
         "includeItems": bool(include_legacy_items),
+        "targeted": targeted_refs is not None,
+        "targetSourceCount": len(targeted_refs or ()),
         "changedDocIds": sorted(changed_doc_ids),
         "removedDocIds": sorted(stale_ids),
         "consistencyRepair": consistency_repair,

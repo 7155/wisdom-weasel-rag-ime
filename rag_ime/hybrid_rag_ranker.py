@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 import math
 import re
 import time
@@ -10,9 +11,9 @@ from .text_utils import compact_whitespace, token_terms, truncate_text
 
 
 LANE_WEIGHTS = {
-    "bm25_raw": 1.00,
+    "bm25_raw": 1.10,
     "bm25_tags": 1.15,
-    "vector_raw": 0.95,
+    "vector_raw": 1.05,
     "vector_tag_boost": 1.05,
     "tagmemo": 1.10,
     "time": 0.90,
@@ -24,9 +25,31 @@ METADATA_FAMILY_LANES = (
     "vector_tag_boost",
 )
 METADATA_FAMILY_MODES = frozenset({"capped", "legacy_sum"})
+DEFAULT_RRF_K = 40
+DEFAULT_QUERY_COVERAGE_WEIGHT = 0.30
 
 
-def rrf(rank: int, k: int = 60) -> float:
+@dataclass(frozen=True)
+class MetadataFamilyFusionConfig:
+    max_multiplier: float = 1.20
+    secondary_weight: float = 0.15
+    tertiary_weight: float = 0.05
+
+    def __post_init__(self) -> None:
+        if not 1.0 <= float(self.max_multiplier) <= 3.0:
+            raise ValueError("metadata family max multiplier must be between 1 and 3")
+        for name, value in (
+            ("secondary", self.secondary_weight),
+            ("tertiary", self.tertiary_weight),
+        ):
+            if not 0.0 <= float(value) <= 1.0:
+                raise ValueError(f"metadata family {name} weight must be between 0 and 1")
+
+
+DEFAULT_METADATA_FAMILY_FUSION = MetadataFamilyFusionConfig()
+
+
+def rrf(rank: int, k: int = DEFAULT_RRF_K) -> float:
     return 1.0 / (k + max(1, int(rank)))
 
 
@@ -40,6 +63,9 @@ def rank_hybrid_hits(
     current_ms: int | None = None,
     decay_settings: dict[str, object] | None = None,
     metadata_family_mode: str = "capped",
+    metadata_family_config: MetadataFamilyFusionConfig | None = None,
+    rrf_k: int = DEFAULT_RRF_K,
+    query_coverage_weight: float = DEFAULT_QUERY_COVERAGE_WEIGHT,
 ) -> list[HybridRagCandidate]:
     from .memory_projectors import ImeMemoryProjector
 
@@ -50,6 +76,9 @@ def rank_hybrid_hits(
         current_ms=current_ms,
         decay_settings=decay_settings,
         metadata_family_mode=metadata_family_mode,
+        metadata_family_config=metadata_family_config,
+        rrf_k=rrf_k,
+        query_coverage_weight=query_coverage_weight,
     )
     return ImeMemoryProjector().project(
         memory_hits,
@@ -67,9 +96,16 @@ def rank_hybrid_hits_to_memory_hits(
     current_ms: int | None = None,
     decay_settings: dict[str, object] | None = None,
     metadata_family_mode: str = "capped",
+    metadata_family_config: MetadataFamilyFusionConfig | None = None,
+    rrf_k: int = DEFAULT_RRF_K,
+    query_coverage_weight: float = DEFAULT_QUERY_COVERAGE_WEIGHT,
 ) -> list[MemoryHit]:
     if metadata_family_mode not in METADATA_FAMILY_MODES:
         raise ValueError("unsupported metadata family fusion mode")
+    if not 1 <= int(rrf_k) <= 10_000:
+        raise ValueError("RRF k must be between 1 and 10000")
+    if not 0.0 <= float(query_coverage_weight) <= 2.0:
+        raise ValueError("query coverage weight must be between 0 and 2")
     effective_lane_weights = {**LANE_WEIGHTS, **(lane_weights or {})}
     grouped: dict[str, list[HybridRagHit]] = defaultdict(list)
     for hit in hits:
@@ -82,6 +118,11 @@ def rank_hybrid_hits_to_memory_hits(
             lane_weights=effective_lane_weights,
             query_text=query_text,
             metadata_family_mode=metadata_family_mode,
+            metadata_family_config=(
+                metadata_family_config or DEFAULT_METADATA_FAMILY_FUSION
+            ),
+            rrf_k=int(rrf_k),
+            query_coverage_weight=float(query_coverage_weight),
         )
         base_score = sum(features.values())
         decay_factor = _time_decay_factor(
@@ -144,11 +185,14 @@ def _score_features(
     lane_weights: dict[str, float],
     query_text: str,
     metadata_family_mode: str,
+    metadata_family_config: MetadataFamilyFusionConfig,
+    rrf_k: int,
+    query_coverage_weight: float,
 ) -> dict[str, float]:
     features: dict[str, float] = {}
     for hit in hits:
         lane = hit.source_lane
-        lane_score = lane_weights.get(lane, 0.5) * rrf(hit.rank)
+        lane_score = lane_weights.get(lane, 0.5) * rrf(hit.rank, k=rrf_k)
         features[lane] = max(features.get(lane, 0.0), lane_score)
     if metadata_family_mode == "capped":
         family_scores = sorted(
@@ -164,8 +208,10 @@ def _score_features(
             second = family_scores[1] if len(family_scores) > 1 else 0.0
             third = family_scores[2] if len(family_scores) > 2 else 0.0
             fused = min(
-                strongest * 1.20,
-                strongest + (0.15 * second) + (0.05 * third),
+                strongest * float(metadata_family_config.max_multiplier),
+                strongest
+                + (float(metadata_family_config.secondary_weight) * second)
+                + (float(metadata_family_config.tertiary_weight) * third),
             )
             raw_family_sum = sum(family_scores)
             if fused < raw_family_sum:
@@ -197,7 +243,9 @@ def _score_features(
             # a different question: does the final fact itself contain the
             # concepts asked for? It prevents broad tags from beating an exact
             # Atom merely because they appear in more expansion lanes.
-            features["query_coverage"] = 0.25 * len(matched) / len(set(query_terms))
+            features["query_coverage"] = (
+                query_coverage_weight * len(matched) / len(set(query_terms))
+            )
     return features
 
 

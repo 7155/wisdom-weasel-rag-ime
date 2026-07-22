@@ -318,6 +318,48 @@ class MemoryProjectionConsistencyTests(unittest.TestCase):
             self.assertIsNotNone(projected)
             self.assertTrue(authoritative_retrieval_doc(conn, dict(projected)))
 
+    def test_phrase_authority_gate_fails_closed_before_async_cleanup(self) -> None:
+        with closing(self.connect()) as conn:
+            self._insert_atom(
+                conn,
+                "atom:old",
+                "公司 VPN 账号是 account-A",
+                10,
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_items(
+                    memory_id, kind, text, normalized_text, summary, project,
+                    status, privacy_class, created_at_ms, updated_at_ms,
+                    metadata_json
+                ) VALUES (
+                    'phrase:account-a', 'phrase', 'account-A', 'account-a',
+                    '旧 VPN 账号', 'test', 'approved', 'local', 10, 10,
+                    '{"source":"memory_book_compile","sourceEventIds":[10]}'
+                )
+                """
+            )
+            rebuild_retrieval_docs(conn, project="test")
+            projected = conn.execute(
+                """
+                SELECT doc_type, source_id, source_revision, projection_version
+                FROM memory_retrieval_docs
+                WHERE doc_id = 'phrase:phrase:account-a'
+                """
+            ).fetchone()
+            self.assertTrue(authoritative_retrieval_doc(conn, dict(projected)))
+
+            conn.execute(
+                """
+                UPDATE memory_atoms
+                SET status = 'superseded', claim_state = 'superseded',
+                    valid_to_ms = 20, updated_at_ms = 20
+                WHERE id = 'atom:old'
+                """
+            )
+
+            self.assertFalse(authoritative_retrieval_doc(conn, dict(projected)))
+
     @staticmethod
     def _insert_atom(
         conn: sqlite3.Connection,

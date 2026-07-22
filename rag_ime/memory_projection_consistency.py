@@ -143,6 +143,11 @@ def authoritative_retrieval_doc(
         expected_kind = "phrase" if doc_type == "phrase" else str(row[0])
         if str(row[0]) != expected_kind or str(row[2]) == "sensitive":
             return False
+        if doc_type == "phrase" and not _phrase_has_current_atom_support(
+            conn,
+            phrase_id=source_id,
+        ):
+            return False
     elif doc_type == "timeline":
         row = conn.execute(
             """
@@ -164,6 +169,50 @@ def authoritative_retrieval_doc(
         conn,
         source_type=source_type_for_doc(doc_type),
         source_id=source_id,
+    )
+
+
+def _phrase_has_current_atom_support(
+    conn: sqlite3.Connection,
+    *,
+    phrase_id: str,
+) -> bool:
+    dependency_count = int(
+        conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM memory_projection_dependencies
+            WHERE source_type = 'atom'
+              AND dependent_type = 'phrase'
+              AND dependent_id = ?
+            """,
+            (phrase_id,),
+        ).fetchone()[0]
+        or 0
+    )
+    if dependency_count == 0:
+        return True
+    return (
+        conn.execute(
+            """
+            SELECT 1
+            FROM memory_projection_dependencies AS dependency
+            JOIN memory_atoms AS atom ON atom.id = dependency.source_id
+            JOIN memory_source_generations AS generation
+              ON generation.source_type = 'atom'
+             AND generation.source_id = atom.id
+             AND generation.generation = dependency.source_revision
+            WHERE dependency.source_type = 'atom'
+              AND dependency.dependent_type = 'phrase'
+              AND dependency.dependent_id = ?
+              AND atom.status IN ('active', 'approved')
+              AND atom.claim_state = 'current'
+              AND atom.privacy_level != 'sensitive'
+            LIMIT 1
+            """,
+            (phrase_id,),
+        ).fetchone()
+        is not None
     )
 
 

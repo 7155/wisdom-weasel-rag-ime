@@ -3,12 +3,17 @@ from __future__ import annotations
 import unittest
 
 from rag_ime.hybrid_rag_models import HybridRagHit
-from rag_ime.hybrid_rag_ranker import rank_hybrid_hits, rank_hybrid_hits_to_memory_hits, rrf
+from rag_ime.hybrid_rag_ranker import (
+    MetadataFamilyFusionConfig,
+    rank_hybrid_hits,
+    rank_hybrid_hits_to_memory_hits,
+    rrf,
+)
 
 
 class HybridRagRankerTests(unittest.TestCase):
     def test_hybrid_ranker_uses_rrf_not_raw_score_addition(self) -> None:
-        self.assertAlmostEqual(rrf(1), 1.0 / 61.0)
+        self.assertAlmostEqual(rrf(1), 1.0 / 41.0)
         raw_giant = HybridRagHit(
             doc_id="doc:giant",
             doc_type="phrase",
@@ -251,6 +256,85 @@ class HybridRagRankerTests(unittest.TestCase):
             "metadata_family_overlap_penalty",
             capped.debug_features,
         )
+
+    def test_metadata_family_fusion_parameters_are_explicitly_tunable(self) -> None:
+        hits = [
+            HybridRagHit(
+                doc_id="doc:metadata",
+                doc_type="atom",
+                source_id="atom:metadata",
+                text="元数据命中",
+                surface_hints=(),
+                tags=("tag",),
+                source_lane=lane,
+                rank=1,
+                raw_score=1.0,
+            )
+            for lane in ("bm25_tags", "tagmemo", "vector_tag_boost")
+        ]
+
+        strongest_only = rank_hybrid_hits_to_memory_hits(
+            hits,
+            metadata_family_config=MetadataFamilyFusionConfig(
+                max_multiplier=1.0,
+                secondary_weight=0.0,
+                tertiary_weight=0.0,
+            ),
+        )[0]
+        strongest = max(
+            strongest_only.debug_features[lane]
+            for lane in ("bm25_tags", "tagmemo", "vector_tag_boost")
+        )
+
+        self.assertAlmostEqual(strongest_only.score, strongest)
+
+    def test_metadata_family_fusion_rejects_invalid_parameters(self) -> None:
+        with self.assertRaisesRegex(ValueError, "max multiplier"):
+            MetadataFamilyFusionConfig(max_multiplier=0.9)
+        with self.assertRaisesRegex(ValueError, "secondary weight"):
+            MetadataFamilyFusionConfig(secondary_weight=1.1)
+
+    def test_rrf_and_query_coverage_parameters_are_explicitly_tunable(self) -> None:
+        exact = HybridRagHit(
+            doc_id="doc:exact",
+            doc_type="atom",
+            source_id="atom:exact",
+            text="输入法候选必须去重",
+            surface_hints=(),
+            tags=(),
+            source_lane="bm25_raw",
+            rank=10,
+            raw_score=1.0,
+        )
+        semantic = HybridRagHit(
+            doc_id="doc:semantic",
+            doc_type="atom",
+            source_id="atom:semantic",
+            text="其他语义结果",
+            surface_hints=(),
+            tags=(),
+            source_lane="vector_raw",
+            rank=1,
+            raw_score=1.0,
+        )
+
+        coverage_first = rank_hybrid_hits_to_memory_hits(
+            [exact, semantic],
+            query_text="输入法候选去重",
+            query_coverage_weight=0.25,
+        )
+        rank_first = rank_hybrid_hits_to_memory_hits(
+            [exact, semantic],
+            query_text="输入法候选去重",
+            query_coverage_weight=0.0,
+            rrf_k=10,
+        )
+
+        self.assertEqual(coverage_first[0].doc_id, "doc:exact")
+        self.assertEqual(rank_first[0].doc_id, "doc:semantic")
+
+        with self.assertRaisesRegex(ValueError, "RRF k"):
+            rank_hybrid_hits_to_memory_hits([exact], rrf_k=0)
 
 
 if __name__ == "__main__":

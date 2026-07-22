@@ -156,6 +156,83 @@ class QueryExpansionTests(unittest.TestCase):
         self.assertNotIn("大模型", expansion.activated_tags)
         self.assertNotIn("Qwen", expansion.expansion_terms)
 
+    def test_query_expansion_ignores_stale_active_retrieval_projection(self) -> None:
+        event_id = self._record_event(
+            "权威投影内容",
+            tags=("权威标签",),
+        )
+        with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    governed_compile_output(
+                        event_id,
+                        "权威投影内容",
+                        ("权威标签",),
+                    ),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            conn.execute(
+                """
+                UPDATE memory_retrieval_docs
+                SET raw_text = '失效触发词', tags_text = '旧投影标签',
+                    surface_hints_text = '失效提示词',
+                    query_expansions_text = '旧投影扩展',
+                    source_revision = source_revision + 100
+                WHERE doc_type = 'atom' AND source_id = ?
+                """,
+                (f"atom:governed:{event_id}",),
+            )
+
+            tag_expansion = build_query_expansion(
+                conn,
+                query_text="失效触发词",
+                project="wisdom-weasel-rag-ime",
+            )
+            hint_expansion = build_query_expansion(
+                conn,
+                query_text="失效提示词",
+                project="wisdom-weasel-rag-ime",
+            )
+
+        self.assertNotIn("旧投影标签", tag_expansion.activated_tags)
+        self.assertNotIn("旧投影扩展", hint_expansion.expansion_terms)
+
+    def test_query_expansion_ignores_superseded_atom_aliases_and_tags(self) -> None:
+        event_id = self._record_event("本地 Qwen3 输入法模型")
+        with self.connect() as conn:
+            apply_memory_book_plan(
+                conn,
+                memory_book_plan_from_compile_output(
+                    qwen_compile_output(event_id),
+                    project="wisdom-weasel-rag-ime",
+                    provider="deepseek",
+                    model="deepseek-v4-flash",
+                ),
+            )
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            conn.execute(
+                """
+                UPDATE memory_atoms
+                SET status = 'historical', claim_state = 'superseded'
+                WHERE id = 'atom:qwen3-local-model'
+                """
+            )
+
+            expansion = build_query_expansion(
+                conn,
+                query_text="千文三",
+                project="wisdom-weasel-rag-ime",
+            )
+
+        self.assertNotIn("千文三", expansion.matched_aliases)
+        self.assertNotIn("Qwen3", expansion.expansion_terms)
+        self.assertNotIn("大模型", expansion.activated_tags)
+
     def _record_event(self, text: str, *, recent_context: str = "", tags: tuple[str, ...] = ()) -> int:
         memory_id = self.core.record_event(
             InputEvent(

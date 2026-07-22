@@ -697,7 +697,7 @@ class AgentMemorySourceStore:
                 source = conn.execute(
                     """
                     SELECT source.source_id, source.status, source.disposition,
-                           source.source_kind, session.role_id
+                           source.source_kind, source.pi_entry_id, session.role_id
                     FROM agent_memory_sources AS source
                     JOIN agent_sessions AS session ON session.id = source.session_id
                     WHERE source.source_id = ? AND source.session_id = ?
@@ -708,7 +708,7 @@ class AgentMemorySourceStore:
                 source = conn.execute(
                     """
                     SELECT source.source_id, source.status, source.disposition,
-                           source.source_kind, session.role_id
+                           source.source_kind, source.pi_entry_id, session.role_id
                     FROM agent_memory_sources AS source
                     JOIN agent_sessions AS session ON session.id = source.session_id
                     WHERE source.session_id = ?
@@ -741,12 +741,24 @@ class AgentMemorySourceStore:
                         WHERE evidence_id IN ({placeholders})
                           AND session_id = ? AND status = 'active'
                           AND (? = '' OR project = ? OR project = '')
+                          AND (
+                              (
+                                  source_kind = 'user_message'
+                                  AND source_id = ?
+                              )
+                              OR (
+                                  source_kind = 'tool_receipt'
+                                  AND json_valid(metadata_json)
+                                  AND json_extract(metadata_json, '$.applied') = 1
+                              )
+                          )
                         """,
                         (
                             *normalized_evidence,
                             normalized_session,
                             self.project,
                             self.project,
+                            str(source["pi_entry_id"] or ""),
                         ),
                     ).fetchall()
                 }

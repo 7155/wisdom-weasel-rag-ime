@@ -7,6 +7,7 @@ from threading import Event, Lock, Thread
 from typing import Any, Callable
 
 from .embeddings import EmbeddingProvider
+from .memory_ingest import normalize_text
 from .text_utils import compact_whitespace, now_ms
 
 
@@ -695,11 +696,18 @@ def _materialize_event(
     if projection_kind == RETRIEVAL_DOCS_PROJECTION:
         from .retrieval_docs import rebuild_retrieval_docs
 
+        source_refs = _retrieval_source_refs_for_event(
+            conn,
+            aggregate_type=str(row["aggregate_type"]),
+            aggregate_id=str(row["aggregate_id"]),
+            payload=payload,
+        )
         report = rebuild_retrieval_docs(
             conn,
             project=project,
             include_phrases=True,
             include_legacy_items=False,
+            source_refs=source_refs,
         )
         vector_outbox_id = enqueue_memory_projection(
             conn,
@@ -754,6 +762,292 @@ def _materialize_event(
             "vectors": report,
         }
     raise ValueError(f"unsupported projection kind: {projection_kind}")
+
+
+def _retrieval_source_refs_for_event(
+    conn: sqlite3.Connection,
+    *,
+    aggregate_type: str,
+    aggregate_id: str,
+    payload: dict[str, object],
+) -> tuple[tuple[str, str], ...] | None:
+    explicit = payload.get("sourceRefs")
+    if isinstance(explicit, list):
+        refs = {
+            (
+                compact_whitespace(str(item.get("sourceType") or "")).lower(),
+                compact_whitespace(str(item.get("sourceId") or "")),
+            )
+            for item in explicit
+            if isinstance(item, dict)
+        }
+        return tuple(sorted(ref for ref in refs if all(ref)))
+
+    normalized_type = compact_whitespace(aggregate_type).lower()
+    normalized_id = compact_whitespace(aggregate_id)
+    direct_types = {
+        "memory_atom": ("atom",),
+        "memory_book": ("book",),
+        "daily_activity_timeline": ("timeline",),
+        # A memory item may switch between a direct phrase and a governed
+        # non-retrievable item, so target both projections for deletion/upsert.
+        "memory_item": ("phrase", "item"),
+    }
+    if normalized_type in direct_types and normalized_id:
+        return tuple(
+            (source_type, normalized_id)
+            for source_type in direct_types[normalized_type]
+        )
+    if normalized_type == "input_event" and normalized_id.isdigit():
+        return _source_refs_for_input_event(conn, int(normalized_id))
+    if normalized_type == "memory_book_run" and normalized_id:
+        return _source_refs_for_memory_book_run(conn, normalized_id)
+    # Project-wide catalog replacement and explicit rebuild operations remain
+    # repair tools. Normal single-source and automatic curation events above
+    # never rewrite unrelated Retrieval Docs.
+    return None
+
+
+def _source_refs_for_input_event(
+    conn: sqlite3.Connection,
+    event_id: int,
+) -> tuple[tuple[str, str], ...]:
+    refs = {
+        (
+            compact_whitespace(str(row["source_type"])).lower(),
+            compact_whitespace(str(row["source_id"])),
+        )
+        for row in conn.execute(
+            """
+            SELECT source_type, source_id
+            FROM memory_source_event_links
+            WHERE event_id = ?
+            """,
+            (max(0, int(event_id)),),
+        ).fetchall()
+    }
+    for row in conn.execute(
+        """
+        SELECT memory_id, kind
+        FROM memory_items
+        WHERE source_event_id = ?
+        """,
+        (max(0, int(event_id)),),
+    ).fetchall():
+        refs.add(
+            (
+                "phrase" if str(row["kind"] or "") == "phrase" else "item",
+                compact_whitespace(str(row["memory_id"] or "")),
+            )
+        )
+    return tuple(sorted(ref for ref in refs if all(ref)))
+
+
+def _source_refs_for_memory_book_run(
+    conn: sqlite3.Connection,
+    run_id: str,
+) -> tuple[tuple[str, str], ...] | None:
+    refs: set[tuple[str, str]] = set()
+    rows = conn.execute(
+        """
+        SELECT op, payload_json, rollback_json
+        FROM memory_cleanup_diffs
+        WHERE run_id = ?
+        ORDER BY id
+        """,
+        (run_id,),
+    ).fetchall()
+    for row in rows:
+        op = compact_whitespace(str(row["op"] or ""))
+        payload = _json_object(row["payload_json"])
+        rollback = _json_object(row["rollback_json"])
+        if op == "upsert_memory_atom":
+            _add_ref(refs, "atom", payload.get("atomId"))
+            for value in rollback.get("autoSuperseded") or []:
+                if isinstance(value, dict):
+                    _add_ref(refs, "atom", value.get("id"))
+            for value in rollback.get("autoSupersededBooks") or []:
+                if isinstance(value, dict):
+                    _add_ref(refs, "book", value.get("book_id"))
+            _add_dependency_invalidation_refs(refs, rollback)
+        elif op == "upsert_memory_book":
+            _add_ref(refs, "book", payload.get("bookId"))
+        elif op == "add_phrase_candidate":
+            _add_ref(refs, "phrase", payload.get("memoryId"))
+            _add_ref(refs, "item", payload.get("memoryId"))
+        elif op == "supersede_memory":
+            for key in ("oldId", "newId"):
+                for source_type in ("atom", "phrase", "item"):
+                    _add_ref(refs, source_type, payload.get(key))
+            _add_dependency_invalidation_refs(refs, rollback)
+        elif op == "retract_memory_atom":
+            _add_ref(refs, "atom", payload.get("targetAtomId"))
+            for value in rollback.get("books") or []:
+                if isinstance(value, dict):
+                    _add_ref(refs, "book", value.get("book_id"))
+            _add_dependency_invalidation_refs(refs, rollback)
+        elif op == "merge_semantic_tag":
+            refs.update(
+                _source_refs_for_tag_names(
+                    conn,
+                    (
+                        str(payload.get("source") or ""),
+                        str(payload.get("target") or ""),
+                    ),
+                )
+            )
+            for value in rollback.get("bookTags") or []:
+                if isinstance(value, dict):
+                    _add_ref(refs, "book", value.get("book_id"))
+        elif op == "upsert_semantic_tag":
+            refs.update(
+                _source_refs_for_tag_names(
+                    conn,
+                    (
+                        str(payload.get("name") or ""),
+                        str(
+                            dict(rollback.get("previous") or {}).get("tag")
+                            or ""
+                        ),
+                    ),
+                )
+            )
+            refs.update(
+                _source_refs_for_tag_ids(
+                    conn,
+                    (rollback.get("pkValue"),),
+                )
+            )
+        elif op in {
+            "upsert_semantic_group",
+            "upsert_tag_edge",
+            "add_negative_phrase",
+        }:
+            continue
+        else:
+            # Unknown/legacy diff kinds are handled only by an explicit full
+            # rebuild instead of risking a partial catalog projection.
+            return None
+    return tuple(sorted(refs))
+
+
+def _source_refs_for_tag_names(
+    conn: sqlite3.Connection,
+    names: tuple[str, ...],
+) -> set[tuple[str, str]]:
+    normalized_names = {
+        normalize_text(value)
+        for value in names
+        if normalize_text(value)
+    }
+    if not normalized_names:
+        return set()
+    placeholders = ",".join("?" for _ in normalized_names)
+    tag_ids = [
+        int(row[0])
+        for row in conn.execute(
+            f"SELECT id FROM memory_tags WHERE normalized_tag IN ({placeholders})",
+            tuple(sorted(normalized_names)),
+        ).fetchall()
+    ]
+    if not tag_ids:
+        return set()
+    refs = _source_refs_for_tag_ids(conn, tag_ids)
+    target_names = tuple(
+        compact_whitespace(value) for value in names if compact_whitespace(value)
+    )
+    if target_names:
+        name_placeholders = ",".join("?" for _ in target_names)
+        for row in conn.execute(
+            f"""
+            SELECT DISTINCT book.book_id
+            FROM memory_books AS book
+            JOIN json_each(
+                CASE WHEN json_valid(book.tags_json) THEN book.tags_json ELSE '[]' END
+            ) AS tag
+            WHERE CAST(tag.value AS TEXT) IN ({name_placeholders})
+            """,
+            target_names,
+        ).fetchall():
+            _add_ref(refs, "book", row["book_id"])
+    return refs
+
+
+def _source_refs_for_tag_ids(
+    conn: sqlite3.Connection,
+    tag_ids: tuple[object, ...] | list[int],
+) -> set[tuple[str, str]]:
+    normalized_ids = tuple(
+        dict.fromkeys(
+            int(value)
+            for value in tag_ids
+            if str(value or "").strip().isdigit() and int(value) > 0
+        )
+    )
+    if not normalized_ids:
+        return set()
+    tag_placeholders = ",".join("?" for _ in normalized_ids)
+    refs: set[tuple[str, str]] = set()
+    for row in conn.execute(
+        f"""
+        SELECT memory_atom_id
+        FROM memory_atom_tags
+        WHERE CAST(tag_id AS INTEGER) IN ({tag_placeholders})
+        """,
+        normalized_ids,
+    ).fetchall():
+        _add_ref(refs, "atom", row["memory_atom_id"])
+    for row in conn.execute(
+        f"""
+        SELECT item.memory_id, item.kind
+        FROM memory_item_tags AS item_tag
+        JOIN memory_items AS item ON item.id = item_tag.memory_item_id
+        WHERE item_tag.tag_id IN ({tag_placeholders})
+        """,
+        normalized_ids,
+    ).fetchall():
+        _add_ref(
+            refs,
+            "phrase" if str(row["kind"] or "") == "phrase" else "item",
+            row["memory_id"],
+        )
+    return refs
+
+
+def _add_dependency_invalidation_refs(
+    refs: set[tuple[str, str]],
+    rollback: dict[str, object],
+) -> None:
+    invalidation = rollback.get("dependencyInvalidation")
+    if not isinstance(invalidation, dict):
+        return
+    for value in invalidation.get("oldAtomIds") or []:
+        _add_ref(refs, "atom", value)
+    _add_ref(refs, "atom", invalidation.get("newAtomId"))
+    for key in ("staleBookIds", "rebuiltBookIds"):
+        for value in invalidation.get(key) or []:
+            _add_ref(refs, "book", value)
+    for value in invalidation.get("suppressedPhraseIds") or []:
+        _add_ref(refs, "phrase", value)
+        _add_ref(refs, "item", value)
+    for value in invalidation.get("previousBooks") or []:
+        if isinstance(value, dict):
+            _add_ref(refs, "book", value.get("bookId"))
+    for value in invalidation.get("previousPhrases") or []:
+        if isinstance(value, dict):
+            _add_ref(refs, "phrase", value.get("phraseId"))
+            _add_ref(refs, "item", value.get("phraseId"))
+
+
+def _add_ref(
+    refs: set[tuple[str, str]],
+    source_type: str,
+    source_id: object,
+) -> None:
+    normalized_type = compact_whitespace(source_type).lower()
+    normalized_id = compact_whitespace(str(source_id or ""))
+    if normalized_type and normalized_id:
+        refs.add((normalized_type, normalized_id))
 
 
 def _retry_delay_ms(attempts: int) -> int:

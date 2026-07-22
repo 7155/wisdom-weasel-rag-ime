@@ -6,6 +6,7 @@ from difflib import SequenceMatcher
 
 from .memory_ingest import normalize_text
 from .memory_ownership import resolve_visible_memory_owners, sql_memory_owner_predicate
+from .memory_projection_consistency import authoritative_retrieval_doc
 from .text_utils import compact_whitespace, token_terms
 
 
@@ -123,6 +124,8 @@ def _matched_aliases_and_atoms(
         FROM memory_aliases AS a
         JOIN memory_atoms AS ma ON ma.id = a.memory_atom_id
         WHERE ma.status IN ('active', 'approved')
+          AND ma.claim_state = 'current'
+          AND ma.privacy_level != 'sensitive'
           AND {owner_clause}
         ORDER BY a.weight DESC, a.created_at_ms ASC
         """,
@@ -244,6 +247,8 @@ def _direct_tag_matches(
                   JOIN memory_atoms AS ma ON ma.id = mat.memory_atom_id
                   WHERE CAST(mat.tag_id AS TEXT) = CAST(t.id AS TEXT)
                     AND ma.status IN ('active', 'approved')
+                    AND ma.claim_state = 'current'
+                    AND ma.privacy_level != 'sensitive'
                     AND {atom_owner_clause}
               )
           )
@@ -299,7 +304,9 @@ def _retrieval_doc_tags(
     )
     rows = conn.execute(
         f"""
-        SELECT raw_text, tags_text, aliases_text, surface_hints_text, query_expansions_text, project, app
+        SELECT doc_type, source_id, source_revision, projection_version,
+               raw_text, tags_text, aliases_text, surface_hints_text,
+               query_expansions_text, project, app
         FROM memory_retrieval_docs
         WHERE status = 'active'
           AND (? = '' OR project = ? OR project = '')
@@ -316,6 +323,8 @@ def _retrieval_doc_tags(
             for key in ("raw_text", "tags_text", "aliases_text", "surface_hints_text", "query_expansions_text")
         )
         if not any(_term_hits_text(term, haystack) for term in query_terms):
+            continue
+        if not _authoritative_doc_row(conn, row):
             continue
         for tag in compact_whitespace(str(row["tags_text"] or "")).split():
             if tag and tag not in tags:
@@ -365,6 +374,8 @@ def _neighbor_tags(
                       JOIN memory_atoms AS ma ON ma.id = mat.memory_atom_id
                       WHERE CAST(mat.tag_id AS TEXT) = CAST(t.id AS TEXT)
                         AND ma.status IN ('active', 'approved')
+                        AND ma.claim_state = 'current'
+                        AND ma.privacy_level != 'sensitive'
                         AND {atom_owner_clause}
                   )
               )
@@ -418,6 +429,7 @@ def _negative_feedback_tags(
                 JOIN memory_item_tags mit ON mit.memory_item_id = mi.id
                 JOIN memory_tags t ON t.id = mit.tag_id
                 WHERE mi.memory_id = ?
+                  AND mi.status IN ('active', 'approved')
                   AND {item_owner_clause}
                   AND t.status = 'active'
                   AND t.source IN ('dsv4', 'user')
@@ -429,6 +441,9 @@ def _negative_feedback_tags(
                 JOIN memory_atoms ma ON ma.id = mat.memory_atom_id
                 JOIN memory_tags t ON CAST(t.id AS TEXT) = CAST(mat.tag_id AS TEXT)
                 WHERE mat.memory_atom_id = ?
+                  AND ma.status IN ('active', 'approved')
+                  AND ma.claim_state = 'current'
+                  AND ma.privacy_level != 'sensitive'
                   AND {atom_owner_clause}
                   AND t.status = 'active'
                   AND t.source IN ('dsv4', 'user')
@@ -507,7 +522,8 @@ def _retrieval_doc_expansions(
     )
     rows = conn.execute(
         f"""
-        SELECT query_expansions_text, surface_hints_text
+        SELECT doc_type, source_id, source_revision, projection_version,
+               query_expansions_text, surface_hints_text
         FROM memory_retrieval_docs
         WHERE status = 'active'
           AND (? = '' OR project = ? OR project = '')
@@ -522,8 +538,25 @@ def _retrieval_doc_expansions(
         haystack = f"{row['query_expansions_text'] or ''} {row['surface_hints_text'] or ''}"
         if not any(_term_hits_text(term, haystack) for term in query_terms):
             continue
+        if not _authoritative_doc_row(conn, row):
+            continue
         result.extend(compact_whitespace(haystack).split())
     return result
+
+
+def _authoritative_doc_row(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+) -> bool:
+    return authoritative_retrieval_doc(
+        conn,
+        {
+            "doc_type": row["doc_type"],
+            "source_id": row["source_id"],
+            "source_revision": row["source_revision"],
+            "projection_version": row["projection_version"],
+        },
+    )
 
 
 def _term_hits_text(term: str, text: str) -> bool:

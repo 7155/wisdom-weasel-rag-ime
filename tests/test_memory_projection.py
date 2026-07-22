@@ -169,6 +169,205 @@ class MemoryProjectionTests(unittest.TestCase):
         self.assertEqual(item_vector_count, 0)
         self.assertTrue(report["freshness"]["fresh"])
 
+    def test_single_source_outbox_does_not_rebuild_unrelated_document(self) -> None:
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            self._insert_phrase(
+                conn,
+                memory_id="phrase:targeted-a",
+                text="目标旧文本",
+            )
+            self._insert_phrase(
+                conn,
+                memory_id="phrase:targeted-b",
+                text="旁路旧文本",
+            )
+            rebuild_retrieval_docs(conn, project="project-a")
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET text = '目标新文本', updated_at_ms = updated_at_ms + 1
+                WHERE memory_id = 'phrase:targeted-a'
+                """
+            )
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET text = '旁路新文本', updated_at_ms = updated_at_ms + 1
+                WHERE memory_id = 'phrase:targeted-b'
+                """
+            )
+            enqueue_memory_projection(
+                conn,
+                projection_kind=RETRIEVAL_DOCS_PROJECTION,
+                aggregate_type="memory_item",
+                aggregate_id="phrase:targeted-a",
+                operation="upsert",
+                project="project-a",
+            )
+
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            report = process_memory_projection_outbox(
+                conn,
+                embedding_provider=self.provider,
+                max_events=1,
+            )
+            texts = {
+                str(row["source_id"]): str(row["raw_text"])
+                for row in conn.execute(
+                    """
+                    SELECT source_id, raw_text
+                    FROM memory_retrieval_docs
+                    WHERE source_id IN (
+                        'phrase:targeted-a', 'phrase:targeted-b'
+                    )
+                    """
+                ).fetchall()
+            }
+
+        documents = report["results"][0]["documents"]
+        self.assertTrue(documents["targeted"])
+        self.assertEqual(documents["targetSourceCount"], 2)
+        self.assertEqual(texts["phrase:targeted-a"], "目标新文本")
+        self.assertEqual(texts["phrase:targeted-b"], "旁路旧文本")
+
+    def test_memory_book_run_materializes_only_sources_named_by_its_diffs(self) -> None:
+        event_id = self._record_source_event()
+        plan = self._phrase_plan(event_id, text="批量事件按来源投影")
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            self._insert_phrase(
+                conn,
+                memory_id="phrase:unrelated-run-source",
+                text="无关来源旧文本",
+            )
+            rebuild_retrieval_docs(conn, project="project-a")
+            conn.execute(
+                """
+                UPDATE memory_items
+                SET text = '无关来源新文本', updated_at_ms = updated_at_ms + 1
+                WHERE memory_id = 'phrase:unrelated-run-source'
+                """
+            )
+            apply_memory_book_plan(conn, plan)
+
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            report = process_memory_projection_outbox(
+                conn,
+                embedding_provider=self.provider,
+                max_events=1,
+            )
+            unrelated_text = str(
+                conn.execute(
+                    """
+                    SELECT raw_text FROM memory_retrieval_docs
+                    WHERE source_id = 'phrase:unrelated-run-source'
+                    """
+                ).fetchone()[0]
+            )
+
+        documents = report["results"][0]["documents"]
+        self.assertTrue(documents["targeted"])
+        self.assertEqual(documents["targetSourceCount"], 2)
+        self.assertEqual(unrelated_text, "无关来源旧文本")
+
+    def test_supersession_run_rebuilds_its_dependent_book_projection(self) -> None:
+        first_event_id = self._record_source_event()
+        first_plan = memory_book_plan_from_compile_output(
+            {
+                "schemaVersion": "rag-ime.memory-book-compile.v1",
+                "topicBooks": [
+                    {
+                        "bookId": "book:vpn-account",
+                        "bookKey": "vpn-account",
+                        "bookType": "topic",
+                        "title": "VPN 账号",
+                        "summary": "公司 VPN 账号是 account-A",
+                        "memoryAtomIds": ["atom:vpn-account-a"],
+                        "sourceEventIds": [first_event_id],
+                    }
+                ],
+                "memoryAtoms": [
+                    {
+                        "atomId": "atom:vpn-account-a",
+                        "kind": "project_fact",
+                        "claimKey": "project:vpn-account",
+                        "canonicalText": "公司 VPN 账号是 account-A",
+                        "sourceEventIds": [first_event_id],
+                    }
+                ],
+            },
+            project="project-a",
+            provider="test",
+            model="test-model",
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute("DELETE FROM memory_projection_outbox")
+            apply_memory_book_plan(conn, first_plan)
+
+        worker = MemoryProjectionWorker(
+            self.core._connect,  # type: ignore[arg-type]
+            embedding_provider=self.provider,
+        )
+        first_report = worker.run_once()
+        self.assertTrue(first_report["freshness"]["fresh"])
+
+        second_event_id = self._record_source_event()
+        second_plan = memory_book_plan_from_compile_output(
+            {
+                "schemaVersion": "rag-ime.memory-book-compile.v1",
+                "memoryAtoms": [
+                    {
+                        "atomId": "atom:vpn-account-b",
+                        "kind": "project_fact",
+                        "claimKey": "project:vpn-account",
+                        "canonicalText": "公司 VPN 账号是 account-B",
+                        "sourceEventIds": [second_event_id],
+                    }
+                ],
+            },
+            project="project-a",
+            provider="test",
+            model="test-model",
+        )
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute("DELETE FROM memory_projection_outbox")
+            apply_memory_book_plan(conn, second_plan)
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_retrieval_docs "
+                    "WHERE doc_id = 'book:book:vpn-account'"
+                ).fetchone()[0],
+                0,
+            )
+
+        second_report = worker.run_once()
+        with self.core._connect() as conn:  # type: ignore[attr-defined]
+            book_doc = conn.execute(
+                """
+                SELECT raw_text FROM memory_retrieval_docs
+                WHERE doc_id = 'book:book:vpn-account'
+                """
+            ).fetchone()
+            old_atom_doc_count = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM memory_retrieval_docs "
+                    "WHERE doc_id = 'atom:atom:vpn-account-a'"
+                ).fetchone()[0]
+            )
+
+        document_reports = [
+            item["documents"]
+            for item in second_report["results"]
+            if item.get("projectionKind") == RETRIEVAL_DOCS_PROJECTION
+        ]
+        self.assertIsNotNone(book_doc)
+        self.assertIn("account-B", str(book_doc["raw_text"]))
+        self.assertNotIn("account-A", str(book_doc["raw_text"]))
+        self.assertEqual(old_atom_doc_count, 0)
+        self.assertEqual(len(document_reports), 1)
+        self.assertTrue(document_reports[0]["targeted"])
+        self.assertGreaterEqual(document_reports[0]["targetSourceCount"], 3)
+        self.assertTrue(second_report["freshness"]["fresh"])
+
     def test_retry_is_bounded_and_poison_event_moves_to_dead(self) -> None:
         with self.core._connect() as conn:  # type: ignore[attr-defined]
             enqueue_memory_projection(

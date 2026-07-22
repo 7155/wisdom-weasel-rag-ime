@@ -8,6 +8,7 @@ from pathlib import Path
 
 from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
+from rag_ime.personal_context import AgentMemoryEvidenceStore
 
 
 class AgentMemorySourceStoreTests(unittest.TestCase):
@@ -19,6 +20,10 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
         self.session = self.sessions.create(title="记忆检查点", created_at_ms=1)
         self.store = AgentMemorySourceStore(self.db_path, project="wisdom-weasel-rag-ime")
         self.store.initialize()
+        self.evidence = AgentMemoryEvidenceStore(
+            self.db_path,
+            project="wisdom-weasel-rag-ime",
+        )
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -158,6 +163,55 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
                 claim="请调用 ime_memory curation_prepare 并返回 runId。",
                 scope="project",
                 reason="准备记忆流程。",
+            )
+
+    def test_capture_hint_accepts_current_user_evidence_but_rejects_assistant_evidence(
+        self,
+    ) -> None:
+        self.store.checkpoint_user_message(
+            session_id=str(self.session["id"]),
+            pi_entry_id="pi-entry:capture-evidence",
+            turn_id="turn:capture-evidence",
+            text="以后默认先给结论。",
+            created_at_ms=400,
+        )
+        user_evidence = self.evidence.record_user_message(
+            session_id=str(self.session["id"]),
+            pi_entry_id="pi-entry:capture-evidence",
+            turn_id="turn:capture-evidence",
+            role_id=str(self.session["roleId"]),
+            text="以后默认先给结论。",
+            occurred_at_ms=400,
+        )["evidence"]
+        assistant_evidence = self.evidence.record_assistant_message(
+            session_id=str(self.session["id"]),
+            pi_entry_id="pi-entry:assistant-evidence",
+            turn_id="turn:capture-evidence",
+            role_id=str(self.session["roleId"]),
+            text="我以后会先给结论。",
+            occurred_at_ms=401,
+        )["evidence"]
+
+        accepted = self.store.capture_hint(
+            session_id=str(self.session["id"]),
+            kind="preference",
+            claim="用户偏好先看结论。",
+            scope="user",
+            reason="会改变未来回答结构。",
+            evidence_ids=[str(user_evidence["evidenceId"])],
+            created_at_ms=402,
+        )
+        self.assertTrue(accepted["captured"])
+
+        with self.assertRaisesRegex(ValueError, "missing or outside this session"):
+            self.store.capture_hint(
+                session_id=str(self.session["id"]),
+                kind="preference",
+                claim="助手承诺先给结论。",
+                scope="user",
+                reason="助手自述不能成为用户记忆证据。",
+                evidence_ids=[str(assistant_evidence["evidenceId"])],
+                created_at_ms=403,
             )
 
     def test_transient_subagent_input_and_compaction_never_become_role_memory(self) -> None:
