@@ -386,6 +386,7 @@ def _select_hits(
     )
     selected: list[dict[str, object]] = []
     seen_sources: set[str] = set()
+    selected_book_text_by_atom: dict[str, list[str]] = {}
     type_counts = {"book": 0, "atom": 0, "timeline": 0}
     used_chars = 0
     eligible_count = 0
@@ -496,12 +497,47 @@ def _select_hits(
                 ][:16],
             }
         )
+        if doc_type == "book":
+            for atom_id in _string_list(metadata.get("memoryAtomIds"), 256):
+                selected_book_text_by_atom.setdefault(atom_id, []).append(text)
         seen_sources.add(source_id)
         type_counts[doc_type] += 1
         used_chars += len(text)
         if len(selected) >= max_items:
             break
+    if selected_book_text_by_atom:
+        selected = [
+            item
+            for item in selected
+            if not (
+                item.get("sourceType") == "memory_atom"
+                and _atom_text_is_covered_by_selected_book(
+                    item,
+                    selected_book_text_by_atom,
+                )
+            )
+        ]
+        for rank, item in enumerate(selected, start=1):
+            item["rank"] = rank
     return selected, max(0, eligible_count - len(selected))
+
+
+def _atom_text_is_covered_by_selected_book(
+    item: Mapping[str, object],
+    book_text_by_atom: Mapping[str, Sequence[str]],
+) -> bool:
+    source_id = compact_whitespace(str(item.get("sourceId") or ""))
+    atom_text = _coverage_text(str(item.get("text") or ""))
+    if not source_id or not atom_text:
+        return False
+    return any(
+        atom_text in _coverage_text(book_text)
+        for book_text in book_text_by_atom.get(source_id, ())
+    )
+
+
+def _coverage_text(value: str) -> str:
+    return re.sub(r"[^\w]+", "", compact_whitespace(value).casefold())
 
 
 def _human_memory_title(doc_type: str, metadata: Mapping[str, object]) -> str:

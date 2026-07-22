@@ -796,7 +796,12 @@ class AgentSessionStore:
         with self._connect() as conn:
             return _agent_goal_projection(conn, session_id)
 
-    def workflow_state(self, session_id: str) -> dict[str, object]:
+    def workflow_state(
+        self,
+        session_id: str,
+        *,
+        room_dispatch_authorized: bool = False,
+    ) -> dict[str, object]:
         self.get(session_id)
         with self._connect() as conn:
             plan = _agent_plan_projection(conn, session_id, limit=100)
@@ -807,7 +812,11 @@ class AgentSessionStore:
             "sessionId": session_id,
             "plan": plan,
             "goal": goal,
-            "actGate": _agent_act_gate(plan, goal),
+            "actGate": (
+                _room_dispatch_act_gate(goal)
+                if room_dispatch_authorized
+                else _agent_act_gate(plan, goal)
+            ),
         }
 
     def mutate_agent_goal(
@@ -1064,8 +1073,16 @@ class AgentSessionStore:
             "actGate": _agent_act_gate(plan, goal),
         }
 
-    def require_workspace_act(self, session_id: str) -> dict[str, object]:
-        state = self.workflow_state(session_id)
+    def require_workspace_act(
+        self,
+        session_id: str,
+        *,
+        room_dispatch_authorized: bool = False,
+    ) -> dict[str, object]:
+        state = self.workflow_state(
+            session_id,
+            room_dispatch_authorized=room_dispatch_authorized,
+        )
         gate = state["actGate"] if isinstance(state.get("actGate"), Mapping) else {}
         if gate.get("allowed") is not True:
             reason = str(gate.get("reason") or "act_gate_closed")
@@ -1364,6 +1381,67 @@ class AgentSessionStore:
             raise AgentApprovalNotFound(approval_id)
         return _approval_payload(row)
 
+    def rebind_pending_approval(
+        self,
+        approval_id: str,
+        *,
+        expected_payload_sha256: str,
+        payload_sha256: str,
+        preview: Mapping[str, object],
+        now_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Atomically add execution context before an approval reaches the UI."""
+
+        timestamp = _timestamp(now_ms)
+        expected_digest = str(expected_payload_sha256).strip().lower()
+        digest = str(payload_sha256).strip().lower()
+        if not _valid_sha256(expected_digest) or not _valid_sha256(digest):
+            raise ValueError(
+                "approval rebind requires valid old and new payload digests"
+            )
+        preview_json = json.dumps(
+            dict(preview),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        terminal_error = ""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_approvals WHERE approval_id = ?",
+                (approval_id,),
+            ).fetchone()
+            if row is None:
+                raise AgentApprovalNotFound(approval_id)
+            if str(row["state"]) != "pending":
+                terminal_error = f"approval is already {row['state']}"
+            elif int(row["expires_at_ms"]) <= timestamp:
+                conn.execute(
+                    "UPDATE agent_approvals SET state = 'expired', decided_at_ms = ? "
+                    "WHERE approval_id = ?",
+                    (timestamp, approval_id),
+                )
+                terminal_error = "approval has expired"
+            elif str(row["payload_sha256"]) != expected_digest:
+                terminal_error = "approval payload changed before context binding"
+            else:
+                cursor = conn.execute(
+                    """
+                    UPDATE agent_approvals
+                    SET payload_sha256 = ?, preview_json = ?
+                    WHERE approval_id = ? AND state = 'pending'
+                      AND payload_sha256 = ?
+                    """,
+                    (digest, preview_json, approval_id, expected_digest),
+                )
+                if cursor.rowcount != 1:
+                    terminal_error = (
+                        "approval changed before context binding"
+                    )
+        if terminal_error:
+            raise ValueError(terminal_error)
+        return self.get_approval(approval_id, now_ms=timestamp)
+
     def list_approvals(
         self,
         *,
@@ -1408,6 +1486,123 @@ class AgentSessionStore:
                     (session_id, bounded_limit),
                 ).fetchall()
         return [_approval_payload(row) for row in rows]
+
+    def invalidate_room_approvals(
+        self,
+        session_id: str,
+        root_id: str,
+        dispatch_id: str,
+        decided_at_ms: int,
+    ) -> dict[str, object]:
+        """Close only approvals bound to the cancelled Room Dispatch.
+
+        Already-invalidated approvals are returned again so durable cancel retries
+        preserve the same evidence even when the Runtime ACK arrives later.
+        """
+
+        timestamp = _timestamp(decided_at_ms)
+        invalidated: list[str] = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT approval_id, state, decided_by, preview_json, receipt_json
+                FROM agent_approvals
+                WHERE session_id = ?
+                  AND (
+                    state = 'pending'
+                    OR (state = 'stale' AND decided_by = 'room-root-cancel')
+                  )
+                ORDER BY requested_at_ms, approval_id
+                """,
+                (session_id,),
+            ).fetchall()
+            for row in rows:
+                approval_id = str(row["approval_id"])
+                if str(row["state"]) == "stale":
+                    try:
+                        existing_receipt = json.loads(str(row["receipt_json"]))
+                    except json.JSONDecodeError:
+                        continue
+                    if (
+                        isinstance(existing_receipt, Mapping)
+                        and existing_receipt.get("reason") == "room_root_cancelled"
+                        and existing_receipt.get("sessionId") == session_id
+                        and existing_receipt.get("rootId") == root_id
+                        and existing_receipt.get("dispatchId") == dispatch_id
+                    ):
+                        invalidated.append(approval_id)
+                    continue
+                try:
+                    preview = json.loads(str(row["preview_json"]))
+                except json.JSONDecodeError:
+                    continue
+                base_state = (
+                    preview.get("baseState")
+                    if isinstance(preview, Mapping)
+                    else None
+                )
+                invocation_receipt_id = str(
+                    base_state.get("roomInvocationReceiptId")
+                    if isinstance(base_state, Mapping)
+                    else ""
+                ).strip()
+                if not invocation_receipt_id:
+                    continue
+                scope = conn.execute(
+                    """
+                    SELECT 1
+                    FROM room_v2_tool_invocation_receipts invocation
+                    JOIN room_v2_capability_manifests manifest
+                      ON manifest.manifest_id = invocation.manifest_id
+                     AND manifest.manifest_hash = invocation.manifest_hash
+                    WHERE invocation.receipt_id = ?
+                      AND manifest.root_id = ?
+                      AND manifest.dispatch_id = ?
+                    """,
+                    (invocation_receipt_id, root_id, dispatch_id),
+                ).fetchone()
+                if scope is None:
+                    continue
+                receipt = {
+                    "schemaVersion": "rag-ime.room-approval-cancellation.v1",
+                    "approvalId": approval_id,
+                    "sessionId": session_id,
+                    "rootId": root_id,
+                    "dispatchId": dispatch_id,
+                    "reason": "room_root_cancelled",
+                    "mutationApplied": False,
+                    "createdAtMs": timestamp,
+                }
+                cursor = conn.execute(
+                    """
+                    UPDATE agent_approvals
+                    SET state = 'stale', decided_at_ms = ?, decided_by = ?,
+                        receipt_json = ?
+                    WHERE approval_id = ? AND state = 'pending'
+                    """,
+                    (
+                        timestamp,
+                        "room-root-cancel",
+                        json.dumps(
+                            receipt,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        approval_id,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    invalidated.append(approval_id)
+        return {
+            "schemaVersion": "rag-ime.room-approval-cancellation-summary.v1",
+            "sessionId": session_id,
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+            "state": "terminated",
+            "cancelledApprovalIds": invalidated,
+            "createdAtMs": timestamp,
+        }
 
     def decide_approval(
         self,
@@ -2084,6 +2279,39 @@ def _agent_act_gate(
         "allowed": True,
         "reason": "approved",
         "message": "Plan 已批准，工作区写操作仍需通过原有预览与审批。",
+    }
+
+
+def _room_dispatch_act_gate(
+    goal: Mapping[str, object],
+) -> dict[str, object]:
+    if goal.get("configured") is True:
+        goal_status = str(goal.get("status") or "")
+        if goal_status == "paused":
+            return {
+                "allowed": False,
+                "reason": "goal_paused",
+                "message": "当前 Goal 已暂停，恢复后才能继续写入。",
+            }
+        if goal_status == "completed":
+            return {
+                "allowed": False,
+                "reason": "goal_completed",
+                "message": "当前 Goal 已完成审计，请清除或设置新 Goal。",
+            }
+        if goal.get("budgetExceeded") is True:
+            return {
+                "allowed": False,
+                "reason": "goal_budget_exhausted",
+                "message": "Goal 的 Token 或时间预算已经耗尽。",
+            }
+    return {
+        "allowed": True,
+        "reason": "approved",
+        "message": (
+            "当前受管 Room Dispatch 已授权执行；读写、Shell 与外部动作仍受"
+            "能力清单、原生审批、取消和迟到写入边界约束。"
+        ),
     }
 
 

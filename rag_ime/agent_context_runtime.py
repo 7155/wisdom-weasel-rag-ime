@@ -1023,6 +1023,10 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
 def _memory_book_body(item: Mapping[str, object]) -> list[str]:
     title = compact_whitespace(str(item.get("title") or "记忆书"))
     body = str(item.get("text") or "").strip()
+    if title and body.startswith(title):
+        remainder = body[len(title) :].lstrip(" \t:：-—\n")
+        if remainder:
+            body = remainder
     return ["", f"#### {title}", body] if body else []
 
 

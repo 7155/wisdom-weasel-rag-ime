@@ -255,6 +255,71 @@ class RequirementGovernanceTests(unittest.TestCase):
             "等待正式安装环境",
         )
 
+    def test_dispatch_packet_references_identical_original_instead_of_copying_it(self) -> None:
+        original_text = self.original.decode("utf-8")
+        kernel = RoomKernelStore(self.db_path, mode="test")
+        kernel.initialize()
+        kernel.create_root(
+            root("root:1"),
+            budget=4,
+            max_hops=2,
+            max_depth=1,
+            acceptance_criteria=(),
+            now_ms=1,
+        )
+        kernel.create_task(task("task:1"), now_ms=1)
+        kernel.enqueue_dispatch(
+            dispatch("dispatch:identical", key="identical"),
+            now_ms=1,
+        )
+        self._catalog(
+            "catalog:identical",
+            expected=0,
+            statement=original_text,
+        )
+        self.store.prepare_dispatch_binding(
+            dispatch_id="dispatch:identical",
+            root_id="root:1",
+            task_id="task:1",
+            session_id="session:participant:a",
+            generation=0,
+            requirement_anchor_ref="anchor:1@sha256:test",
+            created_at_ms=5,
+        )
+
+        rendered = RoomTaskContextProjector(self.store).render(
+            {
+                "taskId": "task:1",
+                "parentTaskId": None,
+                "ownerParticipantId": "participant:owner",
+                "assigneeParticipantId": "participant:target",
+                "objective": "验证需求投影去重",
+                "expectedOutput": "原文只出现一次",
+                "requirementItemIds": ["requirement:1"],
+                "acceptanceCriterionIds": [],
+                "revision": 0,
+                "state": "active",
+            },
+            {
+                "dispatchId": "dispatch:identical",
+                "rootId": "root:1",
+                "taskId": "task:1",
+                "targetSessionId": "session:participant:a",
+                "targetParticipantId": "participant:a",
+                "parentDispatchId": None,
+                "generation": 0,
+                "intentKind": "execute",
+                "hopCount": 0,
+                "depth": 0,
+            },
+        )
+
+        packet = json.loads(rendered)
+        item = packet["requirements"]["items"][0]
+        self.assertEqual(item["statementSource"], "original[0]")
+        self.assertNotIn("statement", item)
+        self.assertEqual(rendered.count(original_text), 1)
+
     def test_concurrent_catalog_revision_fails_closed_and_old_revision_cannot_gate(self) -> None:
         self._catalog("catalog:1", expected=0)
         self._catalog("catalog:2", expected=1, statement="第二版目录")

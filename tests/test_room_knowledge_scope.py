@@ -153,8 +153,38 @@ class RoomKnowledgeScopeTests(unittest.TestCase):
 
     @staticmethod
     def _doc(conn, suffix: str, owner_kind: str, owner_id: str, mode: str, scope_kind: str, scope_id: str, text: str) -> None:
+        knowledge_domain = "legacy" if mode == "legacy" else "participant_private"
+        visibility = "legacy" if mode == "legacy" else "private"
+        authorization_revision = "" if mode == "legacy" else "rev"
+        binding_id = "" if mode == "legacy" else "binding"
+        conn.execute(
+            """INSERT INTO memory_books(
+                   book_id, book_type, book_key, title, summary, normalized_text,
+                   project, memory_atom_ids_json, status, created_at_ms,
+                   updated_at_ms, metadata_json, owner_kind, owner_id,
+                   knowledge_domain, scope_kind, scope_id, visibility,
+                   authorization_revision, binding_id, scope_mode
+               ) VALUES (?, 'topic', ?, ?, ?, ?, 'scope-test', '[]', 'active',
+                         1, 1, '{}', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                suffix,
+                suffix,
+                text,
+                text,
+                text,
+                owner_kind,
+                owner_id,
+                knowledge_domain,
+                scope_kind,
+                scope_id,
+                visibility,
+                authorization_revision,
+                binding_id,
+                mode,
+            ),
+        )
         conn.execute("INSERT INTO memory_retrieval_docs(doc_id,doc_type,source_id,raw_text,project,owner_kind,owner_id,knowledge_domain,scope_kind,scope_id,visibility,authorization_revision,binding_id,scope_mode,status,updated_at_ms,metadata_json) VALUES (?,?,?,?,'scope-test',?,?,?,?,?,?,?,?,?,'active',1,'{}')",
-                     (f"book:{suffix}", "book", suffix, text, owner_kind, owner_id, "legacy" if mode == "legacy" else "participant_private", scope_kind, scope_id, "legacy" if mode == "legacy" else "private", "" if mode == "legacy" else "rev", "" if mode == "legacy" else "binding", mode))
+                     (f"book:{suffix}", "book", suffix, text, owner_kind, owner_id, knowledge_domain, scope_kind, scope_id, visibility, authorization_revision, binding_id, mode))
         rowid = conn.execute("SELECT rowid FROM memory_retrieval_docs WHERE doc_id=?", (f"book:{suffix}",)).fetchone()[0]
         conn.execute("INSERT INTO memory_retrieval_docs_fts(rowid,raw_text) VALUES (?,?)", (rowid, text))
         conn.commit()

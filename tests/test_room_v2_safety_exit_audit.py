@@ -212,7 +212,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             contract["minimumHandlersCommit"],
-            "58c7070348db40e0bf2442a66a1afe341a615e70",
+            "828ae7fa7e8353cb1b323ecb7187a10d536c9f63",
         )
         self.assertEqual(contract["sourceRepository"], "https://github.com/7155/pi.git")
         self.assertEqual(
@@ -226,6 +226,31 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         self.assertEqual(
             contract["handlerSources"]["providerContextJournal"],
             "packages/rag-ime-runtime-host/src/provider-context-journal.ts",
+        )
+        self.assertEqual(
+            contract["handlerSources"]["workflowControl"],
+            "packages/rag-ime-runtime-host/src/workflow-control.ts",
+        )
+        self.assertEqual(
+            contract["handlerSources"]["lifecycleHooks"],
+            "packages/rag-ime-runtime-host/src/lifecycle-hooks.ts",
+        )
+        self.assertEqual(
+            contract["handlerSources"]["deterministicTestAdapter"],
+            "packages/rag-ime-runtime-host/src/deterministic-test-adapter.ts",
+        )
+        self.assertTrue(
+            {
+                "workflowControl",
+                "lifecycleHooks",
+                "deterministicTestAdapter",
+                "contextInspection",
+            }
+            <= set(contract["requiredSourceMarkers"])
+        )
+        self.assertIn(
+            "return record ? structuredClone(record) : undefined;",
+            contract["requiredSourceMarkers"]["contextInspection"],
         )
         self.assertEqual(set(contract["requiredMethods"]), {"room.dispatch", "room.cancel"})
         build = (REPO / "scripts/build_managed_pi_runtime_v2.py").read_text(encoding="utf-8")

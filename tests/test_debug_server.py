@@ -83,6 +83,50 @@ class MarsEmbeddingProvider:
         return [0.0, 1.0]
 
 
+class EmptyThenDraftMemoryOrganizer:
+    provider_name = "fixture"
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def curate_owner_memory(self, *, bundle, **_kwargs):
+        inputs = [dict(item) for item in bundle.get("inputs") or []]
+        self.calls.append([str(item.get("text") or "") for item in inputs])
+        first_batch = len(self.calls) == 1
+        decisions = [
+            {
+                "sourceRef": item["sourceRef"],
+                "disposition": "not_for_memory" if first_batch else "remember",
+                "reasonCode": "fact_free_question" if first_batch else "durable_requirement",
+                "confidence": 0.99,
+            }
+            for item in inputs
+        ]
+        atoms = []
+        if not first_batch:
+            atoms = [
+                {
+                    "canonicalText": "项目必须把显式整理请求中的全部新增证据扫描完，再报告没有变化。",
+                    "summary": "显式整理请求必须扫描完新增证据",
+                    "kind": "project_requirement",
+                    "claimKey": "memory:curation:explicit-request-drain",
+                    "sourceEventIds": list(inputs[0]["sourceEventIds"]),
+                    "confidence": 0.99,
+                    "qualityScore": 0.99,
+                    "directCandidateAllowed": False,
+                }
+            ]
+        return {
+            "schemaVersion": "rag-ime.owner-memory-curation.v1",
+            "provider": self.provider_name,
+            "model": "fixture-memory",
+            "sourceDecisions": decisions,
+            "memoryAtoms": atoms,
+            "topicBooks": [],
+            "supersedes": [],
+        }
+
+
 class BlockingPredictionProvider:
     def __init__(self) -> None:
         self.entered = Event()
@@ -260,6 +304,62 @@ class DebugImeServiceTests(unittest.TestCase):
         seeded = self.service.seed()
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)
+
+    def test_explicit_memory_prepare_drains_empty_batches_until_one_draft(self) -> None:
+        db_path = Path(self.tmp.name) / "manual-curation-drain.sqlite"
+        service = DebugImeService(
+            DebugServerConfig(db_path=db_path, seed_if_empty=False)
+        )
+        organizer = EmptyThenDraftMemoryOrganizer()
+        try:
+            session = service.agent.sessions.create(title="memory-drain", created_at_ms=1)
+            sources = service.agent.memory_sources
+            sources.checkpoint_user_message(
+                session_id=str(session["id"]),
+                pi_entry_id="entry:first-empty",
+                turn_id="turn:first-empty",
+                text=(
+                    "第一段只是会话背景。第二段只是会话背景。第三段只是会话背景。"
+                    "第四段只是会话背景。第五段只是会话背景。第六段只是会话背景。"
+                ),
+                created_at_ms=100,
+            )
+            sources.checkpoint_user_message(
+                session_id=str(session["id"]),
+                pi_entry_id="entry:durable",
+                turn_id="turn:durable",
+                text="项目必须把显式整理请求中的全部新增证据扫描完，再报告没有变化。",
+                created_at_ms=200,
+            )
+
+            with patch.object(
+                debug_server_module,
+                "DeepSeekMemoryOrganizer",
+                return_value=organizer,
+            ):
+                result = service.agent_memory_maintenance_prepare(
+                    {
+                        "project": "wisdom-weasel-rag-ime",
+                        "ownerKind": "user",
+                        "ownerId": "default",
+                        "instruction": "只生成一份可审阅草案。",
+                    }
+                )
+
+            self.assertTrue(result["ok"], result)
+            self.assertTrue(result["storedDraft"], result)
+            self.assertEqual(result["source"]["batchCount"], 2)
+            self.assertEqual(result["source"]["pendingSourceCount"], 0)
+            self.assertEqual(len(organizer.calls), 2)
+            self.assertEqual(len(organizer.calls[0]), 1)
+            self.assertEqual(len(organizer.calls[1]), 1)
+            self.assertGreater(len(result["storedRun"]["diffs"]), 0)
+            self.assertEqual(
+                result["batchSummaries"][0]["deferredModelInputCount"],
+                1,
+            )
+        finally:
+            service.close()
 
     def test_default_local_core_uses_configured_embedding_provider(self) -> None:
         db_path = Path(self.tmp.name) / "configured-embedding.sqlite"

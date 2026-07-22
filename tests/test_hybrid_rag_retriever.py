@@ -365,6 +365,12 @@ class HybridRagRetrieverTests(unittest.TestCase):
     def test_hybrid_retriever_rejects_legacy_item_but_keeps_phrase(self) -> None:
         with self.connect() as conn:
             timestamp = now_ms()
+            self._insert_phrase_source(
+                conn,
+                memory_id="phrase:遗留策略短语",
+                text="遗留策略短语",
+                timestamp=timestamp,
+            )
             conn.executemany(
                 """
                 INSERT INTO memory_retrieval_docs(
@@ -661,6 +667,14 @@ class HybridRagRetrieverTests(unittest.TestCase):
                 ("phrase:global", "phrase:global", "保持普通拼音稳定", "", "", '{"contextGroupId":"global"}'),
             ]
             for doc_id, source_id, hint, project, app, metadata in docs:
+                self._insert_phrase_source(
+                    conn,
+                    memory_id=source_id,
+                    text=hint,
+                    timestamp=now_ms(),
+                    project=project,
+                    app=app,
+                )
                 conn.execute(
                     """
                     INSERT INTO memory_retrieval_docs(
@@ -692,6 +706,57 @@ class HybridRagRetrieverTests(unittest.TestCase):
         self.assertEqual(compatibility["限制模型调用"], 0.75)
         self.assertEqual(compatibility["保持普通拼音稳定"], 0.2)
         self.assertEqual(payload["lanes"]["bm25_raw"]["implementation"], "lexical_substring_fallback")
+
+    def test_vector_revision_mismatch_falls_back_to_bm25_without_pseudo_consensus(self) -> None:
+        self._record_event("VPN 账号使用 account-B", tags=("VPN",))
+
+        class Provider:
+            fingerprint = "test:mismatched-vector"
+
+            def embed(self, text: str) -> list[float]:
+                return [1.0, float(len(text) % 7)]
+
+        with self.connect() as conn:
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            doc = conn.execute(
+                """
+                SELECT doc_id, source_revision, projection_version
+                FROM memory_retrieval_docs
+                WHERE doc_type = 'phrase'
+                ORDER BY doc_id
+                LIMIT 1
+                """
+            ).fetchone()
+            conn.execute(
+                """
+                INSERT INTO memory_retrieval_doc_vectors(
+                    doc_id, provider_fingerprint, raw_vector_json,
+                    tag_vector_json, group_vector_json, dimensions,
+                    source_revision, projection_version, built_at_ms, updated_at_ms
+                ) VALUES (?, ?, '[1,0]', '[1,0]', '[]', 2, ?, ?, 1, 1)
+                """,
+                (
+                    doc["doc_id"],
+                    Provider.fingerprint,
+                    int(doc["source_revision"]) + 1,
+                    int(doc["projection_version"]),
+                ),
+            )
+            payload = retrieve_hybrid_rag_candidates(
+                conn,
+                HybridRagQuery(
+                    query_text="VPN account-B",
+                    project="wisdom-weasel-rag-ime",
+                ),
+                Provider(),
+            )
+
+        self.assertEqual(payload["vectorIndexDocuments"], 0)
+        self.assertTrue(
+            any("account-B" in item["text"] for item in payload["memoryHits"]),
+            payload,
+        )
+        self.assertEqual(payload["lanes"]["vector_raw"]["count"], 0)
 
     def test_owner_visibility_is_enforced_before_alias_and_retrieval_lanes(self) -> None:
         event_id = self._record_event("公共输入法记忆", tags=("输入法",))
@@ -802,6 +867,26 @@ class HybridRagRetrieverTests(unittest.TestCase):
                 ),
             )
         return event_id
+
+    def _insert_phrase_source(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        memory_id: str,
+        text: str,
+        timestamp: int,
+        project: str = "wisdom-weasel-rag-ime",
+        app: str = "",
+    ) -> None:
+        conn.execute(
+            """
+            INSERT INTO memory_items(
+                memory_id, kind, text, normalized_text, summary, project, app,
+                status, privacy_class, created_at_ms, updated_at_ms, metadata_json
+            ) VALUES (?, 'phrase', ?, ?, '', ?, ?, 'approved', 'local', ?, ?, '{}')
+            """,
+            (memory_id, text, text, project, app, timestamp, timestamp),
+        )
 
     def _insert_timeline(
         self,

@@ -42,6 +42,9 @@ _ROOM_RUNTIME_SOURCE_KEYS = (
     "sessionContextRefresh",
     "cancellationReceipts",
     "roomSettleLifecycle",
+    "workflowControl",
+    "lifecycleHooks",
+    "deterministicTestAdapter",
     "session",
 )
 

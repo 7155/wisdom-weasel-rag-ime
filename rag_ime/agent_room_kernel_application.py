@@ -201,6 +201,46 @@ class RoomKernelApplicationService:
         )
         return {"ok": True, "created": created, "executionReceipt": receipt}
 
+    def validate_product_tool_approval(
+        self,
+        session_id: str,
+        invocation_receipt_id: str,
+        *,
+        tool_name: str,
+    ) -> dict[str, object]:
+        try:
+            active = self._active_capability_binding(session_id)
+        except ToolAuthorizationError as exc:
+            raise RoomKernelFenceError(
+                "Room approval lost its active Dispatch capability"
+            ) from exc
+        manifest, binding, _live = active or ({}, {}, {})
+        if not manifest or not binding:
+            raise RoomKernelFenceError(
+                "Room approval lost its active Dispatch capability"
+            )
+        invocation = self.capabilities.invocation_receipt(
+            invocation_receipt_id
+        )
+        command = invocation.get("canonicalCommand")
+        if not isinstance(command, Mapping):
+            raise RoomKernelFenceError(
+                "Room approval invocation has no canonical command"
+            )
+        if (
+            invocation.get("manifestId") != binding.get("manifestId")
+            or invocation.get("manifestHash") != binding.get("manifestHash")
+            or str(command.get("tool") or "") != str(tool_name or "")
+        ):
+            raise RoomKernelFenceError(
+                "Room approval no longer matches its Dispatch capability"
+            )
+        if self.capabilities.execution_receipt(invocation_receipt_id) is not None:
+            raise RoomKernelFenceError(
+                "Room approval invocation already has a terminal execution receipt"
+            )
+        return dict(invocation)
+
     def _authorize_capability_invocation(
         self,
         session_id: str,

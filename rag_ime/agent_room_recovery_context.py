@@ -14,6 +14,7 @@ def room_compaction_recovery_context(
     *,
     skill_receipt: Mapping[str, object] | None = None,
     tool_receipt: Mapping[str, object] | None = None,
+    covered_criterion_ids: Sequence[str] = (),
 ) -> str:
     """Project one bounded recovery packet for a new Provider context epoch."""
 
@@ -35,17 +36,44 @@ def room_compaction_recovery_context(
         if bounded_text(_mapping(item).get("statement"), maximum=1_500)
         not in original
     )
+    task = _mapping(source.get("task"))
+    task_state = bounded_text(task.get("state"), maximum=40)
+    covered = {
+        bounded_text(value, maximum=240)
+        for value in covered_criterion_ids
+        if bounded_text(value, maximum=240)
+    }
     acceptance = _unique_records(
         (
-            {
-                "statement": bounded_text(item.get("statement"), maximum=1_000),
-                "passed": item.get("passed") is True,
-            }
+            _compact_mapping(
+                {
+                    "criterionId": bounded_text(
+                        item.get("criterionId"), maximum=240
+                    ),
+                    "statement": bounded_text(
+                        item.get("statement"), maximum=1_000
+                    ),
+                    "covered": bounded_text(
+                        item.get("criterionId"), maximum=240
+                    ) in covered,
+                    "proofVerified": item.get("passed") is True,
+                    "passed": (
+                        item.get("passed") is True
+                        or (
+                            task_state == "completed"
+                            and bounded_text(
+                                item.get("criterionId"), maximum=240
+                            ) in covered
+                        )
+                    ),
+                }
+            )
             for item in _mappings(
                 _mapping(source.get("acceptance")).get("criteria")
             )[:32]
         ),
-        key="statement",
+        key="criterionId",
+        fallback_key="statement",
     )
     blockers_source = _mapping(source.get("blockers"))
     blockers = _unique_records(
@@ -58,37 +86,49 @@ def room_compaction_recovery_context(
         ),
         key="statement",
     )
-    task = _mapping(source.get("task"))
-    responsibility = _mapping(source.get("responsibility"))
     continuation = _mapping(source.get("continuation"))
     packet: dict[str, object] = {
-        "schemaVersion": "wisdom-weasel.room-compaction-recovery.v1",
         "originalRequirements": original,
         "requirementDirectory": directory,
         "currentTask": {
             "objective": bounded_text(task.get("objective"), maximum=4_000),
             "expectedOutput": bounded_text(task.get("expectedOutput"), maximum=2_000),
-            "revision": int(task.get("revision") or 0),
-            "state": bounded_text(task.get("state"), maximum=40),
+            "state": task_state,
         },
         "acceptance": acceptance,
         "blockers": blockers,
         "handoff": _compact_mapping(
             {
-                "intentKind": continuation.get("intentKind"),
-                "ownerParticipantId": responsibility.get("ownerParticipantId"),
-                "assigneeParticipantId": responsibility.get("assigneeParticipantId"),
-                "currentParticipantId": responsibility.get("currentParticipantId"),
-                "parentDispatchId": continuation.get("parentDispatchId"),
-                "hopCount": int(continuation.get("hopCount") or 0),
-                "depth": int(continuation.get("depth") or 0),
+                "intentKind": _recovery_intent(task_state, continuation),
             }
         ),
     }
     if skill_receipt is not None:
-        packet["skillReceipt"] = dict(skill_receipt)
+        packet["skillReceipt"] = _compact_mapping(
+            {
+                "skillId": bounded_text(
+                    skill_receipt.get("skillId"), maximum=240
+                ),
+                "restoredFromReceiptId": bounded_text(
+                    skill_receipt.get("restoredFromReceiptId"),
+                    maximum=240,
+                ),
+            }
+        )
     if tool_receipt is not None:
-        packet["toolReceipt"] = dict(tool_receipt)
+        packet["toolReceipt"] = {
+            "items": [
+                _compact_mapping(
+                    {
+                        "name": bounded_text(item.get("name"), maximum=240),
+                        "receiptId": bounded_text(
+                            item.get("receiptId"), maximum=240
+                        ),
+                    }
+                )
+                for item in _mappings(tool_receipt.get("items"))[:64]
+            ]
+        }
     rendered = json.dumps(
         packet,
         ensure_ascii=False,
@@ -123,11 +163,14 @@ def _unique_records(
     values: Iterable[Mapping[str, object]],
     *,
     key: str,
+    fallback_key: str | None = None,
 ) -> list[dict[str, object]]:
     result: list[dict[str, object]] = []
     seen: set[str] = set()
     for value in values:
         identity = bounded_text(value.get(key), maximum=1_000)
+        if not identity and fallback_key is not None:
+            identity = bounded_text(value.get(fallback_key), maximum=1_000)
         if not identity or identity in seen:
             continue
         seen.add(identity)
@@ -141,3 +184,14 @@ def _compact_mapping(value: Mapping[str, object]) -> dict[str, object]:
         for key, item in value.items()
         if item not in (None, "")
     }
+
+
+def _recovery_intent(
+    task_state: str,
+    continuation: Mapping[str, object],
+) -> object:
+    return {
+        "completed": "complete",
+        "blocked": "blocked",
+        "waiting": "wait",
+    }.get(task_state, continuation.get("intentKind"))

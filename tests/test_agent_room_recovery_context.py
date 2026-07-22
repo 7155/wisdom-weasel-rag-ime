@@ -36,8 +36,14 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
                     },
                     "acceptance": {
                         "criteria": [
-                            {"statement": "验收：每项只出现一次"},
-                            {"statement": "验收：每项只出现一次"},
+                            {
+                                "criterionId": "criterion:exact",
+                                "statement": "验收：每项只出现一次",
+                            },
+                            {
+                                "criterionId": "criterion:exact",
+                                "statement": "验收：每项只出现一次",
+                            },
                         ]
                     },
                     "blockers": {
@@ -64,6 +70,7 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
                     {"name": "room_state", "receiptId": "tool:exact"}
                 ]
             },
+            covered_criterion_ids=("criterion:exact",),
         )
 
         packet = json.loads(rendered)
@@ -77,10 +84,55 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
             "当前任务：验证一份恢复包",
             "验收：每项只出现一次",
             "阻塞：等待环境",
+            "criterion:exact",
             "skill:exact",
             "tool:exact",
         ):
             self.assertEqual(rendered.count(fact), 1)
+
+        self.assertEqual(
+            packet["acceptance"],
+            [
+                {
+                    "criterionId": "criterion:exact",
+                    "covered": True,
+                    "passed": False,
+                    "proofVerified": False,
+                    "statement": "验收：每项只出现一次",
+                }
+            ],
+        )
+        self.assertEqual(
+            packet["handoff"],
+            {"intentKind": "handoff"},
+        )
+        self.assertEqual(
+            packet["skillReceipt"],
+            {
+                "restoredFromReceiptId": "skill:exact",
+                "skillId": "implementation",
+            },
+        )
+        self.assertEqual(
+            packet["toolReceipt"],
+            {
+                "items": [
+                    {
+                        "name": "room_state",
+                        "receiptId": "tool:exact",
+                    }
+                ]
+            },
+        )
+        for forbidden in (
+            "schemaVersion",
+            "participant:owner",
+            "participant:worker",
+            "dispatch:parent",
+            "hopCount",
+            "depth",
+        ):
+            self.assertNotIn(forbidden, rendered)
 
     def test_invalid_task_context_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "valid JSON"):

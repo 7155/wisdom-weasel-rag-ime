@@ -158,6 +158,7 @@ class AgentService:
         self.role_books = AgentRoleBookStore(db_path)
         self.role_books.initialize()
         self.tool_token = str(tool_gateway_token or secrets.token_urlsafe(32))
+        self.plugin_approval_token = secrets.token_urlsafe(32)
         self.tool_gateway_url = str(tool_gateway_url).strip()
         if not self.tool_gateway_url:
             raise ValueError("tool gateway URL must not be empty")
@@ -165,6 +166,7 @@ class AgentService:
         configured = replace(
             runtime_config or PiRuntimeConfig.from_environment(),
             tool_gateway_token=self.tool_token,
+            plugin_approval_token=self.plugin_approval_token,
             tool_gateway_url=self.tool_gateway_url,
             role_resolver=self.personas.resolve,
             role_book_resolver=self.role_books.prompt_block,
@@ -925,6 +927,7 @@ class AgentService:
         manifest, _binding = bound
         dispatch = self.room_kernel.dispatch(str(manifest["dispatchId"]))
         task = self.room_kernel.task(str(dispatch["taskId"]))
+        root = self.room_kernel.root(str(dispatch["rootId"]))
         task_context = self.room_kernel_runtime.task_context.render(
             task,
             dispatch,
@@ -933,6 +936,11 @@ class AgentService:
             task_context,
             skill_receipt=skill_receipt,
             tool_receipt=tool_receipt,
+            covered_criterion_ids=tuple(
+                str(value)
+                for value in root.get("coveredCriteria", [])
+                if str(value).strip()
+            ),
         )
 
     def _prepare_room_memory_context(
@@ -1059,9 +1067,33 @@ class AgentService:
         return self.session_application.list_sessions(payload)
 
     def workflow_state(self, session_id: str) -> dict[str, object]:
-        state = self.sessions.workflow_state(session_id)
+        state = self.sessions.workflow_state(
+            session_id,
+            room_dispatch_authorized=(
+                self._active_room_dispatch_authorizes_work(session_id)
+            ),
+        )
         validate_contract(state, "agent-workflow-state.v1.json")
         return state
+
+    def _active_room_dispatch_authorizes_work(
+        self,
+        session_id: str,
+    ) -> bool:
+        live = self.room_kernel.session_binding(session_id)
+        bound = self.room_capabilities.manifest_for_runtime(session_id)
+        if live is None or bound is None:
+            return False
+        manifest, binding = bound
+        return (
+            str(binding.get("state") or "") == "active"
+            and str(manifest.get("dispatchId") or "")
+            == str(live.get("dispatchId") or "")
+            and str(manifest.get("rootId") or "")
+            == str(live.get("rootId") or "")
+            and int(manifest.get("generation", -1))
+            == int(live.get("generation", -2))
+        )
 
     def mutate_plan(
         self,
@@ -1601,6 +1633,19 @@ class AgentService:
             invocation_receipt_id,
             status=status,
             result_hash=result_hash,
+        )
+
+    def validate_room_product_tool_approval(
+        self,
+        session_id: str,
+        invocation_receipt_id: str,
+        *,
+        tool_name: str,
+    ) -> dict[str, object]:
+        return self.room_kernel_application.validate_product_tool_approval(
+            session_id,
+            invocation_receipt_id,
+            tool_name=tool_name,
         )
 
     def apply_room_kernel_command(
@@ -2717,6 +2762,7 @@ class AgentService:
             prepare_memory_context=self._prepare_room_memory_context,
             accept_runtime_context=self.room_kernel_runtime.accept_runtime_context,
             revoke_session=self.room_kernel_runtime.revoke_session,
+            invalidate_room_approvals=self.sessions.invalidate_room_approvals,
             learning_observer=self.room_kernel_runtime.record_learning_signal,
         )
         self.room_kernel_commands = KernelCommandBus(self.room_kernel, self.room_kernel_worker)
@@ -2892,6 +2938,7 @@ class AgentService:
         config = replace(
             config,
             tool_gateway_token=self.tool_token,
+            plugin_approval_token=self.plugin_approval_token,
             role_resolver=self.personas.resolve,
             role_book_resolver=self.role_books.prompt_block,
         )

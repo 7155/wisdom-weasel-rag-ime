@@ -38,6 +38,54 @@ class GenerationMemoryTests(unittest.TestCase):
             core = LocalSqliteCoreClient(Path(tmp) / "rag-ime.sqlite")
             core.initialize()
             with core._connect() as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO memory_atoms(
+                        id, kind, text, canonical_text, scope_project,
+                        status, privacy_level, created_at_ms, updated_at_ms,
+                        claim_key, lineage_id, claim_state, valid_from_ms,
+                        valid_to_ms
+                    ) VALUES (?, 'fact', ?, ?, 'wisdom-weasel-rag-ime', ?,
+                              'local', 100, 100, ?, ?, ?, 100, ?)
+                    """,
+                    (
+                        (
+                            "atom:current-model",
+                            "输入法当前使用 100M 自训练模型",
+                            "输入法当前使用 100M 自训练模型",
+                            "active",
+                            "model:current",
+                            "lineage:model",
+                            "current",
+                            None,
+                        ),
+                        (
+                            "atom:old-model",
+                            "输入法仍使用旧 0.8B 模型",
+                            "输入法仍使用旧 0.8B 模型",
+                            "superseded",
+                            "model:old",
+                            "lineage:model",
+                            "superseded",
+                            100,
+                        ),
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO memory_books(
+                        book_id, book_type, book_key, title, summary,
+                        normalized_text, project, memory_atom_ids_json,
+                        status, created_at_ms, updated_at_ms, metadata_json
+                    ) VALUES (
+                        'book:ime-runtime', 'topic', 'ime-runtime',
+                        '输入法工程',
+                        '输入法工程包含本地推理、RAG 与 Personal Context Core',
+                        '输入法 工程 RAG', 'wisdom-weasel-rag-ime', '[]',
+                        'active', 100, 100, '{}'
+                    )
+                    """
+                )
                 for values in (
                     (
                         "atom:current-model",

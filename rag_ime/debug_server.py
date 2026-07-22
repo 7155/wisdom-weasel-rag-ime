@@ -176,6 +176,9 @@ from .voice_control import (
 )
 
 
+_MAX_MANUAL_CURATION_PREPARE_BATCHES = 8
+
+
 def _host_is_loopback(host: str) -> bool:
     normalized = (host or "").strip().lower().removeprefix("[").removesuffix("]")
     if normalized in {"localhost", "localhost.", "::1"}:
@@ -3180,48 +3183,107 @@ class DebugImeService:
                 embedding_provider=self.core.embedding_provider,
             )
             curator.initialize()
-            report = curator.run_due(
-                manual=True,
-                owner_kind=owner_kind,
-                owner_id=owner_id,
-                instruction=instruction,
-            )
-            scopes = list(
-                dict(report.get("status") or {}).get("scopes") or []
-            )
-            scope = next(
-                (
-                    dict(item)
-                    for item in scopes
-                    if isinstance(item, dict)
-                    and _string(item.get("ownerKind")) == owner_kind
-                    and _string(item.get("ownerId")) == owner_id
-                ),
-                {},
-            )
-            results = [
-                dict(item)
-                for item in report.get("results") or []
-                if isinstance(item, dict)
-            ]
-            result = next(
-                (
-                    item
-                    for item in results
-                    if _string(item.get("ownerKind")) == owner_kind
-                    and _string(item.get("ownerId")) == owner_id
-                ),
-                {},
-            )
-            run_id = _string(result.get("runId")) or _string(scope.get("lastRunId"))
+            reports: list[dict[str, object]] = []
+            batch_summaries: list[dict[str, object]] = []
+            report: dict[str, object] = {}
+            result: dict[str, object] = {}
+            scope: dict[str, object] = {}
             stored_run: dict[str, object] = {}
-            if run_id:
-                with self.core._connect() as conn:  # type: ignore[attr-defined]
-                    stored_run = memory_book_run_payload(conn, run_id=run_id)
-            stored_draft = _string(stored_run.get("status")) == "draft"
+            stored_draft = False
+            seen_cursors: set[tuple[int, str, int]] = set()
+            for batch_index in range(_MAX_MANUAL_CURATION_PREPARE_BATCHES):
+                report = curator.run_due(
+                    manual=True,
+                    owner_kind=owner_kind,
+                    owner_id=owner_id,
+                    instruction=instruction,
+                )
+                reports.append(dict(report))
+                scopes = list(
+                    dict(report.get("status") or {}).get("scopes") or []
+                )
+                scope = next(
+                    (
+                        dict(item)
+                        for item in scopes
+                        if isinstance(item, dict)
+                        and _string(item.get("ownerKind")) == owner_kind
+                        and _string(item.get("ownerId")) == owner_id
+                    ),
+                    {},
+                )
+                results = [
+                    dict(item)
+                    for item in report.get("results") or []
+                    if isinstance(item, dict)
+                ]
+                result = next(
+                    (
+                        item
+                        for item in results
+                        if _string(item.get("ownerKind")) == owner_kind
+                        and _string(item.get("ownerId")) == owner_id
+                    ),
+                    {},
+                )
+                run_id = _string(result.get("runId")) or _string(
+                    scope.get("lastRunId")
+                )
+                stored_run = {}
+                if run_id:
+                    with self.core._connect() as conn:  # type: ignore[attr-defined]
+                        stored_run = memory_book_run_payload(conn, run_id=run_id)
+                stored_draft = _string(stored_run.get("status")) == "draft"
+                pending_count = int(scope.get("pendingSourceCount") or 0)
+                needs_review_count = int(scope.get("needsReviewSourceCount") or 0)
+                cursor = dict(scope.get("lastSourceCursor") or {})
+                cursor_key = (
+                    int(cursor.get("createdAtMs") or 0),
+                    _string(cursor.get("sourceId")),
+                    pending_count,
+                )
+                batch_summaries.append(
+                    {
+                        "batch": batch_index + 1,
+                        "runId": run_id,
+                        "runStatus": _string(result.get("runStatus")),
+                        "sourceCount": int(result.get("sourceCount") or 0),
+                        "modelSourceCount": int(result.get("modelSourceCount") or 0),
+                        "deferredModelInputCount": int(
+                            result.get("deferredModelInputCount") or 0
+                        ),
+                        "pendingSourceCount": pending_count,
+                        "needsReviewSourceCount": needs_review_count,
+                    }
+                )
+                stop_reason = _string(result.get("reason"))
+                if (
+                    report.get("ok") is not True
+                    or stored_draft
+                    or pending_count <= 0
+                    or needs_review_count > 0
+                    or stop_reason
+                    in {
+                        "already_running",
+                        "draft_pending_review",
+                        "no_sources",
+                    }
+                    or cursor_key in seen_cursors
+                ):
+                    break
+                seen_cursors.add(cursor_key)
+
+            pending_count = int(scope.get("pendingSourceCount") or 0)
+            needs_review_count = int(scope.get("needsReviewSourceCount") or 0)
+            drain_limited = (
+                not stored_draft
+                and pending_count > 0
+                and needs_review_count <= 0
+                and len(reports) >= _MAX_MANUAL_CURATION_PREPARE_BATCHES
+            )
             return {
                 "schemaVersion": "rag-ime.knowledge-database-organize.v1",
-                "ok": bool(report.get("ok")),
+                "ok": all(item.get("ok") is True for item in reports),
                 "dryRun": True,
                 "applySupported": True,
                 "applyRequiresReview": True,
@@ -3236,17 +3298,30 @@ class DebugImeService:
                 "source": {
                     "ownerKind": owner_kind,
                     "ownerId": owner_id,
-                    "eventCount": int(result.get("sourceCount") or 0),
-                    "pendingSourceCount": int(scope.get("pendingSourceCount") or 0),
-                    "modelSourceCount": int(result.get("modelSourceCount") or 0),
+                    "eventCount": sum(
+                        int(item.get("sourceCount") or 0) for item in batch_summaries
+                    ),
+                    "pendingSourceCount": pending_count,
+                    "needsReviewSourceCount": needs_review_count,
+                    "modelSourceCount": sum(
+                        int(item.get("modelSourceCount") or 0)
+                        for item in batch_summaries
+                    ),
+                    "batchCount": len(batch_summaries),
+                    "drainLimited": drain_limited,
                 },
                 "plan": {},
                 "validation": {
-                    "ok": bool(report.get("ok")),
-                    "errors": [] if report.get("ok") else [result.get("error") or "curation_failed"],
+                    "ok": all(item.get("ok") is True for item in reports),
+                    "errors": (
+                        []
+                        if all(item.get("ok") is True for item in reports)
+                        else [result.get("error") or "curation_failed"]
+                    ),
                 },
                 "storedRun": stored_run,
                 "curation": report,
+                "batchSummaries": batch_summaries,
             }
         request = KnowledgeWorkbenchRequest(
             question=instruction,

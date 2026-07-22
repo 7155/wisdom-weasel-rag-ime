@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from .agent_protocol import AgentEventEnvelope
+from .memory_evidence_policy import memory_evidence_exclusion_reason
 
 
 class AgentMemoryEvidenceService:
@@ -28,6 +29,8 @@ class AgentMemoryEvidenceService:
         turn_id: str,
         text: str,
     ) -> dict[str, object]:
+        if reason := memory_evidence_exclusion_reason(text):
+            return _skipped(f"skipped_{reason}")
         try:
             session = self.sessions.get(session_id)
             return self.memory_evidence.record_user_message(
@@ -53,6 +56,8 @@ class AgentMemoryEvidenceService:
         text = self.message_text(message)
         if not text:
             return _skipped("skipped_empty")
+        if reason := memory_evidence_exclusion_reason(text):
+            return _skipped(f"skipped_{reason}")
         try:
             session = self.sessions.get(event.session_id)
             return self.memory_evidence.record_assistant_message(

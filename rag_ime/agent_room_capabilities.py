@@ -89,9 +89,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             ),
             "notFor": ("普通公开发言、私有进度或没有证据的完成声明",),
             "input": (
-                "交付决定、结果摘要、证据、当前 Task 的验收条件 ID 与可选交接目标；"
-                "ID 只能原样复制 Room task context 的 acceptance.criteria[].criterionId；"
-                "没有 acceptanceCriterionIds 时 requirementCoverage 必须传空数组"
+                "决定、结果、证据和 Room task 中原样 criterionId；"
+                "交接时再给目标与下一任务，无验收项传空数组"
             ),
             "output": "受管提议已暂存回执；收到后必须立即结束本轮，不再调用任何工具",
             "does": "提交当前 Dispatch 的受管状态提议，并明确触发本轮收工。",

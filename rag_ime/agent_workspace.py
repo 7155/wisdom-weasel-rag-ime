@@ -722,6 +722,7 @@ def _sandbox_profile(
         "(allow process*)",
         "(allow sysctl-read)",
         "(allow file-read-metadata)",
+        '(allow file-read* file-write-data (literal "/dev/null"))',
         "(allow file-read*",
         "  (require-all",
         '    (require-not (subpath "/Users"))',

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
 import sqlite3
@@ -518,6 +519,16 @@ _MODEL_CONTEXT_FORBIDDEN_KEY_PARTS = (
     "receipt",
     "internal",
 )
+_MODEL_CONTEXT_FORBIDDEN_KEYS = frozenset(
+    {
+        "schemaversion",
+        "catalogrevision",
+        "catalogrevisionid",
+        "generation",
+        "sha256",
+        "digest",
+    }
+)
 _MODEL_CONTEXT_SOURCE_FIELDS = frozenset({"label", "title", "path", "uri", "section"})
 _MODEL_CONTEXT_KIND = {
     "control_receipt": "control",
@@ -525,6 +536,9 @@ _MODEL_CONTEXT_KIND = {
     "skill_receipt": "skill",
     "knowledge_receipt": "knowledge",
     "recovery_packet": "recovery",
+}
+_MODEL_CONTEXT_OPERATIONAL_IDENTIFIERS = {
+    "dispatch_state": frozenset({"criterionId"}),
 }
 
 
@@ -538,15 +552,38 @@ def _model_visible_projection_content(item: Mapping[str, object]) -> str:
         value = json.loads(raw)
     except json.JSONDecodeError:
         value = raw
-    visible = _model_visible_value(value)
-    if isinstance(visible, str):
-        content = visible.strip()
+    if raw_kind == "dispatch_state" and isinstance(value, Mapping):
+        content = _render_dispatch_state(value)
     else:
-        content = json.dumps(visible, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return f'<room-fact kind="{kind}">{content}</room-fact>'
+        visible = _model_visible_value(
+            value,
+            allowed_identifier_keys=_MODEL_CONTEXT_OPERATIONAL_IDENTIFIERS.get(
+                raw_kind,
+                frozenset(),
+            ),
+        )
+        if isinstance(visible, str):
+            content = visible.strip()
+        else:
+            content = json.dumps(
+                visible,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+    return (
+        f'<room-fact kind="{kind}">'
+        f"{html.escape(content, quote=False)}"
+        "</room-fact>"
+    )
 
 
-def _model_visible_value(value: object, *, source_context: bool = False) -> object:
+def _model_visible_value(
+    value: object,
+    *,
+    source_context: bool = False,
+    allowed_identifier_keys: frozenset[str] = frozenset(),
+) -> object:
     if isinstance(value, Mapping):
         result: dict[str, object] = {}
         for raw_key, raw_value in value.items():
@@ -556,11 +593,19 @@ def _model_visible_value(value: object, *, source_context: bool = False) -> obje
             if source_context and normalized not in _MODEL_CONTEXT_SOURCE_FIELDS:
                 continue
             if (
-                any(part in normalized for part in _MODEL_CONTEXT_FORBIDDEN_KEY_PARTS)
-                or _model_context_identifier_key(key)
+                normalized in _MODEL_CONTEXT_FORBIDDEN_KEYS
+                or any(part in normalized for part in _MODEL_CONTEXT_FORBIDDEN_KEY_PARTS)
+                or (
+                    _model_context_identifier_key(key)
+                    and key not in allowed_identifier_keys
+                )
             ):
                 continue
-            child = _model_visible_value(raw_value, source_context=is_source or source_context)
+            child = _model_visible_value(
+                raw_value,
+                source_context=is_source or source_context,
+                allowed_identifier_keys=allowed_identifier_keys,
+            )
             if child not in (None, "", [], {}):
                 result[key] = child
         return result
@@ -568,11 +613,98 @@ def _model_visible_value(value: object, *, source_context: bool = False) -> obje
         return [
             child
             for item in value
-            for child in [_model_visible_value(item, source_context=source_context)]
+            for child in [
+                _model_visible_value(
+                    item,
+                    source_context=source_context,
+                    allowed_identifier_keys=allowed_identifier_keys,
+                )
+            ]
             if child not in (None, "", [], {})
         ]
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
+    return str(value)
+
+
+def _render_dispatch_state(value: Mapping[str, object]) -> str:
+    """Render one Room task as instructions, not an internal state dump."""
+
+    lines = ["## Room 任务"]
+    requirements = _visible_mapping(value.get("requirements"))
+    originals = [
+        str(item.get("text") or "").strip()
+        for item in _visible_mappings(requirements.get("original"))
+        if str(item.get("text") or "").strip()
+    ]
+    if originals:
+        lines.append("原始需求（不可改写）：")
+        lines.extend(f"- {text}" for text in dict.fromkeys(originals))
+
+    task = _visible_mapping(value.get("task"))
+    objective = str(task.get("objective") or "").strip()
+    expected = str(task.get("expectedOutput") or "").strip()
+    if objective or expected:
+        lines.append("当前任务：")
+        if objective:
+            lines.append(f"- 目标：{objective}")
+        if expected:
+            lines.append(f"- 预期产物：{expected}")
+
+    supplements = [
+        str(item.get("statement") or "").strip()
+        for item in _visible_mappings(requirements.get("items"))
+        if str(item.get("statement") or "").strip()
+        and str(item.get("statement") or "").strip() not in originals
+    ]
+    if supplements:
+        lines.append("补充要求：")
+        lines.extend(f"- {text}" for text in dict.fromkeys(supplements))
+
+    acceptance = _visible_mapping(value.get("acceptance"))
+    criteria = _visible_mappings(acceptance.get("criteria"))
+    rendered_criteria: list[str] = []
+    for criterion in criteria:
+        criterion_id = str(criterion.get("criterionId") or "").strip()
+        statement = str(criterion.get("statement") or "").strip()
+        if not criterion_id or not statement:
+            continue
+        status = "已通过" if criterion.get("passed") is True else "待验收"
+        rendered_criteria.append(
+            f'- criterionId: "{criterion_id}" | {status} | {statement}'
+        )
+    if rendered_criteria:
+        lines.append("验收条件 acceptance.criteria（提交时原样使用 criterionId）：")
+        lines.extend(rendered_criteria)
+
+    blockers = _visible_mapping(value.get("blockers"))
+    obstacle_lines = [
+        str(item.get("statement") or "").strip()
+        for item in _visible_mappings(blockers.get("obstacles"))
+        if str(item.get("statement") or "").strip()
+    ]
+    conflict_count = len(_visible_mappings(blockers.get("conflicts")))
+    if obstacle_lines or conflict_count:
+        lines.append("当前阻塞：")
+        lines.extend(f"- {text}" for text in dict.fromkeys(obstacle_lines))
+        if conflict_count:
+            lines.append(f"- 仍有 {conflict_count} 项需求冲突待协调")
+
+    continuation = _visible_mapping(value.get("continuation"))
+    intent = str(continuation.get("intentKind") or "").strip()
+    if intent and intent != "execute":
+        lines.append(f"协作动作：{intent}")
+    return "\n".join(lines)
+
+
+def _visible_mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _visible_mappings(value: object) -> list[Mapping[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    return [item for item in value if isinstance(item, Mapping)]
     return str(value)
 
 

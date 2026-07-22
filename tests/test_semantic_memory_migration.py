@@ -363,7 +363,7 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
 
         self.assertEqual(input_after, input_before)
         self.assertTrue(report["verification"]["ok"])
-        self.assertEqual(report["migration"]["currentVersion"], 101)
+        self.assertEqual(report["migration"]["currentVersion"], 103)
         self.assertEqual(report["legacyItems"]["promoted"], 1)
         self.assertEqual(report["legacyItems"]["quarantined"], 1)
         self.assertFalse(report["verification"]["vectorGateRequired"])
@@ -595,7 +595,10 @@ class SemanticMemoryMigrationTests(unittest.TestCase):
             )
             conn.execute(
                 """UPDATE memory_retrieval_doc_vectors
-                   SET updated_at_ms = 0
+                   SET source_revision = CASE
+                       WHEN source_revision = 1 THEN 2
+                       ELSE source_revision - 1
+                   END
                    WHERE doc_id = ? AND provider_fingerprint = ?""",
                 (doc_id, provider.fingerprint),
             )

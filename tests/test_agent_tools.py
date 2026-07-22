@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from rag_ime.agent_media import AgentMediaStore
+from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tool_artifacts import AgentToolArtifactProjector
 from rag_ime.agent_tools import ControlToolGateway
@@ -429,6 +430,9 @@ class _Facade:
     def __init__(self):
         self.memory_run_status = "draft"
         self.memory_prepare_no_run = False
+        self.memory_prepare_pending_count = 0
+        self.memory_prepare_batch_count = 1
+        self.memory_prepare_drain_limited = False
         self.memory_maintenance_requests = []
         self.memory_run_owner = ("user", "default")
         self.settings_revision = 1
@@ -539,7 +543,9 @@ class _Facade:
                 "source": {
                     "ownerKind": payload["ownerKind"],
                     "ownerId": payload["ownerId"],
-                    "pendingSourceCount": 0,
+                    "pendingSourceCount": self.memory_prepare_pending_count,
+                    "batchCount": self.memory_prepare_batch_count,
+                    "drainLimited": self.memory_prepare_drain_limited,
                 },
                 "validation": {"ok": True, "errors": []},
                 "storedRun": {},
@@ -559,7 +565,13 @@ class _Facade:
             "ok": True,
             "storedDraft": True,
             "reusedDraft": False,
-            "source": {"bundleHash": "sha256:bundle", "eventCount": 7},
+            "source": {
+                "bundleHash": "sha256:bundle",
+                "eventCount": 7,
+                "pendingSourceCount": self.memory_prepare_pending_count,
+                "batchCount": self.memory_prepare_batch_count,
+                "drainLimited": self.memory_prepare_drain_limited,
+            },
             "validation": {"ok": True, "errors": []},
             "storedRun": {
                 "runId": "memory_book_draft",
@@ -772,6 +784,11 @@ class ControlToolGatewayTests(unittest.TestCase):
         }
 
         self.assertIn("curation_prepare", by_operation)
+        self.assertIn("capture", by_operation)
+        self.assertEqual(
+            by_operation["capture"]["required"],
+            ["op", "kind", "claim", "reason"],
+        )
         self.assertEqual(
             by_operation["curation_prepare"]["required"],
             ["op", "trigger"],
@@ -796,6 +813,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             by_operation["remember_preview"]["required"],
             ["op", "text"],
         )
+
         self.assertEqual(
             by_operation["correct_preview"]["required"],
             ["op", "targetId", "text"],
@@ -837,6 +855,31 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertIn("随 Session 固定版本注入系统提示词", role_book["description"])
         self.assertIn("propose_revision 只保存 draft", role_book["description"])
+
+    def test_memory_capture_is_r0_and_does_not_create_an_approval(self) -> None:
+        AgentMemorySourceStore(
+            self.store.db_path,
+            project="wisdom-weasel-rag-ime",
+        ).checkpoint_user_message(
+            session_id=str(self.session["id"]),
+            pi_entry_id="entry:tool-capture",
+            turn_id="turn:tool-capture",
+            text="以后测试报告默认只给聚合指标。",
+        )
+
+        result = self.gateway.execute(
+            self._call(
+                "capture",
+                kind="preference",
+                claim="用户偏好测试报告只展示聚合指标。",
+                captureScope="user",
+                reason="这会改变未来报告输出。",
+            )
+        )["result"]
+
+        self.assertTrue(result["captured"])
+        self.assertFalse(result["requiresApproval"])
+        self.assertNotIn("approval", result)
 
     def test_runtime_knowledge_and_plan_tools_keep_static_and_backend_schemas_aligned(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)
@@ -1208,6 +1251,19 @@ class ControlToolGatewayTests(unittest.TestCase):
                 executions.append(receipt)
                 return {"executionReceipt": receipt}
 
+            def validate_room_product_tool_approval(
+                self,
+                session_id,
+                invocation_receipt_id,
+                *,
+                tool_name,
+            ):
+                return {
+                    "sessionId": session_id,
+                    "receiptId": invocation_receipt_id,
+                    "tool": tool_name,
+                }
+
         gateway = ControlToolGateway(
             sessions=self.store,
             management=self.management,
@@ -1237,11 +1293,74 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         self.assertTrue(response["result"]["approvalRequired"])
         self.assertEqual(auto_approvals, [])
+        self.assertEqual(executions, [])
+        self.assertIn("roomInvocationReceipt", response)
+        self.assertNotIn("roomExecutionReceipt", response)
+        approval = response["result"]["approval"]
+        self.assertEqual(
+            approval["preview"]["baseState"]["roomInvocationReceiptId"],
+            "invoke:tool:room-planning",
+        )
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = gateway.apply_approval(decided)
+
         self.assertEqual(executions[0]["status"], "applied")
         self.assertEqual(len(str(executions[0]["resultHash"])), 64)
         self.assertEqual(
-            response["roomExecutionReceipt"]["invocationReceiptId"],
+            receipt["roomExecutionReceipt"]["invocationReceiptId"],
             "invoke:tool:room-planning",
+        )
+
+    def test_failed_room_approval_records_a_failed_execution_receipt(self) -> None:
+        executions: list[dict[str, object]] = []
+
+        class _RoomCollaboration:
+            def record_room_product_tool_execution(
+                self,
+                session_id,
+                invocation_receipt_id,
+                *,
+                status,
+                result_hash,
+            ):
+                receipt = {
+                    "sessionId": session_id,
+                    "invocationReceiptId": invocation_receipt_id,
+                    "status": status,
+                    "resultHash": result_hash,
+                }
+                executions.append(receipt)
+                return {"executionReceipt": receipt}
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            collaboration=_RoomCollaboration(),
+        )
+
+        result = gateway._seal_room_approval_execution(
+            approval={
+                "sessionId": self.session["id"],
+                "preview": {
+                    "baseState": {
+                        "roomInvocationReceiptId": "invoke:failed-shell",
+                    }
+                },
+            },
+            result={"mutationApplied": False, "exitCode": 71},
+        )
+
+        self.assertEqual(executions[0]["status"], "failed")
+        self.assertEqual(
+            result["roomExecutionReceipt"]["invocationReceiptId"],
+            "invoke:failed-shell",
         )
 
     def test_coordinator_search_and_patch_require_native_hash_bound_approval(self) -> None:
@@ -1584,6 +1703,27 @@ class ControlToolGatewayTests(unittest.TestCase):
             ("user", "default"),
         )
         self.assertEqual(request["trigger"], "task_completion")
+
+    def test_memory_curation_prepare_does_not_report_completion_with_backlog(self) -> None:
+        self.facade.memory_run_status = "empty"
+        self.facade.memory_prepare_pending_count = 3
+        self.facade.memory_prepare_batch_count = 8
+        self.facade.memory_prepare_drain_limited = True
+
+        result = self.gateway.execute(
+            self._call(
+                "curation_prepare",
+                trigger="explicit_request",
+                scope="incremental",
+                policy="conservative",
+            )
+        )["result"]
+
+        self.assertEqual(result["pendingSourceCount"], 3)
+        self.assertEqual(result["batchCount"], 8)
+        self.assertTrue(result["drainLimited"])
+        self.assertIn("仍有 3 条", result["summary"])
+        self.assertNotIn("全部新增证据已完成整理", result["summary"])
 
     def test_memory_curation_prepare_rejects_ordinary_chat_without_completion_trigger(
         self,

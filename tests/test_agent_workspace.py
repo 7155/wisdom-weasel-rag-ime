@@ -215,6 +215,14 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertNotEqual(outside["exitCode"], 0)
         self.assertNotIn("outside-secret-content", outside["output"])
 
+        dev_null = harness.execute(
+            harness.prepare_command(
+                self.session,
+                {"command": "/bin/sh -c 'echo ok >/dev/null'", "cwd": str(self.root)},
+            )
+        )
+        self.assertEqual(dev_null["exitCode"], 0)
+
         wildcard = harness.execute(
             harness.prepare_command(
                 self.session,

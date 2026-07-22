@@ -419,6 +419,7 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertEqual(child["DEEPSEEK_API_KEY"], "test-secret")
         self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_DIR", child)
         self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES", child)
+        self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS", child)
         self.assertNotIn("RAG_IME_DEEPSEEK_API_KEY", child)
         config.prepare_agent_config()
         models_path = config.agent_dir / "models.json"
@@ -443,6 +444,7 @@ class PiRuntimeTests(unittest.TestCase):
                 "RAG_IME_PI_ENABLED": "1",
                 "RAG_IME_PI_DEBUG_CONTEXT_DIR": str(debug_directory),
                 "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES": "65536",
+                "RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS": "128",
             },
             clear=True,
         ), mock.patch(
@@ -458,6 +460,7 @@ class PiRuntimeTests(unittest.TestCase):
         child = config.child_environment()
         self.assertEqual(child["RAG_IME_PI_DEBUG_CONTEXT_DIR"], str(debug_directory))
         self.assertEqual(child["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"], "65536")
+        self.assertEqual(child["RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS"], "128")
 
     def test_native_deepseek_endpoint_keeps_native_thinking_contract(self) -> None:
         provider = _deepseek_pi_provider(
@@ -730,6 +733,7 @@ class PiRuntimeTests(unittest.TestCase):
             extension_path=extension,
             tools=("ime_memory",),
             tool_gateway_token="scoped-test-token",
+            plugin_approval_token="plugin-only-test-token",
         )
         command = config.launch_command(session=self.session)
         environment = config.child_environment(session=self.session)
@@ -739,6 +743,11 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertIn("ime_memory", command)
         self.assertNotIn("--no-tools", command)
         self.assertEqual(environment["RAG_IME_AGENT_TOOL_TOKEN"], "scoped-test-token")
+        self.assertEqual(environment["RAG_IME_TOOL_GATEWAY_TOKEN"], "scoped-test-token")
+        self.assertEqual(
+            environment["RAG_IME_PLUGIN_APPROVAL_TOKEN"],
+            "plugin-only-test-token",
+        )
         self.assertEqual(environment["RAG_IME_AGENT_SESSION_ID"], self.session["id"])
         self.assertEqual(environment["RAG_IME_AGENT_SESSION_MODE"], "assistant")
         self.assertNotIn("RAG_IME_MANAGEMENT_TOKEN", environment)

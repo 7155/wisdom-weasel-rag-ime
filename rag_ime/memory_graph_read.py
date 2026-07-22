@@ -1003,6 +1003,8 @@ def _load_atom_nodes(
         LEFT JOIN group_counts gc ON gc.member_id = ma.id
         WHERE ma.id IN ({placeholders})
           AND length(ma.id) BETWEEN 1 AND 128
+          AND ma.status IN ('active', 'approved')
+          AND ma.claim_state = 'current'
           AND ma.privacy_level != 'sensitive'
           AND (? = '' OR COALESCE(ma.scope_project, '') = '' OR ma.scope_project = ?)
         """,
@@ -1052,6 +1054,17 @@ def _load_book_nodes(
         LEFT JOIN group_counts gc ON gc.member_id = mb.book_id
         WHERE mb.book_id IN ({placeholders})
           AND length(mb.book_id) BETWEEN 1 AND 128
+          AND mb.status IN ('active', 'approved', 'archived')
+          AND COALESCE(json_extract(mb.metadata_json, '$.retrievalStale'), 0) != 1
+          AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(mb.memory_atom_ids_json) AS member
+              LEFT JOIN memory_atoms AS atom
+                ON atom.id = CAST(member.value AS TEXT)
+               AND atom.status IN ('active', 'approved')
+               AND atom.claim_state = 'current'
+              WHERE json_valid(mb.memory_atom_ids_json) AND atom.id IS NULL
+          )
           AND (? = '' OR mb.project = '' OR mb.project = ?)
         """,
         (*book_ids, project, project),
@@ -1530,11 +1543,24 @@ def _visible_member_filter(alias: str, *, project: str) -> str:
         ({alias}.member_type = 'atom' AND EXISTS (
             SELECT 1 FROM memory_atoms ma
             WHERE ma.id = {alias}.member_id AND ma.privacy_level != 'sensitive'
+              AND ma.status IN ('active', 'approved')
+              AND ma.claim_state = 'current'
               AND (? = '' OR COALESCE(ma.scope_project, '') = '' OR ma.scope_project = ?)
         ))
         OR ({alias}.member_type = 'book' AND EXISTS (
             SELECT 1 FROM memory_books mb
             WHERE mb.book_id = {alias}.member_id
+              AND mb.status IN ('active', 'approved', 'archived')
+              AND COALESCE(json_extract(mb.metadata_json, '$.retrievalStale'), 0) != 1
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM json_each(mb.memory_atom_ids_json) AS member
+                  LEFT JOIN memory_atoms AS atom
+                    ON atom.id = CAST(member.value AS TEXT)
+                   AND atom.status IN ('active', 'approved')
+                   AND atom.claim_state = 'current'
+                  WHERE json_valid(mb.memory_atom_ids_json) AND atom.id IS NULL
+              )
               AND (? = '' OR mb.project = '' OR mb.project = ?)
         ))
         OR ({alias}.member_type = 'tag' AND EXISTS (

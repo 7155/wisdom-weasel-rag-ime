@@ -191,6 +191,67 @@ class HybridRagRankerTests(unittest.TestCase):
         self.assertEqual(initial_requirement[0].metadata["timeDecayFactor"], 1.0)
         self.assertGreater(historical[0].score, ordinary[0].score)
 
+    def test_metadata_family_is_capped_instead_of_counted_as_three_votes(self) -> None:
+        hits = [
+            HybridRagHit(
+                doc_id="doc:metadata",
+                doc_type="atom",
+                source_id="atom:metadata",
+                text="元数据命中",
+                surface_hints=(),
+                tags=("tag",),
+                source_lane=lane,
+                rank=1,
+                raw_score=1.0,
+            )
+            for lane in ("bm25_tags", "tagmemo", "vector_tag_boost")
+        ]
+
+        capped = rank_hybrid_hits_to_memory_hits(hits)[0]
+        legacy = rank_hybrid_hits_to_memory_hits(
+            hits,
+            metadata_family_mode="legacy_sum",
+        )[0]
+        strongest = max(
+            capped.debug_features[lane]
+            for lane in ("bm25_tags", "tagmemo", "vector_tag_boost")
+        )
+
+        self.assertLessEqual(capped.score, strongest * 1.20 + 1e-12)
+        self.assertLess(capped.score, legacy.score)
+        self.assertLess(
+            capped.debug_features["metadata_family_overlap_penalty"],
+            0.0,
+        )
+
+    def test_metadata_cap_does_not_reduce_independent_raw_families(self) -> None:
+        hits = [
+            HybridRagHit(
+                doc_id="doc:raw",
+                doc_type="atom",
+                source_id="atom:raw",
+                text="独立原始证据",
+                surface_hints=(),
+                tags=(),
+                source_lane=lane,
+                rank=1,
+                raw_score=1.0,
+            )
+            for lane in ("bm25_raw", "vector_raw")
+        ]
+
+        capped = rank_hybrid_hits_to_memory_hits(hits)[0]
+        legacy = rank_hybrid_hits_to_memory_hits(
+            hits,
+            metadata_family_mode="legacy_sum",
+        )[0]
+
+        self.assertAlmostEqual(capped.score, legacy.score)
+        self.assertNotIn(
+            "metadata_family_overlap_penalty",
+            capped.debug_features,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

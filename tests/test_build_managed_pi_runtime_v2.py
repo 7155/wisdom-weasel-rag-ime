@@ -42,6 +42,15 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "roomSettleLifecycle": Path(
                     "packages/rag-ime-runtime-host/src/room-settle-lifecycle.ts"
                 ),
+                "workflowControl": Path(
+                    "packages/rag-ime-runtime-host/src/workflow-control.ts"
+                ),
+                "lifecycleHooks": Path(
+                    "packages/rag-ime-runtime-host/src/lifecycle-hooks.ts"
+                ),
+                "deterministicTestAdapter": Path(
+                    "packages/rag-ime-runtime-host/src/deterministic-test-adapter.ts"
+                ),
                 "session": Path("packages/rag-ime-runtime-host/src/pi-session.ts"),
             }
             self.assertEqual(set(relative_sources), set(_ROOM_RUNTIME_SOURCE_KEYS))

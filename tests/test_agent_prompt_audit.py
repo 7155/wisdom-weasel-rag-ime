@@ -55,6 +55,10 @@ class AgentPromptAuditTests(unittest.TestCase):
             self.assertIn("name、when、notFor、input、output、does", template.runtime_prompt)
             self.assertIn("skill_load", template.runtime_prompt)
             self.assertIn("tool_load", template.runtime_prompt)
+            self.assertNotIn(template.prompt, template.room_runtime_prompt)
+            self.assertIn("协作岗位层", template.room_runtime_prompt)
+            self.assertIn("skill_load", template.room_runtime_prompt)
+            self.assertIn("tool_load", template.room_runtime_prompt)
 
         for item in collaboration_role_catalog():
             prompt = collaboration_role(item["roleId"], item["version"]).system_prompt

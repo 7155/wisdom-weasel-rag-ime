@@ -12,8 +12,9 @@ from pathlib import Path
 from .agent_sessions import AgentSessionStore
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
-from .memory_ingest import looks_sensitive, sync_event_to_memory_v2
 from .knowledge_scope import quarantine_scope_issue, session_knowledge_scope
+from .memory_evidence_policy import memory_evidence_exclusion_reason
+from .memory_ingest import looks_sensitive, sync_event_to_memory_v2
 from .sensitive_content import contains_sensitive_content
 from .text_utils import compact_whitespace
 
@@ -75,6 +76,13 @@ class AgentMemorySourceStore:
         canonical = compact_whitespace(text)
         if not canonical:
             raise ValueError("final user message must not be empty")
+        if reason := memory_evidence_exclusion_reason(canonical):
+            return {
+                "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
+                "ok": True,
+                "stored": False,
+                "status": f"skipped_{reason}",
+            }
         if looks_sensitive(canonical):
             return {
                 "schemaVersion": "rag-ime.agent-memory-checkpoint.v1",
@@ -632,6 +640,170 @@ class AgentMemorySourceStore:
         if row is None:
             raise KeyError(source_id)
         return _source_payload(row)
+
+    def capture_hint(
+        self,
+        *,
+        session_id: str,
+        kind: str,
+        claim: str,
+        scope: str,
+        reason: str,
+        source_id: str = "",
+        evidence_ids: list[str] | tuple[str, ...] = (),
+        created_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Attach a non-authoritative curation hint to current user evidence."""
+
+        normalized_session = compact_whitespace(session_id)
+        normalized_kind = compact_whitespace(kind).lower()
+        normalized_scope = compact_whitespace(scope).lower() or "project"
+        normalized_claim = compact_whitespace(claim)[:800]
+        normalized_reason = compact_whitespace(reason)[:500]
+        requested_source = compact_whitespace(source_id)
+        normalized_evidence = list(
+            dict.fromkeys(
+                compact_whitespace(str(value))
+                for value in evidence_ids
+                if compact_whitespace(str(value))
+            )
+        )[:32]
+        if not normalized_session:
+            raise ValueError("memory capture requires the current session")
+        if normalized_kind not in {
+            "preference",
+            "fact",
+            "decision",
+            "correction",
+            "pitfall",
+        }:
+            raise ValueError("unsupported memory capture kind")
+        if normalized_scope not in {"user", "project"}:
+            raise ValueError("memory capture scope must be user or project")
+        if not normalized_claim or not normalized_reason:
+            raise ValueError("memory capture requires claim and reason")
+        if memory_evidence_exclusion_reason(normalized_claim):
+            raise ValueError("memory capture claim is workflow noise or transient input")
+        if looks_sensitive(normalized_claim) or contains_sensitive_content(
+            f"{normalized_claim} {normalized_reason}"
+        ):
+            raise ValueError("sensitive content cannot be captured as a memory hint")
+
+        timestamp = int(
+            created_at_ms if created_at_ms is not None else time.time() * 1000
+        )
+        with self._connect() as conn:
+            if requested_source:
+                source = conn.execute(
+                    """
+                    SELECT source.source_id, source.status, source.disposition,
+                           source.source_kind, session.role_id
+                    FROM agent_memory_sources AS source
+                    JOIN agent_sessions AS session ON session.id = source.session_id
+                    WHERE source.source_id = ? AND source.session_id = ?
+                    """,
+                    (requested_source, normalized_session),
+                ).fetchone()
+            else:
+                source = conn.execute(
+                    """
+                    SELECT source.source_id, source.status, source.disposition,
+                           source.source_kind, session.role_id
+                    FROM agent_memory_sources AS source
+                    JOIN agent_sessions AS session ON session.id = source.session_id
+                    WHERE source.session_id = ?
+                      AND source.status = 'active'
+                      AND source.source_kind = 'user_final'
+                      AND source.disposition IN ('pending', 'remember', 'needs_review')
+                    ORDER BY source.created_at_ms DESC, source.source_id DESC
+                    LIMIT 1
+                    """,
+                    (normalized_session,),
+                ).fetchone()
+            if source is None:
+                raise ValueError("memory capture has no active user evidence in this session")
+            if (
+                str(source["status"]) != "active"
+                or str(source["source_kind"]) != "user_final"
+                or str(source["disposition"])
+                not in {"pending", "remember", "needs_review"}
+            ):
+                raise ValueError("memory capture source is not eligible for curation")
+
+            if normalized_evidence:
+                placeholders = ",".join("?" for _ in normalized_evidence)
+                available = {
+                    str(row[0])
+                    for row in conn.execute(
+                        f"""
+                        SELECT evidence_id
+                        FROM agent_memory_evidence
+                        WHERE evidence_id IN ({placeholders})
+                          AND session_id = ? AND status = 'active'
+                          AND (? = '' OR project = ? OR project = '')
+                        """,
+                        (
+                            *normalized_evidence,
+                            normalized_session,
+                            self.project,
+                            self.project,
+                        ),
+                    ).fetchall()
+                }
+                if available != set(normalized_evidence):
+                    raise ValueError("memory capture evidence is missing or outside this session")
+
+            resolved_source_id = str(source["source_id"])
+            hint_id = f"capture:{uuid.uuid4()}"
+            conn.execute(
+                """
+                INSERT INTO memory_capture_hints(
+                    hint_id, source_id, kind, normalized_claim, scope, reason,
+                    evidence_ids_json, captured_by_session_id,
+                    captured_by_role_id, status, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                ON CONFLICT(source_id, kind, normalized_claim) DO UPDATE SET
+                    scope = excluded.scope,
+                    reason = excluded.reason,
+                    evidence_ids_json = excluded.evidence_ids_json,
+                    captured_by_session_id = excluded.captured_by_session_id,
+                    captured_by_role_id = excluded.captured_by_role_id,
+                    status = 'active',
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    hint_id,
+                    resolved_source_id,
+                    normalized_kind,
+                    normalized_claim,
+                    normalized_scope,
+                    normalized_reason,
+                    json.dumps(normalized_evidence, ensure_ascii=False),
+                    normalized_session,
+                    str(source["role_id"] or ""),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+            stored = conn.execute(
+                """
+                SELECT hint_id
+                FROM memory_capture_hints
+                WHERE source_id = ? AND kind = ? AND normalized_claim = ?
+                """,
+                (resolved_source_id, normalized_kind, normalized_claim),
+            ).fetchone()
+        return {
+            "schemaVersion": "rag-ime.memory-capture-hint.v1",
+            "ok": True,
+            "captured": True,
+            "hintId": str(stored[0]),
+            "sourceId": resolved_source_id,
+            "kind": normalized_kind,
+            "scope": normalized_scope,
+            "createsAtom": False,
+            "requiresApproval": False,
+        }
 
     def list_for_owner(
         self,

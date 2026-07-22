@@ -1567,7 +1567,15 @@ class RoomKernelStore:
         with self._connect() as conn:
             row = self._root_row(conn, root_id)
             payload = json.loads(str(row["payload_json"]))
-            payload.update({"generation": int(row["generation"]), "state": str(row["state"]), "budgetRemaining": int(row["budget_remaining"]), "budgetReserved": int(row["budget_reserved"]), "terminalReceiptId": row["terminal_receipt_id"]})
+            payload.update({
+                "generation": int(row["generation"]),
+                "state": str(row["state"]),
+                "budgetRemaining": int(row["budget_remaining"]),
+                "budgetReserved": int(row["budget_reserved"]),
+                "acceptanceCriteria": json.loads(str(row["acceptance_criteria_json"])),
+                "coveredCriteria": json.loads(str(row["covered_criteria_json"])),
+                "terminalReceiptId": row["terminal_receipt_id"],
+            })
             return payload
 
     def is_root_terminal(self, root_id: str) -> bool:

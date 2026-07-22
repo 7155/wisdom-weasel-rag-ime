@@ -1059,8 +1059,11 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         bundle = organizer.calls[0]
         self.assertIn("在 TextEdit 实现时间线过滤", bundle["activityContext"]["summary"])
         messages = bundle["agentConversationContext"]["messages"]
-        self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
-        self.assertIn("联合上下文", messages[1]["text"])
+        self.assertEqual([item["role"] for item in messages], ["user"])
+        self.assertNotIn(
+            "待审草案",
+            json.dumps(messages, ensure_ascii=False),
+        )
         serialized_activity = json.dumps(bundle["activityContext"], ensure_ascii=False)
         serialized_conversation = json.dumps(
             bundle["agentConversationContext"], ensure_ascii=False
@@ -1133,6 +1136,14 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             text="摘要之后新增的用户要求",
             occurred_at_ms=timestamp + 5_000,
         )
+        evidence.record_user_message(
+            session_id=session_id,
+            pi_entry_id="evidence:user:workflow-noise",
+            turn_id="turn:workflow-noise",
+            role_id="companion-present-v1",
+            text="请调用 ime_memory 的 curation_prepare 并返回 runId。",
+            occurred_at_ms=timestamp + 5_500,
+        )
         evidence.record_assistant_message(
             session_id=session_id,
             pi_entry_id="evidence:assistant:after-digest",
@@ -1162,6 +1173,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         serialized = json.dumps(context, ensure_ascii=False)
         self.assertIn("最新压缩摘要", serialized)
         self.assertIn("摘要之后新增的用户要求", serialized)
+        self.assertNotIn("curation_prepare", serialized)
         self.assertNotIn("摘要前的原始用户对话", serialized)
         self.assertNotIn("摘要前的原始助手回答", serialized)
         self.assertNotIn("已经过期的旧摘要", serialized)
@@ -1402,24 +1414,31 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
 
         self.assertTrue(report["ok"])
         self.assertEqual(organizer.calls, [])
+        self.assertEqual(
+            sources[2]["status"],
+            "skipped_memory_workflow_instruction",
+        )
         reasons = [
-            self.sources.get(str(source["source"]["sourceId"]))["dispositionReason"]
-            for source in sources
+            self.sources.get(str(sources[index]["source"]["sourceId"]))[
+                "dispositionReason"
+            ]
+            for index in (0, 1, 3)
         ]
         self.assertEqual(
             reasons,
             [
                 "duplicate_repeated_input",
                 "standalone_question_no_durable_claim",
-                "memory_workflow_instruction",
                 "transient_user_instruction",
             ],
         )
         self.assertTrue(
             all(
-                self.sources.get(str(source["source"]["sourceId"]))["disposition"]
+                self.sources.get(
+                    str(sources[index]["source"]["sourceId"])
+                )["disposition"]
                 == "not_for_memory"
-                for source in sources
+                for index in (0, 1, 3)
             )
         )
 
@@ -2719,6 +2738,54 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             "per_fact_hybrid_union_with_book_graph",
         )
 
+    def test_capture_hint_and_versioned_purpose_reach_owner_organizer(self) -> None:
+        source = self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:capture-purpose",
+            turn_id="turn:capture-purpose",
+            text="以后测试报告默认只展示聚合数据。",
+            created_at_ms=100,
+        )["source"]
+        self.sources.capture_hint(
+            session_id=str(self.user_session["id"]),
+            source_id=str(source["sourceId"]),
+            kind="preference",
+            claim="用户偏好测试报告只展示聚合数据。",
+            scope="user",
+            reason="这会改变未来报告默认输出。",
+            created_at_ms=101,
+        )
+        organizer = _BundleCaptureOrganizer()
+
+        report = OwnerMemoryCurator(
+            self.db_path,
+            organizer=organizer,
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            daily_interval_ms=60_000,
+            auto_apply=True,
+        ).run_due(current_ms=1_000)
+
+        self.assertTrue(report["ok"], report)
+        bundle = organizer.calls[0]
+        self.assertEqual(
+            bundle["purposeProfile"]["profileRef"],
+            "personal_current_state@1",
+        )
+        self.assertFalse(bundle["inputs"][0]["captureHints"][0]["authoritative"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            metadata = json.loads(
+                conn.execute(
+                    "SELECT metadata_json FROM memory_cleanup_runs ORDER BY created_at_ms DESC LIMIT 1"
+                ).fetchone()[0]
+            )
+        self.assertEqual(metadata["purpose_profile_id"], "personal_current_state")
+        self.assertEqual(metadata["purpose_revision"], 1)
+        self.assertEqual(
+            metadata["schema_revision"],
+            "rag-ime.owner-memory-curation.v1",
+        )
+
     def test_large_mixed_batches_recall_and_replace_every_target_claim(self) -> None:
         total_slots = 500
         target_slots = 120
@@ -2938,10 +3005,10 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         self.assertEqual(supersession_count, len(updates))
         self.assertEqual(invalid_interval_count, 0)
         self.assertEqual(duplicate_current_count, 0)
-        self.assertEqual(noise_count, expected_noise_count)
+        self.assertEqual(noise_count, 0)
         self.assertEqual(
             source_dispositions,
-            {"consolidated": len(updates), "not_for_memory": expected_noise_count},
+            {"consolidated": len(updates)},
         )
         self.assertEqual(len(book_members), total_slots)
         self.assertEqual(

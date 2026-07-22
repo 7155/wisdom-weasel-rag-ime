@@ -138,7 +138,8 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
   });
 
   await page.goto('/#/roles');
-  await expect(page.getByRole('region', { name: '角色列表' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Agent 伙伴', level: 2 })).toBeVisible();
+  await expect(page.getByRole('region', { name: '伙伴目录' })).toBeVisible();
   expect(await page.locator('.persona-grid > button').count()).toBeGreaterThanOrEqual(3);
   const secondPersona = page.locator('.persona-grid > button').nth(1);
   const personaName = (await secondPersona.locator('strong').innerText()).trim();
@@ -148,9 +149,10 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
   await expect(page.getByText(`${personaName} 对话`, { exact: true }).first()).toBeVisible();
 
   await page.goto('/#/roles');
-  await page.getByRole('radio', { name: 'Agent 模板' }).click();
-  await expect(page.getByRole('region', { name: 'Agent 模板列表' })).toBeVisible();
-  expect(await page.locator('.template-list > button').count()).toBeGreaterThanOrEqual(3);
+  await expect(page.getByRole('region', { name: '伙伴能力边界' })).toBeVisible();
+  await expect(page.getByText('运行设置与定义', { exact: true })).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Agent 模板' })).toHaveCount(0);
+  await expect(page.getByRole('radio', { name: /主持人|执行者|研究员|审查员/ })).toHaveCount(0);
   await expectNoHorizontalPageOverflow(page);
 });
 

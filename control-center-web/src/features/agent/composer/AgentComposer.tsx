@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  startTransition,
   useEffect,
   useMemo,
   useRef,
@@ -112,7 +113,7 @@ export function AgentComposer({
   onPasteImages: (files: File[]) => void;
   onToolSelect: (tool: ToolManifest) => void;
   onProductCommand: (command: AgentProductCommandName) => void;
-  onSend: (delivery: AgentMessageDelivery) => void;
+  onSend: (delivery: AgentMessageDelivery, draft: string) => void;
   onStop: () => void;
   editState?: AgentComposerEditState;
   onEditPrevious?: () => void;
@@ -145,17 +146,17 @@ export function AgentComposer({
     [busy, catalog, piCommands, sending, session, toolCatalogStatus, tools],
   );
   const commands = useMemo(() => commandCatalog.filter((command) => {
-    const value = draft.trim().toLowerCase();
+    const value = composerDraft.trim().toLowerCase();
     if (helpOpen || paletteOpen) return true;
-    return draft !== dismissedDraft && value.startsWith('/') && !value.includes(' ') && (value === '/' || command.invocation.toLowerCase().startsWith(value));
-  }), [commandCatalog, dismissedDraft, draft, helpOpen, paletteOpen]);
+    return composerDraft !== dismissedDraft && value.startsWith('/') && !value.includes(' ') && (value === '/' || command.invocation.toLowerCase().startsWith(value));
+  }), [commandCatalog, composerDraft, dismissedDraft, helpOpen, paletteOpen]);
   const commandPanelVisible = commands.length > 0 && (
     paletteOpen
-    || (draft !== dismissedDraft && draft.trim().startsWith('/') && !draft.trim().includes(' '))
+    || (composerDraft !== dismissedDraft && composerDraft.trim().startsWith('/') && !composerDraft.trim().includes(' '))
   );
   useEffect(() => {
     setActiveCommandIndex(Math.max(0, commands.findIndex((command) => command.enabled)));
-  }, [commands, draft]);
+  }, [commands, composerDraft]);
   useEffect(() => {
     if (helpRequest <= 0) return;
     setHelpOpen(true);
@@ -178,7 +179,12 @@ export function AgentComposer({
     return () => window.cancelAnimationFrame(frame);
   }, [editState?.messageId]);
   useEffect(() => () => window.clearTimeout(escapeResetRef.current), []);
-  const canSend = Boolean(session && (draft.trim() || attachments.length) && !sending);
+  const canSend = Boolean(session && (composerDraft.trim() || attachments.length) && !sending);
+  function publishDraft(value: string): void {
+    // The textarea owns keystroke latency; the parent only needs a deferred
+    // projection for navigation and recovery. Send receives the local snapshot.
+    startTransition(() => onDraftChange(value));
+  }
   function selectCommand(command: ComposerCommand): void {
     if (!command.enabled) return;
     if (command.source === 'product' && command.name === 'help') {
@@ -198,14 +204,14 @@ export function AgentComposer({
     setPaletteOpen(false);
     setHelpOpen(false);
     setComposerDraft(nextDraft);
-    onDraftChange(nextDraft);
+    publishDraft(nextDraft);
     textareaRef.current?.focus();
   }
   function clearTypedCommandDraft(invocation: string): void {
-    const value = draft.trim();
+    const value = composerDraft.trim();
     if (!value.startsWith('/') || value.includes(' ') || !invocation.startsWith(value)) return;
     setComposerDraft('');
-    onDraftChange('');
+    publishDraft('');
   }
   function changeDraft(event: ChangeEvent<HTMLTextAreaElement>): void {
     const nextDraft = event.currentTarget.value;
@@ -215,7 +221,7 @@ export function AgentComposer({
       setHelpOpen(false);
     }
     setComposerDraft(nextDraft);
-    if (!composingRef.current) onDraftChange(nextDraft);
+    if (!composingRef.current) publishDraft(nextDraft);
   }
   function startComposition(): void {
     composingRef.current = true;
@@ -224,7 +230,7 @@ export function AgentComposer({
     const nextDraft = event.currentTarget.value;
     composingRef.current = false;
     setComposerDraft(nextDraft);
-    onDraftChange(nextDraft);
+    publishDraft(nextDraft);
   }
   function keyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
     // WebKit can report isComposing=false on the Enter that commits an IME
@@ -241,7 +247,7 @@ export function AgentComposer({
         event.preventDefault();
         setPaletteOpen(false);
         setHelpOpen(false);
-        setDismissedDraft(draft);
+        setDismissedDraft(composerDraft);
         return;
       }
       if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -272,7 +278,7 @@ export function AgentComposer({
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      if (canSend) onSend(busy ? (event.altKey ? 'followUp' : busyDelivery) : 'prompt');
+      if (canSend) onSend(busy ? (event.altKey ? 'followUp' : busyDelivery) : 'prompt', composerDraft);
     }
   }
   function paste(event: ClipboardEvent<HTMLTextAreaElement>): void {
@@ -399,7 +405,7 @@ export function AgentComposer({
               className="agent-composer__send"
               label={busy ? (busyDelivery === 'steer' ? '干预当前执行' : '当前执行完成后接续') : '发送'}
               icon={<Send size={18} />}
-              onClick={() => onSend(busy ? busyDelivery : 'prompt')}
+              onClick={() => onSend(busy ? busyDelivery : 'prompt', composerDraft)}
               disabled={stopping || !canSend}
               tooltip
             />

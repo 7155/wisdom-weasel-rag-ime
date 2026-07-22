@@ -419,6 +419,21 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertFalse(completed["actApproved"])
 
+    def test_fenced_room_dispatch_is_a_work_authority_without_rewriting_the_plan(self) -> None:
+        session = self.store.create(title="Room worker", created_at_ms=100)
+        session_id = str(session["id"])
+
+        ordinary = self.store.workflow_state(session_id)
+        room = self.store.require_workspace_act(
+            session_id,
+            room_dispatch_authorized=True,
+        )
+
+        self.assertEqual(ordinary["actGate"]["reason"], "plan_required")
+        self.assertEqual(room["plan"]["status"], "draft")
+        self.assertTrue(room["actGate"]["allowed"])
+        self.assertIn("Room Dispatch", room["actGate"]["message"])
+
     def test_thread_goal_budget_pause_and_evidence_audit_control_act_gate(self) -> None:
         session = self.store.create(title="goal", created_at_ms=100)
         session_id = str(session["id"])
@@ -555,10 +570,26 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(approval["state"], "pending")
         self.assertEqual(self.store.list_approvals(session_id=session_id, now_ms=2_000), [approval])
 
+        rebound = self.store.rebind_pending_approval(
+            str(approval["approvalId"]),
+            expected_payload_sha256="a" * 64,
+            payload_sha256="f" * 64,
+            preview={
+                "summary": "关闭模糊音",
+                "baseState": {"roomInvocationReceiptId": "invoke:room:1"},
+            },
+            now_ms=1_500,
+        )
+        self.assertEqual(rebound["payloadSha256"], "f" * 64)
+        self.assertEqual(
+            rebound["preview"]["baseState"]["roomInvocationReceiptId"],
+            "invoke:room:1",
+        )
+
         decided = self.store.decide_approval(
             str(approval["approvalId"]),
             approved=True,
-            payload_sha256="a" * 64,
+            payload_sha256="f" * 64,
             decided_at_ms=2_000,
         )
         self.assertEqual(decided["state"], "approved")

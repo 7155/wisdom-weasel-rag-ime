@@ -275,12 +275,12 @@ class RoomKernelRuntimeCoordinator:
             for entry in self.context_ledger.replay_root(str(dispatch["rootId"]))
             if int(entry["generation"]) == generation
         ]
-        selected, omitted = _bounded_provider_context_entries(
+        selected, omission = _bounded_provider_context_entries(
             replay,
             current_entry_id=str(context_entry["entryId"]),
         )
-        if omitted:
-            omission_entry, _ = self.context_ledger.append_entry(
+        if omission:
+            self.context_ledger.append_entry(
                 root_id=str(dispatch["rootId"]),
                 room_id=room_id,
                 generation=generation,
@@ -290,9 +290,8 @@ class RoomKernelRuntimeCoordinator:
                 content=json.dumps(
                     {
                         "schemaVersion": "wisdom-weasel.room-context-omission.v1",
-                        "policy": "anchors-current-and-recent-public-v1",
-                        "omittedEntryCount": omitted[0],
-                        "omittedContentBytes": omitted[1],
+                        "policy": "anchors-current-deduped-recent-public-v2",
+                        **omission,
                     },
                     ensure_ascii=False,
                     sort_keys=True,
@@ -300,7 +299,6 @@ class RoomKernelRuntimeCoordinator:
                 ),
                 created_at_ms=prepared_at_ms,
             )
-            selected.insert(-1, omission_entry)
         for entry in selected:
             self.projection_journals.append_entry(
                 journal_id,
@@ -545,7 +543,7 @@ def _prompt_layers(
             "agent_template_policy",
             "template-capability-compiler",
             f"agent-template:{template.template_id}@{template.version}",
-            template.runtime_prompt,
+            template.room_runtime_prompt,
             ("tool-policy", "skill-policy"),
         ),
         PromptLayer(
@@ -623,7 +621,7 @@ def _bounded_provider_context_entries(
     entries: list[dict[str, object]],
     *,
     current_entry_id: str,
-) -> tuple[list[dict[str, object]], tuple[int, int] | None]:
+) -> tuple[list[dict[str, object]], dict[str, int] | None]:
     maximum_entries = 24
     maximum_bytes = 64 * 1024
     checkpoint_reserve = 512
@@ -646,6 +644,19 @@ def _bounded_provider_context_entries(
         raise RoomKernelFenceError(
             "current Dispatch context exceeds provider projection budget"
         )
+    original_requirement_texts = _original_requirement_texts(current)
+    deduplicated_public_entries = [
+        entry
+        for entry in entries
+        if entry.get("entryId") != current_entry_id
+        and entry.get("entryKind") == "room_post"
+        and str(entry.get("content") or "").strip()
+        in original_requirement_texts
+    ]
+    deduplicated_ids = {
+        str(entry.get("entryId") or "")
+        for entry in deduplicated_public_entries
+    }
     anchors = [
         entry
         for entry in entries
@@ -656,6 +667,7 @@ def _bounded_provider_context_entries(
         entry
         for entry in entries
         if entry.get("entryId") != current_entry_id
+        and str(entry.get("entryId") or "") not in deduplicated_ids
         and entry.get("entryKind")
         in {
             "room_post",
@@ -685,16 +697,45 @@ def _bounded_provider_context_entries(
         if entry.get("entryId") != current_entry_id
         and str(entry.get("entryId") or "") not in chosen_ids
     ]
-    omitted = None
+    omission = None
     if omitted_entries:
-        omitted = (
-            len(omitted_entries),
-            sum(
+        omission = {
+            "omittedEntryCount": len(omitted_entries),
+            "omittedContentBytes": sum(
                 len(str(entry.get("content") or "").encode("utf-8"))
                 for entry in omitted_entries
             ),
-        )
-    return [*chosen, current], omitted
+            "deduplicatedEntryCount": len(deduplicated_public_entries),
+            "deduplicatedContentBytes": sum(
+                len(str(entry.get("content") or "").encode("utf-8"))
+                for entry in deduplicated_public_entries
+            ),
+        }
+    return [*chosen, current], omission
+
+
+def _original_requirement_texts(
+    current: Mapping[str, object],
+) -> frozenset[str]:
+    try:
+        payload = json.loads(str(current.get("content") or ""))
+    except json.JSONDecodeError:
+        return frozenset()
+    if not isinstance(payload, Mapping):
+        return frozenset()
+    requirements = payload.get("requirements")
+    if not isinstance(requirements, Mapping):
+        return frozenset()
+    originals = requirements.get("original")
+    if not isinstance(originals, list):
+        return frozenset()
+    return frozenset(
+        text
+        for original in originals
+        if isinstance(original, Mapping)
+        for text in [str(original.get("text") or "").strip()]
+        if text
+    )
 
 
 

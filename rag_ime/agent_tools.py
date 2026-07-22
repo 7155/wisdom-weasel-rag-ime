@@ -13,6 +13,7 @@ from .agent_governed_memory_tools import (
     AgentRoleBookToolAdapter,
     MemoryGovernanceProposalStore,
 )
+from .agent_memory_sources import AgentMemorySourceStore
 from .agent_role_book import AgentRoleBookStore
 from .agent_tool_artifacts import AgentToolArtifactProjector
 from .agent_tool_ids import CONTROL_TOOL_IDS, DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
@@ -142,6 +143,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
             "read",
             "recent",
             "trace",
+            "capture",
             "maintenance_status",
             "curation_prepare",
             "maintenance_preview",
@@ -949,6 +951,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
         "query", "limit", "kind", "bookId", "traceId", "runId", "instruction",
         "targetId", "text", "reason", "memoryKind", "evidenceIds", "claimKey",
         "idempotencyKey", "proposalId", "draftId", "mode", "trigger",
+        "claim", "sourceId", "captureScope",
     ),
     "agent_role_book": (
         "revisionId", "draftId", "limit", "updates", "changeSummary",
@@ -989,6 +992,7 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("agent_schedule", "retry"): ("scheduleId",),
     ("ime_memory", "read"): ("bookId",),
     ("ime_memory", "trace"): ("traceId",),
+    ("ime_memory", "capture"): ("kind", "claim", "reason"),
     ("ime_memory", "curation_prepare"): ("trigger",),
     ("ime_memory", "maintenance_preview"): ("trigger",),
     ("ime_memory", "maintenance_review"): ("runId",),
@@ -1041,7 +1045,8 @@ _RUNTIME_TOOL_USAGE: dict[str, str] = {
     "ime_memory": (
         "Session 启动快照只在首轮注入一次。Timeline 不能单独证明稳定事实。"
         "无事实问题/流程噪声/失败回执/重复问句/临时指令 not_for_memory；禁止原样复制长输入。"
-        "普通 companion-present-v1 聊天禁整理；task_completion/explicit_request/idle_batch 且有事实时才调用；"
+        "普通聊天禁 curation_prepare，但跨会话仍有价值的用户陈述可静默 capture；"
+        "capture 只标记 Evidence，不创建 Atom；task_completion/explicit_request/idle_batch 且有事实时才整理；"
     ),
     "ime_browser": (
         "先用 tabs 或 snapshot 获取真实 tabId、snapshotId 与 refId。"
@@ -1342,7 +1347,7 @@ class ControlToolGateway:
                 args=args,
                 spec=spec,
                 operation=operation,
-                room_authorized=room_authorization is not None,
+                room_authorization=room_authorization,
             )
         except Exception as exc:
             self._record_failed_room_product_tool(
@@ -1352,7 +1357,19 @@ class ControlToolGateway:
             )
             raise
 
-        if room_authorization is not None:
+        pending_room_approval = (
+            room_authorization is not None
+            and isinstance(response.get("result"), Mapping)
+            and response["result"].get("approvalRequired") is True
+        )
+        if pending_room_approval:
+            invocation = room_authorization.get("invocationReceipt")
+            if not isinstance(invocation, Mapping):
+                raise ValueError(
+                    "Room product Tool authorization has no invocation receipt"
+                )
+            response["roomInvocationReceipt"] = dict(invocation)
+        elif room_authorization is not None:
             execution = self._record_room_product_tool_execution(
                 session_id=session_id,
                 authorization=room_authorization,
@@ -1374,7 +1391,7 @@ class ControlToolGateway:
         args: Mapping[str, object],
         spec: Mapping[str, object],
         operation: str,
-        room_authorized: bool,
+        room_authorization: Mapping[str, object] | None,
     ) -> dict[str, object]:
         session_id = str(session["id"])
         if not _tool_profile_allows(session, tool=tool, operation=operation, spec=spec):
@@ -1385,7 +1402,10 @@ class ControlToolGateway:
         }:
             # A preview request is still planning. Prove Act is open here, but
             # transition to executing only when an approved write is applied.
-            self.sessions.require_workspace_act(session_id)
+            self.sessions.require_workspace_act(
+                session_id,
+                room_dispatch_authorized=(room_authorization is not None),
+            )
         handlers = {
             "ime_overview": self._overview,
             "ime_input": self._input,
@@ -1432,9 +1452,12 @@ class ControlToolGateway:
                 operation=operation,
                 args=args,
                 risk_level=risk_level,
+                room_invocation_receipt_id=(
+                    _room_invocation_receipt_id(room_authorization)
+                ),
             )
             if (
-                not room_authorized
+                room_authorization is None
                 and session.get("toolProfileVersion")
                 == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
             ):
@@ -1536,6 +1559,130 @@ class ControlToolGateway:
             # Preserve the original Tool failure. A revoked binding still keeps
             # this late result from being returned on the success path.
             return
+
+    def _validate_room_product_tool_approval(
+        self,
+        *,
+        session_id: str,
+        invocation_receipt_id: str,
+        tool: str,
+    ) -> Mapping[str, object]:
+        validate = getattr(
+            self.collaboration,
+            "validate_room_product_tool_approval",
+            None,
+        )
+        if not callable(validate):
+            raise ValueError("Room approval fence owner is unavailable")
+        result = validate(
+            session_id,
+            invocation_receipt_id,
+            tool_name=tool,
+        )
+        if not isinstance(result, Mapping):
+            raise ValueError("Room approval fence returned an invalid receipt")
+        return dict(result)
+
+    def _bind_room_invocation_to_approval(
+        self,
+        prepared: Mapping[str, object],
+        *,
+        session_id: str,
+        tool: str,
+        operation: str,
+        invocation_receipt_id: str,
+    ) -> dict[str, object]:
+        if not invocation_receipt_id:
+            return dict(prepared)
+        approval = prepared.get("approval")
+        if not isinstance(approval, Mapping):
+            raise ValueError(
+                "Room approval preparation returned no approval record"
+            )
+        preview = approval.get("preview")
+        if not isinstance(preview, Mapping):
+            raise ValueError("Room approval has no hash-bound preview")
+        action_payload = preview.get("actionPayload")
+        base_state = preview.get("baseState")
+        if not isinstance(action_payload, Mapping) or not isinstance(
+            base_state, Mapping
+        ):
+            raise ValueError(
+                "Room approval preview has no action payload or base state"
+            )
+        existing_receipt_id = _bounded_text(
+            base_state.get("roomInvocationReceiptId"), maximum=240
+        )
+        if existing_receipt_id and existing_receipt_id != invocation_receipt_id:
+            raise ValueError(
+                "Room approval is already bound to another invocation"
+            )
+        rebound_base_state = {
+            **base_state,
+            "roomInvocationReceiptId": invocation_receipt_id,
+        }
+        rebound_preview = {
+            **preview,
+            "baseState": rebound_base_state,
+        }
+        payload_sha256 = _approval_payload_digest(
+            session_id=session_id,
+            tool=tool,
+            operation=operation,
+            action_payload=action_payload,
+            base_state=rebound_base_state,
+        )
+        rebound = self.sessions.rebind_pending_approval(
+            str(approval.get("approvalId") or ""),
+            expected_payload_sha256=str(
+                approval.get("payloadSha256") or ""
+            ),
+            payload_sha256=payload_sha256,
+            preview=rebound_preview,
+        )
+        return {
+            **prepared,
+            "approvalId": rebound["approvalId"],
+            "approval": rebound,
+        }
+
+    def _seal_room_approval_execution(
+        self,
+        *,
+        approval: Mapping[str, object],
+        result: Mapping[str, object],
+    ) -> dict[str, object]:
+        invocation_receipt_id = _approval_room_invocation_receipt_id(
+            approval
+        )
+        sealed = dict(result)
+        if not invocation_receipt_id:
+            return sealed
+        if sealed.get("externalActionPending") is True:
+            # The native supervisor is the execution owner from this point.
+            # Keep the Room invocation open until its final, verified receipt.
+            return sealed
+        execution = self._record_room_product_tool_execution(
+            session_id=str(approval.get("sessionId") or ""),
+            authorization={
+                "invocationReceipt": {
+                    "receiptId": invocation_receipt_id,
+                }
+            },
+            status=(
+                "applied"
+                if sealed.get("mutationApplied") is True
+                else "failed"
+            ),
+            result_hash=_sha256_json(sealed),
+        )
+        receipt = execution.get("executionReceipt")
+        if not isinstance(receipt, Mapping):
+            raise ValueError(
+                "Room approval execution returned no execution receipt"
+            )
+        sealed["roomExecutionReceipt"] = dict(receipt)
+        return sealed
 
     def _plugins(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if self.extensions is None:
@@ -1718,11 +1865,46 @@ class ControlToolGateway:
             raise ValueError("approval must be in approved state before execution")
         tool = str(approval.get("toolId") or "")
         operation = str(approval.get("operation") or "")
-        if (tool, operation) in {
+        session_id = str(approval.get("sessionId") or "")
+        room_invocation_receipt_id = _approval_room_invocation_receipt_id(
+            approval
+        )
+        if room_invocation_receipt_id:
+            self._validate_room_product_tool_approval(
+                session_id=session_id,
+                invocation_receipt_id=room_invocation_receipt_id,
+                tool=tool,
+            )
+        elif (tool, operation) in {
             ("workspace_patch", "apply"),
             ("workspace_shell", "run"),
         }:
-            self.sessions.require_workspace_act(str(approval.get("sessionId") or ""))
+            self.sessions.require_workspace_act(session_id)
+        try:
+            result = self._apply_approved_operation(approval)
+        except Exception as exc:
+            if room_invocation_receipt_id:
+                self._record_failed_room_product_tool(
+                    session_id=session_id,
+                    authorization={
+                        "invocationReceipt": {
+                            "receiptId": room_invocation_receipt_id,
+                        }
+                    },
+                    error=exc,
+                )
+            raise
+        return self._seal_room_approval_execution(
+            approval=approval,
+            result=result,
+        )
+
+    def _apply_approved_operation(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        tool = str(approval.get("toolId") or "")
+        operation = str(approval.get("operation") or "")
         if (tool, operation) == ("workspace_shell", "run"):
             result = self._apply_workspace_command(approval)
             if (
@@ -2009,6 +2191,31 @@ class ControlToolGateway:
         }
 
     def _prepare_approval(
+        self,
+        *,
+        session_id: str,
+        tool: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+        room_invocation_receipt_id: str = "",
+    ) -> dict[str, object]:
+        prepared = self._prepare_approval_operation(
+            session_id=session_id,
+            tool=tool,
+            operation=operation,
+            args=args,
+            risk_level=risk_level,
+        )
+        return self._bind_room_invocation_to_approval(
+            prepared,
+            session_id=session_id,
+            tool=tool,
+            operation=operation,
+            invocation_receipt_id=room_invocation_receipt_id,
+        )
+
+    def _prepare_approval_operation(
         self,
         *,
         session_id: str,
@@ -4895,6 +5102,30 @@ class ControlToolGateway:
 
     def _memory(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+        if operation == "capture":
+            capture = AgentMemorySourceStore(
+                self.sessions.db_path,
+                project=self.project,
+            ).capture_hint(
+                session_id=session_id,
+                kind=_bounded_text(args.get("kind"), maximum=40),
+                claim=_bounded_text(args.get("claim"), maximum=800),
+                scope=_bounded_text(args.get("captureScope"), maximum=24)
+                or "project",
+                reason=_bounded_text(args.get("reason"), maximum=500),
+                source_id=_bounded_text(args.get("sourceId"), maximum=240),
+                evidence_ids=[
+                    _bounded_text(value, maximum=240)
+                    for value in args.get("evidenceIds") or []
+                    if _bounded_text(value, maximum=240)
+                ]
+                if isinstance(args.get("evidenceIds"), (list, tuple))
+                else [],
+            )
+            return {
+                "summary": "已标记一条待后台整理的记忆候选，不创建正式 Atom",
+                **capture,
+            }
         visible_owners, mutable_owner = self._memory_owner_context(session_id)
         curation_owner = _personal_memory_curation_owner(
             visible_owners,
@@ -4980,16 +5211,23 @@ class ControlToolGateway:
             )
             if payload.get("ok") is not True:
                 raise ValueError(_memory_curation_error(payload))
+            source = payload.get("source") if isinstance(payload.get("source"), Mapping) else {}
+            pending_count = _safe_int(source.get("pendingSourceCount"))
+            needs_review_count = _safe_int(source.get("needsReviewSourceCount"))
+            batch_count = _safe_int(source.get("batchCount"))
+            drain_limited = source.get("drainLimited") is True
             stored = payload.get("storedRun") if isinstance(payload.get("storedRun"), Mapping) else {}
             run_id = _bounded_text(stored.get("runId"), maximum=240)
             if not run_id:
-                source = payload.get("source") if isinstance(payload.get("source"), Mapping) else {}
-                pending_count = _safe_int(source.get("pendingSourceCount"))
                 return {
                     "summary": (
                         "当前没有新增个人记忆证据需要整理"
                         if pending_count <= 0
-                        else "本轮个人记忆证据没有形成可写入的长期记忆变更"
+                        else (
+                            f"仍有 {needs_review_count} 条个人记忆证据需要人工确认"
+                            if needs_review_count > 0
+                            else f"仍有 {pending_count} 条个人记忆证据等待后续整理"
+                        )
                     ),
                     "runId": "",
                     "counts": {},
@@ -5000,6 +5238,10 @@ class ControlToolGateway:
                     "reusedDraft": payload.get("reusedDraft") is True,
                     "skipped": True,
                     "reason": _memory_curation_skip_reason(payload),
+                    "pendingSourceCount": pending_count,
+                    "needsReviewSourceCount": needs_review_count,
+                    "batchCount": batch_count,
+                    "drainLimited": drain_limited,
                 }
             review = self._facade_call(
                 "agent_memory_maintenance_run",
@@ -5017,12 +5259,38 @@ class ControlToolGateway:
             needs_review = receipt["status"] == "draft" and diff_count > 0
             return {
                 "summary": (
-                    f"已复用现有记忆草案，共 {diff_count} 项差异"
+                    (
+                        f"已复用现有记忆草案，共 {diff_count} 项差异"
+                        + (
+                            f"；另有 {pending_count} 条证据留待下一轮整理"
+                            if pending_count > 0
+                            else ""
+                        )
+                    )
                     if reused
                     else (
-                        f"已生成记忆草案，共 {diff_count} 项差异"
+                        (
+                            f"已生成记忆草案，共 {diff_count} 项差异"
+                            + (
+                                f"；另有 {pending_count} 条证据留待下一轮整理"
+                                if pending_count > 0
+                                else ""
+                            )
+                        )
                         if needs_review
-                        else "本轮证据已完成整理，没有需要写入的变更"
+                        else (
+                            (
+                                f"已整理 {max(batch_count, 1)} 批证据，有 "
+                                f"{needs_review_count} 条需要人工确认"
+                            )
+                            if needs_review_count > 0
+                            else (
+                                f"已整理 {max(batch_count, 1)} 批证据，仍有 "
+                                f"{pending_count} 条等待后续整理"
+                                if pending_count > 0
+                                else "全部新增证据已完成整理，没有需要写入的变更"
+                            )
+                        )
                     )
                 ),
                 "runId": receipt["runId"],
@@ -5034,6 +5302,10 @@ class ControlToolGateway:
                 "reviewRequired": needs_review,
                 "storedDraft": needs_review,
                 "reusedDraft": reused,
+                "pendingSourceCount": pending_count,
+                "needsReviewSourceCount": needs_review_count,
+                "batchCount": batch_count,
+                "drainLimited": drain_limited,
                 # The Memory page fetches full diffs out of band. Returning the
                 # whole draft here would feed dozens of database operations
                 # back into the main Agent transcript for no useful reason.
@@ -5957,6 +6229,32 @@ def _sha256_json(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _room_invocation_receipt_id(
+    authorization: Mapping[str, object] | None,
+) -> str:
+    if not isinstance(authorization, Mapping):
+        return ""
+    invocation = authorization.get("invocationReceipt")
+    if not isinstance(invocation, Mapping):
+        return ""
+    return _bounded_text(invocation.get("receiptId"), maximum=240)
+
+
+def _approval_room_invocation_receipt_id(
+    approval: Mapping[str, object],
+) -> str:
+    preview = approval.get("preview")
+    if not isinstance(preview, Mapping):
+        return ""
+    base_state = preview.get("baseState")
+    if not isinstance(base_state, Mapping):
+        return ""
+    return _bounded_text(
+        base_state.get("roomInvocationReceiptId"),
+        maximum=240,
+    )
+
+
 def _approval_payload_digest(
     *,
     session_id: str,
@@ -6187,6 +6485,12 @@ def _runtime_memory_tool_parameter_schema(
             },
             "scope": {"type": "string", "enum": ["incremental", "global"]},
             "policy": {"type": "string", "enum": ["conservative"]},
+            "claim": {"type": "string", "minLength": 1, "maxLength": 800},
+            "sourceId": {"type": "string", "maxLength": 240},
+            "captureScope": {
+                "type": "string",
+                "enum": ["user", "project"],
+            },
         }
     )
     branches: list[dict[str, object]] = []
@@ -6209,6 +6513,24 @@ def _runtime_memory_tool_parameter_schema(
             branch["anyOf"] = [
                 {"required": list(alternative)} for alternative in alternatives
             ]
+        if operation == "capture":
+            branch["properties"] = {
+                "op": {"const": operation},
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "preference",
+                        "fact",
+                        "decision",
+                        "correction",
+                        "pitfall",
+                    ],
+                },
+                "captureScope": {
+                    "type": "string",
+                    "enum": ["user", "project"],
+                },
+            }
         branches.append(branch)
     return {
         "type": "object",

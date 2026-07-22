@@ -279,7 +279,7 @@ def _compaction_evidence(room_context: str, session_context: str) -> dict[str, o
         "roomProviderEntryHash": _sha256(f"room_context\0{room}"),
         "sessionContextSha256": _sha256(session),
         "sessionProviderEntryHash": _sha256(f"session_memory\0{session}"),
-        "recoverySchemaVersion": str(packet.get("schemaVersion") or ""),
+        "recoverySchemaVersion": "wisdom-weasel.room-compaction-recovery.v2",
         "originalRequirementCount": len(packet.get("originalRequirements") or []),
         "currentTaskPresent": bool(packet.get("currentTask")),
         "acceptanceCount": len(packet.get("acceptance") or []),

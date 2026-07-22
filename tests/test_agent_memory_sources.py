@@ -84,6 +84,82 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM input_events").fetchone()[0], 0)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM agent_memory_sources").fetchone()[0], 0)
 
+    def test_memory_workflow_instruction_never_creates_source_events(self) -> None:
+        result = self.store.checkpoint_user_message(
+            session_id=str(self.session["id"]),
+            pi_entry_id="pi-entry:memory-workflow",
+            turn_id="turn:memory-workflow",
+            text=(
+                "请调用 ime_memory Tool 的 curation_prepare 操作，"
+                "只生成可审阅草案并返回 runId。"
+            ),
+        )
+
+        self.assertEqual(
+            result["status"],
+            "skipped_memory_workflow_instruction",
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM input_events").fetchone()[0],
+                0,
+            )
+            self.assertEqual(
+                conn.execute(
+                    "SELECT COUNT(*) FROM agent_memory_sources"
+                ).fetchone()[0],
+                0,
+            )
+
+    def test_capture_hint_binds_current_user_source_without_creating_an_atom(self) -> None:
+        source = self.store.checkpoint_user_message(
+            session_id=str(self.session["id"]),
+            pi_entry_id="pi-entry:capture",
+            turn_id="turn:capture",
+            text="以后默认给我聚合报告，不要输出原始隐私文本。",
+            created_at_ms=300,
+        )["source"]
+
+        result = self.store.capture_hint(
+            session_id=str(self.session["id"]),
+            kind="preference",
+            claim="用户偏好只查看聚合报告。",
+            scope="user",
+            reason="这会改变未来报告的默认输出方式。",
+            created_at_ms=301,
+        )
+
+        self.assertTrue(result["captured"])
+        self.assertFalse(result["createsAtom"])
+        self.assertFalse(result["requiresApproval"])
+        self.assertEqual(result["sourceId"], source["sourceId"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM memory_capture_hints").fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0],
+                0,
+            )
+
+    def test_capture_hint_rejects_workflow_prompt(self) -> None:
+        self.store.checkpoint_user_message(
+            session_id=str(self.session["id"]),
+            pi_entry_id="pi-entry:capture-noise",
+            turn_id="turn:capture-noise",
+            text="以后保留稳定偏好。",
+        )
+
+        with self.assertRaisesRegex(ValueError, "workflow noise"):
+            self.store.capture_hint(
+                session_id=str(self.session["id"]),
+                kind="fact",
+                claim="请调用 ime_memory curation_prepare 并返回 runId。",
+                scope="project",
+                reason="准备记忆流程。",
+            )
+
     def test_transient_subagent_input_and_compaction_never_become_role_memory(self) -> None:
         child = self.sessions.create(
             title="临时研究子 Agent",

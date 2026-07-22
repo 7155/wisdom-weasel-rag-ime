@@ -17,6 +17,7 @@ from .knowledge_scope import KnowledgeCallerContext, scope_sql_predicate
 from .memory_ingest import normalize_text
 from .memory_ownership import resolve_visible_memory_owners, sql_memory_owner_predicate
 from .memory_projectors import ImeMemoryProjector
+from .memory_projection_consistency import authoritative_retrieval_doc
 from .query_expansion import build_query_expansion
 from .retrieval_vector_index import load_retrieval_doc_vectors
 from .text_utils import compact_whitespace, token_terms
@@ -484,7 +485,7 @@ def _active_docs(
                query_expansions_text, time_key, project, app, owner_kind, owner_id,
                knowledge_domain, scope_kind, scope_id, visibility,
                authorization_revision, binding_id, scope_mode,
-               updated_at_ms, metadata_json
+               source_revision, projection_version, updated_at_ms, metadata_json
         FROM memory_retrieval_docs
         WHERE status = 'active'
           AND doc_type != 'item'
@@ -533,6 +534,16 @@ def _active_docs(
         now=resolved_now,
     )
     for row, metadata in parsed_rows:
+        if not authoritative_retrieval_doc(
+            conn,
+            {
+                "doc_type": row["doc_type"],
+                "source_id": row["source_id"],
+                "source_revision": row["source_revision"],
+                "projection_version": row["projection_version"],
+            },
+        ):
+            continue
         source_event_ids = _metadata_source_event_ids(metadata)
         if source_event_ids and not set(source_event_ids).issubset(
             governed_visible_event_ids
@@ -593,6 +604,8 @@ def _active_docs(
             "app": str(row["app"] or ""),
             "owner_kind": str(row["owner_kind"] or ""),
             "owner_id": str(row["owner_id"] or ""),
+            "source_revision": int(row["source_revision"] or 1),
+            "projection_version": int(row["projection_version"] or 1),
             "updated_at_ms": int(row["updated_at_ms"] or 0),
             "metadata": metadata,
         })

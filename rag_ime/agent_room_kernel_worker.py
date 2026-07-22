@@ -42,6 +42,10 @@ class RoomKernelWorker:
         | None = None,
         accept_runtime_context: Callable[[Mapping[str, object]], object] | None = None,
         revoke_session: Callable[[str, int], object] | None = None,
+        invalidate_room_approvals: Callable[
+            [str, str, str, int], Mapping[str, object]
+        ]
+        | None = None,
         learning_observer: Callable[[Mapping[str, object]], object] | None = None,
         clock_ms: Callable[[], int] | None = None,
     ) -> None:
@@ -52,6 +56,7 @@ class RoomKernelWorker:
         self.prepare_memory_context = prepare_memory_context
         self.accept_runtime_context = accept_runtime_context
         self.revoke_session = revoke_session
+        self.invalidate_room_approvals = invalidate_room_approvals
         self.learning_observer = learning_observer
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
 
@@ -140,7 +145,25 @@ class RoomKernelWorker:
             try:
                 if self.revoke_session is not None:
                     self.revoke_session(str(intent["sessionId"]), self.clock_ms())
-                runtime_receipt = self.runtime.cancel_room(session_id=str(intent["sessionId"]), root_id=str(intent["rootId"]), generation=int(intent["generation"]))
+                approval_cancellation: Mapping[str, object] | None = None
+                if self.invalidate_room_approvals is not None:
+                    approval_cancellation = self.invalidate_room_approvals(
+                        str(intent["sessionId"]),
+                        str(intent["rootId"]),
+                        str(intent["dispatchId"]),
+                        self.clock_ms(),
+                    )
+                runtime_receipt = dict(
+                    self.runtime.cancel_room(
+                        session_id=str(intent["sessionId"]),
+                        root_id=str(intent["rootId"]),
+                        generation=int(intent["generation"]),
+                    )
+                )
+                if approval_cancellation is not None:
+                    runtime_receipt["approvalCancellation"] = dict(
+                        approval_cancellation
+                    )
                 self.store.complete_cancel(str(intent["cancelId"]), runtime_receipt, now_ms=self.clock_ms())
                 receipts.append(dict(runtime_receipt))
             except Exception as exc:

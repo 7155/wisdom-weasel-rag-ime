@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "58c7070348db40e0bf2442a66a1afe341a615e70",
+  "minimumHandlersCommit": "828ae7fa7e8353cb1b323ecb7187a10d536c9f63",
   "requiredMethods": [
     "room.dispatch",
     "room.cancel"
@@ -21,6 +21,9 @@
     "sessionContextRefresh": "packages/rag-ime-runtime-host/src/session-context-refresh.ts",
     "cancellationReceipts": "packages/rag-ime-runtime-host/src/cancellation-receipts.ts",
     "roomSettleLifecycle": "packages/rag-ime-runtime-host/src/room-settle-lifecycle.ts",
+    "workflowControl": "packages/rag-ime-runtime-host/src/workflow-control.ts",
+    "lifecycleHooks": "packages/rag-ime-runtime-host/src/lifecycle-hooks.ts",
+    "deterministicTestAdapter": "packages/rag-ime-runtime-host/src/deterministic-test-adapter.ts",
     "session": "packages/rag-ime-runtime-host/src/pi-session.ts"
   },
   "requiredSourceMarkers": {
@@ -32,13 +35,17 @@
       "roomSkillLoad: opened.session.roomSkillLoadReceipt()"
     ],
     "providerContextHook": ["before_provider_request"],
-    "contextInspection": ["pi.on(\"before_provider_request\""],
+    "contextInspection": [
+      "pi.on(\"before_provider_request\"",
+      "return record ? structuredClone(record) : undefined;",
+      "normalizeDebugContextRecord(parsed, this.maxCallsPerTurn)"
+    ],
     "skills": [
       "input: routing?.input",
-      "Each JSON line contains only name, when[], notFor[], input, output, and does."
+      "Cards contain name, when, notFor, input, output, and does; load only on a positive match."
     ],
     "discoveryTools": [
-      "Use tool_load before calling a tool",
+      "Use tool_search for detail and tool_load for one schema.",
       "tool: backendToolRouteEntry(loaded.tool)"
     ],
     "toolBridge": [
@@ -61,6 +68,8 @@
     ],
     "sessionContextRefresh": [
       "Managed Room compaction is missing compactionEntryId",
+      "rag-ime.managed-room-compaction-pointer.v1",
+      "session_before_compact",
       "roomRecoveryContext",
       "expectedContextEpoch"
     ],
@@ -73,10 +82,23 @@
       "origin: \"room_settle_guard\"",
       "maxAttempts: 1"
     ],
+    "workflowControl": [
+      "const showPlan = Boolean(planStatus) && (planStatus !== \"draft\" || planItems.length > 0);",
+      "<rag-ime-context type=\"workflow_control\">"
+    ],
+    "lifecycleHooks": [
+      "const isManagedRoom = (): boolean => options.isManagedRoom?.() === true;",
+      "contextOwner: \"room_context_epoch\""
+    ],
+    "deterministicTestAdapter": [
+      "export function projectTaskCanaryResponse",
+      "PROJECT_TASK_SCENARIO = \"project-task\""
+    ],
     "session": [
       "SKILL_REVISION_MISMATCH",
       "loadReason: \"stage_required\"",
-      "requiredRoomSkill(options.roomSkillPolicy)"
+      "requiredRoomSkill(options.roomSkillPolicy)",
+      "RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS"
     ]
   }
 }

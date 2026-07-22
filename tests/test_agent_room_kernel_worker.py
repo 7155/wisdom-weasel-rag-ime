@@ -246,6 +246,85 @@ class RoomKernelWorkerTests(unittest.TestCase):
         )
         self.assertEqual({item["state"] for item in surfaces}, {"requested"})
 
+    def test_cancel_closes_approvals_before_runtime_and_replays_evidence_on_retry(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:approval-retry", key="worker:approval-retry"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime(fail_cancel=True)
+        invalidations: list[tuple[str, str, str, int]] = []
+
+        def invalidate(session_id: str, root_id: str, dispatch_id: str, now_ms: int):
+            invalidations.append((session_id, root_id, dispatch_id, now_ms))
+            return {
+                "schemaVersion": "rag-ime.room-approval-cancellation-summary.v1",
+                "sessionId": session_id,
+                "rootId": root_id,
+                "dispatchId": dispatch_id,
+                "state": "terminated",
+                "cancelledApprovalIds": ["approval:bound"],
+                "createdAtMs": now_ms,
+            }
+
+        worker = RoomKernelWorker(
+            self.store,
+            runtime,
+            invalidate_room_approvals=invalidate,
+            clock_ms=self.clock,
+        )
+        worker.run_once()
+
+        result = worker.cancel_root("root:1")
+
+        self.assertEqual(result["runtimeReceipts"], [])
+        self.assertEqual(
+            invalidations,
+            [
+                (
+                    "session:participant:a",
+                    "root:1",
+                    "dispatch:approval-retry",
+                    10,
+                )
+            ],
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "cancelling")
+
+        runtime.fail_cancel = False
+        self.now_ms = 2_010
+        receipts = worker.drain_cancel_outbox()
+
+        self.assertEqual(
+            receipts[0]["approvalCancellation"]["cancelledApprovalIds"],
+            ["approval:bound"],
+        )
+        self.assertEqual(len(invalidations), 2)
+        self.assertEqual(self.store.root("root:1")["state"], "cancelled")
+
+    def test_approval_invalidation_failure_blocks_runtime_cancel_ack(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:approval-failure", key="worker:approval-failure"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime()
+
+        def invalidate(*_args):
+            raise RuntimeError("approval store unavailable")
+
+        worker = RoomKernelWorker(
+            self.store,
+            runtime,
+            invalidate_room_approvals=invalidate,
+            clock_ms=self.clock,
+        )
+        worker.run_once()
+
+        result = worker.cancel_root("root:1")
+
+        self.assertEqual(result["runtimeReceipts"], [])
+        self.assertEqual(runtime.cancellations, [])
+        self.assertEqual(self.store.root("root:1")["state"], "cancelling")
+
     def test_unknown_surface_proof_is_visible_in_terminal_outcome(self) -> None:
         self.store.enqueue_dispatch(dispatch("dispatch:unknown", key="worker:unknown"), now_ms=3)
         runtime = FakeRoomRuntime(surface_state="unknown")

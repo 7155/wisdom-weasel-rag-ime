@@ -264,6 +264,31 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertIn("- **偏好**: 解释先给结论。", rendered)
         self.assertNotIn("- **2026-07-18 活动时间线**", rendered)
 
+    def test_session_memory_does_not_repeat_book_title_in_its_body(self) -> None:
+        rendered = render_context_items(
+            [
+                {
+                    "sourceKind": "memory_bootstrap",
+                    "payload": {
+                        "schemaVersion": "rag-ime.session-memory-recall.v1",
+                        "retrieval": {"temporalIntent": False},
+                        "items": [
+                            {
+                                "sourceId": "book:delivery",
+                                "sourceType": "memory_book",
+                                "title": "代码任务交付偏好",
+                                "text": "代码任务交付偏好 先读测试，再做最小改动。",
+                            }
+                        ],
+                    },
+                }
+            ]
+        )
+
+        self.assertIn("#### 代码任务交付偏好", rendered)
+        self.assertIn("先读测试，再做最小改动。", rendered)
+        self.assertEqual(rendered.count("代码任务交付偏好"), 1)
+
     def test_maintenance_bounds_terminal_payloads_and_trace_history(self) -> None:
         item = self.runtime.enqueue(
             session_id=self.session_id,

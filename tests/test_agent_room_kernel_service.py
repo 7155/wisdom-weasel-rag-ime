@@ -510,7 +510,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         )["providerContext"]
         for expected in (original, objective, criterion, blocker):
             self.assertIn(expected, room_context)
-        self.assertIn('"continuation"', room_context)
+        self.assertNotIn('"continuation"', room_context)
         initial_recovery = self.service._runtime_session_context(
             self.service.sessions.get(self.session_id)
         )["roomRecoveryContext"]
@@ -892,10 +892,109 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertLessEqual(len(projection["projectionBytes"]), 64 * 1024)
         self.assertIn("Execute a bounded service test.", provider_text)
         self.assertIn("requirement:service", provider_text)
-        self.assertIn("wisdom-weasel.room-context-omission.v1", provider_text)
+        self.assertNotIn("wisdom-weasel.room-context-omission.v1", provider_text)
         self.assertIn("表格：历史矩阵，1 行 1 列", provider_text)
         self.assertNotIn("raw-history-secret-7ab2", provider_text)
         self.assertNotIn('"rows"', provider_text)
+        omission_audits = [
+            json.loads(str(entry["content"]))
+            for entry in self.service.room_context_ledger.replay_root("root:service")
+            if entry["entryKind"] == "recovery_packet"
+            and "room-context-omission" in str(entry["content"])
+        ]
+        self.assertEqual(len(omission_audits), 1)
+        self.assertGreater(omission_audits[0]["omittedEntryCount"], 0)
+
+    def test_provider_projection_keeps_original_once_and_audits_duplicate_post(self) -> None:
+        original = "同一条用户原始要求在 Provider 上下文中只出现一次。"
+        self.service.room_requirements.append_anchor(
+            anchor_id="requirement-anchor:service",
+            root_id="root:service",
+            original_content=original,
+            created_by="user:local",
+            provenance={"roomEventId": "event:dedupe"},
+            created_at_ms=10,
+        )
+        self.service.room_requirements.revise_catalog(
+            catalog_revision_id="catalog:dedupe",
+            root_id="root:service",
+            expected_current_revision=0,
+            anchor_refs=("requirement-anchor:service",),
+            items=(
+                {
+                    "itemId": "requirement:service",
+                    "kind": "explicit_user_requirement",
+                    "statement": original,
+                    "origin": "derived_catalog",
+                    "state": "active",
+                    "sourceSpans": [
+                        {
+                            "anchorId": "requirement-anchor:service",
+                            "startByte": 0,
+                            "endByte": len(original.encode("utf-8")),
+                        }
+                    ],
+                    "supersedes": [],
+                    "ambiguity": "",
+                    "confirmation": "user-confirmed",
+                },
+            ),
+            acceptance_criteria=(
+                {
+                    "criterionId": "criterion:dedupe",
+                    "itemId": "requirement:service",
+                    "acceptanceCriterionFullNameZh": "上下文去重验收条件",
+                    "criterionKind": "requirement",
+                    "expectedReceiptTypes": ["test"],
+                    "statement": "原文只投影一次",
+                },
+            ),
+            change_reason="建立可修订需求目录",
+            provenance={"derivedFrom": ["requirement-anchor:service"]},
+            created_by="agent:requirements",
+            created_at_ms=11,
+        )
+        self.service.room_context_ledger.publish_post(
+            {
+                "schemaVersion": "wisdom-weasel.room-post.v2",
+                "postId": "post:dedupe",
+                "roomId": self.room_id,
+                "rootId": "root:service",
+                "generation": 0,
+                "taskId": "task:service",
+                "dispatchId": "dispatch:dedupe",
+                "authorActorRef": "user:local",
+                "kind": "message",
+                "visibility": "room",
+                "content": original,
+                "idempotencyKey": "post:dedupe",
+                "publicationSource": {"kind": "user", "ref": "user:local"},
+                "createdAtMs": 12,
+            }
+        )
+        self.service.room_kernel.enqueue_dispatch(
+            self._dispatch("dispatch:dedupe"),
+            now_ms=13,
+        )
+
+        self.service.room_kernel_worker.run_once()
+
+        projection = self.service.room_projection_journals.projection(
+            "room-journal:dispatch:dedupe",
+            expected_generation=0,
+        )
+        provider_text = projection["projectionBytes"].decode("utf-8")
+        self.assertEqual(provider_text.count(original), 1)
+        self.assertIn('"statementSource":"original[0]"', provider_text)
+        self.assertNotIn('<room-fact kind="room_post">' + original, provider_text)
+        audits = [
+            json.loads(str(entry["content"]))
+            for entry in self.service.room_context_ledger.replay_root("root:service")
+            if entry["entryKind"] == "recovery_packet"
+            and "room-context-omission" in str(entry["content"])
+        ]
+        self.assertEqual(audits[-1]["deduplicatedEntryCount"], 1)
+        self.assertGreater(audits[-1]["deduplicatedContentBytes"], 0)
 
     def test_command_requires_server_authorization_and_current_room_generation(self) -> None:
         with self.assertRaises(PermissionError):
@@ -1531,6 +1630,287 @@ class RoomKernelServiceTests(unittest.TestCase):
             execution,
         )
 
+    def test_room_dispatch_can_prepare_and_apply_a_native_approved_workspace_patch(self) -> None:
+        target = self.root / "room-approved-patch.txt"
+        target.write_text("before\n", encoding="utf-8")
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=SimpleNamespace(),
+            core=SimpleNamespace(),
+            project="wisdom-weasel-rag-ime",
+            collaboration=self.service,
+        )
+        self.service.bind_tool_manifest_provider(gateway.runtime_manifests)
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:room-workspace-patch",
+                "toolName": "workspace_patch",
+                "createdAtMs": 5,
+            }
+        )["result"]
+
+        workflow = self.service.workflow_state(self.session_id)
+        prepared = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": self.session_id,
+                "tool": "workspace_patch",
+                "toolCallId": "tool:room-workspace-patch",
+                "loadReceiptId": loaded["receiptId"],
+                "args": {
+                    "op": "apply",
+                    "path": str(target),
+                    "oldText": "before",
+                    "newText": "after",
+                    "expectedOccurrences": 1,
+                },
+            }
+        )
+
+        self.assertTrue(workflow["actGate"]["allowed"])
+        self.assertEqual(workflow["plan"]["status"], "draft")
+        self.assertTrue(prepared["result"]["approvalRequired"])
+        self.assertIn("roomInvocationReceipt", prepared)
+        self.assertNotIn("roomExecutionReceipt", prepared)
+        approval = prepared["result"]["approval"]
+        decided = self.service.sessions.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = gateway.apply_approval(decided)
+
+        self.assertEqual(target.read_text(encoding="utf-8"), "after\n")
+        self.assertEqual(receipt["replacementCount"], 1)
+        self.assertEqual(
+            receipt["roomExecutionReceipt"]["status"],
+            "applied",
+        )
+
+    def test_room_dispatch_exposes_the_complete_normal_agent_tool_surface(self) -> None:
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=SimpleNamespace(),
+            core=SimpleNamespace(),
+            project="wisdom-weasel-rag-ime",
+            collaboration=self.service,
+        )
+        self.service.bind_tool_manifest_provider(gateway.runtime_manifests)
+        session = self.service.sessions.get(self.session_id)
+        normal_agent_tools = {
+            str(item["name"])
+            for item in gateway.runtime_manifests(session)
+        }
+
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        bound = self.service.room_capabilities.manifest_for_runtime(
+            self.session_id
+        )
+        self.assertIsNotNone(bound)
+        manifest, _binding = bound
+        product_tools = {
+            str(item["name"])
+            for item in manifest["tools"]
+            if str(item.get("operation") or "").startswith("product.")
+            and item.get("authorized") is True
+        }
+
+        self.assertEqual(product_tools, normal_agent_tools)
+        self.assertTrue(
+            {
+                "workspace_read",
+                "workspace_search",
+                "workspace_patch",
+                "workspace_shell",
+                "ime_memory",
+                "ime_browser",
+                "desktop_semantic",
+            }.issubset(product_tools)
+        )
+
+    def test_rejected_room_tool_approval_seals_a_rejected_execution_receipt(self) -> None:
+        target = self.root / "room-rejected-patch.txt"
+        target.write_text("before\n", encoding="utf-8")
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=SimpleNamespace(),
+            core=SimpleNamespace(),
+            project="wisdom-weasel-rag-ime",
+            collaboration=self.service,
+        )
+        self.service.bind_tool_manifest_provider(gateway.runtime_manifests)
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:rejected-room-workspace-patch",
+                "toolName": "workspace_patch",
+                "createdAtMs": 5,
+            }
+        )["result"]
+        prepared = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": self.session_id,
+                "tool": "workspace_patch",
+                "toolCallId": "tool:rejected-room-workspace-patch",
+                "loadReceiptId": loaded["receiptId"],
+                "args": {
+                    "op": "apply",
+                    "path": str(target),
+                    "oldText": "before",
+                    "newText": "rejected",
+                    "expectedOccurrences": 1,
+                },
+            }
+        )
+        invocation_receipt_id = str(
+            prepared["roomInvocationReceipt"]["receiptId"]
+        )
+        approval = prepared["result"]["approval"]
+        rejected = self.service.sessions.decide_approval(
+            str(approval["approvalId"]),
+            approved=False,
+            payload_sha256=str(approval["payloadSha256"]),
+        )
+
+        decision = self.service.approval_application.finish_decision(
+            rejected,
+            pending_in_pi=False,
+        )
+        execution = self.service.room_capabilities.execution_receipt(
+            invocation_receipt_id
+        )
+
+        self.assertEqual(decision["approval"]["state"], "rejected")
+        self.assertEqual(decision["runtimeWarning"], "")
+        self.assertEqual(execution["status"], "rejected")
+        self.assertEqual(target.read_text(encoding="utf-8"), "before\n")
+
+    def test_cancelled_room_dispatch_rejects_a_late_approved_workspace_patch(self) -> None:
+        target = self.root / "room-cancelled-patch.txt"
+        target.write_text("before\n", encoding="utf-8")
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=SimpleNamespace(),
+            core=SimpleNamespace(),
+            project="wisdom-weasel-rag-ime",
+            collaboration=self.service,
+        )
+        self.service.bind_tool_manifest_provider(gateway.runtime_manifests)
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:cancelled-room-workspace-patch",
+                "toolName": "workspace_patch",
+                "createdAtMs": 5,
+            }
+        )["result"]
+        prepared = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": self.session_id,
+                "tool": "workspace_patch",
+                "toolCallId": "tool:cancelled-room-workspace-patch",
+                "loadReceiptId": loaded["receiptId"],
+                "args": {
+                    "op": "apply",
+                    "path": str(target),
+                    "oldText": "before",
+                    "newText": "late",
+                    "expectedOccurrences": 1,
+                },
+            }
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.service.sessions.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        self.service.apply_room_kernel_command(
+            self.room_id,
+            self._cancel_command(),
+            caller_authorized=True,
+        )
+
+        with self.assertRaises(RoomKernelFenceError):
+            gateway.apply_approval(decided)
+        self.assertEqual(target.read_text(encoding="utf-8"), "before\n")
+
+    def test_cancelled_room_dispatch_invalidates_its_pending_workspace_approval(self) -> None:
+        target = self.root / "room-pending-cancelled-patch.txt"
+        target.write_text("before\n", encoding="utf-8")
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=SimpleNamespace(),
+            core=SimpleNamespace(),
+            project="wisdom-weasel-rag-ime",
+            collaboration=self.service,
+        )
+        self.service.bind_tool_manifest_provider(gateway.runtime_manifests)
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:pending-cancelled-room-workspace-patch",
+                "toolName": "workspace_patch",
+                "createdAtMs": 5,
+            }
+        )["result"]
+        prepared = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": self.session_id,
+                "tool": "workspace_patch",
+                "toolCallId": "tool:pending-cancelled-room-workspace-patch",
+                "loadReceiptId": loaded["receiptId"],
+                "args": {
+                    "op": "apply",
+                    "path": str(target),
+                    "oldText": "before",
+                    "newText": "late",
+                    "expectedOccurrences": 1,
+                },
+            }
+        )["result"]
+        approval = prepared["approval"]
+
+        cancelled = self.service.room_kernel_application.cancel_root(
+            self.room_id,
+            "root:service",
+        )
+        stale = self.service.sessions.get_approval(approval["approvalId"])
+
+        self.assertEqual(cancelled["status"], "terminated")
+        self.assertEqual(stale["state"], "stale")
+        self.assertEqual(stale["receipt"]["reason"], "room_root_cancelled")
+        self.assertFalse(stale["receipt"]["mutationApplied"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "before\n")
+        runtime_receipt = cancelled["sessionReceipts"][0]
+        self.assertEqual(
+            runtime_receipt["approvalCancellation"]["cancelledApprovalIds"],
+            [approval["approvalId"]],
+        )
+        replayed = self.service.sessions.invalidate_room_approvals(
+            self.session_id,
+            "root:service",
+            "dispatch:service",
+            100,
+        )
+        self.assertEqual(
+            replayed["cancelledApprovalIds"],
+            [approval["approvalId"]],
+        )
+
     def test_room_commit_receipt_is_an_explicit_model_turn_boundary(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
         self.service.room_kernel_worker.run_once()
@@ -1939,18 +2319,24 @@ class RoomKernelServiceTests(unittest.TestCase):
         room_recovery = json.loads(
             opened["params"]["roomRecoveryContext"]
         )
-        self.assertEqual(
-            room_recovery["schemaVersion"],
-            "wisdom-weasel.room-compaction-recovery.v1",
-        )
+        self.assertNotIn("schemaVersion", room_recovery)
         self.assertEqual(
             room_recovery["currentTask"]["objective"],
             "Execute a bounded service test.",
         )
         self.assertIn("Session 记忆", session_context)
         self.assertNotIn('"objective":"Execute a bounded service test."', session_context)
-        self.assertIn('"objective":"Execute a bounded service test."', room_context)
-        for internal_label in ('"dispatchId"', '"taskId"', '"rootId"', '"receiptId"'):
+        self.assertIn("目标：Execute a bounded service test.", room_context)
+        for internal_label in (
+            '"dispatchId"',
+            '"taskId"',
+            '"rootId"',
+            '"receiptId"',
+            "schemaVersion",
+            "catalogRevision",
+            "generation",
+            "sha256",
+        ):
             self.assertNotIn(internal_label, room_context)
         self.assertEqual(
             opened["params"]["roomSkillPolicy"]["skillId"],
@@ -1972,7 +2358,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             first_dispatch_request["params"]["sessionContext"],
         )
         self.assertIn(
-            '"objective":"Execute a bounded service test."',
+            "目标：Execute a bounded service test.",
             first_dispatch_request["params"]["roomContext"],
         )
         self.assertEqual(

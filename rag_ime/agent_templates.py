@@ -54,6 +54,16 @@ class AgentTemplate:
     def runtime_prompt(self) -> str:
         return f"{self.prompt.strip()}\n\n{progressive_capability_policy()}"
 
+    @property
+    def room_runtime_prompt(self) -> str:
+        """Keep Room duties in the collaboration-role layer only."""
+
+        return (
+            "当前 Room 的责任、交接和收工方式由协作岗位层决定；"
+            "本层只规定能力如何渐进披露。\n\n"
+            f"{progressive_capability_policy()}"
+        )
+
     def to_payload(self) -> dict[str, object]:
         payload: dict[str, object] = {
             "schemaVersion": "rag-ime.agent-template.v1",

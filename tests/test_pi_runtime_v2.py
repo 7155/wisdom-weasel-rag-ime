@@ -351,6 +351,53 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("images", params)
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])
 
+    def test_plugin_mutations_use_a_dedicated_approval_capability(self) -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                tool_gateway_token="tool-gateway-only",
+                plugin_approval_token="plugin-approval-only",
+            ),
+            sessions=self.store,
+            events=self.events,
+            tool_manifest_provider=lambda _session: [],
+        )
+
+        self.runtime.plugin_install({"sourcePath": "/tmp/plugin"})
+        self.runtime.plugin_enable(
+            "plugin:test",
+            enabled=True,
+            expected_active_digest="a" * 64,
+            expected_enabled=False,
+        )
+        self.runtime.plugin_rollback(
+            "plugin:test",
+            expected_active_digest="b" * 64,
+            target_digest="c" * 64,
+        )
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        mutations = [
+            request
+            for request in requests
+            if request["method"]
+            in {"plugins.install", "plugins.enable", "plugins.rollback"}
+        ]
+        self.assertEqual(len(mutations), 3)
+        self.assertTrue(
+            all(
+                request["params"]["approvalToken"] == "plugin-approval-only"
+                for request in mutations
+            )
+        )
+        self.assertNotIn("tool-gateway-only", json.dumps(mutations))
+
     def test_session_context_resource_settings_reach_pi_session_open(self) -> None:
         session_id = str(self.first["id"])
         self.store.set_runtime_policy(

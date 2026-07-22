@@ -1795,7 +1795,10 @@ class PiRuntimeHostManager:
         return self._require_host_result("plugins.validate", {"sourcePath": source_path})
 
     def plugin_install(self, payload: Mapping[str, object]) -> dict[str, object]:
-        return self._require_host_result("plugins.install", {**dict(payload), "approvalToken": self.config.tool_gateway_token})
+        return self._require_host_result(
+            "plugins.install",
+            {**dict(payload), "approvalToken": self.config.plugin_approval_token},
+        )
 
     def plugin_enable(
         self,
@@ -1809,7 +1812,7 @@ class PiRuntimeHostManager:
             "plugins.enable" if enabled else "plugins.disable",
             {
                 "pluginId": plugin_id,
-                "approvalToken": self.config.tool_gateway_token,
+                "approvalToken": self.config.plugin_approval_token,
                 "expectedActiveDigest": expected_active_digest,
                 "expectedEnabled": expected_enabled,
             },
@@ -1828,7 +1831,7 @@ class PiRuntimeHostManager:
                 "pluginId": plugin_id,
                 "expectedActiveDigest": expected_active_digest,
                 "targetDigest": target_digest,
-                "approvalToken": self.config.tool_gateway_token,
+                "approvalToken": self.config.plugin_approval_token,
             },
         )
 

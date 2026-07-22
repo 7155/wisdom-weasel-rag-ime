@@ -20,6 +20,11 @@ from .input_quality import (
 )
 from .memory_ingest import normalize_text, upsert_memory_item
 from .memory_projection import RETRIEVAL_DOCS_PROJECTION, enqueue_memory_projection
+from .memory_projection_consistency import (
+    invalidate_superseded_atom_dependencies,
+    restore_dependency_invalidation,
+)
+from .memory_purpose import purpose_audit_fields
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, token_terms, truncate_text
 
 
@@ -1064,6 +1069,13 @@ def memory_book_plan_from_compile_output(
                 for item in _list_of_dicts((source_bundle or {}).get("existingSemanticGroups"))
                 if compact_whitespace(str(item.get("groupId") or ""))
             ],
+            **(
+                purpose_audit_fields(
+                    dict((source_bundle or {}).get("purposeProfile") or {})
+                )
+                if isinstance((source_bundle or {}).get("purposeProfile"), dict)
+                else {}
+            ),
         },
         "diffs": diffs,
     }
@@ -2034,6 +2046,9 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
         for old_book in rollback.get("autoSupersededBooks", []) or []:
             if isinstance(old_book, dict):
                 _insert_or_replace_dict(conn, "memory_books", old_book)
+        dependency_rollback = rollback.get("dependencyInvalidation")
+        if isinstance(dependency_rollback, dict):
+            restore_dependency_invalidation(conn, dependency_rollback)
         for relation in rollback.get("supersessionRollbacks", []) or []:
             if isinstance(relation, dict):
                 _restore_or_delete_row(
@@ -2095,6 +2110,9 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
                 pk="supersession_id",
                 rollback=relation,
             )
+        dependency_rollback = rollback.get("dependencyInvalidation")
+        if isinstance(dependency_rollback, dict):
+            restore_dependency_invalidation(conn, dependency_rollback)
     elif op == "retract_memory_atom":
         atom = rollback.get("atom")
         if isinstance(atom, dict) and atom:
@@ -2102,6 +2120,9 @@ def _rollback_memory_book_diff(conn: sqlite3.Connection, *, row: sqlite3.Row) ->
         for book in rollback.get("books", []) or []:
             if isinstance(book, dict) and book:
                 _insert_or_replace_dict(conn, "memory_books", book)
+        dependency_rollback = rollback.get("dependencyInvalidation")
+        if isinstance(dependency_rollback, dict):
+            restore_dependency_invalidation(conn, dependency_rollback)
         tombstone_id = int(rollback.get("tombstoneId") or 0)
         if tombstone_id > 0:
             conn.execute(
@@ -2529,22 +2550,20 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         member_id=atom_id,
         group_ids=_strings(payload.get("semanticGroupIds")),
     )
-    auto_superseded_books = (
-        _replace_superseded_atoms_in_books(
+    dependency_invalidation = (
+        invalidate_superseded_atom_dependencies(
             conn,
             old_atom_ids=[
                 compact_whitespace(str(item.get("id") or ""))
                 for item in auto_superseded
             ],
             new_atom_id=atom_id,
-            owner_kind=str(payload.get("ownerKind") or "user"),
-            owner_id=str(payload.get("ownerId") or "default"),
             timestamp=timestamp,
         )
         if auto_superseded
         and claim_state == "current"
         and stored_status in {"active", "approved"}
-        else []
+        else {}
     )
     return {
         "table": "memory_atoms",
@@ -2555,7 +2574,8 @@ def _apply_memory_atom(conn: sqlite3.Connection, payload: dict[str, object]) -> 
         "previousAliases": previous_aliases,
         "previousAtomTags": previous_atom_tags,
         "autoSuperseded": auto_superseded,
-        "autoSupersededBooks": auto_superseded_books,
+        "autoSupersededBooks": [],
+        "dependencyInvalidation": dependency_invalidation,
         "supersessionRollbacks": supersession_rollbacks,
         **memberships,
     }
@@ -3064,6 +3084,7 @@ def _apply_supersede_memory(conn: sqlite3.Connection, payload: dict[str, object]
     atom = conn.execute("SELECT * FROM memory_atoms WHERE id = ?", (old_id,)).fetchone()
     if atom is not None:
         previous = _row_dict(atom)
+        timestamp = now_ms()
         conn.execute(
             """
             UPDATE memory_atoms
@@ -3073,7 +3094,13 @@ def _apply_supersede_memory(conn: sqlite3.Connection, payload: dict[str, object]
                 updated_at_ms = ?
             WHERE id = ?
             """,
-            (now_ms(), now_ms(), old_id),
+            (timestamp, timestamp, old_id),
+        )
+        dependency_invalidation = invalidate_superseded_atom_dependencies(
+            conn,
+            [old_id],
+            new_atom_id=new_id,
+            timestamp=timestamp,
         )
         return {
             "table": "memory_atoms",
@@ -3081,6 +3108,7 @@ def _apply_supersede_memory(conn: sqlite3.Connection, payload: dict[str, object]
             "pkValue": old_id,
             "previous": previous,
             "supersession": relation_rollback,
+            "dependencyInvalidation": dependency_invalidation,
         }
     item = conn.execute("SELECT * FROM memory_items WHERE memory_id = ?", (old_id,)).fetchone()
     if item is not None:
@@ -3139,6 +3167,12 @@ def _apply_retract_memory_atom(
     )
     if int(conn.execute("SELECT changes()").fetchone()[0]) != 1:
         raise ValueError("memory atom changed before retraction")
+
+    dependency_invalidation = invalidate_superseded_atom_dependencies(
+        conn,
+        [target_id],
+        timestamp=timestamp,
+    )
 
     tombstone = conn.execute(
         """
@@ -3246,6 +3280,7 @@ def _apply_retract_memory_atom(
         "atom": previous,
         "books": affected_books,
         "tombstoneId": int(tombstone.lastrowid),
+        "dependencyInvalidation": dependency_invalidation,
     }
 
 

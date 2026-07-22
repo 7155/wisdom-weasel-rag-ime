@@ -421,12 +421,15 @@ function AgentWorkspace() {
     }
   }
 
-  async function send(requestedDelivery: AgentMessageDelivery = busy ? 'steer' : 'prompt'): Promise<void> {
+  async function send(
+    requestedDelivery: AgentMessageDelivery = busy ? 'steer' : 'prompt',
+    composerDraft = draft,
+  ): Promise<void> {
     if (!session || sending) return;
     const delivery: AgentMessageDelivery = busy
       ? (requestedDelivery === 'followUp' ? 'followUp' : 'steer')
       : 'prompt';
-    const value = draft.trim();
+    const value = composerDraft.trim();
     if (editTarget) {
       if (!value && attachments.length === 0) return;
       if (attachments.length && imageSupport !== 'supported') {
@@ -1037,7 +1040,7 @@ function AgentWorkspace() {
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
-          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging || rewriteResolving || contextResourcesChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery) => void send(delivery)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onProjectContextChange={(enabled) => void changeContextResource('projectContextEnabled', enabled)} onPiSkillsChange={(enabled) => void changeContextResource('piSkillsEnabled', enabled)} onCodexSkillsChange={(enabled) => void changeContextResource('codexSkillsEnabled', enabled)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging || rewriteResolving || contextResourcesChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setDraft} onAttachmentsChange={setAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery, value) => void send(delivery, value)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onProjectContextChange={(enabled) => void changeContextResource('projectContextEnabled', enabled)} onPiSkillsChange={(enabled) => void changeContextResource('piSkillsEnabled', enabled)} onCodexSkillsChange={(enabled) => void changeContextResource('codexSkillsEnabled', enabled)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
         ) : <AgentComposerPending />}
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />

@@ -824,14 +824,29 @@ class AgentServiceTests(unittest.TestCase):
                     ],
                 }
             )
-        self.assertEqual(compact_build.call_args.kwargs["vector_context_weight"], 0.2)
+        self.assertEqual(compact_build.call_args.kwargs["vector_context_weight"], 0.0)
+        self.assertEqual(compact_build.call_args.kwargs["vector_context_text"], "")
+        self.assertEqual(compact_build.call_args.kwargs["recent_messages"], [])
+        self.assertNotIn(
+            "已经完成第一阶段",
+            compact_build.call_args.kwargs["retrieval_context_text"],
+        )
+        self.assertIn(
+            "按 WorkItem 继续",
+            compact_build.call_args.kwargs["retrieval_context_text"],
+        )
         self.assertIn("按 WorkItem 继续", compact_build.call_args.kwargs["query_text"])
         self.assertIn(str(work["objective"]), compact_build.call_args.kwargs["query_text"])
         compacted_context = compacted["result"]["sessionContext"]
         self.assertEqual(compacted["result"]["trigger"], "compaction")
         self.assertIn(str(work["objective"]), compacted_context)
         self.assertIn("核验 Room Provider Payload", compacted_context)
-        self.assertIn("已经完成第一阶段", compacted_context)
+        self.assertNotIn("## 最近对话", compacted_context)
+        self.assertNotIn("已经完成第一阶段", compacted_context)
+        self.assertEqual(
+            compacted["result"]["recentConversationCount"],
+            0,
+        )
         self.assertNotEqual(
             started["result"]["itemId"],
             compacted["result"]["itemId"],
@@ -2462,7 +2477,12 @@ class AgentServiceTests(unittest.TestCase):
             tool_name="ime_runtime",
             operation="restart_sidecar",
             payload_sha256="d" * 64,
-            preview={"summary": "重启 Sidecar"},
+            preview={
+                "summary": "重启 Sidecar",
+                "baseState": {
+                    "roomInvocationReceiptId": "invoke:external:test"
+                },
+            },
             risk_level="R2",
         )
         command = ["launchctl", "kickstart", "-k", "gui/501/com.rag-ime.sidecar"]
@@ -2516,14 +2536,25 @@ class AgentServiceTests(unittest.TestCase):
             self.service.finalize_external_approval(str(approval["approvalId"]), finalize_payload)
 
         self.process_id = 101
-        finalized = self.service.finalize_external_approval(
-            str(approval["approvalId"]),
-            finalize_payload,
-        )
+        with patch.object(
+            self.service,
+            "record_room_product_tool_execution",
+            return_value={"ok": True},
+        ) as room_record:
+            finalized = self.service.finalize_external_approval(
+                str(approval["approvalId"]),
+                finalize_payload,
+            )
         self.assertEqual(finalized["approval"]["state"], "applied")
         self.assertTrue(finalized["approval"]["receipt"]["mutationApplied"])
         self.assertFalse(finalized["approval"]["receipt"]["externalActionPending"])
         self.assertEqual(finalized["approval"]["receipt"]["finalProcessId"], 101)
+        room_record.assert_called_once()
+        self.assertEqual(room_record.call_args.kwargs["status"], "applied")
+        self.assertEqual(
+            room_record.call_args.args,
+            (str(session["id"]), "invoke:external:test"),
+        )
         events, _ = self.service.events.replay(str(session["id"]))
         self.assertEqual(events[-1].event_type, "approval_resolved")
         self.assertTrue(events[-1].payload["externalFinalized"])

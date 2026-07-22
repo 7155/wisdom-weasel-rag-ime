@@ -421,7 +421,10 @@ def memory_projection_freshness(
                 SUM(CASE WHEN v.doc_id IS NULL THEN 1 ELSE 0 END) AS missing_count,
                 SUM(
                     CASE
-                        WHEN v.doc_id IS NOT NULL AND v.updated_at_ms < d.updated_at_ms
+                        WHEN v.doc_id IS NOT NULL AND (
+                            v.source_revision != d.source_revision
+                            OR v.projection_version != d.projection_version
+                        )
                         THEN 1 ELSE 0
                     END
                 ) AS stale_count
@@ -547,7 +550,11 @@ def _enqueue_vector_catchup_if_needed(
             LEFT JOIN memory_retrieval_doc_vectors v
               ON v.doc_id = d.doc_id AND v.provider_fingerprint = ?
             WHERE d.status = 'active'
-              AND (v.doc_id IS NULL OR v.updated_at_ms < d.updated_at_ms)
+              AND (
+                  v.doc_id IS NULL
+                  OR v.source_revision != d.source_revision
+                  OR v.projection_version != d.projection_version
+              )
             """,
             (fingerprint,),
         ).fetchone()[0]
@@ -702,7 +709,15 @@ def _materialize_event(
             operation=str(row["operation"]),
             project=project,
             revision=int(row["revision"]),
-            payload={"sourceOutboxId": int(row["outbox_id"])},
+            payload={
+                "sourceOutboxId": int(row["outbox_id"]),
+                "docIds": sorted(
+                    {
+                        *[str(value) for value in report.get("changedDocIds") or []],
+                        *[str(value) for value in report.get("removedDocIds") or []],
+                    }
+                ),
+            },
             available_at_ms=timestamp,
         )
         return {
@@ -721,10 +736,17 @@ def _materialize_event(
             }
         from .retrieval_vector_index import rebuild_retrieval_doc_vectors
 
+        payload_doc_ids = payload.get("docIds")
+        doc_ids = (
+            [str(value) for value in payload_doc_ids if value]
+            if isinstance(payload_doc_ids, list)
+            else None
+        )
         report = rebuild_retrieval_doc_vectors(
             conn,
             embedding_provider,
             project=project,
+            doc_ids=doc_ids,
         )
         return {
             "projectionKind": projection_kind,

@@ -18,6 +18,12 @@ LANE_WEIGHTS = {
     "time": 0.90,
     "feedback": 1.20,
 }
+METADATA_FAMILY_LANES = (
+    "bm25_tags",
+    "tagmemo",
+    "vector_tag_boost",
+)
+METADATA_FAMILY_MODES = frozenset({"capped", "legacy_sum"})
 
 
 def rrf(rank: int, k: int = 60) -> float:
@@ -33,6 +39,7 @@ def rank_hybrid_hits(
     lane_weights: dict[str, float] | None = None,
     current_ms: int | None = None,
     decay_settings: dict[str, object] | None = None,
+    metadata_family_mode: str = "capped",
 ) -> list[HybridRagCandidate]:
     from .memory_projectors import ImeMemoryProjector
 
@@ -42,6 +49,7 @@ def rank_hybrid_hits(
         lane_weights=lane_weights,
         current_ms=current_ms,
         decay_settings=decay_settings,
+        metadata_family_mode=metadata_family_mode,
     )
     return ImeMemoryProjector().project(
         memory_hits,
@@ -58,7 +66,10 @@ def rank_hybrid_hits_to_memory_hits(
     lane_weights: dict[str, float] | None = None,
     current_ms: int | None = None,
     decay_settings: dict[str, object] | None = None,
+    metadata_family_mode: str = "capped",
 ) -> list[MemoryHit]:
+    if metadata_family_mode not in METADATA_FAMILY_MODES:
+        raise ValueError("unsupported metadata family fusion mode")
     effective_lane_weights = {**LANE_WEIGHTS, **(lane_weights or {})}
     grouped: dict[str, list[HybridRagHit]] = defaultdict(list)
     for hit in hits:
@@ -70,6 +81,7 @@ def rank_hybrid_hits_to_memory_hits(
             doc_hits,
             lane_weights=effective_lane_weights,
             query_text=query_text,
+            metadata_family_mode=metadata_family_mode,
         )
         base_score = sum(features.values())
         decay_factor = _time_decay_factor(
@@ -131,12 +143,38 @@ def _score_features(
     *,
     lane_weights: dict[str, float],
     query_text: str,
+    metadata_family_mode: str,
 ) -> dict[str, float]:
     features: dict[str, float] = {}
     for hit in hits:
         lane = hit.source_lane
         lane_score = lane_weights.get(lane, 0.5) * rrf(hit.rank)
         features[lane] = max(features.get(lane, 0.0), lane_score)
+    if metadata_family_mode == "capped":
+        family_scores = sorted(
+            (
+                features[lane]
+                for lane in METADATA_FAMILY_LANES
+                if lane in features
+            ),
+            reverse=True,
+        )
+        if family_scores:
+            strongest = family_scores[0]
+            second = family_scores[1] if len(family_scores) > 1 else 0.0
+            third = family_scores[2] if len(family_scores) > 2 else 0.0
+            fused = min(
+                strongest * 1.20,
+                strongest + (0.15 * second) + (0.05 * third),
+            )
+            raw_family_sum = sum(family_scores)
+            if fused < raw_family_sum:
+                # Keep each lane visible in debug output, then subtract only
+                # the correlated overlap so the final sum equals the capped
+                # family score instead of pretending three Tag views agree.
+                features["metadata_family_overlap_penalty"] = (
+                    fused - raw_family_sum
+                )
     best_metadata = hits[0].metadata if hits else {}
     if bool(best_metadata.get("projectScope")):
         features["project_scope"] = 0.30

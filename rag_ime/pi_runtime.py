@@ -152,6 +152,7 @@ class PiRuntimeConfig:
     logs_dir: Path
     debug_context_dir: Path | None = None
     debug_context_max_bytes: int = 1024 * 1024 * 1024
+    debug_context_max_calls: int = 12
     node_executable: str = "node"
     idle_timeout_seconds: int = 900
     command_timeout_seconds: float = 15.0
@@ -161,6 +162,7 @@ class PiRuntimeConfig:
     tools: tuple[str, ...] = ()
     tool_gateway_url: str = "http://127.0.0.1:8766/api/agent/tool/execute"
     tool_gateway_token: str = ""
+    plugin_approval_token: str = ""
     provider_environment: Mapping[str, str] = field(default_factory=dict, repr=False)
     model_providers: Mapping[str, Mapping[str, object]] = field(default_factory=dict, repr=False)
     model_base_url: str = ""
@@ -257,6 +259,12 @@ class PiRuntimeConfig:
                 1024 * 1024 * 1024,
                 minimum=1,
                 maximum=1024 * 1024 * 1024,
+            ),
+            debug_context_max_calls=_env_int(
+                "RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS",
+                12,
+                minimum=1,
+                maximum=256,
             ),
             node_executable=node_executable,
             idle_timeout_seconds=_env_int(
@@ -448,13 +456,17 @@ class PiRuntimeConfig:
             environment["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"] = str(
                 min(1024 * 1024 * 1024, max(1, int(self.debug_context_max_bytes)))
             )
+            environment["RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS"] = str(
+                min(256, max(1, int(self.debug_context_max_calls)))
+            )
         environment["RAG_IME_PI_MAX_SESSIONS"] = str(self.max_sessions)
         if self.tool_gateway_token:
             environment["RAG_IME_AGENT_TOOL_TOKEN"] = self.tool_gateway_token
             environment["RAG_IME_AGENT_TOOL_URL"] = self.tool_gateway_url
             environment["RAG_IME_TOOL_GATEWAY_TOKEN"] = self.tool_gateway_token
             environment["RAG_IME_TOOL_GATEWAY_URL"] = self.tool_gateway_url
-            environment["RAG_IME_PLUGIN_APPROVAL_TOKEN"] = self.tool_gateway_token
+        if self.plugin_approval_token:
+            environment["RAG_IME_PLUGIN_APPROVAL_TOKEN"] = self.plugin_approval_token
         if session is not None:
             environment["RAG_IME_AGENT_SESSION_ID"] = str(session.get("id") or "")
             environment["RAG_IME_AGENT_SESSION_MODE"] = str(session.get("mode") or "assistant")

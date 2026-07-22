@@ -15,6 +15,10 @@ from typing import Iterator
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 from .memory_projection import RETRIEVAL_DOCS_PROJECTION, enqueue_memory_projection
+from .memory_projection_consistency import (
+    invalidate_superseded_atom_dependencies,
+    restore_dependency_invalidation,
+)
 from .sensitive_content import contains_sensitive_content
 from .text_utils import compact_whitespace
 
@@ -932,6 +936,12 @@ class MemoryGovernanceProposalStore:
             evidence_snapshot=evidence_snapshot,
             timestamp=timestamp,
         )
+        dependency_invalidation = invalidate_superseded_atom_dependencies(
+            conn,
+            [old_id],
+            new_atom_id=new_id,
+            timestamp=timestamp,
+        )
         return {
             "memoryId": new_id,
             "previousMemoryId": old_id,
@@ -948,6 +958,7 @@ class MemoryGovernanceProposalStore:
                     self._atom_by_id(conn, new_id)
                 ),
                 "approvalId": approval_id,
+                "dependencyInvalidation": dependency_invalidation,
             },
         }
 
@@ -1005,6 +1016,11 @@ class MemoryGovernanceProposalStore:
             evidence_snapshot=evidence_snapshot,
             timestamp=timestamp,
         )
+        dependency_invalidation = invalidate_superseded_atom_dependencies(
+            conn,
+            [target_id],
+            timestamp=timestamp,
+        )
         return {
             "memoryId": target_id,
             "previousMemoryId": target_id,
@@ -1017,6 +1033,7 @@ class MemoryGovernanceProposalStore:
                     self._atom_by_id(conn, target_id)
                 ),
                 "approvalId": approval_id,
+                "dependencyInvalidation": dependency_invalidation,
             },
         }
 
@@ -1079,6 +1096,13 @@ class MemoryGovernanceProposalStore:
             """,
             (timestamp, str(rollback.get("supersessionId") or "")),
         )
+        dependency_rollback = rollback.get("dependencyInvalidation")
+        if isinstance(dependency_rollback, Mapping):
+            restore_dependency_invalidation(
+                conn,
+                dependency_rollback,
+                timestamp=timestamp,
+            )
         return old_id
 
     def _rollback_forget(
@@ -1101,6 +1125,13 @@ class MemoryGovernanceProposalStore:
             "UPDATE memory_tombstones SET active = 0 WHERE id = ? AND active = 1",
             (int(rollback.get("tombstoneId") or 0),),
         )
+        dependency_rollback = rollback.get("dependencyInvalidation")
+        if isinstance(dependency_rollback, Mapping):
+            restore_dependency_invalidation(
+                conn,
+                dependency_rollback,
+                timestamp=timestamp,
+            )
         return atom_id
 
     def _validated_evidence_for_proposal(

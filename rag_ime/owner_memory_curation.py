@@ -26,7 +26,9 @@ from .memory_book_compiler import (
     store_memory_book_plan,
 )
 from .memory_evidence_ledger import backfill_input_event_evidence
+from .memory_evidence_policy import memory_evidence_exclusion_reason
 from .memory_ingest import normalize_text
+from .memory_purpose import personal_current_state_profile, purpose_audit_fields
 from .personal_context import (
     load_activity_timeline_context,
     local_date_for_timestamp,
@@ -79,12 +81,6 @@ _TRANSIENT_TOOL_RECEIPT_RE = re.compile(
 _FAILED_TOOL_RECEIPT_RE = re.compile(
     r"(?:失败|出错|错误|异常|被拒绝|校验拒绝|未成功|未生成|未执行|未应用|"
     r"无法完成|调用超时|执行超时|\bfailed\b|\berror\b|\btimeout\b|\bblocked\b)",
-    re.IGNORECASE,
-)
-_MEMORY_WORKFLOW_NOISE_RE = re.compile(
-    r"(?:请(?:调用|使用)\s*ime_memory|\bcuration_prepare\b|"
-    r"\bmaintenance_(?:preview|review|apply|rollback)\b|\brunId\b|"
-    r"可审阅草案|待审草案|记忆草案已(?:生成|复用)|等待(?:原生)?审阅)",
     re.IGNORECASE,
 )
 _TRANSIENT_USER_COMMAND_RE = re.compile(
@@ -551,6 +547,9 @@ class OwnerMemoryCurator:
                             "sourceDecisionCount": len(model_decisions),
                             "sourceDecisions": model_decisions,
                             "deterministicDispositionCount": len(deterministic),
+                            **purpose_audit_fields(
+                                dict(model_bundle.get("purposeProfile") or {})
+                            ),
                         }
                     )
                     plan["metadata"] = metadata
@@ -1270,6 +1269,9 @@ def _agent_conversation_context(
         text = compact_whitespace(str(row["content_text"] or ""))
         if not text:
             continue
+        if memory_evidence_exclusion_reason(text):
+            deduplicated += 1
+            continue
         if contains_sensitive_content(text):
             redacted += 1
             continue
@@ -1471,6 +1473,40 @@ def _with_owner_bundle_hash(payload: dict[str, object]) -> dict[str, object]:
     return result
 
 
+def _capture_hints_for_sources(
+    conn: sqlite3.Connection,
+    source_ids: list[str],
+) -> dict[str, list[dict[str, object]]]:
+    result: dict[str, list[dict[str, object]]] = {}
+    ids = tuple(dict.fromkeys(source_id for source_id in source_ids if source_id))
+    for offset in range(0, len(ids), 400):
+        chunk = ids[offset : offset + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"""
+            SELECT source_id, hint_id, kind, normalized_claim, scope, reason,
+                   evidence_ids_json, updated_at_ms
+            FROM memory_capture_hints
+            WHERE source_id IN ({placeholders}) AND status = 'active'
+            ORDER BY updated_at_ms ASC, hint_id ASC
+            """,
+            chunk,
+        ).fetchall()
+        for row in rows:
+            result.setdefault(str(row["source_id"]), []).append(
+                {
+                    "hintId": str(row["hint_id"]),
+                    "kind": str(row["kind"]),
+                    "claim": str(row["normalized_claim"]),
+                    "scope": str(row["scope"]),
+                    "reason": str(row["reason"]),
+                    "evidenceIds": _json_strings(row["evidence_ids_json"]),
+                    "authoritative": False,
+                }
+            )
+    return result
+
+
 def _build_owner_source_bundle(
     conn: sqlite3.Connection,
     *,
@@ -1523,6 +1559,10 @@ def _build_owner_source_bundle(
             physical_limit,
         ),
     ).fetchall()
+    capture_hints = _capture_hints_for_sources(
+        conn,
+        [str(row["source_id"]) for row in rows],
+    )
     raw_inputs: list[dict[str, object]] = []
     for row in rows:
         source_metadata = _json_mapping(row["metadata_json"])
@@ -1546,6 +1586,7 @@ def _build_owner_source_bundle(
                 "contextGroupLevel": str(row["context_group_level"] or "app"),
                 "sourceMetadataTags": _json_strings(row["tags_json"]),
                 "sessionId": str(row["session_id"] or ""),
+                "captureHints": capture_hints.get(str(row["source_id"]), []),
                 "sourceOccurredAtMs": int(
                     source_metadata.get("sourceOccurredAtMs")
                     or row["created_at_ms"]
@@ -1630,6 +1671,7 @@ def _build_owner_source_bundle(
         for event_id in item["sourceEventIds"]
         if isinstance(event_id, int)
     ]
+    purpose_profile = personal_current_state_profile(conn)
     payload: dict[str, object] = {
         "schemaVersion": "rag-ime.owner-memory-source-bundle.v1",
         "project": project,
@@ -1638,6 +1680,7 @@ def _build_owner_source_bundle(
             "id": owner_id,
             "displayName": display_name,
         },
+        "purposeProfile": purpose_profile,
         "inputs": inputs,
         "recentEvents": [
             {
@@ -3100,8 +3143,8 @@ def _deterministic_disposition(item: Mapping[str, object]) -> str | None:
         return None
     if not text:
         return "empty_input"
-    if _MEMORY_WORKFLOW_NOISE_RE.search(text):
-        return "memory_workflow_instruction"
+    if reason := memory_evidence_exclusion_reason(text):
+        return reason
     if _FILLER_RE.fullmatch(text):
         return "input_noise_filler"
     if len(text) <= 8 and _RANDOM_INPUT_RE.fullmatch(text):
@@ -3272,6 +3315,7 @@ def _store_empty_owner_run(
             if decision.get("disposition") == "needs_review"
         ),
         "curationOutcome": "no_durable_memory_changes",
+        **purpose_audit_fields(),
     }
     conn.execute(
         """

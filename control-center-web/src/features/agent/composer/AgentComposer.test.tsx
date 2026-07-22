@@ -62,6 +62,7 @@ describe('AgentComposer macOS input methods', () => {
 
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
     expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onSend).toHaveBeenLastCalledWith('prompt', '今儿');
   });
 
   it('keeps responsive controls together while the send action stays fixed', () => {
@@ -171,14 +172,14 @@ describe('AgentComposer macOS input methods', () => {
     const view = within(container);
     const composer = view.getByRole('textbox', { name: '消息' });
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
-    expect(onSend).toHaveBeenLastCalledWith('steer');
+    expect(onSend).toHaveBeenLastCalledWith('steer', '补充要求');
 
     fireEvent.click(view.getByRole('radio', { name: '接续' }));
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
-    expect(onSend).toHaveBeenLastCalledWith('followUp');
+    expect(onSend).toHaveBeenLastCalledWith('followUp', '补充要求');
 
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter', altKey: true });
-    expect(onSend).toHaveBeenLastCalledWith('followUp');
+    expect(onSend).toHaveBeenLastCalledWith('followUp', '补充要求');
     fireEvent.click(view.getByRole('button', { name: '停止本轮' }));
     expect(onStop).toHaveBeenCalledTimes(1);
     expect(view.getByRole('button', { name: '添加图片' })).toBeEnabled();

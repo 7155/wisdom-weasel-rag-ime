@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from typing import Any, Protocol
 
@@ -32,6 +34,15 @@ class ApprovalHost(Protocol):
     def _record_tool_receipt_evidence_safely(
         self,
         approval: Mapping[str, object],
+    ) -> dict[str, object]: ...
+
+    def record_room_product_tool_execution(
+        self,
+        session_id: str,
+        invocation_receipt_id: str,
+        *,
+        status: str,
+        result_hash: str,
     ) -> dict[str, object]: ...
 
 
@@ -198,7 +209,7 @@ class AgentApprovalApplicationService:
         approval_id = str(final.get("approvalId") or "")
         session_id = str(final.get("sessionId") or "")
         runtime_notified = False
-        runtime_warning = ""
+        runtime_warning = self._seal_room_terminal_approval(final)
         memory_checkpoint = self.checkpoint_applied(final)
         memory_evidence: dict[str, object] = {}
         if final.get("state") == "applied":
@@ -219,7 +230,10 @@ class AgentApprovalApplicationService:
                 )
                 runtime_notified = True
             except Exception:
-                runtime_warning = "Pi 会话未收到审批结果，请刷新该对话"
+                runtime_warning = _append_warning(
+                    runtime_warning,
+                    "Pi 会话未收到审批结果，请刷新该对话",
+                )
         else:
             self.host.events.publish(
                 session_id,
@@ -398,7 +412,7 @@ class AgentApprovalApplicationService:
         session_id = str(approval.get("sessionId") or "")
         state = str(approval.get("state") or "stale")
         runtime_notified = False
-        runtime_warning = ""
+        runtime_warning = self._seal_room_terminal_approval(approval)
         if pending_in_pi:
             try:
                 self.host.runtime.resolve_approval(
@@ -409,7 +423,10 @@ class AgentApprovalApplicationService:
                 )
                 runtime_notified = True
             except Exception:
-                runtime_warning = "Pi 会话未收到审批终态，请刷新该对话"
+                runtime_warning = _append_warning(
+                    runtime_warning,
+                    "Pi 会话未收到审批终态，请刷新该对话",
+                )
         else:
             self.host.events.publish(
                 session_id,
@@ -459,6 +476,46 @@ class AgentApprovalApplicationService:
         ):
             raise ValueError("approval payload is stale")
 
+    def _seal_room_terminal_approval(
+        self,
+        approval: Mapping[str, object],
+    ) -> str:
+        invocation_receipt_id = _room_invocation_receipt_id(approval)
+        state = str(approval.get("state") or "")
+        if not invocation_receipt_id or state not in {
+            "rejected",
+            "expired",
+            "stale",
+        }:
+            return ""
+        status = "rejected" if state == "rejected" else "cancelled"
+        identity = {
+            "approvalId": str(approval.get("approvalId") or ""),
+            "invocationReceiptId": invocation_receipt_id,
+            "state": state,
+        }
+        result_hash = hashlib.sha256(
+            json.dumps(
+                identity,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        try:
+            self.host.record_room_product_tool_execution(
+                str(approval.get("sessionId") or ""),
+                invocation_receipt_id,
+                status=status,
+                result_hash=result_hash,
+            )
+        except Exception as exc:
+            return (
+                "Room 工具审批终态未写入，请停止或刷新 Room："
+                + _public_error(exc)
+            )
+        return ""
+
 def _failed_receipt(
     approval: Mapping[str, object],
     *,
@@ -476,6 +533,24 @@ def _failed_receipt(
         "reason": reason,
         "error": _public_error(error),
     }
+
+
+def _room_invocation_receipt_id(
+    approval: Mapping[str, object],
+) -> str:
+    preview = approval.get("preview")
+    if not isinstance(preview, Mapping):
+        return ""
+    base_state = preview.get("baseState")
+    if not isinstance(base_state, Mapping):
+        return ""
+    return " ".join(
+        str(base_state.get("roomInvocationReceiptId") or "").split()
+    )[:240]
+
+
+def _append_warning(current: str, addition: str) -> str:
+    return "；".join(value for value in (current, addition) if value)
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:

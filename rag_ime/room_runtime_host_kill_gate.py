@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import signal
 import sqlite3
 import subprocess
+import sys
 import time
 import uuid
 from collections.abc import Callable
@@ -12,6 +14,37 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .db import apply_database_migrations
+
+
+_PROC_PIDTBSDINFO = 3
+_MAXCOMLEN = 16
+
+
+class _DarwinProcBsdInfo(ctypes.Structure):
+    _fields_ = [
+        ("pbi_flags", ctypes.c_uint32),
+        ("pbi_status", ctypes.c_uint32),
+        ("pbi_xstatus", ctypes.c_uint32),
+        ("pbi_pid", ctypes.c_uint32),
+        ("pbi_ppid", ctypes.c_uint32),
+        ("pbi_uid", ctypes.c_uint32),
+        ("pbi_gid", ctypes.c_uint32),
+        ("pbi_ruid", ctypes.c_uint32),
+        ("pbi_rgid", ctypes.c_uint32),
+        ("pbi_svuid", ctypes.c_uint32),
+        ("pbi_svgid", ctypes.c_uint32),
+        ("rfu_1", ctypes.c_uint32),
+        ("pbi_comm", ctypes.c_char * _MAXCOMLEN),
+        ("pbi_name", ctypes.c_char * (2 * _MAXCOMLEN)),
+        ("pbi_nfiles", ctypes.c_uint32),
+        ("pbi_pgid", ctypes.c_uint32),
+        ("pbi_pjobc", ctypes.c_uint32),
+        ("e_tdev", ctypes.c_uint32),
+        ("e_tpgid", ctypes.c_uint32),
+        ("pbi_nice", ctypes.c_int32),
+        ("pbi_start_tvsec", ctypes.c_uint64),
+        ("pbi_start_tvusec", ctypes.c_uint64),
+    ]
 
 
 class RuntimeHostKillGate:
@@ -303,6 +336,10 @@ def process_birth_token(pid: int) -> str:
 
 
 def _process_identity(pid: int) -> tuple[int, str] | None:
+    if sys.platform == "darwin":
+        identity = _darwin_process_identity(pid)
+        if identity is not None:
+            return identity
     try:
         process_group_id = os.getpgid(int(pid))
     except (OSError, ProcessLookupError):
@@ -319,6 +356,45 @@ def _process_identity(pid: int) -> tuple[int, str] | None:
         return None
     token = " ".join(result.stdout.split())
     return (int(process_group_id), token) if result.returncode == 0 and token else None
+
+
+def _darwin_process_identity(pid: int) -> tuple[int, str] | None:
+    """Read one PID generation directly instead of shelling out to `ps`."""
+
+    try:
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        proc_pidinfo = library.proc_pidinfo
+        proc_pidinfo.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        proc_pidinfo.restype = ctypes.c_int
+        info = _DarwinProcBsdInfo()
+        size = ctypes.sizeof(info)
+        returned = proc_pidinfo(
+            int(pid),
+            _PROC_PIDTBSDINFO,
+            0,
+            ctypes.byref(info),
+            size,
+        )
+    except (AttributeError, OSError, ValueError):
+        return None
+    if (
+        returned != size
+        or int(info.pbi_pid) != int(pid)
+        or int(info.pbi_pgid) <= 0
+        or int(info.pbi_start_tvsec) <= 0
+    ):
+        return None
+    token = (
+        f"darwin:{int(info.pbi_start_tvsec)}:"
+        f"{int(info.pbi_start_tvusec)}"
+    )
+    return int(info.pbi_pgid), token
 
 
 def _signal_process_group(process_group_id: int) -> None:

@@ -243,6 +243,43 @@ class SessionMemoryRecallTests(unittest.TestCase):
         self.assertLessEqual(len(compact[0]["text"]), 480)
         self.assertGreater(len(detailed[0]["text"]), len(compact[0]["text"]))
 
+    def test_selected_book_suppresses_its_duplicate_member_atom(self) -> None:
+        selected, omitted = _select_hits(
+            [
+                {
+                    "doc_type": "atom",
+                    "source_id": "atom:delivery-preference",
+                    "text": "代码任务先读测试，再做最小改动。",
+                    "score": 1.2,
+                    "confidence": 1.0,
+                    "tags": ["代码", "测试"],
+                    "metadata": {"lanes": ["bm25_raw"]},
+                },
+                {
+                    "doc_type": "book",
+                    "source_id": "book:delivery-preference",
+                    "text": "代码任务先读测试，再做最小改动并用真实测试交付。",
+                    "score": 1.1,
+                    "confidence": 1.0,
+                    "tags": ["代码", "测试"],
+                    "metadata": {
+                        "lanes": ["bm25_raw"],
+                        "memoryAtomIds": ["atom:delivery-preference"],
+                    },
+                },
+            ],
+            query_text="代码任务如何测试交付？",
+            max_items=8,
+            max_chars=6_400,
+        )
+
+        self.assertEqual(
+            [item["sourceId"] for item in selected],
+            ["book:delivery-preference"],
+        )
+        self.assertEqual(selected[0]["rank"], 1)
+        self.assertEqual(omitted, 1)
+
     def test_compaction_refresh_injects_task_plan_and_recent_dialogue_without_debug_metadata(self) -> None:
         event_id = self._record_input("压缩后继续完成 Session RAG 上下文")
         provider = HashingEmbeddingProvider(dimensions=16)

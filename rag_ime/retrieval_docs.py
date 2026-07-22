@@ -5,6 +5,14 @@ import sqlite3
 from typing import Any
 
 from .input_quality import MEMORY_CONTEXT_OPT_IN_TAG
+from .memory_projection_consistency import (
+    ACTIVE_RETRIEVAL_PROJECTION_VERSION,
+    bump_source_revision,
+    repair_superseded_memory_residuals,
+    source_revision,
+    source_type_for_doc,
+    sync_projection_dependencies,
+)
 from .memory_schema_v2 import ensure_memory_v2_schema
 from .knowledge_scope import quarantine_scope_issue, scope_from_row
 from .text_utils import build_fts_document, compact_whitespace, now_ms, truncate_text
@@ -32,6 +40,7 @@ def rebuild_retrieval_docs(
     """
 
     ensure_memory_v2_schema(conn)
+    consistency_repair = repair_superseded_memory_residuals(conn)
     if include_items is not None:
         include_legacy_items = bool(include_items)
     # Read every projection type owned by this rebuild, not only enabled types.
@@ -45,7 +54,7 @@ def rebuild_retrieval_docs(
                    time_key, project, app, owner_kind, owner_id,
                    knowledge_domain, scope_kind, scope_id, visibility,
                    authorization_revision, binding_id, scope_mode, metadata_json,
-                   updated_at_ms,
+                   source_revision, projection_version, updated_at_ms,
                    EXISTS(
                        SELECT 1 FROM memory_retrieval_docs_fts f
                        WHERE f.rowid = memory_retrieval_docs.rowid
@@ -63,8 +72,9 @@ def rebuild_retrieval_docs(
                 "project", "app", "owner_kind", "owner_id", "knowledge_domain",
                 "scope_kind", "scope_id", "visibility", "authorization_revision",
                 "binding_id", "scope_mode", "metadata_json",
-            )),
+            )) + (str(row["source_revision"]), str(row["projection_version"])),
             "rowid": int(row["rowid"]),
+            "sourceRevision": int(row["source_revision"] or 1),
             "updatedAtMs": int(row["updated_at_ms"] or 0),
             "ftsPresent": bool(row["fts_present"]),
         }
@@ -95,8 +105,33 @@ def rebuild_retrieval_docs(
             "surface_hints_text", "query_expansions_text", "time_key", "project", "app",
             "owner_kind", "owner_id", "knowledge_domain", "scope_kind", "scope_id",
             "visibility", "authorization_revision", "binding_id", "scope_mode",
-        )) + (metadata_json,)
+        )) + (
+            metadata_json,
+            str(doc["source_revision"]),
+            str(doc["projection_version"]),
+        )
         previous = existing.get(doc_id)
+        if (
+            previous is not None
+            and previous["signature"][:-2] != signature[:-2]
+            and doc_type != "timeline"
+            and int(doc["source_revision"])
+            <= int(previous["sourceRevision"])
+        ):
+            # Alias, Tag, or Group changes can alter a Retrieval Doc without
+            # touching its primary row. Advance the source generation here so
+            # a vector worker holding the old projection cannot pass CAS.
+            doc["source_revision"] = bump_source_revision(
+                conn,
+                source_type=source_type_for_doc(doc_type),
+                source_id=str(doc["source_id"]),
+                timestamp=timestamp,
+                minimum_revision=int(previous["sourceRevision"]) + 1,
+            )
+            signature = signature[:-2] + (
+                str(doc["source_revision"]),
+                str(doc["projection_version"]),
+            )
         if (
             previous is not None
             and previous["signature"] == signature
@@ -115,10 +150,11 @@ def rebuild_retrieval_docs(
                 surface_hints_text, query_expansions_text, time_key, project, app,
                 owner_kind, owner_id, knowledge_domain, scope_kind, scope_id,
                 visibility, authorization_revision, binding_id, scope_mode,
+                source_revision, projection_version,
                 status, updated_at_ms, metadata_json
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    'active', ?, ?)
+                    ?, ?, 'active', ?, ?)
             ON CONFLICT(doc_id) DO UPDATE SET
                 doc_type=excluded.doc_type, source_id=excluded.source_id,
                 raw_text=excluded.raw_text, tags_text=excluded.tags_text,
@@ -130,6 +166,8 @@ def rebuild_retrieval_docs(
                 scope_id=excluded.scope_id, visibility=excluded.visibility,
                 authorization_revision=excluded.authorization_revision,
                 binding_id=excluded.binding_id, scope_mode=excluded.scope_mode,
+                source_revision=excluded.source_revision,
+                projection_version=excluded.projection_version,
                 updated_at_ms=excluded.updated_at_ms, metadata_json=excluded.metadata_json
             """,
             (
@@ -153,6 +191,8 @@ def rebuild_retrieval_docs(
                 doc["authorization_revision"],
                 doc["binding_id"],
                 doc["scope_mode"],
+                doc["source_revision"],
+                doc["projection_version"],
                 timestamp,
                 metadata_json,
             ),
@@ -191,6 +231,14 @@ def rebuild_retrieval_docs(
             ((doc_id,) for doc_id in stale_ids),
         )
         conn.executemany("DELETE FROM memory_retrieval_docs WHERE doc_id = ?", ((doc_id,) for doc_id in stale_ids))
+        conn.executemany(
+            """
+            DELETE FROM memory_projection_dependencies
+            WHERE dependent_type = 'retrieval_doc' AND dependent_id = ?
+            """,
+            ((doc_id,) for doc_id in stale_ids),
+        )
+    sync_projection_dependencies(conn, docs, timestamp=timestamp)
     return {
         "schemaVersion": RETRIEVAL_DOCS_REBUILD_SCHEMA_VERSION,
         "project": project,
@@ -205,6 +253,7 @@ def rebuild_retrieval_docs(
         "includeItems": bool(include_legacy_items),
         "changedDocIds": sorted(changed_doc_ids),
         "removedDocIds": sorted(stale_ids),
+        "consistencyRepair": consistency_repair,
         "updatedAtMs": timestamp,
     }
 
@@ -332,6 +381,12 @@ def _memory_item_docs(
                 "time_key": "",
                 "project": str(row["project"] or ""),
                 "app": str(row["app"] or ""),
+                "source_revision": source_revision(
+                    conn,
+                    source_type=doc_type,
+                    source_id=memory_id,
+                ),
+                "projection_version": ACTIVE_RETRIEVAL_PROJECTION_VERSION,
                 **scope,
                 "metadata": {
                     **metadata,
@@ -398,6 +453,12 @@ def _memory_atom_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "time_key": "",
                 "project": str(row["scope_project"] or ""),
                 "app": str(row["scope_app"] or ""),
+                "source_revision": source_revision(
+                    conn,
+                    source_type="atom",
+                    source_id=atom_id,
+                ),
+                "projection_version": ACTIVE_RETRIEVAL_PROJECTION_VERSION,
                 **scope,
                 "metadata": {
                     "kind": str(row["kind"]),
@@ -458,6 +519,12 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
         book_type = str(row["book_type"] or "")
         book_key = str(row["book_key"] or "")
         stored_metadata = _json_object(row["metadata_json"])
+        atom_ids = _json_list(row["memory_atom_ids_json"])
+        if stored_metadata.get("retrievalStale") is True or not _current_atom_ids(
+            conn,
+            atom_ids,
+        ):
+            continue
         docs.append(
             {
                 "doc_id": f"book:{book_id}",
@@ -471,6 +538,12 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                 "time_key": f"{book_type}:{book_key}" if book_type and book_key else book_key,
                 "project": str(row["project"] or ""),
                 "app": str(row["app"] or ""),
+                "source_revision": source_revision(
+                    conn,
+                    source_type="book",
+                    source_id=book_id,
+                ),
+                "projection_version": ACTIVE_RETRIEVAL_PROJECTION_VERSION,
                 **scope,
                 "metadata": {
                     **stored_metadata,
@@ -478,7 +551,7 @@ def _memory_book_docs(conn: sqlite3.Connection, *, project: str, tombstones: dic
                     "bookKey": book_key,
                     "bookTitle": compact_whitespace(str(row["title"] or "")),
                     "sourceEventIds": source_event_ids,
-                    "memoryAtomIds": _json_list(row["memory_atom_ids_json"]),
+                    "memoryAtomIds": atom_ids,
                     "source": "memory_books",
                     "bookStatus": str(row["status"] or "active"),
                     "archived": str(row["status"] or "") == "archived",
@@ -594,6 +667,8 @@ def _activity_timeline_docs(
                 "app": apps[0] if len(apps) == 1 else "multiple" if apps else "",
                 "owner_kind": "user",
                 "owner_id": "default",
+                "source_revision": max(1, int(row["updated_at_ms"] or 0)),
+                "projection_version": ACTIVE_RETRIEVAL_PROJECTION_VERSION,
                 "metadata": {
                     **stored_metadata,
                     "kind": "activity_timeline",
@@ -917,3 +992,24 @@ def _json_list(raw: Any) -> list[str]:
     if not isinstance(parsed, list):
         return []
     return [compact_whitespace(str(item)) for item in parsed if compact_whitespace(str(item))]
+
+
+def _current_atom_ids(conn: sqlite3.Connection, atom_ids: list[str]) -> bool:
+    ids = tuple(dict.fromkeys(atom_ids))
+    if not ids:
+        return True
+    placeholders = ",".join("?" for _ in ids)
+    current = int(
+        conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM memory_atoms
+            WHERE id IN ({placeholders})
+              AND status IN ('active', 'approved')
+              AND claim_state = 'current'
+              AND privacy_level != 'sensitive'
+            """,
+            ids,
+        ).fetchone()[0]
+    )
+    return current == len(ids)

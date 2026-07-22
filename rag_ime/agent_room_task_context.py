@@ -35,21 +35,7 @@ class RoomTaskContextProjector:
         criterion_ids = _string_set(
             task.get("acceptanceCriterionIds")
         )
-        items = [
-            _requirement_item(item)
-            for item in _mappings(catalog.get("items"))
-            if not requirement_ids
-            or str(item.get("itemId") or "") in requirement_ids
-        ][:64]
-        criteria = [
-            _acceptance_criterion(criterion)
-            for criterion in _mappings(
-                catalog.get("acceptanceCriteria")
-            )
-            if not criterion_ids
-            or str(criterion.get("criterionId") or "")
-            in criterion_ids
-        ][:64]
+        raw_originals = _mappings(snapshot.get("originalRequirements"))[:8]
         originals = [
             {
                 "anchorId": bounded_text(
@@ -65,10 +51,31 @@ class RoomTaskContextProjector:
                     original.get("authenticity"), maximum=40
                 ),
             }
-            for original in _mappings(
-                snapshot.get("originalRequirements")
-            )[:8]
+            for original in raw_originals
         ]
+        original_statement_sources = {
+            str(original.get("text") or "").strip(): f"original[{index}]"
+            for index, original in enumerate(raw_originals)
+            if str(original.get("text") or "").strip()
+        }
+        items = [
+            _requirement_item(
+                item,
+                original_statement_sources=original_statement_sources,
+            )
+            for item in _mappings(catalog.get("items"))
+            if not requirement_ids
+            or str(item.get("itemId") or "") in requirement_ids
+        ][:64]
+        criteria = [
+            _acceptance_criterion(criterion)
+            for criterion in _mappings(
+                catalog.get("acceptanceCriteria")
+            )
+            if not criterion_ids
+            or str(criterion.get("criterionId") or "")
+            in criterion_ids
+        ][:64]
         packet = {
             "schemaVersion": "wisdom-weasel.room-task-context.v1",
             "rootId": str(dispatch["rootId"]),
@@ -181,15 +188,29 @@ class RoomTaskContextProjector:
                 )
 
 
-def _requirement_item(value: Mapping[str, object]) -> dict[str, object]:
-    return {
+def _requirement_item(
+    value: Mapping[str, object],
+    *,
+    original_statement_sources: Mapping[str, str],
+) -> dict[str, object]:
+    raw_statement = str(value.get("statement") or "").strip()
+    source = (
+        original_statement_sources.get(raw_statement)
+        if value.get("kind") == "explicit_user_requirement"
+        else None
+    )
+    item = {
         "itemId": bounded_text(value.get("itemId"), maximum=240),
         "kind": bounded_text(value.get("kind"), maximum=80),
-        "statement": bounded_text(
-            value.get("statement"), maximum=1_500
-        ),
         "state": bounded_text(value.get("state"), maximum=40),
     }
+    if source is not None:
+        item["statementSource"] = source
+    else:
+        item["statement"] = bounded_text(
+            value.get("statement"), maximum=1_500
+        )
+    return item
 
 
 def _acceptance_criterion(

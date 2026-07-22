@@ -144,6 +144,14 @@ class AgentMemoryContextService:
                 task.get("objective"),
                 maximum=4_000,
             )
+            room_ids = self.task_context.room_ids(session_id)
+            managed_room = bool(room_ids)
+            projected_recent = [] if managed_room else recent
+            retrieval_recent = (
+                last_user_recall_text(recent)
+                if managed_room
+                else recall_message_text(recent)
+            )
             specification = self.memory_bootstrap.build(
                 session_id,
                 role_id=role_id,
@@ -151,12 +159,10 @@ class AgentMemoryContextService:
                     query_text,
                     objective,
                 ),
-                room_ids=self.task_context.room_ids(
-                    session_id
-                ),
+                room_ids=room_ids,
                 trigger=self.task_context.trigger(session_id),
                 retrieval_context_text=bounded_text(
-                    f"{recall_message_text(recent)}\n"
+                    f"{retrieval_recent}\n"
                     f"{objective}",
                     maximum=6_000,
                 ),
@@ -165,7 +171,7 @@ class AgentMemoryContextService:
                     session_recall_policy()
                     .start_summary_weight
                 ),
-                recent_messages=recent,
+                recent_messages=projected_recent,
                 planning_context=self.sessions.agent_plan(
                     session_id
                 ),
@@ -314,27 +320,37 @@ class AgentMemoryContextService:
             session_id,
             active_only=False,
         )
+        room_ids = self.task_context.room_ids(session_id)
+        managed_room = before is not None or bool(room_ids)
+        projected_recent = [] if managed_room else recent
+        retrieval_recent = (
+            last_user_recall_text(recent)
+            if managed_room
+            else recall_message_text(recent)
+        )
         specification = self.memory_bootstrap.build(
             session_id,
             role_id=str(session.get("roleId") or ""),
             query_text=query,
-            room_ids=self.task_context.room_ids(session_id),
+            room_ids=room_ids,
             trigger=trigger,
             retrieval_context_text=bounded_text(
-                f"{recall_message_text(recent)}\n"
+                f"{retrieval_recent}\n"
                 f"{str(task.get('objective') or '')}",
                 maximum=6_000,
             ),
             vector_context_text=(
-                summary if is_compaction else ""
+                summary
+                if is_compaction and not managed_room
+                else ""
             ),
             vector_context_weight=(
                 session_recall_policy()
                 .compaction_summary_weight
-                if is_compaction and summary
+                if is_compaction and summary and not managed_room
                 else 0.0
             ),
-            recent_messages=recent,
+            recent_messages=projected_recent,
             planning_context=self.sessions.agent_plan(
                 session_id
             ),
@@ -414,7 +430,9 @@ class AgentMemoryContextService:
                 "sourceCount": len(
                     recall_payload.get("items") or []
                 ),
-                "recentConversationCount": len(recent),
+                "recentConversationCount": len(
+                    projected_recent
+                ),
                 "roomContextRecovery": room_recovery,
                 "roomToolRecovery": room_tool_recovery,
                 "roomRecoveryContext": room_recovery_context,

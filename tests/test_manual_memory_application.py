@@ -115,7 +115,7 @@ class ManualMemoryApplicationTests(unittest.TestCase):
                 session_id=str(session["id"]),
                 pi_entry_id="entry:noise",
                 turn_id="turn:noise",
-                text="请调用 ime_memory Tool 的 curation_prepare 操作。",
+                text="这轮临时把输出缩短一点，不需要长期记忆。",
                 created_at_ms=1_700_000_060_000,
             )
             with sqlite3.connect(db_path) as conn:
@@ -181,7 +181,7 @@ class ManualMemoryApplicationTests(unittest.TestCase):
                     duplicate["sourceEventIds"]
                 )
                 export["inputs"].remove(duplicate)
-            noise = next(item for item in export["inputs"] if "curation_prepare" in item["text"])
+            noise = next(item for item in export["inputs"] if "临时把输出缩短" in item["text"])
             manifest = {
                 "schemaVersion": MANUAL_MEMORY_MANIFEST_SCHEMA_VERSION,
                 "project": PROJECT,
@@ -385,7 +385,7 @@ class ManualMemoryApplicationTests(unittest.TestCase):
             self.assertEqual(dispositions[stable["text"]], "remember")
             self.assertEqual(tuple(old_book), ("archived", "discarded_by_manual_review"))
             self.assertEqual(timeline["status"], "approved")
-            self.assertNotIn("请调用", timeline["summary_text"])
+            self.assertNotIn("临时把输出缩短", timeline["summary_text"])
             self.assertNotIn("。；", timeline["summary_text"])
             self.assertNotIn("；；", timeline["summary_text"])
             self.assertTrue(timeline["summary_text"].endswith("。"))

@@ -251,6 +251,79 @@ class RetrievalDocsTests(unittest.TestCase):
         self.assertIn("混合召回", row["surface_hints_text"])
         self.assertIn("千问三 Qwen3", row["query_expansions_text"])
 
+    def test_secondary_projection_change_advances_source_revision(self) -> None:
+        event_id = self._record_seed_event()
+        plan = memory_book_plan_from_compile_output(
+            sample_compile_output(event_id),
+            project="wisdom-weasel-rag-ime",
+            provider="deepseek",
+            model="deepseek-v4-flash",
+        )
+        with self.connect() as conn:
+            apply_memory_book_plan(conn, plan)
+            rebuild_retrieval_docs(conn, project="wisdom-weasel-rag-ime")
+            before = conn.execute(
+                """
+                SELECT doc_id, source_revision, projection_version
+                FROM memory_retrieval_docs
+                WHERE doc_type = 'atom'
+                """
+            ).fetchone()
+            conn.execute(
+                """
+                INSERT INTO memory_retrieval_doc_vectors(
+                    doc_id, provider_fingerprint, raw_vector_json,
+                    tag_vector_json, group_vector_json, dimensions,
+                    source_revision, projection_version, built_at_ms,
+                    updated_at_ms
+                ) VALUES (?, 'test:old', '[1,0]', '[1,0]', '[]', 2, ?, ?, 1, 1)
+                """,
+                (
+                    str(before["doc_id"]),
+                    int(before["source_revision"]),
+                    int(before["projection_version"]),
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE memory_aliases
+                SET alias = '新版 VCP RAG'
+                WHERE memory_atom_id = 'atom:vcp-style-rag-core'
+                  AND alias_type = 'alias'
+                """
+            )
+
+            report = rebuild_retrieval_docs(
+                conn,
+                project="wisdom-weasel-rag-ime",
+            )
+            after = conn.execute(
+                """
+                SELECT source_revision, aliases_text
+                FROM memory_retrieval_docs
+                WHERE doc_id = ?
+                """,
+                (str(before["doc_id"]),),
+            ).fetchone()
+
+        self.assertIn(str(before["doc_id"]), report["changedDocIds"])
+        self.assertGreater(
+            int(after["source_revision"]),
+            int(before["source_revision"]),
+        )
+        self.assertIn("新版 VCP RAG", str(after["aliases_text"]))
+        with self.connect() as conn:
+            self.assertEqual(
+                conn.execute(
+                    """
+                    SELECT COUNT(*) FROM memory_retrieval_doc_vectors
+                    WHERE doc_id = ?
+                    """,
+                    (str(before["doc_id"]),),
+                ).fetchone()[0],
+                0,
+            )
+
     def test_retrieval_docs_exclude_tombstoned_and_sensitive(self) -> None:
         self.core.record_event(
             InputEvent(

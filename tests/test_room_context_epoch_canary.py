@@ -26,7 +26,520 @@ REPORT = importlib.util.module_from_spec(REPORT_SPEC)
 REPORT_SPEC.loader.exec_module(REPORT)
 
 
+def _model_call(
+    *,
+    index: int,
+    system_prompt: str,
+    messages: list[dict[str, object]],
+    tools: list[dict[str, object]],
+    previous_messages: list[dict[str, object]] | None,
+) -> dict[str, object]:
+    previous = previous_messages or []
+    common_messages = 0
+    while (
+        common_messages < len(previous)
+        and common_messages < len(messages)
+        and CANARY._json_bytes(previous[common_messages])
+        == CANARY._json_bytes(messages[common_messages])
+    ):
+        common_messages += 1
+    previous_bytes = CANARY._json_bytes(previous)
+    current_bytes = CANARY._json_bytes(messages)
+    prefix_bytes = 0
+    while (
+        prefix_bytes < len(previous_bytes)
+        and prefix_bytes < len(current_bytes)
+        and previous_bytes[prefix_bytes] == current_bytes[prefix_bytes]
+    ):
+        prefix_bytes += 1
+    return {
+        "index": index,
+        "contextMessages": messages,
+        "providerContext": {
+            "systemPrompt": system_prompt,
+            "messages": messages,
+            "tools": tools,
+        },
+        "contextDelta": {
+            "baseCallIndex": index - 1 if index > 1 else None,
+            "commonPrefixMessages": common_messages,
+            "removedMessageCount": len(previous) - common_messages,
+            "addedMessageCount": len(messages) - common_messages,
+            "prefixBytes": prefix_bytes,
+            "prefixSha256": hashlib.sha256(
+                current_bytes[:prefix_bytes]
+            ).hexdigest(),
+            "currentBytes": len(current_bytes),
+            "deltaBytes": len(current_bytes) - prefix_bytes,
+            "duplicateBytes": prefix_bytes,
+        },
+    }
+
+
 class RoomContextEpochCanaryTest(unittest.TestCase):
+    def test_debug_evidence_uses_the_audit_timeout_for_both_snapshots(
+        self,
+    ) -> None:
+        requests: list[tuple[str, float]] = []
+
+        def requester(
+            _base_url: str,
+            _method: str,
+            path: str,
+            _payload: object | None = None,
+            *,
+            timeout: float,
+        ) -> dict[str, object]:
+            requests.append((path, timeout))
+            if path.endswith("/debug-context"):
+                return {"context": {}, "transcript": {}}
+            return {"messageQueue": {}}
+
+        CANARY.debug_evidence(
+            "http://in-process.invalid",
+            "session-audit",
+            requester=requester,
+            timeout=240,
+        )
+
+        self.assertEqual(
+            requests,
+            [
+                (
+                    "/api/agent/sessions/session-audit/debug-context",
+                    240,
+                ),
+                (
+                    "/api/agent/sessions/session-audit/messages",
+                    240,
+                ),
+            ],
+        )
+
+    def test_provider_prefix_evidence_proves_content_free_append_only_context(
+        self,
+    ) -> None:
+        first_messages = [{"role": "user", "content": "private requirement"}]
+        second_messages = [
+            *first_messages,
+            {"role": "assistant", "content": "working"},
+            {"role": "toolResult", "content": "private result"},
+        ]
+        first_tools = [{"name": "tool_search", "parameters": {"type": "object"}}]
+        second_tools = [
+            *first_tools,
+            {"name": "workspace_read", "parameters": {"type": "object"}},
+        ]
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=1,
+                    system_prompt="stable private prompt",
+                    messages=first_messages,
+                    tools=first_tools,
+                    previous_messages=None,
+                ),
+                _model_call(
+                    index=2,
+                    system_prompt="stable private prompt",
+                    messages=second_messages,
+                    tools=second_tools,
+                    previous_messages=first_messages,
+                ),
+            ]
+        }
+
+        evidence = CANARY.provider_prefix_evidence(context)
+
+        self.assertTrue(evidence["passed"])
+        self.assertTrue(evidence["checks"]["messageBytePrefixPreserved"])
+        self.assertEqual(evidence["calls"][0]["messageCount"], 1)
+        serialized = json.dumps(evidence, ensure_ascii=False)
+        self.assertNotIn("private requirement", serialized)
+        self.assertNotIn("private result", serialized)
+        self.assertNotIn("stable private prompt", serialized)
+
+    def test_provider_prefix_evidence_rejects_reorder_and_prompt_change(self) -> None:
+        first_messages = [
+            {"role": "user", "content": "one"},
+            {"role": "assistant", "content": "two"},
+        ]
+        second_messages = [
+            first_messages[1],
+            first_messages[0],
+            {"role": "toolResult", "content": "three"},
+        ]
+        first_tools = [{"name": "alpha"}, {"name": "beta"}]
+        second_tools = [first_tools[1], first_tools[0]]
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=1,
+                    system_prompt="prompt one",
+                    messages=first_messages,
+                    tools=first_tools,
+                    previous_messages=None,
+                ),
+                _model_call(
+                    index=2,
+                    system_prompt="prompt two",
+                    messages=second_messages,
+                    tools=second_tools,
+                    previous_messages=first_messages,
+                ),
+            ]
+        }
+
+        evidence = CANARY.provider_prefix_evidence(context)
+
+        self.assertFalse(evidence["passed"])
+        self.assertFalse(evidence["checks"]["stableSystemPrompt"])
+        self.assertFalse(evidence["checks"]["messageHistoryAppendOnly"])
+        self.assertFalse(evidence["checks"]["toolSchemasAppendOnly"])
+        self.assertFalse(evidence["checks"]["messageBytePrefixPreserved"])
+
+    def test_prompt_governance_requires_room_authority_without_duplicate_recovery(self) -> None:
+        routing_card = json.dumps(
+            {
+                "name": "workspace_read",
+                "when": ["读取文件"],
+                "notFor": ["写入文件"],
+                "input": "路径与范围",
+                "output": "有界文本",
+                "does": "读取授权文件。",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        clean_prompt = (
+            "base\n### Act Gate\n"
+            "当前受管 Room Dispatch 已授权执行；写操作仍受原生审批。"
+            "\n<available_skills format=\"routing-card-jsonl\">\n"
+            f"{routing_card}\n</available_skills>"
+            "\n<available_product_tools format=\"route-jsonl\">\n"
+            f"{routing_card}\n</available_product_tools>"
+        )
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=1,
+                    system_prompt=clean_prompt,
+                    messages=[{"role": "user", "content": "work"}],
+                    tools=[{"name": "tool_load"}],
+                    previous_messages=None,
+                )
+            ]
+        }
+
+        clean = CANARY.provider_prompt_governance_evidence(context)
+        self.assertTrue(clean["managedRoomAuthorityEveryCall"])
+        self.assertEqual(clean["conflictingWorkflowMarkers"], [])
+        self.assertEqual(clean["lifecycleHookBlockCount"], 0)
+        self.assertEqual(clean["volatileCurrentTimeCount"], 0)
+        self.assertEqual(clean["projectContextBlockCount"], 0)
+        self.assertTrue(clean["catalogBlocksExactlyOnceEveryCall"])
+        self.assertTrue(clean["routingCardFieldContractEveryCall"])
+        self.assertTrue(clean["routingCardContentCompleteEveryCall"])
+        self.assertTrue(clean["initialProductSchemasDeferred"])
+        self.assertTrue(clean["initialProductSchemasHaveLoadReceipts"])
+        self.assertTrue(clean["progressiveProductSchemasValid"])
+        self.assertEqual(clean["invalidRoutingCardCount"], 0)
+        self.assertEqual(clean["truncatedRoutingCardValueCount"], 0)
+
+        context["modelCalls"][0]["providerContext"]["systemPrompt"] = (
+            clean_prompt
+            + "\n计划尚未批准，不得执行写操作。"
+            + '\n<rag-ime-context type="lifecycle_hook" current_time="volatile">'
+            + "duplicate</rag-ime-context>"
+        )
+        conflicted = CANARY.provider_prompt_governance_evidence(context)
+        self.assertEqual(
+            conflicted["conflictingWorkflowMarkers"],
+            ["不得执行写操作", "计划尚未批准"],
+        )
+        self.assertEqual(conflicted["lifecycleHookBlockCount"], 1)
+        self.assertEqual(conflicted["volatileCurrentTimeCount"], 1)
+
+    def test_prompt_governance_rejects_agentmd_and_eager_product_schema(self) -> None:
+        card = json.dumps(
+            {
+                "name": "workspace_read",
+                "when": ["读取"],
+                "notFor": ["写入"],
+                "input": "路径",
+                "output": "文本",
+                "does": "读取文件。",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        prompt = (
+            "当前受管 Room Dispatch 已授权执行"
+            "\n<project_context>AGENTS.md</project_context>"
+            f"\n<available_skills>{card}</available_skills>"
+            f"\n<available_product_tools>{card}</available_product_tools>"
+        )
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=1,
+                    system_prompt=prompt,
+                    messages=[{"role": "user", "content": "work"}],
+                    tools=[{"name": "tool_load"}, {"name": "workspace_read"}],
+                    previous_messages=None,
+                )
+            ]
+        }
+
+        evidence = CANARY.provider_prompt_governance_evidence(context)
+
+        self.assertEqual(evidence["projectContextBlockCount"], 1)
+        self.assertFalse(evidence["initialProductSchemasDeferred"])
+        self.assertEqual(evidence["initialProductSchemaCount"], 1)
+        self.assertFalse(evidence["initialProductSchemasHaveLoadReceipts"])
+        self.assertFalse(evidence["progressiveProductSchemasValid"])
+
+    def test_prompt_governance_rejects_truncated_routing_card_values(self) -> None:
+        card = json.dumps(
+            {
+                "name": "workspace_read",
+                "when": ["读取"],
+                "notFor": ["写入"],
+                "input": "被硬截断的输入...",
+                "output": "文本",
+                "does": "读取文件。",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        prompt = (
+            "当前受管 Room Dispatch 已授权执行"
+            f"\n<available_skills>{card}</available_skills>"
+            f"\n<available_product_tools>{card}</available_product_tools>"
+        )
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=1,
+                    system_prompt=prompt,
+                    messages=[{"role": "user", "content": "work"}],
+                    tools=[{"name": "tool_load"}],
+                    previous_messages=None,
+                )
+            ]
+        }
+
+        evidence = CANARY.provider_prompt_governance_evidence(context)
+
+        self.assertFalse(evidence["routingCardContentCompleteEveryCall"])
+        self.assertEqual(evidence["truncatedRoutingCardValueCount"], 2)
+
+    def test_prompt_governance_accepts_schema_loaded_before_resumed_capture(
+        self,
+    ) -> None:
+        card = json.dumps(
+            {
+                "name": "workspace_read",
+                "when": ["读取"],
+                "notFor": ["写入"],
+                "input": "路径",
+                "output": "文本",
+                "does": "读取文件。",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        prompt = (
+            "当前受管 Room Dispatch 已授权执行"
+            f"\n<available_skills>{card}</available_skills>"
+            f"\n<available_product_tools>{card}</available_product_tools>"
+        )
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "name": "tool_load",
+                        "arguments": {"name": "workspace_read"},
+                    }
+                ],
+            },
+            {
+                "role": "toolResult",
+                "toolName": "tool_load",
+                "details": {
+                    "disclosed": True,
+                    "tool": {"name": "workspace_read"},
+                },
+            },
+            {"role": "user", "content": "resume after approval"},
+        ]
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=10,
+                    system_prompt=prompt,
+                    messages=messages,
+                    tools=[{"name": "tool_load"}, {"name": "workspace_read"}],
+                    previous_messages=None,
+                )
+            ]
+        }
+
+        evidence = CANARY.provider_prompt_governance_evidence(context)
+
+        self.assertFalse(evidence["initialProductSchemasDeferred"])
+        self.assertEqual(evidence["initialProductSchemaCount"], 1)
+        self.assertEqual(
+            evidence["loadedProductSchemasBeforeFirstCapture"],
+            ["workspace_read"],
+        )
+        self.assertTrue(evidence["initialProductSchemasHaveLoadReceipts"])
+        self.assertTrue(evidence["progressiveProductSchemasValid"])
+
+    def test_prompt_governance_detects_duplicate_original_requirement_projection(self) -> None:
+        original = "原始需求只应进入 Provider 上下文一次"
+        clean_dispatch = "\n".join(
+            (
+                "## Room 任务",
+                "原始需求（不可改写）：",
+                f"- {original}",
+                "当前任务：",
+                "- 目标：验证唯一投影",
+            )
+        )
+        clean_prompt = (
+            '<room-projection state="pending">\n'
+            f'<room-fact kind="dispatch_state">{clean_dispatch}</room-fact>\n'
+            "</room-projection>"
+        )
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=1,
+                    system_prompt=clean_prompt,
+                    messages=[{"role": "user", "content": "work"}],
+                    tools=[],
+                    previous_messages=None,
+                )
+            ]
+        }
+
+        clean = CANARY.provider_prompt_governance_evidence(context)
+        self.assertTrue(
+            clean["originalRequirementProjectionDeduplicatedEveryCall"]
+        )
+        self.assertEqual(clean["catalogOriginalReferenceCount"], 1)
+        self.assertEqual(clean["duplicateOriginalRoomPostCount"], 0)
+        self.assertEqual(clean["duplicateOriginalCatalogStatementCount"], 0)
+
+        duplicate_dispatch = clean_dispatch + "\n" + "\n".join(
+            ("补充要求：", f"- {original}")
+        )
+        context["modelCalls"][0]["providerContext"]["systemPrompt"] = (
+            '<room-projection state="pending">\n'
+            f'<room-fact kind="room_post">{original}</room-fact>\n'
+            f'<room-fact kind="dispatch_state">{duplicate_dispatch}</room-fact>\n'
+            "</room-projection>"
+        )
+        duplicated = CANARY.provider_prompt_governance_evidence(context)
+        self.assertFalse(
+            duplicated["originalRequirementProjectionDeduplicatedEveryCall"]
+        )
+        self.assertEqual(duplicated["duplicateOriginalRoomPostCount"], 1)
+        self.assertEqual(
+            duplicated["duplicateOriginalCatalogStatementCount"],
+            1,
+        )
+
+    def test_progressive_discovery_allows_loaded_schemas_in_later_epochs(self) -> None:
+        first = {
+            "catalogBlocksExactlyOnceEveryCall": True,
+            "routingCardFieldContractEveryCall": True,
+            "routingCardContentCompleteEveryCall": True,
+            "initialProductSchemasDeferred": True,
+            "progressiveProductSchemasValid": True,
+            "initialProductSchemaNames": [],
+            "loadedProductSchemasBeforeFirstCapture": [],
+            "invalidRoutingCardCount": 0,
+            "truncatedRoutingCardValueCount": 0,
+        }
+        later = {
+            **first,
+            "initialProductSchemasDeferred": False,
+            "initialProductSchemaCount": 3,
+            "initialProductSchemaNames": [
+                "room_commit",
+                "room_post",
+                "workspace_read",
+            ],
+        }
+
+        self.assertTrue(
+            CANARY.progressive_discovery_check(
+                [first, later],
+                [set(), {"room_commit", "room_post", "workspace_read"}],
+            )
+        )
+        self.assertFalse(
+            CANARY.progressive_discovery_check(
+                [later],
+                [{"room_commit", "room_post"}],
+            )
+        )
+
+    def test_offline_report_recovers_provider_prefix_from_exact_turn_receipt(
+        self,
+    ) -> None:
+        first_messages = [{"role": "user", "content": "one"}]
+        second_messages = [
+            *first_messages,
+            {"role": "assistant", "content": "two"},
+        ]
+        raw = {
+            "sessionId": "agent:1",
+            "turnId": "turn:1",
+            "capturedAtMs": 1,
+            "updatedAtMs": 2,
+            "modelCalls": [
+                _model_call(
+                    index=1,
+                    system_prompt="prompt",
+                    messages=first_messages,
+                    tools=[{"name": "tool_search"}],
+                    previous_messages=None,
+                ),
+                _model_call(
+                    index=2,
+                    system_prompt="prompt",
+                    messages=second_messages,
+                    tools=[{"name": "tool_search"}],
+                    previous_messages=first_messages,
+                ),
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "context-inspection"
+            receipt_dir = root / "agent_1"
+            receipt_dir.mkdir(parents=True)
+            (receipt_dir / "receipt.json").write_text(
+                json.dumps(raw, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            evidence = REPORT._context_inspection_provider_prefix_evidence(
+                root,
+                session_id="agent:1",
+                turn_id="turn:1",
+            )
+
+        self.assertIsNotNone(evidence)
+        assert evidence is not None
+        self.assertTrue(evidence["passed"])
+        self.assertEqual(evidence["source"], "context_inspection_receipt")
+        self.assertEqual(evidence["sourceReceipt"]["candidateCount"], 1)
+
     def test_workload_files_are_two_real_files_inside_the_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
@@ -231,6 +744,27 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
 
         self.assertEqual(leaked, {"sourceId", "相关度："})
 
+    def test_memory_check_reads_deterministic_provider_context(self) -> None:
+        blocks = CANARY._session_memory_blocks(
+            [
+                {
+                    "systemPrompt": "stable prompt",
+                    "messages": [
+                        {
+                            "role": "developer",
+                            "content": (
+                                '<rag-ime-context type="session_memory">'
+                                "## Session 记忆\n- 只恢复一份有界上下文。"
+                                "</rag-ime-context>"
+                            ),
+                        }
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(blocks, ["## Session 记忆\n- 只恢复一份有界上下文。"])
+
     def test_transcript_evidence_rejects_room_projection_as_user_message(self) -> None:
         entries = [
             {"type": "session", "version": 3},
@@ -266,6 +800,36 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         self.assertEqual(evidence["repairContinuationCount"], 1)
         self.assertEqual(evidence["roomEnvelopeCount"], 1)
 
+    def test_transcript_evidence_requires_a_fact_free_room_compaction_pointer(self) -> None:
+        entries = [
+            {"type": "session", "version": 3},
+            {
+                "type": "compaction",
+                "summary": (
+                    "Managed Room history was compacted. The only authoritative "
+                    'task recovery is <rag-ime-context type="room_context">.'
+                ),
+                "fromHook": True,
+            },
+        ]
+        payload = "".join(
+            json.dumps(entry, ensure_ascii=False) + "\n"
+            for entry in entries
+        ).encode("utf-8")
+        digest = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.jsonl"
+            path.write_bytes(payload)
+            evidence = CANARY.transcript_evidence(
+                Path(directory),
+                digest,
+            )
+
+        self.assertEqual(evidence["compactionCount"], 1)
+        self.assertEqual(evidence["extensionCompactionCount"], 1)
+        self.assertEqual(evidence["roomRecoveryPointerCount"], 1)
+        self.assertEqual(evidence["compactionTaskFactLeakCount"], 0)
+
     def test_offline_report_reuses_recorded_session_memory_receipt(self) -> None:
         receipt = REPORT._recorded_memory_evidence(
             {
@@ -284,6 +848,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
                 "blockCount": 2,
                 "nonEmptyBlockCount": 2,
                 "forbiddenMetadata": [],
+                "assistantConversationBlockCount": 0,
                 "source": "canary_report",
             },
         )
@@ -312,6 +877,10 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
                 "repairContinuationCount": 1,
                 "roomEnvelopeCount": 0,
                 "publicCanaryPostCount": 0,
+                "compactionCount": 3,
+                "extensionCompactionCount": 3,
+                "roomRecoveryPointerCount": 3,
+                "compactionTaskFactLeakCount": 0,
             },
             epoch_count=3,
         )
@@ -321,6 +890,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             {
                 "repairContinuationsAreBounded": True,
                 "roomContextAbsentFromSessionTranscript": True,
+                "piCompactionStoresOnlyRoomRecoveryPointer": True,
             },
         )
 

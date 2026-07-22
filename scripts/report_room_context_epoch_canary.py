@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sqlite3
@@ -16,6 +17,8 @@ from room_context_epoch_canary import (
     _provider_session_memory_blocks,
     debug_evidence,
     encoded,
+    progressive_discovery_check,
+    provider_prefix_evidence,
     request_json,
     transcript_evidence,
 )
@@ -145,6 +148,10 @@ def _turn_memory_evidence(
         "blockCount": len(blocks),
         "nonEmptyBlockCount": sum("## Session 记忆" in block for block in blocks),
         "forbiddenMetadata": forbidden,
+        "assistantConversationBlockCount": sum(
+            "## 最近对话" in block or "**Agent**" in block
+            for block in blocks
+        ),
         "source": "live_debug_context",
     }
 
@@ -160,10 +167,19 @@ def _recorded_memory_evidence(
     block_count = value.get("blockCount")
     non_empty_count = value.get("nonEmptyBlockCount")
     forbidden = value.get("forbiddenMetadata")
+    assistant_conversation_count = value.get(
+        "assistantConversationBlockCount",
+        0,
+    )
     if not isinstance(block_count, int) or not isinstance(non_empty_count, int):
         return None
-    if not isinstance(forbidden, list) or not all(
-        isinstance(item, str) for item in forbidden
+    if (
+        not isinstance(assistant_conversation_count, int)
+        or isinstance(assistant_conversation_count, bool)
+        or not isinstance(forbidden, list)
+        or not all(
+            isinstance(item, str) for item in forbidden
+        )
     ):
         return None
     return {
@@ -171,6 +187,9 @@ def _recorded_memory_evidence(
         "blockCount": block_count,
         "nonEmptyBlockCount": non_empty_count,
         "forbiddenMetadata": forbidden,
+        "assistantConversationBlockCount": (
+            assistant_conversation_count
+        ),
         "source": source,
     }
 
@@ -195,6 +214,127 @@ def _prior_memory_by_turn(path: Path | None) -> dict[str, dict[str, Any]]:
         if turn_id and memory is not None:
             result[turn_id] = memory
     return result
+
+
+def _recorded_provider_prefix_evidence(
+    value: object,
+    *,
+    turn_id: str,
+    source: str,
+) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    if value.get("schemaVersion") != "wisdom-weasel.provider-prefix-evidence.v1":
+        return None
+    if not isinstance(value.get("passed"), bool):
+        return None
+    checks = value.get("checks")
+    calls = value.get("calls")
+    transitions = value.get("transitions")
+    if (
+        not isinstance(checks, dict)
+        or not all(isinstance(item, bool) for item in checks.values())
+        or not isinstance(calls, list)
+        or not isinstance(transitions, list)
+    ):
+        return None
+    return {
+        **value,
+        "turnId": turn_id,
+        "source": source,
+    }
+
+
+def _prior_provider_prefix_by_turn(
+    path: Path | None,
+) -> dict[str, dict[str, Any]]:
+    if path is None:
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    epochs = raw.get("epochs") if isinstance(raw, dict) else None
+    if not isinstance(epochs, list):
+        raise RuntimeError("Recorded evidence is missing its epoch list")
+    result: dict[str, dict[str, Any]] = {}
+    for item in epochs:
+        if not isinstance(item, dict):
+            continue
+        turn_id = str(item.get("turnId") or "")
+        evidence = _recorded_provider_prefix_evidence(
+            item.get("providerPrefix"),
+            turn_id=turn_id,
+            source="recorded_evidence",
+        )
+        if turn_id and evidence is not None:
+            result[turn_id] = evidence
+    return result
+
+
+def _context_inspection_provider_prefix_evidence(
+    context_inspection_dir: Path,
+    *,
+    session_id: str,
+    turn_id: str,
+) -> dict[str, Any] | None:
+    if not context_inspection_dir.is_dir():
+        return None
+    session_dir = context_inspection_dir / session_id.replace(":", "_")
+    search_root = session_dir if session_dir.is_dir() else context_inspection_dir
+    matches: list[tuple[Path, dict[str, Any]]] = []
+    for path in search_root.rglob("*.json"):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(raw, dict)
+            and raw.get("sessionId") == session_id
+            and raw.get("turnId") == turn_id
+        ):
+            matches.append((path, raw))
+    if not matches:
+        return None
+    selected_path, selected = max(
+        matches,
+        key=lambda item: (
+            int(item[1].get("updatedAtMs") or 0),
+            int(item[1].get("capturedAtMs") or 0),
+            item[0].name,
+        ),
+    )
+    evidence = provider_prefix_evidence(selected)
+    return {
+        **evidence,
+        "turnId": turn_id,
+        "source": "context_inspection_receipt",
+        "sourceReceipt": {
+            "path": str(selected_path.resolve()),
+            "sha256": hashlib.sha256(selected_path.read_bytes()).hexdigest(),
+            "candidateCount": len(matches),
+        },
+    }
+
+
+def _live_provider_prefix_evidence(
+    base_url: str,
+    *,
+    session_id: str,
+    turn_id: str,
+) -> dict[str, Any]:
+    debug = request_json(
+        base_url,
+        "GET",
+        (
+            f"/api/agent/sessions/{encoded(session_id)}/debug-context"
+            f"?turnId={encoded(turn_id)}"
+        ),
+        timeout=20,
+    )
+    context = debug.get("context") or {}
+    return {
+        **provider_prefix_evidence(context),
+        "turnId": turn_id,
+        "source": "live_debug_context",
+    }
 
 
 def _prior_transcript_sha(path: Path | None) -> str:
@@ -225,6 +365,14 @@ def _transcript_boundary_checks(
             and transcript.get("publicCanaryPostCount") == 0
             and transcript.get("privateTriggerCount") == epoch_count
         ),
+        "piCompactionStoresOnlyRoomRecoveryPointer": (
+            transcript.get("compactionCount") == epoch_count
+            and transcript.get("extensionCompactionCount")
+            == epoch_count
+            and transcript.get("roomRecoveryPointerCount")
+            == epoch_count
+            and transcript.get("compactionTaskFactLeakCount") == 0
+        ),
     }
 
 
@@ -235,6 +383,7 @@ def build_report(
     canary_report_path: Path,
     pi_session_dir: Path,
     recorded_evidence_path: Path | None = None,
+    context_inspection_dir: Path | None = None,
 ) -> dict[str, Any]:
     raw = json.loads(canary_report_path.read_text(encoding="utf-8"))
     session_id = str(raw.get("sessionId") or "")
@@ -243,6 +392,10 @@ def build_report(
         raise RuntimeError("Expected one resident Session and exactly three canary epochs")
 
     prior_memory = _prior_memory_by_turn(recorded_evidence_path)
+    prior_prefix = _prior_provider_prefix_by_turn(recorded_evidence_path)
+    inspection_root = context_inspection_dir or (
+        pi_session_dir.parent.parent / "context-inspection"
+    )
     verified_epochs: list[dict[str, Any]] = []
     for item in epochs:
         before = item.get("beforeCompaction") or {}
@@ -265,6 +418,25 @@ def build_report(
             memory = prior_memory.get(turn_id)
         if memory is None:
             memory = _turn_memory_evidence(base_url, session_id, turn_id)
+        prefix = _recorded_provider_prefix_evidence(
+            before.get("providerPrefix"),
+            turn_id=turn_id,
+            source="canary_report",
+        )
+        if prefix is None:
+            prefix = prior_prefix.get(turn_id)
+        if prefix is None:
+            prefix = _context_inspection_provider_prefix_evidence(
+                inspection_root,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
+        if prefix is None:
+            prefix = _live_provider_prefix_evidence(
+                base_url,
+                session_id=session_id,
+                turn_id=turn_id,
+            )
         hashes_match = transition["providerHashes"] == after_journal.get("hashes")
         applied = (
             transition["reason"] == "compaction"
@@ -280,6 +452,8 @@ def build_report(
                 "transition": transition,
                 "journal": after_journal,
                 "memory": memory,
+                "providerPrefix": prefix,
+                "promptGovernance": before.get("promptGovernance") or {},
                 "compactionObservedApplied": applied,
                 "hashesMatch": hashes_match,
                 "positiveCacheRead": bool(before.get("positiveCacheRead")),
@@ -346,10 +520,53 @@ def build_report(
             item["memory"]["blockCount"] > 0
             and item["memory"]["nonEmptyBlockCount"] > 0
             and not item["memory"]["forbiddenMetadata"]
+            and item["memory"]["assistantConversationBlockCount"]
+            == 0
             for item in verified_epochs
         ),
         "kvCacheObservedEveryTask": all(
             item["positiveCacheRead"] for item in verified_epochs
+        ),
+        "providerPrefixesStableWithinEpoch": all(
+            item["providerPrefix"]["passed"] for item in verified_epochs
+        ),
+        "managedRoomWorkflowAuthorityClear": all(
+            item["promptGovernance"].get("managedRoomAuthorityEveryCall") is True
+            and not item["promptGovernance"].get("conflictingWorkflowMarkers")
+            for item in verified_epochs
+        ),
+        "singleManagedRoomRecoveryOwner": all(
+            item["promptGovernance"].get("lifecycleHookBlockCount") == 0
+            for item in verified_epochs
+        ),
+        "cacheStableManagedPromptControls": all(
+            item["promptGovernance"].get("volatileCurrentTimeCount") == 0
+            for item in verified_epochs
+        ),
+        "agentMdDefaultOff": all(
+            item["promptGovernance"].get("projectContextBlockCount") == 0
+            for item in verified_epochs
+        ),
+        "roomContextProjectionIsDeduplicated": all(
+            item["promptGovernance"].get(
+                "originalRequirementProjectionDeduplicatedEveryCall"
+            )
+            is True
+            and item["promptGovernance"].get(
+                "roomContextOmissionAuditBlockCount"
+            )
+            == 0
+            and item["promptGovernance"].get(
+                "roomFactFramingValidEveryCall"
+            )
+            is True
+            and not item["promptGovernance"].get(
+                "forbiddenDispatchMetadata"
+            )
+            for item in verified_epochs
+        ),
+        "skillToolDiscoveryIsProgressive": progressive_discovery_check(
+            [item["promptGovernance"] for item in verified_epochs]
         ),
         "settlementQueuesDrained": all(
             item["pendingContinuations"] == 0 for item in verified_epochs
@@ -387,6 +604,14 @@ def main() -> int:
     parser.add_argument("--canary-report", type=Path, required=True)
     parser.add_argument("--pi-session-dir", type=Path, required=True)
     parser.add_argument(
+        "--context-inspection-dir",
+        type=Path,
+        help=(
+            "Optional Pi debug-context receipt directory; defaults to the "
+            "context-inspection sibling of Agent/sessions"
+        ),
+    )
+    parser.add_argument(
         "--recorded-evidence",
         type=Path,
         help=(
@@ -401,6 +626,11 @@ def main() -> int:
         db_path=args.db_path.resolve(),
         canary_report_path=args.canary_report.resolve(),
         pi_session_dir=args.pi_session_dir.resolve(),
+        context_inspection_dir=(
+            args.context_inspection_dir.resolve()
+            if args.context_inspection_dir is not None
+            else None
+        ),
         recorded_evidence_path=(
             args.recorded_evidence.resolve()
             if args.recorded_evidence is not None
