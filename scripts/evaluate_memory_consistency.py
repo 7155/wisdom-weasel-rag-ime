@@ -45,6 +45,11 @@ def main() -> int:
     parser.add_argument("--project", default="wisdom-weasel-rag-ime")
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument("--output-md", type=Path, required=True)
+    parser.add_argument(
+        "--post-apply-db",
+        type=Path,
+        help="Optionally verify the repaired runtime DB in read-only mode.",
+    )
     parser.add_argument("--max-queries", type=int, default=50)
     args = parser.parse_args()
 
@@ -52,6 +57,9 @@ def main() -> int:
         args.db.expanduser(),
         project=compact_whitespace(args.project),
         max_queries=max(1, min(int(args.max_queries), 200)),
+        post_apply_db=(
+            args.post_apply_db.expanduser() if args.post_apply_db is not None else None
+        ),
     )
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
     args.output_md.parent.mkdir(parents=True, exist_ok=True)
@@ -68,6 +76,7 @@ def evaluate(
     *,
     project: str,
     max_queries: int,
+    post_apply_db: Path | None = None,
 ) -> dict[str, object]:
     if not db_path.exists():
         raise FileNotFoundError(db_path)
@@ -98,14 +107,16 @@ def evaluate(
             purpose = _purpose_profile_check(conn)
 
         cas_gate = _cas_gate_check(Path(tmp) / "cas.sqlite")
+        post_apply = _post_apply_check(post_apply_db)
 
     return {
         "schemaVersion": SCHEMA_VERSION,
         "generatedAtMs": int(time.time() * 1000),
         "database": {
             "sourceFile": db_path.name,
-            "liveDatabaseMutated": False,
+            "evaluationMutatedSourceDatabase": False,
             "evaluationUsedSQLiteBackup": True,
+            "liveRepairAppliedSeparately": post_apply_db is not None,
             "project": project,
         },
         "migration": {
@@ -132,6 +143,7 @@ def evaluate(
             **purpose,
             "activeCaptureHints": after["activeCaptureHints"],
         },
+        "postApplyVerification": post_apply,
         "limitations": [
             "metadata self-retrieval is a proxy derived from stored metadata, not a human relevance label",
             "the ablation measures ranking correlation and churn; it does not claim end-to-end semantic quality",
@@ -518,6 +530,22 @@ def _purpose_profile_check(conn: sqlite3.Connection) -> dict[str, object]:
     }
 
 
+def _post_apply_check(db_path: Path | None) -> dict[str, object]:
+    if db_path is None:
+        return {"executed": False}
+    if not db_path.exists():
+        raise FileNotFoundError(db_path)
+    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        return {
+            "executed": True,
+            "sourceFile": db_path.name,
+            "readOnly": True,
+            "consistency": _consistency_counts(conn),
+            "vectorRevisionGates": _actual_vector_gate_check(conn),
+        }
+
+
 def _cache_gate_check(conn: sqlite3.Connection) -> dict[str, object]:
     row = conn.execute(
         """
@@ -631,6 +659,9 @@ def _scalar(
 
 
 def _markdown(report: dict[str, object]) -> str:
+    database = dict(report["database"])
+    evaluation_mutated = "是" if database.get("evaluationMutatedSourceDatabase") else "否"
+    live_repair_applied = "是" if database.get("liveRepairAppliedSeparately") else "否"
     consistency = dict(report["consistency"])
     before = dict(consistency["beforeRepair"])
     after = dict(consistency["afterRepair"])
@@ -640,12 +671,28 @@ def _markdown(report: dict[str, object]) -> str:
     cas = dict(vector["casLateWriterInjection"])
     ranking = dict(report["metadataFamilyAblation"])
     purpose = dict(report["purposeAndCapture"])
+    post_apply = dict(report.get("postApplyVerification") or {})
+    post_apply_markdown = ""
+    if post_apply.get("executed"):
+        post_counts = dict(post_apply["consistency"])
+        post_vectors = dict(post_apply["vectorRevisionGates"])
+        post_apply_markdown = f"""
+## 运行库应用后复验
+
+- 复验方式：只读连接 `{post_apply.get('sourceFile', '')}`
+- 旧 Book Retrieval Doc / 旧 Atom Group 成员 / 旧 Phrase Doc：{post_counts['retrievalBookDocsWithNoncurrentAtoms']} / {post_counts['noncurrentAtomGroupMemberships']} / {post_counts['activePhraseDocsOnlySupportedByNoncurrentAtoms']}
+- 归档 Book 历史引用：{post_counts['allBooksWithNoncurrentAtoms']}（继续保留但不可召回）
+- 活跃 Doc / revision 匹配向量：{post_vectors.get('activeDocuments', 0)} / {post_vectors.get('validVectors', 0)}
+- BM25-only Doc / 混合 revision 向量：{post_vectors.get('bm25OnlyDocuments', 0)} / {post_counts['vectorRevisionMismatches']}
+- revision-aware loader 一致：{post_vectors.get('loaderAgreement', True)}
+"""
     return f"""# 记忆一致性真实数据测试报告
 
 ## 测试边界
 
 - 数据来源：本机实际 SQLite 的一致性快照副本
-- 实时数据库是否被修改：否
+- 评测脚本是否修改来源数据库：{evaluation_mutated}
+- 运行库修复是否另行应用：{live_repair_applied}
 - 输出是否包含记忆正文、查询词或原始 ID：否
 - Schema：`{report['schemaVersion']}`
 
@@ -691,6 +738,8 @@ def _markdown(report: dict[str, object]) -> str:
 - Purpose Schema Revision：`{purpose.get('schemaRevision', '')}`
 - 当前活跃 capture hint：{purpose.get('activeCaptureHints', 0)}
 - capture 只作为复验提示，不直接创建 Atom；手动 `curation_prepare` 与后台既有 `autoApply` 行为未改。
+
+{post_apply_markdown}
 
 ## 限制
 
