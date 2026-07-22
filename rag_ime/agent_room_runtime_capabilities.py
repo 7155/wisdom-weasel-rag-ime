@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 
 from .agent_room_capabilities import (
     RoomCapabilityManifestStore,
-    room_runtime_registry,
 )
 from .agent_room_kernel import RoomKernelFenceError, RoomKernelStore
 from .agent_room_skills import RoomSkillPolicyStore
@@ -37,6 +36,7 @@ class RoomRuntimeCapabilityService:
         role_allowed: Sequence[str],
         profile_allowed: Sequence[str],
         state_allowed: Sequence[str],
+        runtime_registry: Mapping[str, Mapping[str, object]],
         created_at_ms: int,
         runtime_state: str = "active",
     ) -> dict[str, object]:
@@ -64,7 +64,7 @@ class RoomRuntimeCapabilityService:
             room_binding=room_binding,
             participant_binding=participant_binding,
             dispatch_id=str(dispatch["dispatchId"]),
-            runtime_registry=room_runtime_registry(),
+            runtime_registry=runtime_registry,
             user_authorized=user_authorized,
             template_allowed=template_allowed,
             role_allowed=role_allowed,

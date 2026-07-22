@@ -29,6 +29,42 @@ COORDINATOR_TOOL_IDS = (
 
 CONTROL_TOOL_IDS = (*ASSISTANT_CONTROL_TOOL_IDS, *COORDINATOR_TOOL_IDS)
 
+# Runtime capability domains are the common language between Agent templates,
+# collaboration roles, Room profiles, and the concrete product Tool catalog.
+# Read-only evidence tools belong to ``rag`` even when they read the workspace;
+# mutation and command surfaces remain under ``control``.
+TOOL_CAPABILITY_BY_ID = {
+    "ime_overview": "control",
+    "ime_input": "control",
+    "ime_voice": "control",
+    "ime_planning": "planning",
+    "agent_schedule": "planning",
+    "ime_memory": "memory",
+    "agent_role_book": "memory",
+    "ime_knowledge": "rag",
+    "ime_models": "control",
+    "ime_runtime": "control",
+    "ime_configuration": "control",
+    "ime_agents": "delegation",
+    "ime_browser": "rag",
+    "agent_plan": "planning",
+    "ime_plugins": "control",
+    "desktop_semantic": "rag",
+    "workspace_list": "rag",
+    "workspace_read": "rag",
+    "workspace_search": "rag",
+    "workspace_patch": "control",
+    "workspace_shell": "control",
+}
+
+
+def tool_capability(tool_id: object) -> str:
+    name = str(tool_id or "").strip()
+    try:
+        return TOOL_CAPABILITY_BY_ID[name]
+    except KeyError as exc:
+        raise ValueError(f"product Tool has no capability owner: {name or '<empty>'}") from exc
+
 CONTROL_CENTER_TOOL_PROFILE = "control-center-v1"
 READONLY_TOOL_PROFILE = "subagent-readonly-v1"
 WORKER_TOOL_PROFILE = "subagent-worker-v1"

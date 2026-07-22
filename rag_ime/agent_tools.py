@@ -1326,6 +1326,57 @@ class ControlToolGateway:
         operation = str(args.get("op") or "")
         if operation not in spec["operations"]:
             raise ValueError(f"unsupported {tool} operation")
+
+        room_authorization = self._authorize_room_product_tool(
+            session_id=session_id,
+            tool=tool,
+            args=args,
+            tool_call_id=str(request["toolCallId"]),
+            load_receipt_id=str(request.get("loadReceiptId") or ""),
+        )
+        try:
+            response = self._execute_product_tool(
+                request=request,
+                session=session,
+                tool=tool,
+                args=args,
+                spec=spec,
+                operation=operation,
+                room_authorized=room_authorization is not None,
+            )
+        except Exception as exc:
+            self._record_failed_room_product_tool(
+                session_id=session_id,
+                authorization=room_authorization,
+                error=exc,
+            )
+            raise
+
+        if room_authorization is not None:
+            execution = self._record_room_product_tool_execution(
+                session_id=session_id,
+                authorization=room_authorization,
+                status="applied",
+                result_hash=_sha256_json(response),
+            )
+            receipt = execution.get("executionReceipt")
+            if isinstance(receipt, Mapping):
+                response["roomExecutionReceipt"] = dict(receipt)
+        validate_contract(response, "agent-tool-result.v1.json")
+        return response
+
+    def _execute_product_tool(
+        self,
+        *,
+        request: Mapping[str, object],
+        session: Mapping[str, object],
+        tool: str,
+        args: Mapping[str, object],
+        spec: Mapping[str, object],
+        operation: str,
+        room_authorized: bool,
+    ) -> dict[str, object]:
+        session_id = str(session["id"])
         if not _tool_profile_allows(session, tool=tool, operation=operation, spec=spec):
             raise ValueError("tool operation is not enabled for this session tool profile")
         if (tool, operation) in {
@@ -1382,7 +1433,11 @@ class ControlToolGateway:
                 args=args,
                 risk_level=risk_level,
             )
-            if session.get("toolProfileVersion") == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE:
+            if (
+                not room_authorized
+                and session.get("toolProfileVersion")
+                == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
+            ):
                 approval = result.get("approval") if isinstance(result.get("approval"), Mapping) else None
                 if approval is None or self._auto_approval_executor is None:
                     raise ValueError("automatic approval bridge is unavailable")
@@ -1394,8 +1449,93 @@ class ControlToolGateway:
             "operation": operation,
             "result": result,
         }
-        validate_contract(response, "agent-tool-result.v1.json")
         return response
+
+    def _authorize_room_product_tool(
+        self,
+        *,
+        session_id: str,
+        tool: str,
+        args: Mapping[str, object],
+        tool_call_id: str,
+        load_receipt_id: str,
+    ) -> Mapping[str, object] | None:
+        authorize = getattr(
+            self.collaboration,
+            "authorize_room_product_tool",
+            None,
+        )
+        if not callable(authorize):
+            return None
+        result = authorize(
+            session_id,
+            tool,
+            args,
+            tool_call_id=tool_call_id,
+            load_receipt_id=load_receipt_id,
+        )
+        if result is None:
+            return None
+        if not isinstance(result, Mapping):
+            raise ValueError("Room product Tool authorization returned an invalid receipt")
+        return dict(result)
+
+    def _record_room_product_tool_execution(
+        self,
+        *,
+        session_id: str,
+        authorization: Mapping[str, object],
+        status: str,
+        result_hash: str,
+    ) -> Mapping[str, object]:
+        invocation = authorization.get("invocationReceipt")
+        if not isinstance(invocation, Mapping):
+            raise ValueError("Room product Tool authorization has no invocation receipt")
+        invocation_receipt_id = str(invocation.get("receiptId") or "").strip()
+        if not invocation_receipt_id:
+            raise ValueError("Room product Tool invocation receipt has no id")
+        record = getattr(
+            self.collaboration,
+            "record_room_product_tool_execution",
+            None,
+        )
+        if not callable(record):
+            raise ValueError("Room product Tool execution receipt owner is unavailable")
+        result = record(
+            session_id,
+            invocation_receipt_id,
+            status=status,
+            result_hash=result_hash,
+        )
+        if not isinstance(result, Mapping):
+            raise ValueError("Room product Tool execution returned an invalid receipt")
+        return dict(result)
+
+    def _record_failed_room_product_tool(
+        self,
+        *,
+        session_id: str,
+        authorization: Mapping[str, object] | None,
+        error: Exception,
+    ) -> None:
+        if authorization is None:
+            return
+        try:
+            self._record_room_product_tool_execution(
+                session_id=session_id,
+                authorization=authorization,
+                status="failed",
+                result_hash=_sha256_json(
+                    {
+                        "errorType": type(error).__name__,
+                        "message": str(error),
+                    }
+                ),
+            )
+        except Exception:
+            # Preserve the original Tool failure. A revoked binding still keeps
+            # this late result from being returned on the success path.
+            return
 
     def _plugins(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if self.extensions is None:

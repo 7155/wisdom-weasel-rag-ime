@@ -103,6 +103,12 @@ from .agent_rooms import AgentRoomEventHub, AgentRoomStore
 from .agent_room_public_timeline import RoomPublicTimelineProjector
 from .agent_roles import PersonaManifest
 from .agent_sessions import AgentSessionStore
+from .agent_tool_ids import (
+    CONTROL_CENTER_TOOL_PROFILE,
+    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    READONLY_TOOL_PROFILE,
+    WORKER_TOOL_PROFILE,
+)
 from .agent_wake_scheduler import AgentWakeScheduleStore, AgentWakeScheduler
 from .agent_wake_application import AgentWakeApplicationService
 from .contracts.json_schema import validate_contract
@@ -718,12 +724,11 @@ class AgentService:
         runtime_capability = self.room_capabilities.manifest_for_runtime(str(session.get("id") or ""))
         if runtime_capability is not None:
             manifest, _binding = runtime_capability
-            registry = room_runtime_registry()
             return [
                 {
                     "name": tool["name"],
                     "description": tool["description"],
-                    "parameters": registry[str(tool["name"])]["inputSchema"],
+                    "parameters": dict(tool["inputSchema"]),
                     "when": list(tool["when"]),
                     "notFor": list(tool["notFor"]),
                     "input": tool["input"],
@@ -741,6 +746,66 @@ class AgentService:
         if provider is None:
             return []
         return [dict(item) for item in provider(session)]
+
+    def _room_product_tool_manifests(
+        self,
+        session_id: str,
+        template_tool_profile: str,
+    ) -> Mapping[str, Sequence[Mapping[str, object]]]:
+        provider = self._tool_manifest_provider
+        if provider is None:
+            return {
+                "available": (),
+                "userAuthorized": (),
+                "templateAllowed": (),
+                "effective": (),
+            }
+        session = self.sessions.get(session_id)
+        effective_profile = _room_effective_tool_profile(
+            str(session.get("toolProfileVersion") or ""),
+            template_tool_profile,
+        )
+
+        def manifests(
+            profile: str,
+            *,
+            preserve_user_allowlist: bool,
+        ) -> tuple[Mapping[str, object], ...]:
+            policy = {
+                **session,
+                "toolProfileVersion": profile,
+            }
+            if not preserve_user_allowlist:
+                policy.update(
+                    {
+                        "toolAllowlistMode": "profile",
+                        "allowedTools": [],
+                    }
+                )
+            return tuple(dict(item) for item in provider(policy))
+
+        return {
+            # Availability is a backend fact, independent from the current
+            # user's allowlist or the template selected for this Dispatch.
+            "available": manifests(
+                CONTROL_CENTER_TOOL_PROFILE,
+                preserve_user_allowlist=False,
+            ),
+            "userAuthorized": manifests(
+                str(session.get("toolProfileVersion") or CONTROL_CENTER_TOOL_PROFILE),
+                preserve_user_allowlist=True,
+            ),
+            "templateAllowed": manifests(
+                template_tool_profile,
+                preserve_user_allowlist=False,
+            ),
+            # The exact schema disclosed to Pi is produced by the strictest
+            # profile while retaining the user's explicit Tool allowlist.
+            "effective": manifests(
+                effective_profile,
+                preserve_user_allowlist=True,
+            ),
+        }
 
     def _runtime_session_context(self, session: Mapping[str, object]) -> Mapping[str, object]:
         bound = self.room_capabilities.manifest_for_runtime(str(session.get("id") or ""))
@@ -1436,6 +1501,7 @@ class AgentService:
         role_allowed: Sequence[str],
         profile_allowed: Sequence[str],
         state_allowed: Sequence[str],
+        runtime_registry: Mapping[str, Mapping[str, object]] | None = None,
         created_at_ms: int,
         runtime_state: str = "active",
     ) -> dict[str, object]:
@@ -1450,6 +1516,7 @@ class AgentService:
             role_allowed=role_allowed,
             profile_allowed=profile_allowed,
             state_allowed=state_allowed,
+            runtime_registry=runtime_registry or room_runtime_registry(),
             created_at_ms=created_at_ms,
             runtime_state=runtime_state,
         )
@@ -1511,6 +1578,38 @@ class AgentService:
             args,
             tool_call_id=tool_call_id,
             load_receipt_id=load_receipt_id,
+        )
+
+    def authorize_room_product_tool(
+        self,
+        session_id: str,
+        tool_name: str,
+        args: Mapping[str, object],
+        *,
+        tool_call_id: str,
+        load_receipt_id: str,
+    ) -> dict[str, object] | None:
+        return self.room_kernel_application.authorize_product_tool(
+            session_id,
+            tool_name,
+            args,
+            tool_call_id=tool_call_id,
+            load_receipt_id=load_receipt_id,
+        )
+
+    def record_room_product_tool_execution(
+        self,
+        session_id: str,
+        invocation_receipt_id: str,
+        *,
+        status: str,
+        result_hash: str,
+    ) -> dict[str, object]:
+        return self.room_kernel_application.record_product_tool_execution(
+            session_id,
+            invocation_receipt_id,
+            status=status,
+            result_hash=result_hash,
         )
 
     def apply_room_kernel_command(
@@ -2618,6 +2717,7 @@ class AgentService:
                     self.sessions.get(session_id)
                 )
             ),
+            product_tool_manifest_provider=self._room_product_tool_manifests,
         )
         self.room_kernel_worker = RoomKernelWorker(
             self.room_kernel,
@@ -3203,6 +3303,27 @@ def _room_runtime_binding_hash(
             "requiredSkill": skill,
         }
     )
+
+
+def _room_effective_tool_profile(
+    session_profile: str,
+    template_profile: str,
+) -> str:
+    """Choose the stricter Session/Agent-template Tool profile for a Room Dispatch."""
+
+    profiles = {str(session_profile or ""), str(template_profile or "")}
+    if READONLY_TOOL_PROFILE in profiles:
+        return READONLY_TOOL_PROFILE
+    trusted_write_profiles = {
+        CONTROL_CENTER_TOOL_PROFILE,
+        WORKER_TOOL_PROFILE,
+        DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
+    }
+    if profiles <= trusted_write_profiles:
+        # Room never inherits automatic approval. The worker profile still lets
+        # R1/R2 calls create the normal native approval proposal.
+        return WORKER_TOOL_PROFILE
+    return READONLY_TOOL_PROFILE
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:

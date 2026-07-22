@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -201,11 +202,21 @@ class RoomCapabilityManifestStore:
             gates["rootTaskState"] &= {"room_state"}
         tools: list[dict[str, object]] = []
         canonical_registry = room_runtime_registry()
-        for name in ROOM_PUBLIC_TOOLS:
+        ordered_names = (
+            *ROOM_PUBLIC_TOOLS,
+            *sorted(
+                _canonical_tool(name)
+                for name, source in runtime_registry.items()
+                if name not in ROOM_PUBLIC_TOOLS
+                and isinstance(source, Mapping)
+                and source.get("catalogKind") == "product-tool"
+            ),
+        )
+        for name in ordered_names:
             source = runtime_registry.get(name)
             if not isinstance(source, Mapping):
                 continue
-            routing_source = canonical_registry[name]
+            routing_source = canonical_registry.get(name, source)
             schema = source.get("inputSchema")
             if not isinstance(schema, Mapping):
                 raise ValueError(f"runtime tool {name} requires inputSchema")
@@ -231,6 +242,10 @@ class RoomCapabilityManifestStore:
                     "risk": _required(source.get("risk") or "controlled", f"{name}.risk"),
                     "operation": _required(source.get("operation") or name, f"{name}.operation"),
                     "schemaHash": _hash_json(dict(schema)),
+                    # The schema is pinned in the backend manifest so a restart can
+                    # restore the exact disclosure contract. Search responses still
+                    # project only the six compact routing fields.
+                    "inputSchema": dict(schema),
                     "available": True,
                     "authorized": not denied_by,
                     "deniedBy": denied_by,
@@ -319,18 +334,30 @@ class RoomCapabilityManifestStore:
         manifest_id: str,
         manifest_hash: str,
         tool_name: str,
-        runtime_registry: Mapping[str, Mapping[str, object]],
+        runtime_registry: Mapping[str, Mapping[str, object]] | None,
         created_at_ms: int,
     ) -> tuple[dict[str, object], bool]:
         manifest = self._manifest(manifest_id, manifest_hash)
         canonical = _canonical_tool(tool_name)
         tool = _manifest_tool(manifest, canonical)
-        source = runtime_registry.get(canonical)
-        if not isinstance(source, Mapping) or not isinstance(source.get("inputSchema"), Mapping):
-            raise CapabilityManifestConflict("runtime registry no longer provides disclosed tool")
-        schema = dict(source["inputSchema"])
+        pinned_schema = tool.get("inputSchema")
+        if not isinstance(pinned_schema, Mapping):
+            raise CapabilityManifestConflict("capability manifest has no pinned tool schema")
+        schema = dict(pinned_schema)
+        source = (runtime_registry or {}).get(canonical)
+        if source is not None:
+            if not isinstance(source, Mapping) or not isinstance(
+                source.get("inputSchema"), Mapping
+            ):
+                raise CapabilityManifestConflict(
+                    "runtime registry no longer provides disclosed tool"
+                )
+            if _hash_json(dict(source["inputSchema"])) != tool["schemaHash"]:
+                raise CapabilityManifestConflict(
+                    "runtime tool schema hash differs from manifest"
+                )
         if _hash_json(schema) != tool["schemaHash"]:
-            raise CapabilityManifestConflict("runtime tool schema hash differs from manifest")
+            raise CapabilityManifestConflict("pinned tool schema hash differs from manifest")
         return self._record_disclosure(
             receipt_id=receipt_id,
             manifest=manifest,
@@ -640,6 +667,89 @@ class RoomCapabilityManifestStore:
             raise RuntimeError("tool execution receipt is corrupt")
         return payload
 
+    def record_runtime_execution(
+        self,
+        *,
+        session_id: str,
+        invocation_receipt_id: str,
+        status: str,
+        result_hash: str,
+        created_at_ms: int,
+    ) -> tuple[dict[str, object], bool]:
+        """Seal one non-Room Tool result under its active Dispatch capability."""
+
+        normalized_status = str(status or "").strip()
+        if normalized_status not in {"applied", "rejected", "cancelled", "failed"}:
+            raise ValueError("Room Tool execution status is invalid")
+        binding = self.runtime_binding(session_id)
+        if binding is None:
+            raise ToolAuthorizationError(
+                "Session Room Capability Manifest was revoked before Tool result"
+            )
+        invocation = self.invocation_receipt(invocation_receipt_id)
+        if (
+            invocation["manifestId"] != binding["manifestId"]
+            or invocation["manifestHash"] != binding["manifestHash"]
+        ):
+            raise CapabilityManifestConflict(
+                "Tool execution receipt belongs to another capability manifest"
+            )
+        tool_name = _canonical_tool(
+            _mapping(invocation.get("canonicalCommand")).get("tool")
+        )
+        payload = {
+            "schemaVersion": "wisdom-weasel.room-tool-execution-receipt.v1",
+            "executionReceiptId": f"execution:{invocation_receipt_id}",
+            "invocationReceiptId": invocation_receipt_id,
+            "kernelReceiptId": None,
+            "sessionId": _required(session_id, "session_id"),
+            "toolName": tool_name,
+            "status": normalized_status,
+            "resultHash": _hash(result_hash, "result_hash"),
+            "createdAtMs": _non_negative(created_at_ms, "created_at_ms"),
+        }
+        with self._connect(immediate=True) as conn:
+            existing = conn.execute(
+                "SELECT payload_json FROM room_v2_tool_execution_receipts "
+                "WHERE invocation_receipt_id = ?",
+                (invocation_receipt_id,),
+            ).fetchone()
+            if existing is not None:
+                stored = json.loads(str(existing["payload_json"]))
+                stable_fields = (
+                    "executionReceiptId",
+                    "invocationReceiptId",
+                    "sessionId",
+                    "toolName",
+                    "status",
+                    "resultHash",
+                )
+                if any(stored.get(field) != payload[field] for field in stable_fields):
+                    raise CapabilityManifestConflict(
+                        "Tool execution receipt identity changed"
+                    )
+                return dict(stored), False
+            conn.execute(
+                """
+                INSERT INTO room_v2_tool_execution_receipts(
+                    execution_receipt_id, invocation_receipt_id,
+                    kernel_receipt_id, session_id, tool_name, status,
+                    result_hash, payload_json, created_at_ms
+                ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload["executionReceiptId"],
+                    invocation_receipt_id,
+                    payload["sessionId"],
+                    tool_name,
+                    normalized_status,
+                    payload["resultHash"],
+                    _json(payload),
+                    payload["createdAtMs"],
+                ),
+            )
+        return payload, True
+
     def invocation_receipt(self, invocation_receipt_id: str) -> dict[str, object]:
         with self._connect() as conn:
             row = conn.execute(
@@ -665,7 +775,13 @@ class RoomCapabilityManifestStore:
         )
 
     def runtime_tool_load(
-        self, *, session_id: str, receipt_id: str, tool_name: str, created_at_ms: int
+        self,
+        *,
+        session_id: str,
+        receipt_id: str,
+        tool_name: str,
+        created_at_ms: int,
+        runtime_registry: Mapping[str, Mapping[str, object]] | None = None,
     ) -> tuple[dict[str, object], bool]:
         binding = self.runtime_binding(session_id)
         if binding is None:
@@ -675,7 +791,7 @@ class RoomCapabilityManifestStore:
             manifest_id=str(binding["manifestId"]),
             manifest_hash=str(binding["manifestHash"]),
             tool_name=tool_name,
-            runtime_registry=room_runtime_registry(),
+            runtime_registry=runtime_registry,
             created_at_ms=created_at_ms,
         )
 
@@ -945,8 +1061,12 @@ def _assert_manifest_context(
 
 def _canonical_tool(name: str) -> str:
     canonical = _required(name, "tool_name")
-    if canonical not in ROOM_PUBLIC_TOOLS:
-        raise ValueError("Room public tool surface only supports room_state/room_post/room_commit")
+    if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", canonical):
+        raise ValueError("Room capability tool name is not canonical")
+    if canonical.startswith("room_") and canonical not in ROOM_PUBLIC_TOOLS:
+        raise ValueError(
+            "Room public tool surface only supports room_state/room_post/room_commit"
+        )
     return canonical
 
 
@@ -955,6 +1075,10 @@ def _manifest_tool(manifest: Mapping[str, object], name: str) -> dict[str, objec
         if isinstance(value, Mapping) and value.get("name") == name:
             return dict(value)
     raise KeyError(name)
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _manifest_payload(row: sqlite3.Row) -> dict[str, object]:

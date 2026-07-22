@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from .agent_blocks import normalize_trusted_agent_blocks
 from .agent_room_capabilities import (
+    ROOM_PUBLIC_TOOLS,
     RoomCapabilityManifestStore,
     ToolAuthorizationError,
 )
@@ -100,49 +101,21 @@ class RoomKernelApplicationService:
         tool_call_id: str,
         load_receipt_id: str,
     ) -> dict[str, object] | None:
-        bound = self.capabilities.manifest_for_runtime(session_id)
-        if bound is None:
-            if (
-                self.capabilities.runtime_binding(
-                    session_id,
-                    active_only=False,
-                )
-                is not None
-            ):
-                raise ToolAuthorizationError(
-                    "Session Room Capability Manifest is not active"
-                )
-            return None
-        manifest, binding = bound
-        live = self.kernel.session_binding(session_id)
-        if (
-            live is None
-            or live.get("dispatchId") != manifest.get("dispatchId")
-            or live.get("rootId") != manifest.get("rootId")
-            or int(live.get("generation", -1))
-            != int(manifest.get("generation", -2))
-            or int(binding["capabilityEpoch"])
-            != int(manifest["capabilityEpoch"])
-        ):
-            raise RoomKernelFenceError(
-                "Room tool invocation lost its Dispatch or capability fence"
-            )
-        verified_args = _verified_room_media_args(
-            session_id=session_id,
-            tool_name=tool_name,
-            args=args,
-            receipt_provider=self.media_receipt_provider,
-        )
-        invocation, created = self.capabilities.authorize_runtime_invocation(
-            session_id=session_id,
-            receipt_id=f"invoke:{tool_call_id}",
-            invocation_key=tool_call_id,
+        authorized = self._authorize_capability_invocation(
+            session_id,
+            tool_name,
+            args,
+            tool_call_id=tool_call_id,
             load_receipt_id=load_receipt_id,
-            tool_name=tool_name,
-            arguments=verified_args,
-            created_at_ms=int(time.time() * 1000),
         )
+        if authorized is None:
+            return None
+        live, invocation, created = authorized
         canonical = str(invocation["canonicalCommand"]["tool"])
+        if canonical not in ROOM_PUBLIC_TOOLS:
+            raise ToolAuthorizationError(
+                "product Tools must execute through the product Tool gateway"
+            )
         if canonical == "room_state":
             result = self.snapshot(str(live["roomId"]))
         elif canonical == "room_post":
@@ -179,6 +152,117 @@ class RoomKernelApplicationService:
             "result": result,
             "invocationReceipt": invocation,
         }
+
+    def authorize_product_tool(
+        self,
+        session_id: str,
+        tool_name: str,
+        args: Mapping[str, object],
+        *,
+        tool_call_id: str,
+        load_receipt_id: str,
+    ) -> dict[str, object] | None:
+        authorized = self._authorize_capability_invocation(
+            session_id,
+            tool_name,
+            args,
+            tool_call_id=tool_call_id,
+            load_receipt_id=load_receipt_id,
+        )
+        if authorized is None:
+            return None
+        _live, invocation, created = authorized
+        canonical = str(invocation["canonicalCommand"]["tool"])
+        if canonical in ROOM_PUBLIC_TOOLS:
+            raise ToolAuthorizationError(
+                "canonical Room Tools must execute through Room Kernel"
+            )
+        return {
+            "ok": True,
+            "created": created,
+            "invocationReceipt": invocation,
+        }
+
+    def record_product_tool_execution(
+        self,
+        session_id: str,
+        invocation_receipt_id: str,
+        *,
+        status: str,
+        result_hash: str,
+    ) -> dict[str, object]:
+        self._active_capability_binding(session_id)
+        receipt, created = self.capabilities.record_runtime_execution(
+            session_id=session_id,
+            invocation_receipt_id=invocation_receipt_id,
+            status=status,
+            result_hash=result_hash,
+            created_at_ms=int(time.time() * 1000),
+        )
+        return {"ok": True, "created": created, "executionReceipt": receipt}
+
+    def _authorize_capability_invocation(
+        self,
+        session_id: str,
+        tool_name: str,
+        args: Mapping[str, object],
+        *,
+        tool_call_id: str,
+        load_receipt_id: str,
+    ) -> tuple[dict[str, object], dict[str, object], bool] | None:
+        active = self._active_capability_binding(session_id)
+        if active is None:
+            return None
+        _manifest, _binding, live = active
+        verified_args = _verified_room_media_args(
+            session_id=session_id,
+            tool_name=tool_name,
+            args=args,
+            receipt_provider=self.media_receipt_provider,
+        )
+        invocation, created = self.capabilities.authorize_runtime_invocation(
+            session_id=session_id,
+            receipt_id=f"invoke:{tool_call_id}",
+            invocation_key=tool_call_id,
+            load_receipt_id=load_receipt_id,
+            tool_name=tool_name,
+            arguments=verified_args,
+            created_at_ms=int(time.time() * 1000),
+        )
+        return dict(live), invocation, created
+
+    def _active_capability_binding(
+        self,
+        session_id: str,
+    ) -> tuple[dict[str, object], dict[str, object], dict[str, object]] | None:
+        bound = self.capabilities.manifest_for_runtime(session_id)
+        if bound is None:
+            if (
+                self.capabilities.runtime_binding(
+                    session_id,
+                    active_only=False,
+                )
+                is not None
+            ):
+                raise ToolAuthorizationError(
+                    "Session Room Capability Manifest is not active"
+                )
+            return None
+        manifest, binding = bound
+        live = self.kernel.session_binding(session_id)
+        if (
+            live is None
+            or live.get("dispatchId") != manifest.get("dispatchId")
+            or live.get("rootId") != manifest.get("rootId")
+            or int(live.get("generation", -1))
+            != int(manifest.get("generation", -2))
+            or int(binding["capabilityEpoch"])
+            != int(manifest["capabilityEpoch"])
+        ):
+            raise RoomKernelFenceError(
+                "Room tool invocation lost its Dispatch or capability fence"
+            )
+        return dict(manifest), dict(binding), dict(live)
 
     def create_root(
         self,

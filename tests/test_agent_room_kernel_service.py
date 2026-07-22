@@ -30,6 +30,7 @@ from rag_ime.agent_room_kernel_contracts import (
     ROOT_EXECUTION_SCHEMA_VERSION,
 )
 from rag_ime.agent_service import AgentService, _room_kernel_mode_from_environment
+from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.debug_server import DebugRequestHandler
 from rag_ime.pi_runtime import PiRuntimeConfig
 from tests.test_pi_runtime_v2 import FAKE_HOST
@@ -1453,14 +1454,75 @@ class RoomKernelServiceTests(unittest.TestCase):
                 load_receipt_id=str(loaded["receiptId"]),
             )
         self.assertEqual(
-            self.service.room_capabilities.runtime_binding(self.session_id, active_only=False)["state"],
+            self.service.room_capabilities.runtime_binding(
+                self.session_id,
+                active_only=False,
+            )["state"],
             "revoked",
         )
         with self.assertRaises(ToolAuthorizationError):
             self.service.room_capabilities.authorize_runtime_invocation(
-                session_id=self.session_id, receipt_id="invoke:revoked", invocation_key="call:revoked",
-                load_receipt_id=str(loaded["receiptId"]), tool_name="room_post", arguments={"content": "no"}, created_at_ms=7,
+                session_id=self.session_id,
+                receipt_id="invoke:revoked",
+                invocation_key="call:revoked",
+                load_receipt_id=str(loaded["receiptId"]),
+                tool_name="room_post",
+                arguments={"content": "no"},
+                created_at_ms=7,
             )
+
+    def test_room_dispatch_uses_the_normal_agent_tool_catalog_and_gateway(self) -> None:
+        target = self.root / "room-product-tool.txt"
+        target.write_text("Room product Tool is live.\n", encoding="utf-8")
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=SimpleNamespace(),
+            core=SimpleNamespace(),
+            project="wisdom-weasel-rag-ime",
+            collaboration=self.service,
+        )
+        self.service.bind_tool_manifest_provider(gateway.runtime_manifests)
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+
+        runtime_tools = self.service._runtime_tool_manifest(
+            {"id": self.session_id}
+        )
+        names = [str(item["name"]) for item in runtime_tools]
+        self.assertEqual(names[:3], ["room_state", "room_post", "room_commit"])
+        self.assertIn("workspace_read", names)
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:room-workspace-read",
+                "toolName": "workspace_read",
+                "createdAtMs": 5,
+            }
+        )["result"]
+        response = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": self.session_id,
+                "tool": "workspace_read",
+                "toolCallId": "tool:room-workspace-read",
+                "loadReceiptId": loaded["receiptId"],
+                "args": {"op": "read", "path": str(target)},
+            }
+        )
+
+        self.assertEqual(
+            response["result"]["content"],
+            "Room product Tool is live.\n",
+        )
+        execution = response["roomExecutionReceipt"]
+        self.assertEqual(execution["toolName"], "workspace_read")
+        self.assertEqual(execution["status"], "applied")
+        self.assertEqual(
+            self.service.room_capabilities.execution_receipt(
+                str(execution["invocationReceiptId"])
+            ),
+            execution,
+        )
 
     def test_room_commit_receipt_is_an_explicit_model_turn_boundary(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)

@@ -259,6 +259,130 @@ class RoomCapabilityManifestTests(unittest.TestCase):
                 load_receipt_id=loaded["receiptId"], tool_name="room_state", arguments={}, created_at_ms=6,
             )
 
+    def test_product_tool_load_invoke_execute_and_revoke_are_one_fenced_path(self) -> None:
+        room, participant = self._bindings()
+        registry = {
+            **room_runtime_registry(),
+            "workspace_read": {
+                "catalogKind": "product-tool",
+                "description": "Read one authorized workspace file",
+                "when": ["需要核对工作区文件"],
+                "notFor": ["当前上下文已经足够"],
+                "input": "文件路径",
+                "output": "有界文件内容",
+                "does": "读取一个授权工作区文件。",
+                "risk": "R0",
+                "operation": "product.workspace_read",
+                "inputSchema": {
+                    "type": "object",
+                    "required": ["op", "path"],
+                    "properties": {
+                        "op": {"const": "read"},
+                        "path": {"type": "string", "minLength": 1},
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        }
+        tools = (*room_runtime_registry(), "workspace_read")
+        manifest, _ = self.store.compile_manifest(
+            manifest_id="manifest:product",
+            room_binding=room,
+            participant_binding=participant,
+            dispatch_id="dispatch:1",
+            runtime_registry=registry,
+            user_authorized=tools,
+            template_allowed=tools,
+            role_allowed=tools,
+            profile_allowed=tools,
+            state_allowed=tools,
+            created_at_ms=1,
+        )
+        searched, _ = self.store.tool_search(
+            receipt_id="search:workspace",
+            manifest_id=manifest["manifestId"],
+            manifest_hash=manifest["manifestHash"],
+            query="workspace file",
+            created_at_ms=2,
+        )
+        workspace_catalog = next(
+            item for item in searched["items"] if item["name"] == "workspace_read"
+        )
+        self.assertEqual(
+            set(workspace_catalog),
+            {"name", "when", "notFor", "input", "output", "does"},
+        )
+        prompt_receipt = {
+            "schemaVersion": "wisdom-weasel.prompt-compile-receipt.v1",
+            "receiptId": "prompt:product",
+            "plan": {
+                "bindingId": participant["bindingId"],
+                "roomId": room["roomId"],
+                "rootId": room["rootId"],
+                "sessionId": participant["sessionId"],
+                "generation": room["generation"],
+                "capabilityRevision": room["capabilityRevision"],
+                "capabilityEpoch": participant["capabilityEpoch"],
+                "planHash": "b" * 64,
+            },
+            "omittedLayers": [],
+            "producerAudit": [],
+            "createdAtMs": 2,
+        }
+        self.store.bind_runtime(
+            session_id="session:1",
+            manifest_id=manifest["manifestId"],
+            manifest_hash=manifest["manifestHash"],
+            prompt_compile_receipt=prompt_receipt,
+            compiled_runtime_profile_ref=participant["compiledRuntimeProfileRef"],
+            room_binding=room,
+            participant_binding=participant,
+            surface_manifest_hashes={
+                name: manifest["manifestHash"]
+                for name in ("prompt", "runtime", "gateway", "ui")
+            },
+            created_at_ms=2,
+        )
+        loaded, _ = self.store.runtime_tool_load(
+            session_id="session:1",
+            receipt_id="load:workspace",
+            tool_name="workspace_read",
+            created_at_ms=3,
+        )
+        self.assertEqual(
+            loaded["items"][0]["inputSchema"],
+            registry["workspace_read"]["inputSchema"],
+        )
+        invocation, _ = self.store.authorize_runtime_invocation(
+            session_id="session:1",
+            receipt_id="invoke:workspace",
+            invocation_key="tool-call:workspace",
+            load_receipt_id=loaded["receiptId"],
+            tool_name="workspace_read",
+            arguments={"op": "read", "path": "README.md"},
+            created_at_ms=4,
+        )
+        execution, created = self.store.record_runtime_execution(
+            session_id="session:1",
+            invocation_receipt_id=invocation["receiptId"],
+            status="applied",
+            result_hash="a" * 64,
+            created_at_ms=5,
+        )
+        self.assertTrue(created)
+        self.assertEqual(execution["toolName"], "workspace_read")
+        self.assertEqual(execution["resultHash"], "a" * 64)
+
+        self.store.revoke_runtime("session:1", capability_epoch=2, now_ms=6)
+        with self.assertRaisesRegex(ToolAuthorizationError, "revoked"):
+            self.store.record_runtime_execution(
+                session_id="session:1",
+                invocation_receipt_id=invocation["receiptId"],
+                status="applied",
+                result_hash="a" * 64,
+                created_at_ms=7,
+            )
+
     def _compile(
         self,
         *,

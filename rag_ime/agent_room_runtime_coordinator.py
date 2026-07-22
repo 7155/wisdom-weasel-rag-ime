@@ -14,8 +14,8 @@ from .agent_prompt_plans import (
 )
 from .agent_room_capabilities import (
     RoomCapabilityManifestStore,
-    room_runtime_registry,
 )
+from .agent_room_tool_catalog import compose_room_tool_catalog
 from .agent_room_context import (
     ProviderProjectionJournalStore,
     RoomContextLedgerStore,
@@ -65,6 +65,9 @@ class RoomKernelRuntimeCoordinator:
         learning_runtime: RoomLearningRuntime,
         definition_compiler: AgentDefinitionCompiler,
         role_book_prompt_resolver: Callable[[str], str],
+        product_tool_manifest_provider: Callable[
+            [str, str], Mapping[str, Sequence[Mapping[str, object]]]
+        ],
     ) -> None:
         self.db_path = Path(db_path)
         self.rooms = rooms
@@ -83,6 +86,7 @@ class RoomKernelRuntimeCoordinator:
         self.learning_runtime = learning_runtime
         self.definition_compiler = definition_compiler
         self.role_book_prompt_resolver = role_book_prompt_resolver
+        self.product_tool_manifest_provider = product_tool_manifest_provider
         self.profile_pins = RoomCollaborationProfilePins(self.db_path)
         self.runtime_capabilities = RoomRuntimeCapabilityService(
             kernel=kernel,
@@ -103,6 +107,7 @@ class RoomKernelRuntimeCoordinator:
         role_allowed: Sequence[str],
         profile_allowed: Sequence[str],
         state_allowed: Sequence[str],
+        runtime_registry: Mapping[str, Mapping[str, object]],
         created_at_ms: int,
         runtime_state: str = "active",
     ) -> dict[str, object]:
@@ -117,6 +122,7 @@ class RoomKernelRuntimeCoordinator:
             role_allowed=role_allowed,
             profile_allowed=profile_allowed,
             state_allowed=state_allowed,
+            runtime_registry=runtime_registry,
             created_at_ms=created_at_ms,
             runtime_state=runtime_state,
         )
@@ -333,18 +339,31 @@ class RoomKernelRuntimeCoordinator:
             raise RoomKernelFenceError(
                 "managed Dispatch PromptCompile produced no receipt"
             )
-        tools = tuple(room_runtime_registry())
+        product_tools = self.product_tool_manifest_provider(
+            session_id,
+            template.tool_profile_version,
+        )
+        tool_plan = compose_room_tool_catalog(
+            available=_manifest_group(product_tools, "available"),
+            user_authorized=_manifest_group(product_tools, "userAuthorized"),
+            template_allowed=_manifest_group(product_tools, "templateAllowed"),
+            effective=_manifest_group(product_tools, "effective"),
+            template_capabilities=template.capabilities,
+            role_capabilities=role.capability_restrictions,
+            profile_capabilities=active_profile.capability_requests,
+        )
         bound = self.bind_capability_runtime(
             room_binding=room_binding,
             participant_binding=participant_binding,
             prompt_compile_receipt=prompt["receipt"],
             manifest_id=f"capability-manifest:{dispatch_id}",
             dispatch_id=dispatch_id,
-            user_authorized=tools,
-            template_allowed=tools,
-            role_allowed=tools,
-            profile_allowed=tools,
-            state_allowed=tools,
+            user_authorized=tool_plan.user_authorized,
+            template_allowed=tool_plan.template_allowed,
+            role_allowed=tool_plan.role_allowed,
+            profile_allowed=tool_plan.profile_allowed,
+            state_allowed=tool_plan.state_allowed,
+            runtime_registry=tool_plan.runtime_registry,
             created_at_ms=prepared_at_ms,
             runtime_state="prepared",
         )
@@ -595,6 +614,16 @@ def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
         "wake": "implementation",
         "callback": "handoff",
     }.get(str(dispatch.get("intentKind") or ""), "implementation")
+
+
+def _manifest_group(
+    plan: Mapping[str, Sequence[Mapping[str, object]]],
+    key: str,
+) -> Sequence[Mapping[str, object]]:
+    values = plan.get(key)
+    if not isinstance(values, Sequence) or isinstance(values, (str, bytes)):
+        raise RoomKernelFenceError(f"Room product Tool plan has no {key} group")
+    return values
 
 
 def _bounded_provider_context_entries(
