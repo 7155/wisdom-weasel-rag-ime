@@ -33,6 +33,8 @@ class AgentEventProjectionService:
             Mapping[str, object],
         ],
         notify_intercom: Callable[[], None],
+        record_runtime_failure: Callable[..., Mapping[str, object]]
+        | None = None,
     ) -> None:
         self.sessions = sessions
         self.room_kernel = room_kernel
@@ -48,6 +50,7 @@ class AgentEventProjectionService:
             record_assistant_evidence
         )
         self.notify_intercom = notify_intercom
+        self.record_runtime_failure = record_runtime_failure
 
     def record(self, event: AgentEventEnvelope) -> None:
         self.sessions.record_runtime_event(
@@ -105,9 +108,30 @@ class AgentEventProjectionService:
             mapped_type, public_data = room_event_projection(event)
             if event.event_type == "message_completed":
                 mapped_type = "participant_activity"
+                dispatch_id = str(binding["dispatchId"])
+                if _completed_message_failed(event):
+                    # Provider diagnostics stay private. The public Room only
+                    # needs one coalesced lifecycle signal until turn_failed
+                    # publishes the authoritative terminal state.
+                    public_data = {
+                        "status": "provider_error",
+                        "summary": "模型响应中断，正在按运行策略处理",
+                        "requestId": f"{dispatch_id}:provider",
+                        "isError": True,
+                    }
+                else:
+                    public_data = {
+                        "status": "draft_ready",
+                        "summary": "正在整理正式 Post",
+                        "requestId": f"{dispatch_id}:provider",
+                    }
+            elif event.event_type == "turn_failed":
+                dispatch_id = str(binding["dispatchId"])
                 public_data = {
-                    "status": "draft_ready",
-                    "summary": "正在整理正式 Post",
+                    "status": "provider_error",
+                    "summary": "模型响应失败，任务已暂停等待恢复",
+                    "requestId": f"{dispatch_id}:provider",
+                    "isError": True,
                 }
             room_id = str(binding["roomId"])
             room = self.rooms.get(room_id)
@@ -119,6 +143,17 @@ class AgentEventProjectionService:
                 public_data=public_data,
                 topic_id=str(room.get("activeTopicId") or ""),
             )
+            if (
+                event.event_type == "turn_failed"
+                and self.record_runtime_failure is not None
+            ):
+                self.record_runtime_failure(
+                    room_id=room_id,
+                    dispatch_id=str(binding["dispatchId"]),
+                    generation=int(binding["generation"]),
+                    source_event_id=event.event_id,
+                    created_at_ms=event.created_at_ms,
+                )
             self.room_kernel_projection.sync_room(
                 room_id,
                 now_ms=event.created_at_ms,
@@ -291,10 +326,9 @@ def room_event_projection(
         )
     if event.event_type == "turn_failed":
         return "turn_failed", {
-            "error": bounded_text(
-                payload.get("error"),
-                maximum=240,
-            )
+            "status": "failed",
+            "summary": "模型响应失败，任务已暂停等待恢复",
+            "isError": True,
         }
     data = _room_scalar_projection(
         payload,
@@ -330,6 +364,25 @@ def room_event_projection(
             data["summary"] = summary
         data.update(references)
     return "participant_activity", data
+
+
+def _completed_message_failed(
+    event: AgentEventEnvelope,
+) -> bool:
+    message = event.payload.get("message")
+    if not isinstance(message, Mapping):
+        return False
+    if str(message.get("status") or "").lower() == "failed":
+        return True
+    blocks = message.get("blocks")
+    return isinstance(blocks, list) and any(
+        isinstance(block, Mapping)
+        and (
+            str(block.get("status") or "").lower() == "failed"
+            or str(block.get("type") or "").lower() == "error"
+        )
+        for block in blocks
+    )
 
 
 def runtime_event_metrics(

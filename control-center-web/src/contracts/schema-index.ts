@@ -658,7 +658,8 @@ export const contractSchemas = {
       "riskLevel",
       "state",
       "requestedAtMs",
-      "expiresAtMs"
+      "expiresAtMs",
+      "decidedBy"
     ],
     "properties": {
       "schemaVersion": {
@@ -716,6 +717,10 @@ export const contractSchemas = {
       "expiresAtMs": {
         "type": "integer",
         "minimum": 0
+      },
+      "decidedBy": {
+        "type": "string",
+        "maxLength": 120
       },
       "decidedAtMs": {
         "type": [
@@ -4281,6 +4286,7 @@ export const contractSchemas = {
           "id",
           "title",
           "status",
+          "executionMode",
           "routingPolicy",
           "moderatorParticipantId",
           "workspaceRoots",
@@ -4308,6 +4314,15 @@ export const contractSchemas = {
             "enum": [
               "active",
               "archived"
+            ]
+          },
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "per_action",
+              "workspace_managed",
+              "full_trust"
             ]
           },
           "roomKind": {
@@ -4674,6 +4689,7 @@ export const contractSchemas = {
       "routingPolicy",
       "moderatorParticipantId",
       "workspaceRoots",
+      "executionMode",
       "createdAtMs",
       "updatedAtMs",
       "lastEventSequence",
@@ -4775,6 +4791,15 @@ export const contractSchemas = {
           "type": "string",
           "minLength": 1
         }
+      },
+      "executionMode": {
+        "type": "string",
+        "enum": [
+          "read_only",
+          "per_action",
+          "workspace_managed",
+          "full_trust"
+        ]
       },
       "createdAtMs": {
         "type": "integer",
@@ -5386,6 +5411,10 @@ export const contractSchemas = {
       "roleBookRevisionId",
       "modelProfile",
       "toolProfileVersion",
+      "executionMode",
+      "workspaceScopeGranted",
+      "workspaceScopeSha256",
+      "workspaceScopeGrantedAtMs",
       "projectContextEnabled",
       "piSkillsEnabled",
       "codexSkillsEnabled",
@@ -5515,6 +5544,26 @@ export const contractSchemas = {
       "toolProfileVersion": {
         "type": "string",
         "minLength": 1
+      },
+      "executionMode": {
+        "type": "string",
+        "enum": [
+          "read_only",
+          "per_action",
+          "workspace_managed",
+          "full_trust"
+        ]
+      },
+      "workspaceScopeGranted": {
+        "type": "boolean"
+      },
+      "workspaceScopeSha256": {
+        "type": "string",
+        "pattern": "^$|^[a-f0-9]{64}$"
+      },
+      "workspaceScopeGrantedAtMs": {
+        "type": "integer",
+        "minimum": 0
       },
       "toolAllowlistMode": {
         "type": "string",
@@ -6127,6 +6176,7 @@ export const contractSchemas = {
           "workspace_patch",
           "workspace_shell",
           "room_state",
+          "room_collaborate",
           "room_post",
           "room_commit"
         ]
@@ -6305,6 +6355,8 @@ export const contractSchemas = {
           "inspect",
           "act",
           "update",
+          "submit_review",
+          "complete",
           "create_draft",
           "validate",
           "propose_install",
@@ -14211,10 +14263,59 @@ export const contractSchemas = {
           "null"
         ]
       },
+      "postInvocationReceiptId": {
+        "type": "string",
+        "minLength": 1
+      },
       "continuation": {
-        "type": [
-          "object",
-          "null"
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "decision"
+            ],
+            "properties": {
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "dispatch",
+                  "wait",
+                  "block",
+                  "complete"
+                ]
+              },
+              "childTask": {
+                "type": "object"
+              },
+              "childDispatch": {
+                "type": "object"
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "decision": {
+                      "const": "dispatch"
+                    }
+                  },
+                  "required": [
+                    "decision"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "childTask",
+                    "childDispatch"
+                  ]
+                }
+              }
+            ]
+          }
         ]
       },
       "evidenceRefs": {
@@ -14386,7 +14487,8 @@ export const contractSchemas = {
           "resume",
           "retry",
           "wake",
-          "callback"
+          "callback",
+          "close"
         ]
       },
       "idempotencyKey": {
@@ -14612,6 +14714,7 @@ export const contractSchemas = {
           "root_cancelled",
           "panic",
           "runtime_accepted",
+          "runtime_failed",
           "dispatch_unknown",
           "dead_letter",
           "settle_retry_required",
@@ -16275,6 +16378,121 @@ export const contractSchemas = {
             "items": {
               "type": "string",
               "maxLength": 2000
+            }
+          }
+        }
+      },
+      "compactionRecovery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "originalRequirement",
+          "currentTask",
+          "acceptanceCriteria",
+          "acceptanceSource",
+          "blockers",
+          "handoff",
+          "latestProgress",
+          "planStatus",
+          "skills",
+          "tools"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "rag-ime.agent-compaction-recovery.v1"
+          },
+          "originalRequirement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "currentTask": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          },
+          "acceptanceCriteria": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "acceptanceSource": {
+            "enum": [
+              "structured_task",
+              "original_requirement"
+            ]
+          },
+          "blockers": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
+          },
+          "handoff": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "latestProgress": {
+            "type": "string",
+            "maxLength": 1200
+          },
+          "planStatus": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "skills": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "contentRevision"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "contentRevision": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
+            }
+          },
+          "tools": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "schemaRevision"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "schemaRevision": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              }
             }
           }
         }

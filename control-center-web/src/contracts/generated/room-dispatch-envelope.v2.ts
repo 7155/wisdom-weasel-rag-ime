@@ -17,7 +17,7 @@ export interface RoomDispatchEnvelopeV2 {
   targetSessionId: string;
   targetParticipantId: string;
   triggerId: string;
-  intentKind: 'execute' | 'review' | 'revise' | 'resume' | 'retry' | 'wake' | 'callback';
+  intentKind: 'execute' | 'review' | 'revise' | 'resume' | 'retry' | 'wake' | 'callback' | 'close';
   idempotencyKey: string;
   attempt: number;
   capabilityEpoch: number;

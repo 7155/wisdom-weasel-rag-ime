@@ -112,6 +112,7 @@ class SessionMemoryRecallBuilder:
         recent_messages: Sequence[Mapping[str, object]] = (),
         planning_context: Mapping[str, object] | None = None,
         task_context: Mapping[str, object] | None = None,
+        compaction_recovery: Mapping[str, object] | None = None,
         max_items: int = 12,
         max_chars: int = 14_000,
         generated_at_ms: int | None = None,
@@ -241,6 +242,11 @@ class SessionMemoryRecallBuilder:
         conversation = _normalized_recent_messages(recent_messages)
         plan = _normalized_plan(planning_context)
         task = _normalized_task(task_context)
+        recovery = (
+            dict(compaction_recovery)
+            if isinstance(compaction_recovery, Mapping)
+            else {}
+        )
         recall_material = json.dumps(
             {
                 "sessionId": session,
@@ -252,6 +258,7 @@ class SessionMemoryRecallBuilder:
                     else ""
                 ),
                 "sourceIds": source_ids,
+                "compactionRecovery": recovery,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -328,6 +335,8 @@ class SessionMemoryRecallBuilder:
                 "detailLevel": detail_level,
             },
         }
+        if recovery:
+            payload["compactionRecovery"] = recovery
         validate_contract(payload, "session-memory-recall.v1.json")
         return {
             "session_id": session,

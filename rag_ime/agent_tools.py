@@ -13,6 +13,11 @@ from .agent_governed_memory_tools import (
     AgentRoleBookToolAdapter,
     MemoryGovernanceProposalStore,
 )
+from .agent_execution_policy import (
+    APPROVAL_AUTO,
+    APPROVAL_DENY,
+    approval_strategy,
+)
 from .agent_memory_sources import AgentMemorySourceStore
 from .agent_role_book import AgentRoleBookStore
 from .agent_tool_artifacts import AgentToolArtifactProjector
@@ -1195,6 +1200,11 @@ class ControlToolGateway:
             response["sessionPolicy"] = {
                 "sessionId": session["id"],
                 "mode": session["mode"],
+                "executionMode": session.get("executionMode", "per_action"),
+                "workspaceScopeGranted": session.get(
+                    "workspaceScopeGranted",
+                    False,
+                ),
                 "toolProfileVersion": session["toolProfileVersion"],
                 "toolAllowlistMode": session.get("toolAllowlistMode", "profile"),
                 "allowedTools": list(session.get("allowedTools") or []),
@@ -1309,7 +1319,12 @@ class ControlToolGateway:
             raise ValueError("archived sessions cannot execute tools")
         tool = str(request["tool"])
         args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
-        if tool in {"room_state", "room_post", "room_commit"}:
+        if tool in {
+            "room_state",
+            "room_collaborate",
+            "room_post",
+            "room_commit",
+        }:
             if self.collaboration is None:
                 raise ValueError("managed room collaboration is unavailable")
             result = self.collaboration.execute_room_capability_tool(  # type: ignore[attr-defined]
@@ -1370,6 +1385,11 @@ class ControlToolGateway:
                 )
             response["roomInvocationReceipt"] = dict(invocation)
         elif room_authorization is not None:
+            sealed_receipt = _auto_approved_room_execution_receipt(response)
+            if sealed_receipt is not None:
+                response["roomExecutionReceipt"] = sealed_receipt
+                validate_contract(response, "agent-tool-result.v1.json")
+                return response
             execution = self._record_room_product_tool_execution(
                 session_id=session_id,
                 authorization=room_authorization,
@@ -1446,6 +1466,17 @@ class ControlToolGateway:
                 else:
                     result = handlers[tool](operation, handler_args)
         else:
+            strategy = approval_strategy(
+                session,
+                tool=tool,
+                operation=operation,
+            )
+            if strategy == APPROVAL_DENY:
+                # A denied operation must not leave a pending approval behind.
+                # Read-only is a hard runtime policy, not an approval workflow.
+                raise ValueError(
+                    "write and Shell operations are blocked in read-only mode"
+                )
             result = self._prepare_approval(
                 session_id=session_id,
                 tool=tool,
@@ -1456,11 +1487,7 @@ class ControlToolGateway:
                     _room_invocation_receipt_id(room_authorization)
                 ),
             )
-            if (
-                room_authorization is None
-                and session.get("toolProfileVersion")
-                == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
-            ):
+            if strategy == APPROVAL_AUTO:
                 approval = result.get("approval") if isinstance(result.get("approval"), Mapping) else None
                 if approval is None or self._auto_approval_executor is None:
                     raise ValueError("automatic approval bridge is unavailable")
@@ -6240,6 +6267,19 @@ def _room_invocation_receipt_id(
     return _bounded_text(invocation.get("receiptId"), maximum=240)
 
 
+def _auto_approved_room_execution_receipt(
+    response: Mapping[str, object],
+) -> dict[str, object] | None:
+    result = response.get("result")
+    if not isinstance(result, Mapping) or result.get("autoApproved") is not True:
+        return None
+    receipt = result.get("receipt")
+    if not isinstance(receipt, Mapping):
+        return None
+    room_receipt = receipt.get("roomExecutionReceipt")
+    return dict(room_receipt) if isinstance(room_receipt, Mapping) else None
+
+
 def _approval_room_invocation_receipt_id(
     approval: Mapping[str, object],
 ) -> str:
@@ -6441,14 +6481,12 @@ def _tool_profile_allows(
         "ime_agents": frozenset(
             {
                 "catalog",
-                "delegate",
                 "status",
                 "artifact",
-                "abort",
             }
         ),
         "agent_schedule": frozenset({"list", "runs"}),
-        "agent_plan": frozenset({"list", "update", "submit_review", "complete", "cancel"}),
+        "agent_plan": frozenset({"list"}),
         "workspace_list": frozenset({"list"}),
         "workspace_read": frozenset({"read"}),
         "workspace_search": frozenset({"search"}),

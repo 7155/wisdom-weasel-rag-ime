@@ -84,6 +84,7 @@
         "id",
         "title",
         "status",
+        "executionMode",
         "routingPolicy",
         "moderatorParticipantId",
         "workspaceRoots",
@@ -104,6 +105,10 @@
           "maxLength": 120
         },
         "status": {"type": "string", "enum": ["active", "archived"]},
+        "executionMode": {
+          "type": "string",
+          "enum": ["read_only", "per_action", "workspace_managed", "full_trust"]
+        },
         "roomKind": {"type": "string", "enum": ["collaboration", "roleplay"]},
         "avatar": {"type": "string", "maxLength": 80},
         "description": {"type": "string", "maxLength": 500},

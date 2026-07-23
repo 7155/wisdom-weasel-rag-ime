@@ -469,7 +469,7 @@ function displayDraftValue(value: unknown, field: Record<string, unknown> = {}, 
 }
 
 function applyModeLabel(value: string): string {
-  return ({ live: '立即生效', reload: '需重新载入', restart: '需重启', restart_input_method: '重新载入输入法', redeploy_rime: '重新载入输入法', restart_sidecar: '重启后台服务', restart_predictor: '重启本机模型', next_voice_session: '下次语音使用' } as Record<string, string>)[value] ?? '应用后生效';
+  return ({ live: '立即生效', reload: '需重新载入', restart: '需重启', restart_input_method: '重新载入输入法', redeploy_rime: '重新载入输入法', restart_sidecar: '重启后台服务', restart_agent_gateway: '重启 Agent Runtime', restart_predictor: '重启本机模型', next_voice_session: '下次语音使用' } as Record<string, string>)[value] ?? '应用后生效';
 }
 
 function previewDiffItems(rows: readonly { key: string; before: string; after: string; applyMode: string }[]): string[] {

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -132,6 +132,53 @@ describe('Rooms experience', () => {
     pendingSend.resolve({ ok: true });
   });
 
+  it('deduplicates a rapid send and keeps late failure state inside its source Room', async () => {
+    const pendingA = deferred<{ ok: true }>();
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': {
+        ok: true,
+        items: [roomSummary('room-a', 'Room A'), roomSummary('room-b', 'Room B')],
+      },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': (request: ControlRequest) => roomSnapshot(
+        String(request.params?.roomId ?? ''),
+        [],
+      ),
+      'agent.room.message': (request: ControlRequest) => (
+        request.params?.roomId === 'room-a' ? pendingA.promise : { ok: true }
+      ),
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    await user.type(composer, 'A 只应发送一次');
+    const send = screen.getByRole('button', { name: '发送 Room 消息' });
+    fireEvent.click(send);
+    fireEvent.click(send);
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.room.message' && request.params?.roomId === 'room-a'
+    ))).toHaveLength(1);
+
+    await user.click(screen.getByRole('button', { name: '打开 Room：Room B' }));
+    const roomBComposer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    await user.type(roomBComposer, 'B 可以独立发送');
+    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+    await user.type(roomBComposer, 'B 的未发送草稿');
+    expect(transport.requests.filter(({ request }) => (
+      request.pathId === 'agent.room.message' && request.params?.roomId === 'room-b'
+    ))).toHaveLength(1);
+
+    pendingA.reject(new Error('late Room A rejection'));
+    await waitFor(() => expect(roomBComposer).toHaveValue('B 的未发送草稿'));
+    expect(screen.queryByText('A 只应发送一次')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '打开 Room：Room A' }));
+    expect(await screen.findByRole('textbox', { name: 'Room 消息' })).toHaveValue('A 只应发送一次');
+    expect(await screen.findByRole('alert')).toHaveTextContent('消息暂时未发送，请稍后重试。');
+  });
+
   it('removes an optimistic message and restores the draft when the real API rejects it', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '失败恢复 Room')] },
@@ -213,6 +260,8 @@ describe('Rooms experience', () => {
       },
       routingPolicy: 'natural',
       workspaceRoots: ['/Volumes/work/learnA'],
+      executionMode: 'workspace_managed',
+      workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
     });
     expect(await screen.findByRole('button', { name: '打开 Room：发布前检查' })).toHaveAttribute('aria-current', 'true');
     expect(screen.queryByRole('dialog', { name: '新建 Room' })).not.toBeInTheDocument();
@@ -252,6 +301,7 @@ describe('Rooms experience', () => {
     const created = {
       ...roomSummary('room-roleplay', '深夜茶话会'),
       roomKind: 'roleplay' as const,
+      executionMode: 'per_action' as const,
       avatar: 'sparkles',
       scenarioPrompt: '场景在安静的茶室。',
       routingPolicy: 'natural' as const,
@@ -282,8 +332,28 @@ describe('Rooms experience', () => {
       scenarioPrompt: '场景在安静的茶室。',
       routingPolicy: 'natural',
       workspaceRoots: [],
+      executionMode: 'per_action',
       routingConfig: { maxResponders: 1, naturalJitter: 0.04, fallbackParticipantId: '' },
     });
+  });
+
+  it('restores the collaboration permission default whenever the create dialog reopens', async () => {
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.sessions.list': { ok: true, items: [] },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: '新建 Room' }));
+    await user.click(screen.getByRole('radio', { name: /角色群聊/ }));
+    expect(screen.getByRole('radio', { name: /每次确认/ })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    await user.click(screen.getByRole('button', { name: '新建 Room' }));
+    expect(screen.getByRole('radio', { name: /任务协作/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /工作区托管/ })).toBeChecked();
   });
 
   it('sends an invite-only turn with a visible mention and structured participant id', async () => {
@@ -430,6 +500,47 @@ describe('Rooms experience', () => {
       },
     });
     expect(request?.body).not.toHaveProperty('roomKind');
+  });
+
+  it('switches every Room participant to full trust through the Room policy route', async () => {
+    const room = roomSummary('room-permissions', '持续开发 Room');
+    const fullTrustRoom = { ...room, executionMode: 'full_trust' as const };
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot(room.id, [], room.title),
+      'agent.room.archive': (request: ControlRequest) => (
+        request.body as { executionMode?: string } | undefined
+      )?.executionMode === 'full_trust'
+        ? { ok: true, room: fullTrustRoom }
+        : { ok: true, room },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: 'Room 设置' }));
+    await user.click(screen.getByRole('combobox', { name: 'Room 执行权限' }));
+    await user.click(await screen.findByRole('option', { name: '完全信任' }));
+    await user.click(screen.getByRole('button', { name: '保存设置' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'agent.room.archive'),
+    ).toHaveLength(1));
+    const permissionRequest = transport.requests
+      .find((call) => call.request.pathId === 'agent.room.archive')
+      ?.request;
+    expect(permissionRequest).toMatchObject({
+      params: { roomId: room.id },
+      body: {
+        title: room.title,
+        avatar: 'briefcase',
+        description: '',
+        scenarioPrompt: '',
+        routingPolicy: room.routingPolicy,
+        executionMode: 'full_trust',
+        dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
+      },
+    });
   });
 
   it('adds 智鼬·未来 to an existing Room and can remove the member again', async () => {
@@ -605,6 +716,44 @@ describe('Rooms experience', () => {
       displayName: 'report.md',
       mediaType: 'text/markdown',
       topicId: 'topic:risk',
+    });
+  });
+
+  it('keeps a late shared-file failure inside the Room that started the picker', async () => {
+    const pendingPick = deferred<Array<{ id: string; name: string; mimeType: string; byteSize: number; path: string }>>();
+    const pendingAdd = deferred<{ ok: true }>();
+    const transport = new MockControlTransport({
+      pickedFiles: [{ id: 'capability-probe', name: 'probe.md', mimeType: 'text/markdown', byteSize: 1, path: '/Volumes/work/learnA/probe.md' }],
+      routes: {
+        'agent.rooms.list': { ok: true, items: [roomSummary('room-a', 'Room A'), roomSummary('room-b', 'Room B')] },
+        'agent.roles.list': { ok: true, items: previewPersonas },
+        'agent.room.snapshot': (request: ControlRequest) => roomSnapshot(String(request.params?.roomId ?? ''), []),
+        'agent.room.artifact.add': () => pendingAdd.promise,
+      },
+    });
+    vi.spyOn(transport, 'pickFiles').mockImplementation(() => pendingPick.promise);
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await user.click(await screen.findByRole('button', { name: '添加共享文件' }));
+    await user.click(screen.getByRole('button', { name: '打开 Room：Room B' }));
+    pendingPick.resolve([{
+      id: 'late-report',
+      name: 'late-report.md',
+      mimeType: 'text/markdown',
+      byteSize: 100,
+      path: '/Volumes/work/learnA/late-report.md',
+    }]);
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'agent.room.artifact.add' && request.params?.roomId === 'room-a'
+    ))).toBe(true));
+
+    pendingAdd.reject(new Error('late Room A artifact failure'));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: '打开 Room：Room A' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('共享文件暂时无法加入 Room');
+    expect(transport.requests.find(({ request }) => request.pathId === 'agent.room.artifact.add')?.request.body).toMatchObject({
+      path: '/Volumes/work/learnA/late-report.md',
     });
   });
 
@@ -1258,6 +1407,7 @@ function roomSummary(roomId: string, title: string): RoomSummary {
     id: roomId,
     title,
     status: 'active',
+    executionMode: 'workspace_managed',
     routingPolicy: 'moderator',
     moderatorParticipantId: `${roomId}:p1`,
     workspaceRoots: ['/Volumes/work/learnA'],
@@ -1324,6 +1474,10 @@ function roomEvent(
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((accept) => { resolve = accept; });
-  return { promise, resolve };
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  });
+  return { promise, resolve, reject };
 }

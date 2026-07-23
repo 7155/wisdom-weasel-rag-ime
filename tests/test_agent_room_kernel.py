@@ -137,7 +137,44 @@ class RoomKernelCoreTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.store.dispatch("dispatch:batch:rollback:a")
 
-    def test_a_to_b_to_a_is_bounded_by_hop_and_depth_fences(self) -> None:
+    def test_target_session_can_have_only_one_active_dispatch(self) -> None:
+        self.seed(budget=2, criteria=())
+        first, created = self.store.enqueue_dispatch(
+            dispatch(
+                "dispatch:target-session:first",
+                key="target-session:first",
+                target="participant:a",
+            ),
+            now_ms=10,
+        )
+
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "target Session already has an active Dispatch",
+        ):
+            self.store.enqueue_dispatch(
+                dispatch(
+                    "dispatch:target-session:second",
+                    key="target-session:second",
+                    target="participant:a",
+                ),
+                now_ms=11,
+            )
+
+        replay, replay_created = self.store.enqueue_dispatch(
+            dispatch(
+                "dispatch:target-session:first",
+                key="target-session:first",
+                target="participant:a",
+            ),
+            now_ms=12,
+        )
+        self.assertTrue(created)
+        self.assertFalse(replay_created)
+        self.assertEqual(replay["dispatchId"], first["dispatchId"])
+        self.assertEqual(self.store.counts("root:1")["dispatches"], 1)
+
+    def test_multi_member_chain_is_bounded_by_hop_and_depth_fences(self) -> None:
         self.seed(max_hops=2, max_depth=1)
         first, _ = self.store.enqueue_dispatch(
             dispatch("dispatch:a1", key="a1", target="participant:a", hop=0), now_ms=10
@@ -157,7 +194,7 @@ class RoomKernelCoreTests(unittest.TestCase):
             dispatch(
                 "dispatch:a2",
                 key="a2",
-                target="participant:a",
+                target="participant:c",
                 hop=2,
                 depth=1,
                 parent=str(second["dispatchId"]),
@@ -170,7 +207,7 @@ class RoomKernelCoreTests(unittest.TestCase):
                 dispatch(
                     "dispatch:b2",
                     key="b2",
-                    target="participant:b",
+                    target="participant:d",
                     hop=3,
                     depth=1,
                     parent="dispatch:a2",
@@ -186,12 +223,17 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.store.set_dispatch_wait_state("dispatch:a1", "running", now_ms=11)
         child_b = dispatch(
             "dispatch:b1", key="b1", target="participant:b", hop=1,
-            parent=str(first["dispatchId"]),
+            parent=str(first["dispatchId"]), task_id="task:b1",
         )
+        task_b = child_task("task:b1", parent="task:1", target="participant:b")
         first_commit = {
             **commit("commit:a-to-b", "dispatch:a1"),
             "action": "dispatch",
-            "continuation": {"decision": "dispatch", "childDispatch": child_b},
+            "continuation": {
+                "decision": "dispatch",
+                "childTask": task_b,
+                "childDispatch": child_b,
+            },
         }
 
         receipt = self.store.apply_commit(first_commit, generation=0, now_ms=12)
@@ -202,15 +244,23 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.store.set_dispatch_wait_state("dispatch:b1", "running", now_ms=13)
         child_a = dispatch(
             "dispatch:a2", key="a2", target="participant:a", hop=2,
-            parent="dispatch:b1",
+            parent="dispatch:b1", task_id="task:a2",
         )
+        task_a = child_task("task:a2", parent="task:b1", target="participant:a")
         second_commit = {
             **commit("commit:b-to-a", "dispatch:b1"),
             "action": "dispatch",
-            "continuation": {"decision": "dispatch", "childDispatch": child_a},
+            "continuation": {
+                "decision": "dispatch",
+                "childTask": task_a,
+                "childDispatch": child_a,
+            },
         }
         self.store.apply_commit(second_commit, generation=0, now_ms=14)
         self.assertEqual(self.store.dispatch("dispatch:a2")["parentDispatchId"], "dispatch:b1")
+        self.assertEqual(self.store.task("task:1")["state"], "completed")
+        self.assertEqual(self.store.task("task:b1")["state"], "completed")
+        self.assertEqual(self.store.task("task:a2")["state"], "active")
 
     def test_fifteen_agent_mentions_are_stopped_by_system_hop_ceiling(self) -> None:
         self.seed(budget=100, max_hops=12, max_depth=4, criteria=())
@@ -218,33 +268,53 @@ class RoomKernelCoreTests(unittest.TestCase):
             dispatch("dispatch:hop-0", key="hop-0", target="participant:0"), now_ms=10
         )
         parent = str(first["dispatchId"])
+        parent_task = "task:1"
         for hop in range(1, 13):
             self.store.set_dispatch_wait_state(parent, "running", now_ms=10 + hop)
+            next_task = f"task:hop-{hop}"
             child = dispatch(
                 f"dispatch:hop-{hop}", key=f"hop-{hop}",
                 target=f"participant:{hop % 15}", hop=hop, parent=parent,
+                task_id=next_task,
             )
             self.store.apply_commit(
                 {
                     **commit(f"commit:hop-{hop - 1}", parent),
                     "action": "dispatch",
-                    "continuation": {"decision": "dispatch", "childDispatch": child},
+                    "continuation": {
+                        "decision": "dispatch",
+                        "childTask": child_task(
+                            next_task,
+                            parent=parent_task,
+                            target=f"participant:{hop % 15}",
+                        ),
+                        "childDispatch": child,
+                    },
                 },
                 generation=0,
                 now_ms=11 + hop,
             )
             parent = str(child["dispatchId"])
+            parent_task = next_task
         self.store.set_dispatch_wait_state(parent, "running", now_ms=29)
         with self.assertRaisesRegex(RoomKernelFenceError, "hop limit"):
             child = dispatch(
                 "dispatch:hop-13", key="hop-13", target="participant:13",
-                hop=13, parent=parent,
+                hop=13, parent=parent, task_id="task:hop-13",
             )
             self.store.apply_commit(
                 {
                     **commit("commit:hop-12", parent),
                     "action": "dispatch",
-                    "continuation": {"decision": "dispatch", "childDispatch": child},
+                    "continuation": {
+                        "decision": "dispatch",
+                        "childTask": child_task(
+                            "task:hop-13",
+                            parent=parent_task,
+                            target="participant:13",
+                        ),
+                        "childDispatch": child,
+                    },
                 },
                 generation=0,
                 now_ms=30,
@@ -271,6 +341,64 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(self.store.root("root:1")["state"], "blocked")
         self.assertEqual(self.store.task("task:1")["state"], "blocked")
 
+    def test_runtime_failure_is_idempotent_and_blocks_the_dispatch(self) -> None:
+        self.seed(criteria=())
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:runtime-failure", key="runtime-failure"),
+            now_ms=10,
+        )
+        self.store.record_runtime_dispatch_intent(
+            "dispatch:runtime-failure",
+            now_ms=10,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:runtime-failure",
+            "running",
+            now_ms=11,
+        )
+
+        first = self.store.record_runtime_failure(
+            "dispatch:runtime-failure",
+            generation=0,
+            source_event_id="event:turn-failed",
+            now_ms=12,
+        )
+        replay = self.store.record_runtime_failure(
+            "dispatch:runtime-failure",
+            generation=0,
+            source_event_id="event:turn-failed",
+            now_ms=12,
+        )
+
+        self.assertEqual(first, replay)
+        self.assertEqual(first["receiptKind"], "runtime_failed")
+        self.assertEqual(first["status"], "applied")
+        self.assertEqual(first["details"]["reasonCode"], "runtime_turn_failed")
+        self.assertEqual(self.store.root("root:1")["state"], "blocked")
+        self.assertEqual(self.store.task("task:1")["state"], "blocked")
+        self.assertEqual(
+            self.store.dispatch("dispatch:runtime-failure")["state"],
+            "failed",
+        )
+        self.assertEqual(
+            self.store.outbox("dispatch:runtime-failure")["state"],
+            "dead_letter",
+        )
+        self.assertEqual(self.store.counts("root:1")["deadLetters"], 1)
+        with sqlite3.connect(self.db_path) as connection:
+            runtime_state = connection.execute(
+                """
+                SELECT state FROM room_kernel_runtime_effects
+                WHERE dispatch_id = ?
+                """,
+                ("dispatch:runtime-failure",),
+            ).fetchone()[0]
+        self.assertEqual(runtime_state, "failed")
+        self.assertEqual(
+            self.store.abort_scope("dispatch:runtime-failure")["state"],
+            "failed",
+        )
+
     def test_budget_is_reserved_at_enqueue_and_released_by_cancel(self) -> None:
         self.seed(budget=10, criteria=())
         self.store.enqueue_dispatch(dispatch("dispatch:seven", key="seven", cost=7), now_ms=10)
@@ -291,12 +419,21 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.seed(budget=100, criteria=())
         for index in range(4):
             self.store.enqueue_dispatch(
-                dispatch(f"dispatch:parallel-{index}", key=f"parallel-{index}"),
+                dispatch(
+                    f"dispatch:parallel-{index}",
+                    key=f"parallel-{index}",
+                    target=f"participant:{index}",
+                ),
                 now_ms=10 + index,
             )
         with self.assertRaisesRegex(RoomKernelFenceError, "concurrency limit"):
             self.store.enqueue_dispatch(
-                dispatch("dispatch:parallel-4", key="parallel-4"), now_ms=20
+                dispatch(
+                    "dispatch:parallel-4",
+                    key="parallel-4",
+                    target="participant:4",
+                ),
+                now_ms=20,
             )
 
         self.store.cancel_target(
@@ -304,7 +441,12 @@ class RoomKernelCoreTests(unittest.TestCase):
             target_id="dispatch:parallel-0", now_ms=21,
         )
         _item, created = self.store.enqueue_dispatch(
-            dispatch("dispatch:parallel-4", key="parallel-4"), now_ms=22
+            dispatch(
+                "dispatch:parallel-4",
+                key="parallel-4",
+                target="participant:4",
+            ),
+            now_ms=22,
         )
         self.assertTrue(created)
         limits = self.store.resource_limits("root:1")
@@ -336,7 +478,14 @@ class RoomKernelCoreTests(unittest.TestCase):
             )
         self.store.enqueue_dispatch(dispatch("dispatch:first", key="first"), now_ms=10)
         with self.assertRaisesRegex(RoomKernelFenceError, "dispatch limit"):
-            self.store.enqueue_dispatch(dispatch("dispatch:second", key="second"), now_ms=11)
+            self.store.enqueue_dispatch(
+                dispatch(
+                    "dispatch:second",
+                    key="second",
+                    target="participant:b",
+                ),
+                now_ms=11,
+            )
 
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
@@ -384,7 +533,14 @@ class RoomKernelCoreTests(unittest.TestCase):
         states = ("pending", "running", "retry_wait", "timer_wait")
         for ordinal, state in enumerate(states):
             dispatch_id = f"dispatch:{state}"
-            self.store.enqueue_dispatch(dispatch(dispatch_id, key=f"key:{ordinal}"), now_ms=10 + ordinal)
+            self.store.enqueue_dispatch(
+                dispatch(
+                    dispatch_id,
+                    key=f"key:{ordinal}",
+                    target=f"participant:{ordinal}",
+                ),
+                now_ms=10 + ordinal,
+            )
             if state != "pending":
                 self.store.set_dispatch_wait_state(dispatch_id, state, now_ms=20 + ordinal)
 
@@ -499,6 +655,21 @@ def task(task_id: str, *, root_id: str = "root:1") -> dict[str, object]:
     }
 
 
+def child_task(
+    task_id: str,
+    *,
+    parent: str,
+    target: str,
+) -> dict[str, object]:
+    return {
+        **task(task_id),
+        "parentTaskId": parent,
+        "ownerParticipantId": target,
+        "assigneeParticipantId": target,
+        "acceptanceCriterionIds": [],
+    }
+
+
 def dispatch(
     dispatch_id: str,
     *,
@@ -508,12 +679,13 @@ def dispatch(
     depth: int = 0,
     cost: int = 1,
     parent: str | None = None,
+    task_id: str = "task:1",
 ) -> dict[str, object]:
     return {
         "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
         "dispatchId": dispatch_id,
         "rootId": "root:1",
-        "taskId": "task:1",
+        "taskId": task_id,
         "parentDispatchId": parent,
         "generation": 0,
         "hopCount": hop,

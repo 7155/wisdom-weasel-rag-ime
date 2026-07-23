@@ -252,6 +252,16 @@ export function reduceAgentEvent(
       upsertCompactionActivity(next, event, payload, payload.error ? 'failed' : 'completed');
       break;
     case 'status_changed':
+      if (text(payload.phase) === 'provider_retry') {
+        const activityState = text(payload.activityState);
+        const retryStatus: AgentActivityProjection['status'] =
+          activityState === 'completed'
+            ? 'completed'
+            : activityState === 'failed'
+              ? 'failed'
+              : 'running';
+        upsertActivity(next, event, payload, retryStatus);
+      }
       next.status = text(payload.status) || next.status;
       touchTurn(next, event.turnId, turnStatusFromRuntime(next.status), event.createdAtMs);
       break;
@@ -502,6 +512,16 @@ export function applyAgentSnapshot(
     next.messageOrder.push(messageId);
     next.optimisticByClientMessageId[clientMessageId] = messageId;
     attachMessageToTurn(next, optimistic);
+    const previousTurn = state.turnsById[optimistic.turnId];
+    const restoredTurn = next.turnsById[optimistic.turnId];
+    if (previousTurn && restoredTurn) {
+      next.turnsById[optimistic.turnId] = {
+        ...restoredTurn,
+        status: previousTurn.status,
+        updatedAtMs: Math.max(restoredTurn.updatedAtMs, previousTurn.updatedAtMs),
+        failure: previousTurn.failure,
+      };
+    }
   }
   reconcileSnapshotTurnStatuses(next);
   next.lastSequence = Math.max(0, snapshot.lastSequence);

@@ -672,6 +672,9 @@ function cssEscape(value: string): string {
 
 function workingDetail(activities: AgentActivityProjection[]): string {
   const latest = [...activities].reverse().find((activity) => activity.status === 'running');
+  if (text(latest?.payload.phase) === 'provider_retry') {
+    return latest?.summary || '模型连接暂时不可用，正在自动重试。';
+  }
   const tool = text(latest?.payload.toolName ?? latest?.payload.toolId).toLowerCase();
   if (tool.includes('memory')) return '正在读取并整理相关记忆，工具明细会实时显示在下方。';
   if (tool.includes('knowledge') || tool.includes('rag')) return '正在检索知识库，工具明细会实时显示在下方。';

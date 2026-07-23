@@ -77,6 +77,98 @@ def _model_call(
 
 
 class RoomContextEpochCanaryTest(unittest.TestCase):
+    def test_cancel_root_skips_a_terminal_root(self) -> None:
+        requests: list[tuple[str, str, object | None]] = []
+
+        def requester(
+            _base_url: str,
+            method: str,
+            path: str,
+            payload: object | None = None,
+            *,
+            timeout: float,
+        ) -> dict[str, object]:
+            requests.append((method, path, payload))
+            return {
+                "roots": [{
+                    "rootId": "room-root:terminal",
+                    "state": "completed",
+                    "generation": 4,
+                }]
+            }
+
+        result = CANARY.cancel_root(
+            "http://in-process.invalid",
+            "room-1",
+            "room-root:terminal",
+            requester=requester,
+        )
+
+        self.assertEqual(result["status"], "already_terminal")
+        self.assertEqual(result["generation"], 4)
+        self.assertEqual([method for method, _path, _payload in requests], ["GET"])
+
+    def test_cancel_root_uses_the_current_generation(self) -> None:
+        requests: list[tuple[str, str, object | None]] = []
+
+        def requester(
+            _base_url: str,
+            method: str,
+            path: str,
+            payload: object | None = None,
+            *,
+            timeout: float,
+        ) -> dict[str, object]:
+            requests.append((method, path, payload))
+            if method == "GET":
+                return {
+                    "roots": [{
+                        "rootId": "room-root:running",
+                        "state": "running",
+                        "generation": 3,
+                    }]
+                }
+            return {"receipt": {"status": "applied"}}
+
+        result = CANARY.cancel_root(
+            "http://in-process.invalid",
+            "room-1",
+            "room-root:running",
+            requester=requester,
+        )
+
+        self.assertEqual(result["status"], "cancel_requested")
+        command = requests[1][2]
+        self.assertIsInstance(command, dict)
+        assert isinstance(command, dict)
+        self.assertEqual(command["generation"], 3)
+
+    def test_cleanup_failure_is_added_to_the_primary_failure(self) -> None:
+        primary = RuntimeError("provider stream failed first")
+
+        def requester(
+            _base_url: str,
+            _method: str,
+            _path: str,
+            _payload: object | None = None,
+            *,
+            timeout: float,
+        ) -> dict[str, object]:
+            raise TimeoutError("cleanup request timed out")
+
+        result = CANARY.cancel_root_after_failure(
+            "http://in-process.invalid",
+            "room-1",
+            "room-root:failed",
+            primary,
+            requester=requester,
+        )
+
+        self.assertEqual(result["status"], "cleanup_failed")
+        self.assertEqual(str(primary), "provider stream failed first")
+        self.assertEqual(len(primary.__notes__), 1)
+        self.assertIn("cleanup request timed out", primary.__notes__[0])
+
     def test_debug_evidence_uses_the_audit_timeout_for_both_snapshots(
         self,
     ) -> None:
@@ -158,6 +250,76 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         self.assertNotIn("private requirement", serialized)
         self.assertNotIn("private result", serialized)
         self.assertNotIn("stable private prompt", serialized)
+
+    def test_provider_prefix_evidence_accepts_an_identical_provider_replay(
+        self,
+    ) -> None:
+        messages = [{"role": "user", "content": "same request"}]
+        tools = [{"name": "tool_search", "parameters": {"type": "object"}}]
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=1,
+                    system_prompt="stable prompt",
+                    messages=messages,
+                    tools=tools,
+                    previous_messages=None,
+                ),
+                _model_call(
+                    index=2,
+                    system_prompt="stable prompt",
+                    messages=messages,
+                    tools=tools,
+                    previous_messages=messages,
+                ),
+            ]
+        }
+
+        evidence = CANARY.provider_prefix_evidence(context)
+
+        self.assertTrue(evidence["passed"])
+        transition = evidence["transitions"][0]
+        self.assertTrue(transition["runtimeMessageBytePrefixPreserved"])
+        self.assertEqual(
+            evidence["calls"][1]["contextDelta"]["prefixBytes"],
+            evidence["calls"][0]["contextDelta"]["currentBytes"],
+        )
+
+    def test_provider_room_post_visibility_ignores_dispatch_instructions(
+        self,
+    ) -> None:
+        dispatch_only = (
+            '<room-fact kind="dispatch_state">要求输出 POST-A</room-fact>'
+        )
+        post_visible = (
+            '<room-fact kind="room_post">POST-A 已完成，下一步输出 POST-B</room-fact>'
+        )
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=3,
+                    system_prompt=dispatch_only,
+                    messages=[{"role": "user", "content": "task"}],
+                    tools=[],
+                    previous_messages=None,
+                ),
+                _model_call(
+                    index=4,
+                    system_prompt=post_visible,
+                    messages=[{"role": "user", "content": "task"}],
+                    tools=[],
+                    previous_messages=[{"role": "user", "content": "task"}],
+                ),
+            ]
+        }
+
+        evidence = CANARY.provider_room_post_visibility(
+            context,
+            {"A": "POST-A", "B": "POST-B"},
+        )
+
+        self.assertEqual(evidence["A"], {"seen": True, "callIndexes": [4]})
+        self.assertEqual(evidence["B"], {"seen": False, "callIndexes": []})
 
     def test_provider_prefix_evidence_rejects_reorder_and_prompt_change(self) -> None:
         first_messages = [

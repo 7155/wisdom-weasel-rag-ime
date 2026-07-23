@@ -99,28 +99,50 @@ class RoomKernelWorker:
         except BaseException as exc:
             if self.revoke_session is not None:
                 self.revoke_session(str(dispatch["targetSessionId"]), self.clock_ms())
-            if self.learning_observer is not None:
-                try:
-                    self.learning_observer(
-                        {
-                            "eventKind": "runtime_failed",
-                            "rootId": str(dispatch["rootId"]),
-                            "dispatchId": str(dispatch["dispatchId"]),
-                            "reason": f"{type(exc).__name__}: {exc}"[:500],
-                            "createdAtMs": self.clock_ms(),
-                        }
-                    )
-                except Exception:
-                    # Lease reconciliation remains the fallback evidence path.
-                    pass
+            self._observe_failure(dispatch, "runtime_failed", exc)
             raise
-        if self.accept_runtime_context is not None:
-            self.accept_runtime_context(runtime_receipt)
-        return self.store.accept_runtime_receipt(
+        accepted = self.store.accept_runtime_receipt(
             lease_token=str(lease["leaseToken"]),
             runtime_receipt=runtime_receipt,
             now_ms=self.clock_ms(),
         )
+        try:
+            if self.accept_runtime_context is not None:
+                self.accept_runtime_context(runtime_receipt)
+        except BaseException as exc:
+            # Pi has accepted the turn, so the result is no longer an unknown
+            # delivery. A failed governed projection is instead an explicit
+            # fail-closed Root cancellation with durable runtime fan-out.
+            self._observe_failure(
+                dispatch,
+                "runtime_context_failed",
+                exc,
+            )
+            self.cancel_root(str(dispatch["rootId"]))
+            raise
+        return accepted
+
+    def _observe_failure(
+        self,
+        dispatch: Mapping[str, object],
+        event_kind: str,
+        error: BaseException,
+    ) -> None:
+        if self.learning_observer is None:
+            return
+        try:
+            self.learning_observer(
+                {
+                    "eventKind": event_kind,
+                    "rootId": str(dispatch["rootId"]),
+                    "dispatchId": str(dispatch["dispatchId"]),
+                    "reason": f"{type(error).__name__}: {error}"[:500],
+                    "createdAtMs": self.clock_ms(),
+                }
+            )
+        except Exception:
+            # Kernel state and cancellation evidence remain authoritative.
+            pass
 
     def cancel_root(self, root_id: str) -> dict[str, object]:
         kernel_receipt = self.store.cancel_root(root_id, now_ms=self.clock_ms())

@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from .agent_execution_policy import execution_policy_prompt
 from .agent_definition_compiler import AgentDefinitionCompiler
 from .agent_personas import AgentPersonaStore
 from .agent_prompt_plans import (
@@ -65,6 +66,7 @@ class RoomKernelRuntimeCoordinator:
         learning_runtime: RoomLearningRuntime,
         definition_compiler: AgentDefinitionCompiler,
         role_book_prompt_resolver: Callable[[str], str],
+        session_resolver: Callable[[str], Mapping[str, object]],
         product_tool_manifest_provider: Callable[
             [str], Mapping[str, Sequence[Mapping[str, object]]]
         ],
@@ -86,6 +88,7 @@ class RoomKernelRuntimeCoordinator:
         self.learning_runtime = learning_runtime
         self.definition_compiler = definition_compiler
         self.role_book_prompt_resolver = role_book_prompt_resolver
+        self.session_resolver = session_resolver
         self.product_tool_manifest_provider = product_tool_manifest_provider
         self.profile_pins = RoomCollaborationProfilePins(self.db_path)
         self.runtime_capabilities = RoomRuntimeCapabilityService(
@@ -150,6 +153,7 @@ class RoomKernelRuntimeCoordinator:
             participant.get("roleVersion") or "1",
         )
         role_book_prompt = self.role_book_prompt_resolver(session_id)
+        session = self.session_resolver(session_id)
         role_id = str(participant.get("collaborationRole") or "implementer")
         if role_id == "executor":
             role_id = "implementer"
@@ -313,6 +317,7 @@ class RoomKernelRuntimeCoordinator:
         )
         layers = _prompt_layers(
             persona=persona,
+            session=session,
             role_book_prompt=role_book_prompt,
             role=role,
             template=template,
@@ -506,6 +511,7 @@ class RoomKernelRuntimeCoordinator:
 def _prompt_layers(
     *,
     persona: PersonaManifest,
+    session: Mapping[str, object],
     role_book_prompt: str,
     role: object,
     template: object,
@@ -519,7 +525,10 @@ def _prompt_layers(
             "core_rails",
             "pi-core-safety",
             "pi-core-safety:v1",
-            persona.safety_policy_prompt,
+            (
+                f"{persona.safety_policy_prompt.strip()}\n\n"
+                f"{execution_policy_prompt(session)}"
+            ),
             ("safety", "authorization"),
         ),
         PromptLayer(
@@ -598,12 +607,13 @@ def _profile_overlay_prompt(
 def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
     return {
         "execute": "implementation",
-        "review": "review",
+        "review": "vision-review",
         "revise": "feedback",
         "retry": "debugging",
         "resume": "implementation",
         "wake": "implementation",
         "callback": "handoff",
+        "close": "closure",
     }.get(str(dispatch.get("intentKind") or ""), "implementation")
 
 

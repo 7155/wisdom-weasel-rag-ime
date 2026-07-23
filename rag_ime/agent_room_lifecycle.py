@@ -3,6 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from .agent_execution_policy import (
+    FULL_TRUST_EXECUTION_MODE,
+    PER_ACTION_EXECUTION_MODE,
+    READ_ONLY_EXECUTION_MODE,
+    WORKSPACE_MANAGED_EXECUTION_MODE,
+    WORKSPACE_SCOPE_CONFIRMATION,
+    canonical_tool_profile,
+    normalize_execution_mode,
+)
 from .agent_personas import AgentPersonaStore
 from .agent_roles import PersonaManifest
 from .agent_room_participants import (
@@ -17,7 +26,10 @@ from .agent_sessions import (
     AgentSessionNotFound,
     AgentSessionStore,
 )
-from .agent_tool_ids import CONTROL_CENTER_TOOL_PROFILE
+from .agent_tool_ids import (
+    CONTROL_CENTER_TOOL_PROFILE,
+    DANGEROUS_MODE_CONFIRMATION,
+)
 
 
 @dataclass(frozen=True)
@@ -33,6 +45,7 @@ class RoomCreationPlan:
     routing_policy: str
     moderator_ordinal: int
     workspace_roots: tuple[str, ...]
+    execution_mode: str
     participants: tuple[RoomParticipantPlan, ...]
 
 
@@ -113,6 +126,27 @@ class RoomLifecycleService:
                 "archive state must be updated separately "
                 "from room configuration"
             )
+        execution_keys = {
+            "executionMode",
+            "workspaceScopeConfirmation",
+            "dangerousModeConfirmation",
+        }
+        if "executionMode" in payload:
+            execution_payload = {
+                key: value
+                for key, value in payload.items()
+                if key in execution_keys
+            }
+            config_payload = {
+                key: value
+                for key, value in payload.items()
+                if key not in execution_keys
+            }
+            return self._update_execution_mode(
+                room_id,
+                execution_payload,
+                config_payload=config_payload,
+            )
         if set(payload) == {"archived"}:
             archived = _bool(payload.get("archived"))
             room = self.rooms.archive(
@@ -155,6 +189,120 @@ class RoomLifecycleService:
                     room.get("activeTopicId") or ""
                 ),
             )
+        return {
+            "schemaVersion": "rag-ime.agent-room-update.v1",
+            "ok": True,
+            "room": self.rooms.get(room_id),
+            "event": event,
+        }
+
+    def _update_execution_mode(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+        *,
+        config_payload: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        room = self.rooms.get(room_id)
+        execution_mode = normalize_execution_mode(payload.get("executionMode"))
+        roots = [str(value) for value in room.get("workspaceRoots") or []]
+        if execution_mode in {
+            WORKSPACE_MANAGED_EXECUTION_MODE,
+            FULL_TRUST_EXECUTION_MODE,
+        } and not roots:
+            raise ValueError(
+                "managed and full-trust Room execution require a workspace"
+            )
+        if execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and (
+            str(payload.get("workspaceScopeConfirmation") or "")
+            != WORKSPACE_SCOPE_CONFIRMATION
+        ):
+            raise ValueError(
+                "workspace-managed Room execution requires an explicit workspace scope confirmation"
+            )
+        if execution_mode == FULL_TRUST_EXECUTION_MODE and (
+            str(payload.get("dangerousModeConfirmation") or "")
+            != DANGEROUS_MODE_CONFIRMATION
+        ):
+            raise ValueError(
+                "full-trust Room execution requires an explicit native confirmation"
+            )
+        configuration = dict(config_payload or {})
+        with self.participants.turn_lock:
+            sessions = self.participants.participant_sessions(room)
+            active_session_ids = self.participants.active_runtime_session_ids()
+            if any(
+                self.participants.session_is_busy(
+                    str(session["id"]),
+                    session,
+                    active_session_ids=active_session_ids,
+                )
+                for session in sessions
+            ):
+                raise ValueError(
+                    "wait for all Room participant turns to finish before changing execution mode"
+                )
+            with self.rooms.write_transaction() as conn:
+                for session in sessions:
+                    profile = canonical_tool_profile(
+                        session.get("toolProfileVersion"),
+                        execution_mode=execution_mode,
+                    )
+                    self.sessions.set_runtime_policy(
+                        str(session["id"]),
+                        mode=str(session.get("mode") or "coordinator"),
+                        tool_profile_version=profile,
+                        execution_mode=execution_mode,
+                        grant_workspace_scope=execution_mode
+                        in {
+                            WORKSPACE_MANAGED_EXECUTION_MODE,
+                            FULL_TRUST_EXECUTION_MODE,
+                        },
+                        allowed_tools=(
+                            list(session.get("allowedTools") or [])
+                            if session.get("toolAllowlistMode") == "explicit"
+                            else None
+                        ),
+                        workspace_roots=roots,
+                        connection=conn,
+                    )
+                if configuration:
+                    updated = self.rooms.update_config(
+                        room_id,
+                        configuration,
+                        connection=conn,
+                    )
+                    if int(updated["configRevision"]) == int(
+                        room["configRevision"]
+                    ):
+                        self.rooms.touch_config(
+                            room_id,
+                            connection=conn,
+                        )
+                else:
+                    self.rooms.touch_config(
+                        room_id,
+                        connection=conn,
+                    )
+        room = self.rooms.get(room_id)
+        changed_fields = sorted(
+            {*configuration, "executionMode"}
+        )
+        event = self.events.publish(
+            room_id=room_id,
+            event_type="room_config_changed",
+            payload={
+                "status": (
+                    "room_config_and_execution_mode_updated"
+                    if configuration
+                    else "room_execution_mode_updated"
+                ),
+                "changedFields": changed_fields,
+                "executionMode": execution_mode,
+                "configRevision": room["configRevision"],
+            },
+            topic_id=str(room.get("activeTopicId") or ""),
+        )
         return {
             "schemaVersion": "rag-ime.agent-room-update.v1",
             "ok": True,
@@ -352,6 +500,28 @@ class RoomLifecycleService:
             payload,
             room_kind=room_kind,
         )
+        execution_mode = normalize_execution_mode(
+            payload.get("executionMode"),
+            default=(
+                WORKSPACE_MANAGED_EXECUTION_MODE
+                if room_kind == "collaboration"
+                else PER_ACTION_EXECUTION_MODE
+            ),
+        )
+        if execution_mode in {
+            WORKSPACE_MANAGED_EXECUTION_MODE,
+            FULL_TRUST_EXECUTION_MODE,
+        } and room_kind != "collaboration":
+            raise ValueError(
+                "roleplay Rooms cannot use workspace-managed or full-trust execution"
+            )
+        if execution_mode == FULL_TRUST_EXECUTION_MODE and (
+            str(payload.get("dangerousModeConfirmation") or "")
+            != DANGEROUS_MODE_CONFIRMATION
+        ):
+            raise ValueError(
+                "full-trust Room execution requires an explicit native confirmation"
+            )
         routing_policy = str(
             payload.get("routingPolicy") or "natural"
         )
@@ -385,6 +555,7 @@ class RoomLifecycleService:
             routing_policy=routing_policy,
             moderator_ordinal=moderator_ordinal,
             workspace_roots=workspace_roots,
+            execution_mode=execution_mode,
             participants=participants,
         )
 
@@ -517,6 +688,12 @@ def _participant_session_payload(
         # receives the ordinary working Agent surface; native approvals and the
         # Dispatch fence still govern risky effects.
         "toolProfileVersion": CONTROL_CENTER_TOOL_PROFILE,
+        "executionMode": plan.execution_mode,
+        "_internalWorkspaceScopeGrant": plan.execution_mode
+        in {
+            WORKSPACE_MANAGED_EXECUTION_MODE,
+            FULL_TRUST_EXECUTION_MODE,
+        },
         "workspaceRoots": list(plan.workspace_roots),
     }
 

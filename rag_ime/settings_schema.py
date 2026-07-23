@@ -415,7 +415,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "id": "privacy",
             "label": "Privacy",
             "fields": [
-                {"key": "privacy.debugIncludeText", "type": "boolean", "label": "管理页显示原文", "default": False},
+                {"key": "privacy.debugIncludeText", "type": "boolean", "label": "本机调试原文与 Agent 快照", "default": False},
                 {"key": "privacy.traceIncludeText", "type": "boolean", "label": "trace 包含原文", "default": False},
                 {"key": "privacy.allowRemoteModelForActiveRag", "type": "boolean", "label": "显式生成可使用联网模型", "default": True},
                 {"key": "managementSecurity.requireToken", "type": "boolean", "label": "POST 需要管理 token", "default": False},
@@ -496,7 +496,13 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
     "models.activeRag": {"applyMode": "restart_sidecar", "restartComponent": "sidecar"},
     "models.offlineCleanup": {"applyMode": "restart_sidecar", "restartComponent": "sidecar", "expert": True},
     "privacy.traceIncludeText": {"risk": "sensitive", "expert": True},
-    "privacy.debugIncludeText": {"risk": "sensitive", "expert": True},
+    "privacy.debugIncludeText": {
+        "description": "允许管理页显示调试原文，并在本机保存经凭证与隐藏推理脱敏的 Agent Provider/Tool 快照；关闭后只保留当前 Runtime 内存",
+        "applyMode": "restart_agent_gateway",
+        "restartComponent": "agent-gateway",
+        "risk": "sensitive",
+        "expert": True,
+    },
     "managementSecurity.requireToken": {"applyMode": "restart_sidecar", "restartComponent": "sidecar", "expert": True},
     "memory.archiveInactiveDays": {"min": 7, "max": 3650, "unit": "天"},
     "memory.timeDecay.temporaryHalfLifeDays": {"min": 1, "max": 365, "unit": "天", "expert": True},

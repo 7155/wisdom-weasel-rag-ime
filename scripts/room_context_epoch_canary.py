@@ -18,7 +18,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 
 _SESSION_MEMORY_OPEN = '<rag-ime-context type="session_memory">'
@@ -194,9 +194,36 @@ def cancel_root(
     root_id: str,
     *,
     requester: JsonRequester = request_json,
-) -> None:
+    timeout: float = 70,
+) -> dict[str, Any]:
+    snapshot = requester(
+        base_url,
+        "GET",
+        f"/api/agent/rooms/{encoded(room_id)}/kernel/snapshot",
+        timeout=min(timeout, 10),
+    )
+    roots = [
+        item
+        for item in snapshot.get("roots") or []
+        if isinstance(item, dict) and item.get("rootId") == root_id
+    ]
+    if len(roots) != 1:
+        raise RuntimeError(f"Room Root {root_id} is missing during canary cleanup")
+    root = roots[0]
+    state = str(root.get("state") or "")
+    generation = int(root.get("generation", -1))
+    if generation < 0:
+        raise RuntimeError(f"Room Root {root_id} has no valid cleanup generation")
+    if state in {"cancelled", "cancelled_with_unknowns", "completed", "failed"}:
+        return {
+            "schemaVersion": "wisdom-weasel.room-canary-cleanup.v1",
+            "status": "already_terminal",
+            "rootId": root_id,
+            "rootState": state,
+            "generation": generation,
+        }
     now_ms = int(time.time() * 1000)
-    requester(
+    response = requester(
         base_url,
         "POST",
         f"/api/agent/rooms/{encoded(room_id)}/kernel/commands",
@@ -211,12 +238,50 @@ def cancel_root(
             "sourceKind": "control_center",
             "sourceId": "room-context-epoch-canary",
             "idempotencyKey": f"canary-cleanup:{root_id}",
-            "generation": 0,
+            "generation": generation,
             "payload": {},
             "createdAtMs": now_ms,
         },
-        timeout=20,
+        timeout=timeout,
     )
+    return {
+        "schemaVersion": "wisdom-weasel.room-canary-cleanup.v1",
+        "status": "cancel_requested",
+        "rootId": root_id,
+        "rootState": state,
+        "generation": generation,
+        "response": response,
+    }
+
+
+def cancel_root_after_failure(
+    base_url: str,
+    room_id: str,
+    root_id: str,
+    failure: BaseException,
+    *,
+    requester: JsonRequester = request_json,
+) -> dict[str, Any]:
+    """Best-effort cleanup that never replaces the canary's primary failure."""
+
+    try:
+        return cancel_root(
+            base_url,
+            room_id,
+            root_id,
+            requester=requester,
+        )
+    except BaseException as cleanup_error:
+        failure.add_note(
+            "Room canary cleanup also failed: "
+            f"{type(cleanup_error).__name__}: {cleanup_error}"
+        )
+        return {
+            "schemaVersion": "wisdom-weasel.room-canary-cleanup.v1",
+            "status": "cleanup_failed",
+            "rootId": root_id,
+            "error": f"{type(cleanup_error).__name__}: {cleanup_error}",
+        }
 
 
 def _json_bytes(value: object, *, sort_keys: bool = False) -> bytes:
@@ -343,7 +408,12 @@ def provider_prefix_evidence(context: dict[str, Any]) -> dict[str, Any]:
                 "runtimeMessageBytePrefixPreserved": (
                     isinstance(previous["contextDelta"]["currentBytes"], int)
                     and delta["prefixBytes"]
-                    == previous["contextDelta"]["currentBytes"] - 1
+                    == (
+                        previous["contextDelta"]["currentBytes"]
+                        if current["messageHashes"]
+                        == previous["messageHashes"]
+                        else previous["contextDelta"]["currentBytes"] - 1
+                    )
                 ),
                 "providerPrefixBytes": len(expected_prefix),
                 "providerPrefixSha256": _sha256(expected_prefix),
@@ -382,6 +452,45 @@ def provider_prefix_evidence(context: dict[str, Any]) -> dict[str, Any]:
         "checks": checks,
         "calls": calls,
         "transitions": transitions,
+    }
+
+
+def provider_room_post_visibility(
+    context: dict[str, Any],
+    markers: Mapping[str, str] | None,
+) -> dict[str, dict[str, object]]:
+    """Report which captured Provider calls saw named public Room Posts."""
+
+    normalized = {
+        str(name): str(marker)
+        for name, marker in (markers or {}).items()
+        if str(name) and str(marker)
+    }
+    seen: dict[str, list[object]] = {
+        name: [] for name in normalized
+    }
+    raw_calls = context.get("modelCalls")
+    model_calls = raw_calls if isinstance(raw_calls, list) else []
+    for position, call in enumerate(model_calls, start=1):
+        if not isinstance(call, dict):
+            continue
+        provider_context = call.get("providerContext")
+        if not isinstance(provider_context, dict):
+            continue
+        prompt = provider_context.get("systemPrompt")
+        if not isinstance(prompt, str):
+            continue
+        post_facts = _room_fact_contents(prompt, "room_post")
+        call_index = call.get("index", position)
+        for name, marker in normalized.items():
+            if any(fact.startswith(marker) for fact in post_facts):
+                seen[name].append(call_index)
+    return {
+        name: {
+            "seen": bool(call_indexes),
+            "callIndexes": call_indexes,
+        }
+        for name, call_indexes in seen.items()
     }
 
 
@@ -815,6 +924,7 @@ def debug_evidence(
     *,
     requester: JsonRequester = request_json,
     timeout: float = 15,
+    text_markers: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     debug = requester(
         base_url,
@@ -871,6 +981,10 @@ def debug_evidence(
         "positiveCacheRead": any(value > 0 for value in cache_reads),
         "modelCallCount": len(context.get("modelCalls", [])),
         "providerPrefix": provider_prefix_evidence(context),
+        "providerRoomPostVisibility": provider_room_post_visibility(
+            context,
+            text_markers,
+        ),
         "promptGovernance": provider_prompt_governance_evidence(context),
         "toolNames": tool_names,
         "roomCommitCalls": sum(name == "room_commit" for name in tool_names),
@@ -881,6 +995,11 @@ def debug_evidence(
             "nonEmptyBlockCount": sum(
                 "## Session 记忆" in block for block in memory_blocks
             ),
+            "blockSha256s": [
+                hashlib.sha256(block.encode("utf-8")).hexdigest()
+                for block in memory_blocks
+            ],
+            "blocks": memory_blocks,
             "forbiddenMetadata": sorted(
                 {
                     token
@@ -1332,11 +1451,12 @@ def run(
                 timeout=args.turn_timeout,
                 requester=requester,
             )
-        except BaseException:
-            cancel_root(
+        except BaseException as failure:
+            cancel_root_after_failure(
                 args.base_url,
                 room_id,
                 root_id,
+                failure,
                 requester=requester,
             )
             raise

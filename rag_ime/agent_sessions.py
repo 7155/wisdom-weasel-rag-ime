@@ -13,6 +13,14 @@ from .agent_role_identity import (
     canonical_agent_role_id,
     canonical_role_book_revision_id,
 )
+from .agent_execution_policy import (
+    FULL_TRUST_EXECUTION_MODE,
+    PER_ACTION_EXECUTION_MODE,
+    WORKSPACE_MANAGED_EXECUTION_MODE,
+    canonical_tool_profile,
+    normalize_execution_mode,
+    workspace_scope_sha256,
+)
 from .agent_tool_ids import SUPPORTED_AGENT_TOOL_PROFILES
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
@@ -62,6 +70,7 @@ class AgentSessionStore:
         model_profile: str = "gpt/gpt-5.6-sol",
         thinking_level: str = "max",
         tool_profile_version: str = "control-center-v1",
+        execution_mode: str | None = None,
         project_context_enabled: bool = False,
         pi_skills_enabled: bool = False,
         codex_skills_enabled: bool = False,
@@ -96,9 +105,34 @@ class AgentSessionStore:
             "max",
         }:
             raise ValueError("agent thinking level is not supported")
-        if str(tool_profile_version or "").strip() not in SUPPORTED_AGENT_TOOL_PROFILES:
+        normalized_execution_mode = normalize_execution_mode(
+            execution_mode,
+            tool_profile_version=tool_profile_version,
+        )
+        normalized_tool_profile = canonical_tool_profile(
+            tool_profile_version,
+            execution_mode=normalized_execution_mode,
+        )
+        if normalized_tool_profile not in SUPPORTED_AGENT_TOOL_PROFILES:
             raise ValueError("unsupported Agent tool profile")
+        if normalized_execution_mode in {
+            WORKSPACE_MANAGED_EXECUTION_MODE,
+            FULL_TRUST_EXECUTION_MODE,
+        } and (mode != "coordinator" or not roots):
+            raise ValueError(
+                "managed and full-trust execution require a coordinator workspace"
+            )
         timestamp = int(created_at_ms if created_at_ms is not None else time.time() * 1000)
+        scope_sha256 = (
+            workspace_scope_sha256(roots)
+            if normalized_execution_mode
+            in {
+                WORKSPACE_MANAGED_EXECUTION_MODE,
+                FULL_TRUST_EXECUTION_MODE,
+            }
+            else ""
+        )
+        scope_granted_at_ms = timestamp if scope_sha256 else 0
         session_id = f"agent:{uuid.uuid4()}"
         normalized_role_id = canonical_agent_role_id(role_id)
         normalized_role_book_revision_id = canonical_role_book_revision_id(
@@ -115,11 +149,13 @@ class AgentSessionStore:
                 INSERT INTO agent_sessions(
                     id, title, session_mode, role_id, role_version, role_book_revision_id,
                     model_profile, thinking_level,
-                    tool_profile_version, project_context_enabled,
+                    tool_profile_version, execution_mode,
+                    workspace_scope_sha256, workspace_scope_granted_at_ms,
+                    project_context_enabled,
                     pi_skills_enabled, codex_skills_enabled, workspace_roots_json,
                     shell_policy_version, session_kind, created_at_ms, updated_at_ms,
                     last_opened_at_ms, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle')
                 """,
                 (
                     session_id,
@@ -130,7 +166,10 @@ class AgentSessionStore:
                     normalized_role_book_revision_id,
                     normalized_model_profile,
                     normalized_thinking,
-                    tool_profile_version,
+                    normalized_tool_profile,
+                    normalized_execution_mode,
+                    scope_sha256,
+                    scope_granted_at_ms,
                     1 if project_context_enabled else 0,
                     1 if pi_skills_enabled else 0,
                     1 if codex_skills_enabled else 0,
@@ -187,10 +226,17 @@ class AgentSessionStore:
 
     def get(self, session_id: str) -> dict[str, object]:
         with self._connect() as conn:
-            row = conn.execute(
-                f"{_SESSION_SELECT} WHERE s.id = ?",
-                (session_id,),
-            ).fetchone()
+            return self._get(conn, session_id)
+
+    @staticmethod
+    def _get(
+        conn: sqlite3.Connection,
+        session_id: str,
+    ) -> dict[str, object]:
+        row = conn.execute(
+            f"{_SESSION_SELECT} WHERE s.id = ?",
+            (session_id,),
+        ).fetchone()
         if row is None:
             raise AgentSessionNotFound(session_id)
         return _session_payload(row, _joined_runtime_binding(row))
@@ -445,9 +491,12 @@ class AgentSessionStore:
         )
         self._update(
             session_id,
-            "session_mode = ?, workspace_roots_json = ?, shell_policy_version = ?, updated_at_ms = ?",
+            "session_mode = ?, execution_mode = ?, workspace_scope_sha256 = '', "
+            "workspace_scope_granted_at_ms = 0, workspace_roots_json = ?, "
+            "shell_policy_version = ?, updated_at_ms = ?",
             (
                 normalized_mode,
+                PER_ACTION_EXECUTION_MODE,
                 json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
                 shell_policy,
                 _timestamp(updated_at_ms),
@@ -461,25 +510,127 @@ class AgentSessionStore:
         *,
         mode: str,
         tool_profile_version: str,
+        execution_mode: str | None = None,
+        grant_workspace_scope: bool = False,
         allowed_tools: Iterable[str] | None,
         project_context_enabled: bool | None = None,
         pi_skills_enabled: bool | None = None,
         codex_skills_enabled: bool | None = None,
         workspace_roots: Iterable[str] | None = None,
         updated_at_ms: int | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, object]:
+        if connection is not None:
+            return self._set_runtime_policy(
+                connection,
+                session_id,
+                mode=mode,
+                tool_profile_version=tool_profile_version,
+                execution_mode=execution_mode,
+                grant_workspace_scope=grant_workspace_scope,
+                allowed_tools=allowed_tools,
+                project_context_enabled=project_context_enabled,
+                pi_skills_enabled=pi_skills_enabled,
+                codex_skills_enabled=codex_skills_enabled,
+                workspace_roots=workspace_roots,
+                updated_at_ms=updated_at_ms,
+            )
+        with self._connect() as conn:
+            self._set_runtime_policy(
+                conn,
+                session_id,
+                mode=mode,
+                tool_profile_version=tool_profile_version,
+                execution_mode=execution_mode,
+                grant_workspace_scope=grant_workspace_scope,
+                allowed_tools=allowed_tools,
+                project_context_enabled=project_context_enabled,
+                pi_skills_enabled=pi_skills_enabled,
+                codex_skills_enabled=codex_skills_enabled,
+                workspace_roots=workspace_roots,
+                updated_at_ms=updated_at_ms,
+            )
+        return self.get(session_id)
+
+    def _set_runtime_policy(
+        self,
+        conn: sqlite3.Connection,
+        session_id: str,
+        *,
+        mode: str,
+        tool_profile_version: str,
+        execution_mode: str | None,
+        grant_workspace_scope: bool,
+        allowed_tools: Iterable[str] | None,
+        project_context_enabled: bool | None,
+        pi_skills_enabled: bool | None,
+        codex_skills_enabled: bool | None,
+        workspace_roots: Iterable[str] | None,
+        updated_at_ms: int | None,
     ) -> dict[str, object]:
         normalized_mode = str(mode or "").strip()
         if normalized_mode not in {"assistant", "coordinator"}:
             raise ValueError("agent session mode must be assistant or coordinator")
-        profile = str(tool_profile_version or "").strip()
+        current = self._get(conn, session_id)
+        execution_value: object = execution_mode
+        if execution_value is None:
+            execution_value = (
+                None
+                if str(tool_profile_version or "").strip()
+                in {
+                    "control-center-v1",
+                    "subagent-readonly-v1",
+                    "control-center-auto-approve-v1",
+                }
+                else current.get("executionMode")
+            )
+        normalized_execution_mode = normalize_execution_mode(
+            execution_value,
+            tool_profile_version=tool_profile_version,
+        )
+        profile = canonical_tool_profile(
+            tool_profile_version,
+            execution_mode=normalized_execution_mode,
+        )
         if profile not in SUPPORTED_AGENT_TOOL_PROFILES:
             raise ValueError("unsupported Agent tool profile")
-        current = self.get(session_id)
         roots = _workspace_roots(
             current.get("workspaceRoots", []) if workspace_roots is None else workspace_roots
         )
         if normalized_mode == "assistant":
             roots = []
+        if normalized_execution_mode in {
+            WORKSPACE_MANAGED_EXECUTION_MODE,
+            FULL_TRUST_EXECUTION_MODE,
+        } and (normalized_mode != "coordinator" or not roots):
+            raise ValueError(
+                "managed and full-trust execution require a coordinator workspace"
+            )
+        expected_scope_sha256 = workspace_scope_sha256(roots)
+        preserve_scope = (
+            str(current.get("executionMode") or "")
+            == normalized_execution_mode
+            and str(current.get("workspaceScopeSha256") or "")
+            == expected_scope_sha256
+            and int(current.get("workspaceScopeGrantedAtMs") or 0) > 0
+        )
+        scope_sha256 = (
+            expected_scope_sha256
+            if normalized_execution_mode
+            in {
+                WORKSPACE_MANAGED_EXECUTION_MODE,
+                FULL_TRUST_EXECUTION_MODE,
+            }
+            and (grant_workspace_scope or preserve_scope)
+            else ""
+        )
+        scope_granted_at_ms = (
+            _timestamp(updated_at_ms)
+            if scope_sha256 and grant_workspace_scope
+            else int(current.get("workspaceScopeGrantedAtMs") or 0)
+            if scope_sha256 and preserve_scope
+            else 0
+        )
         normalized_tools = _allowed_tools(allowed_tools)
         context_enabled = (
             bool(current.get("projectContextEnabled", False))
@@ -502,46 +653,58 @@ class AgentSessionStore:
             else "assistant-no-shell-v1"
         )
         timestamp = _timestamp(updated_at_ms)
-        with self._connect() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE agent_sessions
-                SET session_mode = ?, tool_profile_version = ?, workspace_roots_json = ?,
-                    shell_policy_version = ?, project_context_enabled = ?,
-                    pi_skills_enabled = ?, codex_skills_enabled = ?, updated_at_ms = ?
-                WHERE id = ?
-                """,
-                (
-                    normalized_mode,
-                    profile,
-                    json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
-                    shell_policy,
-                    1 if context_enabled else 0,
-                    1 if load_pi_skills else 0,
-                    1 if load_codex_skills else 0,
-                    timestamp,
-                    session_id,
-                ),
+        cursor = conn.execute(
+            """
+            UPDATE agent_sessions
+            SET session_mode = ?, tool_profile_version = ?, execution_mode = ?,
+                workspace_scope_sha256 = ?, workspace_scope_granted_at_ms = ?,
+                workspace_roots_json = ?,
+                shell_policy_version = ?, project_context_enabled = ?,
+                pi_skills_enabled = ?, codex_skills_enabled = ?, updated_at_ms = ?
+            WHERE id = ?
+            """,
+            (
+                normalized_mode,
+                profile,
+                normalized_execution_mode,
+                scope_sha256,
+                scope_granted_at_ms,
+                json.dumps(roots, ensure_ascii=False, separators=(",", ":")),
+                shell_policy,
+                1 if context_enabled else 0,
+                1 if load_pi_skills else 0,
+                1 if load_codex_skills else 0,
+                timestamp,
+                session_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise AgentSessionNotFound(session_id)
+        conn.execute(
+            """
+            INSERT INTO agent_session_tool_policies(
+                session_id,
+                allowed_tools_json,
+                updated_at_ms
             )
-            if cursor.rowcount != 1:
-                raise AgentSessionNotFound(session_id)
-            conn.execute(
-                """
-                INSERT INTO agent_session_tool_policies(session_id, allowed_tools_json, updated_at_ms)
-                VALUES (?, ?, ?)
-                ON CONFLICT(session_id) DO UPDATE SET
-                    allowed_tools_json = excluded.allowed_tools_json,
-                    updated_at_ms = excluded.updated_at_ms
-                """,
-                (
-                    session_id,
-                    json.dumps(normalized_tools, ensure_ascii=False, separators=(",", ":"))
-                    if normalized_tools is not None
-                    else "null",
-                    timestamp,
-                ),
-            )
-        return self.get(session_id)
+            VALUES (?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                allowed_tools_json = excluded.allowed_tools_json,
+                updated_at_ms = excluded.updated_at_ms
+            """,
+            (
+                session_id,
+                json.dumps(
+                    normalized_tools,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                if normalized_tools is not None
+                else "null",
+                timestamp,
+            ),
+        )
+        return self._get(conn, session_id)
 
     def archive(self, session_id: str, *, archived: bool = True, updated_at_ms: int | None = None) -> dict[str, object]:
         timestamp = _timestamp(updated_at_ms)
@@ -1789,6 +1952,18 @@ def _session_payload(
         "modelProfile": model_profile,
         "thinkingLevel": str(row["thinking_level"] or ""),
         "toolProfileVersion": str(row["tool_profile_version"]),
+        "executionMode": normalize_execution_mode(
+            row["execution_mode"],
+            tool_profile_version=row["tool_profile_version"],
+        ),
+        "workspaceScopeGranted": bool(
+            str(row["workspace_scope_sha256"] or "")
+            and int(row["workspace_scope_granted_at_ms"] or 0) > 0
+        ),
+        "workspaceScopeSha256": str(row["workspace_scope_sha256"] or ""),
+        "workspaceScopeGrantedAtMs": int(
+            row["workspace_scope_granted_at_ms"] or 0
+        ),
         "toolAllowlistMode": "explicit" if allowed_tools is not None else "profile",
         "allowedTools": allowed_tools or [],
         "projectContextEnabled": bool(row["project_context_enabled"]),
@@ -2392,6 +2567,7 @@ def _approval_payload(row: sqlite3.Row) -> dict[str, object]:
         "state": str(row["state"]),
         "requestedAtMs": int(row["requested_at_ms"]),
         "expiresAtMs": int(row["expires_at_ms"]),
+        "decidedBy": str(row["decided_by"] or ""),
         "decidedAtMs": int(row["decided_at_ms"]) if row["decided_at_ms"] is not None else None,
         "receipt": receipt if isinstance(receipt, dict) else None,
     }

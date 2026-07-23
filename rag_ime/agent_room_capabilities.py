@@ -12,7 +12,12 @@ from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
 
 
-ROOM_PUBLIC_TOOLS = ("room_state", "room_post", "room_commit")
+ROOM_PUBLIC_TOOLS = (
+    "room_state",
+    "room_collaborate",
+    "room_post",
+    "room_commit",
+)
 _SURFACES = frozenset({"prompt", "runtime", "gateway", "ui"})
 _MODEL_TOOL_CATALOG_KEYS = (
     "name",
@@ -46,23 +51,76 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
 
     return {
         "room_state": {
-            "description": "Read the current canonical Root, Task and Dispatch state.",
-            "when": ("需要确认当前责任、任务、Dispatch 或可提交状态",),
+            "description": (
+                "Read the current canonical Root, Task, Dispatch and active "
+                "participant directory."
+            ),
+            "when": ("需要确认当前责任、任务、Dispatch、可提交状态或交接目标",),
             "notFor": ("只需发布公开消息或已有最新状态回执",),
             "input": "无参数",
-            "output": "当前 Root、Task、Dispatch、责任和状态",
-            "does": "读取当前 Room 任务真相。",
+            "output": "当前 Root、Task、Dispatch 与可交接成员的稳定 participantId",
+            "does": "读取当前 Room 任务真相和有界成员目录。",
             "risk": "R0",
             "operation": "room.state",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
+        "room_collaborate": {
+            "description": (
+                "Ask one idle Room participant to perform a bounded child Task "
+                "without ending the current Dispatch. The request uses the same "
+                "Root-governed Kernel queue."
+            ),
+            "when": (
+                "当前任务可继续，同时需要另一位成员独立查证、实现或复核",
+                "需要结构化点名协作，但不转移当前责任",
+            ),
+            "notFor": (
+                "当前责任必须转交给对方",
+                "必须等对方结果才能继续当前步骤",
+                "只想公开说一句话或私下自言自语",
+            ),
+            "input": (
+                "目标 participantId、子任务、预期输出、意图，"
+                "以及可选的当前 Task 验收 criterionId"
+            ),
+            "output": (
+                "关联当前 Root 的 childTaskId、childDispatchId 与入队回执；"
+                "当前 Dispatch 继续运行"
+            ),
+            "does": "异步派生一个可取消、可去重、受深度和预算限制的协作任务。",
+            "risk": "R1",
+            "operation": "room.collaborate",
+            "inputSchema": {
+                "type": "object",
+                "required": [
+                    "targetParticipantId",
+                    "objective",
+                    "expectedOutput",
+                ],
+                "properties": {
+                    "targetParticipantId": {"type": "string", "minLength": 1},
+                    "objective": {"type": "string", "minLength": 1},
+                    "expectedOutput": {"type": "string", "minLength": 1},
+                    "intentKind": {"enum": ["execute", "review", "revise"]},
+                    "acceptanceCriterionIds": {
+                        "type": "array",
+                        "maxItems": 64,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
         "room_post": {
-            "description": "Publish one explicit RoomPost bound to the active Dispatch.",
+            "description": (
+                "Stage one explicit RoomPost body for the active Dispatch. "
+                "The following room_commit publishes the newest staged body atomically."
+            ),
             "when": ("需要向 Room 公开事实、进度、问题、答复或证据",),
             "notFor": ("私有推理、自言自语或提交责任与完成提议",),
             "input": "公开内容与可选结构化块",
-            "output": "绑定当前 Dispatch 的 RoomPost 回执",
-            "does": "发布一条明确的公开 Room 消息。",
+            "output": "绑定当前 Dispatch、等待 room_commit 原子发布的草稿回执",
+            "does": "暂存一条明确的公开 Room 消息，并由随后唯一的责任提交发布。",
             "risk": "R1",
             "operation": "room.post",
             "inputSchema": {
@@ -126,6 +184,18 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     "targetParticipantId": {"type": "string", "minLength": 1},
                     "nextTask": {"type": "string", "minLength": 1},
+                    "nextExpectedOutput": {"type": "string", "minLength": 1},
+                    "nextIntentKind": {
+                        "enum": [
+                            "execute",
+                            "review",
+                            "revise",
+                            "resume",
+                            "retry",
+                            "callback",
+                            "close"
+                        ]
+                    },
                     "blocks": _RICH_BLOCK_INPUT_SCHEMA,
                 },
                 "allOf": [
@@ -137,7 +207,11 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                             "required": ["decision"],
                         },
                         "then": {
-                            "required": ["targetParticipantId", "nextTask"]
+                            "required": [
+                                "targetParticipantId",
+                                "nextTask",
+                                "nextIntentKind"
+                            ]
                         },
                     }
                 ],
@@ -1064,7 +1138,8 @@ def _canonical_tool(name: str) -> str:
         raise ValueError("Room capability tool name is not canonical")
     if canonical.startswith("room_") and canonical not in ROOM_PUBLIC_TOOLS:
         raise ValueError(
-            "Room public tool surface only supports room_state/room_post/room_commit"
+            "Room public tool surface only supports "
+            "room_state/room_collaborate/room_post/room_commit"
         )
     return canonical
 

@@ -315,10 +315,18 @@ class PiRuntimeTests(unittest.TestCase):
         prompt = command[command.index("--system-prompt") + 1]
         self.assertIn("你是“智鼬·未来”", prompt)
         self.assertIn("词表相关操作必须经过预览", prompt)
+        self.assertEqual(prompt.count("执行权限：每次确认"), 1)
+        self.assertIn("任何模式都不得越过工作区、取消栅栏", prompt)
 
         environment = self.config.child_environment()
         self.assertEqual(environment["PI_CODING_AGENT_DIR"], str(self.root / "agent-config"))
         self.assertNotIn("RAG_IME_DEEPSEEK_API_KEY", environment)
+
+        session_environment = self.config.child_environment(session=self.session)
+        self.assertEqual(
+            session_environment["RAG_IME_AGENT_EXECUTION_MODE"],
+            "per_action",
+        )
 
     def test_launch_resolves_persistent_user_persona_prompt_server_side(self) -> None:
         personas = AgentPersonaStore(self.root / "rag-ime.sqlite")
@@ -561,7 +569,10 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertEqual(imported_provider["modelCatalogProvider"], "openai")
         self.assertEqual(imported_provider["models"], [{"id": "gpt-5.6-luna"}])
         self.assertNotIn("api", imported_provider)
-        self.assertNotIn("compat", imported_provider)
+        self.assertEqual(
+            imported_provider["compat"],
+            {"supportsToolSearch": False},
+        )
         self.assertNotIn("contextWindow", imported_provider["models"][0])
         self.assertNotIn("maxTokens", imported_provider["models"][0])
         self.assertNotIn("reasoning", imported_provider["models"][0])
@@ -869,6 +880,77 @@ class PiRuntimeTests(unittest.TestCase):
         events, gap = self.events.replay(session_id)
         self.assertFalse(gap)
         self.assertNotIn("message_completed", [event.event_type for event in events])
+
+    def test_provider_retry_is_visible_without_publishing_an_early_failure(self) -> None:
+        session_id = str(self.session["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            client = self.runtime._client
+            self.runtime._active_turn_id = "turn:provider-retry"
+        assert client is not None
+
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {
+                "type": "auto_retry_start",
+                "attempt": 1,
+                "maxAttempts": 3,
+                "delayMs": 2_000,
+                "errorMessage": "private upstream diagnostic",
+            },
+        )
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {
+                "type": "agent_end",
+                "willRetry": True,
+                "messages": [{
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "private upstream diagnostic",
+                    "content": [],
+                }],
+            },
+        )
+
+        events = self.events.replay(session_id)[0]
+        statuses = [
+            event for event in events
+            if event.event_type == "status_changed"
+            and event.payload.get("phase") == "provider_retry"
+        ]
+        self.assertEqual(statuses[-1].payload["status"], "retrying")
+        self.assertEqual(statuses[-1].payload["attempt"], 1)
+        self.assertEqual(statuses[-1].payload["maxAttempts"], 3)
+        self.assertFalse(any(event.event_type == "turn_failed" for event in events))
+        self.assertNotIn(
+            "private upstream diagnostic",
+            json.dumps(statuses[-1].payload, ensure_ascii=False),
+        )
+
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {
+                "type": "auto_retry_end",
+                "attempt": 1,
+                "success": True,
+                "finalError": "must not escape",
+            },
+        )
+        statuses = [
+            event for event in self.events.replay(session_id)[0]
+            if event.event_type == "status_changed"
+            and event.payload.get("phase") == "provider_retry"
+        ]
+        self.assertEqual(statuses[-1].payload["status"], "analyzing")
+        self.assertEqual(statuses[-1].payload["activityState"], "completed")
+        self.assertNotIn(
+            "must not escape",
+            json.dumps(statuses[-1].payload, ensure_ascii=False),
+        )
 
     def test_tool_artifact_is_carried_to_the_final_assistant_message(self) -> None:
         session_id = str(self.session["id"])

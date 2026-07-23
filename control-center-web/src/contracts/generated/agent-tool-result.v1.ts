@@ -83,6 +83,8 @@ export interface AgentToolResultV1 {
     | 'inspect'
     | 'act'
     | 'update'
+    | 'submit_review'
+    | 'complete'
     | 'create_draft'
     | 'validate'
     | 'propose_install'

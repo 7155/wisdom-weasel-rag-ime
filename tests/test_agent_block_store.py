@@ -121,6 +121,51 @@ class AgentBlockStoreTest(unittest.TestCase):
         merged = self.store.hydrate_messages("session:1", [newer])
         self.assertEqual([item["id"] for item in merged], ["message:1", "message:2"])
 
+    def test_hydration_merges_live_envelope_into_durable_pi_message_alias(self) -> None:
+        live = self.message()
+        live["id"] = "turn:1:assistant"
+        live["blocks"] = [
+            {
+                "id": "turn:1:assistant:text",
+                "type": "text",
+                "status": "completed",
+                "presentationKind": "markdown",
+                "data": {"text": "修复完成"},
+            },
+            *live["blocks"],
+        ]
+        live["createdAtMs"] = 105
+        self.store.persist_message(
+            live,
+            root_id="root:1",
+            generation=2,
+            created_at_ms=105,
+        )
+        durable = {
+            **live,
+            "id": "pi:message:assistant:101",
+            "turnId": "history:user:100",
+            "blocks": [
+                {
+                    "id": "history:user:100:text:0",
+                    "type": "text",
+                    "status": "completed",
+                    "presentationKind": "markdown",
+                    "data": {"text": "修复完成"},
+                }
+            ],
+            "createdAtMs": 101,
+        }
+
+        hydrated = self.store.hydrate_messages("session:1", [durable])
+
+        self.assertEqual(len(hydrated), 1)
+        self.assertEqual(hydrated[0]["id"], "pi:message:assistant:101")
+        self.assertEqual(
+            [block["type"] for block in hydrated[0]["blocks"]],
+            ["text", "table"],
+        )
+
     def test_hydration_preserves_runtime_order_when_timestamps_are_reversed_or_equal(self) -> None:
         first = {
             **self.message(),

@@ -29,6 +29,10 @@ export interface AgentSessionV1 {
   modelProfile: string;
   thinkingLevel?: '' | 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   toolProfileVersion: string;
+  executionMode: 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
+  workspaceScopeGranted: boolean;
+  workspaceScopeSha256: string;
+  workspaceScopeGrantedAtMs: number;
   toolAllowlistMode?: 'profile' | 'explicit';
   allowedTools?: string[];
   projectContextEnabled: boolean;

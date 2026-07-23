@@ -139,23 +139,51 @@ class RoomKernelStore:
     def create_task(self, payload: Mapping[str, object], *, now_ms: int) -> dict[str, object]:
         validate_kernel_contract("roomTask", payload)
         with self._connect(immediate=True) as conn:
-            self._root_row(conn, str(payload["rootId"]))
-            conn.execute(
-                """
-                INSERT INTO room_kernel_tasks(
-                    task_id, root_id, parent_task_id, state, payload_json, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(payload["taskId"]),
-                    str(payload["rootId"]),
-                    payload.get("parentTaskId"),
-                    str(payload["state"]),
-                    _json(payload),
-                    int(now_ms),
-                ),
-            )
+            self._insert_task(conn, payload, now_ms=now_ms)
         return self.task(str(payload["taskId"]))
+
+    def _insert_task(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, object],
+        *,
+        now_ms: int,
+    ) -> tuple[dict[str, object], bool]:
+        validate_kernel_contract("roomTask", payload)
+        root = self._root_row(conn, str(payload["rootId"]))
+        parent_task_id = payload.get("parentTaskId")
+        if parent_task_id is not None:
+            parent = conn.execute(
+                "SELECT root_id FROM room_kernel_tasks WHERE task_id=?",
+                (str(parent_task_id),),
+            ).fetchone()
+            if parent is None or str(parent["root_id"]) != str(root["root_id"]):
+                raise RoomKernelFenceError("child Task parent belongs to another Root")
+        encoded = _json(payload)
+        existing = conn.execute(
+            "SELECT payload_json FROM room_kernel_tasks WHERE task_id=?",
+            (str(payload["taskId"]),),
+        ).fetchone()
+        if existing is not None:
+            if str(existing["payload_json"]) != encoded:
+                raise RoomKernelFenceError("Room Task identity was rebound")
+            return dict(payload), False
+        conn.execute(
+            """
+            INSERT INTO room_kernel_tasks(
+                task_id, root_id, parent_task_id, state, payload_json, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(payload["taskId"]),
+                str(payload["rootId"]),
+                parent_task_id,
+                str(payload["state"]),
+                encoded,
+                int(now_ms),
+            ),
+        )
+        return dict(payload), True
 
     def create_root_with_task(
         self,
@@ -436,6 +464,19 @@ class RoomKernelStore:
         ).fetchone()
         if existing is not None:
             return _dispatch_payload(existing), False
+        active_target = conn.execute(
+            f"""SELECT dispatch_id FROM room_kernel_dispatches
+                WHERE target_session_id = ?
+                  AND state IN ({','.join('?' for _ in _ACTIVE_DISPATCH_STATES)})
+                ORDER BY created_at_ms, dispatch_id
+                LIMIT 1""",
+            (str(payload["targetSessionId"]), *_ACTIVE_DISPATCH_STATES),
+        ).fetchone()
+        if active_target is not None:
+            raise RoomKernelFenceError(
+                "target Session already has an active Dispatch: "
+                f"{active_target['dispatch_id']}"
+            )
         conn.execute(
             """INSERT INTO room_kernel_dispatches(
                dispatch_id, root_id, task_id, parent_dispatch_id, generation,
@@ -1108,6 +1149,102 @@ class RoomKernelStore:
                 now_ms=now_ms,
             )
 
+    def enqueue_collaboration(
+        self,
+        *,
+        parent_dispatch_id: str,
+        child_task: Mapping[str, object],
+        child_dispatch: Mapping[str, object],
+        generation: int,
+        invocation_receipt_id: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        """Atomically spawn one bounded child Task while the parent keeps running."""
+
+        validate_kernel_contract("roomTask", child_task)
+        validate_kernel_contract("dispatchEnvelope", child_dispatch)
+        with self._connect(immediate=True) as conn:
+            parent = self._dispatch_row(conn, parent_dispatch_id)
+            root = self._root_row(conn, str(parent["root_id"]))
+            invocation = conn.execute(
+                """SELECT i.*, b.session_id AS bound_session_id,
+                          b.state AS bound_state
+                   FROM room_v2_tool_invocation_receipts i
+                   JOIN room_v2_capability_runtime_bindings b
+                     ON b.manifest_id=i.manifest_id
+                    AND b.manifest_hash=i.manifest_hash
+                   WHERE i.receipt_id=?""",
+                (invocation_receipt_id,),
+            ).fetchone()
+            if invocation is None:
+                raise RoomKernelFenceError(
+                    "Room collaboration invocation receipt is missing"
+                )
+            command = json.loads(str(invocation["command_json"]))
+            if (
+                command.get("tool") != "room_collaborate"
+                or command.get("dispatchId") != parent_dispatch_id
+                or command.get("rootId") != root["root_id"]
+                or int(command.get("generation", -1)) != generation
+                or str(invocation["bound_session_id"])
+                != str(parent["target_session_id"])
+                or str(invocation["bound_state"]) != "active"
+            ):
+                raise RoomKernelFenceError(
+                    "Room collaboration invocation lost its parent Dispatch fence"
+                )
+            if (
+                int(root["generation"]) != generation
+                or int(parent["generation"]) != generation
+            ):
+                raise RoomKernelFenceError(
+                    "Room collaboration generation is stale"
+                )
+            if str(parent["state"]) != "running":
+                raise RoomKernelFenceError(
+                    "Room collaboration parent Dispatch is not running"
+                )
+            if (
+                child_task.get("rootId") != root["root_id"]
+                or child_task.get("parentTaskId") != parent["task_id"]
+                or child_dispatch.get("rootId") != root["root_id"]
+                or child_dispatch.get("taskId") != child_task.get("taskId")
+                or child_dispatch.get("parentDispatchId") != parent_dispatch_id
+                or int(child_dispatch.get("generation", -1)) != generation
+                or int(child_dispatch.get("hopCount", -1))
+                != int(parent["hop_count"]) + 1
+                or int(child_dispatch.get("depth", -1))
+                != int(parent["depth"]) + 1
+                or child_task.get("assigneeParticipantId")
+                != child_dispatch.get("targetParticipantId")
+            ):
+                raise RoomKernelFenceError(
+                    "Room collaboration child does not match parent fences"
+                )
+            self._insert_task(conn, child_task, now_ms=now_ms)
+            dispatch, created = self._enqueue_dispatch(
+                conn,
+                child_dispatch,
+                shadow_only=self.mode not in {"cohort", "test", "kernel_only"},
+                now_ms=now_ms,
+            )
+            return self._receipt(
+                conn,
+                root_id=str(root["root_id"]),
+                command_id=None,
+                receipt_kind="accepted" if created else "duplicate",
+                status="applied" if created else "noop",
+                generation=generation,
+                details={
+                    "parentTaskId": str(parent["task_id"]),
+                    "parentDispatchId": parent_dispatch_id,
+                    "childTaskId": str(child_task["taskId"]),
+                    "childDispatchId": str(dispatch["dispatchId"]),
+                    "invocationReceiptId": invocation_receipt_id,
+                },
+                now_ms=now_ms,
+            )
+
     def apply_commit(
         self,
         payload: Mapping[str, object],
@@ -1128,24 +1265,35 @@ class RoomKernelStore:
         if continuation is not None and not isinstance(continuation, Mapping):
             raise RoomKernelFenceError("RoomCommit continuation must be an object")
         decision = action
+        child_task_payload: Mapping[str, object] | None = None
         child_payload: Mapping[str, object] | None = None
         if action == "dispatch":
             if not isinstance(continuation, Mapping) or continuation.get("decision") != "dispatch":
                 raise RoomKernelFenceError("dispatch Commit requires a deterministic continuation")
+            child_task = continuation.get("childTask")
             child = continuation.get("childDispatch")
-            if not isinstance(child, Mapping):
-                raise RoomKernelFenceError("dispatch continuation requires childDispatch")
+            if not isinstance(child_task, Mapping) or not isinstance(child, Mapping):
+                raise RoomKernelFenceError(
+                    "dispatch continuation requires childTask and childDispatch"
+                )
+            validate_kernel_contract("roomTask", child_task)
             validate_kernel_contract("dispatchEnvelope", child)
+            child_task_payload = child_task
             child_payload = child
         elif action == "post":
             decision = str(continuation.get("decision") if isinstance(continuation, Mapping) else "wait")
             if decision not in {"dispatch", "wait", "block", "complete"}:
                 raise RoomKernelFenceError("post continuation decision is invalid")
             if decision == "dispatch":
+                child_task = continuation.get("childTask") if isinstance(continuation, Mapping) else None
                 child = continuation.get("childDispatch") if isinstance(continuation, Mapping) else None
-                if not isinstance(child, Mapping):
-                    raise RoomKernelFenceError("post dispatch continuation requires childDispatch")
+                if not isinstance(child_task, Mapping) or not isinstance(child, Mapping):
+                    raise RoomKernelFenceError(
+                        "post dispatch continuation requires childTask and childDispatch"
+                    )
+                validate_kernel_contract("roomTask", child_task)
                 validate_kernel_contract("dispatchEnvelope", child)
+                child_task_payload = child_task
                 child_payload = child
         elif isinstance(continuation, Mapping) and continuation.get("decision") != action:
             raise RoomKernelFenceError("RoomCommit continuation contradicts its action")
@@ -1198,10 +1346,15 @@ class RoomKernelStore:
             if str(dispatch["state"]) != "running":
                 return self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "dispatch_not_running", "dispatchId": payload["dispatchId"], "dispatchState": str(dispatch["state"])}, now_ms=now_ms)
             if child_payload is not None and (
-                child_payload.get("rootId") != root["root_id"]
-                or child_payload.get("taskId") != dispatch["task_id"]
+                child_task_payload is None
+                or child_task_payload.get("rootId") != root["root_id"]
+                or child_task_payload.get("parentTaskId") != dispatch["task_id"]
+                or child_payload.get("rootId") != root["root_id"]
+                or child_payload.get("taskId") != child_task_payload.get("taskId")
                 or child_payload.get("parentDispatchId") != dispatch["dispatch_id"]
                 or int(child_payload.get("generation", -1)) != generation
+                or child_task_payload.get("assigneeParticipantId")
+                != child_payload.get("targetParticipantId")
             ):
                 raise RoomKernelFenceError("continuation child does not match parent fences")
             if post_proposal is not None:
@@ -1246,7 +1399,7 @@ class RoomKernelStore:
                 "post": "waiting",
                 "block": "blocked",
                 "complete": "completed",
-                "dispatch": "active",
+                "dispatch": "completed",
             }[decision]
             conn.execute(
                 "UPDATE room_kernel_tasks SET state=?,updated_at_ms=? WHERE task_id=?",
@@ -1259,6 +1412,8 @@ class RoomKernelStore:
             )
             child_dispatch = None
             if child_payload is not None:
+                assert child_task_payload is not None
+                self._insert_task(conn, child_task_payload, now_ms=now_ms)
                 child_dispatch, _ = self._enqueue_dispatch(
                     conn,
                     child_payload,
@@ -1289,7 +1444,7 @@ class RoomKernelStore:
                         post_proposal["createdAtMs"],
                 ),
             )
-            receipt = self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="accepted", status="applied", generation=generation, details={"commitId": payload["commitId"], "settleDecision": decision, "continuationId": continuation_id, "childDispatchId": child_dispatch["dispatchId"] if child_dispatch is not None else None}, now_ms=now_ms)
+            receipt = self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="accepted", status="applied", generation=generation, details={"commitId": payload["commitId"], "settleDecision": decision, "continuationId": continuation_id, "childTaskId": child_task_payload["taskId"] if child_task_payload is not None else None, "childDispatchId": child_dispatch["dispatchId"] if child_dispatch is not None else None}, now_ms=now_ms)
             if invocation is not None:
                 execution_payload = {
                     "schemaVersion": "wisdom-weasel.room-tool-execution-receipt.v1",
@@ -1631,6 +1786,30 @@ class RoomKernelStore:
         with self._connect() as owned:
             return _dispatch_payload(self._dispatch_row(owned, dispatch_id))
 
+    def has_active_capability_peer(self, dispatch_id: str) -> bool:
+        """Return whether another live Dispatch shares this Root execution wave."""
+
+        with self._connect() as conn:
+            dispatch = self._dispatch_row(conn, dispatch_id)
+            current = _dispatch_payload(dispatch)
+            rows = conn.execute(
+                f"""SELECT payload_json FROM room_kernel_dispatches
+                    WHERE root_id = ? AND dispatch_id != ?
+                      AND state IN ({','.join('?' for _ in _ACTIVE_DISPATCH_STATES)})
+                    """,
+                (
+                    dispatch["root_id"],
+                    dispatch_id,
+                    *_ACTIVE_DISPATCH_STATES,
+                ),
+            ).fetchall()
+        epoch = int(current["capabilityEpoch"])
+        return any(
+            int(json.loads(str(row["payload_json"]))["capabilityEpoch"])
+            == epoch
+            for row in rows
+        )
+
     def commit(self, commit_id: str) -> dict[str, object]:
         with self._connect() as conn:
             row = conn.execute("SELECT payload_json FROM room_kernel_commits WHERE commit_id = ?", (commit_id,)).fetchone()
@@ -1645,17 +1824,165 @@ class RoomKernelStore:
             ).fetchone()
         if row is None:
             raise KeyError(commit_id)
+        payload = json.loads(str(row["payload_json"]))
+        child_task = (
+            payload.get("childTask")
+            if isinstance(payload, Mapping)
+            else None
+        )
         return {
             "continuationId": str(row["continuation_id"]),
             "rootId": str(row["root_id"]),
             "taskId": str(row["task_id"]),
             "parentDispatchId": str(row["parent_dispatch_id"]),
+            "childTaskId": (
+                child_task.get("taskId")
+                if isinstance(child_task, Mapping)
+                else None
+            ),
             "childDispatchId": row["child_dispatch_id"],
             "commitId": str(row["commit_id"]),
             "decision": str(row["decision"]),
             "state": str(row["state"]),
-            "payload": json.loads(str(row["payload_json"])),
+            "payload": payload,
         }
+
+    def collaboration_receipt(
+        self,
+        *,
+        parent_dispatch_id: str,
+        invocation_receipt_id: str,
+    ) -> dict[str, object] | None:
+        """Return the original enqueue receipt for an idempotent Tool replay."""
+
+        with self._connect() as conn:
+            parent = self._dispatch_row(conn, parent_dispatch_id)
+            rows = conn.execute(
+                """SELECT payload_json FROM room_kernel_receipts
+                   WHERE root_id=? AND receipt_kind='accepted'
+                   ORDER BY created_at_ms, receipt_id""",
+                (str(parent["root_id"]),),
+            ).fetchall()
+        for row in rows:
+            payload = json.loads(str(row["payload_json"]))
+            details = payload.get("details")
+            if (
+                isinstance(details, Mapping)
+                and details.get("parentDispatchId") == parent_dispatch_id
+                and details.get("invocationReceiptId")
+                == invocation_receipt_id
+            ):
+                return payload
+        return None
+
+    def record_runtime_failure(
+        self,
+        dispatch_id: str,
+        *,
+        generation: int,
+        source_event_id: str,
+        now_ms: int,
+        resource_usage: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Close one failed Pi turn without pretending it settled or was cancelled."""
+
+        event_id = _required(source_event_id, "source_event_id")
+        with self._connect(immediate=True) as conn:
+            dispatch = self._dispatch_row(conn, dispatch_id)
+            root = self._root_row(conn, str(dispatch["root_id"]))
+            if (
+                generation != int(dispatch["generation"])
+                or generation != int(root["generation"])
+            ):
+                raise RoomKernelFenceError(
+                    "runtime failure generation is stale"
+                )
+            existing = conn.execute(
+                """SELECT reason_code,payload_json
+                   FROM room_kernel_dead_letters
+                   WHERE dispatch_id=?""",
+                (dispatch_id,),
+            ).fetchone()
+            if existing is not None:
+                payload = json.loads(str(existing["payload_json"]))
+                if (
+                    str(existing["reason_code"]) == "runtime_turn_failed"
+                    and payload.get("sourceEventId") == event_id
+                    and isinstance(payload.get("kernelReceipt"), Mapping)
+                ):
+                    return dict(payload["kernelReceipt"])
+                raise RoomKernelFenceError(
+                    "Dispatch already has another dead-letter outcome"
+                )
+            if str(dispatch["state"]) not in _ACTIVE_DISPATCH_STATES:
+                return self._receipt(
+                    conn,
+                    root_id=str(root["root_id"]),
+                    command_id=None,
+                    receipt_kind="runtime_failed",
+                    status="noop",
+                    generation=generation,
+                    details={
+                        "dispatchId": dispatch_id,
+                        "sourceEventId": event_id,
+                        "reasonCode": "runtime_turn_failed",
+                        "previousState": str(dispatch["state"]),
+                    },
+                    now_ms=now_ms,
+                )
+            receipt = self._receipt(
+                conn,
+                root_id=str(root["root_id"]),
+                command_id=None,
+                receipt_kind="runtime_failed",
+                status="applied",
+                generation=generation,
+                details={
+                    "dispatchId": dispatch_id,
+                    "sourceEventId": event_id,
+                    "reasonCode": "runtime_turn_failed",
+                },
+                now_ms=now_ms,
+            )
+            self._block_failed_dispatch(
+                conn,
+                dispatch=dispatch,
+                root=root,
+                now_ms=now_ms,
+                resource_usage=resource_usage,
+                runtime_receipt={
+                    "schemaVersion": (
+                        "wisdom-weasel.room-runtime-failure.v1"
+                    ),
+                    "status": "failed",
+                    "reasonCode": "runtime_turn_failed",
+                    "sourceEventId": event_id,
+                },
+            )
+            dead_letter_id = _stable_id(
+                "room-dead-letter",
+                dispatch_id,
+                "runtime_turn_failed",
+            )
+            conn.execute(
+                """INSERT INTO room_kernel_dead_letters(
+                   dead_letter_id,root_id,dispatch_id,reason_code,
+                   payload_json,created_at_ms)
+                   VALUES (?,?,?,'runtime_turn_failed',?,?)""",
+                (
+                    dead_letter_id,
+                    root["root_id"],
+                    dispatch_id,
+                    _json(
+                        {
+                            "sourceEventId": event_id,
+                            "kernelReceipt": receipt,
+                        }
+                    ),
+                    int(now_ms),
+                ),
+            )
+            return receipt
 
     def record_uncommitted_settle(
         self,
@@ -1724,42 +2051,19 @@ class RoomKernelStore:
                 (dispatch_id, attempts, state, receipt["receiptId"], int(now_ms)),
             )
             if blocked:
-                conn.execute(
-                    "UPDATE room_kernel_tasks SET state='blocked',updated_at_ms=? WHERE task_id=?",
-                    (int(now_ms), dispatch["task_id"]),
-                )
-                conn.execute(
-                    """UPDATE room_kernel_roots
-                       SET state='blocked',
-                           budget_remaining=MAX(0,budget_remaining-?),
-                           budget_reserved=MAX(0,budget_reserved-?),
-                           updated_at_ms=?
-                       WHERE root_id=?""",
-                    (
-                        int(dispatch["budget_cost"]),
-                        int(dispatch["budget_cost"]),
-                        int(now_ms),
-                        root["root_id"],
-                    ),
-                )
-                conn.execute(
-                    "UPDATE room_kernel_dispatches SET state='failed',updated_at_ms=? WHERE dispatch_id=?",
-                    (int(now_ms), dispatch_id),
-                )
-                conn.execute(
-                    "UPDATE room_kernel_outbox SET state='dead_letter',updated_at_ms=? WHERE dispatch_id=?",
-                    (int(now_ms), dispatch_id),
-                )
-                conn.execute(
-                    "UPDATE room_kernel_leases SET state='completed',updated_at_ms=? WHERE dispatch_id=? AND state IN ('active','accepted')",
-                    (int(now_ms), dispatch_id),
-                )
-                self._settle_dispatch_limits(
+                self._block_failed_dispatch(
                     conn,
-                    dispatch_id,
-                    usage=resource_usage,
-                    consumed=True,
+                    dispatch=dispatch,
+                    root=root,
                     now_ms=now_ms,
+                    resource_usage=resource_usage,
+                    runtime_receipt={
+                        "schemaVersion": (
+                            "wisdom-weasel.room-runtime-failure.v1"
+                        ),
+                        "status": "failed",
+                        "reasonCode": "missing_room_commit",
+                    },
                 )
             if request_id:
                 conn.execute(
@@ -1899,6 +2203,74 @@ class RoomKernelStore:
                 DISPATCH_TOOL_CALL_RESERVATION, DISPATCH_TOOL_COST_RESERVATION,
                 int(now_ms), root_id,
             ),
+        )
+
+    @staticmethod
+    def _block_failed_dispatch(
+        conn: sqlite3.Connection,
+        *,
+        dispatch: sqlite3.Row,
+        root: sqlite3.Row,
+        now_ms: int,
+        resource_usage: Mapping[str, object] | None,
+        runtime_receipt: Mapping[str, object],
+    ) -> None:
+        """Apply the one durable transition shared by failed settle paths."""
+
+        dispatch_id = str(dispatch["dispatch_id"])
+        conn.execute(
+            """UPDATE room_kernel_tasks
+               SET state='blocked',updated_at_ms=? WHERE task_id=?""",
+            (int(now_ms), dispatch["task_id"]),
+        )
+        conn.execute(
+            """UPDATE room_kernel_roots
+               SET state='blocked',
+                   budget_remaining=MAX(0,budget_remaining-?),
+                   budget_reserved=MAX(0,budget_reserved-?),
+                   updated_at_ms=?
+               WHERE root_id=?""",
+            (
+                int(dispatch["budget_cost"]),
+                int(dispatch["budget_cost"]),
+                int(now_ms),
+                root["root_id"],
+            ),
+        )
+        conn.execute(
+            """UPDATE room_kernel_dispatches
+               SET state='failed',updated_at_ms=? WHERE dispatch_id=?""",
+            (int(now_ms), dispatch_id),
+        )
+        conn.execute(
+            """UPDATE room_kernel_outbox
+               SET state='dead_letter',updated_at_ms=? WHERE dispatch_id=?""",
+            (int(now_ms), dispatch_id),
+        )
+        conn.execute(
+            """UPDATE room_kernel_leases
+               SET state='completed',updated_at_ms=?
+               WHERE dispatch_id=? AND state IN ('active','accepted')""",
+            (int(now_ms), dispatch_id),
+        )
+        conn.execute(
+            """UPDATE room_kernel_runtime_effects
+               SET state='failed',runtime_receipt_json=?,updated_at_ms=?
+               WHERE dispatch_id=?""",
+            (_json(runtime_receipt), int(now_ms), dispatch_id),
+        )
+        conn.execute(
+            """UPDATE room_kernel_abort_scopes
+               SET state='failed',cancel_receipt_json=?,updated_at_ms=?
+               WHERE dispatch_id=?""",
+            (_json(runtime_receipt), int(now_ms), dispatch_id),
+        )
+        RoomKernelStore._settle_dispatch_limits(
+            conn,
+            dispatch_id,
+            usage=resource_usage,
+            consumed=True,
+            now_ms=now_ms,
         )
 
     @staticmethod

@@ -138,6 +138,11 @@ function participantKey(participantId: string | null, sessionId: string): string
 function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {
   if (activity.kind !== 'participant_activity') return true;
   const sourceEventType = textValue(activity.payload.sourceEventType);
+  if (
+    activity.status === 'failed'
+    || activity.payload.isError === true
+    || textValue(activity.payload.status) === 'provider_error'
+  ) return true;
   if (['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) {
     return true;
   }

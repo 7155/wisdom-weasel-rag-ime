@@ -287,7 +287,12 @@ class AgentMemoryContextService:
             payload.get("trigger") or "session_start"
         ).strip().lower()
         is_compaction = trigger_value == "compaction"
-        recent = recall_messages(payload.get("recentMessages"))
+        recent = recall_messages(
+            payload.get("recentMessages"),
+            first_user_maximum=(
+                4_000 if is_compaction else 1_200
+            ),
+        )
         if recent:
             self.replace_recent_messages(session_id, recent)
         else:
@@ -322,11 +327,30 @@ class AgentMemoryContextService:
         )
         room_ids = self.task_context.room_ids(session_id)
         managed_room = before is not None or bool(room_ids)
-        projected_recent = [] if managed_room else recent
+        projected_recent = (
+            []
+            if managed_room or is_compaction
+            else recent
+        )
         retrieval_recent = (
             last_user_recall_text(recent)
             if managed_room
             else recall_message_text(recent)
+        )
+        compaction_recovery = (
+            _ordinary_compaction_recovery(
+                recent=recent,
+                task=task,
+                plan=self.sessions.agent_plan(session_id),
+                agent_skill_recovery=payload.get(
+                    "agentSkillRecovery"
+                ),
+                agent_tool_recovery=payload.get(
+                    "agentToolRecovery"
+                ),
+            )
+            if is_compaction and not managed_room
+            else None
         )
         specification = self.memory_bootstrap.build(
             session_id,
@@ -355,6 +379,7 @@ class AgentMemoryContextService:
                 session_id
             ),
             task_context=_memory_task_projection(task),
+            compaction_recovery=compaction_recovery,
         )
         after = self.room_capabilities.runtime_binding(
             session_id,
@@ -432,6 +457,9 @@ class AgentMemoryContextService:
                 ),
                 "recentConversationCount": len(
                     projected_recent
+                ),
+                "compactionRecoveryPacket": bool(
+                    compaction_recovery
                 ),
                 "roomContextRecovery": room_recovery,
                 "roomToolRecovery": room_tool_recovery,
@@ -660,11 +688,17 @@ class AgentMemoryContextService:
                 self.room_skill_receipts
                 .restore_for_compaction(
                     str(pinned["receiptId"]),
+                    expected_root_id=str(manifest["rootId"]),
+                    expected_task_id=str(manifest["taskId"]),
+                    expected_dispatch_id=str(
+                        manifest["dispatchId"]
+                    ),
+                    expected_session_id=session_id,
                     expected_capability_epoch=int(
                         manifest["capabilityEpoch"]
                     ),
                     catalog_revision=revision,
-                    allow_immediately_revoked=allow_revoked,
+                    allow_revoked=allow_revoked,
                 )
             )
         elif requested_skill is not None:
@@ -695,6 +729,132 @@ def _memory_task_projection(
     if str(task.get("kind") or "") == "room_kernel_task":
         return {}
     return task
+
+
+def _ordinary_compaction_recovery(
+    *,
+    recent: Sequence[Mapping[str, object]],
+    task: Mapping[str, object],
+    plan: Mapping[str, object],
+    agent_skill_recovery: object,
+    agent_tool_recovery: object,
+) -> dict[str, object]:
+    """Build one bounded, non-authorizing recovery packet per epoch."""
+
+    original = next(
+        (
+            bounded_text(item.get("text"), maximum=4_000)
+            for item in recent
+            if str(item.get("role") or "") == "user"
+            and bounded_text(item.get("text"), maximum=4_000)
+        ),
+        "",
+    )
+    latest_progress = next(
+        (
+            bounded_text(item.get("text"), maximum=1_200)
+            for item in reversed(recent)
+            if str(item.get("role") or "") == "assistant"
+            and bounded_text(item.get("text"), maximum=1_200)
+        ),
+        "",
+    )
+    objective = bounded_text(
+        task.get("objective"),
+        maximum=1_200,
+    ) or (
+        "继续执行上述原始需求。"
+        if original
+        else ""
+    )
+    raw_criteria = task.get("acceptanceCriteria")
+    criteria = [
+        bounded_text(value, maximum=300)
+        for value in (
+            raw_criteria
+            if isinstance(raw_criteria, (list, tuple))
+            else []
+        )
+        if bounded_text(value, maximum=300)
+    ][:8]
+    raw_blockers = task.get("blockers")
+    blockers = [
+        bounded_text(value, maximum=300)
+        for value in (
+            raw_blockers
+            if isinstance(raw_blockers, (list, tuple))
+            else []
+        )
+        if bounded_text(value, maximum=300)
+    ][:8]
+    plan_status = bounded_text(plan.get("status"), maximum=40)
+    task_kind = str(task.get("kind") or "")
+    handoff = (
+        "完成后回交父 Agent；当前责任仍由本 Session 持有。"
+        if task_kind == "subagent"
+        else "未发生正式交接，当前责任仍由本 Session 持有。"
+    )
+    return {
+        "schemaVersion": "rag-ime.agent-compaction-recovery.v1",
+        "originalRequirement": (
+            original
+            or "未从压缩前消息取得；不得猜测。"
+        ),
+        "currentTask": (
+            objective
+            or "未登记；回看原始需求后再继续。"
+        ),
+        "acceptanceCriteria": criteria,
+        "acceptanceSource": (
+            "structured_task"
+            if criteria
+            else "original_requirement"
+        ),
+        "blockers": blockers,
+        "handoff": handoff,
+        "latestProgress": latest_progress,
+        "planStatus": plan_status,
+        "skills": _recovery_receipts(
+            agent_skill_recovery,
+            revision_key="contentRevision",
+        ),
+        "tools": _recovery_receipts(
+            agent_tool_recovery,
+            revision_key="schemaRevision",
+        ),
+    }
+
+
+def _recovery_receipts(
+    value: object,
+    *,
+    revision_key: str,
+) -> list[dict[str, str]]:
+    if not isinstance(value, Mapping):
+        return []
+    items = value.get("items")
+    if not isinstance(items, (list, tuple)):
+        return []
+    receipts: dict[tuple[str, str], dict[str, str]] = {}
+    for item in items[:32]:
+        if not isinstance(item, Mapping):
+            continue
+        name = bounded_text(item.get("name"), maximum=128)
+        revision = str(item.get(revision_key) or "").strip().lower()
+        if (
+            not name
+            or len(revision) != 64
+            or any(char not in "0123456789abcdef" for char in revision)
+        ):
+            continue
+        receipts[(name, revision)] = {
+            "name": name,
+            revision_key: revision,
+        }
+    return [
+        receipts[key]
+        for key in sorted(receipts)
+    ]
 
 
 def _ready_existing(

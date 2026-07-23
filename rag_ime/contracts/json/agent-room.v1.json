@@ -11,6 +11,7 @@
     "routingPolicy",
     "moderatorParticipantId",
     "workspaceRoots",
+    "executionMode",
     "createdAtMs",
     "updatedAtMs",
     "lastEventSequence",
@@ -49,6 +50,7 @@
       "uniqueItems": true,
       "items": {"type": "string", "minLength": 1}
     },
+    "executionMode": {"type": "string", "enum": ["read_only", "per_action", "workspace_managed", "full_trust"]},
     "createdAtMs": {"type": "integer", "minimum": 0},
     "updatedAtMs": {"type": "integer", "minimum": 0},
     "lastEventSequence": {"type": "integer", "minimum": 0},

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -230,6 +231,31 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
             )
         )
         self.assertNotIn("must-not-leak", wildcard["output"])
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires the macOS sandbox harness")
+    def test_real_harness_timeout_kills_the_process_group_before_a_late_write(self) -> None:
+        sandbox = Path("/usr/bin/sandbox-exec")
+        if not sandbox.is_file():
+            self.skipTest("sandbox-exec is unavailable")
+        harness = WorkspaceHarness()
+        late_path = self.root / "late.txt"
+
+        receipt = harness.execute(
+            harness.prepare_command(
+                self.session,
+                {
+                    "command": "/bin/sh -c 'sleep 2; echo late > late.txt'",
+                    "cwd": str(self.root),
+                    "timeoutSeconds": 1,
+                },
+            )
+        )
+
+        self.assertTrue(receipt["timedOut"])
+        self.assertFalse(receipt["mutationApplied"])
+        self.assertFalse(late_path.exists())
+        time.sleep(1.25)
+        self.assertFalse(late_path.exists(), "a timed-out descendant wrote after cancellation")
 
 
 if __name__ == "__main__":

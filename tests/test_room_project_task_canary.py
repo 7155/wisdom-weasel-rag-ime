@@ -97,6 +97,39 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
 
         self.assertEqual(parsed["toolId"], "workspace_patch")
 
+    def test_native_approval_allowlist_accepts_safe_inline_luna_implementation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "project"
+            CANARY.seed_project_workspace(workspace)
+            approval = self._approval(
+                workspace,
+                tool_id="workspace_patch",
+                action={
+                    "path": str(workspace / "calculator.py"),
+                    "oldText": CANARY.PATCH_OLD_TEXT,
+                    "newText": (
+                        "    return [value - min(values) for value in values] "
+                        "if values else []"
+                    ),
+                    "expectedOccurrences": 1,
+                },
+            )
+
+            parsed = CANARY.validate_project_approval(
+                approval,
+                session_id="agent:project",
+                workspace=workspace,
+            )
+
+        self.assertEqual(parsed["toolId"], "workspace_patch")
+
+    def test_native_approval_allowlist_rejects_inline_side_effects(self) -> None:
+        self.assertFalse(
+            CANARY._approved_normalize_scores_body(
+                "    return [print(value) for value in values] if values else []"
+            )
+        )
+
     def test_native_approval_allowlist_accepts_bounded_formatting_variants(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / "project"
@@ -187,6 +220,29 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
                     workspace=workspace,
                 )
 
+    def test_reviewer_approval_allowlist_rejects_every_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "project"
+            CANARY.seed_project_workspace(workspace)
+            approval = self._approval(
+                workspace,
+                tool_id="workspace_patch",
+                action={
+                    "path": str(workspace / "calculator.py"),
+                    "oldText": CANARY.PATCH_OLD_TEXT,
+                    "newText": CANARY.PATCH_NEW_TEXT,
+                    "expectedOccurrences": 1,
+                },
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "forbidden patch"):
+                CANARY.validate_project_approval(
+                    approval,
+                    session_id="agent:project",
+                    workspace=workspace,
+                    allow_patch=False,
+                )
+
     def test_native_approval_allowlist_rejects_extra_command(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / "project"
@@ -274,6 +330,62 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
         self.assertEqual(decisions, [])
         self.assertEqual(len(requests), 1)
         self.assertEqual(requests[0][0], "GET")
+
+    def test_resilience_probe_accepts_one_expected_failed_test_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "project"
+            CANARY.seed_project_workspace(workspace)
+            approval = self._approval(
+                workspace,
+                tool_id="workspace_shell",
+                action={
+                    "command": CANARY.TEST_COMMAND,
+                    "cwd": str(workspace),
+                    "timeoutSeconds": 30,
+                    "allowNetwork": False,
+                },
+            )
+
+            def requester(
+                _base_url,
+                method,
+                _path,
+                _payload=None,
+                *,
+                timeout=130,
+            ):
+                _ = timeout
+                if method == "GET":
+                    return {"items": [approval]}
+                return {
+                    "approval": {
+                        **approval,
+                        "state": "failed",
+                        "receipt": {
+                            "mutationApplied": False,
+                            "exitCode": 1,
+                            "timedOut": False,
+                            "roomExecutionReceipt": {"status": "failed"},
+                        },
+                    },
+                    "runtimeNotified": True,
+                    "runtimeWarning": "",
+                }
+
+            decisions = CANARY.approve_pending_project_actions(
+                "http://in-process.invalid",
+                requester=requester,
+                session_id="agent:project",
+                workspace=workspace,
+                decided_ids=set(),
+                allow_expected_shell_failure=True,
+            )
+
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0]["state"], "failed")
+        self.assertEqual(decisions[0]["exitCode"], 1)
+        self.assertFalse(decisions[0]["mutationApplied"])
+        self.assertEqual(decisions[0]["roomExecutionStatus"], "failed")
 
     @staticmethod
     def _approval(

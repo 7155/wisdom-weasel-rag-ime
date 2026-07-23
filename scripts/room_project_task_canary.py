@@ -27,7 +27,13 @@ from room_context_epoch_canary import (
 
 
 PROJECT_MARKER = "PROJECT-TASK-CANARY"
+RESILIENCE_MARKER = "PROJECT-TOOL-RECOVERY-CANARY"
 PUBLIC_MARKER = "PROJECT-CANARY-OK"
+PROJECT_MEMORY_TEXT = (
+    "代码任务先读取现有测试，只做满足验收的最小改动，"
+    "运行真实测试后再提交交付。"
+)
+MISSING_READ_PATH = "missing_requirements.md"
 TEST_COMMAND = "/usr/bin/python3 -m unittest -v"
 PATCH_OLD_TEXT = '    raise NotImplementedError("ROOM_PROJECT_TASK")'
 PATCH_NEW_TEXT = (
@@ -89,7 +95,13 @@ def _approved_normalize_scores_body(value: object) -> bool:
     except SyntaxError:
         return False
     function = module.body[0] if len(module.body) == 1 else None
-    if not isinstance(function, ast.FunctionDef) or len(function.body) != 3:
+    if not isinstance(function, ast.FunctionDef):
+        return False
+    if len(function.body) == 1:
+        result = function.body[0]
+        expression = result.value if isinstance(result, ast.Return) else None
+        return _approved_inline_normalize_expression(expression)
+    if len(function.body) != 3:
         return False
     guard, assignment, result = function.body
     if not (
@@ -139,6 +151,39 @@ def _approved_normalize_scores_body(value: object) -> bool:
     ):
         return False
     return True
+
+
+def _approved_inline_normalize_expression(value: ast.expr | None) -> bool:
+    if not (
+        isinstance(value, ast.IfExp)
+        and isinstance(value.test, ast.Name)
+        and value.test.id == "values"
+        and isinstance(value.orelse, ast.List)
+        and not value.orelse.elts
+        and isinstance(value.body, ast.ListComp)
+        and len(value.body.generators) == 1
+    ):
+        return False
+    generator = value.body.generators[0]
+    right = value.body.elt.right if isinstance(value.body.elt, ast.BinOp) else None
+    return bool(
+        isinstance(generator.target, ast.Name)
+        and isinstance(generator.iter, ast.Name)
+        and generator.iter.id == "values"
+        and not generator.ifs
+        and generator.is_async == 0
+        and isinstance(value.body.elt, ast.BinOp)
+        and isinstance(value.body.elt.op, ast.Sub)
+        and isinstance(value.body.elt.left, ast.Name)
+        and value.body.elt.left.id == generator.target.id
+        and isinstance(right, ast.Call)
+        and isinstance(right.func, ast.Name)
+        and right.func.id == "min"
+        and len(right.args) == 1
+        and isinstance(right.args[0], ast.Name)
+        and right.args[0].id == "values"
+        and not right.keywords
+    )
 
 
 def _approved_project_source(value: str) -> bool:
@@ -196,6 +241,7 @@ def validate_project_approval(
     *,
     session_id: str,
     workspace: Path,
+    allow_patch: bool = True,
 ) -> dict[str, Any]:
     if approval.get("state") != "pending":
         raise RuntimeError("Room project approval is no longer pending")
@@ -209,6 +255,10 @@ def validate_project_approval(
     action = parsed["action"]
     tool_id = parsed["toolId"]
     if tool_id == "workspace_patch":
+        if not allow_patch:
+            raise RuntimeError(
+                "Room project reviewer or closer attempted a forbidden patch"
+            )
         target = Path(str(action.get("path") or "")).resolve(strict=True)
         if target != resolved_workspace / "calculator.py":
             raise RuntimeError("Room project attempted to patch an unexpected file")
@@ -256,6 +306,8 @@ def approve_pending_project_actions(
     session_id: str,
     workspace: Path,
     decided_ids: set[str],
+    allow_expected_shell_failure: bool = False,
+    allow_patch: bool = True,
 ) -> list[dict[str, Any]]:
     listed = requester(
         base_url,
@@ -289,6 +341,7 @@ def approve_pending_project_actions(
             raw,
             session_id=session_id,
             workspace=workspace,
+            allow_patch=allow_patch,
         )
         registration_started = time.monotonic()
         while True:
@@ -314,7 +367,12 @@ def approve_pending_project_actions(
                 # Wait for that bounded handoff instead of racing the native decision.
                 time.sleep(0.02)
         final = decided.get("approval")
-        if not isinstance(final, dict) or final.get("state") != "applied":
+        allowed_states = (
+            {"applied", "failed"}
+            if allow_expected_shell_failure and expected["toolId"] == "workspace_shell"
+            else {"applied"}
+        )
+        if not isinstance(final, dict) or final.get("state") not in allowed_states:
             raise RuntimeError(f"Room project approval did not apply: {approval_id}")
         if decided.get("runtimeNotified") is not True:
             raise RuntimeError(f"Pi did not receive Room approval result: {approval_id}")
@@ -329,6 +387,7 @@ def approve_pending_project_actions(
                 "runtimeNotified": True,
                 "mutationApplied": receipt.get("mutationApplied") is True,
                 "exitCode": receipt.get("exitCode"),
+                "timedOut": receipt.get("timedOut") is True,
                 "roomExecutionStatus": str(
                     (
                         receipt.get("roomExecutionReceipt")
@@ -355,6 +414,7 @@ def wait_for_project_settlement(
     session_id: str,
     workspace: Path,
     timeout: float,
+    allow_expected_shell_failure: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     deadline = time.monotonic() + timeout
     decisions: list[dict[str, Any]] = []
@@ -368,6 +428,7 @@ def wait_for_project_settlement(
                 session_id=session_id,
                 workspace=workspace,
                 decided_ids=decided_ids,
+                allow_expected_shell_failure=allow_expected_shell_failure,
             )
         )
         snapshot = requester(
@@ -426,6 +487,7 @@ def run(
 ) -> dict[str, Any]:
     stamp = int(time.time() * 1000)
     workspace = args.workspace.expanduser().resolve(strict=True)
+    failure_probe = bool(getattr(args, "failure_probe", False))
     participant_roles = list(args.participant_roles)
     if len(participant_roles) != 2:
         raise RuntimeError("Room project canary requires exactly two role references")
@@ -459,6 +521,31 @@ def run(
             {"level": args.thinking_level},
         )
 
+    marker = RESILIENCE_MARKER if failure_probe else PROJECT_MARKER
+    acceptance_criteria = (
+        [
+            (
+                f"workspace_read 先读取不存在的 {MISSING_READ_PATH} 一次并失败，"
+                "不得同参数重试；随后正确读取两份项目文件"
+            ),
+            (
+                f"修改前运行 {TEST_COMMAND} 一次并保留非零退出回执，"
+                "不得把预期失败冒充通过"
+            ),
+            "workspace_patch 只修改 calculator.py，且必须经过哈希绑定的原生批准",
+            (
+                f"修改后再次运行 {TEST_COMMAND}，无网络且退出码为 0；"
+                f"公开 {PUBLIC_MARKER} 并提交全部验收条件"
+            ),
+        ]
+        if failure_probe
+        else [
+            "渐进加载并实际调用 workspace_list、workspace_search 和 workspace_read",
+            "workspace_patch 只修改 calculator.py，且必须经过哈希绑定的原生批准",
+            f"workspace_shell 只运行 {TEST_COMMAND}，无网络且退出码为 0",
+            f"公开 {PUBLIC_MARKER}，并用 room_commit 覆盖全部验收条件",
+        ]
+    )
     work = requester(
         args.base_url,
         "POST",
@@ -468,38 +555,58 @@ def run(
             "createdByParticipantId": room["participants"][0]["id"],
             "clientMessageId": f"project-canary-work-{stamp}",
             "objective": (
-                f"{PROJECT_MARKER}：在隔离项目中实现 normalize_scores 并运行真实测试"
+                f"{marker}：在隔离项目中实现 normalize_scores 并运行真实测试"
             ),
             "expectedOutput": (
                 "只修改 calculator.py，通过全部 unittest，公开 PROJECT-CANARY-OK，"
                 "提交全部验收条件并结束本轮"
             ),
-            "acceptanceCriteria": [
-                "渐进加载并实际调用 workspace_list、workspace_search 和 workspace_read",
-                "workspace_patch 只修改 calculator.py，且必须经过哈希绑定的原生批准",
-                f"workspace_shell 只运行 {TEST_COMMAND}，无网络且退出码为 0",
-                "公开 PROJECT-CANARY-OK，并用 room_commit 覆盖全部验收条件",
-            ],
+            "acceptanceCriteria": acceptance_criteria,
             "state": "active",
         },
     )["workItem"]
+    message = (
+        (
+            f"@{target['displayName']} 执行 {marker}。先精确加载 workspace_read，"
+            f"只读取一次 {workspace / MISSING_READ_PATH}；这个文件不存在，收到失败回执后"
+            "不要用相同参数重试。随后查看目录并搜索 ROOM_PROJECT_TASK，再读取 "
+            "calculator.py 与 test_calculator.py。修改前先加载 workspace_shell 并运行 "
+            f"{TEST_COMMAND}，等待原生批准；这次应非零退出，必须如实识别为预期失败。"
+            "然后只用 workspace_patch 实现 normalize_scores，等待原生批准；"
+            f"最后再次运行 {TEST_COMMAND}，等待原生批准且禁止网络。只有第二次测试"
+            f"退出码为 0 后，才发布 {PUBLIC_MARKER} 和一句恢复说明，提交全部验收条件并收工。"
+        )
+        if failure_probe
+        else (
+            f"@{target['displayName']} 执行 {marker}。先查看目录并搜索 "
+            "ROOM_PROJECT_TASK，再读取 calculator.py 与 test_calculator.py；"
+            "只用 workspace_patch 实现 normalize_scores，等待原生批准；"
+            f"然后只运行 {TEST_COMMAND}，等待原生批准且禁止网络。测试通过后"
+            f"发布 {PUBLIC_MARKER} 和一句结果，最后提交全部验收条件并收工。"
+        )
+    )
+    message_payload = {
+        "message": message,
+        "clientMessageId": f"project-canary-message-{stamp}",
+        "workItemId": work["id"],
+    }
     accepted = requester(
         args.base_url,
         "POST",
         f"/api/agent/rooms/{encoded(room_id)}/messages",
-        {
-            "message": (
-                f"@{target['displayName']} 执行 {PROJECT_MARKER}。先查看目录并搜索 "
-                "ROOM_PROJECT_TASK，再读取 calculator.py 与 test_calculator.py；"
-                "只用 workspace_patch 实现 normalize_scores，等待原生批准；"
-                f"然后只运行 {TEST_COMMAND}，等待原生批准且禁止网络。测试通过后"
-                f"发布 {PUBLIC_MARKER} 和一句结果，最后提交全部验收条件并收工。"
-            ),
-            "clientMessageId": f"project-canary-message-{stamp}",
-            "workItemId": work["id"],
-        },
+        message_payload,
     )
     root_id = accepted_root_id(accepted)
+    duplicate_root_id = root_id
+    if failure_probe:
+        duplicate_root_id = accepted_root_id(
+            requester(
+                args.base_url,
+                "POST",
+                f"/api/agent/rooms/{encoded(room_id)}/messages",
+                message_payload,
+            )
+        )
     try:
         settled, approvals = wait_for_project_settlement(
             args.base_url,
@@ -509,6 +616,7 @@ def run(
             session_id=session_id,
             workspace=workspace,
             timeout=args.turn_timeout,
+            allow_expected_shell_failure=failure_probe,
         )
     except BaseException:
         cancel_root(
@@ -549,6 +657,11 @@ def run(
     ]
 
     dispatch_ids = [str(value) for value in settled["dispatchIds"]]
+    expected_tool_counts = dict(_EXPECTED_TOOL_COUNTS)
+    expected_applied_counts = dict(_EXPECTED_TOOL_COUNTS)
+    if failure_probe:
+        expected_tool_counts.update(workspace_read=3, workspace_shell=2)
+        expected_applied_counts.update(workspace_read=2, workspace_shell=1)
     tool_receipts = {
         tool_name: tool_receipt_evidence(
             args.db_path,
@@ -618,26 +731,47 @@ def run(
         "projectImplementationApproved": _approved_project_source(final_source),
         "independentTestsPass": independent["exitCode"] == 0,
         "nativeApprovalsApplied": (
-            [item["toolId"] for item in approvals]
-            == ["workspace_patch", "workspace_shell"]
-            and all(item["state"] == "applied" for item in approvals)
-            and all(item["runtimeNotified"] for item in approvals)
-            and all(item["roomExecutionStatus"] == "applied" for item in approvals)
-            and approvals[0]["mutationApplied"] is True
-            and approvals[1]["exitCode"] == 0
+            (
+                [item["toolId"] for item in approvals]
+                == ["workspace_shell", "workspace_patch", "workspace_shell"]
+                and [item["state"] for item in approvals]
+                == ["failed", "applied", "applied"]
+                and approvals[0]["mutationApplied"] is False
+                and isinstance(approvals[0]["exitCode"], int)
+                and approvals[0]["exitCode"] != 0
+                and approvals[0]["timedOut"] is False
+                and approvals[1]["mutationApplied"] is True
+                and approvals[2]["exitCode"] == 0
+                and all(item["runtimeNotified"] for item in approvals)
+                and [item["roomExecutionStatus"] for item in approvals]
+                == ["failed", "applied", "applied"]
+            )
+            if failure_probe
+            else (
+                [item["toolId"] for item in approvals]
+                == ["workspace_patch", "workspace_shell"]
+                and all(item["state"] == "applied" for item in approvals)
+                and all(item["runtimeNotified"] for item in approvals)
+                and all(
+                    item["roomExecutionStatus"] == "applied"
+                    for item in approvals
+                )
+                and approvals[0]["mutationApplied"] is True
+                and approvals[1]["exitCode"] == 0
+            )
         ),
         "actualToolWorkloadExact": all(
             tool_receipts[name]["invocationCount"] == expected
-            and tool_receipts[name]["appliedExecutionCount"] == expected
+            and tool_receipts[name]["appliedExecutionCount"]
+            == expected_applied_counts[name]
             and len(tool_receipts[name]["loadReceiptIds"]) == 1
-            for name, expected in _EXPECTED_TOOL_COUNTS.items()
+            for name, expected in expected_tool_counts.items()
             if name != "room_post"
         )
-        # room_post stages a proposal. The following room_commit is the sole
-        # execution authority that publishes it, so no separate execution
-        # receipt is expected for the proposal call.
+        # room_post stages a proposal. The following room_commit atomically
+        # publishes it and seals the staged invocation as applied.
         and tool_receipts["room_post"]["invocationCount"] == 1
-        and tool_receipts["room_post"]["appliedExecutionCount"] == 0
+        and tool_receipts["room_post"]["appliedExecutionCount"] == 1
         and len(tool_receipts["room_post"]["loadReceiptIds"]) == 1
         and 1 <= tool_receipts["room_commit"]["invocationCount"] <= 2
         and tool_receipts["room_commit"]["appliedExecutionCount"]
@@ -666,6 +800,19 @@ def run(
         ),
         "settlementQueuesDrained": before["pendingContinuations"] == 0,
     }
+    if failure_probe:
+        checks["idempotentUserIngress"] = (
+            duplicate_root_id == root_id and len(dispatch_ids) == 1
+        )
+        checks["failedToolsRecoveredWithoutDuplicateRetry"] = (
+            [item["status"] for item in tool_receipts["workspace_read"]["items"]]
+            == ["failed", "applied", "applied"]
+            and [
+                item["status"]
+                for item in tool_receipts["workspace_shell"]["items"]
+            ]
+            == ["failed", "applied"]
+        )
     if compact_after:
         expected_load_receipts = {
             receipt_id
@@ -697,6 +844,7 @@ def run(
         "roomId": room_id,
         "sessionId": session_id,
         "rootId": root_id,
+        "faultProfile": "tool-recovery" if failure_probe else "none",
         "dispatch": settled,
         "terminal": {
             "receiptId": terminal_receipt.get("receiptId"),
@@ -743,6 +891,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-provider", default="")
     parser.add_argument("--model-id", default="")
     parser.add_argument("--thinking-level", default="")
+    parser.add_argument("--failure-probe", action="store_true")
     parser.add_argument("--participant-role", action="append", default=[])
     return parser.parse_args()
 

@@ -13,6 +13,7 @@ from rag_ime.agent_context_runtime import (
     compose_runtime_prompt,
     render_context_items,
 )
+from rag_ime.agent_memory_context_support import recall_messages
 from rag_ime.agent_sessions import AgentSessionStore
 
 
@@ -29,6 +30,38 @@ class AgentContextRuntimeTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_recall_window_preserves_original_requirement_with_recent_turns(self) -> None:
+        messages: list[dict[str, object]] = [
+            {
+                "role": "user",
+                "content": "原始需求：完成一个三成员 Room 项目并逐项验证。",
+            },
+        ]
+        for index in range(1, 6):
+            messages.extend([
+                {
+                    "role": "assistant",
+                    "content": f"阶段 {index} 已完成。",
+                },
+                {
+                    "role": "user",
+                    "content": f"继续阶段 {index + 1}。",
+                },
+            ])
+
+        recalled = recall_messages(messages)
+
+        self.assertEqual(len(recalled), 8)
+        self.assertEqual(
+            recalled[0]["text"],
+            "原始需求：完成一个三成员 Room 项目并逐项验证。",
+        )
+        self.assertEqual(recalled[-1]["text"], "继续阶段 6。")
+        self.assertNotIn(
+            "阶段 1 已完成。",
+            [item["text"] for item in recalled],
+        )
 
     def test_context_items_are_deduplicated_budgeted_and_consumed_once(self) -> None:
         first = self.runtime.enqueue(

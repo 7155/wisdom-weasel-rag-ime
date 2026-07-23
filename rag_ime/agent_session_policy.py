@@ -4,6 +4,14 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from .agent_runtime_driver import AgentRuntimeError
+from .agent_execution_policy import (
+    FULL_TRUST_EXECUTION_MODE,
+    WORKSPACE_MANAGED_EXECUTION_MODE,
+    WORKSPACE_SCOPE_CONFIRMATION,
+    canonical_tool_profile,
+    normalize_execution_mode,
+    workspace_scope_sha256,
+)
 from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
     CONTROL_TOOL_IDS,
@@ -291,6 +299,21 @@ class AgentSessionPolicyService:
             or session.get("toolProfileVersion")
             or "control-center-v1"
         ).strip()
+        execution_value: object = payload.get("executionMode")
+        if execution_value is None:
+            execution_value = (
+                None
+                if "toolProfileVersion" in payload
+                else session.get("executionMode")
+            )
+        requested_execution_mode = normalize_execution_mode(
+            execution_value,
+            tool_profile_version=requested_profile,
+        )
+        requested_profile = canonical_tool_profile(
+            requested_profile,
+            execution_mode=requested_execution_mode,
+        )
         self._validate_tool_profile(
             requested_profile,
             requested_mode=requested_mode,
@@ -301,6 +324,42 @@ class AgentSessionPolicyService:
                 payload.get("dangerousModeConfirmation") or ""
             ),
         )
+        effective_roots = (
+            [str(value) for value in roots]
+            if isinstance(roots, list)
+            else [str(value) for value in session.get("workspaceRoots") or []]
+        )
+        scope_changed = (
+            workspace_scope_sha256(effective_roots)
+            != str(session.get("workspaceScopeSha256") or "")
+        )
+        entering_execution_mode = (
+            requested_execution_mode
+            != str(session.get("executionMode") or "")
+        )
+        grant_workspace_scope = False
+        if requested_execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and (
+            entering_execution_mode or scope_changed
+        ):
+            if (
+                str(payload.get("workspaceScopeConfirmation") or "")
+                != WORKSPACE_SCOPE_CONFIRMATION
+            ):
+                raise ValueError(
+                    "workspace-managed execution requires an explicit workspace scope confirmation"
+                )
+            grant_workspace_scope = True
+        if requested_execution_mode == FULL_TRUST_EXECUTION_MODE and (
+            entering_execution_mode or scope_changed
+        ):
+            if (
+                str(payload.get("dangerousModeConfirmation") or "")
+                != DANGEROUS_MODE_CONFIRMATION
+            ):
+                raise ValueError(
+                    "full-trust execution requires an explicit native confirmation"
+                )
+            grant_workspace_scope = True
         allowed_tools = self._allowed_tools(
             session,
             payload,
@@ -318,10 +377,12 @@ class AgentSessionPolicyService:
                 raise ValueError(
                     f"{boolean_key} must be a boolean"
                 )
-        return self.sessions.set_runtime_policy(
+        updated = self.sessions.set_runtime_policy(
             session_id,
             mode=requested_mode,
             tool_profile_version=requested_profile,
+            execution_mode=requested_execution_mode,
+            grant_workspace_scope=grant_workspace_scope,
             allowed_tools=allowed_tools,
             project_context_enabled=(
                 bool(payload["projectContextEnabled"])
@@ -344,6 +405,21 @@ class AgentSessionPolicyService:
                 else None
             ),
         )
+        self.events.publish(
+            session_id,
+            "session_configuration_changed",
+            {
+                "kind": "execution_policy",
+                "executionMode": updated.get("executionMode"),
+                "workspaceScopeGranted": updated.get(
+                    "workspaceScopeGranted"
+                ),
+                "workspaceScopeSha256": updated.get(
+                    "workspaceScopeSha256"
+                ),
+            },
+        )
+        return updated
 
     @staticmethod
     def _validate_tool_profile(
@@ -441,6 +517,8 @@ def _has_runtime_policy_update(
         key in payload
         for key in (
             "mode",
+            "executionMode",
+            "workspaceRoots",
             "toolProfileVersion",
             "toolAllowlistMode",
             "allowedTools",

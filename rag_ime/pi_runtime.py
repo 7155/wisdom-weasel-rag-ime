@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 
+from .agent_execution_policy import execution_policy_prompt
 from .agent_events import AgentEventHub
 from .agent_blocks import extract_completed_agent_blocks, normalize_trusted_agent_blocks
 from .agent_tool_block_bridge import AgentToolBlockBuffer
@@ -22,7 +23,6 @@ from .agent_tool_ids import (
     ASSISTANT_CONTROL_TOOL_IDS,
     CONTROL_TOOL_IDS,
     COORDINATOR_TOOL_IDS,
-    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
 )
 from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
 from .agent_runtime_driver import (
@@ -386,14 +386,10 @@ class PiRuntimeConfig:
             session.get("roleVersion") or "1",
         )
         role_book_prompt = str(self.role_book_resolver(session) or "").strip()
-        core_prompt = role.safety_policy_prompt.strip()
-        if session.get("toolProfileVersion") == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE:
-            core_prompt = (
-                f"{core_prompt}\n\n"
-                "当前 Session 已由用户在原生权限界面明确启用完全信任。"
-                "符合策略的写操作可以自动批准，但仍不能扩大任务范围或绕过工作区、"
-                "路径、预览哈希、备份、审计、取消和回滚边界。"
-            )
+        core_prompt = (
+            f"{role.safety_policy_prompt.strip()}\n\n"
+            f"{execution_policy_prompt(session)}"
+        )
         persona_prompt = compose_persona_layer(
             role.persona_prompt,
             role_book_prompt,
@@ -472,6 +468,9 @@ class PiRuntimeConfig:
             environment["RAG_IME_AGENT_SESSION_MODE"] = str(session.get("mode") or "assistant")
             environment["RAG_IME_AGENT_TOOL_PROFILE_VERSION"] = str(
                 session.get("toolProfileVersion") or "control-center-v1"
+            )
+            environment["RAG_IME_AGENT_EXECUTION_MODE"] = str(
+                session.get("executionMode") or "per_action"
             )
             environment["RAG_IME_AGENT_DELEGATION_DEPTH"] = str(
                 session.get("delegationDepth") or 0
@@ -1753,6 +1752,17 @@ class PiRuntimeManager:
                     turn_id=turn_id,
                 )
             return
+        if event_type in {"auto_retry_start", "auto_retry_end"}:
+            self.events.publish(
+                session_id,
+                "status_changed",
+                _provider_retry_status(
+                    raw,
+                    started=event_type == "auto_retry_start",
+                ),
+                turn_id=turn_id,
+            )
+            return
         if event_type == "message_end":
             raw_message = _mapping(raw.get("message"))
             if not _pi_message_is_public(raw_message):
@@ -1916,6 +1926,10 @@ class PiRuntimeManager:
             self.events.publish(session_id, "user_input_required", safe, turn_id=turn_id)
             return
         if event_type == "agent_end":
+            # A failed low-level run may still be owned by Pi's bounded retry
+            # loop. Do not publish a terminal failure until that loop ends.
+            if raw.get("willRetry") is True:
+                return
             messages = raw.get("messages") if isinstance(raw.get("messages"), list) else []
             preview = _last_assistant_preview(messages)
             provider_error = _last_assistant_error(messages)
@@ -2904,6 +2918,41 @@ def _ui_confirmation_value(value: object) -> bool:
     if any(normalized == item or normalized.startswith(f"{item}，") or normalized.startswith(f"{item},") for item in negative):
         return False
     raise PiRuntimeError("confirm UI response must explicitly approve or reject the request")
+
+
+def _provider_retry_status(
+    payload: Mapping[str, object],
+    *,
+    started: bool,
+) -> dict[str, object]:
+    """Project retry progress without leaking raw Provider diagnostics."""
+
+    attempt = max(1, _integer(payload.get("attempt")))
+    maximum = max(attempt, _integer(payload.get("maxAttempts")))
+    if started:
+        return {
+            "status": "retrying",
+            "phase": "provider_retry",
+            "activityState": "running",
+            "summary": f"模型连接暂时失败，正在自动重试（{attempt}/{maximum}）",
+            "attempt": attempt,
+            "maxAttempts": maximum,
+            "delayMs": max(0, _integer(payload.get("delayMs"))),
+        }
+    success = payload.get("success") is True
+    return {
+        "status": "analyzing" if success else "working",
+        "phase": "provider_retry",
+        "activityState": "completed" if success else "failed",
+        "summary": (
+            "模型连接已恢复，继续处理"
+            if success
+            else "自动重试未恢复，正在结束本轮"
+        ),
+        "attempt": attempt,
+        "maxAttempts": maximum,
+        "success": success,
+    }
 
 
 def _legacy_abort_receipt(

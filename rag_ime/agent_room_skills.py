@@ -373,11 +373,27 @@ class RoomSkillPolicyStore:
         self,
         receipt_id: str,
         *,
+        expected_root_id: str,
+        expected_task_id: str,
+        expected_dispatch_id: str,
+        expected_session_id: str,
         expected_capability_epoch: int,
         catalog_revision: str,
-        allow_immediately_revoked: bool = False,
+        allow_revoked: bool = False,
     ) -> dict[str, object]:
         receipt_id = _required_text(receipt_id, "receiptId")
+        expected_lineage = {
+            "rootId": _required_text(expected_root_id, "expectedRootId"),
+            "taskId": _required_text(expected_task_id, "expectedTaskId"),
+            "dispatchId": _required_text(
+                expected_dispatch_id,
+                "expectedDispatchId",
+            ),
+            "sessionId": _required_text(
+                expected_session_id,
+                "expectedSessionId",
+            ),
+        }
         expected_capability_epoch = _non_negative_int(
             expected_capability_epoch,
             "expectedCapabilityEpoch",
@@ -391,12 +407,30 @@ class RoomSkillPolicyStore:
             if row is None:
                 raise ValueError(f"unknown Room Skill load receipt: {receipt_id}")
             current_epoch = self._current_epoch(conn, str(row["root_id"]))
-            newer_receipt_exists = conn.execute(
+            newer_session_receipt_exists = conn.execute(
                 """SELECT 1 FROM room_v2_skill_load_receipts
-                   WHERE root_id = ? AND capability_epoch > ? LIMIT 1""",
-                (str(row["root_id"]), expected_capability_epoch),
+                   WHERE session_id = ? AND receipt_id != ?
+                     AND (
+                       created_at_ms > ?
+                       OR (created_at_ms = ? AND receipt_id > ?)
+                     )
+                   LIMIT 1""",
+                (
+                    str(row["session_id"]),
+                    receipt_id,
+                    int(row["created_at_ms"]),
+                    int(row["created_at_ms"]),
+                    receipt_id,
+                ),
             ).fetchone() is not None
         receipt = _receipt_payload(row)
+        if any(
+            receipt[field] != value
+            for field, value in expected_lineage.items()
+        ):
+            raise RoomSkillEpochRevoked(
+                "Room Skill load receipt belongs to another Session or Dispatch"
+            )
         receipt_epoch = int(receipt["capabilityEpoch"])
         active_epoch = (
             receipt["state"] == "active"
@@ -404,11 +438,11 @@ class RoomSkillPolicyStore:
             and current_epoch == expected_capability_epoch
         )
         sealed_epoch = (
-            allow_immediately_revoked
+            allow_revoked
             and receipt["state"] == "revoked"
             and receipt_epoch == expected_capability_epoch
-            and current_epoch == expected_capability_epoch + 1
-            and not newer_receipt_exists
+            and current_epoch >= expected_capability_epoch
+            and not newer_session_receipt_exists
         )
         if not (active_epoch or sealed_epoch):
             raise RoomSkillEpochRevoked("Room Skill load receipt belongs to a revoked epoch")
@@ -472,6 +506,46 @@ class RoomSkillPolicyStore:
                 WHERE root_id = ? AND capability_epoch < ? AND state = 'active'
                 """,
                 (revoked_at_ms, root_id, new_capability_epoch),
+            )
+            return int(cursor.rowcount)
+
+    def revoke_dispatch(
+        self,
+        *,
+        root_id: str,
+        dispatch_id: str,
+        session_id: str,
+        capability_epoch: int,
+        revoked_at_ms: int,
+    ) -> int:
+        """Revoke one parallel Dispatch without advancing the Root wave."""
+
+        root_id = _required_text(root_id, "rootId")
+        dispatch_id = _required_text(dispatch_id, "dispatchId")
+        session_id = _required_text(session_id, "sessionId")
+        capability_epoch = _non_negative_int(
+            capability_epoch,
+            "capabilityEpoch",
+        )
+        revoked_at_ms = _non_negative_int(revoked_at_ms, "revokedAtMs")
+        with self._connect(immediate=True) as conn:
+            current = self._current_epoch(conn, root_id)
+            if current not in {0, capability_epoch}:
+                raise RoomSkillEpochRevoked(
+                    "parallel Dispatch belongs to a revoked capability epoch"
+                )
+            cursor = conn.execute(
+                """UPDATE room_v2_skill_load_receipts
+                   SET state = 'revoked', revoked_at_ms = ?
+                   WHERE root_id = ? AND dispatch_id = ? AND session_id = ?
+                     AND capability_epoch = ? AND state = 'active'""",
+                (
+                    revoked_at_ms,
+                    root_id,
+                    dispatch_id,
+                    session_id,
+                    capability_epoch,
+                ),
             )
             return int(cursor.rowcount)
 

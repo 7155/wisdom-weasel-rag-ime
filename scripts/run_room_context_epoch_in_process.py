@@ -24,12 +24,15 @@ if str(PRODUCT_ROOT) not in sys.path:
     sys.path.insert(0, str(PRODUCT_ROOT))
 
 from in_process_control_api import FileFetchBridge, InProcessControlApi
+from agent_session_dialogue_canary import run as run_agent_session_canary
 from room_context_epoch_canary import run as run_epoch_canary
 from room_project_task_canary import (
+    PROJECT_MEMORY_TEXT,
     TEST_COMMAND,
     run as run_project_task_canary,
     seed_project_workspace,
 )
+from room_three_member_canary import run as run_three_member_canary
 
 from rag_ime.agent_configuration import default_agent_configuration
 from rag_ime.agent_service import AgentService
@@ -42,6 +45,13 @@ from rag_ime.retrieval_docs import rebuild_retrieval_docs
 
 
 PROJECT = "wisdom-weasel-rag-ime"
+COLLABORATION_SCENARIO = "project-collaboration"
+AGENT_SESSION_SCENARIO = "agent-session"
+COLLABORATION_COMPACTION_KEEP_RECENT_TOKENS = 1
+PROJECT_SCENARIOS = frozenset(
+    {"project-task", "project-resilience", COLLABORATION_SCENARIO}
+)
+WORKSPACE_SCENARIOS = PROJECT_SCENARIOS | {AGENT_SESSION_SCENARIO}
 BRIDGE_URL = "http://rag-ime-file-bridge.invalid/api/agent/tool/execute"
 DETERMINISTIC_PROVIDER = "rag-ime-deterministic"
 DETERMINISTIC_MODEL = "room-v2-test"
@@ -135,11 +145,15 @@ def _configure_compaction_for_audit(
     agent_dir: Path,
     *,
     auto_compaction_enabled: bool,
+    keep_recent_tokens: int | None = None,
 ) -> None:
     agent_dir.mkdir(parents=True, exist_ok=True)
+    compaction: dict[str, object] = {"enabled": auto_compaction_enabled}
+    if keep_recent_tokens is not None:
+        compaction["keepRecentTokens"] = max(1, int(keep_recent_tokens))
     (agent_dir / "settings.json").write_text(
         json.dumps(
-            {"compaction": {"enabled": auto_compaction_enabled}},
+            {"compaction": compaction},
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -156,14 +170,14 @@ def _seed_relevant_memory(
     scenario: str,
 ) -> None:
     now_ms = int(time.time() * 1000)
-    project_task = scenario == "project-task"
+    project_task = scenario in WORKSPACE_SCENARIOS
     atom_id = (
         "atom:room-project-task-canary"
         if project_task
         else "atom:room-context-epoch-canary"
     )
     atom_text = (
-        "代码任务先读取现有测试，只做满足验收的最小改动，运行真实测试后再提交交付。"
+        PROJECT_MEMORY_TEXT
         if project_task
         else (
             "Room 压缩后每个 context epoch 只补回一份恢复包，永久保留原始需求、"
@@ -252,17 +266,40 @@ def _seed_relevant_memory(
         raise RuntimeError("configured embedding provider returned an empty vector")
 
 
+def _report_session_ids(report: Mapping[str, object]) -> tuple[str, ...]:
+    members = report.get("members")
+    session_ids = tuple(dict.fromkeys(
+        str(item.get("sessionId") or "")
+        for item in members.values()
+        if isinstance(item, Mapping) and str(item.get("sessionId") or "")
+    )) if isinstance(members, Mapping) else ()
+    if not session_ids:
+        fallback = str(report.get("sessionId") or "")
+        session_ids = (fallback,) if fallback else ()
+    if not session_ids:
+        raise RuntimeError("Room canary report has no Session for capability audit")
+    return session_ids
+
+
 def _room_tool_surface_evidence(
     service: DebugImeService,
     db_path: Path,
     report: Mapping[str, object],
 ) -> dict[str, object]:
-    session_id = str(report.get("sessionId") or "")
-    session = service.agent.sessions.get(session_id)
-    normal_tools = {
-        str(item["name"])
-        for item in service.agent_tools.runtime_manifests(session)
-    }
+    session_ids = _report_session_ids(report)
+    normal_tool_sets = [
+        {
+            str(item["name"])
+            for item in service.agent_tools.runtime_manifests(
+                service.agent.sessions.get(session_id)
+            )
+        }
+        for session_id in session_ids
+    ]
+    normal_tools = set().union(*normal_tool_sets)
+    normal_surfaces_consistent = all(
+        tools == normal_tools for tools in normal_tool_sets
+    )
     dispatch = report.get("dispatch")
     if not isinstance(dispatch, Mapping):
         epochs = report.get("epochs")
@@ -311,13 +348,52 @@ def _room_tool_surface_evidence(
         "desktop_semantic",
     }
     return {
-        "passed": product_tools == normal_tools and not denied_product_tools,
+        "passed": (
+            normal_surfaces_consistent
+            and product_tools == normal_tools
+            and not denied_product_tools
+        ),
+        "normalAgentSessionCount": len(session_ids),
+        "normalAgentSurfacesConsistent": normal_surfaces_consistent,
         "normalAgentToolCount": len(normal_tools),
         "roomAuthorizedProductToolCount": len(product_tools),
         "roomDeniedProductToolCount": len(denied_product_tools),
         "normalAgentToolsSha256": hashlib.sha256(normal_material).hexdigest(),
         "roomAuthorizedToolsSha256": hashlib.sha256(material).hexdigest(),
         "criticalWorkToolsPresent": critical <= product_tools,
+    }
+
+
+def _agent_tool_surface_evidence(
+    service: DebugImeService,
+    report: Mapping[str, object],
+) -> dict[str, object]:
+    session_id = str(report.get("sessionId") or "")
+    if not session_id:
+        raise RuntimeError("Agent Session canary report has no Session")
+    tools = {
+        str(item["name"])
+        for item in service.agent_tools.runtime_manifests(
+            service.agent.sessions.get(session_id)
+        )
+    }
+    critical = {
+        "workspace_read",
+        "workspace_search",
+        "workspace_patch",
+        "workspace_shell",
+        "ime_memory",
+        "ime_browser",
+        "desktop_semantic",
+    }
+    material = "\n".join(sorted(tools)).encode("utf-8")
+    return {
+        "passed": critical <= tools,
+        "normalAgentSessionCount": 1,
+        "normalAgentToolCount": len(tools),
+        "normalAgentToolsSha256": hashlib.sha256(material).hexdigest(),
+        "criticalWorkToolsPresent": critical <= tools,
+        "roomCapabilityManifestRequired": False,
     }
 
 
@@ -434,13 +510,29 @@ def _external_network_audit(
         if str(item.get("protocol") or "") == "https:"
         and str(item.get("host") or "") == expected_host
     ]
+    matching_success = [
+        200 <= int(item.get("status") or 0) < 300
+        for item in matching
+    ]
+    first_failed_index = next(
+        (index for index, succeeded in enumerate(matching_success) if not succeeded),
+        None,
+    )
+    recovered_after_failure = (
+        first_failed_index is not None
+        and any(matching_success[first_failed_index + 1 :])
+    )
     return {
-        "schemaVersion": "wisdom-weasel.external-provider-network-evidence.v1",
+        "schemaVersion": "wisdom-weasel.external-provider-network-evidence.v2",
         "expectedEndpoint": expected_endpoint,
         "requestCount": len(entries),
         "matchingRequestCount": len(matching),
-        "allMatchingRequestsSucceeded": bool(matching)
-        and all(200 <= int(item.get("status") or 0) < 300 for item in matching),
+        "successfulMatchingRequestCount": sum(matching_success),
+        "failedMatchingRequestCount": len(matching_success) - sum(matching_success),
+        "allMatchingRequestsSucceeded": bool(matching) and all(matching_success),
+        "terminalMatchingRequestSucceeded": bool(matching_success)
+        and matching_success[-1],
+        "recoveredAfterFailure": recovered_after_failure,
         "requests": [
             {
                 "requestId": str(item.get("requestId") or ""),
@@ -461,9 +553,23 @@ def _external_network_audit(
 
 def _create_deterministic_canary_roles(
     api: InProcessControlApi,
+    *,
+    collaboration: bool = False,
 ) -> list[dict[str, str]]:
     roles: list[dict[str, str]] = []
-    for suffix, timeline in (("A", "terra"), ("B", "sol")):
+    specs = (
+        (
+            ("A", "terra", "implementer"),
+            ("B", "sol", "reviewer"),
+            ("C", "terra", "coordinator"),
+        )
+        if collaboration
+        else (
+            ("A", "terra", ""),
+            ("B", "sol", ""),
+        )
+    )
+    for suffix, timeline, collaboration_role in specs:
         created = api.request_json(
             "http://in-process.invalid",
             "POST",
@@ -479,12 +585,13 @@ def _create_deterministic_canary_roles(
                 "unsuitableTasks": ["正式用户任务"],
             },
         )["role"]
-        roles.append(
-            {
-                "roleId": str(created["roleId"]),
-                "roleVersion": str(created["version"]),
-            }
-        )
+        role = {
+            "roleId": str(created["roleId"]),
+            "roleVersion": str(created["version"]),
+        }
+        if collaboration_role:
+            role["collaborationRole"] = collaboration_role
+        roles.append(role)
     return roles
 
 
@@ -500,10 +607,9 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             raise RuntimeError(f"managed Pi payload is incomplete: {required}")
     pi_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     launch_environment = _launch_environment(args.launch_agent_plist)
-
     with _state_directory(args.temp_root, keep=args.keep_state) as state:
         project_seed: dict[str, object] = {}
-        if args.scenario == "project-task":
+        if args.scenario in WORKSPACE_SCENARIOS:
             workspace = state / "project-workspace"
             project_seed = seed_project_workspace(workspace)
         else:
@@ -518,6 +624,16 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         _configure_compaction_for_audit(
             agent_dir,
             auto_compaction_enabled=not args.disable_auto_compaction,
+            keep_recent_tokens=(
+                # The three members can legitimately produce very different
+                # amounts of private history. Keep one token in this isolated
+                # audit so even a concise reviewer has a deterministic
+                # compaction boundary; production settings are untouched.
+                COLLABORATION_COMPACTION_KEEP_RECENT_TOKENS
+                if args.scenario
+                in {COLLABORATION_SCENARIO, AGENT_SESSION_SCENARIO}
+                else None
+            ),
         )
         db_path = state / "rag-ime.sqlite"
         debug_context = state / "context-inspection"
@@ -539,13 +655,34 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             base_runtime = PiRuntimeConfig.from_environment(enabled_default=True)
             if args.provider_mode == "configured" and not base_runtime.model_configured:
                 raise RuntimeError(base_runtime.model_configuration_error)
+            selected_provider = str(args.model_provider or "").strip() or base_runtime.provider
+            selected_model = str(args.model_id or "").strip() or base_runtime.model
+            if args.provider_mode == "configured":
+                configured = base_runtime.model_providers.get(selected_provider)
+                models = configured.get("models") if isinstance(configured, Mapping) else None
+                configured_model_ids = {
+                    str(item.get("id") or "")
+                    for item in models or []
+                    if isinstance(item, Mapping)
+                }
+                if selected_model not in configured_model_ids:
+                    raise RuntimeError(
+                        f"configured model is unavailable: {selected_provider}/{selected_model}"
+                    )
             model_environment = (
                 dict(base_runtime.provider_environment)
                 if args.provider_mode == "configured"
                 else {
                     "NODE_ENV": "test",
                     "RAG_IME_PI_DETERMINISTIC_ADAPTER": "room-v2",
-                    "RAG_IME_PI_DETERMINISTIC_SCENARIO": args.scenario,
+                    "RAG_IME_PI_DETERMINISTIC_SCENARIO": (
+                        "project-task"
+                        if args.scenario in {
+                            "project-task",
+                            "project-resilience",
+                        }
+                        else args.scenario
+                    ),
                 }
             )
             provider_environment = {
@@ -572,12 +709,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 idle_timeout_seconds=0,
                 provider_environment=provider_environment,
                 provider=(
-                    base_runtime.provider
+                    selected_provider
                     if args.provider_mode == "configured"
                     else DETERMINISTIC_PROVIDER
                 ),
                 model=(
-                    base_runtime.model
+                    selected_model
                     if args.provider_mode == "configured"
                     else DETERMINISTIC_MODEL
                 ),
@@ -641,7 +778,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 )
             )
             if (
-                args.scenario == "project-task"
+                args.scenario in WORKSPACE_SCENARIOS
                 and args.workspace_shell_mode == "isolated-test"
             ):
                 service.agent_tools.workspace_harness = WorkspaceHarness(
@@ -664,12 +801,37 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     scenario=args.scenario,
                 )
                 participant_roles = (
-                    _create_deterministic_canary_roles(api)
+                    _create_deterministic_canary_roles(
+                        api,
+                        collaboration=(
+                            args.scenario == COLLABORATION_SCENARIO
+                        ),
+                    )
                     if args.provider_mode == "deterministic"
-                    else [
+                    else (
+                        [
+                            {
+                                "roleId": "companion-present-v1",
+                                "roleVersion": "1",
+                                "collaborationRole": "implementer",
+                            },
+                            {
+                                "roleId": "companion-firstlight-v1",
+                                "roleVersion": "1",
+                                "collaborationRole": "reviewer",
+                            },
+                            {
+                                "roleId": "companion-future-v1",
+                                "roleVersion": "1",
+                                "collaborationRole": "coordinator",
+                            },
+                        ]
+                        if args.scenario == COLLABORATION_SCENARIO
+                        else [
                         {"roleId": "companion-future-v1", "roleVersion": "1"},
                         {"roleId": "companion-present-v1", "roleVersion": "1"},
-                    ]
+                        ]
+                    )
                 )
                 common_canary_args = {
                     "base_url": "http://in-process.invalid",
@@ -679,14 +841,34 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     "turn_timeout": args.turn_timeout,
                     "participant_roles": participant_roles,
                     "thinking_level": (
-                        "off" if args.provider_mode == "deterministic" else ""
+                        str(args.thinking_level or "").strip()
+                        or ("off" if args.provider_mode == "deterministic" else "")
                     ),
                     "model_provider": runtime.provider,
                     "model_id": runtime.model,
+                    "compact_after": args.scenario == "project-resilience",
+                    "require_cache_evidence": (
+                        args.provider_mode == "configured"
+                    ),
                 }
-                if args.scenario == "project-task":
-                    report = run_project_task_canary(
+                if args.scenario == AGENT_SESSION_SCENARIO:
+                    report = run_agent_session_canary(
                         argparse.Namespace(**common_canary_args),
+                        requester=api.request_json,
+                    )
+                    report["projectSeed"] = project_seed
+                elif args.scenario == COLLABORATION_SCENARIO:
+                    report = run_three_member_canary(
+                        argparse.Namespace(**common_canary_args),
+                        requester=api.request_json,
+                    )
+                    report["projectSeed"] = project_seed
+                elif args.scenario in PROJECT_SCENARIOS:
+                    report = run_project_task_canary(
+                        argparse.Namespace(
+                            **common_canary_args,
+                            failure_probe=args.scenario == "project-resilience",
+                        ),
                         requester=api.request_json,
                     )
                     report["projectSeed"] = project_seed
@@ -702,10 +884,14 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                         ),
                         requester=api.request_json,
                     )
-                tool_surface = _room_tool_surface_evidence(
-                    service,
-                    db_path,
-                    report,
+                tool_surface = (
+                    _agent_tool_surface_evidence(service, report)
+                    if args.scenario == AGENT_SESSION_SCENARIO
+                    else _room_tool_surface_evidence(
+                        service,
+                        db_path,
+                        report,
+                    )
                 )
                 report["toolSurface"] = tool_surface
                 report_checks = dict(report.get("checks") or {})
@@ -723,10 +909,11 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     report_checks["externalProviderRequestObserved"] = (
                         bool(endpoint)
                         and network_audit["matchingRequestCount"] > 0
-                        and network_audit["allMatchingRequestsSucceeded"] is True
+                        and network_audit["successfulMatchingRequestCount"] > 0
+                        and network_audit["terminalMatchingRequestSucceeded"] is True
                     )
                 report["checks"] = report_checks
-                if args.scenario == "project-task" and args.artifact_dir is not None:
+                if args.scenario in WORKSPACE_SCENARIOS and args.artifact_dir is not None:
                     artifact_dir = args.artifact_dir.expanduser().resolve()
                     if artifact_dir.exists():
                         shutil.rmtree(artifact_dir)
@@ -752,7 +939,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     _copy_failure_state(state, failure_state, db_path)
                     diagnostic["failureState"] = str(failure_state)
                 raise RuntimeError(
-                    f"Room {args.scenario} canary failed: {error}; "
+                    f"{args.scenario} canary failed: {error}; "
                     f"runtime={json.dumps(diagnostic, ensure_ascii=False)}; "
                     f"state={state if args.keep_state else 'ephemeral'}"
                 ) from error
@@ -794,12 +981,18 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             ),
             "workspaceShellMode": args.workspace_shell_mode,
             "nativeSandboxExecEvidence": (
-                args.scenario == "project-task"
+                args.scenario in WORKSPACE_SCENARIOS
                 and args.workspace_shell_mode == "native"
             ),
             "embeddingProvider": getattr(embedding_provider, "fingerprint", ""),
             "embeddingMode": args.embedding_mode,
             "autoCompactionDuringTask": not args.disable_auto_compaction,
+            "manualCompactionKeepRecentTokens": (
+                COLLABORATION_COMPACTION_KEEP_RECENT_TOKENS
+                if args.scenario
+                in {COLLABORATION_SCENARIO, AGENT_SESSION_SCENARIO}
+                else None
+            ),
             "state": str(state) if args.keep_state else "ephemeral",
         },
     }
@@ -816,7 +1009,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pi-payload", type=Path, required=True)
     parser.add_argument(
         "--scenario",
-        choices=("context-epoch", "project-task"),
+        choices=(
+            "context-epoch",
+            "project-task",
+            "project-resilience",
+            COLLABORATION_SCENARIO,
+            AGENT_SESSION_SCENARIO,
+        ),
         default="context-epoch",
     )
     parser.add_argument(
@@ -870,6 +1069,21 @@ def parse_args() -> argparse.Namespace:
             "Pi test adapter. Deterministic cache usage is synthetic and is never "
             "real Provider KV-cache evidence."
         ),
+    )
+    parser.add_argument(
+        "--model-provider",
+        default="",
+        help="Override the configured Provider for this isolated canary only.",
+    )
+    parser.add_argument(
+        "--model-id",
+        default="",
+        help="Override the configured model for this isolated canary only.",
+    )
+    parser.add_argument(
+        "--thinking-level",
+        default="",
+        help="Override the Session thinking level for this isolated canary only.",
     )
     parser.add_argument(
         "--embedding-mode",

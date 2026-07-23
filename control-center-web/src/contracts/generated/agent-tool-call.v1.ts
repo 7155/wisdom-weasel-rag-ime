@@ -30,6 +30,7 @@ export interface AgentToolCallV1 {
     | 'workspace_patch'
     | 'workspace_shell'
     | 'room_state'
+    | 'room_collaborate'
     | 'room_post'
     | 'room_commit';
   toolCallId: string;

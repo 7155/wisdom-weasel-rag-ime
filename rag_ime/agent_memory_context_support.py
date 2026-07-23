@@ -45,10 +45,15 @@ def room_recall_fence(
     )
 
 
-def recall_messages(value: object) -> list[dict[str, object]]:
+def recall_messages(
+    value: object,
+    *,
+    first_user_maximum: int = 1_200,
+) -> list[dict[str, object]]:
     if not isinstance(value, (list, tuple)):
         return []
     result: list[dict[str, object]] = []
+    preserved_original_requirement = False
     for item in value:
         if not isinstance(item, Mapping):
             continue
@@ -58,8 +63,24 @@ def recall_messages(value: object) -> list[dict[str, object]]:
         text = recall_message_body(item)
         if not text:
             continue
-        result.append({"role": role, "text": text[:1_200]})
-    return result[-8:]
+        maximum = (
+            max(1_200, min(int(first_user_maximum), 4_000))
+            if role == "user" and not preserved_original_requirement
+            else 1_200
+        )
+        result.append({"role": role, "text": text[:maximum]})
+        if role == "user" and not preserved_original_requirement:
+            preserved_original_requirement = True
+    if len(result) <= 8:
+        return result
+    first_user = next(
+        (item for item in result if item["role"] == "user"),
+        None,
+    )
+    tail = result[-7:]
+    if first_user is None or first_user in tail:
+        return result[-8:]
+    return [first_user, *tail]
 
 
 def recall_message_body(

@@ -1058,7 +1058,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "session mode"):
             self.gateway.execute(assistant_call)
 
-    def test_agent_plan_is_session_local_and_readonly_profile_safe(self) -> None:
+    def test_agent_plan_is_session_local_and_read_only_blocks_mutations(self) -> None:
         created = self.gateway.execute(
             self._tool_call(
                 "agent_plan",
@@ -1077,15 +1077,27 @@ class ControlToolGatewayTests(unittest.TestCase):
             tool_profile_version="subagent-readonly-v1",
             allowed_tools=["agent_plan"],
         )
-        updated = self.gateway.execute(
-            self._tool_call(
-                "agent_plan",
-                "update",
-                itemId=item_id,
-                status="in_progress",
-            )
+        readable = self.gateway.execute(
+            self._tool_call("agent_plan", "list")
         )["result"]
-        self.assertEqual(updated["plan"]["counts"]["inProgress"], 1)
+        self.assertEqual(readable["items"][0]["id"], item_id)
+        with self.assertRaisesRegex(ValueError, "not enabled"):
+            self.gateway.execute(
+                self._tool_call(
+                    "agent_plan",
+                    "update",
+                    itemId=item_id,
+                    status="in_progress",
+                )
+            )
+        with self.assertRaisesRegex(ValueError, "not enabled"):
+            self.gateway.execute(
+                self._tool_call(
+                    "agent_plan",
+                    "submit_review",
+                    note="只读模式不得推进计划状态",
+                )
+            )
 
         other = self.store.create(title="other session", created_at_ms=2)
         other_plan = self.gateway.execute(
@@ -1095,6 +1107,31 @@ class ControlToolGatewayTests(unittest.TestCase):
             }
         )["result"]
         self.assertEqual(other_plan["items"], [])
+
+    def test_agent_plan_submit_review_is_valid_in_the_runtime_result_contract(self) -> None:
+        self.gateway.execute(
+            self._tool_call(
+                "agent_plan",
+                "update",
+                title="建立失败基线",
+                status="pending",
+            )
+        )
+
+        reviewed = self.gateway.execute(
+            self._tool_call(
+                "agent_plan",
+                "submit_review",
+                note="请在执行写入前审阅",
+            )
+        )
+
+        self.assertEqual(reviewed["operation"], "submit_review")
+        self.assertEqual(reviewed["result"]["plan"]["status"], "review")
+        self.assertEqual(
+            reviewed["result"]["presentationKind"],
+            "task_plan",
+        )
 
     def test_coordinator_workspace_read_and_shell_use_hash_bound_native_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace"
@@ -1171,6 +1208,257 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(len(executed), 1)
         self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "executing")
 
+    def test_read_only_keeps_workspace_reads_and_creates_no_write_approval(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-read-only"
+        workspace.mkdir()
+        target = workspace / "README.md"
+        target.write_text("只读证据\n", encoding="utf-8")
+        session = self.store.create(
+            title="read only coordinator",
+            mode="coordinator",
+            execution_mode="read_only",
+            workspace_roots=[str(workspace)],
+            created_at_ms=20,
+        )
+
+        read = self.gateway.execute(
+            {
+                **self._tool_call("workspace_read", "read", path=str(target)),
+                "sessionId": session["id"],
+            }
+        )["result"]
+        self.assertEqual(read["content"], "只读证据\n")
+
+        for call in (
+            self._tool_call(
+                "workspace_patch",
+                "apply",
+                path=str(target),
+                oldText="只读证据",
+                newText="不得写入",
+            ),
+            self._tool_call(
+                "workspace_shell",
+                "run",
+                command="pwd",
+                cwd=str(workspace),
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "not enabled|read-only"):
+                self.gateway.execute({**call, "sessionId": session["id"]})
+        self.assertEqual(target.read_text(encoding="utf-8"), "只读证据\n")
+        self.assertEqual(
+            self.store.list_approvals(session_id=str(session["id"])),
+            [],
+        )
+
+    def test_workspace_managed_auto_applies_inside_scope_but_not_outside_or_forbidden(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-managed"
+        outside = Path(self.tmp.name) / "workspace-outside"
+        workspace.mkdir()
+        outside.mkdir()
+        target = workspace / "main.py"
+        target.write_text("value = 'before'\n", encoding="utf-8")
+        outside_target = outside / "outside.py"
+        outside_target.write_text("value = 'outside'\n", encoding="utf-8")
+        session = self.store.create(
+            title="managed coordinator",
+            mode="coordinator",
+            execution_mode="workspace_managed",
+            workspace_roots=[str(workspace)],
+            created_at_ms=21,
+        )
+        self._approve_plan(str(session["id"]))
+        executed = []
+
+        def fake_execute(prepared):
+            executed.append(prepared)
+            return {
+                "schemaVersion": "rag-ime.workspace-command-receipt.v1",
+                "mutationApplied": True,
+                "summary": "命令执行完成，退出码 0",
+                "exitCode": 0,
+                "output": "managed\n",
+                "undoAvailable": False,
+            }
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            workspace_harness=WorkspaceHarness(executor=fake_execute),
+        )
+        automatic_approvals = []
+
+        def auto_approve(approval):
+            automatic_approvals.append(dict(approval))
+            decided = self.store.decide_approval(
+                str(approval["approvalId"]),
+                approved=True,
+                payload_sha256=str(approval["payloadSha256"]),
+                decided_by="execution-policy:workspace_managed",
+            )
+            receipt = gateway.apply_approval(decided)
+            return {
+                "summary": receipt["summary"],
+                "approvalRequired": False,
+                "autoApproved": True,
+                "approvalId": approval["approvalId"],
+                "receipt": receipt,
+            }
+
+        gateway.bind_auto_approval_executor(auto_approve)
+        patch_result = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_patch",
+                    "apply",
+                    path=str(target),
+                    oldText="before",
+                    newText="after",
+                ),
+                "sessionId": session["id"],
+            }
+        )["result"]
+        shell_result = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_shell",
+                    "run",
+                    command="pwd",
+                    cwd=str(workspace),
+                ),
+                "sessionId": session["id"],
+            }
+        )["result"]
+
+        self.assertTrue(patch_result["autoApproved"])
+        self.assertTrue(shell_result["autoApproved"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "value = 'after'\n")
+        self.assertEqual(len(executed), 1)
+        self.assertEqual(len(automatic_approvals), 2)
+
+        with self.assertRaisesRegex(WorkspaceHarnessError, "outside"):
+            gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_patch",
+                        "apply",
+                        path=str(outside_target),
+                        oldText="outside",
+                        newText="escaped",
+                    ),
+                    "sessionId": session["id"],
+                }
+            )
+        with self.assertRaisesRegex(WorkspaceHarnessError, "system or privilege"):
+            gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_shell",
+                        "run",
+                        command="sudo echo escaped",
+                        cwd=str(workspace),
+                    ),
+                    "sessionId": session["id"],
+                }
+            )
+        self.assertEqual(outside_target.read_text(encoding="utf-8"), "value = 'outside'\n")
+        self.assertEqual(len(automatic_approvals), 2)
+
+    def test_full_trust_auto_approves_routine_writes_but_keeps_system_gate(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-full-trust"
+        outside = Path(self.tmp.name) / "outside-full-trust"
+        workspace.mkdir()
+        outside.mkdir()
+        outside_target = outside / "outside.py"
+        outside_target.write_text("value = 'outside'\n", encoding="utf-8")
+        session = self.store.create(
+            title="full trust coordinator",
+            mode="coordinator",
+            execution_mode="full_trust",
+            workspace_roots=[str(workspace)],
+            created_at_ms=22,
+        )
+        self._approve_plan(str(session["id"]))
+        auto_approvals = []
+
+        def auto_approve(approval):
+            auto_approvals.append(dict(approval))
+            decided = self.store.decide_approval(
+                str(approval["approvalId"]),
+                approved=True,
+                payload_sha256=str(approval["payloadSha256"]),
+                decided_by="execution-policy:full_trust",
+            )
+            receipt = self.gateway.apply_approval(decided)
+            return {
+                "summary": receipt["summary"],
+                "approvalRequired": False,
+                "autoApproved": True,
+                "approvalId": approval["approvalId"],
+                "receipt": receipt,
+            }
+
+        self.gateway.bind_auto_approval_executor(auto_approve)
+        routine = self.gateway.execute(
+            {
+                **self._tool_call(
+                    "ime_planning",
+                    "task_action",
+                    taskId="task:1",
+                    action="complete",
+                    date="2026-07-13",
+                ),
+                "sessionId": session["id"],
+            }
+        )["result"]
+        protected = self.gateway.execute(
+            {
+                **self._tool_call("ime_runtime", "restart_sidecar"),
+                "sessionId": session["id"],
+            }
+        )["result"]
+
+        self.assertTrue(routine["autoApproved"])
+        self.assertTrue(protected["approvalRequired"])
+        self.assertEqual(protected["approval"]["operation"], "restart_sidecar")
+        with self.assertRaisesRegex(WorkspaceHarnessError, "outside"):
+            self.gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_patch",
+                        "apply",
+                        path=str(outside_target),
+                        oldText="outside",
+                        newText="escaped",
+                    ),
+                    "sessionId": session["id"],
+                }
+            )
+        with self.assertRaisesRegex(WorkspaceHarnessError, "system or privilege"):
+            self.gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_shell",
+                        "run",
+                        command="sudo echo escaped",
+                        cwd=str(workspace),
+                    ),
+                    "sessionId": session["id"],
+                }
+            )
+        self.assertEqual(
+            outside_target.read_text(encoding="utf-8"),
+            "value = 'outside'\n",
+        )
+        self.assertEqual(len(auto_approvals), 1)
+        applied = self.store.get_approval(str(routine["approvalId"]))
+        self.assertEqual(applied["state"], "approved")
+        self.assertEqual(applied["decidedBy"], "execution-policy:full_trust")
+
     def test_dangerous_profile_auto_approves_through_the_bound_service_bridge(self) -> None:
         self.session = self.store.set_runtime_policy(
             str(self.session["id"]),
@@ -1206,11 +1494,12 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertTrue(response["result"]["autoApproved"])
         self.assertFalse(response["result"]["approvalRequired"])
 
-    def test_room_product_tool_keeps_native_approval_and_seals_a_receipt(self) -> None:
+    def test_room_per_action_tool_keeps_native_approval_and_seals_a_receipt(self) -> None:
         self.session = self.store.set_runtime_policy(
             str(self.session["id"]),
             mode="coordinator",
-            tool_profile_version="control-center-auto-approve-v1",
+            tool_profile_version="control-center-v1",
+            execution_mode="per_action",
             allowed_tools=None,
         )
         auto_approvals: list[dict[str, object]] = []
@@ -1314,6 +1603,124 @@ class ControlToolGatewayTests(unittest.TestCase):
             receipt["roomExecutionReceipt"]["invocationReceiptId"],
             "invoke:tool:room-planning",
         )
+
+    def test_room_workspace_managed_auto_approval_seals_exactly_one_execution_receipt(self) -> None:
+        workspace = Path(self.tmp.name) / "room-managed"
+        workspace.mkdir()
+        target = workspace / "room.py"
+        target.write_text("state = 'before'\n", encoding="utf-8")
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="workspace_managed",
+            grant_workspace_scope=True,
+            allowed_tools=None,
+            workspace_roots=[str(workspace)],
+        )
+        executions: list[dict[str, object]] = []
+
+        class _RoomCollaboration:
+            def authorize_room_product_tool(
+                self,
+                _session_id,
+                _tool,
+                _args,
+                *,
+                tool_call_id,
+                load_receipt_id,
+            ):
+                if not load_receipt_id:
+                    raise AssertionError("Room product Tool requires a load receipt")
+                return {
+                    "invocationReceipt": {
+                        "receiptId": f"invoke:{tool_call_id}",
+                    }
+                }
+
+            def validate_room_product_tool_approval(
+                self,
+                session_id,
+                invocation_receipt_id,
+                *,
+                tool_name,
+            ):
+                return {
+                    "sessionId": session_id,
+                    "receiptId": invocation_receipt_id,
+                    "tool": tool_name,
+                }
+
+            def record_room_product_tool_execution(
+                self,
+                session_id,
+                invocation_receipt_id,
+                *,
+                status,
+                result_hash,
+            ):
+                receipt = {
+                    "sessionId": session_id,
+                    "invocationReceiptId": invocation_receipt_id,
+                    "status": status,
+                    "resultHash": result_hash,
+                }
+                executions.append(receipt)
+                return {"executionReceipt": receipt}
+
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            collaboration=_RoomCollaboration(),
+        )
+
+        def auto_approve(approval):
+            decided = self.store.decide_approval(
+                str(approval["approvalId"]),
+                approved=True,
+                payload_sha256=str(approval["payloadSha256"]),
+                decided_by="execution-policy:workspace_managed",
+            )
+            receipt = gateway.apply_approval(decided)
+            return {
+                "summary": receipt["summary"],
+                "approvalRequired": False,
+                "autoApproved": True,
+                "approvalId": approval["approvalId"],
+                "receipt": receipt,
+            }
+
+        gateway.bind_auto_approval_executor(auto_approve)
+        response = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_patch",
+                    "apply",
+                    path=str(target),
+                    oldText="before",
+                    newText="after",
+                ),
+                "toolCallId": "tool:room-managed-patch",
+                "loadReceiptId": "load:room-managed-patch",
+            }
+        )
+
+        self.assertTrue(response["result"]["autoApproved"])
+        self.assertEqual(target.read_text(encoding="utf-8"), "state = 'after'\n")
+        self.assertEqual(len(executions), 1)
+        self.assertEqual(executions[0]["status"], "applied")
+        self.assertEqual(
+            executions[0]["invocationReceiptId"],
+            "invoke:tool:room-managed-patch",
+        )
+        self.assertEqual(
+            response["roomExecutionReceipt"]["invocationReceiptId"],
+            "invoke:tool:room-managed-patch",
+        )
+        self.assertNotIn("roomInvocationReceipt", response)
 
     def test_failed_room_approval_records_a_failed_execution_receipt(self) -> None:
         executions: list[dict[str, object]] = []

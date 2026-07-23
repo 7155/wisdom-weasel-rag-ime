@@ -189,49 +189,68 @@ class AgentRoomStore:
 
     def get(self, room_id: str) -> dict[str, object]:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM agent_rooms WHERE id = ?", (room_id,)).fetchone()
-            if row is None:
-                raise AgentRoomNotFound(room_id)
-            participants = conn.execute(
-                """
-                SELECT * FROM agent_room_participants
-                WHERE room_id = ? ORDER BY ordinal ASC
-                """,
-                (room_id,),
-            ).fetchall()
-            topics = conn.execute(
-                """
-                SELECT * FROM agent_room_topics
-                WHERE room_id = ? ORDER BY topic_status ASC, ordinal ASC, created_at_ms ASC
-                """,
-                (room_id,),
-            ).fetchall()
-            artifacts = conn.execute(
-                """
-                SELECT * FROM agent_room_artifacts
-                WHERE room_id = ? AND artifact_status = 'active'
-                ORDER BY updated_at_ms DESC LIMIT 100
-                """,
-                (room_id,),
-            ).fetchall()
-            work_items = conn.execute(
-                """
-                SELECT * FROM agent_room_work_items
-                WHERE room_id = ?
-                ORDER BY
-                    CASE state
-                        WHEN 'blocked' THEN 0
-                        WHEN 'review' THEN 1
-                        WHEN 'active' THEN 2
-                        WHEN 'queued' THEN 3
-                        ELSE 4
-                    END,
-                    updated_at_ms DESC
-                LIMIT 100
-                """,
-                (room_id,),
-            ).fetchall()
-        return _room_payload(row, participants, topics, artifacts, work_items)
+            return self._get(conn, room_id)
+
+    @staticmethod
+    def _get(
+        conn: sqlite3.Connection,
+        room_id: str,
+    ) -> dict[str, object]:
+        row = conn.execute(
+            "SELECT * FROM agent_rooms WHERE id = ?",
+            (room_id,),
+        ).fetchone()
+        if row is None:
+            raise AgentRoomNotFound(room_id)
+        participants = conn.execute(
+            """
+            SELECT p.*, s.execution_mode AS session_execution_mode
+            FROM agent_room_participants AS p
+            LEFT JOIN agent_sessions AS s ON s.id = p.session_id
+            WHERE room_id = ? ORDER BY ordinal ASC
+            """,
+            (room_id,),
+        ).fetchall()
+        topics = conn.execute(
+            """
+            SELECT * FROM agent_room_topics
+            WHERE room_id = ?
+            ORDER BY topic_status ASC, ordinal ASC, created_at_ms ASC
+            """,
+            (room_id,),
+        ).fetchall()
+        artifacts = conn.execute(
+            """
+            SELECT * FROM agent_room_artifacts
+            WHERE room_id = ? AND artifact_status = 'active'
+            ORDER BY updated_at_ms DESC LIMIT 100
+            """,
+            (room_id,),
+        ).fetchall()
+        work_items = conn.execute(
+            """
+            SELECT * FROM agent_room_work_items
+            WHERE room_id = ?
+            ORDER BY
+                CASE state
+                    WHEN 'blocked' THEN 0
+                    WHEN 'review' THEN 1
+                    WHEN 'active' THEN 2
+                    WHEN 'queued' THEN 3
+                    ELSE 4
+                END,
+                updated_at_ms DESC
+            LIMIT 100
+            """,
+            (room_id,),
+        ).fetchall()
+        return _room_payload(
+            row,
+            participants,
+            topics,
+            artifacts,
+            work_items,
+        )
 
     def list(self, *, include_archived: bool = False, limit: int = 100) -> list[dict[str, object]]:
         bounded = max(1, min(int(limit), 200))
@@ -253,6 +272,39 @@ class AgentRoomStore:
             if cursor.rowcount != 1:
                 raise AgentRoomNotFound(room_id)
         return self.get(room_id)
+
+    def touch_config(
+        self,
+        room_id: str,
+        *,
+        updated_at_ms: int | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, object]:
+        timestamp = _timestamp(updated_at_ms)
+        if connection is not None:
+            self._touch_config(connection, room_id, timestamp=timestamp)
+            return self._get(connection, room_id)
+        with self._connect() as conn:
+            self._touch_config(conn, room_id, timestamp=timestamp)
+        return self.get(room_id)
+
+    @staticmethod
+    def _touch_config(
+        conn: sqlite3.Connection,
+        room_id: str,
+        *,
+        timestamp: int,
+    ) -> None:
+        cursor = conn.execute(
+            """
+            UPDATE agent_rooms
+            SET config_revision = config_revision + 1, updated_at_ms = ?
+            WHERE id = ?
+            """,
+            (timestamp, room_id),
+        )
+        if cursor.rowcount != 1:
+            raise AgentRoomNotFound(room_id)
 
     def add_participant(
         self,
@@ -636,6 +688,31 @@ class AgentRoomStore:
         values: Mapping[str, object],
         *,
         updated_at_ms: int | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, object]:
+        if connection is not None:
+            return self._update_config(
+                connection,
+                room_id,
+                values,
+                updated_at_ms=updated_at_ms,
+            )
+        with self._connect() as conn:
+            self._update_config(
+                conn,
+                room_id,
+                values,
+                updated_at_ms=updated_at_ms,
+            )
+        return self.get(room_id)
+
+    def _update_config(
+        self,
+        conn: sqlite3.Connection,
+        room_id: str,
+        values: Mapping[str, object],
+        *,
+        updated_at_ms: int | None = None,
     ) -> dict[str, object]:
         allowed = {
             "title",
@@ -651,7 +728,7 @@ class AgentRoomStore:
         unknown = set(values) - allowed
         if unknown:
             raise ValueError(f"unsupported agent room configuration fields: {', '.join(sorted(unknown))}")
-        current = self.get(room_id)
+        current = self._get(conn, room_id)
         active_participant_ids = {
             str(item["id"])
             for item in current["participants"]
@@ -713,18 +790,17 @@ class AgentRoomStore:
             return current
         timestamp = _timestamp(updated_at_ms)
         assignments = ", ".join(f"{column} = ?" for column in updates)
-        with self._connect() as conn:
-            cursor = conn.execute(
-                f"""
-                UPDATE agent_rooms
-                SET {assignments}, config_revision = config_revision + 1, updated_at_ms = ?
-                WHERE id = ?
-                """,  # noqa: S608 - column names come from the fixed allowlist above
-                (*updates.values(), timestamp, room_id),
-            )
-            if cursor.rowcount != 1:
-                raise AgentRoomNotFound(room_id)
-        return self.get(room_id)
+        cursor = conn.execute(
+            f"""
+            UPDATE agent_rooms
+            SET {assignments}, config_revision = config_revision + 1, updated_at_ms = ?
+            WHERE id = ?
+            """,  # noqa: S608 - column names come from the fixed allowlist above
+            (*updates.values(), timestamp, room_id),
+        )
+        if cursor.rowcount != 1:
+            raise AgentRoomNotFound(room_id)
+        return self._get(conn, room_id)
 
     def participant(self, participant_id: str) -> dict[str, object]:
         with self._connect() as conn:
@@ -1508,7 +1584,9 @@ class AgentRoomStore:
                 raise AgentRoomNotFound(room_id)
             participant_rows = conn.execute(
                 """
-                SELECT * FROM agent_room_participants
+                SELECT p.*, s.execution_mode AS session_execution_mode
+                FROM agent_room_participants AS p
+                LEFT JOIN agent_sessions AS s ON s.id = p.session_id
                 WHERE room_id = ? ORDER BY ordinal ASC
                 """,
                 (room_id,),
@@ -1637,6 +1715,14 @@ class AgentRoomStore:
             raise
         finally:
             conn.close()
+
+    @contextmanager
+    def write_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Share one immediate transaction across Room and Session stores."""
+
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            yield conn
 
 
 class AgentRoomEventHub:
@@ -1781,6 +1867,7 @@ def _room_payload(
         "avatar": str(row["avatar"] or "members"),
         "description": str(row["description"] or ""),
         "scenarioPrompt": str(row["scenario_prompt"] or ""),
+        "executionMode": _room_execution_mode(participants),
         "routingPolicy": routing_policy,
         "routingConfig": normalize_routing_config(
             json.loads(str(row["routing_config_json"] or "{}"))
@@ -1804,6 +1891,24 @@ def _room_payload(
     }
     validate_contract(payload, "agent-room.v1.json")
     return payload
+
+
+def _room_execution_mode(participants: Sequence[sqlite3.Row]) -> str:
+    active = {
+        str(
+            row["session_execution_mode"]
+            if "session_execution_mode" in row.keys()
+            and row["session_execution_mode"]
+            else "per_action"
+        )
+        for row in participants
+        if str(row["participant_status"] or "") == "active"
+    }
+    if len(active) == 1:
+        return next(iter(active))
+    # A mixed participant policy is never treated as trusted. Lifecycle repair
+    # will converge it before the next managed Dispatch.
+    return "per_action"
 
 
 def _participant_payload(row: sqlite3.Row) -> dict[str, object]:

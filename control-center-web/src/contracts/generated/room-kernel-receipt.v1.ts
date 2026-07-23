@@ -17,6 +17,7 @@ export interface RoomKernelReceiptV1 {
     | 'root_cancelled'
     | 'panic'
     | 'runtime_accepted'
+    | 'runtime_failed'
     | 'dispatch_unknown'
     | 'dead_letter'
     | 'settle_retry_required'

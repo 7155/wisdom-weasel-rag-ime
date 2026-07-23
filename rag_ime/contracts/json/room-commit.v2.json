@@ -11,7 +11,28 @@
     "action": {"type": "string", "enum": ["post", "dispatch", "wait", "complete", "block"]},
     "contentHash": {"type": "string", "minLength": 1},
     "postProposal": {"type": ["object", "null"]},
-    "continuation": {"type": ["object", "null"]},
+    "postInvocationReceiptId": {"type": "string", "minLength": 1},
+    "continuation": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["decision"],
+          "properties": {
+            "decision": {"type": "string", "enum": ["dispatch", "wait", "block", "complete"]},
+            "childTask": {"type": "object"},
+            "childDispatch": {"type": "object"}
+          },
+          "allOf": [
+            {
+              "if": {"properties": {"decision": {"const": "dispatch"}}, "required": ["decision"]},
+              "then": {"required": ["childTask", "childDispatch"]}
+            }
+          ]
+        }
+      ]
+    },
     "evidenceRefs": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "requirementCoverage": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "createdAtMs": {"type": "integer", "minimum": 0}

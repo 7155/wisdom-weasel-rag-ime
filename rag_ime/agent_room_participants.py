@@ -4,6 +4,13 @@ from collections.abc import Callable, Mapping
 from threading import RLock
 
 from .agent_personas import AgentPersonaStore
+from .agent_execution_policy import (
+    FULL_TRUST_EXECUTION_MODE,
+    PER_ACTION_EXECUTION_MODE,
+    WORKSPACE_MANAGED_EXECUTION_MODE,
+    canonical_tool_profile,
+    normalize_execution_mode,
+)
 from .agent_rooms import (
     AgentRoomEventHub,
     AgentRoomStore,
@@ -392,19 +399,46 @@ class RoomParticipantLifecycleService:
             if mode == "coordinator"
             else []
         )
+        execution_mode = normalize_execution_mode(
+            room.get("executionMode"),
+            default=(
+                WORKSPACE_MANAGED_EXECUTION_MODE
+                if room.get("roomKind", "collaboration") == "collaboration"
+                else PER_ACTION_EXECUTION_MODE
+            ),
+        )
+        tool_profile = canonical_tool_profile(
+            session.get("toolProfileVersion"),
+            execution_mode=execution_mode,
+        )
         if (
             session.get("mode") == mode
             and session.get("toolProfileVersion")
-            == CONTROL_CENTER_TOOL_PROFILE
+            == tool_profile
+            and session.get("executionMode") == execution_mode
             and session.get("toolAllowlistMode") == "profile"
             and list(session.get("workspaceRoots") or [])
             == workspace_roots
+            and (
+                execution_mode
+                not in {
+                    WORKSPACE_MANAGED_EXECUTION_MODE,
+                    FULL_TRUST_EXECUTION_MODE,
+                }
+                or session.get("workspaceScopeGranted") is True
+            )
         ):
             return dict(session)
         return self.sessions.set_runtime_policy(
             str(session["id"]),
             mode=mode,
-            tool_profile_version=CONTROL_CENTER_TOOL_PROFILE,
+            tool_profile_version=tool_profile,
+            execution_mode=execution_mode,
+            grant_workspace_scope=execution_mode
+            in {
+                WORKSPACE_MANAGED_EXECUTION_MODE,
+                FULL_TRUST_EXECUTION_MODE,
+            },
             allowed_tools=None,
             workspace_roots=workspace_roots,
         )
@@ -440,6 +474,14 @@ def _session_payload(
     *,
     mode: str,
 ) -> dict[str, object]:
+    execution_mode = normalize_execution_mode(
+        room.get("executionMode"),
+        default=(
+            WORKSPACE_MANAGED_EXECUTION_MODE
+            if room.get("roomKind", "collaboration") == "collaboration"
+            else PER_ACTION_EXECUTION_MODE
+        ),
+    )
     return {
         "title": (
             f"{room['title']} · "
@@ -448,7 +490,16 @@ def _session_payload(
         "mode": mode,
         "roleId": getattr(role, "role_id"),
         "roleVersion": getattr(role, "version"),
-        "toolProfileVersion": CONTROL_CENTER_TOOL_PROFILE,
+        "toolProfileVersion": canonical_tool_profile(
+            CONTROL_CENTER_TOOL_PROFILE,
+            execution_mode=execution_mode,
+        ),
+        "executionMode": execution_mode,
+        "_internalWorkspaceScopeGrant": execution_mode
+        in {
+            WORKSPACE_MANAGED_EXECUTION_MODE,
+            FULL_TRUST_EXECUTION_MODE,
+        },
         "workspaceRoots": list(
             room.get("workspaceRoots") or []
         ),

@@ -13,6 +13,10 @@ from .agent_room_capabilities import (
     ToolAuthorizationError,
 )
 from .agent_room_context import RoomContextLedgerStore
+from .agent_room_continuations import (
+    RoomContinuationFactory,
+    RoomContinuationProposalError,
+)
 from .agent_room_kernel import RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_contracts import validate_kernel_contract
 from .agent_room_kernel_projection import RoomKernelProjection
@@ -59,6 +63,11 @@ class RoomKernelApplicationService:
         self.revoke_session = revoke_session
         self.artifact_hash_provider = artifact_hash_provider
         self.media_receipt_provider = media_receipt_provider
+        self.continuations = RoomContinuationFactory(
+            rooms=rooms,
+            kernel=kernel,
+            capabilities=capabilities,
+        )
 
     def snapshot(self, room_id: str) -> dict[str, object]:
         self.rooms.get(room_id)
@@ -92,6 +101,142 @@ class RoomKernelApplicationService:
         )
         return snapshot
 
+    def record_runtime_failure(
+        self,
+        *,
+        room_id: str,
+        dispatch_id: str,
+        generation: int,
+        source_event_id: str,
+        created_at_ms: int,
+    ) -> dict[str, object]:
+        """Bridge a private Pi turn failure into the canonical Kernel once."""
+
+        self.rooms.get(room_id)
+        dispatch = self.kernel.dispatch(dispatch_id)
+        root = self.kernel.root(str(dispatch["rootId"]))
+        if (
+            root.get("roomId") != room_id
+            or int(dispatch.get("generation", -1)) != int(generation)
+        ):
+            raise RoomKernelFenceError(
+                "runtime failure does not match the Room Dispatch"
+            )
+        receipt = self.kernel.record_runtime_failure(
+            dispatch_id,
+            generation=generation,
+            source_event_id=source_event_id,
+            now_ms=created_at_ms,
+        )
+        if receipt.get("status") == "applied":
+            self.revoke_session(
+                str(dispatch["targetSessionId"]),
+                created_at_ms,
+            )
+        self.projection.sync_room(room_id)
+        return receipt
+
+    def tool_state(
+        self,
+        room_id: str,
+        *,
+        root_id: str,
+        dispatch_id: str,
+    ) -> dict[str, object]:
+        """Return the bounded model-facing state needed to finish one Dispatch."""
+
+        snapshot = self.snapshot(room_id)
+        dispatch = next(
+            (
+                item
+                for item in snapshot["dispatches"]
+                if item.get("dispatchId") == dispatch_id
+                and item.get("rootId") == root_id
+            ),
+            None,
+        )
+        if not isinstance(dispatch, Mapping):
+            raise RoomKernelFenceError(
+                "Room state projection lost its active Dispatch"
+            )
+        root = next(
+            (
+                item
+                for item in snapshot["roots"]
+                if item.get("rootId") == root_id
+            ),
+            None,
+        )
+        task = next(
+            (
+                item
+                for item in snapshot["tasks"]
+                if item.get("taskId") == dispatch.get("taskId")
+            ),
+            None,
+        )
+        if not isinstance(root, Mapping) or not isinstance(task, Mapping):
+            raise RoomKernelFenceError(
+                "Room state projection lost its Root or Task"
+            )
+        room = self.rooms.get(room_id)
+        participants = [
+            {
+                "participantId": str(item["id"]),
+                "displayName": str(item["displayName"]),
+                "collaborationRole": str(item["collaborationRole"]),
+                "status": str(item["status"]),
+                "isCurrent": str(item["id"])
+                == str(dispatch["targetParticipantId"]),
+            }
+            for item in room["participants"]
+            if isinstance(item, Mapping) and item.get("status") == "active"
+        ]
+        pending_targets = [
+            {
+                "dispatchId": str(item.get("dispatchId") or ""),
+                "state": str(item.get("state") or ""),
+            }
+            for item in snapshot["pendingTargets"]
+            if isinstance(item, Mapping) and item.get("rootId") == root_id
+        ]
+        return {
+            "schemaVersion": "wisdom-weasel.room-state-tool.v1",
+            "roomId": room_id,
+            "root": {
+                key: root.get(key)
+                for key in ("rootId", "state", "generation", "owner")
+            },
+            "task": {
+                key: task.get(key)
+                for key in (
+                    "taskId",
+                    "state",
+                    "ownerParticipantId",
+                    "assigneeParticipantId",
+                    "objective",
+                    "expectedOutput",
+                    "acceptanceCriterionIds",
+                )
+            },
+            "dispatch": {
+                key: dispatch.get(key)
+                for key in (
+                    "dispatchId",
+                    "parentDispatchId",
+                    "state",
+                    "intentKind",
+                    "targetParticipantId",
+                    "hopCount",
+                    "depth",
+                    "generation",
+                    "capabilityEpoch",
+                )
+            },
+            "participants": participants,
+            "pendingCancellationTargets": pending_targets,
+        }
+
     def execute_capability_tool(
         self,
         session_id: str,
@@ -116,8 +261,33 @@ class RoomKernelApplicationService:
             raise ToolAuthorizationError(
                 "product Tools must execute through the product Tool gateway"
             )
+        execution_receipt = None
         if canonical == "room_state":
-            result = self.snapshot(str(live["roomId"]))
+            result = self.tool_state(
+                str(live["roomId"]),
+                root_id=str(live["rootId"]),
+                dispatch_id=str(live["dispatchId"]),
+            )
+            execution_receipt, _ = self.capabilities.record_runtime_execution(
+                session_id=session_id,
+                invocation_receipt_id=str(invocation["receiptId"]),
+                status="applied",
+                result_hash=hashlib.sha256(
+                    json.dumps(
+                        result,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+                created_at_ms=int(time.time() * 1000),
+            )
+        elif canonical == "room_collaborate":
+            result, execution_receipt = self._execute_collaboration(
+                session_id=session_id,
+                live=live,
+                invocation=invocation,
+            )
         elif canonical == "room_post":
             result = {
                 "accepted": True,
@@ -146,12 +316,115 @@ class RoomKernelApplicationService:
                     "before_agent_settle 会执行唯一提交。"
                 ),
             }
-        return {
+        response = {
             "ok": True,
             "created": created,
             "result": result,
             "invocationReceipt": invocation,
         }
+        if execution_receipt is not None:
+            response["executionReceipt"] = execution_receipt
+        return response
+
+    def _execute_collaboration(
+        self,
+        *,
+        session_id: str,
+        live: Mapping[str, object],
+        invocation: Mapping[str, object],
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        invocation_receipt_id = str(invocation["receiptId"])
+        parent_dispatch_id = str(live["dispatchId"])
+        prior_execution = self.capabilities.execution_receipt(
+            invocation_receipt_id
+        )
+        prior_kernel = self.kernel.collaboration_receipt(
+            parent_dispatch_id=parent_dispatch_id,
+            invocation_receipt_id=invocation_receipt_id,
+        )
+        if prior_kernel is not None:
+            result = _collaboration_tool_result(invocation, prior_kernel)
+            if prior_execution is None:
+                prior_execution, _ = self.capabilities.record_runtime_execution(
+                    session_id=session_id,
+                    invocation_receipt_id=invocation_receipt_id,
+                    status="applied",
+                    result_hash=hashlib.sha256(
+                        json.dumps(
+                            result,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode("utf-8")
+                    ).hexdigest(),
+                    created_at_ms=int(time.time() * 1000),
+                )
+            return result, prior_execution
+        if prior_execution is not None:
+            raise RoomKernelFenceError(
+                "Room collaboration execution has no canonical Kernel receipt"
+            )
+
+        command = invocation.get("canonicalCommand")
+        arguments = (
+            command.get("arguments")
+            if isinstance(command, Mapping)
+            else None
+        )
+        if not isinstance(arguments, Mapping):
+            raise RoomKernelFenceError(
+                "Room collaboration invocation has no canonical arguments"
+            )
+        raw_criteria = arguments.get("acceptanceCriterionIds") or []
+        if not isinstance(raw_criteria, list):
+            raise RoomKernelFenceError(
+                "Room collaboration acceptanceCriterionIds must be an array"
+            )
+        parent = self.kernel.dispatch(parent_dispatch_id)
+        parent_task = self.kernel.task(str(parent["taskId"]))
+        try:
+            continuation = self.continuations.build(
+                parent_dispatch=parent,
+                parent_task=parent_task,
+                room_id=str(live["roomId"]),
+                target_participant_id=str(
+                    arguments.get("targetParticipantId") or ""
+                ),
+                trigger_id=invocation_receipt_id,
+                intent_kind=str(arguments.get("intentKind") or "execute"),
+                objective=str(arguments.get("objective") or ""),
+                expected_output=str(arguments.get("expectedOutput") or ""),
+                acceptance_criterion_ids=raw_criteria,
+                kind="collaboration",
+            )
+        except RoomContinuationProposalError as exc:
+            raise RoomKernelFenceError(str(exc)) from exc
+        now_ms = int(time.time() * 1000)
+        kernel_receipt = self.kernel.enqueue_collaboration(
+            parent_dispatch_id=parent_dispatch_id,
+            child_task=continuation["childTask"],
+            child_dispatch=continuation["childDispatch"],
+            generation=int(live["generation"]),
+            invocation_receipt_id=invocation_receipt_id,
+            now_ms=now_ms,
+        )
+        result = _collaboration_tool_result(invocation, kernel_receipt)
+        execution_receipt, _ = self.capabilities.record_runtime_execution(
+            session_id=session_id,
+            invocation_receipt_id=invocation_receipt_id,
+            status="applied",
+            result_hash=hashlib.sha256(
+                json.dumps(
+                    result,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            created_at_ms=now_ms,
+        )
+        self.wake_worker()
+        return result, execution_receipt
 
     def authorize_product_tool(
         self,
@@ -537,6 +810,28 @@ class RoomKernelApplicationService:
                 else None
             ),
         )
+        post_invocation_receipt_id = str(
+            commit.get("postInvocationReceiptId") or ""
+        )
+        if (
+            post_invocation_receipt_id
+            and receipt.get("status") == "applied"
+            and proposal is not None
+        ):
+            self.capabilities.record_runtime_execution(
+                session_id=str(settle["sessionId"]),
+                invocation_receipt_id=post_invocation_receipt_id,
+                status="applied",
+                result_hash=hashlib.sha256(
+                    json.dumps(
+                        proposal,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+                created_at_ms=int(commit.get("createdAtMs") or 0),
+            )
         if receipt.get("details", {}).get("childDispatchId"):
             self.wake_worker()
         post = proposal
@@ -738,6 +1033,32 @@ def _receipt_completes_root_candidate(receipt: Mapping[str, object]) -> bool:
     )
 
 
+def _collaboration_tool_result(
+    invocation: Mapping[str, object],
+    kernel_receipt: Mapping[str, object],
+) -> dict[str, object]:
+    details = kernel_receipt.get("details")
+    if not isinstance(details, Mapping):
+        raise RoomKernelFenceError(
+            "Room collaboration Kernel receipt has no child identity"
+        )
+    return {
+        "accepted": True,
+        "executionPerformed": True,
+        "currentDispatchContinues": True,
+        "canonicalTool": "room_collaborate",
+        "correlationId": invocation["receiptId"],
+        "childTaskId": details["childTaskId"],
+        "childDispatchId": details["childDispatchId"],
+        "kernelReceipt": dict(kernel_receipt),
+        "next": "continue_current_dispatch",
+        "modelInstruction": (
+            "协作任务已进入同一 Root 的受管队列。继续当前任务；"
+            "不要把本次点名当作责任移交，也不要仅因已点名而结束本轮。"
+        ),
+    }
+
+
 def _requires_explicit_delivery_finalization(
     requirement_context: Mapping[str, object] | None,
 ) -> bool:
@@ -771,10 +1092,13 @@ def _validated_post_proposal(
             "post action requires an explicit RoomPost proposal"
         )
     normalized = dict(proposal)
+    source_invocation_receipt_id = str(
+        commit.get("postInvocationReceiptId") or invocation_receipt_id
+    )
     invocation_blocks = None
-    if invocation_receipt_id:
+    if source_invocation_receipt_id:
         invocation = capabilities.invocation_receipt(
-            invocation_receipt_id
+            source_invocation_receipt_id
         )
         command = invocation.get("canonicalCommand")
         arguments = (
@@ -784,6 +1108,16 @@ def _validated_post_proposal(
         )
         if isinstance(arguments, Mapping):
             invocation_blocks = arguments.get("blocks")
+        if commit.get("postInvocationReceiptId") and (
+            not isinstance(command, Mapping)
+            or command.get("tool") != "room_post"
+            or command.get("dispatchId") != dispatch.get("dispatchId")
+            or command.get("rootId") != root.get("rootId")
+            or int(command.get("generation", -1)) != int(root["generation"])
+        ):
+            raise RoomKernelFenceError(
+                "RoomPost staging invocation does not match the settled Dispatch"
+            )
     if normalized.get("blocks") is not None and invocation_blocks is None:
         raise RoomKernelFenceError(
             "RoomPost blocks must originate from the authorized structured tool input"

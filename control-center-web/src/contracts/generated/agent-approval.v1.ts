@@ -26,6 +26,7 @@ export interface AgentApprovalV1 {
     | 'failed';
   requestedAtMs: number;
   expiresAtMs: number;
+  decidedBy: string;
   decidedAtMs?: number | null;
   receipt?: {
     [k: string]: unknown;

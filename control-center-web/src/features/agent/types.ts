@@ -22,6 +22,8 @@ export type SessionSummary = Pick<
     | 'messageCount'
     | 'modelProfile'
     | 'toolProfileVersion'
+    | 'executionMode'
+    | 'workspaceScopeGranted'
     | 'toolAllowlistMode'
     | 'allowedTools'
     | 'projectContextEnabled'
@@ -32,6 +34,8 @@ export type SessionSummary = Pick<
 export interface AgentPermissionSelection {
   mode: 'assistant' | 'coordinator';
   toolProfileVersion: 'control-center-v1' | 'subagent-readonly-v1' | 'control-center-auto-approve-v1';
+  executionMode: 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
+  workspaceScopeConfirmed?: boolean;
   dangerousModeConfirmed?: boolean;
 }
 
@@ -98,11 +102,18 @@ export function sessionItems(value: unknown): SessionSummary[] {
 }
 
 export function sessionPermissionLabel(session: SessionSummary): string {
-  if (session.toolProfileVersion === 'control-center-auto-approve-v1') return '完全信任';
-  if (session.toolProfileVersion === 'subagent-readonly-v1') {
-    return session.mode === 'coordinator' ? '只读协调' : '只读观察';
-  }
-  return session.mode === 'coordinator' ? '运行协调' : '受控助手';
+  const executionMode = session.executionMode
+    ?? (session.toolProfileVersion === 'control-center-auto-approve-v1'
+      ? 'full_trust'
+      : session.toolProfileVersion === 'subagent-readonly-v1'
+        ? 'read_only'
+        : 'per_action');
+  return {
+    read_only: '只读',
+    per_action: '每次确认',
+    workspace_managed: '工作区托管',
+    full_trust: '完全信任',
+  }[executionMode];
 }
 
 export function activeSessionId(value: unknown): string {

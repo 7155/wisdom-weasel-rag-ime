@@ -181,6 +181,27 @@ class RoomSkillReceiptTests(unittest.TestCase):
         values.update(overrides)
         return self.store.pin_skill(**values)  # type: ignore[arg-type]
 
+    def _restore(
+        self,
+        receipt: dict[str, object],
+        *,
+        store: RoomSkillPolicyStore | None = None,
+        **overrides: object,
+    ) -> dict[str, object]:
+        values: dict[str, object] = {
+            "expected_root_id": receipt["rootId"],
+            "expected_task_id": receipt["taskId"],
+            "expected_dispatch_id": receipt["dispatchId"],
+            "expected_session_id": receipt["sessionId"],
+            "expected_capability_epoch": receipt["capabilityEpoch"],
+            "catalog_revision": receipt["catalogRevision"],
+        }
+        values.update(overrides)
+        return (store or self.store).restore_for_compaction(
+            str(receipt["receiptId"]),
+            **values,  # type: ignore[arg-type]
+        )
+
     def test_load_receipt_pins_policy_catalog_and_body_hash_idempotently(self) -> None:
         first, created = self._pin()
         repeated, repeated_created = self._pin()
@@ -197,11 +218,7 @@ class RoomSkillReceiptTests(unittest.TestCase):
     def test_compaction_restores_exact_receipt_not_stage_reselection(self) -> None:
         receipt, _ = self._pin()
 
-        recovered = self.store.restore_for_compaction(
-            str(receipt["receiptId"]),
-            expected_capability_epoch=4,
-            catalog_revision="a" * 64,
-        )
+        recovered = self._restore(receipt)
 
         self.assertEqual(recovered["restoredFromReceiptId"], receipt["receiptId"])
         self.assertEqual(recovered["skillId"], receipt["skillId"])
@@ -213,20 +230,15 @@ class RoomSkillReceiptTests(unittest.TestCase):
         receipt, _ = self._pin()
 
         with self.assertRaises(SkillCatalogRevisionMismatch):
-            self.store.restore_for_compaction(
-                str(receipt["receiptId"]),
-                expected_capability_epoch=4,
+            self._restore(
+                receipt,
                 catalog_revision="b" * 64,
             )
 
         path = self.skills_root / "room-requirement-clarification/SKILL.md"
         path.write_text(path.read_text(encoding="utf-8") + "\nchanged\n", encoding="utf-8")
         with self.assertRaises(SkillContentRevisionMismatch):
-            self.store.restore_for_compaction(
-                str(receipt["receiptId"]),
-                expected_capability_epoch=4,
-                catalog_revision="a" * 64,
-            )
+            self._restore(receipt)
 
     def test_compaction_restore_keeps_the_pinned_policy_version(self) -> None:
         receipt, _ = self._pin()
@@ -242,13 +254,9 @@ class RoomSkillReceiptTests(unittest.TestCase):
         )
 
         with self.assertRaises(RoomSkillPolicyConflict):
-            changed_store.restore_for_compaction(
-                str(receipt["receiptId"]),
-                expected_capability_epoch=4,
-                catalog_revision="a" * 64,
-            )
+            self._restore(receipt, store=changed_store)
 
-    def test_revocation_epoch_invalidates_all_old_load_receipts(self) -> None:
+    def test_revocation_blocks_live_use_but_preserves_exact_sealed_session(self) -> None:
         receipt, _ = self._pin()
         revoked = self.store.revoke_before_epoch(
             "root:1",
@@ -272,34 +280,97 @@ class RoomSkillReceiptTests(unittest.TestCase):
                 revoked_at_ms=202,
             )
         with self.assertRaises(RoomSkillEpochRevoked):
-            self.store.restore_for_compaction(
-                str(receipt["receiptId"]),
-                expected_capability_epoch=4,
-                catalog_revision="a" * 64,
-            )
-        sealed = self.store.restore_for_compaction(
-            str(receipt["receiptId"]),
-            expected_capability_epoch=4,
-            catalog_revision="a" * 64,
-            allow_immediately_revoked=True,
-        )
+            self._restore(receipt)
+        sealed = self._restore(receipt, allow_revoked=True)
         self.assertEqual(sealed["restoredFromReceiptId"], receipt["receiptId"])
         next_receipt, created = self._pin(
             receipt_id="skill-receipt:2",
+            task_id="task:2",
             dispatch_id="dispatch:2",
+            session_id="session:2",
             idempotency_key="dispatch:2/requirements",
             capability_epoch=5,
             created_at_ms=201,
         )
         self.assertTrue(created)
         self.assertEqual(next_receipt["capabilityEpoch"], 5)
+        self.store.revoke_before_epoch(
+            "root:1",
+            new_capability_epoch=6,
+            revoked_at_ms=202,
+        )
+        self.assertEqual(
+            self._restore(receipt, allow_revoked=True)[
+                "restoredFromReceiptId"
+            ],
+            receipt["receiptId"],
+        )
+        self.assertEqual(
+            self._restore(next_receipt, allow_revoked=True)[
+                "restoredFromReceiptId"
+            ],
+            next_receipt["receiptId"],
+        )
+
+    def test_sealed_restore_rejects_wrong_lineage_and_newer_session_receipt(self) -> None:
+        receipt, _ = self._pin()
+        self.store.revoke_before_epoch(
+            "root:1",
+            new_capability_epoch=5,
+            revoked_at_ms=200,
+        )
+
+        for field, value in (
+            ("expected_root_id", "root:other"),
+            ("expected_task_id", "task:other"),
+            ("expected_dispatch_id", "dispatch:other"),
+            ("expected_session_id", "session:other"),
+        ):
+            with self.subTest(field=field), self.assertRaises(
+                RoomSkillEpochRevoked
+            ):
+                self._restore(
+                    receipt,
+                    allow_revoked=True,
+                    **{field: value},
+                )
+
+        self._pin(
+            receipt_id="skill-receipt:session-reused",
+            dispatch_id="dispatch:2",
+            session_id="session:1",
+            idempotency_key="dispatch:2/requirements",
+            capability_epoch=5,
+            created_at_ms=201,
+        )
         with self.assertRaises(RoomSkillEpochRevoked):
-            self.store.restore_for_compaction(
-                str(receipt["receiptId"]),
-                expected_capability_epoch=4,
-                catalog_revision="a" * 64,
-                allow_immediately_revoked=True,
-            )
+            self._restore(receipt, allow_revoked=True)
+
+    def test_parallel_dispatch_revocation_keeps_shared_epoch_available(self) -> None:
+        first, _ = self._pin()
+        second, _ = self._pin(
+            receipt_id="skill-receipt:2",
+            task_id="task:2",
+            dispatch_id="dispatch:2",
+            session_id="session:2",
+            idempotency_key="dispatch:2/requirements",
+            created_at_ms=101,
+        )
+
+        revoked = self.store.revoke_dispatch(
+            root_id="root:1",
+            dispatch_id="dispatch:1",
+            session_id="session:1",
+            capability_epoch=4,
+            revoked_at_ms=200,
+        )
+
+        self.assertEqual(revoked, 1)
+        self.assertEqual(self.store.latest_for_session("session:1")["state"], "revoked")
+        self.assertEqual(self.store.latest_for_session("session:2")["state"], "active")
+        restored = self._restore(second)
+        self.assertEqual(restored["restoredFromReceiptId"], second["receiptId"])
+        self.assertEqual(first["capabilityEpoch"], second["capabilityEpoch"])
 
     def test_receipt_cannot_be_created_from_multi_candidate_suggestion(self) -> None:
         selection = self.policy.select_stage("review")

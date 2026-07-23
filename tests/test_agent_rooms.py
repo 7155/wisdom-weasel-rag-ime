@@ -1159,6 +1159,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         )
         room = created["room"]
         self.assertEqual(room["workspaceRoots"], [str(self.root.resolve())])
+        self.assertEqual(room["executionMode"], "workspace_managed")
         self.assertEqual(room["lastEventSequence"], 1)
         self.assertEqual(len(room["participants"]), 3)
         hermes = next(item for item in room["participants"] if item["roleId"] == "companion-firstlight-v1")
@@ -1172,8 +1173,14 @@ class AgentRoomServiceTests(unittest.TestCase):
         future_session = self.service.sessions.get(str(future["sessionId"]))
         self.assertEqual(hermes_session["mode"], "coordinator")
         self.assertEqual(hermes_session["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(hermes_session["executionMode"], "workspace_managed")
+        self.assertTrue(hermes_session["workspaceScopeGranted"])
         self.assertEqual(current_session["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(current_session["executionMode"], "workspace_managed")
+        self.assertTrue(current_session["workspaceScopeGranted"])
         self.assertEqual(future_session["toolProfileVersion"], "control-center-v1")
+        self.assertEqual(future_session["executionMode"], "workspace_managed")
+        self.assertTrue(future_session["workspaceScopeGranted"])
         self.assertEqual(future_session["modelProfile"], "gpt/gpt-5.6-sol")
         self.assertEqual(future_session["thinkingLevel"], "max")
         self.assertEqual(future_session["workspaceRoots"], [str(self.root.resolve())])
@@ -1262,6 +1269,165 @@ class AgentRoomServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be deleted directly"):
             self.service.delete_session(str(hermes["sessionId"]))
         self.assertEqual(len(self.service.list_rooms()["items"]), 1)
+
+    def test_room_execution_mode_updates_all_participants_atomically(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room 执行权限",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                    {"roleId": "companion-future-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        room_id = str(room["id"])
+
+        read_only = self.service.update_room(
+            room_id,
+            {"executionMode": "read_only"},
+        )["room"]
+        self.assertEqual(read_only["executionMode"], "read_only")
+        for participant in read_only["participants"]:
+            session = self.service.sessions.get(str(participant["sessionId"]))
+            self.assertEqual(session["executionMode"], "read_only")
+            self.assertEqual(session["toolProfileVersion"], "subagent-readonly-v1")
+            self.assertFalse(session["workspaceScopeGranted"])
+
+        per_action = self.service.update_room(
+            room_id,
+            {"executionMode": "per_action"},
+        )["room"]
+        self.assertEqual(per_action["executionMode"], "per_action")
+        for participant in per_action["participants"]:
+            session = self.service.sessions.get(str(participant["sessionId"]))
+            self.assertEqual(session["executionMode"], "per_action")
+            self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+            self.assertFalse(session["workspaceScopeGranted"])
+
+        with self.assertRaisesRegex(ValueError, "workspace scope confirmation"):
+            self.service.update_room(
+                room_id,
+                {"executionMode": "workspace_managed"},
+            )
+        managed = self.service.update_room(
+            room_id,
+            {
+                "executionMode": "workspace_managed",
+                "workspaceScopeConfirmation": "APPROVE_WORKSPACE_SCOPE",
+            },
+        )["room"]
+        self.assertEqual(managed["executionMode"], "workspace_managed")
+        for participant in managed["participants"]:
+            session = self.service.sessions.get(str(participant["sessionId"]))
+            self.assertEqual(session["executionMode"], "workspace_managed")
+            self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+            self.assertTrue(session["workspaceScopeGranted"])
+
+        with self.assertRaisesRegex(ValueError, "explicit native confirmation"):
+            self.service.update_room(
+                room_id,
+                {"executionMode": "full_trust"},
+            )
+        full_trust = self.service.update_room(
+            room_id,
+            {
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )["room"]
+        self.assertEqual(full_trust["executionMode"], "full_trust")
+        for participant in full_trust["participants"]:
+            session = self.service.sessions.get(str(participant["sessionId"]))
+            self.assertEqual(session["executionMode"], "full_trust")
+            self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+            self.assertTrue(session["workspaceScopeGranted"])
+
+        changed_events = [
+            event
+            for event in self.service.rooms.list_events(room_id)
+            if event["eventType"] == "room_config_changed"
+            and event["payload"].get("status")
+            == "room_execution_mode_updated"
+        ]
+        self.assertEqual(
+            [event["payload"]["executionMode"] for event in changed_events],
+            ["read_only", "per_action", "workspace_managed", "full_trust"],
+        )
+
+    def test_room_configuration_and_execution_mode_share_one_transaction(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "原始 Room 名称",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        room_id = str(room["id"])
+        original_revision = int(room["configRevision"])
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "fallbackParticipantId",
+        ):
+            self.service.update_room(
+                room_id,
+                {
+                    "title": "不应半保存",
+                    "routingConfig": {
+                        "maxResponders": 1,
+                        "naturalJitter": 0,
+                        "fallbackParticipantId": "missing-participant",
+                    },
+                    "executionMode": "full_trust",
+                    "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+                },
+            )
+
+        unchanged = self.service.rooms.get(room_id)
+        self.assertEqual(unchanged["title"], "原始 Room 名称")
+        self.assertEqual(unchanged["executionMode"], "workspace_managed")
+        self.assertEqual(unchanged["configRevision"], original_revision)
+        for participant in unchanged["participants"]:
+            session = self.service.sessions.get(str(participant["sessionId"]))
+            self.assertEqual(session["executionMode"], "workspace_managed")
+            self.assertTrue(session["workspaceScopeGranted"])
+
+        updated = self.service.update_room(
+            room_id,
+            {
+                "title": "统一保存后的名称",
+                "description": "配置与权限一次提交",
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )["room"]
+        self.assertEqual(updated["title"], "统一保存后的名称")
+        self.assertEqual(updated["description"], "配置与权限一次提交")
+        self.assertEqual(updated["executionMode"], "full_trust")
+        self.assertEqual(updated["configRevision"], original_revision + 1)
+        for participant in updated["participants"]:
+            session = self.service.sessions.get(str(participant["sessionId"]))
+            self.assertEqual(session["executionMode"], "full_trust")
+            self.assertTrue(session["workspaceScopeGranted"])
+
+        changed = [
+            event
+            for event in self.service.rooms.list_events(room_id)
+            if event["eventType"] == "room_config_changed"
+        ][-1]
+        self.assertEqual(
+            changed["payload"]["status"],
+            "room_config_and_execution_mode_updated",
+        )
+        self.assertEqual(
+            changed["payload"]["changedFields"],
+            ["description", "executionMode", "title"],
+        )
 
     def test_multi_mentions_share_one_root_but_keep_independent_dispatches(self) -> None:
         room = self.service.create_room(
@@ -1873,10 +2039,29 @@ class AgentRoomServiceTests(unittest.TestCase):
         room = created["room"]
         self.assertEqual(room["roomKind"], "roleplay")
         self.assertEqual(room["workspaceRoots"], [])
+        self.assertEqual(room["executionMode"], "per_action")
         self.assertTrue(all(
             self.service.sessions.get(str(item["sessionId"]))["mode"] == "assistant"
             for item in room["participants"]
         ))
+        self.assertTrue(all(
+            self.service.sessions.get(str(item["sessionId"]))["executionMode"]
+            == "per_action"
+            for item in room["participants"]
+        ))
+        with self.assertRaisesRegex(ValueError, "roleplay Rooms cannot use"):
+            self.service.create_room(
+                {
+                    "title": "不允许托管的角色群聊",
+                    "roomKind": "roleplay",
+                    "executionMode": "workspace_managed",
+                    "workspaceRoots": [],
+                    "participants": [
+                        {"roleId": "companion-present-v1", "roleVersion": "1"},
+                        {"roleId": "companion-future-v1", "roleVersion": "1"},
+                    ],
+                }
+            )
         current, future = room["participants"]
         with patch.object(self.service, "prompt", return_value={"turnId": "turn:first"}):
             first = self.service.post_room_message(

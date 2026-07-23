@@ -81,6 +81,8 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(session["roleId"], "companion-future-v1")
         self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-sol")
         self.assertEqual(session["thinkingLevel"], "max")
+        self.assertEqual(session["executionMode"], "per_action")
+        self.assertFalse(session["workspaceScopeGranted"])
         self.assertFalse(session["projectContextEnabled"])
         self.assertFalse(session["piSkillsEnabled"])
         self.assertFalse(session["codexSkillsEnabled"])
@@ -152,6 +154,84 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(deleted["id"], session_id)
         with self.assertRaises(AgentSessionNotFound):
             self.store.get(session_id)
+
+    def test_workspace_execution_grant_is_invalidated_and_can_be_regranted(self) -> None:
+        first_root = self.tmp.name
+        second_root = str(Path(self.tmp.name) / "second")
+        Path(second_root).mkdir()
+        session = self.store.create(
+            title="托管工作区",
+            mode="coordinator",
+            execution_mode="workspace_managed",
+            workspace_roots=[first_root],
+            created_at_ms=100,
+        )
+
+        self.assertEqual(session["executionMode"], "workspace_managed")
+        self.assertTrue(session["workspaceScopeGranted"])
+        first_digest = session["workspaceScopeSha256"]
+
+        unchanged = self.store.set_runtime_policy(
+            str(session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="workspace_managed",
+            allowed_tools=None,
+            workspace_roots=[first_root],
+            updated_at_ms=200,
+        )
+        self.assertTrue(unchanged["workspaceScopeGranted"])
+        self.assertEqual(unchanged["workspaceScopeSha256"], first_digest)
+
+        changed = self.store.set_runtime_policy(
+            str(session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="workspace_managed",
+            allowed_tools=None,
+            workspace_roots=[second_root],
+            updated_at_ms=300,
+        )
+        self.assertFalse(changed["workspaceScopeGranted"])
+        self.assertEqual(changed["workspaceScopeSha256"], "")
+
+        regranted = self.store.set_runtime_policy(
+            str(session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="workspace_managed",
+            grant_workspace_scope=True,
+            allowed_tools=None,
+            workspace_roots=[second_root],
+            updated_at_ms=400,
+        )
+        self.assertTrue(regranted["workspaceScopeGranted"])
+        self.assertNotEqual(regranted["workspaceScopeSha256"], first_digest)
+
+        per_action = self.store.set_runtime_policy(
+            str(session["id"]),
+            mode="coordinator",
+            tool_profile_version="control-center-v1",
+            execution_mode="per_action",
+            allowed_tools=None,
+            workspace_roots=[second_root],
+            updated_at_ms=500,
+        )
+        self.assertFalse(per_action["workspaceScopeGranted"])
+        self.assertEqual(per_action["workspaceScopeSha256"], "")
+
+    def test_legacy_auto_approve_profile_is_not_persisted_as_new_policy(self) -> None:
+        session = self.store.create(
+            title="旧策略兼容",
+            mode="coordinator",
+            tool_profile_version="control-center-auto-approve-v1",
+            workspace_roots=[self.tmp.name],
+            created_at_ms=100,
+        )
+
+        self.assertEqual(session["executionMode"], "full_trust")
+        self.assertEqual(session["toolProfileVersion"], "control-center-v1")
+        self.assertTrue(session["workspaceScopeGranted"])
 
     def test_assistant_rejects_workspace_and_coordinator_persists_normalized_roots(self) -> None:
         with self.assertRaisesRegex(ValueError, "cannot carry workspace roots"):

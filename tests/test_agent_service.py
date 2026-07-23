@@ -243,10 +243,11 @@ class AgentServiceTests(unittest.TestCase):
                 "mode": "coordinator",
                 "workspaceRoots": [self.root.as_posix()],
                 "toolProfileVersion": "control-center-auto-approve-v1",
-                "dangerousModeConfirmation": "AUTO_APPROVE_ALL",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
             },
         )["session"]
-        self.assertEqual(dangerous["toolProfileVersion"], "control-center-auto-approve-v1")
+        self.assertEqual(dangerous["executionMode"], "full_trust")
+        self.assertEqual(dangerous["toolProfileVersion"], "control-center-v1")
         self.service.update_session(
             session_id,
             {
@@ -269,6 +270,92 @@ class AgentServiceTests(unittest.TestCase):
         deleted = self.service.delete_session(session_id)
         self.assertTrue(deleted["ok"])
         self.assertEqual(self.service.list_sessions()["items"], [])
+
+    def test_execution_modes_require_scope_confirmation_and_keep_one_policy_owner(self) -> None:
+        with self.assertRaisesRegex(ValueError, "workspace scope confirmation"):
+            self.service.create_session(
+                {
+                    "title": "未确认托管",
+                    "mode": "coordinator",
+                    "executionMode": "workspace_managed",
+                    "workspaceRoots": [self.root.as_posix()],
+                }
+            )
+        session = self.service.create_session(
+            {
+                "title": "权限模式",
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+            }
+        )["session"]
+        session_id = str(session["id"])
+        self.assertEqual(session["executionMode"], "per_action")
+
+        with self.assertRaisesRegex(ValueError, "workspace scope confirmation"):
+            self.service.update_session(
+                session_id,
+                {
+                    "mode": "coordinator",
+                    "executionMode": "workspace_managed",
+                    "workspaceRoots": [self.root.as_posix()],
+                },
+            )
+        managed = self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "executionMode": "workspace_managed",
+                "workspaceRoots": [self.root.as_posix()],
+                "workspaceScopeConfirmation": "APPROVE_WORKSPACE_SCOPE",
+            },
+        )["session"]
+        self.assertEqual(managed["executionMode"], "workspace_managed")
+        self.assertTrue(managed["workspaceScopeGranted"])
+
+        extra_root = self.root / "second"
+        extra_root.mkdir()
+        with self.assertRaisesRegex(ValueError, "workspace scope confirmation"):
+            self.service.update_session(
+                session_id,
+                {
+                    "mode": "coordinator",
+                    "executionMode": "workspace_managed",
+                    "workspaceRoots": [extra_root.as_posix()],
+                },
+            )
+        read_only = self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "executionMode": "read_only",
+                "workspaceRoots": [self.root.as_posix()],
+            },
+        )["session"]
+        self.assertEqual(read_only["executionMode"], "read_only")
+        self.assertEqual(read_only["toolProfileVersion"], "subagent-readonly-v1")
+        self.assertFalse(read_only["workspaceScopeGranted"])
+
+        with self.assertRaisesRegex(ValueError, "explicit native confirmation"):
+            self.service.update_session(
+                session_id,
+                {
+                    "mode": "coordinator",
+                    "executionMode": "full_trust",
+                    "workspaceRoots": [self.root.as_posix()],
+                },
+            )
+        full_trust = self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "executionMode": "full_trust",
+                "workspaceRoots": [self.root.as_posix()],
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )["session"]
+        self.assertEqual(full_trust["executionMode"], "full_trust")
+        self.assertEqual(full_trust["toolProfileVersion"], "control-center-v1")
+        self.assertTrue(full_trust["workspaceScopeGranted"])
 
     def test_rich_history_hydrates_from_sidecar_after_restart_and_compacted_snapshot(self) -> None:
         session = self.service.create_session({"title": "Rich restart"})["session"]
@@ -361,7 +448,7 @@ class AgentServiceTests(unittest.TestCase):
                 "mode": "coordinator",
                 "workspaceRoots": [self.root.as_posix()],
                 "toolProfileVersion": "control-center-auto-approve-v1",
-                "dangerousModeConfirmation": "AUTO_APPROVE_ALL",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
             },
         )
         approval = self.service.sessions.create_approval(
@@ -685,21 +772,53 @@ class AgentServiceTests(unittest.TestCase):
                 "trigger": "compaction",
                 "summary": "已经完成首轮召回，接下来验证压缩刷新。",
                 "recentMessages": [
-                    {"role": "user", "text": "继续完成 Session 记忆刷新"},
+                    {
+                        "role": "user",
+                        "text": "继续完成 Session 记忆刷新；验收标记 ORIGINAL-RECOVERY-AC",
+                    },
                     {"role": "assistant", "text": "我已经完成首轮召回"},
                 ],
+                "agentSkillRecovery": {
+                    "schemaVersion": "rag-ime.agent-skill-recovery.v1",
+                    "items": [
+                        {
+                            "name": "notfor",
+                            "contentRevision": "a" * 64,
+                        }
+                    ],
+                },
+                "agentToolRecovery": {
+                    "schemaVersion": "rag-ime.agent-tool-recovery.v1",
+                    "catalogRevision": "b" * 64,
+                    "items": [
+                        {
+                            "name": "workspace_read",
+                            "schemaRevision": "c" * 64,
+                        }
+                    ],
+                },
             }
         )
 
         context = refreshed["result"]["sessionContext"]
         self.assertIn("## 当前计划", context)
         self.assertIn("验证压缩后的 Provider 上下文", context)
-        self.assertIn("## 最近对话", context)
+        self.assertIn("## 压缩恢复包（本 epoch 唯一）", context)
+        self.assertEqual(context.count("## 压缩恢复包（本 epoch 唯一）"), 1)
+        self.assertIn("ORIGINAL-RECOVERY-AC", context)
         self.assertIn("我已经完成首轮召回", context)
+        self.assertIn("notfor@sha256:" + "a" * 64, context)
+        self.assertIn("workspace_read@sha256:" + "c" * 64, context)
+        self.assertNotIn("## 最近对话", context)
         self.assertNotIn("命中通道", context)
         self.assertNotIn("score=", context)
+        self.assertTrue(
+            refreshed["result"]["compactionRecoveryPacket"]
+        )
         active = self.service.context_runtime.materialize(session_id)
         self.assertEqual(active["itemIds"], [refreshed["result"]["itemId"]])
+        self.assertEqual(active["prompt"].count("ORIGINAL-RECOVERY-AC"), 1)
+        self.assertIn("workspace_read@sha256:" + "c" * 64, active["prompt"])
         self.assertEqual(
             len(self.service.context_runtime.list_items(session_id, status="expired")),
             1,
@@ -1820,18 +1939,21 @@ class AgentServiceTests(unittest.TestCase):
                 "provider": "gpt",
                 "id": "gpt-5.6-luna",
                 "name": "GPT-5.6 Luna",
+                "reasoning": True,
                 "thinkingLevels": ["off", "max"],
             },
             {
                 "provider": "gpt",
                 "id": "gpt-5.6-terra",
                 "name": "GPT-5.6 Terra",
+                "reasoning": True,
                 "thinkingLevels": ["off", "max"],
             },
             {
                 "provider": "gpt",
                 "id": "gpt-5.6-sol",
                 "name": "GPT-5.6 Sol",
+                "reasoning": True,
                 "thinkingLevels": ["off", "xhigh"],
             },
         ]
@@ -1853,27 +1975,50 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(initial_roles["companion-present-v1"]["thinkingLevel"], "max")
         self.assertEqual(initial_roles["companion-future-v1"]["modelProfile"], "gpt/gpt-5.6-sol")
         self.assertEqual(initial_roles["companion-future-v1"]["thinkingLevel"], "max")
-        self.assertEqual(initial_roles["companion-flash-v1"]["modelProfile"], "deepseek/deepseek-v4-flash")
+        self.assertEqual(initial_roles["companion-flash-v1"]["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(initial_roles["companion-flash-v1"]["thinkingLevel"], "low")
         with patch.object(service.runtime, "available_models", return_value=available_models):
             catalog = service.role_model_catalog()
         self.assertEqual(catalog["providers"][0]["models"][0]["name"], "GPT-5.6 Luna")
         with patch.object(service.runtime, "available_models", return_value=available_models):
-            with self.assertRaisesRegex(ValueError, "fixed"):
+            updated = service.update_role_runtime_defaults(
+                {"roleId": "companion-present-v1", "roleVersion": "1", "provider": "gpt",
+                 "modelId": "gpt-5.6-luna", "thinkingLevel": "max"}
+            )
+            with self.assertRaisesRegex(ValueError, "必须启用"):
                 service.update_role_runtime_defaults(
                     {"roleId": "companion-present-v1", "roleVersion": "1", "provider": "gpt",
-                     "modelId": "gpt-5.6-terra", "thinkingLevel": "max"}
+                     "modelId": "gpt-5.6-luna", "thinkingLevel": "off"}
                 )
+        self.assertEqual(updated["defaults"]["modelProfile"], "gpt/gpt-5.6-luna")
         with patch.object(service.runtime, "set_thinking_level") as set_thinking:
             session = service.create_session(
                 {"title": "继承角色默认", "roleId": "companion-present-v1", "roleVersion": "1"}
             )["session"]
-        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-terra")
+        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-luna")
         self.assertEqual(session["thinkingLevel"], "max")
         set_thinking.assert_not_called()
 
         with self.assertRaisesRegex(ValueError, "cannot be overridden"):
             service.create_session({"title": "本轮显式模型", "roleId": "companion-present-v1",
                                     "roleVersion": "1", "modelProfile": "gpt/gpt-5.6-sol"})
+
+        with patch.object(
+            service.runtime,
+            "available_models",
+            return_value=[{
+                "provider": "deepseek",
+                "id": "deepseek-v4-flash",
+                "name": "DeepSeek V4 Flash",
+                "reasoning": False,
+                "thinkingLevels": ["off"],
+            }],
+        ):
+            with self.assertRaisesRegex(ValueError, "必须支持推理"):
+                service.update_role_runtime_defaults(
+                    {"roleId": "companion-present-v1", "roleVersion": "1", "provider": "deepseek",
+                     "modelId": "deepseek-v4-flash", "thinkingLevel": "off"}
+                )
 
     def test_command_catalog_exposes_only_pi_prompt_commands_and_degrades_cleanly(self) -> None:
         session = self.service.create_session({"title": "命令目录"})["session"]
@@ -2200,6 +2345,39 @@ class AgentServiceTests(unittest.TestCase):
             overridden = pi_runtime_config_from_settings(settings)
         self.assertFalse(overridden.enabled)
         self.assertEqual(overridden.idle_timeout_seconds, 12)
+
+    def test_debug_text_opt_in_persists_bounded_agent_context_snapshots(self) -> None:
+        settings = {
+            "agent": {"pi": {"enabled": True}},
+            "privacy": {"debugIncludeText": True},
+        }
+        with patch.dict(
+            "os.environ",
+            {"RAG_IME_APP_SUPPORT_DIR": str(self.root / "support")},
+            clear=True,
+        ):
+            configured = pi_runtime_config_from_settings(settings)
+
+        self.assertEqual(
+            configured.debug_context_dir,
+            self.root / "support" / "Agent" / "debug-context",
+        )
+        self.assertEqual(configured.debug_context_max_bytes, 64 * 1024 * 1024)
+
+        with patch.dict(
+            "os.environ",
+            {
+                "RAG_IME_APP_SUPPORT_DIR": str(self.root / "support"),
+                "RAG_IME_PI_DEBUG_CONTEXT_DIR": str(self.root / "explicit"),
+                "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES": "4096",
+            },
+            clear=True,
+        ):
+            explicit = pi_runtime_config_from_settings(
+                {"privacy": {"debugIncludeText": False}}
+            )
+        self.assertEqual(explicit.debug_context_dir, self.root / "explicit")
+        self.assertEqual(explicit.debug_context_max_bytes, 4096)
 
     def test_approval_api_lists_and_rejects_but_cannot_fake_an_approval(self) -> None:
         session = self.service.create_session({"title": "审批"})["session"]

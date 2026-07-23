@@ -150,8 +150,8 @@ _FLASH_DEFAULTS = PersonaDefaults(
     model_policy="fixed",
     memory_policy="personal-evidence-v1",
     tool_profile_version="control-center-v1",
-    model_profile="deepseek/deepseek-v4-flash",
-    thinking_level="off",
+    model_profile="gpt/gpt-5.6-luna",
+    thinking_level="low",
 )
 
 _PRESENT_COMPANION = PersonaManifest(

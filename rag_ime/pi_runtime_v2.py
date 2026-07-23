@@ -40,6 +40,7 @@ from .pi_runtime import (
     _public_pi_model,
     _public_message_queue,
     _public_usage,
+    _provider_retry_status,
     _redact_mapping,
     _redact_runtime_text,
     _ui_confirmation_value,
@@ -151,9 +152,15 @@ class PiRuntimeHostClient:
         self._lock = threading.RLock()
         self._write_lock = threading.Lock()
         self._pending: dict[str, queue.Queue[object]] = {}
+        # Host responses and host events share stdout, but they must not share
+        # one execution lane. Event projection can touch SQLite, Room state, or
+        # even issue a nested control RPC; running it in the stdout reader can
+        # therefore delay or deadlock an otherwise immediate command ACK.
+        self._event_queue: queue.Queue[object] = queue.Queue()
         self._stderr: deque[str] = deque(maxlen=32)
         self._process: subprocess.Popen[bytes] | None = None
         self._stdout_thread: threading.Thread | None = None
+        self._event_thread: threading.Thread | None = None
         self._stderr_thread: threading.Thread | None = None
         self._stopping = False
 
@@ -206,9 +213,17 @@ class PiRuntimeHostClient:
                 self._process = None
                 raise
             self._stopping = False
+            # A client is normally one-shot, but resetting the lane here keeps
+            # an explicit stop/start from inheriting the previous sentinel.
+            self._event_queue = queue.Queue()
             self._stdout_thread = threading.Thread(
                 target=self._read_stdout,
                 name="rag-ime-pi-host-stdout",
+                daemon=True,
+            )
+            self._event_thread = threading.Thread(
+                target=self._read_events,
+                name="rag-ime-pi-host-events",
                 daemon=True,
             )
             self._stderr_thread = threading.Thread(
@@ -216,6 +231,7 @@ class PiRuntimeHostClient:
                 name="rag-ime-pi-host-stderr",
                 daemon=True,
             )
+            self._event_thread.start()
             self._stdout_thread.start()
             self._stderr_thread.start()
         return self.send("hello")
@@ -283,7 +299,7 @@ class PiRuntimeHostClient:
                 process.wait(timeout=2)
         self._fail_pending(PiRuntimeError("Pi Runtime Host stopped"))
         current = threading.current_thread()
-        for thread in (self._stdout_thread, self._stderr_thread):
+        for thread in (self._stdout_thread, self._event_thread, self._stderr_thread):
             if thread is not None and thread is not current:
                 thread.join(timeout=2)
         for stream in (process.stdin, process.stdout, process.stderr):
@@ -318,10 +334,14 @@ class PiRuntimeHostClient:
                 if waiter is not None:
                     waiter.put_nowait(value)
                 continue
-            try:
-                self.on_event(value)
-            except Exception as exc:  # Keep other Sessions alive when one adapter fails.
-                protocol_error = f"Pi Runtime Host event adapter failed: {exc}"
+            # Never run product event projection in the response reader. A slow
+            # observer must not hold a Room dispatch lease open while the typed
+            # dispatch ACK is already waiting on the next JSONL line.
+            self._event_queue.put(value)
+        # The stdout reader owns the event-lane sentinel. It is emitted only
+        # after every preceding JSONL event has been queued, so stop/EOF cannot
+        # cut in front of a terminal agent_settled projection.
+        self._event_queue.put(None)
         exit_code = process.poll()
         if exit_code is None:
             try:
@@ -334,6 +354,9 @@ class PiRuntimeHostClient:
         # Wake RPC callers only after the manager and durable process registry
         # agree the Host is terminal; callers must not observe a stale ready state.
         self._fail_pending(PiRuntimeError(error or "Pi Runtime Host exited"))
+        event_thread = self._event_thread
+        if event_thread is not None and event_thread is not threading.current_thread():
+            event_thread.join(timeout=2)
         stderr_thread = self._stderr_thread
         if stderr_thread is not None and stderr_thread is not threading.current_thread():
             stderr_thread.join(timeout=1)
@@ -343,6 +366,20 @@ class PiRuntimeHostClient:
         with self._lock:
             if self._process is process:
                 self._process = None
+
+    def _read_events(self) -> None:
+        while True:
+            value = self._event_queue.get()
+            if value is None:
+                return
+            assert isinstance(value, dict)
+            try:
+                self.on_event(value)
+            except Exception:
+                # Event projections are secondary to the Runtime protocol. A
+                # failed projection cannot stop response routing or other
+                # Sessions; the event stores keep their own observable errors.
+                continue
 
     def _read_stderr(self) -> None:
         process = self._process
@@ -857,6 +894,12 @@ class PiRuntimeHostManager:
         )
         result: list[dict[str, object]] = []
         current_turn_id = ""
+        last_assistant_fingerprint: tuple[str, str] | None = None
+        durable_assistant_counts = _durable_public_assistant_counts(
+            raw_entries,
+            session_id=session_id,
+        )
+        emitted_assistant_counts: dict[str, int] = {}
         for raw in raw_messages:
             if not isinstance(raw, Mapping) or not _pi_message_is_public(raw):
                 continue
@@ -864,14 +907,50 @@ class PiRuntimeHostManager:
             message_id = _pi_message_id(raw, "history")
             if role == "user" or not current_turn_id:
                 current_turn_id = f"history:{message_id}"
+                last_assistant_fingerprint = None
+            payload = _pi_message_payload(
+                raw,
+                session_id=session_id,
+                turn_id=current_turn_id,
+                media_resolver=self._media_resolver,
+                message_id=message_id,
+            ).to_payload()
+            if role == "assistant":
+                projection_fingerprint = _assistant_projection_fingerprint(
+                    payload
+                )
+                durable_count = durable_assistant_counts.get(
+                    projection_fingerprint,
+                    0,
+                )
+                emitted_count = emitted_assistant_counts.get(
+                    projection_fingerprint,
+                    0,
+                )
+                # session.messages can replay a previously settled assistant
+                # object after a native follow-up. The durable transcript is
+                # authoritative for how many semantic copies really exist.
+                # This removes a replay even when it crosses a new user turn,
+                # while preserving two intentionally identical replies when
+                # the transcript contains both.
+                if durable_count and emitted_count >= durable_count:
+                    continue
+                fingerprint = (
+                    current_turn_id,
+                    projection_fingerprint,
+                )
+                # Pi may transiently project the same settled assistant object
+                # twice after a native follow-up. Its JSONL transcript contains
+                # one message, so collapse only an adjacent exact duplicate in
+                # the same user turn. Identical replies in later turns remain.
+                if fingerprint == last_assistant_fingerprint:
+                    continue
+                last_assistant_fingerprint = fingerprint
+                emitted_assistant_counts[projection_fingerprint] = (
+                    emitted_count + 1
+                )
             result.append(
-                _pi_message_payload(
-                    raw,
-                    session_id=session_id,
-                    turn_id=current_turn_id,
-                    media_resolver=self._media_resolver,
-                    message_id=message_id,
-                ).to_payload()
+                payload
             )
         telemetry = snapshot.get("telemetry")
         raw_queue = _mapping(snapshot.get("messageQueue"))
@@ -2008,6 +2087,17 @@ class PiRuntimeHostManager:
                 str(raw.get("trigger") or raw.get("reason") or "").strip() or "automatic",
             )
             return
+        if event_type in {"auto_retry_start", "auto_retry_end"}:
+            self.events.publish(
+                session_id,
+                "status_changed",
+                _provider_retry_status(
+                    raw,
+                    started=event_type == "auto_retry_start",
+                ),
+                turn_id=turn_id,
+            )
+            return
         if event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
             mapped_type = {
                 "tool_execution_start": "tool_started",
@@ -2461,6 +2551,63 @@ def _pi_history_entry_timestamps(raw_entries: list[object]) -> dict[str, deque[i
             continue
         timestamps.setdefault(fingerprint, deque()).append(created_at_ms)
     return timestamps
+
+
+def _durable_public_assistant_counts(
+    raw_entries: list[object],
+    *,
+    session_id: str,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for entry_value in raw_entries:
+        entry = _mapping(entry_value)
+        if str(entry.get("type") or "") != "message":
+            continue
+        message = _mapping(entry.get("message"))
+        if (
+            str(message.get("role") or "").lower() != "assistant"
+            or not _pi_message_is_public(message)
+        ):
+            continue
+        payload = _pi_message_payload(
+            message,
+            session_id=session_id,
+            turn_id="durable-transcript",
+            message_id=str(entry.get("id") or "durable-transcript"),
+        ).to_payload()
+        fingerprint = _assistant_projection_fingerprint(payload)
+        counts[fingerprint] = counts.get(fingerprint, 0) + 1
+    return counts
+
+
+def _assistant_projection_fingerprint(
+    payload: Mapping[str, object],
+) -> str:
+    return json.dumps(
+        {
+            "blocks": [
+                {
+                    key: block.get(key)
+                    for key in (
+                        "type",
+                        "status",
+                        "presentationKind",
+                        "data",
+                        "summary",
+                        "visibility",
+                    )
+                    if block.get(key) is not None
+                }
+                for block in payload.get("blocks") or []
+                if isinstance(block, Mapping)
+            ],
+            "attachments": payload.get("attachments") or [],
+            "citations": payload.get("citations") or [],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _pi_history_message_fingerprint(message: Mapping[str, object]) -> str:

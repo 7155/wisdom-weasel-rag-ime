@@ -70,11 +70,19 @@ def load_pi_provider_config(path: str | Path) -> PiProviderBundle:
         environment_name = f"RAG_IME_PI_{provider_id.upper().replace('-', '_')}_API_KEY"
         environment[environment_name] = api_key
         providers[provider_id] = {
-            # Only provide the connection and model selection. Pi owns the
-            # referenced model's API transport, compatibility and capabilities.
+            # Inherit the catalog model's public capabilities, but do not
+            # assume an arbitrary OpenAI-compatible gateway implements the
+            # native client-side tool-search protocol. Loaded tools stay in
+            # the ordinary append-only tool list unless a verified endpoint
+            # explicitly opts in at the Pi configuration boundary.
             "modelCatalogProvider": model_catalog_provider,
             "baseUrl": base_url,
             "apiKey": f"${environment_name}",
+            **(
+                {"compat": {"supportsToolSearch": False}}
+                if model_catalog_provider == "openai"
+                else {}
+            ),
             "models": models,
         }
         if not first_provider:

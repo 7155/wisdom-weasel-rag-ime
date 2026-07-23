@@ -105,7 +105,6 @@ from .agent_roles import PersonaManifest
 from .agent_sessions import AgentSessionStore
 from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
-    DANGEROUS_AUTO_APPROVE_TOOL_PROFILE,
 )
 from .agent_wake_scheduler import AgentWakeScheduleStore, AgentWakeScheduler
 from .agent_wake_application import AgentWakeApplicationService
@@ -509,6 +508,9 @@ class AgentService:
                 notify_intercom=lambda: (
                     getattr(self, "room_intercom", None)
                     and self.room_intercom.notify()
+                ),
+                record_runtime_failure=(
+                    self.room_kernel_application.record_runtime_failure
                 ),
             )
         )
@@ -2753,6 +2755,7 @@ class AgentService:
                     self.sessions.get(session_id)
                 )
             ),
+            session_resolver=self.sessions.get,
             product_tool_manifest_provider=self._room_product_tool_manifests,
         )
         self.room_kernel_worker = RoomKernelWorker(
@@ -3180,7 +3183,12 @@ def agent_service_from_environment(
 def pi_runtime_config_from_settings(settings: Mapping[str, object]) -> PiRuntimeConfig:
     agent = settings.get("agent") if isinstance(settings.get("agent"), Mapping) else {}
     pi = agent.get("pi") if isinstance(agent.get("pi"), Mapping) else {}
-    return PiRuntimeConfig.from_environment(
+    privacy = (
+        settings.get("privacy")
+        if isinstance(settings.get("privacy"), Mapping)
+        else {}
+    )
+    runtime_config = PiRuntimeConfig.from_environment(
         enabled_default=_bool(pi.get("enabled")),
         idle_timeout_default=_integer(
             pi.get("idleTimeoutSeconds"),
@@ -3189,6 +3197,16 @@ def pi_runtime_config_from_settings(settings: Mapping[str, object]) -> PiRuntime
             maximum=86400,
         ),
     )
+    if (
+        runtime_config.debug_context_dir is None
+        and _bool(privacy.get("debugIncludeText"))
+    ):
+        runtime_config = replace(
+            runtime_config,
+            debug_context_dir=runtime_config.agent_dir.parent / "debug-context",
+            debug_context_max_bytes=64 * 1024 * 1024,
+        )
+    return runtime_config
 
 
 def agent_service_from_settings(
@@ -3286,12 +3304,13 @@ def _room_skill_stage(dispatch: Mapping[str, object]) -> str:
 
     return {
         "execute": "implementation",
-        "review": "review",
+        "review": "vision-review",
         "revise": "feedback",
         "retry": "debugging",
         "resume": "implementation",
         "wake": "implementation",
         "callback": "handoff",
+        "close": "closure",
     }.get(str(dispatch.get("intentKind") or ""), "implementation")
 
 
@@ -3346,12 +3365,9 @@ def _room_runtime_binding_hash(
 def _room_effective_tool_profile(
     session_profile: str,
 ) -> str:
-    """Keep Session permissions complete while disabling Room auto-approval."""
+    """Tool visibility is independent from the unified execution mode."""
 
-    normalized = str(session_profile or CONTROL_CENTER_TOOL_PROFILE).strip()
-    if normalized == DANGEROUS_AUTO_APPROVE_TOOL_PROFILE:
-        return CONTROL_CENTER_TOOL_PROFILE
-    return normalized
+    return str(session_profile or CONTROL_CENTER_TOOL_PROFILE).strip()
 
 
 def _required_text(payload: Mapping[str, object], key: str) -> str:

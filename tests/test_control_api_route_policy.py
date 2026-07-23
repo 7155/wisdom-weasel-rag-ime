@@ -185,7 +185,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
                 "toolProfileVersion": "control-center-auto-approve-v1",
                 "toolAllowlistMode": "profile",
                 "workspaceRoots": ["/tmp/project"],
-                "dangerousModeConfirmation": "AUTO_APPROVE_ALL",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
             },
         ):
             with self.subTest(body=body):

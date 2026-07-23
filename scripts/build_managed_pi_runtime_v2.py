@@ -40,6 +40,7 @@ _ROOM_RUNTIME_SOURCE_KEYS = (
     "toolArtifacts",
     "providerContextJournal",
     "sessionContextRefresh",
+    "summarizationCompletion",
     "cancellationReceipts",
     "roomSettleLifecycle",
     "workflowControl",

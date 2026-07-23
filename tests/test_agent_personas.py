@@ -86,18 +86,21 @@ class AgentPersonaStoreTests(unittest.TestCase):
         coordinator = self.store.create({**base, "selectableModes": ["coordinator"]})
         self.assertEqual(coordinator.selectable_modes, ("coordinator",))
 
-    def test_builtin_defaults_are_fixed_while_user_defaults_are_persistent(self) -> None:
+    def test_builtin_and_user_runtime_defaults_are_persistent(self) -> None:
         self.assertEqual(
             self.store.runtime_defaults("companion-present-v1", "1"),
             {"modelProfile": "gpt/gpt-5.6-terra", "thinkingLevel": "max"},
         )
-        with self.assertRaisesRegex(ValueError, "fixed"):
-            self.store.set_runtime_defaults(
-                "companion-present-v1",
-                "1",
-                model_profile="gpt/gpt-5.6-terra",
-                thinking_level="high",
-            )
+        builtin = self.store.set_runtime_defaults(
+            "companion-present-v1",
+            "1",
+            model_profile="gpt/gpt-5.6-luna",
+            thinking_level="high",
+        )
+        self.assertEqual(
+            self.store.runtime_defaults("companion-present-v1", "1"),
+            builtin,
+        )
 
         created = self.store.create({
             "displayName": "测试角色", "tagline": "测试定位", "summary": "测试摘要",

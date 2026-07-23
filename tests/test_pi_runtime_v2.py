@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import time
 import unittest
 from dataclasses import replace
@@ -129,7 +130,41 @@ for line in sys.stdin:
                         "content": [{"type": "text", "text": params["message"]}]}
         assistant = {"id": assistant_entry_id, "role": "assistant", "timestamp": 101,
                      "content": [{"type": "text", "text": "host reply for " + session_id}]}
-        sessions[session_id]["messages"].extend([user_message, assistant])
+        if params["message"] == "duplicate-across-native-followup":
+            previous_messages = list(sessions[session_id]["messages"])
+            previous_assistant = next(
+                item for item in reversed(previous_messages)
+                if item.get("role") == "assistant"
+            )
+            assistant = {
+                **assistant,
+                "content": [{"type": "text", "text": "second host reply for " + session_id}],
+            }
+            replayed_assistant = {
+                **previous_assistant,
+                "id": str(previous_assistant["id"]) + "-replayed",
+                "timestamp": 102,
+            }
+            sessions[session_id]["messages"].extend(
+                [user_message, replayed_assistant, assistant]
+            )
+            durable_messages = [*previous_messages, user_message, assistant]
+            sessions[session_id]["entries"] = [
+                {
+                    "type": "message",
+                    "id": "durable-" + str(message["id"]),
+                    "message": message,
+                }
+                for message in durable_messages
+            ]
+        else:
+            sessions[session_id]["messages"].extend([user_message, assistant])
+        if params["message"] == "duplicate-final-snapshot":
+            sessions[session_id]["messages"].append({
+                **assistant,
+                "id": assistant_entry_id + "-duplicate",
+                "timestamp": 102,
+            })
         sessions[session_id].setdefault("forkItems", []).extend([
             {"entryId": user_entry_id, "text": params["message"], "role": "user", "createdAtMs": 100},
             {"entryId": assistant_entry_id, "text": "host reply for " + session_id,
@@ -220,6 +255,14 @@ for line in sys.stdin:
     elif method == "room.dispatch":
         if params.get("message") == "crash-host-after-room-dispatch":
             os._exit(23)
+        if params.get("message") == "event-before-room-dispatch-ack":
+            event(session_id, "room-turn-" + params["dispatchId"], params["idempotencyKey"], {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "text_delta", "contentIndex": 0, "delta": "working",
+                },
+                "message": {"role": "assistant", "id": "assistant-before-ack"},
+            })
         if params.get("roomCapability") is not None:
             sessions[session_id]["roomCapability"] = params["roomCapability"]
         if params.get("roomProviderContext") is not None:
@@ -537,6 +580,53 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 lease_token="lease-token:crashed-host",
             )
         self.assertEqual(self.runtime.runtime_status()["status"], "faulted")
+
+    def test_room_dispatch_ack_is_not_blocked_by_slow_event_projection(self) -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=lambda _session: {
+                "providerContext": "bounded-room-context",
+            },
+            tool_manifest_provider=lambda _session: [],
+        )
+        observer_started = threading.Event()
+        release_observer = threading.Event()
+
+        def slow_projection(envelope) -> None:
+            if envelope.event_type != "text_delta":
+                return
+            observer_started.set()
+            release_observer.wait(timeout=2.0)
+
+        remove_observer = self.events.add_observer(slow_projection)
+        try:
+            started_at = time.monotonic()
+            receipt = self.runtime.dispatch_room(
+                {
+                    "targetSessionId": str(self.first["id"]),
+                    "rootId": "root:event-lane",
+                    "dispatchId": "dispatch:event-lane",
+                    "generation": 0,
+                    "capabilityEpoch": 1,
+                    "idempotencyKey": "event-lane:1",
+                },
+                message="event-before-room-dispatch-ack",
+                lease_token="lease:event-lane",
+            )
+            elapsed = time.monotonic() - started_at
+
+            self.assertTrue(observer_started.wait(timeout=1.0))
+            self.assertEqual(receipt["receiptKind"], "dispatch_accepted")
+            self.assertLess(elapsed, 1.0)
+        finally:
+            release_observer.set()
+            remove_observer()
 
     def test_room_dispatch_reuses_session_for_delta_and_task_switch_epoch(self) -> None:
         self.runtime.stop()
@@ -980,6 +1070,117 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(completed[-1].payload["terminalEvent"], "agent_settled")
         messages = self.runtime.messages(session_id)
         self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+
+    def test_provider_retry_events_are_projected_without_raw_diagnostics(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-provider-retry"
+        with self.runtime._lock:
+            self.runtime._states[session_id].turn_id = turn_id
+
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "auto_retry_start",
+                "attempt": 2,
+                "maxAttempts": 3,
+                "delayMs": 4_000,
+                "errorMessage": "private upstream diagnostic",
+            },
+        })
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "agent_end",
+                "willRetry": True,
+                "messages": [{
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "private upstream diagnostic",
+                    "content": [],
+                }],
+            },
+        })
+
+        events = self.events.replay(session_id)[0]
+        statuses = [
+            event for event in events
+            if event.event_type == "status_changed"
+            and event.payload.get("phase") == "provider_retry"
+        ]
+        self.assertEqual(statuses[-1].payload["status"], "retrying")
+        self.assertEqual(statuses[-1].payload["attempt"], 2)
+        self.assertEqual(statuses[-1].payload["maxAttempts"], 3)
+        self.assertFalse(any(event.event_type == "turn_failed" for event in events))
+        self.assertNotIn(
+            "private upstream diagnostic",
+            json.dumps(statuses[-1].payload, ensure_ascii=False),
+        )
+
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "auto_retry_end",
+                "attempt": 2,
+                "success": False,
+                "finalError": "must not escape",
+            },
+        })
+        statuses = [
+            event for event in self.events.replay(session_id)[0]
+            if event.event_type == "status_changed"
+            and event.payload.get("phase") == "provider_retry"
+        ]
+        self.assertEqual(statuses[-1].payload["status"], "working")
+        self.assertEqual(statuses[-1].payload["activityState"], "failed")
+        self.assertNotIn(
+            "must not escape",
+            json.dumps(statuses[-1].payload, ensure_ascii=False),
+        )
+
+    def test_snapshot_collapses_only_adjacent_duplicate_assistant_projection(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.prompt(session_id, "duplicate-final-snapshot")
+        _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+
+        messages = self.runtime.messages(session_id)
+
+        self.assertEqual([item["role"] for item in messages], ["user", "assistant"])
+        self.assertEqual(
+            messages[-1]["blocks"][0]["data"]["text"],
+            f"host reply for {session_id}",
+        )
+
+    def test_snapshot_uses_durable_entries_to_remove_cross_turn_assistant_replay(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.prompt(session_id, "first turn")
+        _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+        self.runtime.prompt(session_id, "duplicate-across-native-followup")
+        _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+
+        messages = self.runtime.messages(session_id)
+        assistant_texts = [
+            item["blocks"][0]["data"]["text"]
+            for item in messages
+            if item["role"] == "assistant"
+        ]
+
+        self.assertEqual(
+            assistant_texts,
+            [
+                f"host reply for {session_id}",
+                f"second host reply for {session_id}",
+            ],
+        )
 
     def test_v2_exposes_managed_skill_commands_to_the_composer(self) -> None:
         session_id = str(self.first["id"])

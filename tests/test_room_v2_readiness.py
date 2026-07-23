@@ -32,7 +32,7 @@ class RoomV2ReadinessTests(unittest.TestCase):
                 baseline = apply_database_migrations(conn, migrations_dir=old_migrations, applied_at_ms=1)
                 upgraded = apply_database_migrations(conn, applied_at_ms=2)
                 self.assertEqual(baseline.current_version, 65)
-                self.assertEqual(upgraded.current_version, 103)
+                self.assertEqual(upgraded.current_version, 105)
                 self.assertEqual(
                     upgraded.applied_versions,
                     tuple(migration.version for migration in load_migrations() if migration.version > 65),
@@ -68,7 +68,10 @@ class RoomV2ReadinessTests(unittest.TestCase):
             )
             self.assertIsNone(result)
             self.assertFalse(path.exists())
-            self.assertEqual(tuple(room_runtime_registry()), ("room_state", "room_post", "room_commit"))
+            self.assertEqual(
+                tuple(room_runtime_registry()),
+                ("room_state", "room_collaborate", "room_post", "room_commit"),
+            )
 
     def test_default_off_cohort_gate_and_rollback_switch(self) -> None:
         with patch.dict(os.environ, {}, clear=True):

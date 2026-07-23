@@ -573,9 +573,10 @@ function PermissionPicker({
   const [open, setOpen] = useState(false);
   const [dangerousOpen, setDangerousOpen] = useState(false);
   const [dangerousAcknowledged, setDangerousAcknowledged] = useState(false);
-  const mode = session?.mode ?? 'assistant';
   const profile = session?.toolProfileVersion ?? 'control-center-v1';
-  const current = permissionPreset(mode, profile);
+  const current = permissionPreset(session?.executionMode, profile);
+  const sessionMode = session?.mode ?? 'assistant';
+  const workspaceRoots = session?.workspaceRoots ?? [];
   const canCoordinate = persona?.selectableModes.includes('coordinator') ?? false;
   useEffect(() => {
     if (requestOpen > 0 && session && !disabled) setOpen(true);
@@ -601,14 +602,25 @@ function PermissionPicker({
               setDangerousOpen(true);
               return;
             }
-            onChange({ mode: preset.mode, toolProfileVersion: preset.toolProfileVersion });
+            const mode = preset.executionMode === 'workspace_managed'
+              ? 'coordinator'
+              : sessionMode;
+            onChange({
+              mode,
+              toolProfileVersion: preset.toolProfileVersion,
+              executionMode: preset.executionMode,
+              workspaceScopeConfirmed: preset.executionMode === 'workspace_managed',
+            });
             setOpen(false);
           }}
         >
           {PERMISSION_PRESETS.map((preset) => {
             const selected = current.id === preset.id;
-            const available = preset.mode !== 'coordinator' || canCoordinate;
-            const toolCount = tools.filter((tool) => toolAvailableForPolicy(tool, preset.mode, preset.toolProfileVersion)).length;
+            const requiresCoordinator = preset.executionMode === 'workspace_managed'
+              || preset.executionMode === 'full_trust';
+            const available = !requiresCoordinator || canCoordinate;
+            const effectiveMode = requiresCoordinator ? 'coordinator' : sessionMode;
+            const toolCount = tools.filter((tool) => toolAvailableForPolicy(tool, effectiveMode, preset.toolProfileVersion)).length;
             return (
               <RadioGroup.Item
                 className="agent-picker-popover__option"
@@ -627,19 +639,19 @@ function PermissionPicker({
             );
           })}
         </RadioGroup.Root>
-        {session?.mode === 'coordinator' ? (
+        {canCoordinate ? (
           <section className="agent-picker-popover__workspace" aria-label="授权工作区">
             <FolderOpen size={16} />
             <span>
               <strong>授权工作区</strong>
-              <small title={session.workspaceRoots.join('\n')}>
-                {session.workspaceRoots.length > 0
-                  ? `${session.workspaceRoots.length} 个目录 · ${session.workspaceRoots.map(shortPath).join('、')}`
+              <small title={workspaceRoots.join('\n')}>
+                {workspaceRoots.length > 0
+                  ? `${workspaceRoots.length} 个目录 · ${workspaceRoots.map(shortPath).join('、')}`
                   : '尚未授权目录，工作区工具无法运行'}
               </small>
             </span>
             <Button size="small" variant="quiet" disabled={disabled} onClick={onWorkspaceRootsChange}>
-              {session.workspaceRoots.length > 0 ? '更改' : '选择'}
+              {workspaceRoots.length > 0 ? '更改' : '选择'}
             </Button>
           </section>
         ) : null}
@@ -658,11 +670,11 @@ function PermissionPicker({
           <span className="agent-dangerous-permission-dialog__symbol"><TriangleAlert size={20} /></span>
           <DialogTitle>启用完全信任？</DialogTitle>
           <DialogDescription>
-            当前对话内的写入、命令、重启、导入与部署操作将根据结构化预览自动批准，不再逐项等待你确认。
+            当前工作区内符合策略的写入与命令会根据结构化预览自动批准；系统级危险动作仍保留人工门禁。
           </DialogDescription>
         </DialogHeader>
         <div className="agent-dangerous-permission-dialog__limits">
-          <p><ShieldCheck size={16} /><span><strong>仍然保留</strong> 工作区和路径边界、哈希复验、备份、审计回执与回滚记录</span></p>
+          <p><ShieldCheck size={16} /><span><strong>仍然保留</strong> 工作区和路径边界、取消栅栏、哈希复验、审计回执与危险动作禁区</span></p>
           <p><TriangleAlert size={16} /><span><strong>不再保留</strong> 每次写操作前的人工确认机会</span></p>
         </div>
         <label className="agent-dangerous-permission-dialog__check">
@@ -680,7 +692,8 @@ function PermissionPicker({
             onClick={() => {
               onChange({
                 mode: 'coordinator',
-                toolProfileVersion: 'control-center-auto-approve-v1',
+                toolProfileVersion: 'control-center-v1',
+                executionMode: 'full_trust',
                 dangerousModeConfirmed: true,
               });
               setDangerousOpen(false);
@@ -703,52 +716,52 @@ type PermissionPreset = AgentPermissionSelection & {
 const PERMISSION_PRESETS: PermissionPreset[] = [
   {
     id: 'controlled',
-    label: '受控助手',
-    description: '可读取产品状态，写操作逐项批准',
+    label: '每次确认',
+    description: '只读自动，写入与 Shell 逐项批准',
     icon: 'shield',
     mode: 'assistant',
     toolProfileVersion: 'control-center-v1',
+    executionMode: 'per_action',
   },
   {
     id: 'readonly',
-    label: '只读观察',
-    description: '只允许检索、查看与维护会话计划',
+    label: '只读',
+    description: '只读自动，写入与 Shell 全部阻止',
     icon: 'lock',
     mode: 'assistant',
     toolProfileVersion: 'subagent-readonly-v1',
+    executionMode: 'read_only',
   },
   {
-    id: 'coordinator',
-    label: '运行协调',
-    description: '可编排受控子 Agent 与授权工作区工具',
+    id: 'managed',
+    label: '工作区托管',
+    description: '启动时批准范围，范围内自动，越界再问',
     icon: 'network',
     mode: 'coordinator',
     toolProfileVersion: 'control-center-v1',
+    executionMode: 'workspace_managed',
   },
   {
     id: 'dangerous',
     label: '完全信任',
-    description: '全部受控写操作自动批准',
+    description: '范围内自动，保留取消、审计与危险动作禁区',
     icon: 'danger',
     mode: 'coordinator',
-    toolProfileVersion: 'control-center-auto-approve-v1',
+    toolProfileVersion: 'control-center-v1',
+    executionMode: 'full_trust',
   },
 ];
 
-function permissionPreset(mode: SessionSummary['mode'], profile: string): PermissionPreset {
-  const exact = PERMISSION_PRESETS.find((item) => item.mode === mode && item.toolProfileVersion === profile);
+function permissionPreset(executionMode: SessionSummary['executionMode'] | undefined, profile: string): PermissionPreset {
+  const legacyMode = executionMode
+    ?? (profile === 'control-center-auto-approve-v1'
+      ? 'full_trust'
+      : profile === 'subagent-readonly-v1'
+        ? 'read_only'
+        : 'per_action');
+  const exact = PERMISSION_PRESETS.find((item) => item.executionMode === legacyMode);
   if (exact) return exact;
-  if (profile === 'subagent-readonly-v1') {
-    return {
-      ...PERMISSION_PRESETS[1]!,
-      id: 'readonly-coordinator',
-      label: mode === 'coordinator' ? '只读协调' : '只读观察',
-      mode,
-      icon: mode === 'coordinator' ? 'network' : 'lock',
-    };
-  }
-  if (profile === 'control-center-auto-approve-v1') return PERMISSION_PRESETS[3]!;
-  return mode === 'coordinator' ? PERMISSION_PRESETS[2]! : PERMISSION_PRESETS[0]!;
+  return PERMISSION_PRESETS[0]!;
 }
 
 function permissionIcon(icon: PermissionPreset['icon'], size: number) {
@@ -969,7 +982,7 @@ function commandTitle(source: ComposerCommand['source']): string {
 
 function permissionLabel(session: SessionSummary): string {
   return permissionPreset(
-    session.mode,
+    session.executionMode,
     session.toolProfileVersion ?? 'control-center-v1',
   ).label;
 }

@@ -173,6 +173,39 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertIsNone(worker.run_once())
         self.assertEqual(len(runtime.dispatches), 1)
 
+    def test_post_ack_context_failure_cancels_root_without_unknown_lease(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:context-failure", key="worker:context-failure"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime()
+        observed: list[dict[str, object]] = []
+
+        def reject_context(_receipt: object) -> None:
+            raise RuntimeError("governed context projection rejected")
+
+        worker = RoomKernelWorker(
+            self.store,
+            runtime,
+            accept_runtime_context=reject_context,
+            learning_observer=lambda signal: observed.append(dict(signal)),
+            clock_ms=self.clock,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "projection rejected"):
+            worker.run_once(lease_ttl_ms=5)
+
+        self.assertEqual(
+            self.store.dispatch("dispatch:context-failure")["state"],
+            "cancelled",
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "cancelled")
+        self.assertEqual(len(runtime.dispatches), 1)
+        self.assertEqual(len(runtime.cancellations), 1)
+        self.assertEqual(observed[0]["eventKind"], "runtime_context_failed")
+        self.now_ms = 20
+        self.assertEqual(worker.reconcile(), [])
+
     def test_cancel_root_reaches_every_active_runtime_target(self) -> None:
         self.store.enqueue_dispatch(dispatch("dispatch:cancel", key="worker:cancel"), now_ms=3)
         runtime = FakeRoomRuntime()

@@ -5,6 +5,7 @@ import {
   appendOptimisticAgentMessage,
   applyAgentSnapshot,
   createAgentProjection,
+  failOptimisticAgentMessage,
   reduceAgentEvent,
 } from './agent-reducer';
 import { parseAgentEvent } from './validators';
@@ -152,6 +153,47 @@ describe('AgentEventReducer', () => {
       messageQueue: { steering: [], followUp: ['下一项任务'] },
     });
     expect(restored.messageQueue).toEqual({ steering: [], followUp: ['下一项任务'] });
+  });
+
+  it('projects provider retries as one live progress activity', () => {
+    const started = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'status_changed', {
+        status: 'retrying',
+        phase: 'provider_retry',
+        activityState: 'running',
+        summary: '模型连接暂时失败，正在自动重试（1/3）',
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 2_000,
+      }),
+    ).state;
+
+    expect(started.status).toBe('retrying');
+    expect(started.activitiesById['turn-1:status_changed']).toMatchObject({
+      status: 'running',
+      summary: '模型连接暂时失败，正在自动重试（1/3）',
+    });
+
+    const recovered = reduceAgentEvent(
+      started,
+      agentEvent(2, 'status_changed', {
+        status: 'analyzing',
+        phase: 'provider_retry',
+        activityState: 'completed',
+        summary: '模型连接已恢复，继续处理',
+        attempt: 1,
+        maxAttempts: 3,
+        success: true,
+      }),
+    ).state;
+
+    expect(recovered.status).toBe('analyzing');
+    expect(recovered.activitiesById['turn-1:status_changed']).toMatchObject({
+      status: 'completed',
+      summary: '模型连接已恢复，继续处理',
+    });
+    expect(recovered.activityOrder).toEqual(['turn-1:status_changed']);
   });
 
   it('restores live tool and approval state from a snapshot without moving the SSE cursor', () => {
@@ -349,6 +391,36 @@ describe('AgentEventReducer', () => {
     expect(completed.messagesById['local:client-1']).toBeUndefined();
     expect(completed.messagesById['server-1'].clientMessageId).toBe('client-1');
     expect(completed.optimisticByClientMessageId).toEqual({});
+  });
+
+  it('keeps an unaccepted prompt failure across a Session snapshot refresh', () => {
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
+      clientMessageId: 'client-failed',
+      text: '发送失败后仍可重试',
+      nowMs: 10,
+    });
+    const failed = failOptimisticAgentMessage(
+      optimistic,
+      'client-failed',
+      '当前模型不可用，请切换模型后重试。',
+      20,
+    );
+
+    const restored = applyAgentSnapshot(failed, {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 7,
+      resumeToken: 'session-1:7',
+      status: 'idle',
+    });
+
+    expect(restored.messagesById['local:client-failed'].status).toBe('failed');
+    expect(restored.messagesById['local:client-failed'].completedAtMs).toBe(20);
+    expect(restored.turnsById['local-turn:client-failed']).toMatchObject({
+      status: 'failed',
+      updatedAtMs: 20,
+      failure: '当前模型不可用，请切换模型后重试。',
+    });
   });
 
   it('retains unknown events and can abort an active turn without throwing', () => {

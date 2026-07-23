@@ -13,6 +13,14 @@ from rag_ime.agent_room_capabilities import (
 )
 
 
+ROOM_TOOLS = (
+    "room_state",
+    "room_collaborate",
+    "room_post",
+    "room_commit",
+)
+
+
 class RoomCapabilityManifestTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="room-capability-")
@@ -25,11 +33,11 @@ class RoomCapabilityManifestTests(unittest.TestCase):
 
     def test_manifest_separates_available_authorized_and_public_surface(self) -> None:
         manifest = self._compile(
-            user=("room_state", "room_post"),
-            state=("room_state", "room_post", "room_commit"),
+            user=("room_state", "room_collaborate", "room_post"),
+            state=ROOM_TOOLS,
         )
         tools = {tool["name"]: tool for tool in manifest["tools"]}
-        self.assertEqual(tuple(tools), ("room_state", "room_post", "room_commit"))
+        self.assertEqual(tuple(tools), ROOM_TOOLS)
         self.assertTrue(tools["room_state"]["available"])
         self.assertTrue(tools["room_post"]["authorized"])
         self.assertFalse(tools["room_commit"]["authorized"])
@@ -96,7 +104,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             ValueError,
-            "room_state/room_post/room_commit",
+            "room_state/room_collaborate/room_post/room_commit",
         ):
             self._invoke(
                 manifest,
@@ -179,11 +187,11 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         manifest, _ = self.store.compile_manifest(
             manifest_id="manifest:runtime", room_binding=room, participant_binding=participant,
             dispatch_id="dispatch:1", runtime_registry=room_runtime_registry(),
-            user_authorized=("room_state", "room_post", "room_commit"),
-            template_allowed=("room_state", "room_post", "room_commit"),
-            role_allowed=("room_state", "room_post", "room_commit"),
-            profile_allowed=("room_state", "room_post", "room_commit"),
-            state_allowed=("room_state", "room_post", "room_commit"), created_at_ms=1,
+            user_authorized=ROOM_TOOLS,
+            template_allowed=ROOM_TOOLS,
+            role_allowed=ROOM_TOOLS,
+            profile_allowed=ROOM_TOOLS,
+            state_allowed=ROOM_TOOLS, created_at_ms=1,
         )
         prompt_receipt = {
             "schemaVersion": "wisdom-weasel.prompt-compile-receipt.v1",
@@ -389,8 +397,8 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         manifest_id="manifest:1",
         room=None,
         participant=None,
-        user=("room_state", "room_post", "room_commit"),
-        state=("room_state", "room_post", "room_commit"),
+        user=ROOM_TOOLS,
+        state=ROOM_TOOLS,
     ):
         default_room, default_participant = self._bindings()
         payload, _ = self.store.compile_manifest(
@@ -398,9 +406,9 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             participant_binding=participant or default_participant,
             dispatch_id="dispatch:1", runtime_registry=self._registry(),
             user_authorized=user,
-            template_allowed=("room_state", "room_post", "room_commit"),
-            role_allowed=("room_state", "room_post", "room_commit"),
-            profile_allowed=("room_state", "room_post", "room_commit"),
+            template_allowed=ROOM_TOOLS,
+            role_allowed=ROOM_TOOLS,
+            profile_allowed=ROOM_TOOLS,
             state_allowed=state, created_at_ms=1,
         )
         return payload
@@ -434,6 +442,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
     def _registry():
         return {
             "room_state": {"description": "Read current Room state", "risk": "read", "operation": "room.state", "inputSchema": {"type": "object", "properties": {}}},
+            "room_collaborate": {"description": "Enqueue a bounded Room collaboration", "risk": "write", "operation": "room.collaborate", "inputSchema": {"type": "object", "required": ["targetParticipantId", "objective", "expectedOutput"], "properties": {"targetParticipantId": {"type": "string"}, "objective": {"type": "string"}, "expectedOutput": {"type": "string"}}}},
             "room_post": {"description": "Publish an explicit Room Post", "risk": "write", "operation": "room.post", "inputSchema": {"type": "object", "required": ["content"], "properties": {"content": {"type": "string"}}}},
             "room_commit": {"description": "Propose a governed Room Commit", "risk": "write", "operation": "room.commit", "inputSchema": {"type": "object", "required": ["result"], "properties": {"result": {"type": "string"}}}},
             "room_assign": {"description": "legacy", "risk": "write", "operation": "legacy", "inputSchema": {"type": "object"}},

@@ -5,8 +5,8 @@ import json
 from collections.abc import Mapping
 from typing import Any, Protocol
 
+from .agent_execution_policy import APPROVAL_AUTO, approval_strategy
 from .agent_external_approval import ExternalApprovalFinalizer
-from .agent_tool_ids import DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
 from .external_actions import (
     PORTABLE_RESTORE_ACTION,
     materialize_portable_restore_plan,
@@ -263,10 +263,11 @@ class AgentApprovalApplicationService:
         current = self.host.sessions.get_approval(approval_id)
         session_id = str(current.get("sessionId") or "")
         session = self.host.sessions.get(session_id)
-        if (
-            session.get("toolProfileVersion")
-            != DANGEROUS_AUTO_APPROVE_TOOL_PROFILE
-        ):
+        if approval_strategy(
+            session,
+            tool=str(current.get("toolId") or ""),
+            operation=str(current.get("operation") or ""),
+        ) != APPROVAL_AUTO:
             raise ValueError(
                 "automatic approval is not enabled for this session"
             )
@@ -284,7 +285,10 @@ class AgentApprovalApplicationService:
             approval_id,
             approved=True,
             payload_sha256=str(current["payloadSha256"]),
-            decided_by="dangerous-auto-approve",
+            decided_by=(
+                "execution-policy:"
+                + str(session.get("executionMode") or "per_action")
+            ),
         )
         final = self.execute_approved(decided)
         memory_checkpoint = self.checkpoint_applied(final)

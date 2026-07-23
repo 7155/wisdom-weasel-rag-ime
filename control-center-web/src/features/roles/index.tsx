@@ -15,7 +15,7 @@ import {
   Zap,
   X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import {
@@ -40,7 +40,6 @@ import {
   agentDefaultCompanion,
   createdSessionId,
   ensureControlOk,
-  modelDisplayName,
   normalizeTrait,
   normalizedTraits,
   numberValue,
@@ -65,6 +64,12 @@ import {
   type TimelineModel,
 } from './role-model';
 import './roles.css';
+
+type ReasoningLevel = Exclude<NonNullable<AgentPersonaV1['defaults']['thinkingLevel']>, 'off'>;
+
+function isReasoningLevel(level: string | undefined): level is ReasoningLevel {
+  return Boolean(level) && level !== 'off';
+}
 
 export function RolesFeature() {
   const transport = useControlTransport();
@@ -422,24 +427,108 @@ function PersonaInspector({
   const expressionTraits = personaExpressionTraits(persona);
   const initialProfile = persona.defaults.modelProfile ?? '';
   const [modelProfile, setModelProfile] = useState(initialProfile);
-  const [thinkingLevel, setThinkingLevel] = useState<string>(persona.defaults.thinkingLevel ?? 'off');
+  const [thinkingLevel, setThinkingLevel] = useState<ReasoningLevel | ''>(
+    isReasoningLevel(persona.defaults.thinkingLevel) ? persona.defaults.thinkingLevel : '',
+  );
+  const models = useMemo(
+    () => catalog.providers
+      .flatMap((provider) => provider.models)
+      .filter((model) => model.reasoning === true && model.thinkingLevels.some((level) => level !== 'off')),
+    [catalog],
+  );
   useEffect(() => {
-    setModelProfile(persona.defaults.modelProfile ?? '');
-    setThinkingLevel(persona.defaults.thinkingLevel ?? 'off');
-  }, [persona.roleId, persona.version, persona.defaults.modelProfile, persona.defaults.thinkingLevel]);
-  const models = catalog.providers.flatMap((provider) => provider.models);
+    const configuredProfile = persona.defaults.modelProfile ?? '';
+    const configuredLevel = persona.defaults.thinkingLevel ?? '';
+    const configuredModel = models.find((model) => `${model.provider}/${model.id}` === configuredProfile);
+    const nextModel = configuredModel ?? models[0];
+    const nextProfile = nextModel ? `${nextModel.provider}/${nextModel.id}` : configuredProfile;
+    const supportedLevels = nextModel?.thinkingLevels.filter(isReasoningLevel) ?? [];
+    setModelProfile(nextProfile);
+    setThinkingLevel(
+      isReasoningLevel(configuredLevel) && supportedLevels.includes(configuredLevel)
+        ? configuredLevel
+        : supportedLevels[0] ?? '',
+    );
+  }, [models, persona.roleId, persona.version, persona.defaults.modelProfile, persona.defaults.thinkingLevel]);
   const selectedModel = models.find((model) => `${model.provider}/${model.id}` === modelProfile);
-  const thinkingLevels = selectedModel?.thinkingLevels?.length ? selectedModel.thinkingLevels : ['off'];
+  const thinkingLevels = selectedModel?.thinkingLevels.filter(isReasoningLevel) ?? [];
   const changed = modelProfile !== initialProfile || thinkingLevel !== (persona.defaults.thinkingLevel ?? 'off');
   const fixed = persona.defaults.modelPolicy === 'fixed';
-  return <aside className="role-inspector companion-inspector" data-accent={persona.visualProfile.accentToken}>
-    <div className="role-inspector__hero"><PersonaAvatar persona={persona} size="hero" /><span><small>{fixed ? '内置伙伴 · 只读' : '我的伙伴 · 可编辑'}</small><h3>{persona.displayName}</h3><p>{persona.summary}</p></span></div>
-    <div className="companion-actions"><Button variant="primary" size="small" loading={starting} leadingIcon={<MessageCirclePlus size={15} />} onClick={onStart}>开始对话</Button><Button variant="quiet" size="small" onClick={fixed ? onCopy : onEdit}>{fixed ? '复制并自定义' : '编辑伙伴'}</Button></div>
-    <section className="companion-fit" aria-label="伙伴能力边界"><div><header><Sparkles size={15} /><strong>适合交给她</strong></header><ul>{persona.runtimeCharacteristics.suitableTasks.map((task) => <li key={task}>{task}</li>)}</ul></div><div><header><ShieldCheck size={15} /><strong>不建议交给她</strong></header><ul>{persona.runtimeCharacteristics.unsuitableTasks.map((task) => <li key={task}>{task}</li>)}</ul></div></section>
-    <section className="companion-expression"><header><strong>表达特征</strong><small>{phase.label}</small></header><div>{expressionTraits.map((trait) => <span key={trait}>{trait}</span>)}</div></section>
-    <div className="companion-links"><Button variant="quiet" size="small" leadingIcon={<BookOpen size={14} />} onClick={onOpenGrowth}>角色记忆与成长档案</Button>{defaulted ? <span className="companion-default-state"><Star size={13} />新对话默认伙伴</span> : <Button variant="quiet" size="small" leadingIcon={<Star size={14} />} loading={defaultSaving} disabled={!canChangeDefault} onClick={onSetDefault}>设为默认</Button>}{fixed ? null : <Button variant="quiet" size="small" leadingIcon={<Trash2 size={14} />} disabled={defaulted} title={defaulted ? '请先选择另一位默认伙伴' : undefined} onClick={onArchive}>移除伙伴</Button>}</div>
-    <details className="role-runtime-disclosure"><summary><Cpu size={15} /><span><strong>运行设置与定义</strong><small>{fixed ? '内置配置只读；复制后可自定义' : '只影响新对话的默认运行方式'}</small></span></summary><div className="role-runtime-disclosure__body"><dl><div><dt>可用方式</dt><dd>{persona.selectableModes.includes('coordinator') ? '陪伴对话 · 可加入 Room' : '陪伴对话'}</dd></div><div><dt>工具边界</dt><dd>按任务调用已连接工具，敏感操作仍需确认</dd></div></dl><section className="role-runtime-defaults" aria-label="伙伴运行默认设置"><header><span>{persona.roleId === 'companion-flash-v1' ? <Zap size={15} /> : <Cpu size={15} />}<strong>{fixed ? '内置模型' : '默认模型'}</strong></span><small>新对话自动使用</small></header>{fixed ? <div className="role-runtime-fixed"><span><b>{modelDisplayName(modelProfile)}</b><small>产品基线</small></span><span><b>推理强度</b><small>{thinkingLabel(thinkingLevel)}</small></span></div> : models.length ? <><label><span>模型</span><Select aria-label="角色默认模型" value={modelProfile} onValueChange={(value) => { setModelProfile(value); const next = models.find((model) => `${model.provider}/${model.id}` === value); const levels = next?.thinkingLevels?.length ? next.thinkingLevels : ['off']; if (!levels.includes(thinkingLevel)) setThinkingLevel(levels[0] ?? 'off'); }} options={models.map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name }))} /></label><label><span>推理强度</span><Select aria-label="角色默认推理强度" value={thinkingLevel} onValueChange={setThinkingLevel} options={thinkingLevels.map((level) => ({ value: level, label: thinkingLabel(level) }))} /></label><Button variant="primary" size="small" leadingIcon={<Save size={14} />} loading={saving} disabled={!changed || !modelProfile} onClick={() => void onSave(modelProfile, thinkingLevel)}>保存默认设置</Button></> : <p><BrainCircuit size={15} />当前 Pi 模型目录不可用，请先在配置页完成模型配置。</p>}</section><DefinitionAudit kind="伙伴定义" summary={`${persona.tagline}；${persona.summary}`} version={persona.version} source={fixed ? '内置伙伴目录' : '用户自定义伙伴'} /></div></details>
-  </aside>;
+  return (
+    <aside className="role-inspector companion-inspector" data-accent={persona.visualProfile.accentToken}>
+      <div className="role-inspector__hero">
+        <PersonaAvatar persona={persona} size="hero" />
+        <span>
+          <small>{fixed ? '内置伙伴 · 定义只读' : '我的伙伴 · 可编辑'}</small>
+          <h3>{persona.displayName}</h3>
+          <p>{persona.summary}</p>
+        </span>
+      </div>
+      <div className="companion-actions">
+        <Button variant="primary" size="small" loading={starting} leadingIcon={<MessageCirclePlus size={15} />} onClick={onStart}>开始对话</Button>
+        <Button variant="quiet" size="small" onClick={fixed ? onCopy : onEdit}>{fixed ? '复制并自定义' : '编辑伙伴'}</Button>
+      </div>
+      <section className="companion-fit" aria-label="伙伴能力边界">
+        <div><header><Sparkles size={15} /><strong>适合交给她</strong></header><ul>{persona.runtimeCharacteristics.suitableTasks.map((task) => <li key={task}>{task}</li>)}</ul></div>
+        <div><header><ShieldCheck size={15} /><strong>不建议交给她</strong></header><ul>{persona.runtimeCharacteristics.unsuitableTasks.map((task) => <li key={task}>{task}</li>)}</ul></div>
+      </section>
+      <section className="companion-expression">
+        <header><strong>表达特征</strong><small>{phase.label}</small></header>
+        <div>{expressionTraits.map((trait) => <span key={trait}>{trait}</span>)}</div>
+      </section>
+      <div className="companion-links">
+        <Button variant="quiet" size="small" leadingIcon={<BookOpen size={14} />} onClick={onOpenGrowth}>角色记忆与成长档案</Button>
+        {defaulted ? <span className="companion-default-state"><Star size={13} />新对话默认伙伴</span> : <Button variant="quiet" size="small" leadingIcon={<Star size={14} />} loading={defaultSaving} disabled={!canChangeDefault} onClick={onSetDefault}>设为默认</Button>}
+        {fixed ? null : <Button variant="quiet" size="small" leadingIcon={<Trash2 size={14} />} disabled={defaulted} title={defaulted ? '请先选择另一位默认伙伴' : undefined} onClick={onArchive}>移除伙伴</Button>}
+      </div>
+      <details className="role-runtime-disclosure">
+        <summary>
+          <Cpu size={15} />
+          <span><strong>运行设置与定义</strong><small>{fixed ? '伙伴定义只读；新对话模型可调整' : '只影响新对话的默认运行方式'}</small></span>
+        </summary>
+        <div className="role-runtime-disclosure__body">
+          <dl>
+            <div><dt>可用方式</dt><dd>{persona.selectableModes.includes('coordinator') ? '陪伴对话 · 可加入 Room' : '陪伴对话'}</dd></div>
+            <div><dt>工具边界</dt><dd>按任务调用已连接工具，敏感操作仍需确认</dd></div>
+          </dl>
+          <section className="role-runtime-defaults" aria-label="伙伴运行默认设置">
+            <header><span>{persona.roleId === 'companion-flash-v1' ? <Zap size={15} /> : <Cpu size={15} />}<strong>默认模型</strong></span><small>只列出支持推理的模型</small></header>
+            {models.length ? (
+              <>
+                <label>
+                  <span>模型</span>
+                  <Select
+                    aria-label="角色默认模型"
+                    value={modelProfile}
+                    onValueChange={(value) => {
+                      setModelProfile(value);
+                      const next = models.find((model) => `${model.provider}/${model.id}` === value);
+                      const levels = next?.thinkingLevels.filter(isReasoningLevel) ?? [];
+                      if (!thinkingLevel || !levels.includes(thinkingLevel)) setThinkingLevel(levels[0] ?? '');
+                    }}
+                    options={models.map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name }))}
+                  />
+                </label>
+                <label>
+                  <span>推理强度</span>
+                  <Select
+                    aria-label="角色默认推理强度"
+                    value={thinkingLevel}
+                    onValueChange={(value) => {
+                      if (isReasoningLevel(value)) setThinkingLevel(value);
+                    }}
+                    options={thinkingLevels.map((level) => ({ value: level, label: thinkingLabel(level) }))}
+                  />
+                </label>
+                <Button variant="primary" size="small" leadingIcon={<Save size={14} />} loading={saving} disabled={!changed || !modelProfile || !thinkingLevel} onClick={() => void onSave(modelProfile, thinkingLevel)}>保存默认设置</Button>
+              </>
+            ) : <p><BrainCircuit size={15} />当前没有可用的推理模型，请先在配置页完成模型配置。</p>}
+          </section>
+          <DefinitionAudit kind="伙伴定义" summary={`${persona.tagline}；${persona.summary}`} version={persona.version} source={fixed ? '内置伙伴目录' : '用户自定义伙伴'} />
+        </div>
+      </details>
+    </aside>
+  );
 }
 
 function PersonaGrowthInspector({ persona, onBack }: { persona: AgentPersonaV1; onBack: () => void }) {

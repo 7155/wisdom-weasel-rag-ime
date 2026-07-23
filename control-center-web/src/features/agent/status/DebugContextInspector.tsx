@@ -95,7 +95,11 @@ export function DebugContextInspector({
       <DebugStorage storage={response.storage} />
       {query.isPending ? <p className="debug-context-inspector__empty">正在读取本轮上下文快照</p> : null}
       {query.error ? <p className="debug-context-inspector__empty" data-tone="warning">上下文快照不可用，或本轮来自旧版 Runtime</p> : null}
-      {!query.isPending && !query.error && !response.available ? <p className="debug-context-inspector__empty">这轮尚未生成上下文快照</p> : null}
+      {!query.isPending && !query.error && !response.available ? (
+        <p className="debug-context-inspector__empty" data-tone={response.storage.error ? 'warning' : undefined}>
+          {debugContextEmptyMessage(response.storage)}
+        </p>
+      ) : null}
       {response.available ? <DebugTelemetryStrip telemetry={response.telemetry} /> : null}
       {stages.length ? (
         <div className="debug-context-inspector__workspace" data-detail-open={Boolean(selectedStage) || undefined}>
@@ -157,17 +161,29 @@ export function DebugContextInspector({
 function DebugStorage({ storage }: { storage: Record<string, unknown> }) {
   const persistent = storage.persistent === true;
   const directory = text(storage.directory);
+  const error = text(storage.error);
   if (!Object.keys(storage).length) return null;
   return (
     <div className="debug-context-inspector__storage" data-persistent={persistent || undefined}>
       <HardDrive size={14} />
       <span>
-        <strong>{persistent ? '快照已持久化' : '快照存储不可用'}</strong>
-        <small title={directory}>{directory || text(storage.error) || 'Pi Runtime 未返回存储位置'}</small>
+        <strong>{persistent ? '快照已保存到本机' : error ? '快照保存失败' : '仅保留当前 Runtime'}</strong>
+        <small title={directory || error}>
+          {directory || error || '未开启本机快照保存，Runtime 重启后旧轮次不可恢复'}
+        </small>
       </span>
       <b>{formatBytes(finiteNumber(storage.usedBytes) ?? 0)} / {formatBytes(finiteNumber(storage.maxBytes) ?? 0)}</b>
     </div>
   );
+}
+
+function debugContextEmptyMessage(storage: Record<string, unknown>): string {
+  const error = text(storage.error);
+  if (error) return `本轮快照写入失败：${error}`;
+  if (storage.persistent === false && !text(storage.directory)) {
+    return '本轮快照只存在于原 Runtime；Runtime 重启后已经无法恢复';
+  }
+  return '本轮还没有到达可核对的 Provider 请求边界';
 }
 
 function DebugTelemetryStrip({ telemetry }: { telemetry: Record<string, unknown> }) {
@@ -290,18 +306,37 @@ function debugStages(context: Record<string, unknown>): DebugStage[] {
     }
     const request = record(providerRequests[index]);
     if (Object.keys(request).length) {
+      const requestIndex = finiteNumber(request.index) ?? index + 1;
+      const providerStatus = providerExchangeStatus(modelCalls, requestIndex, index);
+      const failed = providerStatus !== null && providerStatus >= 400;
       stages.push({
         id: `wire:${index + 1}`,
-        label: `Provider 请求 ${finiteNumber(request.index) ?? index + 1}`,
-        detail: 'OpenAI 兼容传输信封',
+        label: `Provider 请求 ${requestIndex}`,
+        detail: `${providerStatus === null ? '' : `HTTP ${providerStatus} · `}OpenAI 兼容传输信封`,
         kind: 'json',
         value: request.payload,
         channel: 'wire',
-        note: '这是 API 线上的 JSON 信封。model、stream 等是请求控制字段；role、content、tools 保留结构边界，Provider 再用模板或特殊 Token 编码，并不是把 JSON 标点原样拼成普通文本。',
+        note: failed
+          ? '请求已到达 Provider 边界并返回失败；这里保留失败前真正发送的信封，便于核对模型、消息、工具与推理参数。'
+          : '这是 API 线上的 JSON 信封。model、stream 等是请求控制字段；role、content、tools 保留结构边界，Provider 再用模板或特殊 Token 编码，并不是把 JSON 标点原样拼成普通文本。',
       });
     }
   }
   return stages;
+}
+
+function providerExchangeStatus(
+  modelCalls: unknown[],
+  requestIndex: number,
+  callIndex: number,
+): number | null {
+  const exchanges = modelCalls.flatMap((call) => array(record(call).providerExchanges));
+  const matched = exchanges
+    .map(record)
+    .find((exchange) => finiteNumber(exchange.index) === requestIndex);
+  if (matched) return finiteNumber(matched.status);
+  const fallback = array(record(modelCalls[callIndex]).providerExchanges).at(-1);
+  return finiteNumber(record(fallback).status);
 }
 
 function stage(

@@ -111,4 +111,52 @@ describe('selectRoomTurnExecution', () => {
       'dispatch-b',
     ]);
   });
+
+  it('keeps a bounded Provider failure visible in its dispatch lane', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.activityOrder.push('provider-error');
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'running',
+      messageIds: [],
+      activityIds: ['provider-error'],
+      participantIds: ['participant-1'],
+      dispatchIds: ['dispatch-1'],
+      dispatchParticipantIds: { 'dispatch-1': 'participant-1' },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    projection.activitiesById['provider-error'] = {
+      id: 'provider-error',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-1',
+      kind: 'participant_activity',
+      status: 'failed',
+      summary: '模型响应中断，正在按运行策略处理',
+      payload: {
+        rootId: 'root-1',
+        dispatchId: 'dispatch-1',
+        sourceEventType: 'message_completed',
+        status: 'provider_error',
+        isError: true,
+      },
+      createdAtMs: 2,
+    };
+
+    const selected = selectRoomTurnExecution(projection, 'root-1');
+
+    expect(selected.lanes).toHaveLength(1);
+    expect(selected.lanes[0]).toMatchObject({
+      dispatchId: 'dispatch-1',
+      participantId: 'participant-1',
+    });
+    expect(selected.lanes[0].activities).toHaveLength(1);
+    expect(selected.lanes[0].activities[0]).toMatchObject({
+      status: 'failed',
+      summary: '模型响应中断，正在按运行策略处理',
+    });
+  });
 });

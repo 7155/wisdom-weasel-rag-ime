@@ -10,6 +10,86 @@ import { DebugContextInspector } from './DebugContextInspector';
 afterEach(cleanup);
 
 describe('DebugContextInspector', () => {
+  it('explains that a snapshot was lost after a non-persistent Runtime restarted', async () => {
+    const transport = new StubControlTransport('mock', {
+      'agent.session.debugContext.get': {
+        schemaVersion: 'rag-ime.pi-debug-context-response.v1',
+        available: false,
+        transient: true,
+        context: null,
+        storage: {
+          persistent: false,
+          directory: '',
+          usedBytes: 0,
+          maxBytes: 64 * 1024 * 1024,
+        },
+      },
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={client}>
+          <TooltipProvider>
+            <DebugContextInspector sessionId="session-lost" turnId="turn-lost" />
+          </TooltipProvider>
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    expect(await screen.findByText('仅保留当前 Runtime')).toBeVisible();
+    expect(screen.getByText('本轮快照只存在于原 Runtime；Runtime 重启后已经无法恢复')).toBeVisible();
+    expect(screen.queryByText('这轮尚未生成上下文快照')).not.toBeInTheDocument();
+  });
+
+  it('keeps the exact provider payload visible when the provider returns an error', async () => {
+    const transport = new StubControlTransport('mock', {
+      'agent.session.debugContext.get': {
+        schemaVersion: 'rag-ime.pi-debug-context-response.v1',
+        available: true,
+        transient: false,
+        context: {
+          systemPrompt: 'SYSTEM_BEFORE_FAILURE',
+          activeTools: ['workspace_read'],
+          modelCalls: [{
+            providerExchanges: [{ index: 1, status: 400 }],
+          }],
+          providerRequests: [{
+            index: 1,
+            payload: {
+              model: 'gpt-5.6-luna',
+              input: [{ role: 'user', content: 'REQUEST_BEFORE_FAILURE' }],
+              reasoning: { effort: 'max' },
+            },
+          }],
+        },
+        storage: {
+          persistent: true,
+          directory: '/tmp/debug-context',
+          usedBytes: 2048,
+          maxBytes: 64 * 1024 * 1024,
+        },
+      },
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={client}>
+          <TooltipProvider>
+            <DebugContextInspector sessionId="session-failed" turnId="turn-failed" />
+          </TooltipProvider>
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    const providerStage = await screen.findByRole('button', { name: /Provider 请求 1/ });
+    expect(providerStage).toHaveTextContent('HTTP 400');
+    await user.click(providerStage);
+    expect(screen.getByText(/REQUEST_BEFORE_FAILURE/)).toBeVisible();
+    expect(screen.getByText(/请求已到达 Provider 边界并返回失败/)).toBeVisible();
+    expect(screen.queryByText('本轮还没有到达可核对的 Provider 请求边界')).not.toBeInTheDocument();
+  });
+
   it('shows prompt inputs as ordered deltas and separates the provider wire envelope', async () => {
     const transport = new StubControlTransport('mock', {
       'agent.session.debugContext.get': {

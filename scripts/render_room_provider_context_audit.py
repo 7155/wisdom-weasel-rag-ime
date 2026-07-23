@@ -144,6 +144,59 @@ def _tool_names(provider_context: object) -> list[str]:
     ]
 
 
+def _provider_wire_payload(call: dict[str, Any]) -> dict[str, Any] | None:
+    exchanges = call.get("providerExchanges")
+    if not isinstance(exchanges, list):
+        return None
+    for exchange in reversed(exchanges):
+        if not isinstance(exchange, dict):
+            continue
+        payload = exchange.get("payload")
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def _wire_system_prompt(call: dict[str, Any]) -> str | None:
+    payload = _provider_wire_payload(call)
+    inputs = payload.get("input") if isinstance(payload, dict) else None
+    if not isinstance(inputs, list):
+        return None
+    for item in inputs:
+        if not isinstance(item, dict) or item.get("role") != "developer":
+            continue
+        content = item.get("content")
+        return content if isinstance(content, str) else None
+    return None
+
+
+def _wire_tool_names(call: dict[str, Any]) -> list[str] | None:
+    """Collect Tool schemas from both Responses API disclosure locations."""
+
+    payload = _provider_wire_payload(call)
+    if payload is None:
+        return None
+    names: list[str] = []
+
+    def append_tools(value: object) -> None:
+        if not isinstance(value, list):
+            return
+        for tool in value:
+            if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
+                continue
+            name = str(tool["name"])
+            if name not in names:
+                names.append(name)
+
+    append_tools(payload.get("tools"))
+    inputs = payload.get("input")
+    if isinstance(inputs, list):
+        for item in inputs:
+            if isinstance(item, dict) and item.get("type") == "tool_search_output":
+                append_tools(item.get("tools"))
+    return names
+
+
 def _usage(call: dict[str, Any]) -> dict[str, Any]:
     assistant = call.get("assistantMessage")
     if not isinstance(assistant, dict):
@@ -365,6 +418,10 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
                 "providerExchanges": _safe_provider_exchanges(call.get("providerExchanges")),
                 "providerRequestReceipt": request_receipts.get(call_index),
                 "cacheEvidence": cache_evidence.get(call_index),
+                "contextViews": {
+                    "providerContext": "normalized effective context",
+                    "providerExchanges[].payload": "exact credential-free wire request",
+                },
             }
             _write_json(output_dir / "calls" / call_name, safe_call)
             call_files.append(f"calls/{call_name}")
@@ -420,6 +477,9 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         recovery_prompt_files.append(name)
 
     all_calls.sort(key=lambda item: _call_sort_key(item[2]))
+    exact_wire_payloads_captured = True
+    normalized_prompts_match_wire = True
+    effective_tools_match_wire = True
     for position, (turn_number, call_index, call) in enumerate(all_calls):
         provider_context = call.get("providerContext")
         prompt = (
@@ -429,6 +489,21 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         )
         messages = provider_context.get("messages") if isinstance(provider_context, dict) else []
         usage = _usage(call)
+        wire_prompt = _wire_system_prompt(call)
+        wire_tools = _wire_tool_names(call)
+        exact_wire_payloads_captured = (
+            exact_wire_payloads_captured and _provider_wire_payload(call) is not None
+        )
+        normalized_prompts_match_wire = (
+            normalized_prompts_match_wire
+            and wire_prompt is not None
+            and wire_prompt == prompt
+        )
+        effective_tools_match_wire = (
+            effective_tools_match_wire
+            and wire_tools is not None
+            and set(wire_tools) == set(_tool_names(provider_context))
+        )
         network_item = network[position] if position < len(network) else {}
         duration = (
             int(network_item.get("completedAtMs") or 0)
@@ -456,6 +531,9 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
     audit_checks = {
         "reportChecksPassed": bool(checks) and all(value is True for value in checks.values()),
         "exactProviderCallsCaptured": exact_call_count_matches_network,
+        "exactWirePayloadsCaptured": exact_wire_payloads_captured,
+        "normalizedPromptMatchesWire": normalized_prompts_match_wire,
+        "effectiveToolSetMatchesWireDisclosure": effective_tools_match_wire,
         "systemPromptStableWithinEachTurn": prompt_stable_within_turn,
         "contextBlocksExactlyOncePerTurn": context_block_counts_valid,
         "agentMdDefaultOff": agent_md_absent,
@@ -508,7 +586,8 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         "# Room 真实 Provider 上下文审计",
         "",
         "这不是配置推断，而是 Pi 在每次 Provider 请求前记录的最终上下文。",
-        "所有请求头和凭证均不进入这些文件；模型看到的系统提示词、消息、Tool schema、回执与 usage 保留原样。",
+        "每个调用同时保留两种视图：`providerContext` 是合并动态 Tool schema 后的有效上下文；",
+        "`providerExchanges[].payload` 是去除请求头和凭证后的原始 Provider wire request。二者必须通过自动一致性检查。",
         "",
         "## 执行身份",
         "",
@@ -530,7 +609,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         "",
         "## 每次 Provider 调用",
         "",
-        "| Turn | Call | System bytes | Messages | Tools | Cache read | HTTP | Duration | Exact context |",
+        "| Turn | Call | System bytes | Messages | Effective tools | Cache read | HTTP | Duration | Exact context |",
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
         *table_rows,
         "",
@@ -545,7 +624,8 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         ],
         *[f"- [完整系统提示词 {index}]({name})" for index, name in enumerate(prompt_files, start=1)],
         "",
-        "`calls/` 中每个 JSON 都包含该次请求的完整 `providerContext`、增量、模型回复、usage 与去除响应头后的交换记录。",
+        "`calls/` 中每个 JSON 都包含该次请求的归一化有效 `providerContext`、增量、模型回复、usage 与去除响应头后的原始 wire payload。",
+        "动态 Tool schema 可能位于顶层 `tools` 或历史 `tool_search_output`；有效工具集会合并两处并与 wire payload 自动对账。",
         "`raw/` 是 Pi 原始调试回执，`transcripts/` 是受管 Session JSONL。",
         "",
     ]

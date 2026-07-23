@@ -103,7 +103,6 @@ class RoomRuntimeCapabilityService:
         binding = self.capabilities.runtime_binding(session_id)
         if binding is None:
             return
-        next_epoch = int(binding["capabilityEpoch"]) + 1
         manifest_id = str(binding["manifestId"])
         if not manifest_id.startswith("capability-manifest:"):
             raise RoomKernelFenceError(
@@ -112,11 +111,22 @@ class RoomRuntimeCapabilityService:
         dispatch = self.kernel.dispatch(
             manifest_id.removeprefix("capability-manifest:")
         )
-        self.skill_receipts.revoke_before_epoch(
-            str(dispatch["rootId"]),
-            new_capability_epoch=next_epoch,
-            revoked_at_ms=now_ms,
-        )
+        capability_epoch = int(dispatch["capabilityEpoch"])
+        next_epoch = capability_epoch + 1
+        if self.kernel.has_active_capability_peer(str(dispatch["dispatchId"])):
+            self.skill_receipts.revoke_dispatch(
+                root_id=str(dispatch["rootId"]),
+                dispatch_id=str(dispatch["dispatchId"]),
+                session_id=session_id,
+                capability_epoch=capability_epoch,
+                revoked_at_ms=now_ms,
+            )
+        else:
+            self.skill_receipts.revoke_before_epoch(
+                str(dispatch["rootId"]),
+                new_capability_epoch=next_epoch,
+                revoked_at_ms=now_ms,
+            )
         self.capabilities.revoke_runtime(
             session_id,
             capability_epoch=next_epoch,

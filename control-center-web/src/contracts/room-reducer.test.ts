@@ -605,6 +605,7 @@ function roomSnapshotFixture(
       id: 'room-1',
       title: '快照 Room',
       status: 'active',
+      executionMode: 'workspace_managed',
       routingPolicy: 'moderator',
       moderatorParticipantId: 'participant-1',
       workspaceRoots: ['/Volumes/work/learnA'],

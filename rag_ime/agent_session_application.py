@@ -5,8 +5,17 @@ from pathlib import Path
 from typing import Any
 
 from .agent_roles import PersonaManifest
+from .agent_execution_policy import (
+    FULL_TRUST_EXECUTION_MODE,
+    PER_ACTION_EXECUTION_MODE,
+    WORKSPACE_MANAGED_EXECUTION_MODE,
+    WORKSPACE_SCOPE_CONFIRMATION,
+    canonical_tool_profile,
+    normalize_execution_mode,
+)
 from .agent_tool_ids import (
     CONTROL_CENTER_TOOL_PROFILE,
+    DANGEROUS_MODE_CONFIRMATION,
     READONLY_TOOL_PROFILE,
 )
 
@@ -110,6 +119,15 @@ class AgentSessionApplicationService:
             or session_defaults["toolProfileVersion"]
             or role.defaults.tool_profile_version
         )
+        requested_execution_mode = normalize_execution_mode(
+            payload.get("executionMode"),
+            tool_profile_version=requested_tool_profile,
+            default=PER_ACTION_EXECUTION_MODE,
+        )
+        requested_tool_profile = canonical_tool_profile(
+            requested_tool_profile,
+            execution_mode=requested_execution_mode,
+        )
         if requested_tool_profile not in {
             CONTROL_CENTER_TOOL_PROFILE,
             READONLY_TOOL_PROFILE,
@@ -131,6 +149,23 @@ class AgentSessionApplicationService:
             workspace_roots = [str(item) for item in roots_value]
         else:
             raise ValueError("workspaceRoots must be an array")
+        internal_scope_grant = payload.get("_internalWorkspaceScopeGrant") is True
+        if requested_execution_mode == WORKSPACE_MANAGED_EXECUTION_MODE and not (
+            internal_scope_grant
+            or str(payload.get("workspaceScopeConfirmation") or "")
+            == WORKSPACE_SCOPE_CONFIRMATION
+        ):
+            raise ValueError(
+                "workspace-managed execution requires an explicit workspace scope confirmation"
+            )
+        if requested_execution_mode == FULL_TRUST_EXECUTION_MODE and not (
+            internal_scope_grant
+            or str(payload.get("dangerousModeConfirmation") or "")
+            == DANGEROUS_MODE_CONFIRMATION
+        ):
+            raise ValueError(
+                "full-trust execution requires an explicit native confirmation"
+            )
         role_runtime_defaults = self.personas.runtime_defaults(
             role.role_id,
             role.version,
@@ -154,6 +189,7 @@ class AgentSessionApplicationService:
             model_profile=model_profile,
             thinking_level=thinking_level,
             tool_profile_version=requested_tool_profile,
+            execution_mode=requested_execution_mode,
             workspace_roots=workspace_roots,
         )
         return {
@@ -218,17 +254,21 @@ class AgentSessionApplicationService:
             role.defaults.model_policy == "fixed"
             and payload.get("_internalModelOverride") is not True
         ):
+            effective = role_runtime_defaults or {
+                "modelProfile": role.defaults.model_profile,
+                "thinkingLevel": role.defaults.thinking_level,
+            }
             if (
                 requested_model_profile is not None
                 and str(requested_model_profile)
-                != role.defaults.model_profile
+                != str(effective["modelProfile"])
             ):
                 raise ValueError(
                     "builtin persona model cannot be overridden"
                 )
             return (
-                role.defaults.model_profile,
-                role.defaults.thinking_level,
+                str(effective["modelProfile"]),
+                str(effective.get("thinkingLevel", "")),
             )
         if requested_model_profile is not None:
             return str(requested_model_profile), ""

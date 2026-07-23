@@ -16,6 +16,7 @@
   "state": "pending",
   "requestedAtMs": 1783950000000,
   "expiresAtMs": 1783950060000,
+  "decidedBy": "",
   "decidedAtMs": null,
   "receipt": null
 }

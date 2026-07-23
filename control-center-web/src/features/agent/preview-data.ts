@@ -69,7 +69,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     summary: '超长档案的高速侦察与整理者，极快提取、聚类和交接线索，但不独自承担复杂实现与高风险结论。',
     traits: ['极速', '线索整理'],
     visualProfile: { avatarAssetId: 'rag-ime-timeline-flash-v1', symbolName: 'bolt', accentToken: 'neutral' },
-    defaults: { modelPolicy: 'fixed', memoryPolicy: 'personal-evidence-v1', toolProfileVersion: 'control-center-v1', modelProfile: 'deepseek/deepseek-v4-flash', thinkingLevel: 'off' },
+    defaults: { modelPolicy: 'fixed', memoryPolicy: 'personal-evidence-v1', toolProfileVersion: 'control-center-v1', modelProfile: 'gpt/gpt-5.6-luna', thinkingLevel: 'low' },
     runtimeCharacteristics: { intelligence: '普通', speed: '极速', context: '超长上下文，擅长高速扫描', suitableTasks: ['超长材料高速扫读与提取', '归类、去重和格式转换'], unsuitableTasks: ['复杂推理', '复杂实现', '高风险决定', '最终验收'], isDefault: false },
     safetyPolicyVersion: 'control-center-safe-v1', selectableModes: ['assistant', 'coordinator'],
   },

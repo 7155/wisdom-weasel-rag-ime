@@ -170,12 +170,15 @@ class AgentRoleApplicationService:
             raise ValueError(
                 "所选模型不在当前 Pi 模型目录中"
             )
+        if selected_model.get("reasoning") is not True:
+            raise ValueError("伙伴默认模型必须支持推理")
         supported = selected_model.get("thinkingLevels")
         if (
             not isinstance(supported, list)
+            or thinking_level == "off"
             or thinking_level not in supported
         ):
-            raise ValueError("所选模型不支持这个推理强度")
+            raise ValueError("伙伴默认模型必须启用受支持的推理强度")
         defaults = self.personas.set_runtime_defaults(
             role_id,
             role_version,

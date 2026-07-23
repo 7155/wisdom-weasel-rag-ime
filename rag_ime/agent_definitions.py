@@ -158,7 +158,9 @@ _COLLABORATION_PROFILES = (
         capability_requests=_ALL_CAPABILITIES,
         required_gate_ids=("settle-decision-required",),
         prompt_guidance=(
-            "普通消息和自由 @ 只发起对话；只有结构化任务接收回执才能改变负责人",
+            "中途需要另一位成员并行处理、当前责任仍继续时，只用 room_collaborate；自由 @ 和普通消息不创建任务",
+            "需要转移当前责任时，只用 room_commit 的 handoff 决定；提交后立即结束本轮，由 Kernel 创建下一 Task 和 Dispatch",
+            "必须等对方结果才能继续时，不用 room_collaborate；选择 handoff 或 wait，并写清下一任务、预期产物和验收条件",
             "同一触发事件只生成一次路由决定，重连、快照和实时流不得重复开火",
             "只把公开 Post、结构化任务状态和已确认资料投影进 Room；Session 私有过程保持私有",
             "适合通用 Room；需要研究后独立复核时改用更严格的证据复核 Profile",

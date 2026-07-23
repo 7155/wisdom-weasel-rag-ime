@@ -22,6 +22,7 @@ export interface Room {
   id: string;
   title: string;
   status: 'active' | 'archived';
+  executionMode: 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
   roomKind?: 'collaboration' | 'roleplay';
   avatar?: string;
   description?: string;

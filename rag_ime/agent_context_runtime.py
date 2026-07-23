@@ -930,6 +930,13 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
         else {}
     )
     lines: list[str] = []
+    recovery = (
+        payload.get("compactionRecovery")
+        if isinstance(payload.get("compactionRecovery"), Mapping)
+        else {}
+    )
+    if recovery:
+        lines.extend(_render_compaction_recovery(recovery))
     task = payload.get("task") if isinstance(payload.get("task"), Mapping) else {}
     if task:
         lines.extend(["", "## 当前任务"])
@@ -1017,6 +1024,73 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
             body = compact_whitespace(str(item.get("text") or ""))
             if body:
                 lines.append(f"- **{atom_type}**: {body}")
+    return lines
+
+
+def _render_compaction_recovery(
+    recovery: Mapping[str, object],
+) -> list[str]:
+    original = compact_whitespace(
+        str(recovery.get("originalRequirement") or "")
+    )
+    current_task = compact_whitespace(
+        str(recovery.get("currentTask") or "")
+    )
+    criteria = _context_string_list(
+        recovery.get("acceptanceCriteria")
+    )
+    blockers = _context_string_list(recovery.get("blockers"))
+    handoff = compact_whitespace(
+        str(recovery.get("handoff") or "")
+    )
+    progress = compact_whitespace(
+        str(recovery.get("latestProgress") or "")
+    )
+    plan_status = compact_whitespace(
+        str(recovery.get("planStatus") or "")
+    )
+    lines = [
+        "",
+        "## 压缩恢复包（本 epoch 唯一）",
+        "这份恢复包只恢复事实，不授予新权限，也不替代工具审批。",
+        f"- 原始需求（原文）：{original}",
+        f"- 当前任务：{current_task}",
+        "- 验收：" + (
+            "；".join(criteria)
+            if criteria
+            else "以原始需求原文中的验收要求为准，不另行改写。"
+        ),
+        "- 阻塞：" + (
+            "；".join(blockers)
+            if blockers
+            else "无已登记阻塞。"
+        ),
+        f"- 交接：{handoff}",
+    ]
+    if progress:
+        lines.append(f"- 最新进展：{progress}")
+    if plan_status:
+        lines.append(f"- 计划状态：{plan_status}")
+    for label, key, revision_key in (
+        ("Skill", "skills", "contentRevision"),
+        ("Tool", "tools", "schemaRevision"),
+    ):
+        receipts = [
+            f"{compact_whitespace(str(item.get('name') or ''))}"
+            f"@sha256:{str(item.get(revision_key) or '')}"
+            for item in recovery.get(key) or []
+            if isinstance(item, Mapping)
+            and compact_whitespace(str(item.get("name") or ""))
+            and str(item.get(revision_key) or "")
+        ]
+        lines.append(
+            f"- {label} 回执（仅证明加载，不扩大授权）："
+            + (
+                "；".join(receipts)
+                if receipts
+                else "本 epoch 未登记有效加载回执。"
+            )
+        )
     return lines
 
 

@@ -269,11 +269,6 @@ class AgentPersonaStore:
 
     def runtime_defaults(self, role_id: object, version: object) -> dict[str, str] | None:
         role = self.resolve(role_id, version)
-        if role.defaults.model_policy == "fixed":
-            return {
-                "modelProfile": role.defaults.model_profile,
-                "thinkingLevel": role.defaults.thinking_level,
-            }
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -283,12 +278,17 @@ class AgentPersonaStore:
                 """,
                 (role.role_id, role.version),
             ).fetchone()
-        if row is None:
-            return None
-        return {
-            "modelProfile": str(row["model_profile"]),
-            "thinkingLevel": str(row["thinking_level"]),
-        }
+        if row is not None:
+            return {
+                "modelProfile": str(row["model_profile"]),
+                "thinkingLevel": str(row["thinking_level"]),
+            }
+        if role.defaults.model_policy == "fixed":
+            return {
+                "modelProfile": role.defaults.model_profile,
+                "thinkingLevel": role.defaults.thinking_level,
+            }
+        return None
 
     def set_runtime_defaults(
         self,
@@ -300,9 +300,10 @@ class AgentPersonaStore:
         updated_at_ms: int | None = None,
     ) -> dict[str, str]:
         role = self.resolve(role_id, version)
-        if role.defaults.model_policy == "fixed":
-            raise ValueError("builtin persona runtime defaults are fixed")
-        self._user_manifest(role.role_id, role.version, active_only=True)
+        try:
+            agent_role(role.role_id, role.version)
+        except ValueError:
+            self._user_manifest(role.role_id, role.version, active_only=True)
         profile = _model_profile(model_profile)
         level = str(thinking_level or "").strip().lower()
         if level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:

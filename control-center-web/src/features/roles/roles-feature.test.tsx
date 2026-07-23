@@ -14,6 +14,14 @@ describe('Roles experience', () => {
   it('keeps the partner page focused on identity instead of runtime task definitions', async () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.role.models': {
+        ok: true,
+        providers: [{
+          id: 'gpt',
+          displayName: 'GPT',
+          models: [{ provider: 'gpt', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', api: 'responses', reasoning: true, thinkingLevels: ['off', 'max'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 }],
+        }],
+      },
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
     expect(await screen.findByText('此刻陪你输入，也陪你把事情想清楚')).toBeInTheDocument();
@@ -41,7 +49,7 @@ describe('Roles experience', () => {
     expect(await screen.findByText(/Room 成员、岗位和任务交接只在 Room 内管理/)).toBeInTheDocument();
     expect(screen.queryByText('协作配置')).not.toBeInTheDocument();
     expect(screen.queryByText('协作主持')).not.toBeInTheDocument();
-    expect(screen.getByText('内置伙伴 · 只读')).toBeInTheDocument();
+    expect(screen.getByText('内置伙伴 · 定义只读')).toBeInTheDocument();
   });
 
   it('copies the selected built-in partner without changing her lifecycle phase', async () => {
@@ -195,7 +203,8 @@ describe('Roles experience', () => {
     expect(await screen.findByRole('button', { name: '撤销本次启用' })).toBeInTheDocument();
   });
 
-  it('shows builtin model and thinking as a fixed runtime profile', async () => {
+  it('lets builtin partners choose a reasoning model and non-off thinking level', async () => {
+    const user = userEvent.setup();
     const configured = {
       ...previewPersonas[0]!,
       defaults: {
@@ -204,9 +213,18 @@ describe('Roles experience', () => {
         thinkingLevel: 'max' as const,
       },
     };
+    const updated = {
+      ...configured,
+      defaults: {
+        ...configured.defaults,
+        modelProfile: 'gpt/gpt-5.6-terra',
+        thinkingLevel: 'high' as const,
+      },
+    };
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: [configured] },
       'agent.subagents.templates': { ok: true, items: [] },
+      'agent.role.runtimeDefaults.update': { ok: true, role: updated, defaults: updated.defaults },
       'agent.role.models': {
         ok: true,
         providers: [{
@@ -214,7 +232,8 @@ describe('Roles experience', () => {
           displayName: 'GPT',
           models: [
             { provider: 'gpt', id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'high'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
-            { provider: 'gpt', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', api: 'responses', reasoning: true, thinkingLevels: ['off', 'xhigh'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
+            { provider: 'gpt', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', api: 'responses', reasoning: true, thinkingLevels: ['off', 'max'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
+            { provider: 'deepseek', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', api: 'responses', reasoning: false, thinkingLevels: ['off'], supportsImages: false, contextWindow: 1000000, maxTokens: 128000 },
           ],
         }],
       },
@@ -222,10 +241,23 @@ describe('Roles experience', () => {
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
     expect((await screen.findAllByText('GPT-5.6 Sol')).length).toBeGreaterThan(0);
-    expect(screen.getByText('内置模型')).toBeInTheDocument();
-    expect(screen.getByText('Max')).toBeInTheDocument();
-    expect(screen.queryByLabelText('角色默认模型')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '保存默认设置' })).not.toBeInTheDocument();
+    expect(screen.getByText('内置伙伴 · 定义只读')).toBeInTheDocument();
+    await user.click(screen.getByText('运行设置与定义'));
+    await user.click(screen.getByLabelText('角色默认模型'));
+    expect(await screen.findByRole('option', { name: 'GPT-5.6 Terra' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'DeepSeek V4 Flash' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('option', { name: 'GPT-5.6 Terra' }));
+    await user.click(screen.getByLabelText('角色默认推理强度'));
+    expect(screen.queryByRole('option', { name: '不启用推理' })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('option', { name: '高' }));
+    await user.click(screen.getByRole('button', { name: '保存默认设置' }));
+    await waitFor(() => expect(transport.requests.find((call) => call.request.pathId === 'agent.role.runtimeDefaults.update')?.request.body).toEqual({
+      roleId: configured.roleId,
+      roleVersion: configured.version,
+      provider: 'gpt',
+      modelId: 'gpt-5.6-terra',
+      thinkingLevel: 'high',
+    }));
   });
 
   it('exposes Flash as a selectable fast-scan role with explicit boundaries', async () => {
@@ -233,16 +265,25 @@ describe('Roles experience', () => {
     const transport = new MockControlTransport({ routes: {
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.subagents.templates': { ok: true, items: previewTemplates },
+      'agent.role.models': {
+        ok: true,
+        providers: [{
+          id: 'gpt',
+          displayName: 'GPT',
+          models: [{ provider: 'gpt', id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'max'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 }],
+        }],
+      },
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
     await user.click(await screen.findByRole('button', { name: /智鼬·闪念/ }));
-    expect(screen.getAllByText('DeepSeek V4 Flash').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('GPT-5.6 Luna').length).toBeGreaterThan(0);
     expect(screen.getByText('超长材料高速扫读与提取')).toBeInTheDocument();
     expect(screen.getByText('归类、去重和格式转换')).toBeInTheDocument();
     expect(screen.getByText('复杂推理')).toBeInTheDocument();
     expect(screen.getByText('最终验收')).toBeInTheDocument();
-    expect(screen.getByText('不启用推理')).toBeInTheDocument();
+    await user.click(screen.getByText('运行设置与定义'));
+    expect(screen.getByLabelText('角色默认推理强度')).toHaveTextContent('低');
   });
 
   it('does not substitute preview Personas when the native catalog is empty', async () => {

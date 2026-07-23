@@ -8,7 +8,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { StubControlTransport } from '@/test/stub-control-transport';
-import type { ControlTransport } from '@/platform/transport';
+import type { ControlRequest, ControlTransport } from '@/platform/transport';
 import { AgentFeature } from './index';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from './preview-data';
 import { resolveConversationEntryId } from './sessions/ConversationForkDialog';
@@ -647,6 +647,90 @@ describe('Agent experience', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(true);
   });
 
+  it('deduplicates rapid sends and isolates a late prompt failure to its source Session', async () => {
+    const pendingA = deferred<unknown>();
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      (request: ControlRequest) => request.params?.sessionId === 'session-preview'
+        ? pendingA.promise
+        : { ok: true },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+
+    fireEvent.change(composer, { target: { value: 'A 会迟到失败' } });
+    const send = screen.getByRole('button', { name: '发送' });
+    fireEvent.click(send);
+    fireEvent.click(send);
+
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt'),
+    ).toHaveLength(1));
+
+    await user.click(screen.getByRole('button', { name: /记忆整理/ }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue(''));
+    await user.type(screen.getByRole('textbox', { name: '消息' }), 'B 可以独立发送');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt'),
+    ).toHaveLength(2));
+    expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt')[1]?.request)
+      .toMatchObject({ params: { sessionId: 'session-memory' }, body: { message: 'B 可以独立发送' } });
+
+    await user.type(screen.getByRole('textbox', { name: '消息' }), 'B 的未发送草稿');
+    await act(async () => pendingA.reject(new Error('404 Model "gpt-5.6-luna" is not supported by any configured account in this group')));
+    expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('B 的未发送草稿');
+    expect(document.querySelector('.agent-conversation__header [role="alert"]')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('A 会迟到失败'));
+    expect(Object.values(useAgentLiveStore.getState().projections['session-preview'].turnsById)
+      .some((turn) => turn.failure === '当前模型不可用，请切换模型后重试。')).toBe(true);
+  });
+
+  it('keeps an in-flight stop request and its late failure inside the source Session', async () => {
+    const pendingAbort = deferred<unknown>();
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      { ok: true },
+      { ok: true, items: [] },
+      { ok: true },
+      () => pendingAbort.promise,
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.messageOrder.length,
+    ).toBeGreaterThan(0));
+    act(() => useAgentLiveStore.getState().hydrateSnapshot('session-preview', {
+      ...previewAgentSnapshot('session-preview'),
+      status: 'working',
+    }));
+
+    await user.click(await screen.findByRole('button', { name: '停止本轮' }));
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'agent.session.abort'),
+    ).toHaveLength(1));
+
+    await user.click(screen.getByRole('button', { name: /记忆整理/ }));
+    const composerB = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composerB, 'B 不应被 A 的停止请求锁住');
+    expect(screen.getByRole('button', { name: '发送' })).toBeEnabled();
+
+    await act(async () => pendingAbort.reject(new Error('A 的停止请求失败')));
+    expect(composerB).toHaveValue('B 不应被 A 的停止请求锁住');
+    expect(screen.queryByText('A 的停止请求失败')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    expect(await screen.findByText('A 的停止请求失败')).toBeInTheDocument();
+  });
+
   it('renders a rejected Pi prompt once with a public recovery message', async () => {
     const transport = featureTransport(
       previewModelCatalog('session-preview'),
@@ -930,7 +1014,7 @@ describe('Agent experience', () => {
     expect(await screen.findByText('对话权限')).toBeInTheDocument();
     const picker = document.querySelector('.agent-picker-popover');
     expect(picker).not.toBeNull();
-    expect(within(picker as HTMLElement).getByRole('radio', { name: /受控助手/ })).toBeInTheDocument();
+    expect(within(picker as HTMLElement).getByRole('radio', { name: /每次确认/ })).toBeInTheDocument();
   });
 
   it('restores a pending approval dialog directly from the session snapshot', async () => {
@@ -1003,6 +1087,64 @@ describe('Agent experience', () => {
     const dialog = await screen.findByRole('dialog', { name: '确认应用设置' });
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('审批已过期，请重新发起操作');
     expect(within(dialog).getByRole('button', { name: '批准并执行' })).toBeEnabled();
+  });
+
+  it('keeps a late approval failure inside the Session that owned the decision', async () => {
+    const pendingApproval = deferred<unknown>();
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => pendingApproval.promise,
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.lastSequence,
+    ).toBeGreaterThan(0));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const turnId = projection.turnOrder.at(-1) ?? 'turn-approval-switch';
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'approval-before-session-switch',
+        sessionId: 'session-preview',
+        turnId,
+        sequence: projection.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'approval_required',
+        payload: {
+          approvalId: 'approval-session-a',
+          payloadSha256: 'approval-session-a-hash',
+          summary: '执行 A 的受控操作',
+          preview: { title: '确认 A 的受控操作', changes: [] },
+        },
+        resumeToken: 'approval-before-session-switch',
+      }]);
+    });
+
+    await user.click(await screen.findByRole('button', { name: '批准并执行' }));
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'agent.approval.decide'),
+    ).toHaveLength(1));
+
+    // A modal blocks pointer navigation, but the selected Session can still
+    // change through restored navigation/native state while the request is in
+    // flight. Exercise that ownership boundary directly.
+    fireEvent.click(screen.getByRole('button', { name: /记忆整理/, hidden: true }));
+    const composerB = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composerB, 'B 的草稿不能被 A 的审批结果覆盖');
+    await act(async () => pendingApproval.reject(new Error('A 的审批已经过期')));
+
+    expect(composerB).toHaveValue('B 的草稿不能被 A 的审批结果覆盖');
+    expect(screen.queryByText('A 的审批已经过期')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    expect(await screen.findByText('A 的审批已经过期')).toBeInTheDocument();
   });
 
   it('keeps the turn busy while abort is only acknowledged and prevents repeated stop clicks', async () => {
@@ -1172,6 +1314,58 @@ describe('Agent experience', () => {
     })));
   });
 
+  it('keeps a late memory-review failure inside its source Session', async () => {
+    const pendingReview = deferred<unknown>();
+    const transport = productionTransport({
+      'agent.memoryMaintenance.run': memoryRunFixture(),
+      'agent.session.review.resolve': () => pendingReview.promise,
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.lastSequence,
+    ).toBeGreaterThan(0));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const turnId = projection.turnOrder.at(-1) ?? 'turn-review-switch';
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'memory-review-before-session-switch',
+        sessionId: 'session-preview',
+        turnId,
+        sequence: projection.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'user_input_required',
+        payload: {
+          requestId: 'review-session-a',
+          requestKind: 'memory_review',
+          runId: 'memory-run-1',
+          title: '审阅 A 的记忆草案',
+        },
+        resumeToken: 'memory-review-before-session-switch',
+      }]);
+    });
+
+    await screen.findByRole('dialog');
+    await user.click(screen.getByRole('button', { name: '稍后审阅' }));
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.pathId === 'agent.session.review.resolve'),
+    ).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole('button', { name: /记忆整理/, hidden: true }));
+    const composerB = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composerB, 'B 的草稿不能被 A 的记忆审阅覆盖');
+    await act(async () => pendingReview.reject(new Error('A 的记忆草案已经失效')));
+
+    expect(composerB).toHaveValue('B 的草稿不能被 A 的记忆审阅覆盖');
+    expect(screen.queryByText('A 的记忆草案已经失效')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    expect(await screen.findByText('A 的记忆草案已经失效')).toBeInTheDocument();
+  });
+
   it('uses the Pi RPC command catalog and supports keyboard and pointer selection', async () => {
     const transport = featureTransport();
     const user = userEvent.setup();
@@ -1248,12 +1442,13 @@ describe('Agent experience', () => {
     expect(await screen.findByText('对话权限')).toBeInTheDocument();
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
-    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /受控助手/ })).toBeInTheDocument();
-    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /只读观察/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /每次确认/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /^只读/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /工作区托管/ })).toBeInTheDocument();
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /完全信任/ })).toBeInTheDocument();
-    const readonlyPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /只读观察/ });
-    const coordinatorPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /运行协调/ });
-    expect(coordinatorPermission).toHaveAttribute('aria-checked', 'true');
+    const readonlyPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /^只读/ });
+    const perActionPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /每次确认/ });
+    expect(perActionPermission).toHaveAttribute('aria-checked', 'true');
     readonlyPermission.focus();
     await user.keyboard(' ');
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
@@ -1261,14 +1456,15 @@ describe('Agent experience', () => {
         pathId: 'agent.session.mode.update',
         params: { sessionId: 'session-preview' },
         body: {
-          mode: 'assistant',
-          workspaceRoots: [],
+          mode: 'coordinator',
+          executionMode: 'read_only',
+          workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
           toolProfileVersion: 'subagent-readonly-v1',
           toolAllowlistMode: 'profile',
         },
       }),
     })));
-    expect(await screen.findByRole('button', { name: '对话权限：只读观察' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '对话权限：只读' })).toBeInTheDocument();
 
     await openCommandPalette();
     await user.click(screen.getByRole('option', { name: /\/tools/ }));
@@ -1355,10 +1551,10 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '对话权限：受控助手' }));
+    await user.click(await screen.findByRole('button', { name: '对话权限：每次确认' }));
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
-    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /运行协调/ }));
+    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /工作区托管/ }));
 
     await waitFor(() => expect(pickFiles).toHaveBeenCalledWith({
       purpose: 'workspace-root',
@@ -1371,12 +1567,14 @@ describe('Agent experience', () => {
         pathId: 'agent.session.mode.update',
         body: expect.objectContaining({
           mode: 'coordinator',
+          executionMode: 'workspace_managed',
           workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+          workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
           toolAllowlistMode: 'profile',
         }),
       }),
     })));
-    expect(await screen.findByRole('button', { name: '对话权限：运行协调' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '对话权限：工作区托管' })).toBeInTheDocument();
   });
 
   it('requires an explicit native confirmation before enabling complete trust', async () => {
@@ -1401,7 +1599,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '对话权限：受控助手' }));
+    await user.click(await screen.findByRole('button', { name: '对话权限：每次确认' }));
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
     await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /完全信任/ }));
@@ -1425,10 +1623,11 @@ describe('Agent experience', () => {
         params: { sessionId: 'session-preview' },
         body: {
           mode: 'coordinator',
+          executionMode: 'full_trust',
           workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
-          toolProfileVersion: 'control-center-auto-approve-v1',
+          toolProfileVersion: 'control-center-v1',
           toolAllowlistMode: 'profile',
-          dangerousModeConfirmation: 'AUTO_APPROVE_ALL',
+          dangerousModeConfirmation: 'ENABLE_FULL_TRUST',
         },
       }),
     })));
@@ -1472,7 +1671,7 @@ describe('Agent experience', () => {
     await user.type(composer, '/');
     const toolsCommand = screen.getByRole('option', { name: /\/tools/ });
     expect(toolsCommand).toBeDisabled();
-    expect(toolsCommand).toHaveAttribute('title', '受控助手没有可用工具');
+    expect(toolsCommand).toHaveAttribute('title', '每次确认没有可用工具');
     await user.keyboard('{Escape}');
 
     act(() => {
@@ -1527,6 +1726,47 @@ describe('Agent experience', () => {
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(true));
     const prompt = transport.requests.find((call) => call.request.pathId === 'agent.session.prompt');
     expect(prompt?.request.body).toMatchObject({ attachments: ['media_fixture_attachment_01'] });
+  });
+
+  it('returns a late image import to its source Session instead of dropping or leaking it', async () => {
+    const pendingPaste = deferred<Array<{
+      id: string;
+      name: string;
+      mimeType: string;
+      byteSize: number;
+      sessionId: string;
+      sha256: string;
+    }>>();
+    const transport = featureTransport();
+    vi.spyOn(transport, 'pasteImages').mockImplementation(() => pendingPaste.promise);
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composerA = await screen.findByRole('textbox', { name: '消息' });
+    await screen.findByRole('button', { name: /模型：GPT-5\.4/ }, { timeout: 5_000 });
+    const image = new File([new Uint8Array([137, 80, 78, 71])], 'late.png', { type: 'image/png' });
+
+    fireEvent.paste(composerA, {
+      clipboardData: { files: [image], items: [] },
+    });
+    await waitFor(() => expect(transport.pasteImages).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole('button', { name: /记忆整理/ }));
+    const composerB = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composerB, 'B 保留自己的草稿');
+    await act(async () => pendingPaste.resolve([{
+      id: 'media-late-a',
+      name: 'late.png',
+      mimeType: 'image/png',
+      byteSize: 4,
+      sessionId: 'session-preview',
+      sha256: 'a'.repeat(64),
+    }]));
+
+    expect(composerB).toHaveValue('B 保留自己的草稿');
+    expect(screen.queryByText('late.png')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    expect(await screen.findByText('late.png')).toBeInTheDocument();
   });
 
   it('imports a selected image through the native managed attachment picker', async () => {
@@ -2019,6 +2259,16 @@ function renderAgent(transport: ControlTransport, initialEntry = '/agent') {
 
 function testQueryClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 function featureTransport(

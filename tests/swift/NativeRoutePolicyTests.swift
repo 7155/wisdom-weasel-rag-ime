@@ -542,7 +542,7 @@ struct NativeRoutePolicyTests {
                 "toolProfileVersion": "control-center-auto-approve-v1",
                 "toolAllowlistMode": "profile",
                 "workspaceRoots": ["/tmp/project"],
-                "dangerousModeConfirmation": "AUTO_APPROVE_ALL",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
                 "projectContextEnabled": false,
                 "piSkillsEnabled": true,
                 "codexSkillsEnabled": true,

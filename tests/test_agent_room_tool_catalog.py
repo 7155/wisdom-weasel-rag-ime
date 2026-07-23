@@ -36,7 +36,10 @@ class RoomToolCatalogTests(unittest.TestCase):
             effective=(workspace_read,),
         )
 
-        self.assertEqual(plan.user_authorized[:3], ROOM_PUBLIC_TOOLS)
+        self.assertEqual(
+            plan.user_authorized[: len(ROOM_PUBLIC_TOOLS)],
+            ROOM_PUBLIC_TOOLS,
+        )
         self.assertIn("workspace_read", plan.user_authorized)
         self.assertNotIn("workspace_shell", plan.user_authorized)
         self.assertIn("workspace_read", plan.template_allowed)

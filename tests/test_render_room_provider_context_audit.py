@@ -71,6 +71,19 @@ class RenderRoomProviderContextAuditTest(unittest.TestCase):
                                     "index": 1,
                                     "status": 200,
                                     "headers": {"x-request-id": "private"},
+                                    "payload": {
+                                        "input": [
+                                            {
+                                                "role": "developer",
+                                                "content": prompt,
+                                            },
+                                            {
+                                                "role": "user",
+                                                "content": "work",
+                                            },
+                                        ],
+                                        "tools": [{"name": "tool_search"}],
+                                    },
                                 }
                             ],
                         }
@@ -183,7 +196,44 @@ class RenderRoomProviderContextAuditTest(unittest.TestCase):
                 prompt,
             )
             self.assertNotIn("headers", exact_call["providerExchanges"][0])
+            self.assertEqual(
+                exact_call["contextViews"]["providerContext"],
+                "normalized effective context",
+            )
+            self.assertTrue(result["checks"]["exactWirePayloadsCaptured"])
+            self.assertTrue(result["checks"]["normalizedPromptMatchesWire"])
+            self.assertTrue(
+                result["checks"]["effectiveToolSetMatchesWireDisclosure"]
+            )
             self.assertNotIn("private", (output / "README.md").read_text())
+
+    def test_wire_tool_names_merge_top_level_and_tool_search_outputs(self) -> None:
+        call = {
+            "providerExchanges": [
+                {
+                    "payload": {
+                        "input": [
+                            {
+                                "type": "tool_search_output",
+                                "tools": [
+                                    {"name": "workspace_read"},
+                                    {"name": "room_post"},
+                                ],
+                            }
+                        ],
+                        "tools": [
+                            {"name": "tool_search"},
+                            {"name": "workspace_read"},
+                        ],
+                    }
+                }
+            ]
+        }
+
+        self.assertEqual(
+            AUDIT._wire_tool_names(call),
+            ["tool_search", "workspace_read", "room_post"],
+        )
 
 
 if __name__ == "__main__":

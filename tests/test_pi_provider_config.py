@@ -9,7 +9,7 @@ from rag_ime.pi_provider_config import load_pi_provider_config
 
 
 class PiProviderConfigTest(unittest.TestCase):
-    def test_imported_openai_gateway_defers_transport_and_capabilities_to_pi(self) -> None:
+    def test_imported_openai_gateway_disables_unverified_native_tool_search(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "providers.json"
             path.write_text(
@@ -35,7 +35,7 @@ class PiProviderConfigTest(unittest.TestCase):
         self.assertEqual(provider["modelCatalogProvider"], "openai")
         self.assertEqual(provider["models"], [{"id": "gpt-test"}])
         self.assertNotIn("api", provider)
-        self.assertNotIn("compat", provider)
+        self.assertEqual(provider["compat"], {"supportsToolSearch": False})
 
 
 if __name__ == "__main__":

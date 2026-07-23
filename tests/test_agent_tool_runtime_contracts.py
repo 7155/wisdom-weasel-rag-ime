@@ -241,8 +241,10 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertEqual(effective["workspace_search"], {"search"})
         self.assertEqual(
             effective["ime_agents"],
-            {"catalog", "delegate", "status", "artifact", "abort"},
+            {"catalog", "status", "artifact"},
         )
+        self.assertNotIn("delegate", effective["ime_agents"])
+        self.assertNotIn("abort", effective["ime_agents"])
         self.assertNotIn("workspace_patch", effective)
         self.assertNotIn("workspace_shell", effective)
 

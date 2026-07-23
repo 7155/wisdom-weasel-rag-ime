@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "828ae7fa7e8353cb1b323ecb7187a10d536c9f63",
+  "minimumHandlersCommit": "d1738b3c49bf685f4360da337357a16430bf5fdf",
   "requiredMethods": [
     "room.dispatch",
     "room.cancel"
@@ -19,6 +19,7 @@
     "toolArtifacts": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
     "providerContextJournal": "packages/rag-ime-runtime-host/src/provider-context-journal.ts",
     "sessionContextRefresh": "packages/rag-ime-runtime-host/src/session-context-refresh.ts",
+    "summarizationCompletion": "packages/coding-agent/src/core/compaction/summarization-completion.ts",
     "cancellationReceipts": "packages/rag-ime-runtime-host/src/cancellation-receipts.ts",
     "roomSettleLifecycle": "packages/rag-ime-runtime-host/src/room-settle-lifecycle.ts",
     "workflowControl": "packages/rag-ime-runtime-host/src/workflow-control.ts",
@@ -38,7 +39,9 @@
     "contextInspection": [
       "pi.on(\"before_provider_request\"",
       "return record ? structuredClone(record) : undefined;",
-      "normalizeDebugContextRecord(parsed, this.maxCallsPerTurn)"
+      "normalizeDebugContextRecord(parsed, this.maxCallsPerTurn)",
+      "loadedSkillRecoveryReceipts()",
+      "safeReasoningInspectionValue"
     ],
     "skills": [
       "input: routing?.input",
@@ -71,7 +74,14 @@
       "rag-ime.managed-room-compaction-pointer.v1",
       "session_before_compact",
       "roomRecoveryContext",
-      "expectedContextEpoch"
+      "expectedContextEpoch",
+      "preCompactionMessages",
+      "getAgentSkillRecovery"
+    ],
+    "summarizationCompletion": [
+      "export async function completeSummarizationWithRetry(",
+      "isRetryableAssistantError",
+      "Compaction cancelled"
     ],
     "cancellationReceipts": [
       "export function roomCancellationSurfaces",
@@ -80,7 +90,8 @@
     ],
     "roomSettleLifecycle": [
       "origin: \"room_settle_guard\"",
-      "maxAttempts: 1"
+      "maxAttempts: 1",
+      "event.message.stopReason === \"error\" || event.message.stopReason === \"aborted\""
     ],
     "workflowControl": [
       "const showPlan = Boolean(planStatus) && (planStatus !== \"draft\" || planItems.length > 0);",
@@ -92,7 +103,9 @@
     ],
     "deterministicTestAdapter": [
       "export function projectTaskCanaryResponse",
-      "PROJECT_TASK_SCENARIO = \"project-task\""
+      "PROJECT_TASK_SCENARIO = \"project-task\"",
+      "export function projectCollaborationCanaryResponse",
+      "export function agentSessionCanaryResponse"
     ],
     "session": [
       "SKILL_REVISION_MISMATCH",

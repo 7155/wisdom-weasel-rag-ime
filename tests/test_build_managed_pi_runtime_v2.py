@@ -36,6 +36,9 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "sessionContextRefresh": Path(
                     "packages/rag-ime-runtime-host/src/session-context-refresh.ts"
                 ),
+                "summarizationCompletion": Path(
+                    "packages/coding-agent/src/core/compaction/summarization-completion.ts"
+                ),
                 "cancellationReceipts": Path(
                     "packages/rag-ime-runtime-host/src/cancellation-receipts.ts"
                 ),

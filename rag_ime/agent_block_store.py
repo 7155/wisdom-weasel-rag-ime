@@ -186,15 +186,30 @@ class AgentBlockStore:
                 """,
                 (session_id, session_id),
             ).fetchall()
+        persisted_message_ids = {str(row["message_id"]) for row in rows}
+        claimed_alias_ids: set[str] = set()
         missing_envelopes: list[tuple[int, str, dict[str, object]]] = []
         for row in rows:
             message_id = str(row["message_id"])
             base = runtime_by_id.get(message_id)
+            target_message_id = message_id
             if base is None:
                 value = json.loads(str(row["message_json"]))
                 if not isinstance(value, dict):
                     raise RuntimeError("Agent block message envelope is corrupt")
-                base = value
+                alias_id = _runtime_message_alias(
+                    value,
+                    runtime_order=runtime_order,
+                    runtime_by_id=runtime_by_id,
+                    persisted_message_ids=persisted_message_ids,
+                    claimed_alias_ids=claimed_alias_ids,
+                )
+                if alias_id:
+                    target_message_id = alias_id
+                    claimed_alias_ids.add(alias_id)
+                    base = runtime_by_id[alias_id]
+                else:
+                    base = value
             base_blocks = [
                 dict(item) for item in base.get("blocks", [])
                 if isinstance(item, Mapping)
@@ -206,8 +221,8 @@ class AgentBlockStore:
                     session_id, message_id, generation=int(row["generation"])
                 ),
             ]
-            runtime_by_id[message_id] = base
-            if message_id not in runtime_order:
+            runtime_by_id[target_message_id] = base
+            if target_message_id not in runtime_order:
                 missing_envelopes.append((int(row["created_at_ms"]), message_id, base))
 
         # Pi's runtime snapshot owns message/parent order. Timestamps can drift
@@ -301,6 +316,88 @@ class AgentBlockStore:
 def _canonical_json(value: object) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+
+
+def _runtime_message_alias(
+    envelope: Mapping[str, object],
+    *,
+    runtime_order: Sequence[str],
+    runtime_by_id: Mapping[str, Mapping[str, object]],
+    persisted_message_ids: set[str],
+    claimed_alias_ids: set[str],
+) -> str:
+    """Match one live-event envelope to its differently keyed Pi history row."""
+
+    fingerprint = _message_projection_fingerprint(envelope)
+    if not fingerprint:
+        return ""
+    envelope_time = max(0, int(envelope.get("createdAtMs") or 0))
+    candidates = [
+        message_id
+        for message_id in runtime_order
+        if message_id not in persisted_message_ids
+        and message_id not in claimed_alias_ids
+        and envelope_time > 0
+        and 0
+        < max(
+            0,
+            int(runtime_by_id[message_id].get("createdAtMs") or 0),
+        )
+        <= envelope_time
+        and _message_projection_fingerprint(runtime_by_id[message_id])
+        == fingerprint
+    ]
+    if not candidates:
+        return ""
+    runtime_position = {
+        message_id: index
+        for index, message_id in enumerate(runtime_order)
+    }
+    return min(
+        candidates,
+        key=lambda message_id: (
+            abs(
+                max(
+                    0,
+                    int(runtime_by_id[message_id].get("createdAtMs") or 0),
+                )
+                - envelope_time
+            ),
+            runtime_position[message_id],
+        ),
+    )
+
+
+def _message_projection_fingerprint(message: Mapping[str, object]) -> str:
+    role = str(message.get("role") or "")
+    if role not in {"assistant", "user"}:
+        return ""
+    blocks = [
+        {
+            key: block.get(key)
+            for key in (
+                "type",
+                "status",
+                "presentationKind",
+                "data",
+                "summary",
+            )
+            if block.get(key) is not None
+        }
+        for block in message.get("blocks", [])
+        if isinstance(block, Mapping)
+        and block.get("schemaVersion") != "rag-ime.agent-block.v1"
+    ]
+    if not blocks:
+        return ""
+    return _canonical_json(
+        {
+            "role": role,
+            "blocks": blocks,
+            "attachments": message.get("attachments") or [],
+            "citations": message.get("citations") or [],
+        }
     )
 
 

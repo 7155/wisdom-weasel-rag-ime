@@ -28,6 +28,7 @@ export interface AgentRoomV1 {
    */
   workspaceRoots:
     [] | [string] | [string, string] | [string, string, string] | [string, string, string, string];
+  executionMode: 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
   createdAtMs: number;
   updatedAtMs: number;
   lastEventSequence: number;
