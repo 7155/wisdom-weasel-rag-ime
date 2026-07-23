@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createConfiguredControlTransport } from './control-transport';
 
 describe('preview control transport', () => {
-  it('keeps Room member Sessions internal and exposes canonical working tools', async () => {
+  it('keeps Room member Sessions available for direct Agent chat and exposes canonical working tools', async () => {
     const transport = createConfiguredControlTransport();
 
     const publicSessions = await transport.request<{ sessions: Record<string, unknown>[] }>({
@@ -18,7 +18,13 @@ describe('preview control transport', () => {
       query: { sessionId: 'session-room-present' },
     });
 
-    expect(publicSessions.sessions.some((session) => session.id === 'session-room-present')).toBe(false);
+    expect(publicSessions.sessions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'session-room-present',
+        mode: 'coordinator',
+        workspaceRoots: ['/Volumes/work/wisdom-weasel-rag-ime'],
+      }),
+    ]));
     expect(roomSessions.sessions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'session-room-present',
@@ -70,5 +76,30 @@ describe('preview control transport', () => {
       id: 'event:10001',
       disposition: 'pending',
     });
+  });
+
+  it('keeps preview model and reasoning selections consistent with the next catalog read', async () => {
+    const transport = createConfiguredControlTransport();
+
+    await transport.request({
+      pathId: 'agent.session.model.select',
+      params: { sessionId: 'session-preview' },
+      body: { provider: 'openai', modelId: 'gpt-5.4-mini' },
+    });
+    await transport.request({
+      pathId: 'agent.session.thinking.select',
+      params: { sessionId: 'session-preview' },
+      body: { level: 'high' },
+    });
+    const catalog = await transport.request<Record<string, unknown>>({
+      pathId: 'agent.session.models',
+      params: { sessionId: 'session-preview' },
+    });
+
+    expect(catalog.selected).toMatchObject({
+      provider: 'openai',
+      id: 'gpt-5.4-mini',
+    });
+    expect(catalog.thinkingLevel).toBe('high');
   });
 });

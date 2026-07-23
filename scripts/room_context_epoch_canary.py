@@ -925,22 +925,52 @@ def debug_evidence(
     requester: JsonRequester = request_json,
     timeout: float = 15,
     text_markers: Mapping[str, str] | None = None,
+    turn_id: str = "",
 ) -> dict[str, Any]:
+    path = f"/api/agent/sessions/{encoded(session_id)}/debug-context"
+    if turn_id:
+        path = f"{path}?turnId={encoded(turn_id)}"
     debug = requester(
         base_url,
         "GET",
-        f"/api/agent/sessions/{encoded(session_id)}/debug-context",
+        path,
         timeout=timeout,
     )
     context = debug.get("context") or {}
     current_provider_context = debug.get("currentProviderContext") or {}
     projection = context.get("contextProjection") or {}
-    journal = projection.get("providerContextJournal") or {}
+    journal = (
+        projection.get("providerContextJournal")
+        if isinstance(
+            projection.get("providerContextJournal"),
+            dict,
+        )
+        else current_provider_context.get(
+            "providerContextJournal"
+        )
+    ) or {}
     cache_reads = [
         int((call.get("usage") or {}).get("cacheRead") or 0)
         for call in context.get("providerRequestReceipts", [])
         if isinstance(call, dict)
     ]
+    provider_usage_reported = any(
+        sum(
+            int(usage.get(key) or 0)
+            for key in (
+                "input",
+                "output",
+                "cacheRead",
+                "cacheWrite",
+                "totalTokens",
+            )
+        )
+        > 0
+        for call in context.get("providerRequestReceipts", [])
+        if isinstance(call, dict)
+        for usage in [call.get("usage")]
+        if isinstance(usage, dict)
+    )
     tool_names = [
         str(item.get("toolName") or item.get("name") or "")
         for item in context.get("toolExecutions", [])
@@ -979,6 +1009,7 @@ def debug_evidence(
         },
         "cacheReads": cache_reads,
         "positiveCacheRead": any(value > 0 for value in cache_reads),
+        "providerUsageReported": provider_usage_reported,
         "modelCallCount": len(context.get("modelCalls", [])),
         "providerPrefix": provider_prefix_evidence(context),
         "providerRoomPostVisibility": provider_room_post_visibility(
@@ -1244,8 +1275,12 @@ def latest_transition(db_path: Path, session_id: str) -> dict[str, Any]:
         raise RuntimeError(f"No Product context transition for {session_id}")
     evidence = json.loads(row[4])
     hashes = [
-        evidence.get("roomProviderEntryHash"),
-        evidence.get("sessionProviderEntryHash"),
+        str(value)
+        for value in (
+            evidence.get("roomProviderEntryHash"),
+            evidence.get("sessionProviderEntryHash"),
+        )
+        if str(value or "").strip()
     ]
     return {
         "source": row[0],

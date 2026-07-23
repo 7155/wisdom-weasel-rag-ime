@@ -5,6 +5,7 @@ import {
   appendOptimisticAgentMessage,
   applyAgentSnapshot,
   createAgentProjection,
+  discardOptimisticAgentMessage,
   failOptimisticAgentMessage,
   reduceAgentEvent,
 } from './agent-reducer';
@@ -421,6 +422,24 @@ describe('AgentEventReducer', () => {
       updatedAtMs: 20,
       failure: '当前模型不可用，请切换模型后重试。',
     });
+  });
+
+  it('discards a rejected optimistic retry without leaving a duplicate turn', () => {
+    const optimistic = appendOptimisticAgentMessage(createAgentProjection('session-1'), {
+      clientMessageId: 'client-conflict',
+      text: '不要把并发冲突记成新对话',
+      nowMs: 10,
+    });
+
+    const discarded = discardOptimisticAgentMessage(
+      optimistic,
+      'client-conflict',
+    );
+
+    expect(discarded.messageOrder).toEqual([]);
+    expect(discarded.turnOrder).toEqual([]);
+    expect(discarded.optimisticByClientMessageId).toEqual({});
+    expect(discarded.status).toBe('idle');
   });
 
   it('retains unknown events and can abort an active turn without throwing', () => {

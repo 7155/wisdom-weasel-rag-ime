@@ -3,6 +3,12 @@ import { publicErrorText } from '@/features/overview/management-ui';
 const unavailableModelPattern = /(?:model\s+["']?[^"']+["']?\s+is\s+not\s+supported|unsupported\s+model|model_not_supported|模型.*(?:不支持|不可用))/i;
 const providerRequestFailurePattern = /(?:error\s+from\s+provider|upstream\s+request\s+failed|provider[_\s-](?:request|response|error)|模型服务.*(?:失败|异常))/i;
 const nativeRouteMismatchPattern = /(?:route[_\s-]policy[_\s-]rejected|unexpected\s+(?:request\s+)?body\s+field|body\s+field\s+is\s+not\s+allowlisted|unknown\s+pathid)/i;
+const activeTurnConflictPattern = /(?:Pi\s*正在处理上一轮|Pi\s*正在回复|Session\s*正在执行\s*Room\s*任务|previous\s+turn\s+(?:is\s+)?(?:busy|processing))/i;
+
+export function isAgentTurnConflict(value: unknown): boolean {
+  const message = (value instanceof Error ? value.message : String(value ?? '')).trim();
+  return activeTurnConflictPattern.test(message);
+}
 
 export function publicAgentErrorText(
   value: unknown,

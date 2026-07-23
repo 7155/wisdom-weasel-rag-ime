@@ -101,14 +101,20 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                 schema = manifest["parameters"]
                 self.assertEqual(schema["type"], "object")
                 branches = schema["oneOf"]
+                operation_branches = [
+                    branch
+                    for branch in branches
+                    if isinstance(branch.get("properties", {}).get("op"), dict)
+                    and "const" in branch["properties"]["op"]
+                ]
                 self.assertEqual(
                     {
                         branch["properties"]["op"]["const"]
-                        for branch in branches
+                        for branch in operation_branches
                     },
                     effective[manifest["name"]],
                 )
-                for branch in branches:
+                for branch in operation_branches:
                     self.assertIs(
                         branch.get(
                             "additionalProperties",
@@ -117,6 +123,18 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                         False,
                     )
                     self.assertIn("op", branch["required"])
+                compatibility_branches = [
+                    branch for branch in branches if branch not in operation_branches
+                ]
+                if manifest["name"] == "ime_memory":
+                    self.assertEqual(len(compatibility_branches), 1)
+                    self.assertEqual(compatibility_branches[0]["required"], ["query"])
+                    self.assertEqual(
+                        compatibility_branches[0]["not"],
+                        {"required": ["op"]},
+                    )
+                else:
+                    self.assertEqual(compatibility_branches, [])
 
     def test_runtime_manifest_keeps_internal_catalog_and_public_cards_bounded(self) -> None:
         _catalog, manifests = self._runtime_contracts(mode="coordinator")
@@ -253,6 +271,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                 operations = {
                     branch["properties"]["op"]["const"]
                     for branch in manifest["parameters"]["oneOf"]
+                    if "op" in branch.get("properties", {})
                 }
                 self.assertEqual(operations, effective[manifest["name"]])
                 self.assertTrue(operations)

@@ -276,9 +276,15 @@ def _compaction_evidence(room_context: str, session_context: str) -> dict[str, o
     tool_items = tools.get("items") if isinstance(tools.get("items"), list) else []
     return {
         "roomContextSha256": _sha256(room),
-        "roomProviderEntryHash": _sha256(f"room_context\0{room}"),
+        "roomProviderEntryHash": _provider_entry_hash(
+            "room_context",
+            room,
+        ),
         "sessionContextSha256": _sha256(session),
-        "sessionProviderEntryHash": _sha256(f"session_memory\0{session}"),
+        "sessionProviderEntryHash": _provider_entry_hash(
+            "session_memory",
+            session,
+        ),
         "recoverySchemaVersion": "wisdom-weasel.room-compaction-recovery.v2",
         "originalRequirementCount": len(packet.get("originalRequirements") or []),
         "currentTaskPresent": bool(packet.get("currentTask")),
@@ -292,6 +298,13 @@ def _compaction_evidence(room_context: str, session_context: str) -> dict[str, o
             if isinstance(item, Mapping) and str(item.get("receiptId") or "").strip()
         ],
     }
+
+
+def _provider_entry_hash(kind: str, body: str) -> str:
+    normalized = str(body or "").strip()
+    if not normalized:
+        return ""
+    return _sha256(f"{kind}\0{normalized}")
 
 
 def _current_payload(row: sqlite3.Row) -> dict[str, object]:

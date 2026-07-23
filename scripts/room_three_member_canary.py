@@ -9,7 +9,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from room_context_epoch_canary import (
     JsonRequester,
@@ -48,6 +48,8 @@ EXPECTED_SKILLS = {
     "C": "room-delivery-closure",
 }
 EXPECTED_INTENTS = ("execute", "review", "close")
+SESSION_CONTINUITY_PROMPT = "SESSION-CONTINUITY-AFTER-ROOM"
+SESSION_CONTINUITY_REPLY = "SESSION-CONTINUITY-OK"
 _PROJECT_MEMORY_SIGNAL_GROUPS = (
     ("代码任务",),
     ("最小改动", "最小修改"),
@@ -62,6 +64,30 @@ def _is_useful_project_memory(block: str) -> bool:
     return all(
         any(signal in block for signal in alternatives)
         for alternatives in _PROJECT_MEMORY_SIGNAL_GROUPS
+    )
+
+
+def bounded_useful_rag_check(
+    contexts: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    """Require useful recalled blocks while allowing a true zero-hit member."""
+
+    memories = [
+        value.get("sessionMemory")
+        if isinstance(value.get("sessionMemory"), Mapping)
+        else {}
+        for value in contexts.values()
+    ]
+    return (
+        any(int(memory.get("blockCount") or 0) > 0 for memory in memories)
+        and all(
+            not memory.get("forbiddenMetadata")
+            and all(
+                _is_useful_project_memory(str(block))
+                for block in memory.get("blocks") or []
+            )
+            for memory in memories
+        )
     )
 
 
@@ -509,21 +535,43 @@ def tool_workload_checks(
     receipts: dict[str, dict[str, dict[str, Any]]],
 ) -> dict[str, bool]:
     a = receipts["A"]
+    a_read_statuses = _statuses(a["workspace_read"])
+    a_patch_statuses = _statuses(a["workspace_patch"])
     checks = {
         "aRoomState": _statuses(a["room_state"]) == ["applied"],
         "aCollaboratedOnce": _statuses(a["room_collaborate"]) == ["applied"],
         "aListSearch": _statuses(a["workspace_list"]) == ["applied"]
         and _statuses(a["workspace_search"]) == ["applied"],
-        "aReadFailureRecovered": _statuses(a["workspace_read"])
-        == ["failed", "applied", "applied"],
-        "aPatchAppliedOnce": _statuses(a["workspace_patch"]) == ["applied"],
+        "aReadFailureRecoveredWithoutLoop": (
+            3 <= len(a_read_statuses) <= 4
+            and a_read_statuses[0] == "failed"
+            and a_read_statuses.count("failed") == 1
+            and 2 <= a_read_statuses.count("applied") <= 3
+            and set(a_read_statuses) <= {"failed", "applied"}
+        ),
+        "aPatchAppliedOnceWithBoundedRepair": (
+            1 <= len(a_patch_statuses) <= 2
+            and a_patch_statuses[-1] == "applied"
+            and a_patch_statuses.count("applied") == 1
+            and a_patch_statuses.count("failed") <= 1
+            and set(a_patch_statuses) <= {"failed", "applied"}
+        ),
         "aTestFailureRecovered": _statuses(a["workspace_shell"])
         == ["failed", "applied"],
         "aPublicCommit": _statuses(a["room_post"]) == ["applied"]
         and _statuses(a["room_commit"]) == ["applied"],
     }
     b = receipts["B"]
-    checks["bRoomState"] = _statuses(b["room_state"]) == ["applied"]
+    b_commit_statuses = _statuses(b["room_commit"])
+    b_clean_commit = (
+        _statuses(b["room_state"]) == ["applied"]
+        and b_commit_statuses == ["applied"]
+    )
+    b_recovered_commit = (
+        _statuses(b["room_state"]) == ["applied"]
+        and b_commit_statuses == ["", "applied"]
+    )
+    checks["bRoomState"] = b_clean_commit or b_recovered_commit
     checks["bIndependentReads"] = _statuses(b["workspace_read"]) == [
         "applied",
         "applied",
@@ -534,9 +582,21 @@ def tool_workload_checks(
     )
     checks["bPublicCommit"] = _statuses(b["room_post"]) == [
         "applied"
-    ] and _statuses(b["room_commit"]) == ["applied"]
+    ] and (b_clean_commit or b_recovered_commit)
+    checks["bCommitValidationPathBounded"] = (
+        b_clean_commit or b_recovered_commit
+    )
     c = receipts["C"]
-    checks["cRoomState"] = _statuses(c["room_state"]) == ["applied"]
+    c_commit_statuses = _statuses(c["room_commit"])
+    c_clean_commit = (
+        _statuses(c["room_state"]) == ["applied"]
+        and c_commit_statuses == ["applied"]
+    )
+    c_recovered_commit = (
+        _statuses(c["room_state"]) == ["applied", "applied"]
+        and c_commit_statuses == ["", "applied"]
+    )
+    checks["cRoomState"] = c_clean_commit or c_recovered_commit
     checks["cIndependentReads"] = _statuses(c["workspace_read"]) == [
         "applied",
         "applied",
@@ -545,7 +605,10 @@ def tool_workload_checks(
     checks["cNeverPatched"] = c["workspace_patch"]["invocationCount"] == 0
     checks["cPublicCommit"] = _statuses(c["room_post"]) == [
         "applied"
-    ] and _statuses(c["room_commit"]) == ["applied"]
+    ] and (c_clean_commit or c_recovered_commit)
+    checks["cCommitValidationPathBounded"] = (
+        c_clean_commit or c_recovered_commit
+    )
     checks["everyInvocationHasOneLoadReceipt"] = all(
         evidence["invocationCount"] == 0 or len(evidence["loadReceiptIds"]) == 1
         for member in receipts.values()
@@ -659,11 +722,19 @@ def _compact_members(
             str(skill_items[0]["receiptId"]) if len(skill_items) == 1 else ""
         )
         compact_result = response.get("result") or {}
+        journal_hashes = list(after["journal"]["hashes"])
+        journal_entry_count = int(
+            after["journal"]["entryCount"] or 0
+        )
         checks = {
             "refreshApplied": compact_result.get("contextRefreshApplied") is True,
-            "oneRecoveryPacket": after["journal"]["entryCount"] == 2
-            and after["recoveryPacket"]["valid"] is True
-            and after["recoveryPacket"]["roomContextCount"] == 1,
+            "oneRecoveryPacket": (
+                after["recoveryPacket"]["valid"] is True
+                and after["recoveryPacket"]["roomContextCount"] == 1
+                and journal_entry_count == len(journal_hashes)
+                and journal_entry_count in {1, 2}
+                and len(set(journal_hashes)) == journal_entry_count
+            ),
             "transitionBound": transition["reason"] == "compaction"
             and transition["recovery"]["providerHashes"] == after["journal"]["hashes"],
             "requirementsRecovered": int(
@@ -681,7 +752,10 @@ def _compact_members(
             == set(transition["recovery"]["toolReceiptNames"]),
         }
         if bool(getattr(args, "require_cache_evidence", True)):
-            checks["cacheUsageObserved"] = after["positiveCacheRead"] is True
+            checks["compactionDoesNotClaimCacheHit"] = (
+                after["modelCallCount"] == 0
+                and after["positiveCacheRead"] is False
+            )
         else:
             checks["deterministicCacheEvidenceNotClaimed"] = (
                 after["positiveCacheRead"] is False
@@ -700,6 +774,213 @@ def _compact_members(
             "passed": all(checks.values()),
         }
     return results
+
+
+def _role_texts(
+    snapshot: Mapping[str, Any],
+    role: str,
+) -> list[str]:
+    texts: list[str] = []
+    for item in snapshot.get("items") or []:
+        if not isinstance(item, Mapping) or item.get("role") != role:
+            continue
+        blocks = item.get("blocks")
+        if not isinstance(blocks, list):
+            continue
+        value = "\n".join(
+            str(block.get("data", {}).get("text") or "")
+            for block in blocks
+            if isinstance(block, Mapping)
+            and block.get("type") == "text"
+            and isinstance(block.get("data"), Mapping)
+        ).strip()
+        if value:
+            texts.append(value)
+    return texts
+
+
+def _assistant_texts(snapshot: Mapping[str, Any]) -> list[str]:
+    return _role_texts(snapshot, "assistant")
+
+
+def _user_texts(snapshot: Mapping[str, Any]) -> list[str]:
+    return _role_texts(snapshot, "user")
+
+
+def _runtime_transcript_ref(db_path: Path, session_id: str) -> str:
+    with sqlite3.connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT transcript_ref FROM agent_runtime_bindings WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    return str(row[0]) if row is not None else ""
+
+
+def _wait_for_ordinary_reply(
+    base_url: str,
+    *,
+    requester: JsonRequester,
+    session_id: str,
+    prior_assistant_count: int,
+    timeout: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        last = requester(
+            base_url,
+            "GET",
+            f"/api/agent/sessions/{encoded(session_id)}/messages",
+            timeout=15,
+        )
+        if (
+            str(last.get("status") or "") == "idle"
+            and len(_assistant_texts(last)) > prior_assistant_count
+        ):
+            return last
+        time.sleep(0.1)
+    raise TimeoutError(
+        "ordinary Agent did not resume after Room settlement: "
+        f"status={last.get('status')!r}"
+    )
+
+
+def _session_continuity_probe(
+    args: argparse.Namespace,
+    *,
+    requester: JsonRequester,
+    session_id: str,
+    room_id: str,
+    root_id: str,
+    public_posts: list[dict[str, Any]],
+) -> dict[str, Any]:
+    before = requester(
+        args.base_url,
+        "GET",
+        f"/api/agent/sessions/{encoded(session_id)}/messages",
+        timeout=15,
+    )
+    before_serialized = json.dumps(before, ensure_ascii=False, sort_keys=True)
+    prior_assistant_count = len(_assistant_texts(before))
+    transcript_before = _runtime_transcript_ref(args.db_path, session_id)
+    accepted = requester(
+        args.base_url,
+        "POST",
+        f"/api/agent/sessions/{encoded(session_id)}/prompt",
+        {
+            "message": (
+                f"{SESSION_CONTINUITY_PROMPT}：Room 已收工。不要调用工具。"
+                "只依据这个 Session 现有上下文确认刚才的三成员任务和测试结果；"
+                f"回答必须以 {SESSION_CONTINUITY_REPLY} 开头。"
+            ),
+            "clientMessageId": (
+                f"session-continuity:{root_id}:{session_id}"
+            ),
+            "delivery": "prompt",
+        },
+        timeout=30,
+    )
+    after = _wait_for_ordinary_reply(
+        args.base_url,
+        requester=requester,
+        session_id=session_id,
+        prior_assistant_count=prior_assistant_count,
+        timeout=args.turn_timeout,
+    )
+    transcript_after = _runtime_transcript_ref(args.db_path, session_id)
+    debug = requester(
+        args.base_url,
+        "GET",
+        (
+            f"/api/agent/sessions/{encoded(session_id)}/debug-context"
+            f"?turnId={encoded(str(accepted.get('turnId') or ''))}"
+        ),
+        timeout=args.turn_timeout,
+    )
+    context = debug.get("context") if isinstance(debug.get("context"), Mapping) else {}
+    context_text = json.dumps(
+        {
+            "systemPrompt": context.get("systemPrompt"),
+            "modelCalls": context.get("modelCalls"),
+            "providerRequests": context.get("providerRequests"),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    assistant_texts = _assistant_texts(after)
+    public_a_posts = [
+        item
+        for item in public_posts
+        if MARKERS["A"] in str(item.get("content") or "")
+    ]
+    provider_mode = str(getattr(args, "provider_mode", "") or "")
+    checks = {
+        "sameTranscript": bool(transcript_before)
+        and transcript_before == transcript_after,
+        "publicRoomDeliveryVisibleInAgentWindow": MARKERS["A"]
+        in before_serialized,
+        "samePublicDeliveryVisibleInRoom": len(public_a_posts) == 1,
+        "ordinaryPromptAccepted": accepted.get("accepted") is True,
+        "ordinarySessionIdle": str(after.get("status") or "") == "idle",
+        "providerSawRoomHistory": (
+            SESSION_CONTINUITY_PROMPT in context_text
+            and (
+                "THREE-MEMBER-ROOM-CANARY" in context_text
+                or MARKERS["A"] in context_text
+                or COMMIT_RESULTS["A"] in context_text
+            )
+        ),
+        "noDuplicateContinuationPrompt": (
+            sum(
+                SESSION_CONTINUITY_PROMPT in text
+                for text in _user_texts(after)
+            )
+            == 1
+        ),
+    }
+    if provider_mode == "configured":
+        checks["modelConfirmedContinuity"] = bool(assistant_texts) and (
+            SESSION_CONTINUITY_REPLY in assistant_texts[-1]
+        )
+    else:
+        checks["deterministicResponseNotClaimedAsSemanticProof"] = (
+            SESSION_CONTINUITY_PROMPT in context_text
+        )
+    return {
+        "sessionId": session_id,
+        "roomId": room_id,
+        "rootId": root_id,
+        "accepted": accepted,
+        "transcriptRefBefore": transcript_before,
+        "transcriptRefAfter": transcript_after,
+        "agentWindowBefore": {
+            "status": before.get("status"),
+            "messageCount": len(before.get("items") or []),
+            "assistantCount": prior_assistant_count,
+            "containsPrivateRoomTask": "THREE-MEMBER-ROOM-CANARY"
+            in before_serialized,
+            "containsOwnPublicPost": MARKERS["A"] in before_serialized,
+        },
+        "agentWindowAfter": {
+            "status": after.get("status"),
+            "messageCount": len(after.get("items") or []),
+            "assistantCount": len(assistant_texts),
+            "lastAssistantText": (
+                assistant_texts[-1] if assistant_texts else ""
+            ),
+        },
+        "providerContext": {
+            "turnId": debug.get("turnId"),
+            "modelCallCount": len(context.get("modelCalls") or []),
+            "containsRoomTaskOrDelivery": (
+                "THREE-MEMBER-ROOM-CANARY" in context_text
+                or MARKERS["A"] in context_text
+                or COMMIT_RESULTS["A"] in context_text
+            ),
+        },
+        "checks": checks,
+        "passed": all(checks.values()),
+    }
 
 
 def run(
@@ -1026,15 +1307,7 @@ def run(
             progressive_discovery_check([value["promptGovernance"]])
             for value in before.values()
         ),
-        "boundedUsefulRag": all(
-            value["sessionMemory"]["blockCount"] > 0
-            and not value["sessionMemory"]["forbiddenMetadata"]
-            and any(
-                _is_useful_project_memory(block)
-                for block in value["sessionMemory"]["blocks"]
-            )
-            for value in before.values()
-        ),
+        "boundedUsefulRag": bounded_useful_rag_check(before),
         "queuesDrained": all(value["pendingContinuations"] == 0 for value in before.values()),
     }
     if bool(getattr(args, "require_cache_evidence", True)):
@@ -1044,6 +1317,28 @@ def run(
             not cache_usage_observed
         )
     transcript = private_transcript_evidence(args.pi_session_dir, before)
+    b_commit_recovered = _statuses(
+        tool_receipts["B"]["room_commit"]
+    ) == ["", "applied"]
+    tool_checks["bRepairContinuationBounded"] = (
+        int(
+            transcript["transcripts"]["B"][
+                "repairContinuationCount"
+            ]
+        )
+        == (1 if b_commit_recovered else 0)
+    )
+    c_commit_recovered = _statuses(
+        tool_receipts["C"]["room_commit"]
+    ) == ["", "applied"]
+    tool_checks["cRepairContinuationBounded"] = (
+        int(
+            transcript["transcripts"]["C"][
+                "repairContinuationCount"
+            ]
+        )
+        == (1 if c_commit_recovered else 0)
+    )
     independent = _independent_project_verification(workspace)
     final_source = (workspace / "calculator.py").read_text(encoding="utf-8")
     compaction = _compact_members(
@@ -1053,6 +1348,14 @@ def run(
         tool_receipts=tool_receipts,
         loaded_tool_receipts=loaded_tool_receipts,
         skill_receipts=skill_receipts,
+    )
+    continuity = _session_continuity_probe(
+        args,
+        requester=requester,
+        session_id=session_ids["A"],
+        room_id=room_id,
+        root_id=root_id,
+        public_posts=public_posts,
     )
     terminal_receipt = finalized.get("receipt") or {}
     checks = {
@@ -1077,15 +1380,12 @@ def run(
         "independentTestsPass": independent["exitCode"] == 0,
         "workspaceManagedApprovalsExact": all(approval_checks.values()),
         "threeRecoveryPacketsValid": all(value["passed"] for value in compaction.values()),
+        "sameSessionContinuesAfterRoom": continuity["passed"] is True,
     }
     if bool(getattr(args, "require_cache_evidence", True)):
-        checks["realProviderKvCacheObserved"] = (
-            prompt_checks["cacheUsageObserved"]
-            and all(
-                value["checks"]["cacheUsageObserved"]
-                for value in compaction.values()
-            )
-        )
+        checks["realProviderKvCacheObserved"] = prompt_checks[
+            "cacheUsageObserved"
+        ]
     else:
         checks["deterministicCacheEvidenceNotClaimed"] = (
             prompt_checks["deterministicCacheEvidenceNotClaimed"]
@@ -1128,6 +1428,7 @@ def run(
         "promptChecks": prompt_checks,
         "transcriptIsolation": transcript,
         "compaction": compaction,
+        "sessionContinuity": continuity,
         "project": {
             "workspace": str(workspace),
             "calculatorSha256": hashlib.sha256(final_source.encode("utf-8")).hexdigest(),

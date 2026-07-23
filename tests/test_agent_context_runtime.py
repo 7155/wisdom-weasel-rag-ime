@@ -322,6 +322,23 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertIn("先读测试，再做最小改动。", rendered)
         self.assertEqual(rendered.count("代码任务交付偏好"), 1)
 
+    def test_empty_session_memory_does_not_consume_provider_context(self) -> None:
+        rendered = render_context_items(
+            [
+                {
+                    "sourceKind": "memory_bootstrap",
+                    "payload": {
+                        "schemaVersion": "rag-ime.session-memory-recall.v1",
+                        "retrieval": {"temporalIntent": False},
+                        "items": [],
+                    },
+                }
+            ]
+        )
+
+        self.assertEqual(rendered, "")
+        self.assertNotIn("没有召回", rendered)
+
     def test_maintenance_bounds_terminal_payloads_and_trace_history(self) -> None:
         item = self.runtime.enqueue(
             session_id=self.session_id,

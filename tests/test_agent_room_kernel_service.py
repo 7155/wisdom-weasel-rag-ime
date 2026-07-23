@@ -286,6 +286,52 @@ class RoomKernelServiceTests(unittest.TestCase):
             len(snapshot["posts"]),
         )
 
+    def test_agent_and_room_entry_race_is_rejected_before_creating_a_root(self) -> None:
+        roots_before = self.service.room_kernel.root_ids(self.room_id)
+
+        with self.service.session_mode_gate.claim_agent(self.session_id):
+            with self.assertRaisesRegex(
+                ValueError,
+                "正在接收 Agent 消息",
+            ):
+                self.service.post_room_message(
+                    self.room_id,
+                    {
+                        "message": "不要与 Agent 输入并发抢同一个 Session",
+                        "clientMessageId": "client:mode-race",
+                        "participantIds": [
+                            str(self.participant["id"])
+                        ],
+                    },
+                )
+
+        self.assertEqual(
+            self.service.room_kernel.root_ids(self.room_id),
+            roots_before,
+        )
+
+    def test_pending_room_dispatch_rejects_direct_agent_prompt_cleanly(self) -> None:
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "Room 先占用这个 Session",
+                "clientMessageId": "client:room-owns-session",
+                "participantIds": [
+                    str(self.participant["id"])
+                ],
+            },
+        )
+        self.assertEqual(accepted["status"], "queued")
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "正在执行 Room 任务",
+        ):
+            self.service.prompt(
+                self.session_id,
+                {"message": "Agent 页面同时发送"},
+            )
+
     def test_managed_runtime_projects_live_text_and_tools_without_auto_publishing_a_post(self) -> None:
         accepted = self.service.post_room_message(
             self.room_id,
@@ -730,6 +776,27 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertEqual(
             sealed_context.count(tool_receipt["receiptId"]),
+            1,
+        )
+        continued_context = self.service._runtime_session_context(
+            self.service.sessions.get(self.session_id)
+        )
+        self.assertEqual(
+            continued_context["roomCapability"]["status"],
+            "revoked",
+        )
+        ordinary_session_context = continued_context["sessionContext"]
+        for expected in (original, objective, criterion, blocker):
+            self.assertEqual(
+                ordinary_session_context.count(expected),
+                1,
+            )
+        self.assertEqual(
+            ordinary_session_context.count(skill_receipt["receiptId"]),
+            1,
+        )
+        self.assertEqual(
+            ordinary_session_context.count(tool_receipt["receiptId"]),
             1,
         )
 
@@ -2538,7 +2605,8 @@ class RoomKernelServiceTests(unittest.TestCase):
             }
         )
         generic_rag = refreshed["result"]["sessionContext"]
-        self.assertIn("## Session 记忆", generic_rag)
+        self.assertEqual(generic_rag, "")
+        self.assertEqual(refreshed["result"]["sourceCount"], 0)
         self.assertNotIn("原始需求（不可改写）", generic_rag)
         self.assertNotIn(original, generic_rag)
         binding = self.service.room_capabilities.runtime_binding(
@@ -2550,6 +2618,73 @@ class RoomKernelServiceTests(unittest.TestCase):
         )["providerContext"]
         self.assertIn(original, room_context)
         self.assertIn("Execute a bounded service test.", room_context)
+
+    def test_failed_room_recovery_keeps_previous_memory_bootstrap_active(self) -> None:
+        dispatch = self._dispatch()
+        self.service.room_kernel.enqueue_dispatch(dispatch, now_ms=3)
+        prepared = self.service._prepare_managed_room_dispatch(dispatch, 3)
+        lease = self.service.room_kernel.lease_next(
+            now_ms=4,
+            ttl_ms=30_000,
+            dispatch_id=str(dispatch["dispatchId"]),
+            prepared_session_id=str(prepared["sessionId"]),
+            prepared_manifest_hash=str(prepared["manifestHash"]),
+        )
+        self.assertIsNotNone(lease)
+        self.assertEqual(
+            self.service.room_capabilities.runtime_binding(
+                self.session_id
+            )["state"],
+            "active",
+        )
+
+        self.service.refresh_session_context(
+            {
+                "sessionId": self.session_id,
+                "trigger": "session_start",
+                "queryText": "建立一份有效上下文",
+                "recentMessages": [
+                    {"role": "user", "text": "建立一份有效上下文"}
+                ],
+            }
+        )
+        before = (
+            self.service.memory_context_application
+            .context_runtime.materialize(self.session_id)
+        )
+        self.assertTrue(
+            any(
+                item.get("sourceKind") == "memory_bootstrap"
+                for item in before["items"]
+            )
+        )
+
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "Skill receipt that is not pinned",
+        ):
+            self.service.refresh_session_context(
+                {
+                    "sessionId": self.session_id,
+                    "trigger": "session_start",
+                    "queryText": "这次错误请求不得覆盖旧上下文",
+                    "recentMessages": [
+                        {
+                            "role": "user",
+                            "text": "这次错误请求不得覆盖旧上下文",
+                        }
+                    ],
+                    "roomSkillRecovery": {
+                        "catalogRevision": "c" * 64,
+                    },
+                }
+            )
+
+        after = (
+            self.service.memory_context_application
+            .context_runtime.materialize(self.session_id)
+        )
+        self.assertEqual(after, before)
 
     def test_room_binding_rejects_legacy_intercom_before_it_can_enqueue(self) -> None:
         dispatch = self._dispatch()
@@ -2847,7 +2982,9 @@ class RoomKernelServiceTests(unittest.TestCase):
             room_recovery["currentTask"]["objective"],
             "Execute a bounded service test.",
         )
-        self.assertIn("Session 记忆", session_context)
+        # No relevant governed memory was seeded for this process test. An empty
+        # RAG lane stays empty instead of spending Provider tokens on a placeholder.
+        self.assertEqual(session_context, "")
         self.assertNotIn('"objective":"Execute a bounded service test."', session_context)
         self.assertIn("目标：Execute a bounded service test.", room_context)
         for internal_label in (
@@ -2876,10 +3013,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             ["dispatch:service", "dispatch:complete"],
         )
         first_dispatch_request = room_dispatches[0]
-        self.assertIn(
-            "Session 记忆",
-            first_dispatch_request["params"]["sessionContext"],
-        )
+        self.assertNotIn("sessionContext", first_dispatch_request["params"])
         self.assertIn(
             "目标：Execute a bounded service test.",
             first_dispatch_request["params"]["roomContext"],

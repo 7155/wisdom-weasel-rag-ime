@@ -1,5 +1,5 @@
 import { AtSign, Send } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { startTransition, useEffect, useRef, useState } from 'react';
 
 import { IconButton } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
@@ -32,20 +32,19 @@ export function RoomComposer({
   room,
   personas,
   draft,
-  addressedParticipantId,
-  canSend,
+  sending,
   onDraftChange,
   onSend,
 }: {
   room?: ComposerRoom;
   personas: AgentPersonaV1[];
   draft: string;
-  addressedParticipantId: string;
-  canSend: boolean;
+  sending: boolean;
   onDraftChange: (value: string) => void;
-  onSend: () => void;
+  onSend: (value: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [composerDraft, setComposerDraft] = useState(draft);
   const [mention, setMention] = useState<RoomMentionDraft>();
   const [activeIndex, setActiveIndex] = useState(0);
   const roomCanSend = room?.status === 'active';
@@ -55,11 +54,21 @@ export function RoomComposer({
   const mentionCandidates = mention
     ? participants.filter((participant) => roomMentionMatches(participant, mention.query))
     : [];
+  const addressedParticipantId = roomMentionedParticipants(
+    participants,
+    composerDraft,
+  )[0]?.id ?? '';
+  const canSend = Boolean(roomCanSend && composerDraft.trim() && !sending);
 
   useEffect(() => {
+    setComposerDraft(draft);
     setMention(undefined);
     setActiveIndex(0);
-  }, [room?.id]);
+  }, [draft]);
+
+  function publishDraft(value: string): void {
+    startTransition(() => onDraftChange(value));
+  }
 
   function syncMention(value: string, caret: number | null): void {
     setMention(activeRoomMention(value, caret ?? value.length));
@@ -74,15 +83,16 @@ export function RoomComposer({
     let caret: number;
     if (currentMention) {
       const inserted = `@${participant.displayName} `;
-      const suffix = draft.slice(currentMention.end).replace(/^ /, '');
-      next = `${draft.slice(0, currentMention.start)}${inserted}${suffix}`;
+      const suffix = composerDraft.slice(currentMention.end).replace(/^ /, '');
+      next = `${composerDraft.slice(0, currentMention.start)}${inserted}${suffix}`;
       caret = currentMention.start + inserted.length;
     } else {
-      const body = stripLeadingRoomMention(draft, participants);
+      const body = stripLeadingRoomMention(composerDraft, participants);
       next = `@${participant.displayName}${body ? ` ${body}` : ' '}`;
       caret = `@${participant.displayName} `.length;
     }
-    onDraftChange(next);
+    setComposerDraft(next);
+    publishDraft(next);
     setMention(undefined);
     setActiveIndex(0);
     queueMicrotask(() => {
@@ -92,16 +102,27 @@ export function RoomComposer({
   }
 
   function openMentionMenu(): void {
-    const spacer = draft && !/\s$/u.test(draft) ? ' ' : '';
-    const next = `${draft}${spacer}@`;
+    const spacer = composerDraft && !/\s$/u.test(composerDraft) ? ' ' : '';
+    const next = `${composerDraft}${spacer}@`;
     const start = next.length - 1;
-    onDraftChange(next);
+    setComposerDraft(next);
+    publishDraft(next);
     setMention({ start, end: next.length, query: '' });
     setActiveIndex(0);
     queueMicrotask(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(next.length, next.length);
     });
+  }
+
+  function submit(): void {
+    if (!canSend) return;
+    const value = composerDraft;
+    setComposerDraft('');
+    setMention(undefined);
+    setActiveIndex(0);
+    publishDraft('');
+    onSend(value);
   }
 
   return <div className="room-composer-shell">
@@ -147,10 +168,11 @@ export function RoomComposer({
           ref={textareaRef}
           rows={2}
           maxLength={8_000}
-          value={draft}
+          value={composerDraft}
           disabled={!roomCanSend}
           onChange={(event) => {
-            onDraftChange(event.target.value);
+            setComposerDraft(event.target.value);
+            publishDraft(event.target.value);
             syncMention(event.target.value, event.target.selectionStart);
           }}
           onClick={(event) => (
@@ -186,7 +208,7 @@ export function RoomComposer({
             }
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();
-              onSend();
+              submit();
             }
           }}
           placeholder={composerPlaceholder(room)}
@@ -201,7 +223,7 @@ export function RoomComposer({
           label="发送 Room 消息"
           icon={<Send size={17} />}
           disabled={!canSend}
-          onClick={onSend}
+          onClick={submit}
           tooltip
         />
       </div>

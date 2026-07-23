@@ -285,6 +285,8 @@ export interface ActGate {
     | 'approved'
     | 'plan_required'
     | 'plan_not_approved'
+    | 'plan_completed'
+    | 'plan_cancelled'
     | 'goal_paused'
     | 'goal_completed'
     | 'goal_budget_exhausted';

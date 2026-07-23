@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Mapping, Sequence
 from threading import RLock
@@ -388,10 +389,6 @@ class AgentMemoryContextService:
         self._validate_room_fence(
             before,
             after,
-            allow_revoked=is_compaction,
-        )
-        item = self.context_runtime.replace_active(
-            **specification
         )
         rendered = _render_specification(specification)
         rendered, room_recovery, room_tool_recovery = self._room_recovery(
@@ -431,6 +428,19 @@ class AgentMemoryContextService:
                     now_ms=int(time.time() * 1000),
                 )
             )
+            if room_recovery_context:
+                self._persist_room_compaction_recovery(
+                    session_id=session_id,
+                    compaction_entry_id=compaction_entry_id,
+                    room_recovery_context=room_recovery_context,
+                    transition=context_epoch_transition,
+                )
+        # Keep the previous valid bootstrap active until every Room fence,
+        # receipt, and epoch transition has been validated. A failed recovery
+        # must not expire good context and leave a pending replacement behind.
+        item = self.context_runtime.replace_active(
+            **specification
+        )
         recall_payload = (
             specification.get("payload")
             if isinstance(
@@ -477,6 +487,53 @@ class AgentMemoryContextService:
                 ),
             },
         }
+
+    def _persist_room_compaction_recovery(
+        self,
+        *,
+        session_id: str,
+        compaction_entry_id: str,
+        room_recovery_context: str,
+        transition: Mapping[str, object],
+    ) -> None:
+        try:
+            recovery = json.loads(room_recovery_context)
+        except json.JSONDecodeError as exc:
+            raise RoomKernelFenceError(
+                "Room compaction recovery is not canonical JSON"
+            ) from exc
+        if not isinstance(recovery, Mapping):
+            raise RoomKernelFenceError(
+                "Room compaction recovery must be an object"
+            )
+        transition_id = str(
+            transition.get("transitionId") or ""
+        ).strip()
+        if not transition_id:
+            raise RoomKernelFenceError(
+                "Room compaction recovery has no context transition"
+            )
+        self.context_runtime.replace_active(
+            session_id=session_id,
+            source_kind="room_compaction_recovery",
+            source_id=compaction_entry_id,
+            lane="room",
+            lifecycle="persistent",
+            title="最近一次 Room 压缩恢复包",
+            summary=(
+                "只恢复同一 Session 已确认的任务与交付事实；"
+                "不授予新权限，也不恢复私有推理。"
+            ),
+            payload={
+                "schemaVersion": (
+                    "wisdom-weasel.room-session-recovery-item.v1"
+                ),
+                "recovery": dict(recovery),
+            },
+            dedupe_key=(
+                f"room-compaction-recovery:{transition_id}"
+            ),
+        )
 
     def remember_query(
         self,
@@ -570,22 +627,32 @@ class AgentMemoryContextService:
                 self._last_query.pop(session_id, None)
                 self._recent_messages.pop(session_id, None)
 
-    def provider_context(self, session_id: str) -> str:
+    def provider_context(
+        self,
+        session_id: str,
+        *,
+        include_room_recovery: bool = False,
+    ) -> str:
         """Render the latest valid generic RAG projection for one Agent.
 
         The same projection is used by ordinary prompts and Kernel-managed
-        Room dispatches. Room responsibility and task governance are owned by
-        the Room provider context and therefore never enter this channel.
+        Room dispatches. Room responsibility stays in the Room provider
+        context while its capability is active. After revocation, the latest
+        bounded recovery packet may be restored here so the same Session can
+        continue as an ordinary Agent.
         """
 
         materialized = self.context_runtime.materialize(
             session_id
         )
+        allowed_source_kinds = {"memory_bootstrap"}
+        if include_room_recovery:
+            allowed_source_kinds.add("room_compaction_recovery")
         items = [
             item
             for item in materialized.get("items") or []
             if isinstance(item, Mapping)
-            and item.get("sourceKind") == "memory_bootstrap"
+            and item.get("sourceKind") in allowed_source_kinds
         ]
         return render_context_items(items)
 
@@ -615,8 +682,6 @@ class AgentMemoryContextService:
     def _validate_room_fence(
         before: Mapping[str, object] | None,
         after: Mapping[str, object] | None,
-        *,
-        allow_revoked: bool = False,
     ) -> None:
         if room_recall_fence(before) != room_recall_fence(
             after
@@ -624,15 +689,6 @@ class AgentMemoryContextService:
             raise RoomKernelFenceError(
                 "Room generation/capability changed while "
                 "Session context was rebuilding"
-            )
-        if (
-            after is not None
-            and str(after.get("state") or "") == "revoked"
-            and not allow_revoked
-        ):
-            raise RoomKernelFenceError(
-                "Room Session context refresh was cancelled "
-                "before projection"
             )
 
     def _room_recovery(
@@ -789,21 +845,30 @@ def _ordinary_compaction_recovery(
     ][:8]
     plan_status = bounded_text(plan.get("status"), maximum=40)
     task_kind = str(task.get("kind") or "")
-    handoff = (
-        "完成后回交父 Agent；当前责任仍由本 Session 持有。"
-        if task_kind == "subagent"
-        else "未发生正式交接，当前责任仍由本 Session 持有。"
-    )
+    if plan_status == "completed":
+        current_task = "已完成；不要重复执行。"
+        handoff = (
+            "子任务已完成；只按父 Agent 的新指令继续。"
+            if task_kind == "subagent"
+            else "任务已由本 Session 完成；无待交接责任。"
+        )
+    elif plan_status == "cancelled":
+        current_task = "已取消；除非用户重新发起并授权，否则不要继续。"
+        handoff = "任务已取消；当前没有可继续的责任。"
+    else:
+        current_task = objective or "未登记；回看原始需求后再继续。"
+        handoff = (
+            "完成后回交父 Agent；当前责任仍由本 Session 持有。"
+            if task_kind == "subagent"
+            else "未发生正式交接，当前责任仍由本 Session 持有。"
+        )
     return {
         "schemaVersion": "rag-ime.agent-compaction-recovery.v1",
         "originalRequirement": (
             original
             or "未从压缩前消息取得；不得猜测。"
         ),
-        "currentTask": (
-            objective
-            or "未登记；回看原始需求后再继续。"
-        ),
+        "currentTask": current_task,
         "acceptanceCriteria": criteria,
         "acceptanceSource": (
             "structured_task"

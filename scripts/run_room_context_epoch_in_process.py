@@ -24,7 +24,11 @@ if str(PRODUCT_ROOT) not in sys.path:
     sys.path.insert(0, str(PRODUCT_ROOT))
 
 from in_process_control_api import FileFetchBridge, InProcessControlApi
-from agent_session_dialogue_canary import run as run_agent_session_canary
+from agent_session_dialogue_canary import (
+    READ_BOUNDARY_PATH,
+    READ_BOUNDARY_SOURCE,
+    run as run_agent_session_canary,
+)
 from room_context_epoch_canary import run as run_epoch_canary
 from room_project_task_canary import (
     PROJECT_MEMORY_TEXT,
@@ -130,7 +134,8 @@ def _copy_failure_state(state: Path, destination: Path, db_path: Path) -> None:
         return {
             name
             for name in names
-            if name == "file-fetch-bridge" or name.startswith("rag-ime.sqlite")
+            if name in {"auth.json", "file-fetch-bridge"}
+            or name.startswith("rag-ime.sqlite")
         }
 
     shutil.copytree(state, destination, ignore=ignore)
@@ -477,6 +482,8 @@ def _git_revision(root: Path) -> dict[str, object]:
 
 
 def _provider_endpoint(runtime: PiRuntimeConfig) -> str:
+    if runtime.provider == "openai-codex":
+        return "https://chatgpt.com"
     base_url = runtime.model_base_url if runtime.provider == "deepseek" else ""
     if not base_url:
         provider = runtime.model_providers.get(runtime.provider)
@@ -486,6 +493,30 @@ def _provider_endpoint(runtime: PiRuntimeConfig) -> str:
     if parsed.scheme != "https" or not parsed.hostname:
         return ""
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _configured_model_available(
+    runtime: PiRuntimeConfig,
+    *,
+    provider: str,
+    model: str,
+) -> bool:
+    """Mirror Pi's model validation for built-in and imported providers."""
+
+    configured = runtime.model_providers.get(provider)
+    if not isinstance(configured, Mapping):
+        return False
+    raw_models = configured.get("models")
+    if not isinstance(raw_models, list) or not raw_models:
+        # Built-in provider catalogs, such as DeepSeek, are resolved by Pi and
+        # therefore do not duplicate their model list in managed models.json.
+        return True
+    configured_model_ids = {
+        str(item.get("id") or "").strip()
+        for item in raw_models
+        if isinstance(item, Mapping)
+    }
+    return model in configured_model_ids
 
 
 def _external_network_audit(
@@ -612,6 +643,18 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         if args.scenario in WORKSPACE_SCENARIOS:
             workspace = state / "project-workspace"
             project_seed = seed_project_workspace(workspace)
+            if args.scenario == AGENT_SESSION_SCENARIO:
+                boundary_path = workspace / READ_BOUNDARY_PATH
+                boundary_path.write_text(
+                    READ_BOUNDARY_SOURCE,
+                    encoding="utf-8",
+                )
+                project_seed["files"][READ_BOUNDARY_PATH] = {
+                    "bytes": len(READ_BOUNDARY_SOURCE.encode("utf-8")),
+                    "sha256": hashlib.sha256(
+                        READ_BOUNDARY_SOURCE.encode("utf-8")
+                    ).hexdigest(),
+                }
         else:
             workspace = source_workspace
         bridge_root = state / "file-fetch-bridge"
@@ -657,18 +700,14 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 raise RuntimeError(base_runtime.model_configuration_error)
             selected_provider = str(args.model_provider or "").strip() or base_runtime.provider
             selected_model = str(args.model_id or "").strip() or base_runtime.model
-            if args.provider_mode == "configured":
-                configured = base_runtime.model_providers.get(selected_provider)
-                models = configured.get("models") if isinstance(configured, Mapping) else None
-                configured_model_ids = {
-                    str(item.get("id") or "")
-                    for item in models or []
-                    if isinstance(item, Mapping)
-                }
-                if selected_model not in configured_model_ids:
-                    raise RuntimeError(
-                        f"configured model is unavailable: {selected_provider}/{selected_model}"
-                    )
+            if args.provider_mode == "configured" and not _configured_model_available(
+                base_runtime,
+                provider=selected_provider,
+                model=selected_model,
+            ):
+                raise RuntimeError(
+                    f"configured model is unavailable: {selected_provider}/{selected_model}"
+                )
             model_environment = (
                 dict(base_runtime.provider_environment)
                 if args.provider_mode == "configured"
@@ -850,6 +889,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     "require_cache_evidence": (
                         args.provider_mode == "configured"
                     ),
+                    "provider_mode": args.provider_mode,
                 }
                 if args.scenario == AGENT_SESSION_SCENARIO:
                     report = run_agent_session_canary(

@@ -7,6 +7,7 @@ from contextlib import closing
 from pathlib import Path
 
 from rag_ime.agent_sessions import AgentSessionNotFound, AgentSessionStore
+from rag_ime.contracts.json_schema import validate_contract
 
 
 class AgentSessionStoreTests(unittest.TestCase):
@@ -498,6 +499,38 @@ class AgentSessionStoreTests(unittest.TestCase):
         )["plan"]
         self.assertEqual(completed["status"], "completed")
         self.assertFalse(completed["actApproved"])
+        completed_state = self.store.workflow_state(session_id)
+        validate_contract(
+            completed_state,
+            "agent-workflow-state.v1.json",
+        )
+        completed_gate = completed_state["actGate"]
+        self.assertEqual(completed_gate["reason"], "plan_completed")
+        self.assertIn("计划已经完成", completed_gate["message"])
+        self.assertNotIn("尚未获得用户批准", completed_gate["message"])
+
+    def test_cancelled_plan_gate_is_terminal_and_contract_valid(self) -> None:
+        session_id = str(self.store.create(title="cancelled")["id"])
+        saved = self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "save",
+                "title": "取消前计划",
+                "items": [{"title": "不再执行", "status": "pending"}],
+            },
+        )["plan"]
+        self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "cancel",
+                "expectedRevision": saved["revision"],
+            },
+        )
+
+        state = self.store.workflow_state(session_id)
+        validate_contract(state, "agent-workflow-state.v1.json")
+        self.assertEqual(state["actGate"]["reason"], "plan_cancelled")
+        self.assertIn("计划已经取消", state["actGate"]["message"])
 
     def test_fenced_room_dispatch_is_a_work_authority_without_rewriting_the_plan(self) -> None:
         session = self.store.create(title="Room worker", created_at_ms=100)

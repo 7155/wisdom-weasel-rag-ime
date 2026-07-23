@@ -146,6 +146,73 @@ class RoomContextEpochInProcessTest(unittest.TestCase):
         self.assertFalse(evidence["allMatchingRequestsSucceeded"])
         self.assertFalse(evidence["terminalMatchingRequestSucceeded"])
 
+    def test_openai_codex_network_audit_uses_chatgpt_backend(self) -> None:
+        runtime = RUNNER.PiRuntimeConfig(
+            enabled=True,
+            executable=None,
+            agent_dir=Path("/tmp/agent"),
+            session_dir=Path("/tmp/sessions"),
+            logs_dir=Path("/tmp/logs"),
+            provider="openai-codex",
+            model="gpt-5.6-luna",
+        )
+
+        self.assertEqual(
+            RUNNER._provider_endpoint(runtime),
+            "https://chatgpt.com",
+        )
+
+    def test_configured_model_validation_accepts_builtin_catalogs(self) -> None:
+        runtime = RUNNER.PiRuntimeConfig(
+            enabled=True,
+            executable=None,
+            agent_dir=Path("/tmp/agent"),
+            session_dir=Path("/tmp/sessions"),
+            logs_dir=Path("/tmp/logs"),
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            model_providers={
+                "deepseek": {
+                    "baseUrl": "https://api.example.test",
+                    "apiKey": "$DEEPSEEK_API_KEY",
+                },
+                "gpt": {
+                    "baseUrl": "https://gateway.example.test",
+                    "apiKey": "$RAG_IME_PI_GPT_API_KEY",
+                    "models": [{"id": "gpt-5.6-luna"}],
+                },
+            },
+        )
+
+        self.assertTrue(
+            RUNNER._configured_model_available(
+                runtime,
+                provider="deepseek",
+                model="deepseek-v4-flash",
+            )
+        )
+        self.assertTrue(
+            RUNNER._configured_model_available(
+                runtime,
+                provider="gpt",
+                model="gpt-5.6-luna",
+            )
+        )
+        self.assertFalse(
+            RUNNER._configured_model_available(
+                runtime,
+                provider="gpt",
+                model="gpt-5.6-sol",
+            )
+        )
+        self.assertFalse(
+            RUNNER._configured_model_available(
+                runtime,
+                provider="missing",
+                model="any",
+            )
+        )
+
     def test_external_network_audit_keeps_transient_failure_and_recovery_visible(
         self,
     ) -> None:

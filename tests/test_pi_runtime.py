@@ -289,7 +289,7 @@ class PiRuntimeTests(unittest.TestCase):
             session_dir=self.root / "sessions",
             logs_dir=self.root / "logs",
             idle_timeout_seconds=0,
-            command_timeout_seconds=3,
+            command_timeout_seconds=5,
             pi_version="test",
         )
         self.runtime = PiRuntimeManager(config=self.config, sessions=self.store, events=self.events)
@@ -441,6 +441,99 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertTrue(provider["compat"]["supportsUsageInStreaming"])
         self.assertEqual(provider["compat"]["thinkingFormat"], "deepseek")
         self.assertNotIn("modelOverrides", provider)
+
+    def test_pi_remote_provider_uses_valid_macos_system_proxy_and_bypasses_localhost(
+        self,
+    ) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RAG_IME_APP_SUPPORT_DIR": str(self.root / "support"),
+                "RAG_IME_PI_EXECUTABLE": str(self.fake_pi),
+                "RAG_IME_PI_ENABLED": "1",
+            },
+            clear=True,
+        ), mock.patch(
+            "rag_ime.pi_runtime.getproxies",
+            return_value={
+                "http": "http://127.0.0.1:7897",
+                "https": "http://127.0.0.1:7897",
+                "no": "internal.example",
+                "socks": "socks5://127.0.0.1:7897",
+            },
+        ), mock.patch(
+            "rag_ime.pi_runtime.load_deepseek_config",
+            return_value=DeepSeekConfig(
+                api_base_url="https://gateway.example/v1",
+                api_key="test-secret",
+                model="deepseek-v4-flash",
+            ),
+        ):
+            config = PiRuntimeConfig.from_environment()
+
+        child = config.child_environment()
+        self.assertEqual(child["NODE_USE_ENV_PROXY"], "1")
+        self.assertEqual(child["HTTP_PROXY"], "http://127.0.0.1:7897")
+        self.assertEqual(child["HTTPS_PROXY"], "http://127.0.0.1:7897")
+        self.assertEqual(child["http_proxy"], "http://127.0.0.1:7897")
+        self.assertEqual(child["https_proxy"], "http://127.0.0.1:7897")
+        self.assertEqual(
+            child["NO_PROXY"],
+            "internal.example,127.0.0.1,localhost,::1",
+        )
+        self.assertEqual(child["no_proxy"], child["NO_PROXY"])
+        self.assertNotIn("ALL_PROXY", child)
+        self.assertNotIn("all_proxy", child)
+        config.prepare_agent_config()
+        models_text = (config.agent_dir / "models.json").read_text(encoding="utf-8")
+        self.assertIn('"baseUrl": "https://gateway.example/v1"', models_text)
+        self.assertNotIn("test-secret", models_text)
+
+    def test_models_file_rejects_literal_provider_credentials_only(self) -> None:
+        config = replace(
+            self.config,
+            provider="custom",
+            model="custom-model",
+            provider_environment={
+                "NODE_USE_ENV_PROXY": "1",
+                "CUSTOM_API_KEY": "literal-provider-secret",
+            },
+            model_providers={
+                "custom": {
+                    "baseUrl": "https://gateway.example/v1",
+                    "apiKey": "literal-provider-secret",
+                    "models": [{"id": "custom-model"}],
+                }
+            },
+        )
+
+        with self.assertRaisesRegex(
+            PiRuntimeError,
+            "models.json must not contain provider credentials",
+        ):
+            config.prepare_agent_config()
+
+    def test_pi_system_proxy_can_be_disabled_and_rejects_socks_only_proxy(
+        self,
+    ) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"RAG_IME_PI_SYSTEM_PROXY": "off"},
+            clear=True,
+        ), mock.patch(
+            "rag_ime.pi_runtime.getproxies",
+            return_value={"https": "socks5://127.0.0.1:7897"},
+        ), mock.patch(
+            "rag_ime.pi_runtime.load_deepseek_config",
+            return_value=None,
+        ):
+            config = PiRuntimeConfig.from_environment()
+
+        child = config.child_environment()
+        self.assertNotIn("HTTP_PROXY", child)
+        self.assertNotIn("HTTPS_PROXY", child)
+        self.assertNotIn("NODE_USE_ENV_PROXY", child)
+        self.assertNotIn("NO_PROXY", child)
 
     def test_debug_context_persistence_requires_explicit_opt_in(self) -> None:
         debug_directory = self.root / "private-debug-context"
@@ -950,6 +1043,64 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn(
             "must not escape",
             json.dumps(statuses[-1].payload, ensure_ascii=False),
+        )
+
+    def test_nonfatal_extension_error_does_not_terminalize_active_turn(self) -> None:
+        session_id = str(self.session["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            client = self.runtime._client
+            self.runtime._active_turn_id = "turn:extension-warning"
+        assert client is not None
+
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {
+                "type": "extension_error",
+                "extensionPath": "session-context-refresh.ts",
+                "event": "before_agent_start",
+                "error": "optional context refresh failed",
+            },
+        )
+
+        events = self.events.replay(session_id)[0]
+        warnings = [
+            event for event in events
+            if event.event_type == "status_changed"
+            and event.payload.get("phase") == "extension_warning"
+        ]
+        self.assertEqual(warnings[-1].payload["status"], "analyzing")
+        self.assertEqual(
+            warnings[-1].payload["extensionEvent"],
+            "before_agent_start",
+        )
+        self.assertFalse(
+            any(event.event_type == "turn_failed" for event in events)
+        )
+        with self.runtime._lock:
+            self.assertEqual(
+                self.runtime._active_turn_id,
+                "turn:extension-warning",
+            )
+
+        self.runtime._handle_pi_event(
+            client,
+            session_id,
+            {
+                "type": "agent_end",
+                "messages": [{
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "继续并完成"}],
+                }],
+            },
+        )
+        events = self.events.replay(session_id)[0]
+        self.assertFalse(
+            any(event.event_type == "turn_failed" for event in events)
+        )
+        self.assertTrue(
+            any(event.event_type == "turn_completed" for event in events)
         )
 
     def test_tool_artifact_is_carried_to_the_final_assistant_message(self) -> None:

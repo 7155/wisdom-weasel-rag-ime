@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import { IconButton } from '@/components/primitives';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
-import type { AgentActivityProjection } from '@/contracts/agent-reducer';
+import type { AgentActivityProjection, AgentProjectionState } from '@/contracts/agent-reducer';
 import type { UiAgentEvent } from '@/contracts/ui-events';
 import { AgentComposer, type AgentComposerEditState, type AgentMessageDelivery } from './composer/AgentComposer';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from '@/features/agent/preview-data';
@@ -18,8 +18,9 @@ import { NewSessionDialog, type NewSessionInput } from './sessions/NewSessionDia
 import { AgentStatusPanel } from './status/AgentStatusPanel';
 import { useMediaQuery, useModalPanel } from './overlay-dialog';
 import { agentProjection, useAgentLiveStore } from './state/live-store';
+import { useModelSelectionController } from './state/use-model-selection-controller';
 import { AgentTimeline } from './timeline/AgentTimeline';
-import { publicAgentErrorText } from './public-error';
+import { isAgentTurnConflict, publicAgentErrorText } from './public-error';
 import { ApprovalReviewDialog, MemoryReviewDialog } from './review/AgentReviewDialogs';
 import {
   activeSessionId,
@@ -41,24 +42,6 @@ import {
 import './agent.css';
 
 export function AgentFeature() {
-  const ready = useDeferredAgentWorkspace();
-  if (!ready) {
-    const mobileViewport = isMobileViewport();
-    return (
-      <main
-        aria-busy="true"
-        aria-label="正在准备 Agent 工作区"
-        className="agent-feature agent-feature--pending"
-        data-rail-open={!mobileViewport}
-        data-route-id="agent"
-        data-status-open={!mobileViewport && isWideStatusViewport()}
-      >
-        <span aria-hidden="true" />
-        <span aria-hidden="true" />
-        <span aria-hidden="true" />
-      </main>
-    );
-  }
   return <AgentWorkspace />;
 }
 
@@ -86,7 +69,6 @@ function AgentWorkspace() {
   const [loading, setLoading] = useState(true);
   const [sendingSessionIds, setSendingSessionIds] = useState<Set<string>>(() => new Set());
   const [stoppingSessionIds, setStoppingSessionIds] = useState<Set<string>>(() => new Set());
-  const [modelChangingSessionIds, setModelChangingSessionIds] = useState<Set<string>>(() => new Set());
   const [contextResourcesChangingSessionIds, setContextResourcesChangingSessionIds] = useState<Set<string>>(() => new Set());
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
@@ -95,6 +77,7 @@ function AgentWorkspace() {
   const [requestedApproval, setRequestedApproval] = useState<AgentActivityProjection>();
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [forkDialogOpen, setForkDialogOpen] = useState(false);
+  const [forkDialogNodes, setForkDialogNodes] = useState<ConversationNode[]>([]);
   const [forkDialogInitialEntryId, setForkDialogInitialEntryId] = useState('');
   const [timelineJumpRequest, setTimelineJumpRequest] = useState<{ messageId: string; requestId: number }>();
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
@@ -113,8 +96,20 @@ function AgentWorkspace() {
   const sessionSendLocksRef = useRef(new Set<string>());
   selectedIdRef.current = selectedId;
   const sending = sendingSessionIds.has(selectedId);
+  const modelSelection = useModelSelectionController({
+    transport,
+    selectedSessionId: selectedId,
+    setCatalog,
+    updateSession: (updated) => {
+      setSessions((current) => current.map((item) => (
+        item.id === updated.id ? updated : item
+      )));
+    },
+    setSessionError,
+    errorText,
+  });
+  const modelChanging = modelSelection.changingSessionIds.has(selectedId);
   const stopping = stoppingSessionIds.has(selectedId);
-  const modelChanging = modelChangingSessionIds.has(selectedId);
   const rewriteResolving = rewriteResolvingSessionIds.has(selectedId);
   const contextResourcesChanging = contextResourcesChangingSessionIds.has(selectedId);
 
@@ -153,6 +148,13 @@ function AgentWorkspace() {
 
   function setSelectedDraft(value: string | ((current: string) => string)): void {
     setSessionDraft(selectedIdRef.current, value);
+  }
+
+  function persistSelectedDraft(value: string): void {
+    const sessionId = selectedIdRef.current;
+    if (!sessionId) return;
+    const current = inputForSession(sessionId);
+    composerInputsRef.current.set(sessionId, { ...current, draft: value });
   }
 
   function setSelectedAttachments(
@@ -205,10 +207,6 @@ function AgentWorkspace() {
     updatePendingSession(setStoppingSessionIds, sessionId, pending);
   }
 
-  function setSessionModelChanging(sessionId: string, pending: boolean): void {
-    updatePendingSession(setModelChangingSessionIds, sessionId, pending);
-  }
-
   function setSessionRewriteResolving(sessionId: string, pending: boolean): void {
     updatePendingSession(setRewriteResolvingSessionIds, sessionId, pending);
   }
@@ -217,22 +215,9 @@ function AgentWorkspace() {
     updatePendingSession(setContextResourcesChangingSessionIds, sessionId, pending);
   }
   const ensure = useAgentLiveStore((state) => state.ensure);
-  const activeTurnId = useAgentLiveStore((state) => {
-    const projection = state.projections[selectedId];
-    if (!projection) return '';
-    // Only the newest visible turn owns the composer stop action. Older
-    // streaming flags can survive a reconnect, but must not turn a later
-    // failed/completed turn back into a stoppable request.
-    for (let index = projection.turnOrder.length - 1; index >= 0; index -= 1) {
-      const turnId = projection.turnOrder[index];
-      const turn = turnId ? projection.turnsById[turnId] : undefined;
-      if (!turn || (turn.messageIds.length === 0 && turn.activityIds.length === 0)) continue;
-      return turn.status === 'queued' || turn.status === 'running' || turn.status === 'waiting'
-        ? turnId
-        : '';
-    }
-    return '';
-  });
+  const activeTurnId = useAgentLiveStore((state) => latestActiveTurnId(
+    state.projections[selectedId],
+  ));
   const pendingMemoryReview = useAgentLiveStore((state) => latestWaitingActivity(
     state.projections[selectedId],
     (activity) => activity.kind === 'user_input_required' && activity.payload.requestKind === 'memory_review',
@@ -241,21 +226,6 @@ function AgentWorkspace() {
     state.projections[selectedId],
     (activity) => activity.kind === 'approval_required',
   ));
-  const selectedProjection = useAgentLiveStore((state) => state.projections[selectedId]);
-  const conversationNodes = useMemo((): ConversationNode[] => {
-    const projection = selectedProjection;
-    if (!projection) return [];
-    return projection.messageOrder
-      .map((messageId) => projection.messagesById[messageId])
-      .filter((message) => message && (message.role === 'user' || message.role === 'assistant'))
-      .map((message) => ({
-        entryId: message!.id,
-        role: message!.role as ConversationNode['role'],
-        text: conversationNodeText(message!.blocks),
-        createdAtMs: message!.createdAtMs,
-      }))
-      .filter((node) => node.text.length > 0);
-  }, [selectedProjection]);
   const projectPaths = useMemo(() => sessions
     .flatMap((item) => item.workspaceRoots ?? [])
     .filter((path, index, values) => path.startsWith('/') && values.indexOf(path) === index), [sessions]);
@@ -332,6 +302,7 @@ function AgentWorkspace() {
     setConversationRewriteAvailable(false);
     setEditTarget(undefined);
     setRequestedApproval(undefined);
+    setForkDialogNodes([]);
     setForkDialogInitialEntryId('');
     setTimelineJumpRequest(undefined);
   }, [selectedId]);
@@ -373,7 +344,7 @@ function AgentWorkspace() {
             next: (event) => {
               batcher.push(event);
               if (event.eventType === 'session_configuration_changed') {
-                void loadSessionCatalogs();
+                modelSelection.applyConfigurationEvent(selectedId, event.payload);
               }
             },
             error: (streamError) => active && setError(errorText(streamError)),
@@ -415,9 +386,9 @@ function AgentWorkspace() {
       if (!active) return;
       const notices: string[] = [];
       if (modelResult.status === 'fulfilled' && isModelCatalog(modelResult.value)) {
-        setCatalog(modelResult.value);
+        modelSelection.acceptConfirmedCatalog(selectedId, modelResult.value);
       } else if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
-        setCatalog(previewModelCatalog(selectedId));
+        modelSelection.acceptConfirmedCatalog(selectedId, previewModelCatalog(selectedId));
       } else {
         setCatalog(undefined);
         notices.push('模型目录暂时不可用，对话记录仍可查看。');
@@ -549,7 +520,7 @@ function AgentWorkspace() {
     requestedDelivery: AgentMessageDelivery = busy ? 'steer' : 'prompt',
     composerDraft = draft,
   ): Promise<void> {
-    if (!session || sending) return;
+    if (!session || sending || modelChanging) return;
     const delivery: AgentMessageDelivery = busy
       ? (requestedDelivery === 'followUp' ? 'followUp' : 'steer')
       : 'prompt';
@@ -676,6 +647,12 @@ function AgentWorkspace() {
         },
       });
     } catch (requestError) {
+      if (isAgentTurnConflict(requestError)) {
+        useAgentLiveStore.getState().discardOptimistic(sessionId, clientMessageId);
+        restoreInput?.();
+        setSessionError(sessionId, '上一轮仍在处理，输入已保留；可以继续补充或先停止当前轮。');
+        return;
+      }
       const failure = publicAgentErrorText(requestError);
       const projection = agentProjection(sessionId);
       const hasOptimisticTurn = Boolean(projection.optimisticByClientMessageId[clientMessageId]);
@@ -688,7 +665,7 @@ function AgentWorkspace() {
   }
 
   async function retryTurn(turnId: string): Promise<void> {
-    if (!session || sending) return;
+    if (!session || sending || latestActiveTurnId(agentProjection(session.id))) return;
     const projection = agentProjection(session.id);
     const turn = projection.turnsById[turnId];
     const userMessage = turn?.messageIds
@@ -782,6 +759,7 @@ function AgentWorkspace() {
 
   function openForkDialog(initialEntryId = ''): void {
     if (!session) return;
+    setForkDialogNodes(conversationNodesForSession(session.id));
     setForkDialogInitialEntryId(initialEntryId);
     setForkDialogOpen(true);
   }
@@ -820,7 +798,11 @@ function AgentWorkspace() {
         params: { sessionId: session.id },
       });
       if (selectedIdRef.current !== session.id) return;
-      const entryId = resolveConversationEntryId(response, conversationNodes, message.id);
+      const entryId = resolveConversationEntryId(
+        response,
+        conversationNodesForSession(session.id),
+        message.id,
+      );
       if (!entryId) throw new Error('Pi 没有返回这条公开消息对应的可回溯锚点。');
       setEditTarget({ entryId, messageId: message.id });
       setSessionDraft(session.id, text);
@@ -1120,7 +1102,7 @@ function AgentWorkspace() {
     }
   }
 
-  async function changeModel(provider: string, modelId: string, level: ThinkingLevel): Promise<void> {
+  function changeModel(provider: string, modelId: string, level: ThinkingLevel): void {
     if (!session || !catalog) return;
     const targetModel = catalog.providers.find((item) => item.id === provider)?.models.find((item) => item.id === modelId);
     if (!targetModel) { setError('Pi 模型目录中没有这个模型。'); return; }
@@ -1128,38 +1110,7 @@ function AgentWorkspace() {
       setError('当前消息含有图片，请先移除图片再切换到不支持图片的模型。');
       return;
     }
-    const selected = isRecord(catalog.selected) ? catalog.selected : {};
-    const selectedModelId = typeof selected.id === 'string' && selected.id
-      ? selected.id
-      : selected.modelId;
-    const modelChanged = selected.provider !== provider || selectedModelId !== modelId;
-    const thinkingChanged = catalog.thinkingLevel !== level;
-    if (!modelChanged && !thinkingChanged) return;
-    setSessionModelChanging(session.id, true);
-    try {
-      if (modelChanged) {
-        const response = await transport.request<Record<string, unknown>>({ pathId: 'agent.session.model.select', params: { sessionId: session.id }, body: { provider, modelId } });
-        if (isRecord(response.session)) {
-          const updated = response.session as unknown as SessionSummary;
-          setSessions((current) => current.map((item) => item.id === session.id ? updated : item));
-        }
-      }
-      if (modelChanged || thinkingChanged) await transport.request({ pathId: 'agent.session.thinking.select', params: { sessionId: session.id }, body: { level } });
-      const refreshed = await transport.request({ pathId: 'agent.session.models', params: { sessionId: session.id } });
-      if (!isModelCatalog(refreshed)) throw new Error('Pi 没有返回有效的模型目录。');
-      if (selectedIdRef.current === session.id) setCatalog(refreshed);
-      setSessionError(session.id, '');
-    } catch (requestError) {
-      setSessionError(session.id, errorText(requestError));
-      try {
-        const refreshed = await transport.request({ pathId: 'agent.session.models', params: { sessionId: session.id } });
-        if (selectedIdRef.current === session.id && isModelCatalog(refreshed)) setCatalog(refreshed);
-      } catch {
-        // Keep the last confirmed Pi catalog when recovery also fails.
-      }
-    } finally {
-      setSessionModelChanging(session.id, false);
-    }
+    modelSelection.select(session.id, catalog, { provider, modelId, level });
   }
 
   async function decideApproval(approvalId: string, decision: 'approved' | 'rejected', payloadSha256: string): Promise<void> {
@@ -1184,7 +1135,13 @@ function AgentWorkspace() {
     <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
       <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => setNewSessionOpen(true)} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={deleteSession} onClose={closeMobileRail} />
       <button className="agent-rail-backdrop" aria-hidden="true" disabled={!railModal} tabIndex={-1} onClick={closeMobileRail} type="button" />
-      <section className="agent-conversation" aria-hidden={railModal || statusModal || undefined} inert={railModal || statusModal ? true : undefined}>
+      <section
+        className="agent-conversation"
+        aria-hidden={railModal || statusModal || undefined}
+        data-composer-attachments={attachments.length > 0 || undefined}
+        data-composer-edit={Boolean(editTarget) || undefined}
+        inert={railModal || statusModal ? true : undefined}
+      >
         <header className="agent-conversation__header">
           <IconButton ref={railToggleRef} className="agent-rail-toggle" label={railOpen ? '收起任务列表' : '展开任务列表'} icon={railOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} onClick={toggleRail} tooltip />
           <span><strong>{session?.title ?? '智鼬'}</strong><small>{session ? `${sessionProjectName(session)} · 本地 · ${sessionPermissionLabel(session)}` : '选择一个任务'}</small></span>
@@ -1194,9 +1151,9 @@ function AgentWorkspace() {
             <IconButton ref={statusToggleRef} className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
-          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || modelChanging || rewriteResolving || contextResourcesChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={setSelectedDraft} onAttachmentsChange={setSelectedAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery, value) => void send(delivery, value)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onProjectContextChange={(enabled) => void changeContextResource('projectContextEnabled', enabled)} onPiSkillsChange={(enabled) => void changeContextResource('piSkillsEnabled', enabled)} onCodexSkillsChange={(enabled) => void changeContextResource('codexSkillsEnabled', enabled)} onModelChange={(provider, modelId, level) => void changeModel(provider, modelId, level)} />
+          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || rewriteResolving || contextResourcesChanging} modelChanging={modelChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={persistSelectedDraft} onAttachmentsChange={setSelectedAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery, value) => void send(delivery, value)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onProjectContextChange={(enabled) => void changeContextResource('projectContextEnabled', enabled)} onPiSkillsChange={(enabled) => void changeContextResource('piSkillsEnabled', enabled)} onCodexSkillsChange={(enabled) => void changeContextResource('codexSkillsEnabled', enabled)} onModelChange={changeModel} />
         ) : <AgentComposerPending />}
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />
@@ -1219,7 +1176,7 @@ function AgentWorkspace() {
         open={forkDialogOpen}
         sessionId={session?.id ?? ''}
         sessionTitle={session?.title ?? '新对话'}
-        nodes={conversationNodes}
+        nodes={forkDialogNodes}
         initialEntryId={forkDialogInitialEntryId}
         branchAvailable={conversationForkAvailable}
         branchBlocked={branchBlocked}
@@ -1229,21 +1186,6 @@ function AgentWorkspace() {
       />
     </main>
   );
-}
-
-function useDeferredAgentWorkspace(): boolean {
-  const [ready, setReady] = useState(false);
-  useEffect(() => {
-    let secondFrame = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => setReady(true));
-    });
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      if (secondFrame) window.cancelAnimationFrame(secondFrame);
-    };
-  }, []);
-  return ready;
 }
 
 function AgentComposerPending() {
@@ -1263,6 +1205,23 @@ function conversationNodeText(blocks: Array<{ type: string; data: Record<string,
     return candidates.find((item): item is string => typeof item === 'string' && item.trim().length > 0) ?? '';
   }).filter(Boolean).join('\n').replace(/\s+/gu, ' ').trim();
   return value.slice(0, 480) || '非文本消息';
+}
+
+function conversationNodesForSession(sessionId: string): ConversationNode[] {
+  const projection = agentProjection(sessionId);
+  return projection.messageOrder
+    .map((messageId) => projection.messagesById[messageId])
+    .filter((message) => (
+      message
+      && (message.role === 'user' || message.role === 'assistant')
+    ))
+    .map((message) => ({
+      entryId: message!.id,
+      role: message!.role as ConversationNode['role'],
+      text: conversationNodeText(message!.blocks),
+      createdAtMs: message!.createdAtMs,
+    }))
+    .filter((node) => node.text.length > 0);
 }
 function sessionProjectName(session: SessionSummary): string {
   const root = session.workspaceRoots?.[0] ?? '';
@@ -1290,6 +1249,21 @@ function isWideStatusViewport(): boolean { return window.matchMedia?.('(min-widt
 
 const PASTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const MAX_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function latestActiveTurnId(projection?: AgentProjectionState): string {
+  if (!projection) return '';
+  // The newest visible turn owns retry, stop, and model-change availability.
+  // A stale older streaming flag must not revive after a later terminal turn.
+  for (let index = projection.turnOrder.length - 1; index >= 0; index -= 1) {
+    const turnId = projection.turnOrder[index];
+    const turn = turnId ? projection.turnsById[turnId] : undefined;
+    if (!turn || (turn.messageIds.length === 0 && turn.activityIds.length === 0)) continue;
+    return turn.status === 'queued' || turn.status === 'running' || turn.status === 'waiting'
+      ? turnId
+      : '';
+  }
+  return '';
+}
 
 function latestWaitingActivity(
   projection: ReturnType<typeof agentProjection> | undefined,

@@ -2424,6 +2424,18 @@ def _agent_act_gate(
             "reason": "plan_required",
             "message": "先创建执行计划并提交审阅。",
         }
+    if plan_status == "completed":
+        return {
+            "allowed": False,
+            "reason": "plan_completed",
+            "message": "当前计划已经完成；开始新任务前请创建并审批新计划。",
+        }
+    if plan_status == "cancelled":
+        return {
+            "allowed": False,
+            "reason": "plan_cancelled",
+            "message": "当前计划已经取消；继续工作前请创建并审批新计划。",
+        }
     if plan_status not in {"approved", "executing"}:
         return {
             "allowed": False,

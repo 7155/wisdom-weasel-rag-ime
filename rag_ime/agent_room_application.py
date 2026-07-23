@@ -24,6 +24,7 @@ from .agent_room_requirements import RequirementGovernanceStore
 from .agent_room_work import AgentRoomWorkStore
 from .agent_rooms import AgentRoomStore
 from .agent_sessions import AgentSessionStore
+from .agent_session_mode_gate import AgentSessionModeGate
 
 
 DEFAULT_ROOT_BUDGET = 32
@@ -55,6 +56,7 @@ class RoomApplicationService:
         requirements: RequirementGovernanceStore,
         capabilities: RoomCapabilityManifestStore,
         public_timeline: RoomPublicTimelineProjector,
+        session_mode_gate: AgentSessionModeGate,
         wake_worker: Callable[[], None],
         restore_participant_sessions: Callable[[Mapping[str, object]], None],
         clock_ms: Callable[[], int] | None = None,
@@ -71,11 +73,42 @@ class RoomApplicationService:
         self.requirements = requirements
         self.capabilities = capabilities
         self.public_timeline = public_timeline
+        self.session_mode_gate = session_mode_gate
         self.wake_worker = wake_worker
         self.restore_participant_sessions = restore_participant_sessions
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
 
     def post_message(
+        self,
+        room_id: str,
+        *,
+        message: str,
+        client_message_id: str,
+        requested_participant_ids: Sequence[str],
+        work_item_id: str,
+    ) -> dict[str, object]:
+        room = self.rooms.get(room_id)
+        self.restore_participant_sessions(room)
+        room = self.rooms.get(room_id)
+        active_session_ids = [
+            str(value["sessionId"])
+            for value in room.get("participants", [])
+            if (
+                isinstance(value, Mapping)
+                and value.get("status") == "active"
+                and str(value.get("sessionId") or "").strip()
+            )
+        ]
+        with self.session_mode_gate.claim_room(active_session_ids):
+            return self._post_message_claimed(
+                room_id,
+                message=message,
+                client_message_id=client_message_id,
+                requested_participant_ids=requested_participant_ids,
+                work_item_id=work_item_id,
+            )
+
+    def _post_message_claimed(
         self,
         room_id: str,
         *,

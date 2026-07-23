@@ -32,6 +32,11 @@ SCHEMA_VERSION = "wisdom-weasel.agent-session-dialogue-canary.v1"
 TASK_MARKER = "AGENT-SESSION-RESILIENCE"
 FINAL_MARKER = "AGENT-SESSION-CANARY-OK"
 RECOVERY_MARKER = "AGENT-SESSION-RECOVERY-OK"
+READ_BOUNDARY_PATH = "read-boundary.txt"
+READ_BOUNDARY_SOURCE = "".join(
+    f'第{index:04d}行 "quoted" \\\\ path 智鼬数据\n'
+    for index in range(4_200)
+)
 EXPECTED_SKILL = "room-test-driven-implementation"
 EXPECTED_TOOLS = {
     "workspace_list",
@@ -535,6 +540,7 @@ def _debug_context(
             "args": item.get("args") if isinstance(item.get("args"), dict) else {},
             "status": str(item.get("status") or ""),
             "isError": item.get("isError") is True,
+            "result": item.get("result"),
             "resultSha256": hashlib.sha256(
                 json.dumps(
                     item.get("result"),
@@ -710,6 +716,66 @@ def _aggregate_debug_contexts(
     }
 
 
+def _workspace_read_result(
+    execution: dict[str, Any],
+) -> dict[str, Any] | None:
+    result = execution.get("result")
+    if not isinstance(result, dict):
+        return None
+    details = result.get("details")
+    content_blocks = result.get("content")
+    if not isinstance(details, dict) or not isinstance(content_blocks, list):
+        return None
+    content = details.get("content")
+    required = (
+        "contentBytes",
+        "contentLines",
+        "nextOffset",
+        "byteSize",
+        "truncated",
+    )
+    if not isinstance(content, str) or any(key not in details for key in required):
+        return None
+    model_text = "".join(
+        str(block.get("text") or "")
+        for block in content_blocks
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+    try:
+        model_receipt = json.loads(model_text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(model_receipt, dict):
+        return None
+    model_content = model_receipt.get("content")
+    if not isinstance(model_content, str):
+        return None
+    receipt_fields = (
+        "contentBytes",
+        "contentChars",
+        "contentLines",
+        "nextOffset",
+        "byteSize",
+        "truncated",
+    )
+    if any(model_receipt.get(key) != details.get(key) for key in receipt_fields):
+        return None
+    if model_content != content:
+        return None
+    return {
+        "contentBytes": int(details["contentBytes"]),
+        "contentChars": int(details.get("contentChars") or 0),
+        "contentLines": int(details["contentLines"]),
+        "contentSha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "modelContent": model_content,
+        "modelResultBytes": len(model_text.encode("utf-8")),
+        "modelResultJsonValid": True,
+        "nextOffset": int(details["nextOffset"]),
+        "byteSize": int(details["byteSize"]),
+        "truncated": details["truncated"] is True,
+    }
+
+
 def _tool_checks(evidence: dict[str, Any], workspace: Path) -> dict[str, bool]:
     executions = evidence["toolExecutions"]
     by_name = {
@@ -734,30 +800,138 @@ def _tool_checks(evidence: dict[str, Any], workspace: Path) -> dict[str, bool]:
         str((workspace / "calculator.py").resolve(strict=False)),
         str((workspace / "test_calculator.py").resolve(strict=False)),
     }
+    boundary_path = str(
+        (workspace / READ_BOUNDARY_PATH).resolve(strict=False)
+    )
+    boundary_reads = [
+        item
+        for item, path in zip(reads, resolved_read_paths, strict=True)
+        if path == boundary_path
+    ]
+    boundary_receipts = [
+        _workspace_read_result(item) for item in boundary_reads
+    ]
     tool_load_names = [
         str(item["args"].get("name") or "") for item in by_name["tool_load"]
     ]
     skill_names = [
         str(item["args"].get("name") or "") for item in by_name["skill_load"]
     ]
+    first_load_index = {
+        str(item["args"].get("name") or ""): index
+        for index, item in enumerate(executions)
+        if item["toolName"] == "tool_load"
+    }
+    pre_disclosure_calls = [
+        item
+        for index, item in enumerate(executions)
+        if item["toolName"] in EXPECTED_TOOLS
+        and item["toolName"] in first_load_index
+        and index < first_load_index[item["toolName"]]
+    ]
+    canonical_missing_reads = [
+        item
+        for item, path in zip(reads, resolved_read_paths, strict=True)
+        if path == str((workspace / MISSING_READ_PATH).resolve(strict=False))
+        and item["args"].get("op") == "read"
+    ]
+    valid_project_reads = [
+        (item, path)
+        for item, path in zip(reads, resolved_read_paths, strict=True)
+        if path in expected_reads and item["args"].get("op") == "read"
+    ]
+    valid_lists = [
+        item for item in by_name["workspace_list"]
+        if item["args"].get("op") == "list"
+    ]
+    valid_searches = [
+        item for item in by_name["workspace_search"]
+        if item["args"].get("op") == "search"
+    ]
     return {
         "skillLoadedExactlyOnce": skill_names.count(EXPECTED_SKILL) == 1,
         "requiredToolsLoadedOnce": all(
             tool_load_names.count(name) == 1 for name in EXPECTED_TOOLS
         ),
-        "missingReadFailedOnce": len(reads) == 3
-        and resolved_read_paths[0]
-        == str((workspace / MISSING_READ_PATH).resolve(strict=False))
-        and reads[0]["isError"] is True,
-        "projectFilesReadOnce": set(resolved_read_paths[1:]) == expected_reads
-        and len(resolved_read_paths[1:]) == 2
-        and all(item["isError"] is False for item in reads[1:]),
-        "listAndSearchOnce": len(by_name["workspace_list"]) == 1
-        and by_name["workspace_list"][0]["args"].get("path") == "."
-        and by_name["workspace_list"][0]["isError"] is False
-        and len(by_name["workspace_search"]) == 1
-        and by_name["workspace_search"][0]["args"].get("path") == "."
-        and by_name["workspace_search"][0]["isError"] is False,
+        "preDisclosureCallsFailClosedWithoutRepeat": (
+            len(pre_disclosure_calls) <= len(EXPECTED_TOOLS)
+            and len({item["toolName"] for item in pre_disclosure_calls})
+            == len(pre_disclosure_calls)
+        )
+        and all(item["isError"] is True for item in pre_disclosure_calls)
+        and all(not item["args"].get("op") for item in pre_disclosure_calls),
+        "missingReadFailedOnce": len(canonical_missing_reads) == 1
+        and canonical_missing_reads[0]["isError"] is True,
+        "projectFilesReadWithBoundedVerification": (
+            2 <= len(valid_project_reads) <= 3
+            and sum(
+                path == str((workspace / "calculator.py").resolve(strict=False))
+                for _, path in valid_project_reads
+            )
+            in {1, 2}
+            and sum(
+                path
+                == str((workspace / "test_calculator.py").resolve(strict=False))
+                for _, path in valid_project_reads
+            )
+            == 1
+            and all(item["isError"] is False for item, _ in valid_project_reads)
+        ),
+        "boundaryReadUsesPiBudget": len(boundary_reads) >= 3
+        and all(item["isError"] is False for item in boundary_reads)
+        and all(
+            item["args"].get("limit") == 65_536
+            for item in boundary_reads
+        )
+        and all(receipt is not None for receipt in boundary_receipts)
+        and all(
+            receipt is not None
+            and int(receipt["contentBytes"]) <= 50 * 1024
+            and int(receipt["contentLines"]) <= 2_000
+            and int(receipt["modelResultBytes"]) <= 50 * 1024
+            and int(receipt["nextOffset"])
+            - int(item["args"].get("offset") or 0)
+            == int(receipt["contentBytes"])
+            for receipt, item in zip(
+                boundary_receipts,
+                boundary_reads,
+                strict=True,
+            )
+        ),
+        "boundaryReadContinuationExact": bool(boundary_receipts)
+        and (boundary_reads[0]["args"].get("offset") or 0) == 0
+        and all(
+            current is not None
+            and next_item["args"].get("offset")
+            == current["nextOffset"]
+            for current, next_item in zip(
+                boundary_receipts[:-1],
+                boundary_reads[1:],
+                strict=True,
+            )
+        )
+        and boundary_receipts[-1] is not None
+        and boundary_receipts[-1]["truncated"] is False
+        and boundary_receipts[-1]["nextOffset"]
+        == boundary_receipts[-1]["byteSize"],
+        "boundaryReadModelPayloadExact": bool(boundary_receipts)
+        and all(
+            receipt is not None
+            and receipt["modelResultJsonValid"] is True
+            for receipt in boundary_receipts
+        )
+        and "".join(
+            str(receipt["modelContent"])
+            for receipt in boundary_receipts
+            if receipt is not None
+        )
+        == (workspace / READ_BOUNDARY_PATH).read_text(encoding="utf-8"),
+        "listAndSearchAppliedOnceWithBoundedRepair": len(valid_lists) == 1
+        and valid_lists[0]["args"].get("path") == "."
+        and valid_lists[0]["isError"] is False
+        and len(valid_searches) == 1
+        and valid_searches[0]["args"].get("path") == "."
+        and valid_searches[0]["isError"] is False,
         "patchOnce": 1 <= len(by_name["workspace_patch"]) <= 2
         and sum(
             item["isError"] is False for item in by_name["workspace_patch"]
@@ -848,7 +1022,10 @@ def run(
         f"第一步只用 workspace_read 读取不存在的 {workspace / MISSING_READ_PATH} 一次；"
         "确认失败后不得同参数重试。随后用 workspace_list(path='.') 查看目录、"
         "workspace_search(path='.') 搜索 ROOM_PROJECT_TASK，再以相对路径各读取一次 "
-        "calculator.py 与 test_calculator.py。"
+        "calculator.py 与 test_calculator.py。随后读取 read-boundary.txt，limit=65536，"
+        "每次严格使用上一次回执的 nextOffset 续读，直到 truncated=false；"
+        "每次模型可见结果不得超过 Pi 的 50 KiB，contentLines 不得超过 2000，"
+        "不得重复同一 offset，也不得用 Shell 绕过读取上限。"
         "在任何写入或 Shell 前加载 agent_plan，建立覆盖基线测试、精确修改和回归测试的"
         "执行清单，调用 submit_review；系统回执显示计划已批准前不得尝试写入或 Shell。"
         f"计划批准后加载 workspace_shell 并运行 {TEST_COMMAND}，cwd 为当前项目、allowNetwork=false；"
@@ -856,6 +1033,8 @@ def run(
         "再加载 workspace_patch，只修改 calculator.py 实现 normalize_scores：先对空列表返回 []，"
         "非空时只计算一次 minimum = min(values)，再返回每个 value - minimum；等待原生批准。"
         f"随后复用 workspace_shell 再运行同一命令并等待批准，必须退出码 0。"
+        "每一步取得回执后都要把对应 agent_plan 计划项更新为 completed；"
+        "所有计划项和验收均完成后，必须先调用 agent_plan complete，再输出最终回答。"
         f"最终回答以 {FINAL_MARKER} 开头，列出失败、修复、通过测试和剩余风险。"
         f"计划待审或等待批准时不得输出 {FINAL_MARKER}，它只代表全部验收真的完成。"
         "不要调用任何 room_*、ime_agents 或其他无关产品 Tool。"
@@ -1019,6 +1198,10 @@ def run(
         and not recovery_plan_approvals
         and TASK_MARKER in compact_summary
         and TASK_MARKER in current_after_text
+        and "当前任务：已完成；不要重复执行。" in current_after_text
+        and "计划状态：completed" in current_after_text
+        and "继续执行上述原始需求。" not in current_after_text
+        and "## 当前计划" not in current_after_text
         and all(after["systemPromptChecks"].values())
         and set(EXPECTED_TOOLS) <= {
             str(value) for value in after["activeTools"]

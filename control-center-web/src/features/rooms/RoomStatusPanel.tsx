@@ -19,19 +19,28 @@ import { IconButton } from '@/components/primitives';
 import type { RoomProjectionState, RoomTurnProjection } from '@/contracts/room-reducer';
 import type { RoomSummary, RoomWorkItem } from '.';
 import { useAgentLiveStore } from '../agent/state/live-store';
+import { roomProjection, useRoomLiveStore } from './state/live-store';
 import '../agent/agent.css';
 
 export function RoomStatusPanel({
   room,
-  projection,
+  roomId = '',
+  projection: providedProjection,
   open,
   onClose,
 }: {
   room?: RoomSummary;
-  projection: RoomProjectionState;
+  roomId?: string;
+  projection?: RoomProjectionState;
   open: boolean;
   onClose: () => void;
 }) {
+  useRoomLiveStore((state) => (
+    open && !providedProjection
+      ? state.roomRevisions[roomId || room?.id || ''] ?? 0
+      : 0
+  ));
+  const projection = providedProjection ?? roomProjection(roomId || room?.id || '');
   const turn = latestRoomTurn(projection);
   const activities = turn?.activityIds.map((id) => projection.activitiesById[id]).filter(Boolean) ?? [];
   const messages = turn?.messageIds.map((id) => projection.messagesById[id]).filter(Boolean) ?? [];

@@ -20,6 +20,7 @@ export function AgentTimeline({
   sessionId,
   persona,
   modelSelectionAvailable,
+  turnRecoveryDisabled = false,
   onSuggestion,
   onRetryTurn,
   onSwitchModel,
@@ -35,6 +36,7 @@ export function AgentTimeline({
   sessionId: string;
   persona?: AgentPersonaV1;
   modelSelectionAvailable: boolean;
+  turnRecoveryDisabled?: boolean;
   onSuggestion: (value: string) => void;
   onRetryTurn: (turnId: string) => void;
   onSwitchModel: () => void;
@@ -142,6 +144,7 @@ export function AgentTimeline({
             turnId={turnId}
             persona={persona}
             modelSelectionAvailable={modelSelectionAvailable}
+            turnRecoveryDisabled={turnRecoveryDisabled}
             onRetryTurn={onRetryTurn}
             onSwitchModel={onSwitchModel}
             onApprovalDecision={onApprovalDecision}
@@ -223,6 +226,7 @@ export function AgentTurn({
   turnId,
   persona,
   modelSelectionAvailable = false,
+  turnRecoveryDisabled = false,
   onRetryTurn,
   onSwitchModel,
   onApprovalDecision,
@@ -238,6 +242,7 @@ export function AgentTurn({
   turnId: string;
   persona?: AgentPersonaV1;
   modelSelectionAvailable?: boolean;
+  turnRecoveryDisabled?: boolean;
   onRetryTurn?: (turnId: string) => void;
   onSwitchModel?: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
@@ -321,8 +326,8 @@ export function AgentTurn({
                 <span><strong>本轮未完成</strong><small>{failure}</small></span>
                 {onRetryTurn && onSwitchModel ? (
                   <div className="agent-turn__failure-actions">
-                    <Button size="small" variant="primary" leadingIcon={<RefreshCcw size={14} />} onClick={() => onRetryTurn(turnId)}>重试本轮</Button>
-                    <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={!modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button>
+                    <Button size="small" variant="primary" leadingIcon={<RefreshCcw size={14} />} disabled={turnRecoveryDisabled} onClick={() => onRetryTurn(turnId)}>重试本轮</Button>
+                    <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button>
                   </div>
                 ) : null}
               </div>

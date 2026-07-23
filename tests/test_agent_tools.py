@@ -718,6 +718,36 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertTrue(all(request.visible_owners for request in evidence_requests))
 
+    def test_memory_read_compatibility_normalizes_missing_operation_without_enabling_writes(self) -> None:
+        recent = self.gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": self.session["id"],
+                "tool": "ime_memory",
+                "toolCallId": "tool:legacy-recent",
+                "args": {
+                    "query": "RAG IME 昨天进展",
+                    "scope": "recent",
+                },
+            }
+        )["result"]
+
+        self.assertEqual(recent["count"], 1)
+        self.assertEqual(recent["items"][0]["text"], "把普通生成和深度检索分开")
+        with self.assertRaisesRegex(ValueError, "unsupported ime_memory operation"):
+            self.gateway.execute(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": self.session["id"],
+                    "tool": "ime_memory",
+                    "toolCallId": "tool:legacy-write",
+                    "args": {
+                        "text": "不能凭缺失 op 猜写操作",
+                        "scope": "global",
+                    },
+                }
+            )
+
     def test_memory_tools_include_the_active_room_owner_in_visibility(self) -> None:
         participant_calls = []
 
@@ -781,6 +811,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         by_operation = {
             branch["properties"]["op"]["const"]: branch
             for branch in branches
+            if "op" in branch.get("properties", {})
         }
 
         self.assertIn("curation_prepare", by_operation)
@@ -799,7 +830,25 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertEqual(
             parameters["properties"]["scope"]["enum"],
-            ["incremental", "global"],
+            [
+                "incremental",
+                "global",
+                "recent",
+                "current",
+                "historical",
+                "change",
+            ],
+        )
+        compatibility = next(
+            branch
+            for branch in branches
+            if "op" not in branch.get("properties", {})
+        )
+        self.assertEqual(compatibility["required"], ["query"])
+        self.assertEqual(compatibility["not"], {"required": ["op"]})
+        self.assertEqual(
+            compatibility["properties"]["scope"]["enum"],
+            ["recent", "current", "historical", "change"],
         )
         self.assertEqual(
             parameters["properties"]["policy"]["enum"],

@@ -2,6 +2,7 @@ import { Archive, ArchiveRestore, BriefcaseBusiness, FilePlus2, FolderOpen, GitB
 import * as RadioGroup from '@radix-ui/react-radio-group';
 import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
+import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -18,14 +19,7 @@ import {
 } from '@/components/primitives';
 import { createRoomDeltaBatcher } from '@/contracts/batching';
 import {
-  abortRoomTurn,
-  abortRoomParticipantTurn,
-  appendOptimisticRoomMessage,
-  createRoomProjection,
   parseRoomEventSnapshot,
-  reduceRoomEvent,
-  replayRoomEventSnapshot,
-  type RoomProjectionState,
 } from '@/contracts/room-reducer';
 import type { UiRoomEvent } from '@/contracts/ui-events';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
@@ -36,13 +30,14 @@ import { RoomStatusPanel } from './RoomStatusPanel';
 import { RoomMemberBoundaryDialog } from './RoomMemberBoundaryDialog';
 import { RoomComposer, roomMentionedParticipants } from './composer/RoomComposer';
 import { RoomKernelLivePanel } from './kernel/RoomKernelLivePanel';
-import { createRoomRuntimeLedger } from './room-runtime-ledger';
-import { mergeAcceptedRoomTimeline } from './runtime/accepted-room-timeline';
 import { RoomTurn } from './timeline/RoomTurn';
 import { selectPublicRoomTurnOrder } from './runtime/room-execution-lanes';
+import { useRoomLiveStore } from './state/live-store';
 import './rooms.css';
 
 export { RoomTurn } from './timeline/RoomTurn';
+
+const emptyRoomTurnIds: string[] = [];
 
 export type RoomCollaborationRole = 'coordinator' | 'researcher' | 'implementer' | 'reviewer' | 'specialist';
 export interface RoomParticipant { id: string; sessionId: string; roleId: string; roleVersion: string; displayName: string; collaborationRole?: RoomCollaborationRole; status: string; ordinal: number; }
@@ -105,8 +100,6 @@ export function RoomsFeature() {
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [personas, setPersonas] = useState<AgentPersonaV1[]>([]);
   const [selectedId, setSelectedId] = useState('');
-  const [projection, setProjection] = useState<RoomProjectionState>(() => createRoomProjection(''));
-  const roomRuntimeLedgerRef = useRef(createRoomRuntimeLedger());
   const roomDraftsRef = useRef(new Map<string, string>());
   const roomErrorsRef = useRef(new Map<string, {
     message: string;
@@ -169,17 +162,26 @@ export function RoomsFeature() {
   const [abortingSessionIds, setAbortingSessionIds] = useState<Set<string>>(() => new Set());
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
   const [sendingRoomIds, setSendingRoomIds] = useState<Set<string>>(() => new Set());
+  const visibleTurnOrder = useRoomLiveStore(useShallow((state) => {
+    const projection = state.projections[selectedId];
+    return projection ? selectPublicRoomTurnOrder(projection) : emptyRoomTurnIds;
+  }));
 
   selectedRoomIdRef.current = selectedId;
 
   function selectRoomId(roomId: string): void {
     selectedRoomIdRef.current = roomId;
     setSelectedId(roomId);
+    setDraft(roomDraftsRef.current.get(roomId) ?? '');
     setError(roomErrorsRef.current.get(roomId)?.message ?? '');
   }
 
-  function updateRoomDraft(roomId: string, value: string): void {
+  function persistRoomDraft(roomId: string, value: string): void {
     if (roomId) roomDraftsRef.current.set(roomId, value);
+  }
+
+  function updateRoomDraft(roomId: string, value: string): void {
+    persistRoomDraft(roomId, value);
     if (selectedRoomIdRef.current === roomId) setDraft(value);
   }
 
@@ -281,7 +283,6 @@ export function RoomsFeature() {
 
   useEffect(() => {
     if (!selectedId) {
-      setProjection(createRoomProjection(''));
       setDraft('');
       setError('');
       setSnapshotLoading(false);
@@ -294,9 +295,7 @@ export function RoomsFeature() {
     let reloadQueued = false;
     let unsubscribe: (() => void) | undefined;
     let snapshotController: AbortController | undefined;
-    const runtimeLedger = roomRuntimeLedgerRef.current;
-    const cached = runtimeLedger.getOrCreate(selectedId).projection;
-    setProjection(cached);
+    useRoomLiveStore.getState().ensure(selectedId);
     setSnapshotLoading(true);
 
     const scheduleSnapshotReload = () => {
@@ -309,15 +308,9 @@ export function RoomsFeature() {
     };
     const batcher = createRoomDeltaBatcher((events) => {
       if (!active) return;
-      let next = runtimeLedger.getOrCreate(selectedId).projection;
-      let snapshotRequired = false;
-      for (const event of events) {
-        const reduced = reduceRoomEvent(next, event);
-        next = reduced.state;
-        snapshotRequired ||= reduced.disposition === 'snapshot-required';
-      }
-      runtimeLedger.replace(selectedId, next);
-      setProjection(next);
+      const snapshotRequired = useRoomLiveStore
+        .getState()
+        .applyEvents(selectedId, events);
       if (snapshotRequired) scheduleSnapshotReload();
     });
 
@@ -336,10 +329,7 @@ export function RoomsFeature() {
         });
         if (!active || requestGeneration !== generation) return;
         const snapshot = parseRoomEventSnapshot(value);
-        const base = runtimeLedger.getOrCreate(selectedId).projection;
-        const next = replayRoomEventSnapshot(base, snapshot);
-        runtimeLedger.replace(selectedId, next);
-        setProjection(next);
+        useRoomLiveStore.getState().replaySnapshot(selectedId, snapshot);
         setSnapshotLoading(false);
         const snapshotRoom = snapshot.room as unknown as RoomSummary;
         setRooms((current) => current.map((item) => item.id === snapshotRoom.id ? snapshotRoom : item));
@@ -392,31 +382,22 @@ export function RoomsFeature() {
 
   const room = rooms.find((item) => item.id === selectedId);
   const activeParticipants = room?.participants.filter((participant) => participant.status === 'active') ?? [];
-  const visibleTurnOrder = projection.roomId === selectedId
-    ? selectPublicRoomTurnOrder(projection)
-    : [];
-  const roomCanSend = room?.status === 'active';
   const activeWork = room?.workItems?.find((work) => ['blocked', 'review', 'active', 'queued'].includes(work.state));
-  const addressedParticipants = roomMentionedParticipants(activeParticipants, draft);
-  const canSend = Boolean(
-    roomCanSend
-    && draft.trim()
-    && !sendingRoomIds.has(room?.id ?? ''),
-  );
-  async function send(): Promise<void> {
-    const message = draft.trim();
+  async function send(composerDraft = draft): Promise<void> {
+    const message = composerDraft.trim();
     if (!room || room.status !== 'active' || !message) return;
     if (roomSendLocksRef.current.has(room.id)) return;
+    const addressedParticipants = roomMentionedParticipants(
+      activeParticipants,
+      message,
+    );
     const clientMessageId = `room-web-${crypto.randomUUID()}`;
     roomSendLocksRef.current.add(room.id);
     setSendingRoomIds((current) => new Set(current).add(room.id));
-    const runtimeLedger = roomRuntimeLedgerRef.current;
-    const optimistic = appendOptimisticRoomMessage(
-      runtimeLedger.getOrCreate(room.id).projection,
+    useRoomLiveStore.getState().appendOptimistic(
+      room.id,
       { clientMessageId, text: message, nowMs: Date.now() },
     );
-    runtimeLedger.replace(room.id, optimistic);
-    setProjection(optimistic);
     updateRoomDraft(room.id, '');
     setRoomError(room.id, '');
     try {
@@ -431,16 +412,10 @@ export function RoomsFeature() {
             : {}),
         },
       });
-      const current = runtimeLedger.getOrCreate(room.id).projection;
-      const accepted = mergeAcceptedRoomTimeline(current, response);
-      runtimeLedger.replace(room.id, accepted);
-      if (selectedRoomIdRef.current === room.id) setProjection(accepted);
+      useRoomLiveStore.getState().acceptMessage(room.id, response);
     }
     catch (requestError) {
-      const current = runtimeLedger.getOrCreate(room.id).projection;
-      const next = removeOptimisticRoomMessage(current, clientMessageId);
-      runtimeLedger.replace(room.id, next);
-      if (selectedRoomIdRef.current === room.id) setProjection(next);
+      useRoomLiveStore.getState().discardOptimistic(room.id, clientMessageId);
       updateRoomDraft(room.id, message);
       setRoomError(room.id, publicErrorText(requestError, '消息暂时未发送，请稍后重试。'));
     } finally {
@@ -467,15 +442,12 @@ export function RoomsFeature() {
       )?.id ?? '';
       const roomId = room?.id ?? '';
       if (roomId) {
-        const runtimeLedger = roomRuntimeLedgerRef.current;
-        const next = abortRoomParticipantTurn(
-          runtimeLedger.getOrCreate(roomId).projection,
+        useRoomLiveStore.getState().abortParticipant(
+          roomId,
           turnId,
           participantId,
           Date.now(),
         );
-        runtimeLedger.replace(roomId, next);
-        if (selectedRoomIdRef.current === roomId) setProjection(next);
       }
     } catch (requestError) {
       setRoomError(sourceRoomId, publicErrorText(requestError, '暂时无法停止这个 Agent，请稍后重试。'));
@@ -510,14 +482,11 @@ export function RoomsFeature() {
         );
         return;
       }
-      const runtimeLedger = roomRuntimeLedgerRef.current;
-      const next = abortRoomTurn(
-        runtimeLedger.getOrCreate(room.id).projection,
+      useRoomLiveStore.getState().abortTurn(
+        room.id,
         turnId,
         Date.now(),
       );
-      runtimeLedger.replace(room.id, next);
-      if (selectedRoomIdRef.current === room.id) setProjection(next);
     } catch (requestError) {
       setRoomError(room.id, publicErrorText(requestError, '暂时无法停止整条 Room 任务，请稍后重试。'));
     } finally {
@@ -809,7 +778,7 @@ export function RoomsFeature() {
         body: { confirmTitle: deleteConfirmTitle },
       });
       const nextRooms = rooms.filter((item) => item.id !== room.id);
-      roomRuntimeLedgerRef.current.remove(room.id);
+      useRoomLiveStore.getState().remove(room.id);
       roomDraftsRef.current.delete(room.id);
       roomErrorsRef.current.delete(room.id);
       setRooms(nextRooms);
@@ -936,16 +905,26 @@ export function RoomsFeature() {
           {!error && !roomCatalogError && roleCatalogError ? <p className="room-catalog-warning" role="status">{roleCatalogError}</p> : null}
         </div>
         {workspaceView === 'posts' ? <><div className="room-timeline" aria-label="Room Posts 时间线">
-          {room ? visibleTurnOrder.length ? <Virtuoso data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} room={room} projection={projection} personas={personas} abortingSessionIds={abortingSessionIds} abortingTurnIds={abortingTurnIds} onAbortTurn={(rootId) => void abortRootTurn(rootId)} onAbortSession={(sessionId) => void abortParticipantTurn(sessionId, turnId)} />} /> : snapshotLoading ? <p className="room-empty">正在读取 Room Posts…</p> : <EmptyState icon={MessagesSquare} title="还没有公开 Post" description="发一条消息，伙伴会立即接手并在这里持续显示进度。" /> : catalogLoading ? <p className="room-empty">正在读取 Rooms…</p> : <EmptyState icon={MessagesSquare} title="选择一个 Room" description="从 Rooms 列表选择，或新建协作 Room。" />}
-        </div><RoomComposer
+          {room ? visibleTurnOrder.length ? <Virtuoso data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} roomId={room.id} room={room} personas={personas} abortingSessionIds={abortingSessionIds} abortingTurnIds={abortingTurnIds} onAbortTurn={(rootId) => void abortRootTurn(rootId)} onAbortSession={(sessionId) => void abortParticipantTurn(sessionId, turnId)} />} /> : snapshotLoading ? <p className="room-empty">正在读取 Room Posts…</p> : <EmptyState icon={MessagesSquare} title="还没有公开 Post" description="发一条消息，伙伴会立即接手并在这里持续显示进度。" /> : catalogLoading ? <p className="room-empty">正在读取 Rooms…</p> : <EmptyState icon={MessagesSquare} title="选择一个 Room" description="从 Rooms 列表选择，或新建协作 Room。" />}
+        </div>{room ? <RoomComposer
+          key={room.id}
           room={room}
           personas={personas}
           draft={draft}
-          addressedParticipantId={addressedParticipants[0]?.id ?? ''}
-          canSend={canSend}
-          onDraftChange={(value) => { updateRoomDraft(selectedId, value); setRoomError(selectedId, ''); }}
-          onSend={() => void send()}
-        /></> : workspaceView === 'execution' ? <section className="room-execution-workspace" aria-label="Root、Task 与 Dispatch">
+          sending={sendingRoomIds.has(room.id)}
+          onDraftChange={(value) => {
+            persistRoomDraft(room.id, value);
+            if (roomErrorsRef.current.has(room.id)) setRoomError(room.id, '');
+          }}
+          onSend={(value) => void send(value)}
+        /> : !catalogLoading ? <RoomComposer
+          room={undefined}
+          personas={personas}
+          draft=""
+          sending={false}
+          onDraftChange={() => undefined}
+          onSend={() => undefined}
+        /> : null}</> : workspaceView === 'execution' ? <section className="room-execution-workspace" aria-label="Root、Task 与 Dispatch">
           {room ? <RoomKernelLivePanel roomId={room.id} /> : <p className="room-empty">请选择一个 Room。</p>}
         </section> : <section className="room-session-workspace" aria-label="Room 成员运行">
           <header><span><strong>成员运行边界</strong><small>每位伙伴拥有独立 Session；只有显式 Post 进入 Room，思考与工具细节保持私有。</small></span></header>
@@ -954,7 +933,7 @@ export function RoomsFeature() {
         </section>}
       </section>
       <button className="agent-status-backdrop room-status-backdrop" aria-label="关闭 Room 状态" disabled={!statusOpen} onClick={() => setStatusOpen(false)} type="button" />
-      <RoomStatusPanel room={room} projection={projection} open={statusOpen} onClose={() => setStatusOpen(false)} />
+      <RoomStatusPanel room={room} roomId={room?.id ?? ''} open={statusOpen} onClose={() => setStatusOpen(false)} />
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
       <DialogContent className="room-create-dialog">
@@ -1176,33 +1155,3 @@ function collaborationRoleLabel(role: RoomParticipant['collaborationRole']): str
 }
 
 function isAbortError(value: unknown): boolean { return value instanceof DOMException && value.name === 'AbortError'; }
-
-export function removeOptimisticRoomMessage(
-  state: RoomProjectionState,
-  clientMessageId: string,
-): RoomProjectionState {
-  const messageId = state.optimisticByClientMessageId[clientMessageId];
-  if (!messageId) return state;
-  const message = state.messagesById[messageId];
-  const next: RoomProjectionState = {
-    ...state,
-    messagesById: { ...state.messagesById },
-    messageOrder: state.messageOrder.filter((id) => id !== messageId),
-    turnsById: { ...state.turnsById },
-    turnOrder: [...state.turnOrder],
-    optimisticByClientMessageId: { ...state.optimisticByClientMessageId },
-  };
-  delete next.messagesById[messageId];
-  delete next.optimisticByClientMessageId[clientMessageId];
-  if (!message) return next;
-  const turn = next.turnsById[message.turnId];
-  if (!turn) return next;
-  const messageIds = turn.messageIds.filter((id) => id !== messageId);
-  if (messageIds.length || turn.activityIds.length) {
-    next.turnsById[turn.id] = { ...turn, messageIds };
-  } else {
-    delete next.turnsById[turn.id];
-    next.turnOrder = next.turnOrder.filter((id) => id !== turn.id);
-  }
-  return next;
-}

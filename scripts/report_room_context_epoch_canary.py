@@ -113,8 +113,12 @@ def _transition_evidence(
         "toolReceiptIds": tool_receipt_ids,
         "toolReceipts": tool_receipts,
         "providerHashes": [
-            evidence.get("roomProviderEntryHash"),
-            evidence.get("sessionProviderEntryHash"),
+            str(value)
+            for value in (
+                evidence.get("roomProviderEntryHash"),
+                evidence.get("sessionProviderEntryHash"),
+            )
+            if str(value or "").strip()
         ],
     }
 

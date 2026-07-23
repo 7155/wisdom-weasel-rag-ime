@@ -327,6 +327,19 @@ describe('Agent experience', () => {
     expect(sessionItems({ ok: true, items: [parent, child] })).toEqual([parent]);
   });
 
+  it('keeps Room member conversation Sessions in the Agent rail', () => {
+    const roomMember = {
+      ...previewSessions[0]!,
+      id: 'session-room-member',
+      title: '联调 Room · 智鼬',
+      sessionKind: 'conversation',
+    };
+
+    expect(
+      sessionItems({ ok: true, items: [roomMember] })
+    ).toEqual([roomMember]);
+  });
+
   it('renders one persona avatar and one activity container per assistant turn without raw payloads', async () => {
     const sessionId = 'session-preview';
     const snapshot = previewAgentSnapshot(sessionId);
@@ -791,12 +804,51 @@ describe('Agent experience', () => {
     await user.type(composer, '重试时保留这句话');
     await user.click(screen.getByRole('button', { name: '发送' }));
 
-    await user.click(await screen.findByRole('button', { name: '重试本轮' }));
+    const retry = await screen.findByRole('button', { name: '重试本轮' });
+    await user.click(retry);
 
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt')).toHaveLength(2));
+    await waitFor(() => expect(retry).toBeDisabled());
+    await user.click(retry);
+    expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt')).toHaveLength(2);
     const prompts = transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt');
     expect(prompts[1]?.request.params).toEqual({ sessionId: 'session-preview' });
     expect(prompts[1]?.request.body).toMatchObject({ message: '重试时保留这句话', attachments: [] });
+  });
+
+  it('does not turn a stale-window active-turn conflict into duplicate chat messages', async () => {
+    let attempt = 0;
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error('model unavailable');
+        throw new Error('Pi 正在处理上一轮，请等待结束或停止完成后再发送');
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '避免重复的同一条消息');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await user.click(await screen.findByRole('button', { name: '重试本轮' }));
+
+    await waitFor(() => expect(
+      document.querySelector('.agent-conversation__header [role="alert"]')
+    ).toHaveTextContent('上一轮仍在处理，输入已保留'));
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    const matchingUserMessages = Object.values(projection.messagesById).filter((message) => (
+      message.role === 'user'
+      && message.blocks.some((block) => block.data.text === '避免重复的同一条消息')
+    ));
+    const matchingFailedTurns = Object.values(projection.turnsById).filter((turn) => (
+      turn.status === 'failed'
+    ));
+    expect(matchingUserMessages).toHaveLength(1);
+    expect(matchingFailedTurns).toHaveLength(1);
+    expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt')).toHaveLength(2);
   });
 
   it('opens the real model picker from a failed turn', async () => {
@@ -2066,7 +2118,128 @@ describe('Agent experience', () => {
     expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.models')).toHaveLength(2);
   });
 
-  it('reloads the model catalog when Pi publishes a session configuration change', async () => {
+  it('closes the model menu and reflects the choice before Pi confirms it', async () => {
+    const pendingSelection = deferred<{ ok: true }>();
+    const initial = lunaModelCatalog();
+    const confirmed = {
+      ...initial,
+      selected: {
+        provider: 'gpt',
+        id: 'codex-mini-latest',
+        modelId: 'codex-mini-latest',
+        name: 'Codex Mini',
+      },
+      thinkingLevel: 'medium' as ThinkingLevel,
+    };
+    let modelCatalogCalls = 0;
+    const transport = featureTransport(
+      () => {
+        modelCatalogCalls += 1;
+        return modelCatalogCalls === 1 ? initial : confirmed;
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => pendingSelection.promise,
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ }));
+    const codexDetails = screen.getByText('Codex Mini', { selector: 'summary' }).closest('details');
+    expect(codexDetails).not.toBeNull();
+    codexDetails!.open = true;
+    await user.click(within(codexDetails!).getByRole('button', { name: '中' }));
+
+    expect(screen.queryByText('模型与推理强度')).not.toBeInTheDocument();
+    const optimistic = screen.getByRole('button', {
+      name: '模型：Codex Mini，思考强度：中',
+    });
+    expect(optimistic).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('textbox', { name: '消息' })).toBeEnabled();
+
+    pendingSelection.resolve({ ok: true });
+    await waitFor(() => expect(optimistic).not.toHaveAttribute('aria-busy'));
+    expect(modelCatalogCalls).toBe(2);
+  });
+
+  it('coalesces rapid model changes to the latest visible choice', async () => {
+    const firstSelection = deferred<{ ok: true }>();
+    const initial = lunaModelCatalog();
+    const confirmedCodex = {
+      ...initial,
+      selected: {
+        provider: 'gpt',
+        id: 'codex-mini-latest',
+        modelId: 'codex-mini-latest',
+        name: 'Codex Mini',
+      },
+      thinkingLevel: 'medium' as ThinkingLevel,
+    };
+    const confirmedLuna = {
+      ...initial,
+      thinkingLevel: 'high' as ThinkingLevel,
+    };
+    let modelCatalogCalls = 0;
+    let modelSelectionCalls = 0;
+    const transport = featureTransport(
+      () => {
+        modelCatalogCalls += 1;
+        if (modelCatalogCalls === 1) return initial;
+        return modelCatalogCalls === 2 ? confirmedCodex : confirmedLuna;
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => {
+        modelSelectionCalls += 1;
+        return modelSelectionCalls === 1 ? firstSelection.promise : { ok: true };
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ }));
+    const codexDetails = screen.getByText('Codex Mini', { selector: 'summary' }).closest('details');
+    expect(codexDetails).not.toBeNull();
+    codexDetails!.open = true;
+    await user.click(within(codexDetails!).getByRole('button', { name: '中' }));
+
+    await user.click(screen.getByRole('button', { name: '模型：Codex Mini，思考强度：中' }));
+    const lunaDetails = screen.getByText('GPT-5.6 Luna', { selector: 'summary' }).closest('details');
+    expect(lunaDetails).not.toBeNull();
+    lunaDetails!.open = true;
+    await user.click(within(lunaDetails!).getByRole('button', { name: '高' }));
+    expect(screen.getByRole('button', {
+      name: '模型：GPT-5.6 Luna，思考强度：高',
+    })).toHaveAttribute('aria-busy', 'true');
+
+    firstSelection.resolve({ ok: true });
+    await waitFor(() => expect(modelSelectionCalls).toBe(2));
+    await waitFor(() => expect(screen.getByRole('button', {
+      name: '模型：GPT-5.6 Luna，思考强度：高',
+    })).not.toHaveAttribute('aria-busy'));
+    expect(transport.requests.filter((call) => (
+      call.request.pathId === 'agent.session.model.select'
+    )).map((call) => call.request.body)).toEqual([
+      { provider: 'gpt', modelId: 'codex-mini-latest' },
+      { provider: 'gpt', modelId: 'gpt-5.6-luna' },
+    ]);
+  });
+
+  it('applies Pi model configuration events without reloading every catalog', async () => {
     let modelCatalogCalls = 0;
     const transport = featureTransport(() => {
       modelCatalogCalls += 1;
@@ -2088,12 +2261,24 @@ describe('Agent experience', () => {
         createdAtMs: Date.now(),
         streamKind: 'agent',
         eventType: 'session_configuration_changed',
-        payload: { kind: 'model' },
+        payload: {
+          kind: 'thinking',
+          thinkingLevel: 'high',
+          selected: {
+            provider: 'gpt',
+            id: 'gpt-5.6-luna',
+            modelId: 'gpt-5.6-luna',
+            name: 'GPT-5.6 Luna',
+          },
+        },
         resumeToken: `session-preview:${sequence}`,
       });
     });
 
-    await waitFor(() => expect(modelCatalogCalls).toBe(2));
+    expect(await screen.findByRole('button', {
+      name: '模型：GPT-5.6 Luna，思考强度：高',
+    })).toBeInTheDocument();
+    expect(modelCatalogCalls).toBe(1);
   });
 
   it('treats the mobile session rail as a focus-managed drawer', async () => {
@@ -2310,6 +2495,8 @@ function featureTransport(
       updatedAtMs: Date.now(),
     },
   },
+  modelSelectRoute: unknown = { ok: true },
+  thinkingSelectRoute: unknown = { ok: true },
 ): MockControlTransport {
   return new MockControlTransport({
     pickedFiles: [{
@@ -2359,8 +2546,8 @@ function featureTransport(
       'agent.session.compact': { ok: true },
       'agent.session.abort': abortRoute,
       'agent.session.mode.update': { ok: true },
-      'agent.session.model.select': { ok: true },
-      'agent.session.thinking.select': { ok: true },
+      'agent.session.model.select': modelSelectRoute,
+      'agent.session.thinking.select': thinkingSelectRoute,
       'agent.approval.decide': approvalRoute,
       'agent.memoryMaintenance.run': memoryRunFixture(),
       'agent.session.review.resolve': { ok: true },

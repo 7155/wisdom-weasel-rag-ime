@@ -5,6 +5,7 @@ import {
   appendOptimisticAgentMessage,
   applyAgentSnapshot,
   createAgentProjection,
+  discardOptimisticAgentMessage,
   failOptimisticAgentMessage,
   reduceAgentEvent,
   type AgentProjectionState,
@@ -22,6 +23,7 @@ interface AgentLiveStore {
     sessionId: string,
     input: { clientMessageId: string; text: string; attachments?: string[]; nowMs: number },
   ): void;
+  discardOptimistic(sessionId: string, clientMessageId: string): void;
   failOptimistic(sessionId: string, clientMessageId: string, error: string, nowMs: number): void;
   abortTurn(sessionId: string, turnId: string, nowMs: number): void;
   clear(sessionId: string): void;
@@ -59,6 +61,14 @@ export const useAgentLiveStore = create<AgentLiveStore>((set, get) => ({
   appendOptimistic(sessionId, input) {
     const current = get().projections[sessionId] ?? createAgentProjection(sessionId);
     const projection = appendOptimisticAgentMessage(current, input);
+    set((state) => ({
+      projections: { ...state.projections, [sessionId]: projection },
+    }));
+  },
+  discardOptimistic(sessionId, clientMessageId) {
+    const current = get().projections[sessionId];
+    if (!current) return;
+    const projection = discardOptimisticAgentMessage(current, clientMessageId);
     set((state) => ({
       projections: { ...state.projections, [sessionId]: projection },
     }));

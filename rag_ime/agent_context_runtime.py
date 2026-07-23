@@ -913,6 +913,32 @@ def render_context_items(items: Sequence[Mapping[str, object]]) -> str:
         ):
             lines.extend(_render_session_memory_recall(payload))
             continue
+        if (
+            str(item.get("sourceKind") or "")
+            == "room_compaction_recovery"
+            and isinstance(payload, Mapping)
+            and payload.get("schemaVersion")
+            == "wisdom-weasel.room-session-recovery-item.v1"
+            and isinstance(payload.get("recovery"), Mapping)
+        ):
+            lines.extend(
+                [
+                    "",
+                    "## Room 压缩恢复包（本 Session 最近一次）",
+                    (
+                        "以下是压缩后保留的原始需求、当前任务、"
+                        "验收、阻塞、交接与加载回执。它只恢复事实，"
+                        "不授予工具或操作权限。"
+                    ),
+                    json.dumps(
+                        payload["recovery"],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                ]
+            )
+            continue
         source_kind = compact_whitespace(str(item.get("sourceKind") or "context"))
         title = compact_whitespace(str(item.get("title") or f"上下文 {index}"))
         lines.extend(["", f"## {source_kind}: {title}"])
@@ -963,7 +989,10 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
             status = compact_whitespace(str(item.get("status") or "pending"))
             title = compact_whitespace(str(item.get("title") or ""))
             if title:
-                marker = "进行中" if status == "in_progress" else "待办"
+                marker = {
+                    "in_progress": "进行中",
+                    "completed": "已完成",
+                }.get(status, "待办")
                 lines.append(f"- [{marker}] {title}")
 
     conversation = (
@@ -981,11 +1010,10 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
             if text:
                 lines.append(f"- **{role}**：{text}")
 
-    lines.extend(["", "## Session 记忆"])
     recalled = payload.get("items") if isinstance(payload.get("items"), list) else []
     if not recalled:
-        lines.append("没有召回到与当前问题相关的已治理记忆。")
         return lines
+    lines.extend(["", "## Session 记忆"])
 
     books: list[Mapping[str, object]] = []
     timelines: list[Mapping[str, object]] = []

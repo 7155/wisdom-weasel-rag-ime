@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import json
 import os
 import re
 import selectors
@@ -34,6 +35,8 @@ _SENSITIVE_NAMES = frozenset(
 _SENSITIVE_PARTS = frozenset({".git", ".ssh", ".gnupg", ".aws", ".azure", ".keychain"})
 _SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".sqlite", ".sqlite3", ".db")
 _MAX_SEARCH_FILES = 5_000
+_PI_TOOL_RESULT_MAX_BYTES = 50 * 1024
+_PI_READ_MAX_LINES = 2_000
 _FORBIDDEN_COMMAND = re.compile(
     r"(?ix)(?:^|[;&|()\s])"
     r"(?:sudo|su|security|tccutil|csrutil|spctl|kmutil|kextload|nvram|diskutil|"
@@ -163,27 +166,44 @@ class WorkspaceHarness:
         if not target.is_file() or target.is_symlink():
             raise WorkspaceHarnessError("workspace_read requires a regular non-symlink file")
         offset = _bounded_integer(args.get("offset"), default=0, minimum=0, maximum=50_000_000)
-        limit = _bounded_integer(args.get("limit"), default=32_768, minimum=1, maximum=65_536)
+        requested_limit = _bounded_integer(
+            args.get("limit"),
+            default=32_768,
+            minimum=1,
+            maximum=65_536,
+        )
+        content_limit = min(requested_limit, _PI_TOOL_RESULT_MAX_BYTES)
         size = target.stat().st_size
+        if offset > size:
+            raise WorkspaceHarnessError(
+                f"workspace_read offset {offset} is beyond end of file ({size} UTF-8 bytes)"
+            )
         with target.open("rb") as handle:
             handle.seek(offset)
-            raw = handle.read(limit + 1)
+            raw = handle.read(content_limit + 4)
         if b"\x00" in raw:
             raise WorkspaceHarnessError("binary files are not available through workspace_read")
-        try:
-            text = raw[:limit].decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise WorkspaceHarnessError("workspace_read only accepts UTF-8 text") from exc
-        return {
-            "summary": f"已读取 {target.name}",
-            "path": str(target),
-            "root": str(root),
-            "offset": offset,
-            "byteSize": size,
-            "content": text,
-            "truncated": len(raw) > limit or offset + len(raw) < size,
-            "nextOffset": offset + len(raw[:limit]),
-        }
+        text = _decode_workspace_read_prefix(
+            raw[:content_limit],
+            allow_trailing_partial=offset + content_limit < size,
+            offset=offset,
+        )
+        if not text and offset < size:
+            required = _utf8_codepoint_width(raw[0]) if raw else 1
+            raise WorkspaceHarnessError(
+                "workspace_read limit is too small for the next UTF-8 character; "
+                f"use at least {required} bytes"
+            )
+        text, line_limited = _limit_workspace_read_lines(text)
+        return _bounded_workspace_read_result(
+            target=target,
+            root=root,
+            offset=offset,
+            size=size,
+            requested_limit=requested_limit,
+            candidate=text,
+            line_limited=line_limited,
+        )
 
     def search(self, session: Mapping[str, object], args: Mapping[str, object]) -> dict[str, object]:
         roots = self._session_roots(session)
@@ -772,6 +792,149 @@ def _is_within(path: Path, root: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _decode_workspace_read_prefix(
+    raw: bytes,
+    *,
+    allow_trailing_partial: bool,
+    offset: int,
+) -> str:
+    """Decode the largest valid UTF-8 prefix without splitting a code point."""
+
+    if not raw:
+        return ""
+    for trim in range(4):
+        candidate = raw[: len(raw) - trim] if trim else raw
+        try:
+            return candidate.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            starts_mid_character = (
+                exc.start == 0
+                and candidate
+                and 0x80 <= candidate[0] <= 0xBF
+            )
+            if starts_mid_character:
+                raise WorkspaceHarnessError(
+                    f"workspace_read offset {offset} is not on a UTF-8 character boundary"
+                ) from exc
+            trailing_partial = (
+                allow_trailing_partial
+                and exc.reason == "unexpected end of data"
+                and exc.end == len(candidate)
+            )
+            if not trailing_partial:
+                raise WorkspaceHarnessError(
+                    "workspace_read only accepts UTF-8 text"
+                ) from exc
+    return ""
+
+
+def _limit_workspace_read_lines(text: str) -> tuple[str, bool]:
+    """Apply Pi's 2,000-line result bound while preserving byte continuity."""
+
+    search_from = 0
+    cut = -1
+    for _ in range(_PI_READ_MAX_LINES):
+        cut = text.find("\n", search_from)
+        if cut < 0:
+            return text, False
+        search_from = cut + 1
+    if search_from >= len(text):
+        return text, False
+    return text[:search_from], True
+
+
+def _utf8_codepoint_width(first_byte: int) -> int:
+    if first_byte < 0x80:
+        return 1
+    if 0xC2 <= first_byte <= 0xDF:
+        return 2
+    if 0xE0 <= first_byte <= 0xEF:
+        return 3
+    if 0xF0 <= first_byte <= 0xF4:
+        return 4
+    return 1
+
+
+def _bounded_workspace_read_result(
+    *,
+    target: Path,
+    root: Path,
+    offset: int,
+    size: int,
+    requested_limit: int,
+    candidate: str,
+    line_limited: bool,
+) -> dict[str, object]:
+    """Keep the complete JSON Tool result inside Pi's 50 KiB result budget."""
+
+    candidate_bytes = len(candidate.encode("utf-8"))
+
+    def build(content: str) -> dict[str, object]:
+        content_bytes = len(content.encode("utf-8"))
+        next_offset = offset + content_bytes
+        truncated = next_offset < size
+        result_trimmed = content_bytes < candidate_bytes
+        return {
+            "summary": f"已读取 {target.name}",
+            "path": str(target),
+            "root": str(root),
+            "offset": offset,
+            "offsetUnit": "utf8_bytes",
+            "byteSize": size,
+            "requestedLimitBytes": requested_limit,
+            "contentLimitBytes": _PI_TOOL_RESULT_MAX_BYTES,
+            "lineLimit": _PI_READ_MAX_LINES,
+            "modelResultLimitBytes": _PI_TOOL_RESULT_MAX_BYTES,
+            "content": content,
+            "contentChars": len(content),
+            "contentBytes": content_bytes,
+            "contentLines": _workspace_text_line_count(content),
+            "truncated": truncated,
+            "truncatedBy": (
+                None
+                if not truncated
+                else "lines"
+                if line_limited and not result_trimmed
+                else "bytes"
+            ),
+            "modelResultBounded": result_trimmed,
+            "nextOffset": next_offset,
+        }
+
+    result = build(candidate)
+    if _compact_json_size(result) <= _PI_TOOL_RESULT_MAX_BYTES:
+        return result
+
+    low = 0
+    high = len(candidate)
+    best = build("")
+    while low <= high:
+        middle = (low + high) // 2
+        trial = build(candidate[:middle])
+        if _compact_json_size(trial) <= _PI_TOOL_RESULT_MAX_BYTES:
+            best = trial
+            low = middle + 1
+        else:
+            high = middle - 1
+    return best
+
+
+def _workspace_text_line_count(text: str) -> int:
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
+
+
+def _compact_json_size(value: Mapping[str, object]) -> int:
+    return len(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
 
 
 def _bounded_integer(

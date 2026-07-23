@@ -766,7 +766,8 @@ class PiRuntimeV2Tests(unittest.TestCase):
                     "roomCapability": {
                         **room_capability,
                         "status": "revoked",
-                    }
+                    },
+                    "sessionContext": "settled-room-recovery",
                 }
             return {
                 "roomCapability": {
@@ -799,6 +800,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         state["revoked"] = True
 
         self.assertEqual(self.runtime.debug_context(session_id), {})
+        self.assertEqual(self.runtime.messages(session_id), [])
         compacted = self.runtime.compact(session_id, "保留受管恢复事实")
 
         requests = [
@@ -811,15 +813,400 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(methods.count("session.open"), 1)
         self.assertNotIn("session.close", methods)
         self.assertEqual(
-            methods[-4:],
+            methods[-6:],
             [
                 "session.snapshot",
                 "session.debug.context",
+                "session.snapshot",
+                "session.snapshot",
                 "session.snapshot",
                 "session.compact",
             ],
         )
         self.assertTrue(compacted["memoryCheckpoint"]["stored"])
+
+    def test_revoked_room_session_reopens_as_an_ordinary_agent_and_keeps_transcript(self) -> None:
+        self.runtime.stop()
+        state = {"revoked": False}
+        manifest_id = "manifest:shared-session"
+        manifest_hash = "a" * 64
+
+        def context_provider(_session):
+            if state["revoked"]:
+                return {
+                    "roomCapability": {
+                        "manifestId": manifest_id,
+                        "manifestHash": manifest_hash,
+                        "capabilityEpoch": 3,
+                        "status": "revoked",
+                    },
+                    "sessionContext": "settled-room-recovery",
+                }
+            return {
+                "roomCapability": {
+                    "manifestId": manifest_id,
+                    "manifestHash": manifest_hash,
+                    "capabilityEpoch": 2,
+                    "promptCompileReceiptId": "prompt:shared-session",
+                    "promptPlanHash": "b" * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:shared-session",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "rootId": "root:shared-session",
+                    "generation": 0,
+                    "contextEpoch": 1,
+                    "contextEpochReason": "session_open",
+                    "runtimeBindingHash": "c" * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+                "roomRecoveryContext": "sealed-room-recovery",
+            }
+
+        ordinary_tools = [
+            {
+                "name": "workspace_read",
+                "description": "Read one workspace file",
+                "parameters": {"type": "object"},
+            }
+        ]
+        self.runtime = PiRuntimeHostManager(
+            config=self.runtime.config,
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: ordinary_tools,
+        )
+        session_id = str(self.first["id"])
+        first_open = self.runtime.ensure(session_id)
+        original_transcript = str(first_open["state"]["sessionFile"])
+        state["revoked"] = True
+
+        accepted = self.runtime.prompt(
+            session_id,
+            "Room 已收工，现在继续普通对话",
+            client_message_id="client:ordinary-after-room",
+        )
+        self.assertTrue(accepted["accepted"])
+        _wait_until(
+            lambda: self.store.get(session_id)["status"] == "idle"
+        )
+        self.assertEqual(
+            self.runtime.debug_context(
+                session_id,
+                str(accepted["turnId"]),
+            ),
+            {},
+        )
+        self.runtime.prompt(
+            session_id,
+            "继续第二轮普通对话",
+            client_message_id="client:ordinary-second",
+        )
+        _wait_until(
+            lambda: self.store.get(session_id)["status"] == "idle"
+        )
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        opened = [
+            request
+            for request in requests
+            if request["method"] == "session.open"
+        ]
+        self.assertEqual(len(opened), 2)
+        self.assertEqual(
+            sum(
+                request["method"] == "session.close"
+                for request in requests
+            ),
+            1,
+        )
+        ordinary_open = opened[-1]["params"]
+        self.assertNotIn("roomCapability", ordinary_open)
+        self.assertNotIn("roomContext", ordinary_open)
+        self.assertEqual(
+            ordinary_open["sessionContext"],
+            "settled-room-recovery",
+        )
+        self.assertNotEqual(
+            ordinary_open["systemPrompt"],
+            "stable-room-prefix",
+        )
+        self.assertEqual(
+            ordinary_open["toolManifest"],
+            ordinary_tools,
+        )
+        self.assertEqual(
+            ordinary_open["sessionFile"],
+            original_transcript,
+        )
+        prompts = [
+            request
+            for request in requests
+            if request["method"] == "session.prompt"
+        ]
+        self.assertEqual(len(prompts), 2)
+        self.assertIn(
+            "session.debug.context",
+            [request["method"] for request in requests],
+        )
+
+    def test_ordinary_agent_session_reopens_in_room_mode_for_a_dispatch(self) -> None:
+        self.runtime.stop()
+        state = {"room": False}
+
+        def context_provider(_session):
+            if not state["room"]:
+                return {}
+            return {
+                "roomCapability": {
+                    "manifestId": "manifest:agent-to-room",
+                    "manifestHash": "a" * 64,
+                    "capabilityEpoch": 4,
+                    "promptCompileReceiptId": "prompt:agent-to-room",
+                    "promptPlanHash": "b" * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:agent-to-room",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "rootId": "root:agent-to-room",
+                    "dispatchId": "dispatch:agent-to-room",
+                    "generation": 0,
+                    "contextEpoch": 1,
+                    "contextEpochReason": "session_open",
+                    "runtimeBindingHash": "c" * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+                "roomRecoveryContext": "governed-room-task",
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        self.runtime.prompt(
+            session_id,
+            "先在 Agent 里讨论任务",
+            client_message_id="client:agent-first",
+        )
+        _wait_until(
+            lambda: self.store.get(session_id)["status"] == "idle"
+        )
+        transcript = str(
+            self.store.runtime_binding(session_id)["transcriptRef"]
+        )
+        state["room"] = True
+
+        receipt = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:agent-to-room",
+                "dispatchId": "dispatch:agent-to-room",
+                "generation": 0,
+                "capabilityEpoch": 4,
+                "idempotencyKey": "agent-to-room:1",
+            },
+            message="现在由 Room 接管同一个 Session",
+            lease_token="lease:agent-to-room",
+        )
+
+        self.assertEqual(receipt["status"], "accepted")
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        opened = [
+            request
+            for request in requests
+            if request["method"] == "session.open"
+        ]
+        self.assertEqual(len(opened), 2)
+        self.assertEqual(
+            sum(
+                request["method"] == "session.close"
+                for request in requests
+            ),
+            1,
+        )
+        room_open = opened[-1]["params"]
+        self.assertEqual(
+            room_open["roomCapability"]["dispatchId"],
+            "dispatch:agent-to-room",
+        )
+        self.assertEqual(
+            room_open["systemPrompt"],
+            "stable-room-prefix",
+        )
+        self.assertEqual(room_open["sessionFile"], transcript)
+        self.assertTrue(
+            any(
+                request["method"] == "room.dispatch"
+                for request in requests
+            )
+        )
+
+    def test_one_session_moves_agent_room_agent_without_changing_transcript(self) -> None:
+        self.runtime.stop()
+        state = {"mode": "agent"}
+
+        def context_provider(_session):
+            if state["mode"] == "agent":
+                return {}
+            capability = {
+                "manifestId": "manifest:agent-room-agent",
+                "manifestHash": "a" * 64,
+                "capabilityEpoch": 5,
+                "rootId": "root:agent-room-agent",
+                "dispatchId": "dispatch:agent-room-agent",
+                "generation": 0,
+                "contextEpoch": 1,
+                "contextEpochReason": "session_open",
+            }
+            if state["mode"] == "revoked":
+                return {
+                    "roomCapability": {
+                        **capability,
+                        "capabilityEpoch": 6,
+                        "status": "revoked",
+                    }
+                }
+            return {
+                "roomCapability": {
+                    **capability,
+                    "promptCompileReceiptId": "prompt:agent-room-agent",
+                    "promptPlanHash": "b" * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:agent-room-agent",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "runtimeBindingHash": "c" * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+                "roomRecoveryContext": "governed-room-task",
+            }
+
+        ordinary_tools = [
+            {
+                "name": "workspace_read",
+                "description": "Read one workspace file",
+                "parameters": {"type": "object"},
+            }
+        ]
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: ordinary_tools,
+        )
+        session_id = str(self.first["id"])
+
+        self.runtime.prompt(
+            session_id,
+            "普通 Agent 第一轮",
+            client_message_id="client:agent-before-room",
+        )
+        _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+        transcript = str(
+            self.store.runtime_binding(session_id)["transcriptRef"]
+        )
+
+        state["mode"] = "room"
+        self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:agent-room-agent",
+                "dispatchId": "dispatch:agent-room-agent",
+                "generation": 0,
+                "capabilityEpoch": 5,
+                "idempotencyKey": "agent-room-agent:room",
+            },
+            message="同一个 Session 进入 Room",
+            lease_token="lease:agent-room-agent",
+        )
+
+        cancelled = self.runtime.cancel_room(
+            session_id=session_id,
+            root_id="root:agent-room-agent",
+            generation=1,
+        )
+        self.assertEqual(cancelled["receiptKind"], "cancel_applied")
+        self.assertEqual(cancelled["pendingTargets"], [])
+        state["mode"] = "revoked"
+        self.runtime.prompt(
+            session_id,
+            "Room 已收工，继续普通 Agent",
+            client_message_id="client:agent-after-room",
+        )
+        _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        opens = [
+            request["params"]
+            for request in requests
+            if request["method"] == "session.open"
+        ]
+        self.assertEqual(len(opens), 3)
+        self.assertEqual(
+            [params.get("sessionFile", transcript) for params in opens],
+            [transcript, transcript, transcript],
+        )
+        self.assertNotIn("roomCapability", opens[0])
+        self.assertEqual(
+            opens[1]["roomCapability"]["dispatchId"],
+            "dispatch:agent-room-agent",
+        )
+        self.assertEqual(opens[1]["systemPrompt"], "stable-room-prefix")
+        self.assertNotIn("roomCapability", opens[2])
+        self.assertNotEqual(opens[2]["systemPrompt"], "stable-room-prefix")
+        self.assertEqual(opens[2]["toolManifest"], ordinary_tools)
+        methods = [request["method"] for request in requests]
+        self.assertLess(
+            methods.index("room.cancel"),
+            max(
+                index
+                for index, method in enumerate(methods)
+                if method == "session.open"
+            ),
+        )
+        self.assertEqual(
+            sum(
+                request["method"] == "session.close"
+                for request in requests
+            ),
+            2,
+        )
 
     def test_transcript_tool_messages_rebuild_a_redacted_durable_timeline(self) -> None:
         raw_messages = [
@@ -1145,6 +1532,80 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn(
             "must not escape",
             json.dumps(statuses[-1].payload, ensure_ascii=False),
+        )
+
+    def test_nonfatal_extension_error_does_not_terminalize_active_turn(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-extension-warning"
+        with self.runtime._lock:
+            self.runtime._states[session_id].turn_id = turn_id
+
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "extension_error",
+                "extensionPath": "session-context-refresh.ts",
+                "event": "before_agent_start",
+                "error": "optional context refresh failed",
+            },
+        })
+
+        events = self.events.replay(session_id)[0]
+        warnings = [
+            event for event in events
+            if event.event_type == "status_changed"
+            and event.payload.get("phase") == "extension_warning"
+        ]
+        self.assertEqual(warnings[-1].payload["status"], "working")
+        self.assertEqual(
+            warnings[-1].payload["extensionEvent"],
+            "before_agent_start",
+        )
+        self.assertFalse(
+            any(event.event_type == "turn_failed" for event in events)
+        )
+        with self.runtime._lock:
+            self.assertEqual(
+                self.runtime._states[session_id].turn_id,
+                turn_id,
+            )
+
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "agent_end",
+                "messages": [{
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "继续并完成"}],
+                }],
+            },
+        })
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {"type": "agent_settled"},
+        })
+
+        events = self.events.replay(session_id)[0]
+        self.assertFalse(
+            any(event.event_type == "turn_failed" for event in events)
+        )
+        completed = [
+            event for event in events
+            if event.event_type == "turn_completed"
+        ]
+        self.assertEqual(
+            completed[-1].payload["terminalEvent"],
+            "agent_settled",
         )
 
     def test_snapshot_collapses_only_adjacent_duplicate_assistant_projection(self) -> None:

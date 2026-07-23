@@ -415,6 +415,32 @@ export function failOptimisticAgentMessage(
   return next;
 }
 
+export function discardOptimisticAgentMessage(
+  state: AgentProjectionState,
+  clientMessageId: string,
+): AgentProjectionState {
+  const messageId = state.optimisticByClientMessageId[clientMessageId];
+  if (!messageId) return state;
+  const message = state.messagesById[messageId];
+  if (!message) return state;
+
+  const next = cloneState(state);
+  delete next.optimisticByClientMessageId[clientMessageId];
+  delete next.messagesById[messageId];
+  next.messageOrder = next.messageOrder.filter((id) => id !== messageId);
+  detachMessageFromTurn(next, message);
+  const turn = next.turnsById[message.turnId];
+  if (turn && turn.messageIds.length === 0 && turn.activityIds.length === 0) {
+    delete next.turnsById[message.turnId];
+    next.turnOrder = next.turnOrder.filter((id) => id !== message.turnId);
+  }
+  next.status = next.turnOrder.some((turnId) => {
+    const status = next.turnsById[turnId]?.status;
+    return status === 'queued' || status === 'running' || status === 'waiting';
+  }) ? 'busy' : 'idle';
+  return next;
+}
+
 export function abortAgentTurn(
   state: AgentProjectionState,
   turnId: string,
@@ -1285,7 +1311,16 @@ function parseAgentGoal(value: unknown): AgentGoalProjection | undefined {
 function parseActGate(value: unknown): AgentActGateProjection | undefined {
   const source = record(value);
   const reason = text(source.reason);
-  if (!['approved', 'plan_required', 'plan_not_approved', 'goal_paused', 'goal_completed', 'goal_budget_exhausted'].includes(reason)) return undefined;
+  if (![
+    'approved',
+    'plan_required',
+    'plan_not_approved',
+    'plan_completed',
+    'plan_cancelled',
+    'goal_paused',
+    'goal_completed',
+    'goal_budget_exhausted',
+  ].includes(reason)) return undefined;
   return {
     allowed: source.allowed === true,
     reason: reason as AgentActGateProjection['reason'],

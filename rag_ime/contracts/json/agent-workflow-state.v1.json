@@ -128,7 +128,7 @@
       "required": ["allowed", "reason", "message"],
       "properties": {
         "allowed": { "type": "boolean" },
-        "reason": { "type": "string", "enum": ["approved", "plan_required", "plan_not_approved", "goal_paused", "goal_completed", "goal_budget_exhausted"] },
+        "reason": { "type": "string", "enum": ["approved", "plan_required", "plan_not_approved", "plan_completed", "plan_cancelled", "goal_paused", "goal_completed", "goal_budget_exhausted"] },
         "message": { "type": "string", "minLength": 1, "maxLength": 300 }
       }
     }

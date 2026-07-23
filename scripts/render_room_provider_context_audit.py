@@ -12,8 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "wisdom-weasel.room-provider-context-audit.v1"
-CONTEXT_TYPES = ("workflow_control", "room_context", "session_memory")
+SCHEMA_VERSION = "wisdom-weasel.dialogue-provider-context-audit.v2"
 FORBIDDEN_ROOM_METADATA = (
     "schemaVersion",
     "catalogRevision",
@@ -65,6 +64,203 @@ def _write_json(path: Path, value: object) -> None:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _json_bytes(value: object) -> int:
+    return len(_canonical_json(value).encode("utf-8"))
+
+
+def _json_sha256(value: object) -> str:
+    return _sha256_text(_canonical_json(value))
+
+
+def _strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [
+            text
+            for item in value
+            for text in _strings(item)
+        ]
+    if isinstance(value, dict):
+        return [
+            text
+            for item in value.values()
+            for text in _strings(item)
+        ]
+    return []
+
+
+def _provider_object_summary(provider_context: object) -> dict[str, Any]:
+    if not isinstance(provider_context, dict):
+        return {
+            "systemPrompt": {},
+            "messages": [],
+            "tools": [],
+            "totalJsonBytes": 0,
+        }
+    prompt = str(provider_context.get("systemPrompt") or "")
+    raw_messages = provider_context.get("messages")
+    messages = (
+        [item for item in raw_messages if isinstance(item, dict)]
+        if isinstance(raw_messages, list)
+        else []
+    )
+    raw_tools = provider_context.get("tools")
+    tools = (
+        [item for item in raw_tools if isinstance(item, dict)]
+        if isinstance(raw_tools, list)
+        else []
+    )
+    message_summaries = [
+        {
+            "index": index,
+            "role": str(message.get("role") or ""),
+            "contentChars": sum(
+                len(text) for text in _strings(message.get("content"))
+            ),
+            "contentUtf8Bytes": sum(
+                len(text.encode("utf-8"))
+                for text in _strings(message.get("content"))
+            ),
+            "jsonBytes": _json_bytes(message),
+            "sha256": _json_sha256(message),
+        }
+        for index, message in enumerate(messages)
+    ]
+    tool_summaries = [
+        {
+            "index": index,
+            "name": str(tool.get("name") or ""),
+            "descriptionUtf8Bytes": len(
+                str(tool.get("description") or "").encode("utf-8")
+            ),
+            "schemaJsonBytes": _json_bytes(
+                tool.get("parameters")
+                if isinstance(tool.get("parameters"), dict)
+                else {}
+            ),
+            "jsonBytes": _json_bytes(tool),
+            "sha256": _json_sha256(tool),
+        }
+        for index, tool in enumerate(tools)
+    ]
+    return {
+        "systemPrompt": {
+            "chars": len(prompt),
+            "utf8Bytes": len(prompt.encode("utf-8")),
+            "sha256": _sha256_text(prompt),
+        },
+        "messages": message_summaries,
+        "messagesJsonBytes": _json_bytes(messages),
+        "messagesContentUtf8Bytes": sum(
+            int(item["contentUtf8Bytes"]) for item in message_summaries
+        ),
+        "tools": tool_summaries,
+        "toolsJsonBytes": _json_bytes(tools),
+        "totalJsonBytes": _json_bytes(provider_context),
+        "sha256": _json_sha256(provider_context),
+    }
+
+
+def _tool_execution_summary(execution: dict[str, Any]) -> dict[str, Any]:
+    result = execution.get("result")
+    result_record = result if isinstance(result, dict) else {}
+    blocks = result_record.get("content")
+    block_list = blocks if isinstance(blocks, list) else []
+    model_text = "".join(
+        str(block.get("text") or "")
+        for block in block_list
+        if isinstance(block, dict)
+        and block.get("type") == "text"
+    )
+    details = (
+        result_record.get("details")
+        if isinstance(result_record.get("details"), dict)
+        else {}
+    )
+    summary: dict[str, Any] = {
+        "toolCallId": str(execution.get("toolCallId") or ""),
+        "toolName": str(execution.get("toolName") or ""),
+        "status": str(execution.get("status") or ""),
+        "isError": execution.get("isError") is True,
+        "args": (
+            execution.get("args")
+            if isinstance(execution.get("args"), dict)
+            else {}
+        ),
+        "argsJsonBytes": _json_bytes(execution.get("args") or {}),
+        "argsSha256": _json_sha256(execution.get("args") or {}),
+        "resultJsonBytes": _json_bytes(result),
+        "fullAuditResultJsonBytes": _json_bytes(result),
+        "resultSha256": _json_sha256(result),
+        "modelVisibleTextBytes": len(model_text.encode("utf-8")),
+        "modelVisibleTextSha256": _sha256_text(model_text),
+        "durationMs": max(
+            0,
+            int(execution.get("endedAtMs") or 0)
+            - int(execution.get("startedAtMs") or 0),
+        ),
+    }
+    if summary["toolName"] == "workspace_read" and isinstance(details, dict):
+        try:
+            parsed_model_receipt = json.loads(model_text)
+        except json.JSONDecodeError:
+            parsed_model_receipt = None
+        model_receipt = (
+            parsed_model_receipt
+            if isinstance(parsed_model_receipt, dict)
+            else {}
+        )
+        receipt_keys = (
+            "offset",
+            "offsetUnit",
+            "byteSize",
+            "requestedLimitBytes",
+            "contentLimitBytes",
+            "lineLimit",
+            "modelResultLimitBytes",
+            "contentChars",
+            "contentBytes",
+            "contentLines",
+            "truncated",
+            "truncatedBy",
+            "modelResultBounded",
+            "nextOffset",
+        )
+        summary["workspaceRead"] = {
+            key: details.get(key)
+            for key in receipt_keys
+        }
+        summary["workspaceReadModelReceipt"] = {
+            key: model_receipt.get(key)
+            for key in receipt_keys
+        }
+        summary["workspaceReadModelJsonValid"] = bool(model_receipt)
+        summary["workspaceReadModelReceiptMatchesDetails"] = (
+            bool(model_receipt)
+            and all(
+                model_receipt.get(key) == details.get(key)
+                for key in receipt_keys
+            )
+            and model_receipt.get("content") == details.get("content")
+        )
+    return summary
+
+
+def _safe_file_part(value: object) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "")).strip("-")
+    return normalized[:80] or "unknown"
 
 
 def _extract_context_blocks(prompt: str, context_type: str) -> list[str]:
@@ -159,14 +355,20 @@ def _provider_wire_payload(call: dict[str, Any]) -> dict[str, Any] | None:
 
 def _wire_system_prompt(call: dict[str, Any]) -> str | None:
     payload = _provider_wire_payload(call)
-    inputs = payload.get("input") if isinstance(payload, dict) else None
-    if not isinstance(inputs, list):
+    if not isinstance(payload, dict):
         return None
-    for item in inputs:
-        if not isinstance(item, dict) or item.get("role") != "developer":
+    for field in ("input", "messages"):
+        items = payload.get(field)
+        if not isinstance(items, list):
             continue
-        content = item.get("content")
-        return content if isinstance(content, str) else None
+        for item in items:
+            if (
+                not isinstance(item, dict)
+                or item.get("role") not in {"developer", "system"}
+            ):
+                continue
+            content = item.get("content")
+            return content if isinstance(content, str) else None
     return None
 
 
@@ -182,9 +384,14 @@ def _wire_tool_names(call: dict[str, Any]) -> list[str] | None:
         if not isinstance(value, list):
             return
         for tool in value:
-            if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
+            if not isinstance(tool, dict):
                 continue
-            name = str(tool["name"])
+            name = tool.get("name")
+            function = tool.get("function")
+            if not isinstance(name, str) and isinstance(function, dict):
+                name = function.get("name")
+            if not isinstance(name, str):
+                continue
             if name not in names:
                 names.append(name)
 
@@ -244,6 +451,44 @@ def _memory_book_title_echoes(block: str) -> list[str]:
     return echoes
 
 
+def _workflow_control_contradictions(
+    prompts: list[str],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    unapproved_markers = (
+        "计划尚未批准",
+        "计划尚未获得用户批准",
+    )
+    for prompt_index, prompt in enumerate(prompts, start=1):
+        for block_index, block in enumerate(
+            _extract_context_blocks(prompt, "workflow_control"),
+            start=1,
+        ):
+            normalized = block.lower()
+            status = next(
+                (
+                    candidate
+                    for candidate in ("completed", "cancelled", "canceled")
+                    if f"plan · {candidate}" in normalized
+                ),
+                "",
+            )
+            approval_marker = next(
+                (marker for marker in unapproved_markers if marker in block),
+                "",
+            )
+            if status and approval_marker:
+                findings.append(
+                    {
+                        "promptIndex": prompt_index,
+                        "blockIndex": block_index,
+                        "planStatus": status,
+                        "contradictoryMarker": approval_marker,
+                    }
+                )
+    return findings
+
+
 def _secret_hits(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
     return [pattern.pattern for pattern in SECRET_PATTERNS if pattern.search(text)]
@@ -252,6 +497,30 @@ def _secret_hits(path: Path) -> list[str]:
 def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
     report_path = report_path.expanduser().resolve(strict=True)
     report = _read_json(report_path)
+    report_schema = str(report.get("schemaVersion") or "")
+    surface = (
+        "agent"
+        if "agent-session-dialogue" in report_schema
+        else "room"
+    )
+    audited_context_types = (
+        "workflow_control",
+        "room_context",
+        "session_memory",
+    )
+    continuity = (
+        report.get("sessionContinuity")
+        if isinstance(report.get("sessionContinuity"), dict)
+        else {}
+    )
+    continuity_acceptance = (
+        continuity.get("accepted")
+        if isinstance(continuity.get("accepted"), dict)
+        else {}
+    )
+    ordinary_turn_ids = {
+        str(continuity_acceptance.get("turnId") or "")
+    } - {""}
     execution = report.get("execution")
     if not isinstance(execution, dict):
         raise ValueError("report.execution is required")
@@ -274,14 +543,20 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
     if output_dir.exists():
         shutil.rmtree(output_dir)
     (output_dir / "calls").mkdir(parents=True)
+    (output_dir / "objects").mkdir(parents=True)
     (output_dir / "raw").mkdir(parents=True)
+    (output_dir / "tool-executions").mkdir(parents=True)
     (output_dir / "transcripts").mkdir(parents=True)
 
     table_rows: list[str] = []
     room_context_sections: list[str] = ["# 模型实际看到的动态上下文", ""]
     prompt_files: list[str] = []
     call_files: list[str] = []
+    object_files: list[str] = []
     tool_files: list[str] = []
+    tool_execution_files: list[str] = []
+    provider_object_summaries: list[dict[str, Any]] = []
+    tool_execution_summaries: list[dict[str, Any]] = []
     recovery_prompt_files: list[str] = []
     all_calls: list[tuple[int, int, dict[str, Any]]] = []
     prompt_stable_within_turn = True
@@ -289,10 +564,21 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
     agent_md_absent = True
     room_metadata_absent = True
     memory_book_title_echoes: list[str] = []
+    audited_prompts: list[str] = []
 
     for turn_number, (context, source_path) in enumerate(contexts, start=1):
         turn_id = str(context.get("turnId") or "")
         session_id = str(context.get("sessionId") or "")
+        lifecycle = (
+            context.get("lifecycle")
+            if isinstance(context.get("lifecycle"), dict)
+            else None
+        )
+        phase_label = (
+            f"Lifecycle: {lifecycle.get('kind', 'unknown')}"
+            if lifecycle is not None
+            else f"Turn {turn_number:02d}"
+        )
         raw_calls = context.get("modelCalls")
         calls = [item for item in raw_calls if isinstance(item, dict)] if isinstance(raw_calls, list) else []
         calls.sort(key=_call_sort_key)
@@ -311,15 +597,27 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
             prompt_hash = _sha256_text(prompt)
             prompt_by_hash.setdefault(prompt_hash, prompt)
             call_prompt_hashes.append((int(call.get("index") or 0), prompt_hash))
-        prompt_stable_within_turn = prompt_stable_within_turn and len(prompt_by_hash) == 1
+            audited_prompts.append(prompt)
+        if calls:
+            prompt_stable_within_turn = (
+                prompt_stable_within_turn and len(prompt_by_hash) == 1
+            )
 
         prompt_name = f"turn-{turn_number:02d}-system-prompt.md"
         prompt_path = output_dir / prompt_name
         prompt_lines = [
-            f"# Turn {turn_number:02d} 完整系统提示词",
+            f"# {phase_label} 完整系统提示词",
             "",
             f"- Session: `{session_id}`",
             f"- Turn: `{turn_id}`",
+            *(
+                [
+                    f"- Lifecycle status: `{lifecycle.get('status', '')}`",
+                    f"- Lifecycle reason: `{lifecycle.get('reason', '')}`",
+                ]
+                if lifecycle is not None
+                else []
+            ),
             f"- Provider calls: `{len(calls)}`",
             f"- Unique prompt hashes: `{len(prompt_by_hash)}`",
             "",
@@ -342,7 +640,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
 
         room_context_sections.extend(
             (
-                f"## Turn {turn_number:02d}",
+                f"## {phase_label}",
                 "",
                 f"- Session: `{session_id}`",
                 f"- Turn: `{turn_id}`",
@@ -351,27 +649,58 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
             )
         )
         representative_prompt = next(iter(prompt_by_hash.values()), "")
-        for context_type in CONTEXT_TYPES:
-            blocks = _extract_context_blocks(representative_prompt, context_type)
-            context_block_counts_valid = context_block_counts_valid and len(blocks) == 1
+        if lifecycle is not None:
             room_context_sections.extend(
                 (
-                    f"### `{context_type}`",
+                    "### 生命周期专用 Provider 上下文",
                     "",
-                    _markdown_code("\n\n".join(blocks) if blocks else "<missing>"),
+                    "压缩不伪装成用户 Turn；它使用独立摘要 Prompt，完整对象见对应 `objects/`。",
+                    "",
                 )
             )
-            if context_type == "room_context":
-                room_metadata_absent = room_metadata_absent and not any(
-                    marker in block for block in blocks for marker in FORBIDDEN_ROOM_METADATA
+        else:
+            expected_context_counts = {
+                "workflow_control": 1,
+                "room_context": (
+                    1
+                    if surface == "room" and turn_id not in ordinary_turn_ids
+                    else 0
+                ),
+                "session_memory": 1,
+            }
+            for context_type in audited_context_types:
+                blocks = _extract_context_blocks(representative_prompt, context_type)
+                expected_count = expected_context_counts[context_type]
+                context_block_counts_valid = (
+                    context_block_counts_valid
+                    and len(blocks) == expected_count
                 )
-            elif context_type == "session_memory":
-                memory_book_title_echoes.extend(
-                    title
-                    for block in blocks
-                    for title in _memory_book_title_echoes(block)
+                room_context_sections.extend(
+                    (
+                        f"### `{context_type}`",
+                        "",
+                        _markdown_code(
+                            "\n\n".join(blocks)
+                            if blocks
+                            else (
+                                "<not injected: ordinary Agent turn>"
+                                if expected_count == 0
+                                else "<missing>"
+                            )
+                        ),
+                    )
                 )
-        agent_md_absent = agent_md_absent and "<project_context>" not in representative_prompt
+                if context_type == "room_context":
+                    room_metadata_absent = room_metadata_absent and not any(
+                        marker in block for block in blocks for marker in FORBIDDEN_ROOM_METADATA
+                    )
+                elif context_type == "session_memory":
+                    memory_book_title_echoes.extend(
+                        title
+                        for block in blocks
+                        for title in _memory_book_title_echoes(block)
+                    )
+            agent_md_absent = agent_md_absent and "<project_context>" not in representative_prompt
 
         tools = context.get("toolExecutions")
         tool_list = [item for item in tools if isinstance(item, dict)] if isinstance(tools, list) else []
@@ -387,6 +716,36 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
             },
         )
         tool_files.append(tool_name)
+        for execution_index, tool_execution in enumerate(tool_list, start=1):
+            execution_name = (
+                f"turn-{turn_number:02d}-execution-{execution_index:03d}-"
+                f"{_safe_file_part(tool_execution.get('toolName'))}.json"
+            )
+            summary = _tool_execution_summary(tool_execution)
+            _write_json(
+                output_dir / "tool-executions" / execution_name,
+                {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "executionIndex": execution_index,
+                    "summary": summary,
+                    "execution": tool_execution,
+                },
+            )
+            tool_execution_files.append(
+                f"tool-executions/{execution_name}"
+            )
+            tool_execution_summaries.append(
+                {
+                    "turn": turn_number,
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "executionIndex": execution_index,
+                    "file": f"tool-executions/{execution_name}",
+                    **summary,
+                }
+            )
 
         request_receipts = {
             int(item.get("index") or 0): item
@@ -402,6 +761,62 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
             call_index = int(call.get("index") or 0)
             provider_context = call.get("providerContext")
             call_name = f"turn-{turn_number:02d}-call-{call_index:03d}.json"
+            object_dir_name = (
+                f"turn-{turn_number:02d}-call-{call_index:03d}"
+            )
+            object_dir = output_dir / "objects" / object_dir_name
+            object_dir.mkdir(parents=True, exist_ok=True)
+            context_record = (
+                provider_context
+                if isinstance(provider_context, dict)
+                else {}
+            )
+            exact_prompt = str(context_record.get("systemPrompt") or "")
+            exact_messages = (
+                context_record.get("messages")
+                if isinstance(context_record.get("messages"), list)
+                else []
+            )
+            exact_tools = (
+                context_record.get("tools")
+                if isinstance(context_record.get("tools"), list)
+                else []
+            )
+            object_summary = _provider_object_summary(context_record)
+            object_summary.update(
+                {
+                    "turn": turn_number,
+                    "sessionId": session_id,
+                    "turnId": turn_id,
+                    "callIndex": call_index,
+                    "contextDelta": call.get("contextDelta"),
+                    "files": {
+                        "systemPrompt": (
+                            f"objects/{object_dir_name}/system-prompt.txt"
+                        ),
+                        "messages": (
+                            f"objects/{object_dir_name}/messages.json"
+                        ),
+                        "tools": f"objects/{object_dir_name}/tools.json",
+                    },
+                }
+            )
+            (object_dir / "system-prompt.txt").write_text(
+                exact_prompt,
+                encoding="utf-8",
+            )
+            _write_json(object_dir / "messages.json", exact_messages)
+            _write_json(object_dir / "tools.json", exact_tools)
+            _write_json(object_dir / "summary.json", object_summary)
+            object_files.extend(
+                [
+                    f"objects/{object_dir_name}/system-prompt.txt",
+                    f"objects/{object_dir_name}/messages.json",
+                    f"objects/{object_dir_name}/tools.json",
+                    f"objects/{object_dir_name}/summary.json",
+                ]
+            )
+            provider_object_summaries.append(object_summary)
             assistant = call.get("assistantMessage")
             safe_call = {
                 "schemaVersion": SCHEMA_VERSION,
@@ -445,38 +860,127 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
     compactions = [item for item in transcript_entries if item.get("type") == "compaction"]
     _write_json(output_dir / "compaction-records.json", compactions)
 
+    checks = report.get("checks") if isinstance(report.get("checks"), dict) else {}
     recovery_packets_valid = True
-    raw_epochs = report.get("epochs")
-    epochs = [item for item in raw_epochs if isinstance(item, dict)] if isinstance(raw_epochs, list) else []
-    if compactions:
-        recovery_packets_valid = len(epochs) == len(compactions)
-    for epoch in epochs:
-        index = int(epoch.get("index") or len(recovery_prompt_files) + 1)
-        after = epoch.get("afterCompaction")
-        current = after.get("currentProviderContext") if isinstance(after, dict) else None
-        prompt = str(current.get("systemPrompt") or "") if isinstance(current, dict) else ""
-        packet = _recovery_packet(prompt)
-        recovery_packets_valid = recovery_packets_valid and _valid_recovery_packet(packet)
-        name = f"compaction-{index:02d}-recovery-prompt.md"
+    if surface == "agent":
+        after = report.get("afterCompaction")
+        current = (
+            after.get("currentProviderContext")
+            if isinstance(after, dict)
+            else None
+        )
+        prompt = (
+            str(current.get("systemPrompt") or "")
+            if isinstance(current, dict)
+            else ""
+        )
+        audited_prompts.append(prompt)
+        recovery_packets_valid = (
+            checks.get("compactionRecoveryValid") is True
+            and len(compactions) == 1
+            and prompt.count("## 压缩恢复包（本 epoch 唯一）") == 1
+        )
+        name = "compaction-01-recovery-prompt.md"
         lines = [
-            f"# 压缩 {index:02d} 后的完整 Provider 系统上下文",
+            "# 压缩 01 后的完整 Provider 系统上下文",
             "",
-            "这是压缩换代完成、下一任务尚未覆盖 Room Context 时，Pi 当前持有的精确系统上下文。",
+            "这是普通 Agent 压缩换代后，Pi 当前持有的精确系统上下文。",
             "",
             _markdown_code(prompt),
-            "## 恢复包 JSON",
-            "",
-            _markdown_code(
-                json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True)
-                if packet is not None
-                else "<invalid>",
-                "json",
-            ),
         ]
         (output_dir / name).write_text("\n".join(lines), encoding="utf-8")
         recovery_prompt_files.append(name)
+    else:
+        recovery_entries: list[tuple[str, dict[str, Any], bool]] = []
+        room_compaction = report.get("compaction")
+        if isinstance(room_compaction, dict):
+            for member, raw_entry in sorted(room_compaction.items()):
+                if not isinstance(raw_entry, dict):
+                    continue
+                after = raw_entry.get("after")
+                if not isinstance(after, dict):
+                    continue
+                recovery_entries.append(
+                    (
+                        str(member),
+                        after,
+                        raw_entry.get("passed") is True,
+                    )
+                )
+        else:
+            raw_epochs = report.get("epochs")
+            epochs = (
+                [item for item in raw_epochs if isinstance(item, dict)]
+                if isinstance(raw_epochs, list)
+                else []
+            )
+            for epoch in epochs:
+                after = epoch.get("afterCompaction")
+                if not isinstance(after, dict):
+                    continue
+                recovery_entries.append(
+                    (
+                        str(epoch.get("index") or len(recovery_entries) + 1),
+                        after,
+                        True,
+                    )
+                )
+        if compactions:
+            recovery_packets_valid = len(recovery_entries) == len(compactions)
+        for index, (member, after, entry_passed) in enumerate(
+            recovery_entries,
+            start=1,
+        ):
+            current = (
+                after.get("currentProviderContext")
+                if isinstance(after, dict)
+                else None
+            )
+            prompt = (
+                str(current.get("systemPrompt") or "")
+                if isinstance(current, dict)
+                else ""
+            )
+            audited_prompts.append(prompt)
+            packet = _recovery_packet(prompt)
+            recovery_packets_valid = (
+                recovery_packets_valid
+                and entry_passed
+                and _valid_recovery_packet(packet)
+            )
+            name = f"compaction-{index:02d}-recovery-prompt.md"
+            lines = [
+                f"# 压缩 {index:02d} 后的完整 Provider 系统上下文",
+                "",
+                f"- Room member: `{member}`",
+                "",
+                "这是该成员压缩换代后，Pi 当前持有的精确系统上下文。",
+                "",
+                _markdown_code(prompt),
+                "## 恢复包 JSON",
+                "",
+                _markdown_code(
+                    json.dumps(
+                        packet,
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    )
+                    if packet is not None
+                    else "<invalid>",
+                    "json",
+                ),
+            ]
+            (output_dir / name).write_text(
+                "\n".join(lines),
+                encoding="utf-8",
+            )
+            recovery_prompt_files.append(name)
 
     all_calls.sort(key=lambda item: _call_sort_key(item[2]))
+    wire_evidence_required = (
+        str(execution.get("providerMode") or "") != "deterministic"
+    )
     exact_wire_payloads_captured = True
     normalized_prompts_match_wire = True
     effective_tools_match_wire = True
@@ -488,22 +992,25 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
             else ""
         )
         messages = provider_context.get("messages") if isinstance(provider_context, dict) else []
+        object_summary = _provider_object_summary(provider_context)
         usage = _usage(call)
         wire_prompt = _wire_system_prompt(call)
         wire_tools = _wire_tool_names(call)
-        exact_wire_payloads_captured = (
-            exact_wire_payloads_captured and _provider_wire_payload(call) is not None
-        )
-        normalized_prompts_match_wire = (
-            normalized_prompts_match_wire
-            and wire_prompt is not None
-            and wire_prompt == prompt
-        )
-        effective_tools_match_wire = (
-            effective_tools_match_wire
-            and wire_tools is not None
-            and set(wire_tools) == set(_tool_names(provider_context))
-        )
+        if wire_evidence_required:
+            exact_wire_payloads_captured = (
+                exact_wire_payloads_captured
+                and _provider_wire_payload(call) is not None
+            )
+            normalized_prompts_match_wire = (
+                normalized_prompts_match_wire
+                and wire_prompt is not None
+                and wire_prompt == prompt
+            )
+            effective_tools_match_wire = (
+                effective_tools_match_wire
+                and wire_tools is not None
+                and set(wire_tools) == set(_tool_names(provider_context))
+            )
         network_item = network[position] if position < len(network) else {}
         duration = (
             int(network_item.get("completedAtMs") or 0)
@@ -512,13 +1019,18 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
             else None
         )
         table_rows.append(
-            "| {turn} | {call} | {prompt_bytes} | {messages} | {tools} | {cache} | {status} | {duration} | "
+            "| {turn} | {call} | {prompt_bytes} | {message_count} | {message_bytes} | "
+            "{tool_count} | {tool_bytes} | {cache} | {status} | {duration} | "
             "[{file}]({file}) |".format(
                 turn=turn_number,
                 call=call_index,
                 prompt_bytes=len(prompt.encode("utf-8")),
-                messages=len(messages) if isinstance(messages, list) else 0,
-                tools=len(_tool_names(provider_context)),
+                message_count=len(messages) if isinstance(messages, list) else 0,
+                message_bytes=int(
+                    object_summary.get("messagesContentUtf8Bytes") or 0
+                ),
+                tool_count=len(_tool_names(provider_context)),
+                tool_bytes=int(object_summary.get("toolsJsonBytes") or 0),
                 cache=int(usage.get("cacheRead") or 0),
                 status=network_item.get("status", "-"),
                 duration=_format_ms(duration),
@@ -526,38 +1038,166 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
             )
         )
 
-    exact_call_count_matches_network = not network or len(all_calls) == len(network)
-    checks = report.get("checks") if isinstance(report.get("checks"), dict) else {}
+    exact_call_count_matches_network = (
+        not wire_evidence_required
+        or len(all_calls) == len(network)
+    )
+    read_summaries = [
+        item
+        for item in tool_execution_summaries
+        if item["toolName"] == "workspace_read"
+        and item["isError"] is False
+    ]
+    read_receipts_complete = bool(read_summaries) and all(
+        isinstance(item.get("workspaceRead"), dict)
+        and item.get("workspaceReadModelJsonValid") is True
+        and item.get("workspaceReadModelReceiptMatchesDetails") is True
+        for item in read_summaries
+    )
+    read_results_bounded = read_receipts_complete and all(
+        int((item["workspaceRead"] or {}).get("contentBytes") or 0)
+        <= 50 * 1024
+        and int((item["workspaceRead"] or {}).get("contentLines") or 0)
+        <= 2_000
+        and int(item.get("modelVisibleTextBytes") or 0)
+        <= 50 * 1024
+        for item in read_summaries
+    )
+    read_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in read_summaries:
+        args = item.get("args")
+        path = str(args.get("path") or "") if isinstance(args, dict) else ""
+        read_groups.setdefault((str(item.get("sessionId") or ""), path), []).append(item)
+    read_continuations_exact = True
+    for group in read_groups.values():
+        final_receipt = group[-1].get("workspaceRead")
+        if (
+            isinstance(final_receipt, dict)
+            and final_receipt.get("truncated") is True
+        ):
+            read_continuations_exact = False
+        for current, following in zip(group[:-1], group[1:], strict=True):
+            receipt = current.get("workspaceRead")
+            following_args = following.get("args")
+            if (
+                isinstance(receipt, dict)
+                and receipt.get("truncated") is True
+                and (
+                    not isinstance(following_args, dict)
+                    or following_args.get("offset")
+                    != receipt.get("nextOffset")
+                )
+            ):
+                read_continuations_exact = False
+        for item in group:
+            receipt = item.get("workspaceRead")
+            args = item.get("args")
+            if not isinstance(receipt, dict) or not isinstance(args, dict):
+                read_continuations_exact = False
+                continue
+            if (
+                int(receipt.get("nextOffset") or 0)
+                - int(args.get("offset") or 0)
+                != int(receipt.get("contentBytes") or 0)
+            ):
+                read_continuations_exact = False
+    before_compaction = (
+        report.get("beforeCompaction")
+        if isinstance(report.get("beforeCompaction"), dict)
+        else {}
+    )
+    prompt_checks = (
+        report.get("promptChecks")
+        if isinstance(report.get("promptChecks"), dict)
+        else {}
+    )
+    transcript_isolation = (
+        report.get("transcriptIsolation")
+        if isinstance(report.get("transcriptIsolation"), dict)
+        else {}
+    )
+    progressive_disclosure = (
+        before_compaction.get("progressiveDiscovery") is True
+        if surface == "agent"
+        else prompt_checks.get("progressiveDiscovery") is True
+    )
+    provider_prefix = before_compaction.get("providerPrefix")
+    provider_prefix_stable = (
+        (
+            checks.get("providerPrefixStable") is True
+            or (
+                isinstance(provider_prefix, dict)
+                and provider_prefix.get("passed") is True
+            )
+        )
+        if surface == "agent"
+        else prompt_checks.get("providerPrefixStable") is True
+    )
+    session_transcripts_private = (
+        checks.get("noRoomRuntimeSurface") is True
+        if surface == "agent"
+        else transcript_isolation.get("passed") is True
+    )
+    workflow_control_contradictions = _workflow_control_contradictions(
+        audited_prompts
+    )
     audit_checks = {
         "reportChecksPassed": bool(checks) and all(value is True for value in checks.values()),
         "exactProviderCallsCaptured": exact_call_count_matches_network,
-        "exactWirePayloadsCaptured": exact_wire_payloads_captured,
-        "normalizedPromptMatchesWire": normalized_prompts_match_wire,
-        "effectiveToolSetMatchesWireDisclosure": effective_tools_match_wire,
+        "wireEvidenceRequiredOrExplicitlyDeterministic": (
+            wire_evidence_required
+            or str(execution.get("providerMode") or "") == "deterministic"
+        ),
+        "exactWirePayloadsCaptured": (
+            not wire_evidence_required
+            or exact_wire_payloads_captured
+        ),
+        "normalizedPromptMatchesWire": (
+            not wire_evidence_required
+            or normalized_prompts_match_wire
+        ),
+        "effectiveToolSetMatchesWireDisclosure": (
+            not wire_evidence_required
+            or effective_tools_match_wire
+        ),
         "systemPromptStableWithinEachTurn": prompt_stable_within_turn,
         "contextBlocksExactlyOncePerTurn": context_block_counts_valid,
         "agentMdDefaultOff": agent_md_absent,
-        "roomDynamicMetadataAbsent": room_metadata_absent,
+        "roomDynamicMetadataAbsent": (
+            surface == "agent"
+            or room_metadata_absent
+        ),
         "memoryBookTitleEchoAbsent": not memory_book_title_echoes,
-        "externalRequestsSucceeded": bool(network)
-        and all(int(item.get("status") or 0) in range(200, 300) for item in network),
-        "progressiveSkillToolDisclosure": (
-            checks.get("skillToolDiscoveryProgressive") is True
-            or checks.get("skillToolDiscoveryIsProgressive") is True
+        "workflowControlSemanticallyConsistent": (
+            not workflow_control_contradictions
         ),
-        "providerPrefixStable": (
-            checks.get("providerPrefixStable") is True
-            or checks.get("providerPrefixesStableWithinEpoch") is True
+        "externalRequestsSucceeded": (
+            not wire_evidence_required
+            or (
+                bool(network)
+                and all(
+                    int(item.get("status") or 0) in range(200, 300)
+                    for item in network
+                )
+            )
         ),
-        "roomContextAbsentFromSessionTranscript": checks.get(
-            "roomContextAbsentFromSessionTranscript"
-        )
-        is True,
+        "modelVisibleToolResultsBounded": all(
+            int(item.get("modelVisibleTextBytes") or 0)
+            <= 50 * 1024
+            for item in tool_execution_summaries
+        ),
+        "workspaceReadReceiptsComplete": read_receipts_complete,
+        "workspaceReadResultsBounded": read_results_bounded,
+        "workspaceReadContinuationsExact": read_continuations_exact,
+        "progressiveSkillToolDisclosure": progressive_disclosure,
+        "providerPrefixStable": provider_prefix_stable,
+        "roomContextAbsentFromSessionTranscript": session_transcripts_private,
         "oneExactRecoveryPacketPerCompaction": recovery_packets_valid,
     }
 
     metadata = {
         "schemaVersion": SCHEMA_VERSION,
+        "surface": surface,
         "sourceReport": str(report_path),
         "state": str(state),
         "provider": execution.get("provider"),
@@ -573,21 +1213,28 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         "compactionCount": len(compactions),
         "checks": audit_checks,
         "memoryBookTitleEchoes": sorted(set(memory_book_title_echoes)),
+        "workflowControlContradictions": workflow_control_contradictions,
         "promptFiles": prompt_files,
         "roomContextFile": "room-contexts.md",
         "callFiles": call_files,
+        "objectFiles": object_files,
+        "providerObjectSummaries": provider_object_summaries,
         "toolFiles": tool_files,
+        "toolExecutionFiles": tool_execution_files,
+        "toolExecutionSummaries": tool_execution_summaries,
         "recoveryPromptFiles": recovery_prompt_files,
         "transcriptFiles": transcript_files,
     }
     _write_json(output_dir / "audit.json", metadata)
 
     readme = [
-        "# Room 真实 Provider 上下文审计",
+        f"# {'普通 Agent' if surface == 'agent' else '三成员 Room'} Provider 上下文审计",
         "",
         "这不是配置推断，而是 Pi 在每次 Provider 请求前记录的最终上下文。",
         "每个调用同时保留两种视图：`providerContext` 是合并动态 Tool schema 后的有效上下文；",
-        "`providerExchanges[].payload` 是去除请求头和凭证后的原始 Provider wire request。二者必须通过自动一致性检查。",
+        "`objects/` 把每次请求的 `systemPrompt`、`messages`、`tools` 分成三个原始对象；",
+        "`providerExchanges[].payload` 是去除请求头和凭证后的原始 Provider wire request。",
+        "确定性 Provider 没有外网 wire payload，因此只证明真实 Pi Agent Loop/Tool Loop 上下文，不冒充真实 KV cache。",
         "",
         "## 执行身份",
         "",
@@ -609,8 +1256,8 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         "",
         "## 每次 Provider 调用",
         "",
-        "| Turn | Call | System bytes | Messages | Effective tools | Cache read | HTTP | Duration | Exact context |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Turn | Call | System B | Messages | Message content B | Tools | Tools B | Cache read | HTTP | Duration | Exact context |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
         *table_rows,
         "",
         "## 直接查看",
@@ -618,6 +1265,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         "- [动态 Room / Session 上下文](room-contexts.md)",
         "- [外网请求证据](external-network-audit.json)",
         "- [压缩记录](compaction-records.json)",
+        "- [逐调用对象与字节/hash 清单](audit.json)",
         *[
             f"- [压缩后完整恢复上下文 {index}]({name})"
             for index, name in enumerate(recovery_prompt_files, start=1)
@@ -625,6 +1273,9 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         *[f"- [完整系统提示词 {index}]({name})" for index, name in enumerate(prompt_files, start=1)],
         "",
         "`calls/` 中每个 JSON 都包含该次请求的归一化有效 `providerContext`、增量、模型回复、usage 与去除响应头后的原始 wire payload。",
+        "`objects/turn-*/` 中分别保存完整 `system-prompt.txt`、`messages.json`、`tools.json` 和对象级字节/hash 摘要。",
+        "`tool-executions/` 中每个文件保存一次完整 Tool 参数、结果、失败状态、耗时和模型可见字节数；workspace_read 另列 offset/nextOffset/字符/字节/行/截断。",
+        "Tool `details` 只供界面与审计保留；Provider 适配器只发送 ToolResult 的模型可见 `content`，表中的 Message content B 不把审计副本冒充模型上下文。",
         "动态 Tool schema 可能位于顶层 `tools` 或历史 `tool_search_output`；有效工具集会合并两处并与 wire payload 自动对账。",
         "`raw/` 是 Pi 原始调试回执，`transcripts/` 是受管 Session JSONL。",
         "",
@@ -634,7 +1285,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
     secret_hits = {
         str(path.relative_to(output_dir)): _secret_hits(path)
         for path in output_dir.rglob("*")
-        if path.is_file() and path.suffix in {".json", ".jsonl", ".md"}
+        if path.is_file() and path.suffix in {".json", ".jsonl", ".md", ".txt"}
     }
     secret_hits = {path: hits for path, hits in secret_hits.items() if hits}
     metadata["checks"]["credentialLeakAbsent"] = not secret_hits
@@ -657,7 +1308,20 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     metadata = render(args.report, args.output_dir)
-    print(_json_text(metadata), end="")
+    print(
+        _json_text(
+            {
+                "outputDir": str(args.output_dir.resolve()),
+                "provider": metadata.get("provider"),
+                "model": metadata.get("model"),
+                "providerCallCount": metadata.get("providerCallCount"),
+                "toolExecutionCount": metadata.get("toolExecutionCount"),
+                "compactionCount": metadata.get("compactionCount"),
+                "checks": metadata.get("checks"),
+            }
+        ),
+        end="",
+    )
     return 0 if all(metadata["checks"].values()) else 2
 
 

@@ -38,6 +38,42 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             )
         )
 
+    def test_bounded_rag_allows_zero_hit_member_but_rejects_placeholder(self) -> None:
+        useful = (
+            "代码任务先做最小改动，运行真实测试，并以证据完成交付。"
+        )
+        contexts = {
+            "A": {
+                "sessionMemory": {
+                    "blockCount": 1,
+                    "blocks": [useful],
+                    "forbiddenMetadata": [],
+                }
+            },
+            "B": {
+                "sessionMemory": {
+                    "blockCount": 0,
+                    "blocks": [],
+                    "forbiddenMetadata": [],
+                }
+            },
+            "C": {
+                "sessionMemory": {
+                    "blockCount": 1,
+                    "blocks": [useful],
+                    "forbiddenMetadata": [],
+                }
+            },
+        }
+
+        self.assertTrue(CANARY.bounded_useful_rag_check(contexts))
+        contexts["B"]["sessionMemory"] = {
+            "blockCount": 1,
+            "blocks": ["没有召回到相关记忆。"],
+            "forbiddenMetadata": [],
+        }
+        self.assertFalse(CANARY.bounded_useful_rag_check(contexts))
+
     def test_dispatch_chain_requires_collaboration_and_handoff_siblings(self) -> None:
         tasks = [
             self._task("t1", None, "pa"),
@@ -90,8 +126,8 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                 room_collaborate=["applied"],
                 workspace_list=["applied"],
                 workspace_search=["applied"],
-                workspace_read=["failed", "applied", "applied"],
-                workspace_patch=["applied"],
+                workspace_read=["failed", "applied", "applied", "applied"],
+                workspace_patch=["failed", "applied"],
                 workspace_shell=["failed", "applied"],
                 room_post=["applied"],
                 room_commit=["applied"],
@@ -116,6 +152,90 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         self.assertTrue(all(checks.values()))
         receipts["B"]["workspace_patch"] = self._receipt(["applied"])
         self.assertFalse(CANARY.tool_workload_checks(receipts)["bStayedReadOnly"])
+
+    def test_tool_workload_rejects_unbounded_executor_retries(self) -> None:
+        receipts = {
+            "A": self._tool_set(
+                room_state=["applied"],
+                room_collaborate=["applied"],
+                workspace_list=["applied"],
+                workspace_search=["applied"],
+                workspace_read=[
+                    "failed",
+                    "applied",
+                    "applied",
+                    "applied",
+                    "applied",
+                ],
+                workspace_patch=["failed", "failed", "applied"],
+                workspace_shell=["failed", "applied"],
+                room_post=["applied"],
+                room_commit=["applied"],
+            ),
+            "B": self._tool_set(
+                room_state=["applied"],
+                workspace_read=["applied", "applied"],
+                room_post=["applied"],
+                room_commit=["applied"],
+            ),
+            "C": self._tool_set(
+                room_state=["applied"],
+                workspace_read=["applied", "applied"],
+                workspace_shell=["applied"],
+                room_post=["applied"],
+                room_commit=["applied"],
+            ),
+        }
+
+        checks = CANARY.tool_workload_checks(receipts)
+
+        self.assertFalse(checks["aReadFailureRecoveredWithoutLoop"])
+        self.assertFalse(checks["aPatchAppliedOnceWithBoundedRepair"])
+
+    def test_tool_workload_accepts_one_settlement_repair_then_delivery(self) -> None:
+        receipts = {
+            "A": self._tool_set(
+                room_state=["applied"],
+                room_collaborate=["applied"],
+                workspace_list=["applied"],
+                workspace_search=["applied"],
+                workspace_read=["failed", "applied", "applied"],
+                workspace_patch=["applied"],
+                workspace_shell=["failed", "applied"],
+                room_post=["applied"],
+                room_commit=["applied"],
+            ),
+            "B": self._tool_set(
+                room_state=["applied"],
+                workspace_read=["applied", "applied"],
+                room_post=["applied"],
+                room_commit=["", "applied"],
+            ),
+            "C": self._tool_set(
+                room_state=["applied", "applied"],
+                workspace_read=["applied", "applied"],
+                workspace_shell=["applied"],
+                room_post=["applied"],
+                room_commit=["", "applied"],
+            ),
+        }
+
+        checks = CANARY.tool_workload_checks(receipts)
+
+        self.assertTrue(all(checks.values()))
+        receipts["B"]["room_commit"] = self._receipt(["", "", "applied"])
+        self.assertFalse(
+            CANARY.tool_workload_checks(receipts)[
+                "bCommitValidationPathBounded"
+            ]
+        )
+        receipts["B"]["room_commit"] = self._receipt(["", "applied"])
+        receipts["C"]["room_commit"] = self._receipt(["", "", "applied"])
+        self.assertFalse(
+            CANARY.tool_workload_checks(receipts)[
+                "cCommitValidationPathBounded"
+            ]
+        )
 
     def test_managed_approval_checks_require_policy_owned_receipts(self) -> None:
         approvals = {

@@ -19,6 +19,7 @@ import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { AgentBlocks, MarkdownBody } from '@/features/agent/timeline/BlockRenderer';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { selectRoomTurnExecution } from '../runtime/room-execution-lanes';
+import { roomProjection, useRoomLiveStore } from '../state/live-store';
 
 interface TimelineParticipant {
   id: string;
@@ -34,8 +35,9 @@ interface TimelineRoom {
 
 interface RoomTurnProps {
   turnId: string;
+  roomId?: string;
   room?: TimelineRoom;
-  projection: RoomProjectionState;
+  projection?: RoomProjectionState;
   personas: AgentPersonaV1[];
   abortingSessionIds?: ReadonlySet<string>;
   abortingTurnIds?: ReadonlySet<string>;
@@ -46,14 +48,19 @@ interface RoomTurnProps {
 /** Render one Root as independent participant/dispatch execution lanes. */
 export function RoomTurn({
   turnId,
+  roomId = '',
   room,
-  projection,
+  projection: providedProjection,
   personas,
   abortingSessionIds = new Set(),
   abortingTurnIds = new Set(),
   onAbortTurn,
   onAbortSession,
 }: RoomTurnProps) {
+  useRoomLiveStore((state) => (
+    providedProjection ? 0 : state.turnRevisions[roomId]?.[turnId] ?? 0
+  ));
+  const projection = providedProjection ?? roomProjection(roomId);
   const turn = projection.turnsById[turnId];
   // Room/session lifecycle events may legitimately have no public Root. They
   // belong in the execution ledger, never as a synthetic Post in the chat.

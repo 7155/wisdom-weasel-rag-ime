@@ -208,6 +208,38 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             ],
         )
 
+    def test_debug_evidence_can_select_one_recovery_turn(self) -> None:
+        requests: list[str] = []
+
+        def requester(
+            _base_url: str,
+            _method: str,
+            path: str,
+            _payload: object | None = None,
+            *,
+            timeout: float,
+        ) -> dict[str, object]:
+            del timeout
+            requests.append(path)
+            if "/debug-context" in path:
+                return {"context": {}, "transcript": {}}
+            return {"messageQueue": {}}
+
+        CANARY.debug_evidence(
+            "http://in-process.invalid",
+            "session-audit",
+            requester=requester,
+            turn_id="turn:recovery",
+        )
+
+        self.assertEqual(
+            requests[0],
+            (
+                "/api/agent/sessions/session-audit/debug-context"
+                "?turnId=turn%3Arecovery"
+            ),
+        )
+
     def test_provider_prefix_evidence_proves_content_free_append_only_context(
         self,
     ) -> None:
@@ -795,7 +827,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
                 "skillReceiptId": "skill:1",
                 "toolReceiptIds": ["load:workspace", "load:commit"],
                 "roomProviderEntryHash": "a" * 64,
-                "sessionProviderEntryHash": "b" * 64,
+                "sessionProviderEntryHash": "",
             }
             with sqlite3.connect(path) as connection:
                 connection.executescript(
@@ -841,6 +873,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             {item["toolName"] for item in transition["toolReceipts"]},
             {"workspace_read", "room_commit"},
         )
+        self.assertEqual(transition["providerHashes"], ["a" * 64])
 
     def test_message_acceptance_requires_the_v2_root_contract(self) -> None:
         self.assertEqual(

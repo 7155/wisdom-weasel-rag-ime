@@ -341,7 +341,10 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "notFor": ("修改用户每日计划或简单单步任务",),
         "input": "清单项、状态、证据、复核或取消动作",
         "output": "跨回合保留的 Agent 执行清单与状态",
-        "does": "维护 Session 内可恢复的任务执行清单。",
+        "does": (
+            "维护 Session 内可恢复的任务执行清单；每完成一步就更新状态，"
+            "全部验收后先 complete 再最终答复。"
+        ),
         "operations": ("list", "update", "submit_review", "complete", "cancel"),
         "resultPresentation": "tool_result",
     },
@@ -393,8 +396,8 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "description": "读取授权工作区内的非敏感 UTF-8 文本",
         "when": ("协调 Session 需要读取已知授权文本文件",),
         "notFor": ("二进制、敏感文件、未知位置搜索或未授权路径",),
-        "input": "相对文件路径、偏移与字符上限",
-        "output": "有界 UTF-8 文本及文件元数据",
+        "input": "相对文件路径、UTF-8 字节偏移与请求上限",
+        "output": "Pi 50 KiB/2000 行预算内的 UTF-8 文本、续读偏移与文件元数据",
         "does": "读取授权工作区文本。",
         "operations": ("read",),
         "sessionModes": ("coordinator",),
@@ -925,7 +928,15 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
 
 _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]] = {
     ("workspace_list", "limit"): {"type": "integer", "minimum": 1, "maximum": 300},
-    ("workspace_read", "limit"): {"type": "integer", "minimum": 1, "maximum": 65_536},
+    ("workspace_read", "limit"): {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65_536,
+        "description": (
+            "请求读取的 UTF-8 字节数；实际模型可见结果仍受 Pi "
+            "50 KiB 与 2000 行上限约束，按 nextOffset 续读。"
+        ),
+    },
     ("ime_memory", "mode"): {
         "type": "string",
         "enum": ["current", "historical", "change"],
@@ -1130,6 +1141,30 @@ _SETTING_SCHEMA_FIELDS = {
 }
 
 
+def _normalize_runtime_tool_args(
+    tool: str,
+    args: Mapping[str, object],
+) -> dict[str, object]:
+    normalized = dict(args)
+    if tool != "ime_memory" or str(normalized.get("op") or "").strip():
+        return normalized
+
+    query = str(normalized.get("query") or "").strip()
+    scope = str(normalized.get("scope") or "").strip().lower()
+    if not query:
+        return normalized
+    if scope == "recent":
+        normalized["op"] = "recent"
+        normalized.pop("scope", None)
+        return normalized
+    if scope in {"", "current", "historical", "change"}:
+        normalized["op"] = "search"
+        normalized.pop("scope", None)
+        if scope:
+            normalized.setdefault("mode", scope)
+    return normalized
+
+
 class ControlToolGateway:
     """Capability-scoped gateway over the existing control-plane services.
 
@@ -1318,7 +1353,8 @@ class ControlToolGateway:
         if session.get("status") == "archived":
             raise ValueError("archived sessions cannot execute tools")
         tool = str(request["tool"])
-        args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
+        raw_args = request.get("args") if isinstance(request.get("args"), Mapping) else {}
+        args = _normalize_runtime_tool_args(tool, raw_args)
         if tool in {
             "room_state",
             "room_collaborate",
@@ -6501,6 +6537,8 @@ def _runtime_memory_tool_parameter_schema(
 ) -> dict[str, object]:
     argument_names = (*_RUNTIME_TOOL_ARGUMENTS["ime_memory"], "scope", "policy")
     properties = {
+        "op": {"type": "string", "enum": operations},
+        **{
         name: dict(
             _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES.get(
                 ("ime_memory", name),
@@ -6510,10 +6548,10 @@ def _runtime_memory_tool_parameter_schema(
         for name in argument_names
         if name in _RUNTIME_TOOL_ARGUMENT_SCHEMAS
         or ("ime_memory", name) in _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES
+        },
     }
     properties.update(
         {
-            "op": {"type": "string", "enum": operations},
             "query": {"type": "string", "maxLength": 240},
             "limit": {"type": "integer", "minimum": 1, "maximum": 30},
             "instruction": {"type": "string", "maxLength": 800},
@@ -6521,7 +6559,17 @@ def _runtime_memory_tool_parameter_schema(
                 "type": "string",
                 "enum": ["task_completion", "explicit_request", "idle_batch"],
             },
-            "scope": {"type": "string", "enum": ["incremental", "global"]},
+            "scope": {
+                "type": "string",
+                "enum": [
+                    "incremental",
+                    "global",
+                    "recent",
+                    "current",
+                    "historical",
+                    "change",
+                ],
+            },
             "policy": {"type": "string", "enum": ["conservative"]},
             "claim": {"type": "string", "minLength": 1, "maxLength": 800},
             "sourceId": {"type": "string", "maxLength": 240},
@@ -6569,12 +6617,39 @@ def _runtime_memory_tool_parameter_schema(
                     "enum": ["user", "project"],
                 },
             }
+        elif operation == "maintenance_status":
+            branch["properties"] = {
+                "op": {"const": operation},
+                "scope": {
+                    "type": "string",
+                    "enum": ["incremental", "global"],
+                },
+            }
         branches.append(branch)
+    # Older and weaker OpenAI-compatible models sometimes infer the obvious
+    # read-only call from the compact catalog before emitting `op`. Accept only
+    # this bounded compatibility shape; every mutation still requires an exact
+    # operation branch and its operation-specific fields.
+    branches.append(
+        {
+            "description": (
+                "只读兼容：query 必填；scope=recent 读取近期证据，"
+                "current/historical/change 转为对应检索视图。新调用应显式传 op。"
+            ),
+            "required": ["query"],
+            "not": {"required": ["op"]},
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "enum": ["recent", "current", "historical", "change"],
+                },
+            },
+        }
+    )
     return {
         "type": "object",
         "description": "Evidence->Atom->Book/Timeline；Role Book 用 agent_role_book。",
         "additionalProperties": False,
-        "required": ["op"],
         "properties": properties,
         "oneOf": branches,
     }

@@ -8,6 +8,7 @@ import sqlite3
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from threading import RLock
@@ -46,6 +47,7 @@ from .agent_role_application import AgentRoleApplicationService
 from .agent_session_application import AgentSessionApplicationService
 from .agent_session_branching import AgentSessionBranchingService
 from .agent_session_policy import AgentSessionPolicyService
+from .agent_session_mode_gate import AgentSessionModeGate
 from .agent_room_intercom import (
     AgentRoomIntercomRouter,
     AgentRoomIntercomStore,
@@ -190,6 +192,7 @@ class AgentService:
         self.control_events = AgentControlEventHub(self.configuration_store)
         self._configuration_lock = RLock()
         self._context_source_token = object()
+        self.session_mode_gate = AgentSessionModeGate()
         self.room_turns = RoomTurnRegistry()
         # Compatibility aliases for the legacy dispatcher/canceller. The
         # registry owns these collections; no second source of truth exists.
@@ -742,7 +745,14 @@ class AgentService:
                 for tool in manifest["tools"]
                 if isinstance(tool, Mapping) and tool.get("authorized") is True
             ]
-        if self.room_capabilities.runtime_binding(str(session.get("id") or ""), active_only=False) is not None:
+        historical_binding = self.room_capabilities.runtime_binding(
+            str(session.get("id") or ""),
+            active_only=False,
+        )
+        if (
+            historical_binding is not None
+            and historical_binding.get("state") == "prepared"
+        ):
             return []
         provider = self._tool_manifest_provider
         if provider is None:
@@ -809,13 +819,20 @@ class AgentService:
                 str(session.get("id") or ""), active_only=False
             )
             if tombstone is not None:
+                session_id = str(session.get("id") or "")
                 return {
                     "roomCapability": {
                         "manifestId": tombstone["manifestId"],
                         "manifestHash": tombstone["manifestHash"],
                         "capabilityEpoch": tombstone["capabilityEpoch"],
                         "status": tombstone["state"],
-                    }
+                    },
+                    "sessionContext": (
+                        self.memory_context_application.provider_context(
+                            session_id,
+                            include_room_recovery=True,
+                        )
+                    ),
                 }
             return {}
         manifest, binding = bound
@@ -1063,7 +1080,9 @@ class AgentService:
         }
 
     def ensure_runtime(self, payload: Mapping[str, object]) -> dict[str, object]:
-        return self.session_application.ensure_runtime(payload)
+        session_id = _required_text(payload, "sessionId")
+        with self._direct_agent_entry(session_id):
+            return self.session_application.ensure_runtime(payload)
 
     def list_sessions(self, payload: Mapping[str, object] | None = None) -> dict[str, object]:
         return self.session_application.list_sessions(payload)
@@ -2302,15 +2321,71 @@ class AgentService:
         delivery: str = "prompt",
         transient_context: str = "",
     ) -> dict[str, object]:
-        return self.prompt_application.prompt_with_checkpoint(
-            session_id=session_id,
-            message=message,
-            checkpoint_text=checkpoint_text,
-            attachment_ids=attachment_ids,
-            client_message_id=client_message_id,
-            context_source=context_source,
-            delivery=delivery,
-            transient_context=transient_context,
+        if context_source == "room":
+            return self.prompt_application.prompt_with_checkpoint(
+                session_id=session_id,
+                message=message,
+                checkpoint_text=checkpoint_text,
+                attachment_ids=attachment_ids,
+                client_message_id=client_message_id,
+                context_source=context_source,
+                delivery=delivery,
+                transient_context=transient_context,
+            )
+        with self._direct_agent_entry(session_id):
+            return self.prompt_application.prompt_with_checkpoint(
+                session_id=session_id,
+                message=message,
+                checkpoint_text=checkpoint_text,
+                attachment_ids=attachment_ids,
+                client_message_id=client_message_id,
+                context_source=context_source,
+                delivery=delivery,
+                transient_context=transient_context,
+            )
+
+    @contextmanager
+    def _direct_agent_entry(
+        self,
+        session_id: str,
+    ) -> Iterator[None]:
+        with self.session_mode_gate.claim_agent(session_id):
+            self._assert_direct_agent_prompt_available(session_id)
+            with self._room_turn_lock:
+                self._room_user_priority_sessions.add(session_id)
+            try:
+                yield
+            finally:
+                with self._room_turn_lock:
+                    self._room_user_priority_sessions.discard(
+                        session_id
+                    )
+
+    def _assert_direct_agent_prompt_available(
+        self,
+        session_id: str,
+    ) -> None:
+        kernel_binding = self.room_kernel.session_binding(session_id)
+        capability_binding = self.room_capabilities.runtime_binding(
+            session_id
+        )
+        with self._room_turn_lock:
+            legacy_busy = (
+                session_id in self._pending_room_turn_by_session
+                or any(
+                    key[0] == session_id
+                    for key in self._room_turn_by_session_turn
+                )
+            )
+        if (
+            kernel_binding is None
+            and capability_binding is None
+            and not legacy_busy
+        ):
+            return
+        raise ValueError(
+            "Session 正在执行 Room 任务，不能同时从 Agent 发送；"
+            "请等待 Room 结束或先停止该 Room 任务"
         )
 
     def _runtime_prompt_with_context(
@@ -2787,6 +2862,7 @@ class AgentService:
             requirements=self.room_requirements,
             capabilities=self.room_capabilities,
             public_timeline=self.room_public_timeline,
+            session_mode_gate=self.session_mode_gate,
             wake_worker=self.room_kernel_worker_loop.wake,
             restore_participant_sessions=self._restore_legacy_room_participant_sessions,
         )

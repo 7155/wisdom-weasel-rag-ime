@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,60 @@ from room_project_task_canary import (  # noqa: E402
     PATCH_NEW_TEXT,
     PATCH_OLD_TEXT,
 )
+
+
+def boundary_read_executions(workspace: Path) -> list[dict[str, object]]:
+    path = workspace / CANARY.READ_BOUNDARY_PATH
+    chunks = (
+        (0, 4, "甲\n", True),
+        (4, 8, "乙\n", True),
+        (8, 11, "终", False),
+    )
+    path.write_text(
+        "".join(content for _, _, content, _ in chunks),
+        encoding="utf-8",
+    )
+    return [
+        {
+            "toolName": "workspace_read",
+            "args": {
+                "path": str(path),
+                "offset": offset,
+                "limit": 65_536,
+            },
+            "isError": False,
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "content": content,
+                                "contentBytes": len(content.encode("utf-8")),
+                                "contentChars": len(content),
+                                "contentLines": 1,
+                                "nextOffset": next_offset,
+                                "byteSize": 11,
+                                "truncated": truncated,
+                            },
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                    }
+                ],
+                "details": {
+                    "content": content,
+                    "contentBytes": len(content.encode("utf-8")),
+                    "contentChars": len(content),
+                    "contentLines": 1,
+                    "nextOffset": next_offset,
+                    "byteSize": 11,
+                    "truncated": truncated,
+                },
+            },
+        }
+        for offset, next_offset, content, truncated in chunks
+    ]
 
 
 class AgentSessionDialogueCanaryTest(unittest.TestCase):
@@ -249,11 +304,12 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
                     {"toolName": "tool_load", "args": {"name": name}, "isError": False}
                     for name in CANARY.EXPECTED_TOOLS
                 ],
-                {"toolName": "workspace_read", "args": {"path": str(workspace / CANARY.MISSING_READ_PATH)}, "isError": True},
-                {"toolName": "workspace_read", "args": {"path": str(workspace / "calculator.py")}, "isError": False},
-                {"toolName": "workspace_read", "args": {"path": str(workspace / "test_calculator.py")}, "isError": False},
-                {"toolName": "workspace_list", "args": {"path": "."}, "isError": False},
-                {"toolName": "workspace_search", "args": {"path": "."}, "isError": False},
+                {"toolName": "workspace_read", "args": {"op": "read", "path": str(workspace / CANARY.MISSING_READ_PATH)}, "isError": True},
+                {"toolName": "workspace_read", "args": {"op": "read", "path": str(workspace / "calculator.py")}, "isError": False},
+                {"toolName": "workspace_read", "args": {"op": "read", "path": str(workspace / "test_calculator.py")}, "isError": False},
+                *boundary_read_executions(workspace),
+                {"toolName": "workspace_list", "args": {"op": "list", "path": "."}, "isError": False},
+                {"toolName": "workspace_search", "args": {"op": "search", "path": "."}, "isError": False},
                 {"toolName": "workspace_patch", "args": {}, "isError": False},
                 {"toolName": "workspace_shell", "args": {}, "isError": True},
                 {"toolName": "workspace_shell", "args": {}, "isError": False},
@@ -284,11 +340,12 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
                     {"toolName": "tool_load", "args": {"name": name}, "isError": False}
                     for name in CANARY.EXPECTED_TOOLS
                 ],
-                {"toolName": "workspace_read", "args": {"path": str(workspace / CANARY.MISSING_READ_PATH)}, "isError": True},
-                {"toolName": "workspace_read", "args": {"path": "calculator.py"}, "isError": False},
-                {"toolName": "workspace_read", "args": {"path": "test_calculator.py"}, "isError": False},
-                {"toolName": "workspace_list", "args": {"path": "."}, "isError": False},
-                {"toolName": "workspace_search", "args": {"path": "."}, "isError": False},
+                {"toolName": "workspace_read", "args": {"op": "read", "path": str(workspace / CANARY.MISSING_READ_PATH)}, "isError": True},
+                {"toolName": "workspace_read", "args": {"op": "read", "path": "calculator.py"}, "isError": False},
+                {"toolName": "workspace_read", "args": {"op": "read", "path": "test_calculator.py"}, "isError": False},
+                *boundary_read_executions(workspace),
+                {"toolName": "workspace_list", "args": {"op": "list", "path": "."}, "isError": False},
+                {"toolName": "workspace_search", "args": {"op": "search", "path": "."}, "isError": False},
                 {"toolName": "workspace_patch", "args": {}, "isError": False},
                 {"toolName": "workspace_shell", "args": {}, "isError": True},
                 {"toolName": "workspace_shell", "args": {}, "isError": False},
@@ -297,7 +354,117 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
             self.assertTrue(
                 CANARY._tool_checks(
                     {"toolExecutions": executions}, workspace
-                )["projectFilesReadOnce"]
+                )["projectFilesReadWithBoundedVerification"]
+            )
+
+    def test_tool_checks_accept_bounded_pre_disclosure_repair_and_reread(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            executions = [
+                {
+                    "toolName": "skill_load",
+                    "args": {"name": CANARY.EXPECTED_SKILL},
+                    "isError": False,
+                },
+                {
+                    "toolName": "workspace_read",
+                    "args": {"path": str(workspace / CANARY.MISSING_READ_PATH)},
+                    "isError": True,
+                },
+                {
+                    "toolName": "tool_load",
+                    "args": {"name": "workspace_read"},
+                    "isError": False,
+                },
+                {
+                    "toolName": "workspace_read",
+                    "args": {
+                        "op": "read",
+                        "path": CANARY.MISSING_READ_PATH,
+                    },
+                    "isError": True,
+                },
+                {
+                    "toolName": "workspace_list",
+                    "args": {"path": "."},
+                    "isError": True,
+                },
+                {
+                    "toolName": "tool_load",
+                    "args": {"name": "workspace_list"},
+                    "isError": False,
+                },
+                {
+                    "toolName": "workspace_list",
+                    "args": {"op": "list", "path": "."},
+                    "isError": False,
+                },
+                *[
+                    {
+                        "toolName": "tool_load",
+                        "args": {"name": name},
+                        "isError": False,
+                    }
+                    for name in CANARY.EXPECTED_TOOLS
+                    if name not in {"workspace_read", "workspace_list"}
+                ],
+                {
+                    "toolName": "workspace_search",
+                    "args": {"op": "search", "path": "."},
+                    "isError": False,
+                },
+                {
+                    "toolName": "workspace_read",
+                    "args": {"op": "read", "path": "calculator.py"},
+                    "isError": False,
+                },
+                {
+                    "toolName": "workspace_read",
+                    "args": {"op": "read", "path": "test_calculator.py"},
+                    "isError": False,
+                },
+                *boundary_read_executions(workspace),
+                {
+                    "toolName": "workspace_patch",
+                    "args": {},
+                    "isError": False,
+                },
+                {
+                    "toolName": "workspace_read",
+                    "args": {"op": "read", "path": "calculator.py"},
+                    "isError": False,
+                },
+                {
+                    "toolName": "workspace_shell",
+                    "args": {},
+                    "isError": True,
+                },
+                {
+                    "toolName": "workspace_shell",
+                    "args": {},
+                    "isError": False,
+                },
+            ]
+
+            checks = CANARY._tool_checks(
+                {"toolExecutions": executions}, workspace
+            )
+
+            self.assertTrue(all(checks.values()))
+            executions.insert(
+                2,
+                {
+                    "toolName": "workspace_read",
+                    "args": {"path": CANARY.MISSING_READ_PATH},
+                    "isError": True,
+                },
+            )
+            self.assertFalse(
+                CANARY._tool_checks(
+                    {"toolExecutions": executions}, workspace
+                )["preDisclosureCallsFailClosedWithoutRepeat"]
             )
 
 

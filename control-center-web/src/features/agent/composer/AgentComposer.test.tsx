@@ -174,10 +174,12 @@ describe('AgentComposer macOS input methods', () => {
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
     expect(onSend).toHaveBeenLastCalledWith('steer', '补充要求');
 
+    fireEvent.change(composer, { target: { value: '补充要求' } });
     fireEvent.click(view.getByRole('radio', { name: '接续' }));
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
     expect(onSend).toHaveBeenLastCalledWith('followUp', '补充要求');
 
+    fireEvent.change(composer, { target: { value: '补充要求' } });
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter', altKey: true });
     expect(onSend).toHaveBeenLastCalledWith('followUp', '补充要求');
     fireEvent.click(view.getByRole('button', { name: '停止本轮' }));

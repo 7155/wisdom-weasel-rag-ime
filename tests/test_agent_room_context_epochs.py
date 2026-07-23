@@ -86,6 +86,35 @@ class RoomSessionContextEpochStoreTests(unittest.TestCase):
                 session_context="session memory", now_ms=4,
             )
 
+    def test_empty_session_context_has_no_provider_journal_entry_hash(self) -> None:
+        self.store.prepare_dispatch(
+            session_id=self.session_id, root_id="root:1", generation=0,
+            dispatch_id="dispatch:1", now_ms=1,
+        )
+        recovery = json.dumps(
+            {
+                "schemaVersion": "wisdom-weasel.room-compaction-recovery.v2",
+                "originalRequirements": ["original"],
+                "currentTask": {"objective": "task"},
+                "acceptance": [{"statement": "accept"}],
+                "blockers": [],
+                "handoff": {"intentKind": "complete"},
+                "skillReceipt": {"restoredFromReceiptId": "skill:1"},
+                "toolReceipt": {"items": [{"receiptId": "tool:1"}]},
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+        transition = self.store.advance_compaction(
+            session_id=self.session_id, compaction_entry_id="compact:empty",
+            expected_epoch=1, room_recovery_context=recovery,
+            session_context="", now_ms=2,
+        )
+
+        self.assertTrue(transition["evidence"]["roomProviderEntryHash"])
+        self.assertEqual(transition["evidence"]["sessionProviderEntryHash"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

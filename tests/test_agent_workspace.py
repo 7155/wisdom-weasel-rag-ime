@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import tempfile
 import time
@@ -61,6 +62,122 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         ):
             with self.subTest(path=path), self.assertRaises(WorkspaceHarnessError):
                 harness.read(self.session, {"path": str(path)})
+
+    def test_read_chunks_reconstruct_exact_text_within_pi_result_budget(self) -> None:
+        target = self.root / "large-unicode.txt"
+        original = "".join(
+            f'第{index:04d}行 "quoted" \\\\ path 智鼬数据\n'
+            for index in range(4_200)
+        )
+        target.write_text(original, encoding="utf-8")
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        offset = 0
+        chunks: list[str] = []
+        receipts: list[dict[str, object]] = []
+        while True:
+            receipt = harness.read(
+                self.session,
+                {
+                    "path": str(target),
+                    "offset": offset,
+                    "limit": 65_536,
+                },
+            )
+            receipts.append(receipt)
+            content = str(receipt["content"])
+            content_bytes = len(content.encode("utf-8"))
+            serialized_bytes = len(
+                json.dumps(
+                    receipt,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            self.assertLessEqual(serialized_bytes, 50 * 1024)
+            self.assertLessEqual(content_bytes, 50 * 1024)
+            self.assertLessEqual(int(receipt["contentLines"]), 2_000)
+            self.assertEqual(receipt["contentChars"], len(content))
+            self.assertEqual(receipt["contentBytes"], content_bytes)
+            self.assertEqual(receipt["nextOffset"], offset + content_bytes)
+            self.assertGreater(int(receipt["nextOffset"]), offset)
+            chunks.append(content)
+            offset = int(receipt["nextOffset"])
+            if receipt["truncated"] is False:
+                break
+            self.assertLess(len(receipts), 20, "workspace_read did not make bounded progress")
+
+        self.assertGreater(len(receipts), 2)
+        self.assertEqual("".join(chunks), original)
+        self.assertEqual(offset, len(original.encode("utf-8")))
+        self.assertTrue(any(item["modelResultBounded"] is True for item in receipts))
+
+    def test_read_uses_pi_line_limit_and_preserves_continuation(self) -> None:
+        target = self.root / "many-lines.txt"
+        original = "x\n" * 2_501
+        target.write_text(original, encoding="utf-8")
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        first = harness.read(
+            self.session,
+            {"path": str(target), "offset": 0, "limit": 65_536},
+        )
+        second = harness.read(
+            self.session,
+            {
+                "path": str(target),
+                "offset": first["nextOffset"],
+                "limit": 65_536,
+            },
+        )
+
+        self.assertEqual(first["contentLines"], 2_000)
+        self.assertEqual(first["truncatedBy"], "lines")
+        self.assertEqual(first["content"], "x\n" * 2_000)
+        self.assertEqual(str(first["content"]) + str(second["content"]), original)
+        self.assertFalse(second["truncated"])
+
+    def test_read_never_splits_utf8_and_rejects_invalid_boundaries(self) -> None:
+        target = self.root / "unicode-boundary.txt"
+        target.write_text("智智", encoding="utf-8")
+        invalid = self.root / "invalid-utf8.txt"
+        invalid.write_bytes(b"valid\n\xe6\x99")
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        first = harness.read(
+            self.session,
+            {"path": str(target), "offset": 0, "limit": 4},
+        )
+        second = harness.read(
+            self.session,
+            {"path": str(target), "offset": first["nextOffset"], "limit": 4},
+        )
+        self.assertEqual(first["content"], "智")
+        self.assertEqual(first["nextOffset"], 3)
+        self.assertEqual(second["content"], "智")
+        self.assertFalse(second["truncated"])
+        with self.assertRaisesRegex(WorkspaceHarnessError, "at least 3 bytes"):
+            harness.read(
+                self.session,
+                {"path": str(target), "offset": 0, "limit": 1},
+            )
+        with self.assertRaisesRegex(WorkspaceHarnessError, "UTF-8 character boundary"):
+            harness.read(
+                self.session,
+                {"path": str(target), "offset": 1, "limit": 4},
+            )
+        with self.assertRaisesRegex(WorkspaceHarnessError, "only accepts UTF-8"):
+            harness.read(self.session, {"path": str(invalid), "limit": 65_536})
+        with self.assertRaisesRegex(WorkspaceHarnessError, "beyond end of file"):
+            harness.read(
+                self.session,
+                {"path": str(target), "offset": 7, "limit": 4},
+            )
+        with self.assertRaisesRegex(WorkspaceHarnessError, "between 1 and 65536"):
+            harness.read(
+                self.session,
+                {"path": str(target), "limit": 65_537},
+            )
 
     def test_shell_requires_coordinator_and_rejects_privilege_destruction_and_secrets(self) -> None:
         harness = WorkspaceHarness(executor=lambda prepared: {})

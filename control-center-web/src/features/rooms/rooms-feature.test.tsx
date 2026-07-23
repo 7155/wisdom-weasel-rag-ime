@@ -10,6 +10,7 @@ import { previewPersonas } from '@/features/agent/preview-data';
 import type { ControlRequest } from '@/platform/transport';
 import { RoomTurn, RoomsFeature, type RoomSummary } from './index';
 import { RoomStatusPanel } from './RoomStatusPanel';
+import { useRoomLiveStore } from './state/live-store';
 
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({
@@ -26,7 +27,10 @@ vi.mock('react-virtuoso', () => ({
 }));
 
 describe('Rooms experience', () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    useRoomLiveStore.getState().reset();
+  });
 
   it('sends messages through the room path and preserves the selected room id', async () => {
     const transport = new MockControlTransport({ routes: {

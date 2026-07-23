@@ -178,6 +178,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(coordinator["session"]["shellPolicyVersion"], "coordinator-per-command-v1")
         controlled = self.service.update_session(session_id, {"mode": "assistant"})
         self.assertEqual(controlled["session"]["mode"], "assistant")
+
         self.assertEqual(controlled["session"]["workspaceRoots"], [])
         restricted = self.service.update_session(
             session_id,
@@ -270,6 +271,134 @@ class AgentServiceTests(unittest.TestCase):
         deleted = self.service.delete_session(session_id)
         self.assertTrue(deleted["ok"])
         self.assertEqual(self.service.list_sessions()["items"], [])
+
+    def test_direct_agent_prompt_rejects_an_active_room_session_before_runtime(self) -> None:
+        session = self.service.create_session(
+            {"title": "Agent 与 Room 共用"}
+        )["session"]
+        session_id = str(session["id"])
+
+        with (
+            patch.object(
+                self.service.room_kernel,
+                "session_binding",
+                return_value={
+                    "roomId": "room:shared",
+                    "rootId": "root:active",
+                    "dispatchId": "dispatch:active",
+                    "generation": 0,
+                    "state": "running",
+                },
+            ),
+            patch.object(self.service.runtime, "prompt") as runtime_prompt,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "正在执行 Room 任务",
+            ):
+                self.service.prompt(
+                    session_id,
+                    {"message": "从 Agent 页面继续"},
+                )
+
+        runtime_prompt.assert_not_called()
+
+    def test_agent_runtime_open_rejects_an_active_room_session_before_rebind(self) -> None:
+        session = self.service.create_session(
+            {"title": "Agent 打开 Room Session"}
+        )["session"]
+        session_id = str(session["id"])
+
+        with (
+            patch.object(
+                self.service.room_kernel,
+                "session_binding",
+                return_value={
+                    "roomId": "room:shared",
+                    "rootId": "root:active",
+                    "dispatchId": "dispatch:active",
+                    "generation": 0,
+                    "state": "running",
+                },
+            ),
+            patch.object(self.service.runtime, "ensure") as runtime_ensure,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "正在执行 Room 任务",
+            ):
+                self.service.ensure_runtime(
+                    {"sessionId": session_id}
+                )
+
+        runtime_ensure.assert_not_called()
+
+    def test_revoked_room_binding_restores_the_ordinary_agent_tool_catalog(self) -> None:
+        session = self.service.create_session(
+            {"title": "Room 收工后继续聊"}
+        )["session"]
+        self.service.bind_tool_manifest_provider(
+            lambda _session: [
+                {
+                    "name": "workspace_read",
+                    "description": "读取工作区文件",
+                    "parameters": {"type": "object"},
+                }
+            ]
+        )
+
+        with (
+            patch.object(
+                self.service.room_capabilities,
+                "manifest_for_runtime",
+                return_value=None,
+            ),
+            patch.object(
+                self.service.room_capabilities,
+                "runtime_binding",
+                return_value={"state": "revoked"},
+            ),
+        ):
+            tools = self.service._runtime_tool_manifest(session)
+
+        self.assertEqual(
+            [str(tool["name"]) for tool in tools],
+            ["workspace_read"],
+        )
+
+    def test_room_member_conversation_sessions_remain_visible_in_agent_list(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "共享 Session",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    },
+                ],
+            }
+        )["room"]
+        member_session_ids = {
+            str(participant["sessionId"])
+            for participant in room["participants"]
+        }
+
+        listed = self.service.list_sessions()
+        visible = {
+            str(session["id"]): str(session["sessionKind"])
+            for session in listed["items"]
+        }
+
+        self.assertTrue(member_session_ids.issubset(visible))
+        self.assertEqual(
+            {visible[session_id] for session_id in member_session_ids},
+            {"conversation"},
+        )
 
     def test_execution_modes_require_scope_confirmation_and_keep_one_policy_owner(self) -> None:
         with self.assertRaisesRegex(ValueError, "workspace scope confirmation"):
@@ -518,7 +647,7 @@ class AgentServiceTests(unittest.TestCase):
                 self.service.prompt(session_id, {"message": "继续执行"})
             provider.assert_not_called()
 
-    def test_new_session_keeps_query_aware_bootstrap_in_each_provider_prompt(self) -> None:
+    def test_new_session_keeps_query_aware_bootstrap_without_empty_provider_envelope(self) -> None:
         created = self.service.create_session({"title": "个人上下文"})
         session = created["session"]
         session_id = str(session["id"])
@@ -582,23 +711,8 @@ class AgentServiceTests(unittest.TestCase):
             "第二轮",
             build_memory.call_args_list[1].kwargs["query_text"],
         )
-        first_runtime_message = runtime_prompt.call_args_list[0].args[1]
-        first_envelope = json.loads(
-            first_runtime_message.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
-        )
-        second_envelope = json.loads(
-            runtime_prompt.call_args_list[1].args[1].removeprefix(
-                RUNTIME_PROMPT_ENVELOPE_PREFIX
-            )
-        )
-        self.assertEqual(first_envelope["message"], "第一轮")
-        self.assertEqual(second_envelope["message"], "第二轮")
-        self.assertEqual(first_envelope["transientContext"], "")
-        self.assertEqual(second_envelope["transientContext"], "")
-        self.assertIn("## Session 记忆", first_envelope["sessionContext"])
-        self.assertNotIn("召回依据", first_envelope["sessionContext"])
-        self.assertEqual(second_envelope["sessionContext"], first_envelope["sessionContext"])
-        self.assertNotIn('"queryFree":true', first_envelope["sessionContext"])
+        self.assertEqual(runtime_prompt.call_args_list[0].args[1], "第一轮")
+        self.assertEqual(runtime_prompt.call_args_list[1].args[1], "第二轮")
         self.assertTrue(first["memoryEvidence"]["stored"])
         self.assertTrue(second["memoryEvidence"]["stored"])
         delivered = self.service.context_runtime.list_items(
@@ -739,12 +853,10 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.assertEqual(len(delivered), 1)
         self.assertEqual(delivered[0]["lifecycle"], "persistent")
-        runtime_message = runtime_prompt.call_args.args[1]
-        envelope = json.loads(
-            runtime_message.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
+        self.assertEqual(
+            runtime_prompt.call_args.args[1],
+            "按当前问题重新召回",
         )
-        self.assertIn("## Session 记忆", envelope["sessionContext"])
-        self.assertEqual(envelope["message"], "按当前问题重新召回")
 
     def test_compaction_refresh_replaces_session_context_with_recent_dialogue_and_plan(self) -> None:
         session = self.service.create_session({"title": "压缩刷新"})["session"]
@@ -823,6 +935,83 @@ class AgentServiceTests(unittest.TestCase):
             len(self.service.context_runtime.list_items(session_id, status="expired")),
             1,
         )
+
+    def test_completed_plan_compaction_recovers_terminal_state_without_restarting_work(self) -> None:
+        session = self.service.create_session({"title": "已完成任务压缩"})["session"]
+        session_id = str(session["id"])
+        for item_id, title in (
+            ("plan-item:baseline", "运行失败基线"),
+            ("plan-item:patch", "完成精确修改"),
+            ("plan-item:regression", "运行回归测试"),
+        ):
+            self.service.sessions.update_agent_plan_item(
+                session_id,
+                item_id=item_id,
+                title=title,
+                status="pending",
+            )
+        self.service.sessions.mutate_agent_plan(
+            session_id,
+            {"action": "submit_review", "note": "提交执行计划"},
+        )
+        self.service.sessions.mutate_agent_plan(
+            session_id,
+            {"action": "approve", "note": "批准执行计划"},
+        )
+        self.service.sessions.mutate_agent_plan(
+            session_id,
+            {"action": "start_execution", "note": "开始执行"},
+        )
+        for item_id in (
+            "plan-item:baseline",
+            "plan-item:patch",
+            "plan-item:regression",
+        ):
+            self.service.sessions.update_agent_plan_item(
+                session_id,
+                item_id=item_id,
+                status="completed",
+            )
+        self.service.sessions.mutate_agent_plan(
+            session_id,
+            {"action": "complete", "note": "全部验收完成"},
+        )
+
+        refreshed = self.service.refresh_session_context(
+            {
+                "sessionId": session_id,
+                "trigger": "compaction",
+                "summary": "修复和回归均已完成。",
+                "recentMessages": [
+                    {
+                        "role": "user",
+                        "text": "完成 normalize_scores 并通过独立回归测试；验收标记 TERMINAL-RECOVERY-AC",
+                    },
+                    {
+                        "role": "assistant",
+                        "text": "实现、测试和最终交付都已完成。",
+                    },
+                ],
+                "agentSkillRecovery": {
+                    "schemaVersion": "rag-ime.agent-skill-recovery.v1",
+                    "items": [],
+                },
+                "agentToolRecovery": {
+                    "schemaVersion": "rag-ime.agent-tool-recovery.v1",
+                    "items": [],
+                },
+            }
+        )
+
+        context = refreshed["result"]["sessionContext"]
+        self.assertTrue(refreshed["result"]["compactionRecoveryPacket"])
+        self.assertIn("当前任务：已完成；不要重复执行。", context)
+        self.assertIn("计划状态：completed", context)
+        self.assertIn("任务已由本 Session 完成；无待交接责任。", context)
+        self.assertNotIn("继续执行上述原始需求。", context)
+        self.assertNotIn("## 当前计划", context)
+        self.assertNotIn("[待办]", context)
+        self.assertEqual(context.count("## 压缩恢复包（本 epoch 唯一）"), 1)
 
     def test_manual_compaction_does_not_repeat_runtime_context_refresh(self) -> None:
         session = self.service.create_session({"title": "压缩去重"})["session"]
@@ -1044,6 +1233,54 @@ class AgentServiceTests(unittest.TestCase):
             )
         )
 
+    def test_next_agent_turn_accepts_stably_revoked_room_binding(self) -> None:
+        session = self.service.create_session({"title": "Room 收工后继续对话"})[
+            "session"
+        ]
+        session_id = str(session["id"])
+        revoked = {
+            "manifestId": "manifest:settled",
+            "manifestHash": "b" * 64,
+            "capabilityEpoch": 8,
+            "state": "revoked",
+        }
+
+        with (
+            patch.object(
+                self.service.room_capabilities,
+                "runtime_binding",
+                side_effect=lambda _session_id, *, active_only=True: (
+                    None if active_only else revoked
+                ),
+            ),
+            patch.object(
+                self.service.memory_context_application,
+                "room_recovery_context_provider",
+                return_value="",
+            ),
+        ):
+            refreshed = self.service.refresh_session_context(
+                {
+                    "sessionId": session_id,
+                    "trigger": "turn_start",
+                    "queryText": "Room 已经收工，我们继续普通聊天",
+                    "recentMessages": [
+                        {
+                            "role": "user",
+                            "text": "Room 已经收工，我们继续普通聊天",
+                        }
+                    ],
+                }
+            )
+
+        self.assertTrue(refreshed["ok"])
+        self.assertEqual(
+            refreshed["result"]["trigger"],
+            "first_user_prompt",
+        )
+        self.assertTrue(refreshed["result"]["itemId"])
+        self.assertIsNone(refreshed["result"]["roomContextRecovery"])
+
     def test_next_prompt_repairs_first_query_bootstrap_failure(self) -> None:
         created = self.service.create_session({"title": "可恢复启动上下文"})
         session_id = str(created["session"]["id"])
@@ -1140,15 +1377,8 @@ class AgentServiceTests(unittest.TestCase):
                 },
             )
 
-        first_envelope = json.loads(
-            sent_messages[0].removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
-        )
-        retry_envelope = json.loads(
-            retried.call_args.args[1].removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
-        )
-        self.assertIn("## Session 记忆", first_envelope["sessionContext"])
-        self.assertEqual(retry_envelope["message"], "第一轮")
-        self.assertEqual(retry_envelope["sessionContext"], first_envelope["sessionContext"])
+        self.assertEqual(sent_messages[0], "第一轮")
+        self.assertEqual(retried.call_args.args[1], "第一轮")
         self.assertEqual(accepted["contextItemsDelivered"], 1)
 
     def test_corrupt_role_book_falls_back_to_base_persona_without_blocking_chat(self) -> None:
@@ -1317,10 +1547,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["entryId"], "entry-user-1")
         rewind.assert_called_once_with(session_id, entry_id="entry-user-1")
         self.assertEqual(prompt.call_args.args[0], session_id)
-        rewrite_envelope = json.loads(
-            prompt.call_args.args[1].removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
-        )
-        self.assertEqual(rewrite_envelope["message"], "修改后的问题")
+        self.assertEqual(prompt.call_args.args[1], "修改后的问题")
         replay, gap = self.service.events.replay(session_id)
         self.assertFalse(gap)
         self.assertNotIn(old_event.event_id, [event.event_id for event in replay])
@@ -2805,17 +3032,13 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(str(first["session"]["title"]).startswith("输入助手 "))
         self.assertEqual(first["evidenceCount"], 1)
         sent = prompt.call_args_list[0].args[1]
-        self.assertTrue(sent.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
-        sent_envelope = json.loads(sent.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX))
         self.assertIn(
             "<rag-ime-user-query>\n最近我在做什么？\n</rag-ime-user-query>",
-            sent_envelope["message"],
+            sent,
         )
-        self.assertIn("控制中心使用连续 Pi Session", sent_envelope["message"])
-        self.assertIn("任何写操作仍必须经过原生审批", sent_envelope["message"])
-        self.assertIn("## Session 记忆", sent_envelope["sessionContext"])
-        self.assertNotIn("召回依据", sent_envelope["sessionContext"])
-        self.assertNotIn('"queryFree":true', sent_envelope["sessionContext"])
+        self.assertIn("控制中心使用连续 Pi Session", sent)
+        self.assertIn("任何写操作仍必须经过原生审批", sent)
+        self.assertNotIn(RUNTIME_PROMPT_ENVELOPE_PREFIX, sent)
         sources = self.service.list_memory_sources({"sessionId": first["sessionId"]})["items"]
         self.assertEqual(
             [item["canonicalTextSha256"] for item in sources],

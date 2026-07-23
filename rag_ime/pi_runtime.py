@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
+from urllib.request import getproxies
 
 from .agent_execution_policy import execution_policy_prompt
 from .agent_events import AgentEventHub
@@ -499,7 +500,7 @@ class PiRuntimeConfig:
             return
         payload = {"providers": providers}
         encoded = (json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True) + "\n").encode("utf-8")
-        for secret in self.provider_environment.values():
+        for secret in _provider_credential_values(self.provider_environment):
             if secret and secret.encode("utf-8") in encoded:
                 raise PiRuntimeError("managed Pi models.json must not contain provider credentials")
         temporary = self.agent_dir / f".models.json.tmp-{uuid.uuid4().hex}"
@@ -1976,7 +1977,20 @@ class PiRuntimeManager:
             self.sessions.set_status(session_id, "idle", message_count=len(messages), last_message_preview=preview)
             return
         if event_type == "extension_error":
-            self._turn_failed(session_id, turn_id, PiRuntimeError(str(raw.get("error") or "Pi extension failed")))
+            self.events.publish(
+                session_id,
+                "status_changed",
+                {
+                    "status": "analyzing" if turn_id else "ready",
+                    "phase": "extension_warning",
+                    "extensionEvent": str(raw.get("event") or ""),
+                    "warning": _redact_runtime_text(
+                        str(raw.get("error") or "Pi extension failed")
+                    ),
+                },
+                turn_id=turn_id,
+            )
+            return
 
     def has_pending_approval(self, session_id: str, approval_id: str) -> bool:
         with self._lock:
@@ -2744,7 +2758,7 @@ def _pi_model_configuration_from_environment() -> tuple[
     explicit_provider = os.environ.get("RAG_IME_PI_PROVIDER", "").strip()
     explicit_model = os.environ.get("RAG_IME_PI_MODEL", "").strip()
     providers: dict[str, Mapping[str, object]] = {}
-    provider_environment: dict[str, str] = {}
+    provider_environment = _pi_system_proxy_environment()
     deepseek_error = ""
     try:
         knowledge = load_deepseek_config()
@@ -2805,7 +2819,7 @@ def _pi_model_configuration_from_environment() -> tuple[
 
     if not providers:
         error = imported_error or deepseek_error or "尚未配置 Pi 对话模型"
-        return provider, model, model_base_url, {}, {}, error
+        return provider, model, model_base_url, provider_environment, {}, error
     if provider not in providers:
         return (
             provider,
@@ -2822,6 +2836,74 @@ def _pi_model_configuration_from_environment() -> tuple[
     if imported_error and explicit_provider and explicit_provider != "deepseek":
         return provider, model, model_base_url, provider_environment, providers, imported_error
     return provider, model, model_base_url, provider_environment, providers, ""
+
+
+def _pi_system_proxy_environment() -> dict[str, str]:
+    """Pass the user's HTTP proxy only to remote Pi provider processes."""
+
+    if os.environ.get("RAG_IME_PI_SYSTEM_PROXY", "1").strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        return {}
+    try:
+        proxies = getproxies()
+    except OSError:
+        return {}
+    http_proxy = _supported_pi_proxy(proxies.get("http"))
+    https_proxy = _supported_pi_proxy(proxies.get("https")) or http_proxy
+    if not http_proxy and not https_proxy:
+        return {}
+    no_proxy = _pi_no_proxy(proxies.get("no"))
+    environment = {
+        "NODE_USE_ENV_PROXY": "1",
+        "NO_PROXY": no_proxy,
+        "no_proxy": no_proxy,
+    }
+    if http_proxy:
+        environment.update(
+            {
+                "HTTP_PROXY": http_proxy,
+                "http_proxy": http_proxy,
+            }
+        )
+    if https_proxy:
+        environment.update(
+            {
+                "HTTPS_PROXY": https_proxy,
+                "https_proxy": https_proxy,
+            }
+        )
+    return environment
+
+
+def _supported_pi_proxy(value: object) -> str:
+    proxy = str(value or "").strip()
+    if not proxy:
+        return ""
+    parsed = urlsplit(proxy)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.query
+        or parsed.fragment
+    ):
+        return ""
+    return proxy
+
+
+def _pi_no_proxy(value: object) -> str:
+    entries = [
+        item.strip()
+        for item in str(value or "").replace(" ", ",").split(",")
+        if item.strip()
+    ]
+    for required in ("127.0.0.1", "localhost", "::1"):
+        if required not in entries:
+            entries.append(required)
+    return ",".join(entries)
 
 
 def _deepseek_pi_provider(
@@ -2879,6 +2961,17 @@ def _configured_model_ids(provider: Mapping[str, object] | None) -> list[str]:
         if isinstance(value, Mapping)
         for model_id in [str(value.get("id") or "").strip()]
         if model_id
+    ]
+
+
+def _provider_credential_values(environment: Mapping[str, str]) -> list[str]:
+    """Return secret-bearing Provider values without treating proxy flags as secrets."""
+
+    credential_markers = ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+    return [
+        str(value)
+        for key, value in environment.items()
+        if value and any(marker in str(key).upper() for marker in credential_markers)
     ]
 
 
