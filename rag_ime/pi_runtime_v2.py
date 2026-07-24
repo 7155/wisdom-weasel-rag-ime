@@ -215,8 +215,16 @@ class PiRuntimeHostClient:
                     now_ms=int(time.time() * 1000),
                 )
             except Exception:
-                self._process.kill()
-                self._process.wait(timeout=2)
+                process = self._process
+                process.kill()
+                process.wait(timeout=2)
+                for stream in (
+                    process.stdin,
+                    process.stdout,
+                    process.stderr,
+                ):
+                    if stream is not None:
+                        stream.close()
                 self._process = None
                 raise
             self._stopping = False
@@ -2437,7 +2445,16 @@ class PiRuntimeHostManager:
             self._last_error = message
         for session_id, turn_id in active:
             self.sessions.set_status(session_id, "faulted", last_message_preview=message)
-            self.events.publish(session_id, "turn_failed", {"error": message}, turn_id=turn_id)
+            self.events.publish(
+                session_id,
+                "turn_failed",
+                {
+                    "error": message,
+                    "failureKind": "runtime_host_exit",
+                    "exitCode": exit_code,
+                },
+                turn_id=turn_id,
+            )
 
     def _abort_fallback_expired(self, session_id: str, turn_id: str) -> None:
         # session.abort is an ACK, not a terminal event. If a host/extension

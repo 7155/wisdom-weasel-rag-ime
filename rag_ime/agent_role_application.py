@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .agent_personas import AgentPersonaStore
@@ -16,12 +16,18 @@ class AgentRoleApplicationService:
         self,
         *,
         personas: AgentPersonaStore,
-        runtime: Any,
+        runtime_provider: Callable[[], Any],
         runtime_factory: Any,
     ) -> None:
         self.personas = personas
-        self.runtime = runtime
+        self._runtime_provider = runtime_provider
         self.runtime_factory = runtime_factory
+
+    @property
+    def runtime(self) -> Any:
+        """Resolve the current interactive Runtime after policy replacement."""
+
+        return self._runtime_provider()
 
     def list_roles(self) -> dict[str, object]:
         available_models = self.available_models()

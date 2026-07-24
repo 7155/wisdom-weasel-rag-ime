@@ -1414,6 +1414,49 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(opened[0]["params"]["toolManifest"][0]["name"], "ime_memory")
         self.assertEqual(opened[0]["params"]["thinkingLevel"], "max")
 
+    def test_live_peer_runtime_manager_cannot_kill_the_active_host(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        client = self.runtime._client
+        self.assertIsNotNone(client)
+        assert client is not None
+        active_host_identity = client.host_identity
+
+        peer = PiRuntimeHostManager(
+            config=self.runtime.config,
+            sessions=self.store,
+            events=self.events,
+            tool_manifest_provider=lambda _session: [],
+        )
+        try:
+            self.assertEqual(
+                peer.runtime_status()["runtimeHostKillGate"][
+                    "orphanReconcileReceipts"
+                ],
+                [],
+            )
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "unreconciled Runtime Host",
+            ):
+                peer.available_models()
+
+            self.assertTrue(client.running)
+            self.assertEqual(
+                self.runtime.ensure(session_id)["state"][
+                    "sessionId"
+                ],
+                session_id,
+            )
+            self.assertEqual(
+                self.runtime._kill_gate.process(
+                    active_host_identity
+                )["state"],
+                "running",
+            )
+        finally:
+            peer.stop()
+
     def test_close_session_keeps_other_hosted_sessions_ready(self) -> None:
         first_id = str(self.first["id"])
         second_id = str(self.second["id"])
@@ -1936,6 +1979,37 @@ class PiRuntimeV2Tests(unittest.TestCase):
         failed = [item for item in self.events.replay(session_id)[0] if item.event_type == "turn_failed"]
         self.assertEqual(failed[-1].turn_id, "turn-provider-error")
         self.assertEqual(failed[-1].payload["error"], "provider failed")
+
+    def test_host_exit_is_classified_separately_from_provider_failure(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        client = self.runtime._client
+        self.assertIsNotNone(client)
+        with self.runtime._lock:
+            self.runtime._states[session_id].turn_id = (
+                "turn-runtime-host-exit"
+            )
+
+        try:
+            self.runtime._handle_host_exit(-9, "")
+
+            failed = [
+                item
+                for item in self.events.replay(session_id)[0]
+                if item.event_type == "turn_failed"
+            ]
+            self.assertEqual(
+                failed[-1].payload["failureKind"],
+                "runtime_host_exit",
+            )
+            self.assertEqual(failed[-1].payload["exitCode"], -9)
+            self.assertEqual(
+                failed[-1].payload["error"],
+                "Pi Runtime Host exited with code -9",
+            )
+        finally:
+            assert client is not None
+            client.stop()
 
     def _record_event(self, event) -> None:
         self.store.record_runtime_event(

@@ -17,12 +17,19 @@ class RuntimeHostKillGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="runtime-host-kill-gate-")
         self.db_path = Path(self.tmp.name) / "room.sqlite"
-        self.observed: dict[int, tuple[int, str]] = {101: (101, "birth:101")}
+        self.observed: dict[int, tuple[int, str]] = {
+            101: (101, "birth:101"),
+            900: (900, "owner-birth:900"),
+        }
         self.signals: list[int] = []
         self.gate = RuntimeHostKillGate(
             self.db_path,
             signal_tree=self.signals.append,
             identity_probe=lambda pid: self.observed.get(pid),
+            owner_identity_provider=lambda: (
+                900,
+                "owner-birth:900",
+            ),
         )
         self.assertEqual(self.gate.initialize(), latest_migration_version())
 
@@ -85,8 +92,21 @@ class RuntimeHostKillGateTests(unittest.TestCase):
         self.assertEqual(receipt["errorCode"], "process_identity_mismatch")
         self.assertEqual(self.signals, [])
 
-    def test_restart_reconciles_an_orphan_but_not_the_current_owner(self) -> None:
+    def test_live_peer_manager_cannot_kill_the_active_host(self) -> None:
         self.register(owner="runtime:old")
+
+        receipts = self.gate.reconcile_orphans(
+            owner_instance_id="runtime:new",
+            now_ms=20,
+        )
+
+        self.assertEqual(receipts, [])
+        self.assertEqual(self.signals, [])
+        self.assertEqual(self.gate.process("host:1")["state"], "running")
+
+    def test_restart_reconciles_a_dead_owner_but_not_the_current_owner(self) -> None:
+        self.register(owner="runtime:old")
+        self.observed.pop(900)
         receipts = self.gate.reconcile_orphans(owner_instance_id="runtime:new", now_ms=20)
         self.assertEqual(len(receipts), 1)
         self.assertEqual(receipts[0]["requestKind"], "orphan_reconcile")
@@ -130,6 +150,10 @@ class RuntimeHostKillGateTests(unittest.TestCase):
             birth_token = process_birth_token(process.pid)
             gate = RuntimeHostKillGate(
                 self.db_path,
+                owner_identity_provider=lambda: (
+                    999_999,
+                    "dead-owner",
+                ),
                 confirm_attempts=20,
                 confirm_interval_seconds=0.01,
             )

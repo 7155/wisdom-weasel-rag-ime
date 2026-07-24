@@ -1573,6 +1573,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(replay_response["idempotentReplay"])
 
     def test_kernel_configuration_drives_new_sessions_and_runtime_policy(self) -> None:
+        initial_runtime = self.service.runtime
         initial = self.service.configuration()["configuration"]
         defaults = self.service.update_configuration(
             {
@@ -1600,6 +1601,15 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.assertTrue(runtime["ok"])
         self.assertEqual(runtime["configuration"]["sync"]["state"], "synchronized")
+        self.assertIsNot(self.service.runtime, initial_runtime)
+        self.assertIs(
+            self.service.role_application.runtime,
+            self.service.runtime,
+        )
+        self.assertIs(
+            self.service.message_snapshot.runtime,
+            self.service.runtime,
+        )
         self.assertTrue(self.service.runtime_status()["enabled"])
         self.assertEqual(self.service.runtime_status()["idleTimeoutSeconds"], 321)
 

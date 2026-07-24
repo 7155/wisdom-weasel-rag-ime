@@ -60,12 +60,16 @@ class RuntimeHostKillGate:
         *,
         signal_tree: Callable[[int], None] | None = None,
         identity_probe: Callable[[int], tuple[int, str] | None] | None = None,
+        owner_identity_provider: Callable[[], tuple[int, str]] | None = None,
         confirm_attempts: int = 4,
         confirm_interval_seconds: float = 0.01,
     ) -> None:
         self.db_path = Path(db_path)
         self._signal_tree = signal_tree or _signal_process_group
         self._identity_probe = identity_probe or _process_identity
+        self._owner_identity_provider = (
+            owner_identity_provider or _current_process_identity
+        )
         self._confirm_attempts = max(1, int(confirm_attempts))
         self._confirm_interval_seconds = max(0.0, float(confirm_interval_seconds))
 
@@ -90,6 +94,13 @@ class RuntimeHostKillGate:
         required = (host_identity, owner_instance_id, job_identity, process_birth_token, executable_ref)
         if any(not str(value).strip() for value in required):
             raise ValueError("runtime host process identity is incomplete")
+        owner_process_id, owner_process_birth_token = (
+            self._owner_identity_provider()
+        )
+        if int(owner_process_id) <= 0 or not str(
+            owner_process_birth_token
+        ).strip():
+            raise ValueError("runtime host owner process identity is incomplete")
         with self._connect(immediate=True) as conn:
             active = conn.execute(
                 "SELECT host_identity FROM room_v2_runtime_host_processes WHERE state='running'"
@@ -99,8 +110,9 @@ class RuntimeHostKillGate:
             conn.execute(
                 """INSERT INTO room_v2_runtime_host_processes(
                    host_identity,owner_instance_id,pid,process_group_id,job_identity,
-                   process_birth_token,executable_ref,state,registered_at_ms,updated_at_ms)
-                   VALUES (?,?,?,?,?,?,?,'running',?,?)""",
+                   process_birth_token,executable_ref,state,registered_at_ms,updated_at_ms,
+                   owner_process_id,owner_process_birth_token)
+                   VALUES (?,?,?,?,?,?,?,'running',?,?,?,?)""",
                 (
                     host_identity,
                     owner_instance_id,
@@ -111,6 +123,8 @@ class RuntimeHostKillGate:
                     executable_ref,
                     int(now_ms),
                     int(now_ms),
+                    int(owner_process_id),
+                    str(owner_process_birth_token),
                 ),
             )
         return self.process(host_identity)
@@ -202,21 +216,48 @@ class RuntimeHostKillGate:
     ) -> list[dict[str, object]]:
         with self._connect() as conn:
             rows = conn.execute(
-                """SELECT host_identity FROM room_v2_runtime_host_processes
-                   WHERE state='running' AND (?=1 OR owner_instance_id!=?)
+                """SELECT * FROM room_v2_runtime_host_processes
+                   WHERE state='running'
                    ORDER BY registered_at_ms""",
-                (int(include_owner), owner_instance_id),
             ).fetchall()
+        orphan_ids = [
+            str(row["host_identity"])
+            for row in rows
+            if self._is_reconcilable_orphan(
+                row,
+                owner_instance_id=owner_instance_id,
+                include_owner=include_owner,
+            )
+        ]
         return [
             self.request_kill(
-                str(row[0]),
+                host_identity,
                 request_kind="orphan_reconcile",
                 requested_by=f"runtime:{owner_instance_id}",
                 reason="runtime host owner restarted",
                 now_ms=now_ms,
             )
-            for row in rows
+            for host_identity in orphan_ids
         ]
+
+    def _is_reconcilable_orphan(
+        self,
+        row: sqlite3.Row,
+        *,
+        owner_instance_id: str,
+        include_owner: bool,
+    ) -> bool:
+        if str(row["owner_instance_id"]) == owner_instance_id:
+            return include_owner
+        owner_process_id = int(row["owner_process_id"])
+        owner_birth_token = str(row["owner_process_birth_token"])
+        if owner_process_id <= 0 or not owner_birth_token:
+            # Rows created before owner-process fencing cannot prove that
+            # their supervisor is still alive, so startup keeps the legacy
+            # bounded orphan recovery behavior.
+            return True
+        observed = self._identity_probe(owner_process_id)
+        return observed is None or observed[1] != owner_birth_token
 
     def receipt(self, receipt_id: str) -> dict[str, object]:
         with self._connect() as conn:
@@ -333,6 +374,14 @@ def process_birth_token(pid: int) -> str:
     if identity is None:
         raise RuntimeError("Runtime Host exited before process identity registration")
     return identity[1]
+
+
+def _current_process_identity() -> tuple[int, str]:
+    pid = os.getpid()
+    identity = _process_identity(pid)
+    if identity is None:
+        raise RuntimeError("Runtime Host owner process identity is unavailable")
+    return pid, identity[1]
 
 
 def _process_identity(pid: int) -> tuple[int, str] | None:

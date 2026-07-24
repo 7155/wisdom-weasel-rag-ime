@@ -339,7 +339,7 @@ class AgentService:
         )
         self.role_application = AgentRoleApplicationService(
             personas=self.personas,
-            runtime=self.runtime,
+            runtime_provider=lambda: self.runtime,
             runtime_factory=self.runtime_factory,
         )
         # Build the Room runtime graph now, but do not start its worker until
@@ -610,7 +610,7 @@ class AgentService:
         self.approval_application = AgentApprovalApplicationService(self)
         self.message_snapshot = AgentMessageSnapshotService(
             sessions=self.sessions,
-            runtime=self.runtime,
+            runtime_provider=lambda: self.runtime,
             agent_blocks=self.agent_blocks,
             observations=self.observations,
             events=self.events,

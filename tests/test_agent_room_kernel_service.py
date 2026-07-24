@@ -1942,6 +1942,36 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertTrue(str(failed_data["requestId"]).endswith(":provider"))
         self.assertNotIn("private upstream", str(failed))
 
+        self.service.events.publish(
+            self.session_id,
+            "turn_failed",
+            {
+                "error": "Pi Runtime Host exited with code -9",
+                "failureKind": "runtime_host_exit",
+                "exitCode": -9,
+            },
+            turn_id="turn:runtime-host-exit",
+        )
+        runtime_failed = self.service.rooms.list_events(
+            self.room_id,
+            limit=200,
+        )[-1]
+        runtime_failed_data = runtime_failed["payload"]["data"]
+        self.assertEqual(
+            runtime_failed_data["status"],
+            "runtime_error",
+        )
+        self.assertEqual(
+            runtime_failed_data["summary"],
+            "Agent 运行时中断，任务已暂停等待恢复",
+        )
+        self.assertTrue(
+            str(runtime_failed_data["requestId"]).endswith(
+                ":runtime"
+            )
+        )
+        self.assertNotIn("code -9", str(runtime_failed))
+
     def test_worker_lifecycle_is_stoppable(self) -> None:
         self.service.room_kernel_worker_loop.start()
         self.assertTrue(self.service.room_kernel_worker_loop.running)

@@ -131,12 +131,10 @@ class AgentEventProjectionService:
                     }
             elif event.event_type == "turn_failed":
                 dispatch_id = str(binding["dispatchId"])
-                public_data = {
-                    "status": "provider_error",
-                    "summary": "模型响应失败，任务已暂停等待恢复",
-                    "requestId": f"{dispatch_id}:provider",
-                    "isError": True,
-                }
+                public_data = _public_turn_failure(
+                    event,
+                    dispatch_id=dispatch_id,
+                )
             room_id = str(binding["roomId"])
             room = self.rooms.get(room_id)
             self.public_timeline.publish_runtime(
@@ -338,11 +336,7 @@ def room_event_projection(
             ("status", "summary"),
         )
     if event.event_type == "turn_failed":
-        return "turn_failed", {
-            "status": "failed",
-            "summary": "模型响应失败，任务已暂停等待恢复",
-            "isError": True,
-        }
+        return "turn_failed", _public_turn_failure(event)
     data = _room_scalar_projection(
         payload,
         (
@@ -377,6 +371,40 @@ def room_event_projection(
             data["summary"] = summary
         data.update(references)
     return "participant_activity", data
+
+
+def _public_turn_failure(
+    event: AgentEventEnvelope,
+    *,
+    dispatch_id: str = "",
+) -> dict[str, object]:
+    runtime_host_exit = (
+        str(event.payload.get("failureKind") or "")
+        == "runtime_host_exit"
+    )
+    kind = "runtime" if runtime_host_exit else "provider"
+    return {
+        "status": (
+            "runtime_error"
+            if runtime_host_exit
+            else (
+                "provider_error"
+                if dispatch_id
+                else "failed"
+            )
+        ),
+        "summary": (
+            "Agent 运行时中断，任务已暂停等待恢复"
+            if runtime_host_exit
+            else "模型响应失败，任务已暂停等待恢复"
+        ),
+        **(
+            {"requestId": f"{dispatch_id}:{kind}"}
+            if dispatch_id
+            else {}
+        ),
+        "isError": True,
+    }
 
 
 def _completed_message_failed(

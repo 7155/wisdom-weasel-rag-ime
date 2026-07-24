@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from .agent_protocol import AgentEventEnvelope
@@ -14,16 +14,22 @@ class AgentMessageSnapshotService:
         self,
         *,
         sessions: Any,
-        runtime: Any,
+        runtime_provider: Callable[[], Any],
         agent_blocks: Any,
         observations: Any,
         events: Any,
     ) -> None:
         self.sessions = sessions
-        self.runtime = runtime
+        self._runtime_provider = runtime_provider
         self.agent_blocks = agent_blocks
         self.observations = observations
         self.events = events
+
+    @property
+    def runtime(self) -> Any:
+        """Resolve the current interactive Runtime after policy replacement."""
+
+        return self._runtime_provider()
 
     def messages(self, session_id: str) -> dict[str, object]:
         session = self.sessions.get(session_id)
