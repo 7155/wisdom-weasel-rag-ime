@@ -64,16 +64,14 @@ class RoomTaskContextProjector:
                 original_statement_sources=original_statement_sources,
             )
             for item in _mappings(catalog.get("items"))
-            if not requirement_ids
-            or str(item.get("itemId") or "") in requirement_ids
+            if str(item.get("itemId") or "") in requirement_ids
         ][:64]
         criteria = [
             _acceptance_criterion(criterion)
             for criterion in _mappings(
                 catalog.get("acceptanceCriteria")
             )
-            if not criterion_ids
-            or str(criterion.get("criterionId") or "")
+            if str(criterion.get("criterionId") or "")
             in criterion_ids
         ][:64]
         packet = {

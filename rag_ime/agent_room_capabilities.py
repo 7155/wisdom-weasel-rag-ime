@@ -47,6 +47,11 @@ _RICH_BLOCK_INPUT_SCHEMA = {
 
 _QUALITY_GATE_INPUT_SCHEMA = {
     "type": "object",
+    "description": (
+        "这是 room_commit.qualityGate 的嵌套对象，不是顶层字段。"
+        "originalRequestChecked、verdict、items、residualRisks 四个字段"
+        "必须全部放在本对象内。"
+    ),
     "required": [
         "originalRequestChecked",
         "verdict",
@@ -79,6 +84,10 @@ _QUALITY_GATE_INPUT_SCHEMA = {
                     "evidenceRefs": {
                         "type": "array",
                         "maxItems": 64,
+                        "description": (
+                            "本验收项使用的证据引用；status=pass 时至少一项，且每个字符串"
+                            "必须与 room_commit 顶层 evidenceRefs 中某一项完全相同。"
+                        ),
                         "items": {"type": "string", "minLength": 1},
                     },
                 },
@@ -188,8 +197,13 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "for the active Dispatch, then end the model turn immediately. "
                 "Every proposal must include a structured quality gate over every "
                 "current acceptance criterion. "
+                "The only top-level quality field is qualityGate: keep "
+                "originalRequestChecked, verdict, items and residualRisks nested "
+                "inside qualityGate, never beside it. "
                 "For deliver, copy acceptance.criteria[].criterionId exactly from "
-                "the provider-only Room task context into requirementCoverage."
+                "the provider-only Room task context into requirementCoverage, and "
+                "copy every evidence ref byte-for-byte into both the top-level "
+                "evidenceRefs set and the matching passing qualityGate item."
             ),
             "when": (
                 "完成实现或修复后，需要提交验收覆盖与证据",
@@ -207,6 +221,12 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "operation": "room.commit",
             "inputSchema": {
                 "type": "object",
+                "description": (
+                    "顶层只接受 decision、result、qualityGate、evidenceRefs、"
+                    "requirementCoverage 以及按 decision 需要的交接/展示字段。"
+                    "originalRequestChecked、verdict、items、residualRisks "
+                    "只能嵌套在 qualityGate 内。"
+                ),
                 "required": [
                     "decision",
                     "result",
@@ -223,6 +243,10 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     "evidenceRefs": {
                         "type": "array",
                         "maxItems": 64,
+                        "description": (
+                            "本次提交的证据全集。必须包含 qualityGate 中每个 pass 项"
+                            "使用的全部 evidenceRefs，字符串逐字相同；不得只写摘要。"
+                        ),
                         "items": {"type": "string", "minLength": 1},
                     },
                     "requirementCoverage": {
@@ -231,7 +255,9 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "description": (
                             "只能填写当前 Task.acceptanceCriterionIds；"
                             "从 Room task context 的 acceptance.criteria[].criterionId 原样复制；"
-                            "不得填写 requirementItemIds，没有验收条件时传空数组。"
+                            "其集合必须与 qualityGate.items 中 status=pass 的 criterionId "
+                            "完全相同；不得包含 fail/not_verified 项，不得填写 "
+                            "requirementItemIds，没有验收条件时传空数组。"
                         ),
                         "items": {"type": "string", "minLength": 1},
                     },
@@ -424,29 +450,34 @@ class RoomCapabilityManifestStore:
         created_at_ms: int,
     ) -> tuple[dict[str, object], bool]:
         manifest = self._manifest(manifest_id, manifest_hash)
-        needle = str(query or "").strip().casefold()
+        normalized_query = str(query or "").strip()
+        ranked = [
+            (
+                _tool_routing_score(normalized_query, _mapping(tool)),
+                index,
+                _mapping(tool),
+            )
+            for index, tool in enumerate(manifest["tools"])
+        ]
+        if normalized_query:
+            ranked = [item for item in ranked if item[0] > 0]
+            ranked.sort(
+                key=lambda item: (
+                    -item[0],
+                    str(item[2].get("name") or ""),
+                    item[1],
+                )
+            )
         items = [
             {key: tool[key] for key in _MODEL_TOOL_CATALOG_KEYS}
-            for tool in manifest["tools"]
-            if not needle
-            or needle in str(tool["name"]).casefold()
-            or needle in str(tool["description"]).casefold()
-            or needle in " ".join(
-                [
-                    *[str(item) for item in tool["when"]],
-                    *[str(item) for item in tool["notFor"]],
-                    str(tool["input"]),
-                    str(tool["output"]),
-                    str(tool["does"]),
-                ]
-            ).casefold()
+            for _score, _index, tool in ranked
         ]
         # Search deliberately never discloses inputSchema.
         return self._record_disclosure(
             receipt_id=receipt_id,
             manifest=manifest,
             kind="search",
-            query=str(query or "").strip(),
+            query=normalized_query,
             tool_name="",
             schema_hash="",
             items=items,
@@ -1384,6 +1415,82 @@ def _runtime_binding_payload(row: sqlite3.Row) -> dict[str, object]:
         "capabilityEpoch": int(row["capability_epoch"]),
         "state": str(row["state"]),
     }
+
+
+def _tool_routing_score(
+    query: str,
+    tool: Mapping[str, object],
+) -> int:
+    normalized = query.strip().casefold()
+    if not normalized:
+        return 1
+    name = str(tool.get("name") or "").casefold()
+    fragments = _query_fragments(normalized)
+    if normalized == name:
+        return 1_000
+    if name in fragments:
+        return 900
+
+    when = [str(value) for value in tool.get("when") or []]
+    not_for = [str(value) for value in tool.get("notFor") or []]
+    if any(
+        normalized in value.casefold()
+        or _fragment_coverage(normalized, value) >= 0.75
+        for value in not_for
+    ):
+        return -1
+
+    description = str(tool.get("description") or "")
+    supporting = " ".join(
+        [
+            description,
+            str(tool.get("input") or ""),
+            str(tool.get("output") or ""),
+            str(tool.get("does") or ""),
+        ]
+    ).casefold()
+    when_text = " ".join(when).casefold()
+    score = 0
+    if normalized in name:
+        score += 300
+    if normalized in when_text:
+        score += 120
+    if normalized in supporting:
+        score += 60
+    for fragment in fragments:
+        if fragment in name:
+            score += 40
+        if fragment in when_text:
+            score += 16
+        if fragment in supporting:
+            score += 8
+    positive_coverage = max(
+        (0.0, *(_fragment_coverage(normalized, value) for value in when))
+    )
+    if positive_coverage >= 0.5:
+        score += round(positive_coverage * 100)
+    return score
+
+
+def _query_fragments(query: str) -> set[str]:
+    fragments: set[str] = set()
+    for token in re.findall(r"[\w-]+", query.casefold(), flags=re.UNICODE):
+        fragments.add(token)
+        if len(token) >= 2 and all("\u4e00" <= char <= "\u9fff" for char in token):
+            fragments.update(
+                token[index : index + 2]
+                for index in range(len(token) - 1)
+            )
+    return fragments
+
+
+def _fragment_coverage(query: str, value: str) -> float:
+    fragments = _query_fragments(query)
+    if not fragments:
+        return 0.0
+    normalized = value.casefold()
+    matched = sum(fragment in normalized for fragment in fragments)
+    return matched / len(fragments)
 
 
 def _names(values: Sequence[str]) -> tuple[str, ...]:

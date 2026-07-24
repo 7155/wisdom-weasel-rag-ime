@@ -9,7 +9,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from room_context_epoch_canary import (
     JsonRequester,
@@ -533,6 +533,169 @@ def loaded_tool_receipt_evidence(
     return result
 
 
+def quality_gate_commit_evidence(
+    db_path: Path,
+    *,
+    tasks: list[dict[str, Any]],
+    dispatches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    tasks_by_id = {
+        str(task.get("taskId") or ""): task
+        for task in tasks
+        if str(task.get("taskId") or "")
+    }
+    members: dict[str, dict[str, Any]] = {}
+    with sqlite3.connect(db_path) as connection:
+        for index, member in enumerate(("A", "B", "C")):
+            dispatch = dispatches[index]
+            dispatch_id = str(dispatch.get("dispatchId") or "")
+            task_id = str(dispatch.get("taskId") or "")
+            task = tasks_by_id.get(task_id, {})
+            row = connection.execute(
+                """
+                SELECT payload_json
+                FROM room_kernel_commits
+                WHERE dispatch_id = ?
+                """,
+                (dispatch_id,),
+            ).fetchone()
+            attempt_rows = connection.execute(
+                """
+                SELECT kernel_receipt_json
+                FROM room_kernel_settle_attempt_receipts
+                WHERE dispatch_id = ?
+                ORDER BY created_at_ms, settle_receipt_id
+                """,
+                (dispatch_id,),
+            ).fetchall()
+            payload = (
+                json.loads(str(row[0]))
+                if row is not None
+                else {}
+            )
+            receipt = payload.get("qualityGateReceipt")
+            receipt = receipt if isinstance(receipt, dict) else {}
+            items = receipt.get("items")
+            items = items if isinstance(items, list) else []
+            criteria = {
+                str(value)
+                for value in task.get("acceptanceCriterionIds") or []
+                if str(value)
+            }
+            item_criteria = {
+                str(item.get("criterionId") or "")
+                for item in items
+                if isinstance(item, dict)
+                and str(item.get("criterionId") or "")
+            }
+            pass_items = [
+                item
+                for item in items
+                if isinstance(item, dict)
+                and item.get("status") == "pass"
+            ]
+            pass_criteria = {
+                str(item.get("criterionId") or "")
+                for item in pass_items
+                if str(item.get("criterionId") or "")
+            }
+            aggregate_evidence = {
+                str(value)
+                for value in payload.get("evidenceRefs") or []
+                if str(value)
+            }
+            pass_item_evidence = [
+                {
+                    str(value)
+                    for value in item.get("evidenceRefs") or []
+                    if str(value)
+                }
+                for item in pass_items
+            ]
+            continuation = payload.get("continuation")
+            continuation = (
+                continuation if isinstance(continuation, dict) else {}
+            )
+            decision = str(continuation.get("decision") or "")
+            expected_verdict = (
+                "ready_to_deliver"
+                if decision == "complete"
+                else "not_ready"
+            )
+            checks = {
+                "commitSchemaV3": payload.get("schemaVersion")
+                == "wisdom-weasel.room-commit.v3",
+                "receiptSchemaV1": receipt.get("schemaVersion")
+                == "wisdom-weasel.room-quality-gate-receipt.v1",
+                "identityBound": (
+                    receipt.get("rootId") == dispatch.get("rootId")
+                    and receipt.get("taskId") == task_id
+                    and receipt.get("dispatchId") == dispatch_id
+                    and receipt.get("generation")
+                    == dispatch.get("generation")
+                ),
+                "originalRequestChecked": receipt.get(
+                    "originalRequestChecked"
+                )
+                is True,
+                "criterionCoverageExact": (
+                    len(items) == len(criteria)
+                    and item_criteria == criteria
+                    and pass_criteria
+                    == {
+                        str(value)
+                        for value in payload.get(
+                            "requirementCoverage"
+                        )
+                        or []
+                        if str(value)
+                    }
+                ),
+                "completeHasOnlyPassingCriteria": (
+                    decision != "complete"
+                    or len(pass_items) == len(criteria)
+                ),
+                "passEvidenceCommitted": all(
+                    evidence
+                    and evidence <= aggregate_evidence
+                    for evidence in pass_item_evidence
+                ),
+                "verdictMatchesExit": receipt.get("verdict")
+                == expected_verdict,
+                "settleRepairsBounded": len(attempt_rows) <= 2,
+            }
+            members[member] = {
+                "dispatchId": dispatch_id,
+                "taskId": task_id,
+                "receiptId": str(receipt.get("receiptId") or ""),
+                "verdict": str(receipt.get("verdict") or ""),
+                "criterionCount": len(criteria),
+                "passCount": len(pass_criteria),
+                "settleRepairCount": len(attempt_rows),
+                "settleRepairReasons": [
+                    str(
+                        (
+                            json.loads(str(attempt[0])).get(
+                                "details"
+                            )
+                            or {}
+                        ).get("reason")
+                        or ""
+                    )
+                    for attempt in attempt_rows
+                ],
+                "checks": checks,
+                "passed": bool(receipt.get("receiptId"))
+                and all(checks.values()),
+            }
+    return {
+        "members": members,
+        "passed": all(
+            value["passed"] for value in members.values()
+        ),
+    }
+
+
 def _effective_loaded_tool_receipts(
     loaded: list[dict[str, Any]],
     disclosed_names: set[str],
@@ -553,6 +716,21 @@ def _effective_loaded_tool_receipts(
 
 def _statuses(value: dict[str, Any]) -> list[str]:
     return [str(item.get("status") or "") for item in value.get("items") or []]
+
+
+def _bounded_commit_statuses(value: dict[str, Any]) -> bool:
+    statuses = _statuses(value)
+    return (
+        1 <= len(statuses) <= 3
+        and statuses[-1] == "applied"
+        and statuses.count("applied") == 1
+        and all(status == "" for status in statuses[:-1])
+    )
+
+
+def _bounded_room_state_statuses(value: dict[str, Any]) -> bool:
+    statuses = _statuses(value)
+    return 1 <= len(statuses) <= 2 and set(statuses) == {"applied"}
 
 
 def tool_workload_checks(
@@ -583,19 +761,11 @@ def tool_workload_checks(
         "aTestFailureRecovered": _statuses(a["workspace_shell"])
         == ["failed", "applied"],
         "aPublicCommit": _statuses(a["room_post"]) == ["applied"]
-        and _statuses(a["room_commit"]) == ["applied"],
+        and _bounded_commit_statuses(a["room_commit"]),
     }
     b = receipts["B"]
-    b_commit_statuses = _statuses(b["room_commit"])
-    b_clean_commit = (
-        _statuses(b["room_state"]) == ["applied"]
-        and b_commit_statuses == ["applied"]
-    )
-    b_recovered_commit = (
-        _statuses(b["room_state"]) == ["applied"]
-        and b_commit_statuses == ["", "applied"]
-    )
-    checks["bRoomState"] = b_clean_commit or b_recovered_commit
+    b_commit_bounded = _bounded_commit_statuses(b["room_commit"])
+    checks["bRoomState"] = _bounded_room_state_statuses(b["room_state"])
     checks["bIndependentReads"] = _statuses(b["workspace_read"]) == [
         "applied",
         "applied",
@@ -606,21 +776,11 @@ def tool_workload_checks(
     )
     checks["bPublicCommit"] = _statuses(b["room_post"]) == [
         "applied"
-    ] and (b_clean_commit or b_recovered_commit)
-    checks["bCommitValidationPathBounded"] = (
-        b_clean_commit or b_recovered_commit
-    )
+    ] and b_commit_bounded
+    checks["bCommitValidationPathBounded"] = b_commit_bounded
     c = receipts["C"]
-    c_commit_statuses = _statuses(c["room_commit"])
-    c_clean_commit = (
-        _statuses(c["room_state"]) == ["applied"]
-        and c_commit_statuses == ["applied"]
-    )
-    c_recovered_commit = (
-        _statuses(c["room_state"]) == ["applied", "applied"]
-        and c_commit_statuses == ["", "applied"]
-    )
-    checks["cRoomState"] = c_clean_commit or c_recovered_commit
+    c_commit_bounded = _bounded_commit_statuses(c["room_commit"])
+    checks["cRoomState"] = _bounded_room_state_statuses(c["room_state"])
     checks["cIndependentReads"] = _statuses(c["workspace_read"]) == [
         "applied",
         "applied",
@@ -629,10 +789,8 @@ def tool_workload_checks(
     checks["cNeverPatched"] = c["workspace_patch"]["invocationCount"] == 0
     checks["cPublicCommit"] = _statuses(c["room_post"]) == [
         "applied"
-    ] and (c_clean_commit or c_recovered_commit)
-    checks["cCommitValidationPathBounded"] = (
-        c_clean_commit or c_recovered_commit
-    )
+    ] and c_commit_bounded
+    checks["cCommitValidationPathBounded"] = c_commit_bounded
     checks["everyInvocationHasOneLoadReceipt"] = all(
         evidence["invocationCount"] == 0 or len(evidence["loadReceiptIds"]) == 1
         for member in receipts.values()
@@ -708,6 +866,7 @@ def _compact_members(
     loaded_tool_receipts: dict[str, list[dict[str, Any]]],
     disclosed_tool_names: dict[str, set[str]],
     skill_receipts: dict[str, dict[str, Any]],
+    expected_acceptance_counts: Mapping[str, int],
 ) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
     for member, session_id in session_ids.items():
@@ -774,7 +933,8 @@ def _compact_members(
             )
             >= 1
             and transition["recovery"]["currentTask"] is True
-            and int(transition["recovery"]["acceptance"] or 0) >= 6,
+            and int(transition["recovery"]["acceptance"] or 0)
+            == expected_acceptance_counts[member],
             "handoffRecovered": transition["recovery"]["handoff"] is True,
             "skillReceiptExact": transition["recovery"]["skillReceiptId"]
             == expected_skill_receipt,
@@ -797,6 +957,7 @@ def _compact_members(
             "after": after,
             "transition": transition,
             "expectedSkillReceiptId": expected_skill_receipt,
+            "expectedAcceptanceCount": expected_acceptance_counts[member],
             "expectedToolReceiptIds": sorted(expected_tool_ids),
             "expectedToolReceiptNames": sorted(expected_tool_names),
             "loadedWithoutInvocationReceiptIds": sorted(
@@ -809,6 +970,34 @@ def _compact_members(
             "passed": all(checks.values()),
         }
     return results
+
+
+def task_acceptance_counts(
+    tasks: Sequence[Mapping[str, Any]],
+    dispatches: Sequence[Mapping[str, Any]],
+) -> dict[str, int]:
+    task_by_id = {
+        str(task.get("taskId") or ""): task
+        for task in tasks
+        if str(task.get("taskId") or "")
+    }
+    if len(dispatches) != 3:
+        raise RuntimeError("three-member canary requires one terminal Dispatch per member")
+    result: dict[str, int] = {}
+    for member, dispatch in zip(("A", "B", "C"), dispatches, strict=True):
+        task_id = str(dispatch.get("taskId") or "")
+        task = task_by_id.get(task_id)
+        if task is None:
+            raise RuntimeError(
+                f"terminal Dispatch for member {member} has no matching Task"
+            )
+        criterion_ids = task.get("acceptanceCriterionIds")
+        if not isinstance(criterion_ids, list):
+            raise RuntimeError(
+                f"Task {task_id} has no canonical acceptanceCriterionIds array"
+            )
+        result[member] = len(criterion_ids)
+    return result
 
 
 def _role_texts(
@@ -1241,6 +1430,11 @@ def run(
         session_ids=session_ids,
         dispatches=ordered_terminal_dispatches,
     )
+    quality_gate_receipts = quality_gate_commit_evidence(
+        args.db_path,
+        tasks=terminal_tasks,
+        dispatches=ordered_terminal_dispatches,
+    )
     tool_checks = tool_workload_checks(tool_receipts)
     approvals = managed_approval_evidence(
         args.base_url,
@@ -1355,27 +1549,38 @@ def run(
             not cache_usage_observed
         )
     transcript = private_transcript_evidence(args.pi_session_dir, before)
-    b_commit_recovered = _statuses(
+    a_commit_repair_count = _statuses(
+        tool_receipts["A"]["room_commit"]
+    ).count("")
+    tool_checks["aRepairContinuationBounded"] = (
+        int(
+            transcript["transcripts"]["A"][
+                "repairContinuationCount"
+            ]
+        )
+        == a_commit_repair_count
+    )
+    b_commit_repair_count = _statuses(
         tool_receipts["B"]["room_commit"]
-    ) == ["", "applied"]
+    ).count("")
     tool_checks["bRepairContinuationBounded"] = (
         int(
             transcript["transcripts"]["B"][
                 "repairContinuationCount"
             ]
         )
-        == (1 if b_commit_recovered else 0)
+        == b_commit_repair_count
     )
-    c_commit_recovered = _statuses(
+    c_commit_repair_count = _statuses(
         tool_receipts["C"]["room_commit"]
-    ) == ["", "applied"]
+    ).count("")
     tool_checks["cRepairContinuationBounded"] = (
         int(
             transcript["transcripts"]["C"][
                 "repairContinuationCount"
             ]
         )
-        == (1 if c_commit_recovered else 0)
+        == c_commit_repair_count
     )
     independent = _independent_project_verification(workspace)
     final_source = (workspace / "calculator.py").read_text(encoding="utf-8")
@@ -1399,6 +1604,10 @@ def run(
             for member in ("A", "B", "C")
         },
         skill_receipts=skill_receipts,
+        expected_acceptance_counts=task_acceptance_counts(
+            terminal_tasks,
+            ordered_terminal_dispatches,
+        ),
     )
     continuity = _session_continuity_probe(
         args,
@@ -1425,6 +1634,10 @@ def run(
         "publicPostsExact": all(public_post_checks.values()),
         "toolWorkloadExact": all(tool_checks.values()),
         "skillsExact": all(skill_checks.values()),
+        "qualityGateReceiptsValid": quality_gate_receipts[
+            "passed"
+        ]
+        is True,
         "providerContextsValid": all(prompt_checks.values()),
         "privateSessionHistories": transcript["passed"] is True,
         "projectImplementationApproved": _approved_project_source(final_source),
@@ -1475,6 +1688,7 @@ def run(
         "toolChecks": tool_checks,
         "skillReceipts": skill_receipts,
         "skillChecks": skill_checks,
+        "qualityGateReceipts": quality_gate_receipts,
         "beforeCompaction": before,
         "promptChecks": prompt_checks,
         "transcriptIsolation": transcript,

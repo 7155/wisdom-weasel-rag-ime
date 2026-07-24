@@ -483,6 +483,15 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         self.assertIn('kind="repair_commit"', settled["message"])
         self.assertIn("不得填写 requirementItemIds", settled["message"])
         self.assertIn(
+            "originalRequestChecked、verdict、items、residualRisks "
+            "只能放在 qualityGate 内",
+            settled["message"],
+        )
+        self.assertIn(
+            "每条证据引用必须从顶层 evidenceRefs 逐字复制",
+            settled["message"],
+        )
+        self.assertIn(
             "若当前模型无法完成且没有合法新动作",
             settled["message"],
         )

@@ -119,6 +119,33 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         self.assertFalse(evidence["checks"]["parents"])
         self.assertFalse(evidence["checks"]["hops"])
 
+    def test_compaction_expects_each_current_tasks_exact_acceptance_set(self) -> None:
+        tasks = [
+            self._task(
+                "t1",
+                None,
+                "pa",
+                acceptance_criterion_ids=[f"criterion-{index}" for index in range(6)],
+            ),
+            self._task("t2", "t1", "pb", acceptance_criterion_ids=[]),
+            self._task(
+                "t3",
+                "t1",
+                "pc",
+                acceptance_criterion_ids=["criterion-3", "criterion-4", "criterion-5"],
+            ),
+        ]
+        dispatches = [
+            self._dispatch("d1", "t1", None, 0, 0, "execute", "pa", "sa"),
+            self._dispatch("d2", "t2", "d1", 1, 1, "review", "pb", "sb"),
+            self._dispatch("d3", "t3", "d1", 1, 0, "close", "pc", "sc"),
+        ]
+
+        self.assertEqual(
+            CANARY.task_acceptance_counts(tasks, dispatches),
+            {"A": 6, "B": 0, "C": 3},
+        )
+
     def test_tool_workload_requires_parallel_review_and_formal_handoff(self) -> None:
         receipts = {
             "A": self._tool_set(
@@ -224,13 +251,15 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
 
         self.assertTrue(all(checks.values()))
         receipts["B"]["room_commit"] = self._receipt(["", "", "applied"])
-        self.assertFalse(
+        self.assertTrue(
             CANARY.tool_workload_checks(receipts)[
                 "bCommitValidationPathBounded"
             ]
         )
         receipts["B"]["room_commit"] = self._receipt(["", "applied"])
-        receipts["C"]["room_commit"] = self._receipt(["", "", "applied"])
+        receipts["C"]["room_commit"] = self._receipt(
+            ["", "", "", "applied"]
+        )
         self.assertFalse(
             CANARY.tool_workload_checks(receipts)[
                 "cCommitValidationPathBounded"
@@ -386,6 +415,156 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             ],
         )
 
+    def test_quality_gate_commit_evidence_binds_receipts_and_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "quality.sqlite"
+            tasks = [
+                self._task(
+                    f"task-{member}",
+                    None,
+                    f"participant-{member}",
+                    acceptance_criterion_ids=(
+                        [] if member == "B" else [f"criterion-{member}"]
+                    ),
+                )
+                for member in ("A", "B", "C")
+            ]
+            dispatches = [
+                {
+                    **self._dispatch(
+                        f"dispatch-{member}",
+                        f"task-{member}",
+                        None,
+                        index,
+                        0,
+                        "execute",
+                        f"participant-{member}",
+                        f"session-{member}",
+                    ),
+                    "rootId": "root-1",
+                    "generation": 0,
+                }
+                for index, member in enumerate(("A", "B", "C"))
+            ]
+            with sqlite3.connect(database) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE room_kernel_commits(
+                        dispatch_id TEXT PRIMARY KEY,
+                        payload_json TEXT NOT NULL
+                    );
+                    CREATE TABLE room_kernel_settle_attempt_receipts(
+                        settle_receipt_id TEXT PRIMARY KEY,
+                        dispatch_id TEXT NOT NULL,
+                        kernel_receipt_json TEXT NOT NULL,
+                        created_at_ms INTEGER NOT NULL
+                    );
+                    """
+                )
+                for member in ("A", "B", "C"):
+                    criterion_ids = (
+                        [] if member == "B" else [f"criterion-{member}"]
+                    )
+                    evidence_refs = (
+                        [] if member == "B" else [f"evidence-{member}"]
+                    )
+                    payload = {
+                        "schemaVersion": "wisdom-weasel.room-commit.v3",
+                        "dispatchId": f"dispatch-{member}",
+                        "continuation": {"decision": "complete"},
+                        "evidenceRefs": evidence_refs,
+                        "requirementCoverage": criterion_ids,
+                        "qualityGateReceipt": {
+                            "schemaVersion": (
+                                "wisdom-weasel.room-quality-gate-receipt.v1"
+                            ),
+                            "receiptId": f"quality-{member}",
+                            "rootId": "root-1",
+                            "taskId": f"task-{member}",
+                            "dispatchId": f"dispatch-{member}",
+                            "generation": 0,
+                            "originalRequestChecked": True,
+                            "verdict": "ready_to_deliver",
+                            "items": [
+                                {
+                                    "criterionId": criterion_id,
+                                    "status": "pass",
+                                    "evidenceRefs": evidence_refs,
+                                }
+                                for criterion_id in criterion_ids
+                            ],
+                        },
+                    }
+                    connection.execute(
+                        "INSERT INTO room_kernel_commits VALUES (?, ?)",
+                        (
+                            f"dispatch-{member}",
+                            json.dumps(payload),
+                        ),
+                    )
+
+            valid = CANARY.quality_gate_commit_evidence(
+                database,
+                tasks=tasks,
+                dispatches=dispatches,
+            )
+            self.assertTrue(valid["passed"])
+
+            with sqlite3.connect(database) as connection:
+                payload = json.loads(
+                    connection.execute(
+                        "SELECT payload_json FROM room_kernel_commits "
+                        "WHERE dispatch_id = 'dispatch-C'"
+                    ).fetchone()[0]
+                )
+                original_items = list(
+                    payload["qualityGateReceipt"]["items"]
+                )
+                payload["qualityGateReceipt"]["items"] = [
+                    *original_items,
+                    dict(original_items[0]),
+                ]
+                connection.execute(
+                    "UPDATE room_kernel_commits SET payload_json = ? "
+                    "WHERE dispatch_id = 'dispatch-C'",
+                    (json.dumps(payload),),
+                )
+
+            duplicate = CANARY.quality_gate_commit_evidence(
+                database,
+                tasks=tasks,
+                dispatches=dispatches,
+            )
+            self.assertFalse(duplicate["passed"])
+            self.assertFalse(
+                duplicate["members"]["C"]["checks"][
+                    "criterionCoverageExact"
+                ]
+            )
+
+            with sqlite3.connect(database) as connection:
+                payload["qualityGateReceipt"]["items"] = original_items
+                payload["evidenceRefs"] = []
+                connection.execute(
+                    "UPDATE room_kernel_commits SET payload_json = ? "
+                    "WHERE dispatch_id = 'dispatch-C'",
+                    (json.dumps(payload),),
+                )
+
+            invalid = CANARY.quality_gate_commit_evidence(
+                database,
+                tasks=tasks,
+                dispatches=dispatches,
+            )
+            self.assertFalse(invalid["passed"])
+            self.assertFalse(
+                invalid["members"]["C"]["checks"][
+                    "passEvidenceCommitted"
+                ]
+            )
+
     @staticmethod
     def _dispatch(
         dispatch_id: str,
@@ -417,12 +596,14 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         participant_id: str,
         *,
         owner_participant_id: str | None = None,
+        acceptance_criterion_ids: list[str] | None = None,
     ) -> dict[str, object]:
         return {
             "taskId": task_id,
             "parentTaskId": parent_id,
             "ownerParticipantId": owner_participant_id or participant_id,
             "assigneeParticipantId": participant_id,
+            "acceptanceCriterionIds": acceptance_criterion_ids or [],
             "state": "completed",
         }
 

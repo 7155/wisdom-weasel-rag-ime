@@ -258,6 +258,15 @@ class RoomSettleLifecycleService:
             if str(item).strip()
         ]
         allowed = json.dumps(criterion_ids, ensure_ascii=False)
+        quality_gate_shape = (
+            '{"decision":"deliver|handoff|wait|blocked","result":"...",'
+            '"qualityGate":{"originalRequestChecked":true,'
+            '"verdict":"ready_to_deliver|not_ready","items":['
+            '{"criterionId":"<当前 Task 的原样 criterionId>",'
+            '"status":"pass|fail|not_verified","evidenceRefs":["<证据引用>"]}'
+            '],"residualRisks":[]},"evidenceRefs":["<同一证据引用>"],'
+            '"requirementCoverage":["<全部 pass criterionId>"]}'
+        )
         if follow_up_kind == "continue":
             lead = (
                 "当前受管任务还没有合法收工。一次模型回答结束不等于任务完成。"
@@ -286,8 +295,12 @@ class RoomSettleLifecycleService:
             "不要复述进度，也不要为了结束本轮而虚构等待、阻塞或完成。"
             "只有已经形成合法生命周期出口时，才调用 room_commit，明确选择 "
             "deliver、handoff、wait 或 blocked，并填写 result、qualityGate、"
-            "evidenceRefs 与 requirementCoverage。qualityGate.items 必须逐项覆盖"
+            "evidenceRefs 与 requirementCoverage。合法嵌套形状是 "
+            f"{quality_gate_shape}。originalRequestChecked、verdict、items、"
+            "residualRisks 只能放在 qualityGate 内，不能放到 room_commit 顶层。"
+            "qualityGate.items 必须逐项覆盖"
             "当前 Task 的全部验收条件；pass 项必须附新鲜证据，"
+            "每条证据引用必须从顶层 evidenceRefs 逐字复制，不得改写或猜测；"
             "requirementCoverage 必须与 pass 项完全一致。requirementCoverage "
             "只能使用当前 Task 的 "
             f"acceptanceCriterionIds={allowed}；不得填写 requirementItemIds；"

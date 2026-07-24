@@ -35,6 +35,9 @@ _ROUTING_CARD_FIELDS = frozenset(
 )
 _SKILL_CATALOG_TAG = "available_skills"
 _PRODUCT_TOOL_CATALOG_TAG = "available_product_tools"
+_SKILL_FAMILY_TAG = "skill_capability_families"
+_PRODUCT_TOOL_FAMILY_TAG = "product_tool_capability_families"
+_MAX_STAGE_CARD_COUNT = 4
 _ROOM_BOOTSTRAP_TOOL_NAMES = frozenset(
     {"room_state", "room_post", "room_commit"}
 )
@@ -569,6 +572,69 @@ def _routing_catalog_evidence(prompt: str, tag: str) -> dict[str, Any]:
     }
 
 
+def _tag_block_count(prompt: str, tag: str) -> int:
+    return prompt.count(f"<{tag}")
+
+
+def _loaded_skill_names(prompt: str) -> set[str]:
+    opening = '<loaded_skill name="'
+    names: set[str] = set()
+    cursor = 0
+    while True:
+        start = prompt.find(opening, cursor)
+        if start < 0:
+            return names
+        name_start = start + len(opening)
+        name_end = prompt.find('"', name_start)
+        if name_end < 0:
+            return names
+        name = prompt[name_start:name_end].strip()
+        if name:
+            names.add(name)
+        cursor = name_end + 1
+
+
+def _loaded_tool_result_names(messages: list[Any]) -> set[str]:
+    names: set[str] = set()
+    for message in messages:
+        if (
+            not isinstance(message, dict)
+            or message.get("role") != "toolResult"
+            or message.get("toolName") != "tool_load"
+        ):
+            continue
+        details = message.get("details")
+        if not isinstance(details, dict):
+            continue
+        tool = details.get("tool")
+        if isinstance(tool, dict) and isinstance(tool.get("name"), str):
+            names.add(str(tool["name"]))
+        tools = details.get("tools")
+        if isinstance(tools, list):
+            names.update(
+                str(item["name"])
+                for item in tools
+                if isinstance(item, dict)
+                and isinstance(item.get("name"), str)
+            )
+    return names
+
+
+def _loaded_skill_result_names(messages: list[Any]) -> set[str]:
+    names: set[str] = set()
+    for message in messages:
+        if (
+            not isinstance(message, dict)
+            or message.get("role") != "toolResult"
+            or message.get("toolName") != "skill_load"
+        ):
+            continue
+        details = message.get("details")
+        if isinstance(details, dict) and isinstance(details.get("name"), str):
+            names.add(str(details["name"]))
+    return names
+
+
 def _room_fact_contents(prompt: str, kind: str) -> list[str]:
     opening = f'<room-fact kind="{kind}">'
     closing = "</room-fact>"
@@ -718,6 +784,7 @@ def provider_prompt_governance_evidence(
     model_calls = raw_calls if isinstance(raw_calls, list) else []
     prompts: list[str] = []
     provider_tool_names: list[set[str]] = []
+    provider_messages: list[list[Any]] = []
     for call in model_calls:
         if not isinstance(call, dict):
             continue
@@ -729,6 +796,8 @@ def provider_prompt_governance_evidence(
         if not isinstance(prompt, str) or not isinstance(tools, list):
             continue
         prompts.append(prompt)
+        messages = provider_context.get("messages")
+        provider_messages.append(messages if isinstance(messages, list) else [])
         provider_tool_names.append(
             {
                 str(tool.get("name"))
@@ -752,14 +821,100 @@ def provider_prompt_governance_evidence(
         _routing_catalog_evidence(prompt, _PRODUCT_TOOL_CATALOG_TAG)
         for prompt in prompts
     ]
+    skill_family_block_counts = [
+        _tag_block_count(prompt, _SKILL_FAMILY_TAG) for prompt in prompts
+    ]
+    product_tool_family_block_counts = [
+        _tag_block_count(prompt, _PRODUCT_TOOL_FAMILY_TAG)
+        for prompt in prompts
+    ]
+    governed_tool_set = set(governed_tool_names or ())
+    loaded_tool_result_names = [
+        _loaded_tool_result_names(messages)
+        for messages in provider_messages
+    ]
+    loaded_skill_result_names = [
+        _loaded_skill_result_names(messages)
+        for messages in provider_messages
+    ]
+    loaded_skill_names = [
+        _loaded_skill_names(prompt)
+        | {
+            name
+            for text in _walk_strings(messages)
+            for name in _loaded_skill_names(text)
+        }
+        for prompt, messages in zip(
+            prompts,
+            provider_messages,
+            strict=True,
+        )
+    ]
+    raw_active_deferred_tool_overlaps = [
+        active_names & catalog["names"]
+        for active_names, catalog in zip(
+            provider_tool_names,
+            product_tool_catalogs,
+            strict=True,
+        )
+    ]
+    active_deferred_tool_overlaps = [
+        raw_overlap - loaded_names - governed_tool_set
+        for raw_overlap, loaded_names in zip(
+            raw_active_deferred_tool_overlaps,
+            loaded_tool_result_names,
+            strict=True,
+        )
+    ]
+    historical_activated_tool_cards = [
+        raw_overlap & (loaded_names | governed_tool_set)
+        for raw_overlap, loaded_names in zip(
+            raw_active_deferred_tool_overlaps,
+            loaded_tool_result_names,
+            strict=True,
+        )
+    ]
+    raw_loaded_deferred_skill_overlaps = [
+        loaded_names & catalog["names"]
+        for loaded_names, catalog in zip(
+            loaded_skill_names,
+            skill_catalogs,
+            strict=True,
+        )
+    ]
+    loaded_deferred_skill_overlaps = [
+        raw_overlap - receipt_names
+        for raw_overlap, receipt_names in zip(
+            raw_loaded_deferred_skill_overlaps,
+            loaded_skill_result_names,
+            strict=True,
+        )
+    ]
+    historical_loaded_skill_cards = [
+        raw_overlap & receipt_names
+        for raw_overlap, receipt_names in zip(
+            raw_loaded_deferred_skill_overlaps,
+            loaded_skill_result_names,
+            strict=True,
+        )
+    ]
     requirement_projections = [
         _requirement_projection_evidence(prompt) for prompt in prompts
     ]
     first_product_tool_names = (
         product_tool_catalogs[0]["names"] if product_tool_catalogs else set()
     )
-    initial_provider_tools = provider_tool_names[0] if provider_tool_names else set()
-    initial_product_tools = initial_provider_tools & first_product_tool_names
+    known_product_tool_names = (
+        first_product_tool_names
+        | governed_tool_set
+        | set(_ROOM_BOOTSTRAP_TOOL_NAMES)
+    )
+    initial_provider_tools = (
+        provider_tool_names[0] if provider_tool_names else set()
+    )
+    initial_product_tools = (
+        initial_provider_tools & known_product_tool_names
+    )
     first_provider_messages: list[Any] = []
     if model_calls:
         first_provider_context = model_calls[0].get("providerContext")
@@ -779,7 +934,7 @@ def provider_prompt_governance_evidence(
         and isinstance(details["tool"].get("name"), str)
     }
     governed_before_first_capture = (
-        set(governed_tool_names or ()) & first_product_tool_names
+        governed_tool_set & initial_product_tools
     )
     proven_initial_product_tools = (
         loaded_before_first_capture | governed_before_first_capture
@@ -849,15 +1004,65 @@ def provider_prompt_governance_evidence(
         ),
         "routingCardFieldContractEveryCall": bool(prompts)
         and all(
-            skill["cardCount"] > 0
-            and product_tool["cardCount"] > 0
-            and skill["invalidCardCount"] == 0
+            skill["invalidCardCount"] == 0
             and product_tool["invalidCardCount"] == 0
+            and skill["cardCount"] <= _MAX_STAGE_CARD_COUNT
+            and product_tool["cardCount"] <= _MAX_STAGE_CARD_COUNT
             for skill, product_tool in zip(
                 skill_catalogs,
                 product_tool_catalogs,
                 strict=True,
             )
+        ),
+        "capabilityFamilyIndexesExactlyOnceEveryCall": bool(prompts)
+        and all(
+            skill_count == 1 and tool_count == 1
+            for skill_count, tool_count in zip(
+                skill_family_block_counts,
+                product_tool_family_block_counts,
+                strict=True,
+            )
+        ),
+        "stageCardsBoundedEveryCall": bool(prompts)
+        and all(
+            skill["cardCount"] <= _MAX_STAGE_CARD_COUNT
+            and product_tool["cardCount"] <= _MAX_STAGE_CARD_COUNT
+            for skill, product_tool in zip(
+                skill_catalogs,
+                product_tool_catalogs,
+                strict=True,
+            )
+        ),
+        "activeDeferredMutuallyExclusiveEveryCall": bool(prompts)
+        and all(not names for names in active_deferred_tool_overlaps)
+        and all(not names for names in loaded_deferred_skill_overlaps),
+        "activeDeferredToolOverlapNames": sorted(
+            {
+                name
+                for names in active_deferred_tool_overlaps
+                for name in names
+            }
+        ),
+        "loadedDeferredSkillOverlapNames": sorted(
+            {
+                name
+                for names in loaded_deferred_skill_overlaps
+                for name in names
+            }
+        ),
+        "historicalActivatedToolCardNames": sorted(
+            {
+                name
+                for names in historical_activated_tool_cards
+                for name in names
+            }
+        ),
+        "historicalLoadedSkillCardNames": sorted(
+            {
+                name
+                for names in historical_loaded_skill_cards
+                for name in names
+            }
         ),
         "routingCardContentCompleteEveryCall": bool(prompts)
         and all(
@@ -891,10 +1096,11 @@ def provider_prompt_governance_evidence(
             initial_product_tools == _ROOM_BOOTSTRAP_TOOL_NAMES
         ),
         "initialProductSchemasDeferred": bool(prompts)
-        and bool(first_product_tool_names)
-        and not initial_product_tools,
+        and not (
+            initial_product_tools - set(_ROOM_BOOTSTRAP_TOOL_NAMES)
+        ),
         "loadedProductSchemasBeforeFirstCapture": sorted(
-            loaded_before_first_capture & first_product_tool_names
+            loaded_before_first_capture & initial_product_tools
         ),
         "governedProductSchemasBeforeFirstCapture": sorted(
             governed_before_first_capture
@@ -938,6 +1144,20 @@ def progressive_discovery_check(
         )
         and item.get("catalogBlocksExactlyOnceEveryCall") is True
         and item.get("routingCardFieldContractEveryCall") is True
+        and (
+            item.get("managedRoomAuthorityEveryCall") is not True
+            or (
+                item.get(
+                    "capabilityFamilyIndexesExactlyOnceEveryCall"
+                )
+                is True
+                and item.get("stageCardsBoundedEveryCall") is True
+                and item.get(
+                    "activeDeferredMutuallyExclusiveEveryCall"
+                )
+                is True
+            )
+        )
         and item.get("routingCardContentCompleteEveryCall") is True
         and item.get("invalidRoutingCardCount") == 0
         and item.get("truncatedRoutingCardValueCount") == 0
@@ -1246,7 +1466,13 @@ def transcript_evidence(
             message.startswith("执行当前受管 Room 任务") for message in user_messages
         ),
         "repairContinuationCount": sum(
-            message.startswith("收工检查未通过：") for message in user_messages
+            message.startswith(
+                (
+                    '<managed-task-follow-up origin="room-kernel" kind="repair_commit">',
+                    "收工检查未通过：",
+                )
+            )
+            for message in user_messages
         ),
         "roomEnvelopeCount": sum(
             token in message

@@ -318,6 +318,7 @@ class RequirementGovernanceTests(unittest.TestCase):
         item = packet["requirements"]["items"][0]
         self.assertEqual(item["statementSource"], "original[0]")
         self.assertNotIn("statement", item)
+        self.assertEqual(packet["acceptance"]["criteria"], [])
         self.assertEqual(rendered.count(original_text), 1)
 
     def test_concurrent_catalog_revision_fails_closed_and_old_revision_cannot_gate(self) -> None:

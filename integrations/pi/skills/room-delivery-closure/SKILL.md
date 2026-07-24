@@ -41,6 +41,25 @@ owner.
 Return acceptance evidence, unresolved non-blocking risks, cleanup state,
 public-delivery reference, and a closure recommendation.
 
+When the active exit is `room_commit`, follow its loaded schema literally. The
+quality fields are one nested object, never top-level aliases:
+
+```json
+{
+  "qualityGate": {
+    "originalRequestChecked": true,
+    "verdict": "ready_to_deliver",
+    "items": [],
+    "residualRisks": []
+  },
+  "evidenceRefs": [],
+  "requirementCoverage": []
+}
+```
+
+Populate every current criterion exactly once. Every evidence string used by a
+passing item must also appear byte-for-byte in the top-level `evidenceRefs`.
+
 ## Exit Conditions
 
 Exit with `ready_to_close` or `not_ready`, including exact missing evidence.

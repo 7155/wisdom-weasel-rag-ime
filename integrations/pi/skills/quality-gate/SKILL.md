@@ -36,8 +36,34 @@ field:
 - `originalRequestChecked: true` only after re-reading the immutable request;
 - one `items[]` entry for every current acceptance `criterionId`;
 - `pass`, `fail`, or `not_verified`, with fresh `evidenceRefs` on every pass;
+- copy every pass-item evidence string into the top-level
+  `room_commit.evidenceRefs` unchanged; the top-level array is the evidence
+  union, not a separate summary;
+- set `room_commit.requirementCoverage` to exactly the `criterionId` values
+  whose item status is `pass`; do not include `fail` or `not_verified`;
 - `residualRisks`;
 - `ready_to_deliver` or `not_ready`.
+
+The four fields above must remain inside `qualityGate`; do not emit any of them
+beside it:
+
+```json
+{
+  "qualityGate": {
+    "originalRequestChecked": true,
+    "verdict": "ready_to_deliver",
+    "items": [],
+    "residualRisks": []
+  }
+}
+```
+
+Before calling `room_commit`, perform this mechanical equality check:
+
+```text
+union(qualityGate pass item evidenceRefs) ⊆ room_commit.evidenceRefs
+set(qualityGate pass criterionId) == set(room_commit.requirementCoverage)
+```
 
 ## Boundaries
 

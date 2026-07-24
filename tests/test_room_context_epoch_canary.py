@@ -408,6 +408,9 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         clean_prompt = (
             "base\n### Act Gate\n"
             "当前受管 Room Dispatch 已授权执行；写操作仍受原生审批。"
+            "\n<skill_capability_families></skill_capability_families>"
+            "\n<product_tool_capability_families>"
+            "</product_tool_capability_families>"
             "\n<available_skills format=\"routing-card-jsonl\">\n"
             f"{routing_card}\n</available_skills>"
             "\n<available_product_tools format=\"route-jsonl\">\n"
@@ -433,6 +436,11 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         self.assertEqual(clean["projectContextBlockCount"], 0)
         self.assertTrue(clean["catalogBlocksExactlyOnceEveryCall"])
         self.assertTrue(clean["routingCardFieldContractEveryCall"])
+        self.assertTrue(
+            clean["capabilityFamilyIndexesExactlyOnceEveryCall"]
+        )
+        self.assertTrue(clean["stageCardsBoundedEveryCall"])
+        self.assertTrue(clean["activeDeferredMutuallyExclusiveEveryCall"])
         self.assertTrue(clean["routingCardContentCompleteEveryCall"])
         self.assertTrue(clean["initialProductSchemasDeferred"])
         self.assertTrue(clean["initialProductSchemasHaveLoadReceipts"])
@@ -470,6 +478,9 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         prompt = (
             "当前受管 Room Dispatch 已授权执行"
             "\n<project_context>AGENTS.md</project_context>"
+            "\n<skill_capability_families></skill_capability_families>"
+            "\n<product_tool_capability_families>"
+            "</product_tool_capability_families>"
             f"\n<available_skills>{card}</available_skills>"
             f"\n<available_product_tools>{card}</available_product_tools>"
         )
@@ -492,27 +503,46 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         self.assertEqual(evidence["initialProductSchemaCount"], 1)
         self.assertFalse(evidence["initialProductSchemasHaveLoadReceipts"])
         self.assertFalse(evidence["progressiveProductSchemasValid"])
+        self.assertFalse(
+            evidence["activeDeferredMutuallyExclusiveEveryCall"]
+        )
+        self.assertEqual(
+            evidence["activeDeferredToolOverlapNames"],
+            ["workspace_read"],
+        )
 
     def test_prompt_governance_accepts_exact_governed_room_bootstrap(self) -> None:
-        cards = "\n".join(
-            json.dumps(
-                {
-                    "name": name,
-                    "when": ["受管 Room 生命周期需要"],
-                    "notFor": ["普通对话"],
-                    "input": "精确参数",
-                    "output": "治理回执",
-                    "does": "处理 Room 生命周期。",
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
-            for name in ("room_state", "room_post", "room_commit")
+        skill_card = json.dumps(
+            {
+                "name": "quality-gate",
+                "when": ["即将交付"],
+                "notFor": ["仍在探索"],
+                "input": "验收与证据",
+                "output": "质量回执",
+                "does": "逐项核对验收。",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        tool_card = json.dumps(
+            {
+                "name": "room_collaborate",
+                "when": ["并行协作"],
+                "notFor": ["责任转交"],
+                "input": "参与者和子任务",
+                "output": "子 Dispatch 回执",
+                "does": "创建受管并行协作。",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
         prompt = (
             "当前受管 Room Dispatch 已授权执行"
-            f"\n<available_skills>{cards}</available_skills>"
-            f"\n<available_product_tools>{cards}</available_product_tools>"
+            "\n<skill_capability_families></skill_capability_families>"
+            "\n<product_tool_capability_families>"
+            "</product_tool_capability_families>"
+            f"\n<available_skills>{skill_card}</available_skills>"
+            f"\n<available_product_tools>{tool_card}</available_product_tools>"
         )
         context = {
             "modelCalls": [
@@ -548,9 +578,66 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         )
         self.assertTrue(governed["initialProductSchemasHaveLoadReceipts"])
         self.assertTrue(governed["progressiveProductSchemasValid"])
+        self.assertTrue(
+            governed["activeDeferredMutuallyExclusiveEveryCall"]
+        )
         self.assertTrue(CANARY.progressive_discovery_check([governed]))
         self.assertFalse(ungoverned["initialProductSchemasHaveLoadReceipts"])
         self.assertFalse(CANARY.progressive_discovery_check([ungoverned]))
+
+    def test_prompt_governance_rejects_loaded_skill_in_deferred_catalog(
+        self,
+    ) -> None:
+        card = json.dumps(
+            {
+                "name": "quality-gate",
+                "when": ["即将交付"],
+                "notFor": ["仍在探索"],
+                "input": "验收与证据",
+                "output": "质量回执",
+                "does": "逐项核对验收。",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        prompt = (
+            "当前受管 Room Dispatch 已授权执行"
+            '\n<loaded_skill name="quality-gate">full body</loaded_skill>'
+            "\n<skill_capability_families></skill_capability_families>"
+            "\n<product_tool_capability_families>"
+            "</product_tool_capability_families>"
+            f"\n<available_skills>{card}</available_skills>"
+            "\n<available_product_tools></available_product_tools>"
+        )
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=1,
+                    system_prompt=prompt,
+                    messages=[{"role": "user", "content": "work"}],
+                    tools=[
+                        {"name": "room_state"},
+                        {"name": "room_post"},
+                        {"name": "room_commit"},
+                    ],
+                    previous_messages=None,
+                )
+            ]
+        }
+
+        evidence = CANARY.provider_prompt_governance_evidence(
+            context,
+            {"room_state", "room_post", "room_commit"},
+        )
+
+        self.assertFalse(
+            evidence["activeDeferredMutuallyExclusiveEveryCall"]
+        )
+        self.assertEqual(
+            evidence["loadedDeferredSkillOverlapNames"],
+            ["quality-gate"],
+        )
+        self.assertFalse(CANARY.progressive_discovery_check([evidence]))
 
     def test_prompt_governance_rejects_truncated_routing_card_values(self) -> None:
         card = json.dumps(
@@ -590,7 +677,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
     def test_prompt_governance_accepts_schema_loaded_before_resumed_capture(
         self,
     ) -> None:
-        card = json.dumps(
+        loaded_card = json.dumps(
             {
                 "name": "workspace_read",
                 "when": ["读取"],
@@ -602,10 +689,28 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             ensure_ascii=False,
             separators=(",", ":"),
         )
+        deferred_card = json.dumps(
+            {
+                "name": "workspace_read",
+                "when": ["读取已知文件"],
+                "notFor": ["未知位置搜索"],
+                "input": "路径与偏移",
+                "output": "有界文本",
+                "does": "读取授权工作区文件。",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         prompt = (
             "当前受管 Room Dispatch 已授权执行"
-            f"\n<available_skills>{card}</available_skills>"
-            f"\n<available_product_tools>{card}</available_product_tools>"
+            f'\n<loaded_skill name="workspace-read-guide">{loaded_card}'
+            "</loaded_skill>"
+            "\n<skill_capability_families></skill_capability_families>"
+            "\n<product_tool_capability_families>"
+            "</product_tool_capability_families>"
+            "\n<available_skills></available_skills>"
+            f"\n<available_product_tools>{deferred_card}"
+            "</available_product_tools>"
         )
         messages = [
             {
@@ -640,7 +745,10 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             ]
         }
 
-        evidence = CANARY.provider_prompt_governance_evidence(context)
+        evidence = CANARY.provider_prompt_governance_evidence(
+            context,
+            {"workspace_read"},
+        )
 
         self.assertFalse(evidence["initialProductSchemasDeferred"])
         self.assertEqual(evidence["initialProductSchemaCount"], 1)
@@ -650,6 +758,13 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         )
         self.assertTrue(evidence["initialProductSchemasHaveLoadReceipts"])
         self.assertTrue(evidence["progressiveProductSchemasValid"])
+        self.assertTrue(
+            evidence["activeDeferredMutuallyExclusiveEveryCall"]
+        )
+        self.assertEqual(
+            evidence["historicalActivatedToolCardNames"],
+            ["workspace_read"],
+        )
 
     def test_prompt_governance_detects_duplicate_original_requirement_projection(self) -> None:
         original = "原始需求只应进入 Provider 上下文一次"
@@ -708,8 +823,12 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
 
     def test_progressive_discovery_allows_loaded_schemas_in_later_epochs(self) -> None:
         first = {
+            "managedRoomAuthorityEveryCall": True,
             "catalogBlocksExactlyOnceEveryCall": True,
             "routingCardFieldContractEveryCall": True,
+            "capabilityFamilyIndexesExactlyOnceEveryCall": True,
+            "stageCardsBoundedEveryCall": True,
+            "activeDeferredMutuallyExclusiveEveryCall": True,
             "routingCardContentCompleteEveryCall": True,
             "initialProductSchemasDeferred": True,
             "progressiveProductSchemasValid": True,
@@ -1034,7 +1153,10 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
                 "message": {
                     "role": "user",
                     "content": (
-                        "收工检查未通过：请使用精确验收 ID。"
+                        '<managed-task-follow-up origin="room-kernel" '
+                        'kind="repair_commit">'
+                        "请使用精确验收 ID。"
+                        "</managed-task-follow-up>"
                         '<room-projection state="pending">不应进入 Session</room-projection>'
                     ),
                 },

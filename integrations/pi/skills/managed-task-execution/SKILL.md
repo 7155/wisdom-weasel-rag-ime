@@ -72,8 +72,11 @@ Return the current outcome, evidence, unmet acceptance items, and one lifecycle
 recommendation. In a managed Room, use its canonical state, post, and commit
 tools exactly as the loaded schema requires. `requirementCoverage` must equal
 the `qualityGate.items` whose status is `pass`; a delivery claim also requires
-`ready_to_deliver`. Do not call `room_commit` merely because one Provider
-response is ending; call it only for a valid lifecycle exit.
+`ready_to_deliver`. Every evidence string used by a passing quality item must
+also appear unchanged in the top-level `evidenceRefs`; use that top-level array
+as the evidence union, not as a separate summary. Do not call `room_commit`
+merely because one Provider response is ending; call it only for a valid
+lifecycle exit.
 
 ## Boundaries
 

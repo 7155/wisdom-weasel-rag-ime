@@ -78,6 +78,60 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self.assertIn("inputSchema", loaded["items"][0])
         self.assertNotIn("room_commit", str(loaded["items"][0]["inputSchema"]))
 
+    def test_governed_search_matches_exact_name_tokens_and_verbose_intent(self) -> None:
+        room, participant = self._bindings()
+        registry = {
+            **self._registry(),
+            "workspace_list": self._product_tool(
+                "List authorized workspace files",
+                does="列出授权工作区中的文件。",
+            ),
+            "workspace_read": self._product_tool(
+                "Read one authorized workspace file",
+                does="读取授权工作区中的一个文件。",
+            ),
+        }
+        names = (*ROOM_TOOLS, "workspace_list", "workspace_read")
+        manifest, _ = self.store.compile_manifest(
+            manifest_id="manifest:search-routing",
+            room_binding=room,
+            participant_binding=participant,
+            dispatch_id="dispatch:1",
+            runtime_registry=registry,
+            user_authorized=names,
+            template_allowed=names,
+            role_allowed=names,
+            profile_allowed=names,
+            state_allowed=names,
+            created_at_ms=1,
+        )
+
+        queries = (
+            ("search:exact-token", "name workspace_list", "workspace_list"),
+            (
+                "search:verbose",
+                "workspace_read read files authorized workspace input path",
+                "workspace_read",
+            ),
+            ("search:family", "workspace", "workspace_list"),
+        )
+        for index, (receipt_id, query, expected_name) in enumerate(
+            queries,
+            start=2,
+        ):
+            receipt, _ = self.store.tool_search(
+                receipt_id=receipt_id,
+                manifest_id=manifest["manifestId"],
+                manifest_hash=manifest["manifestHash"],
+                query=query,
+                created_at_ms=index,
+            )
+            names_found = [item["name"] for item in receipt["items"]]
+            self.assertIn(expected_name, names_found)
+            self.assertTrue(
+                all("inputSchema" not in item for item in receipt["items"])
+            )
+
     def test_tool_load_batch_records_all_receipts_atomically_in_input_order(self) -> None:
         manifest = self._compile()
         receipts, created = self.store.tool_load_batch(
@@ -143,6 +197,34 @@ class RoomCapabilityManifestTests(unittest.TestCase):
     def test_room_delivery_schema_accepts_managed_file_blocks(self) -> None:
         schema = room_runtime_registry()["room_post"]["inputSchema"]
         self.assertIn("file", str(schema))
+
+    def test_room_commit_schema_keeps_quality_fields_nested(self) -> None:
+        tool = room_runtime_registry()["room_commit"]
+        schema = tool["inputSchema"]
+        self.assertIn(
+            "originalRequestChecked、verdict、items、residualRisks",
+            str(schema["description"]),
+        )
+        self.assertFalse(
+            {
+                "originalRequestChecked",
+                "verdict",
+                "items",
+                "residualRisks",
+            }
+            & set(schema["properties"])
+        )
+        quality_gate = schema["properties"]["qualityGate"]
+        self.assertIn("嵌套对象", str(quality_gate["description"]))
+        self.assertEqual(
+            set(quality_gate["required"]),
+            {
+                "originalRequestChecked",
+                "verdict",
+                "items",
+                "residualRisks",
+            },
+        )
 
     def test_disclosure_does_not_grant_authorization(self) -> None:
         manifest = self._compile(user=("room_state", "room_post"))
@@ -509,6 +591,29 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             "room_commit": {"description": "Propose a governed Room Commit", "risk": "write", "operation": "room.commit", "inputSchema": {"type": "object", "required": ["result"], "properties": {"result": {"type": "string"}}}},
             "room_assign": {"description": "legacy", "risk": "write", "operation": "legacy", "inputSchema": {"type": "object"}},
             "filesystem_write": {"description": "not public", "risk": "write", "operation": "fs.write", "inputSchema": {"type": "object"}},
+        }
+
+    @staticmethod
+    def _product_tool(
+        description: str,
+        *,
+        does: str,
+    ) -> dict[str, object]:
+        return {
+            "catalogKind": "product-tool",
+            "description": description,
+            "when": ["需要查看授权工作区文件"],
+            "notFor": ["不需要工作区证据"],
+            "input": "工作区路径",
+            "output": "有界文件结果",
+            "does": does,
+            "risk": "R0",
+            "operation": "product.workspace",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "additionalProperties": False,
+            },
         }
 
     @staticmethod
