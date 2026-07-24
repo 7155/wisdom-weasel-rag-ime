@@ -72,10 +72,14 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 source.parent.mkdir(parents=True, exist_ok=True)
                 extra = ""
                 if key == "protocol":
-                    extra = 'export type RuntimeMethod = | "room.dispatch" | "room.cancel";\n'
+                    extra = (
+                        'export type RuntimeMethod = | "session.control_state" '
+                        '| "room.dispatch" | "room.cancel";\n'
+                    )
                 elif key == "runtimeHost":
                     extra = (
-                        'switch (method) { case "room.dispatch": break; '
+                        'switch (method) { case "session.control_state": break; '
+                        'case "room.dispatch": break; '
                         'case "room.cancel": break; }\n'
                     )
                 source.write_text(f"// marker:{key}\n{extra}", encoding="utf-8")
@@ -112,7 +116,11 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                         "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
                         "protocolVersion": "2",
                         "minimumHandlersCommit": commit,
-                        "requiredMethods": ["room.dispatch", "room.cancel"],
+                        "requiredMethods": [
+                            "session.control_state",
+                            "room.dispatch",
+                            "room.cancel",
+                        ],
                         "handlerSources": {
                             key: relative.as_posix()
                             for key, relative in relative_sources.items()
@@ -124,7 +132,10 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 encoding="utf-8",
             )
             adapter_path.write_text(
-                'export const methods = ["room.dispatch", "room.cancel"] as const;\n',
+                (
+                    'export const methods = ["session.control_state", '
+                    '"room.dispatch", "room.cancel"] as const;\n'
+                ),
                 encoding="utf-8",
             )
             with (

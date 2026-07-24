@@ -202,7 +202,7 @@ def _verified_room_runtime_contract(pi_root: Path) -> tuple[dict[str, object], s
     ):
         raise ManagedPiRuntimeError("Room runtime source provenance is unsupported")
     methods = contract.get("requiredMethods")
-    if methods != ["room.dispatch", "room.cancel"]:
+    if methods != ["session.control_state", "room.dispatch", "room.cancel"]:
         raise ManagedPiRuntimeError("Room runtime source contract methods are incomplete")
     minimum_commit = str(contract.get("minimumHandlersCommit") or "").strip()
     if len(minimum_commit) != 40 or any(
