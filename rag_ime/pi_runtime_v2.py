@@ -550,6 +550,9 @@ class PiRuntimeHostManager:
                 "tools": True,
                 "dynamicTools": True,
                 "managedPlugins": bool(capabilities.get("managedPlugins", True)),
+                "sessionControlState": bool(
+                    capabilities.get("sessionControlState")
+                ),
                 "sessionSnapshot": True,
                 "settledEvents": True,
                 "statelessCompletion": (
@@ -638,6 +641,31 @@ class PiRuntimeHostManager:
         return client
 
     def ensure(self, session_id: str) -> dict[str, object]:
+        return self._ensure_session(
+            session_id,
+            lightweight_existing=False,
+        )
+
+    def _ensure_room_dispatch(self, session_id: str) -> dict[str, object]:
+        """Prepare a Dispatch without serializing the resident transcript.
+
+        Room delivery only needs the Session lifecycle fence and current Room
+        capability. The full snapshot also contains messages, entries,
+        telemetry, and Tool manifests; reading it on the hot handoff path can
+        hold a short Dispatch lease behind unrelated transcript work.
+        """
+
+        return self._ensure_session(
+            session_id,
+            lightweight_existing=True,
+        )
+
+    def _ensure_session(
+        self,
+        session_id: str,
+        *,
+        lightweight_existing: bool,
+    ) -> dict[str, object]:
         with self._lifecycle_lock:
             if not self.config.model_configured:
                 raise PiRuntimeError(self.config.model_configuration_error or "Pi model is not configured")
@@ -656,7 +684,33 @@ class PiRuntimeHostManager:
             with self._lock:
                 already_open = session_id in self._open_sessions
             if already_open:
-                snapshot = dict(client.send("session.snapshot", {"sessionId": session_id}))
+                use_control_state = (
+                    lightweight_existing
+                    and bool(
+                        self._host_capabilities.get(
+                            "sessionControlState"
+                        )
+                    )
+                )
+                snapshot = dict(
+                    client.send(
+                        (
+                            "session.control_state"
+                            if use_control_state
+                            else "session.snapshot"
+                        ),
+                        {"sessionId": session_id},
+                    )
+                )
+                if use_control_state and (
+                    snapshot.get("schemaVersion")
+                    != "rag-ime.pi-session-control-state.v1"
+                    or snapshot.get("sessionId") != session_id
+                    or not isinstance(snapshot.get("isIdle"), bool)
+                ):
+                    raise PiRuntimeError(
+                        "Pi Runtime Host returned an invalid Session control state"
+                    )
                 current_room = _live_room_capability(
                     snapshot.get("roomCapability")
                 )
@@ -1563,7 +1617,7 @@ class PiRuntimeHostManager:
         capability_epoch = _integer(payload.get("capabilityEpoch"))
         if capability_epoch < 0:
             raise ValueError("Room dispatch capabilityEpoch must be non-negative")
-        opened = self.ensure(session_id)
+        opened = self._ensure_room_dispatch(session_id)
         client = self._require_client()
         session = dict(self.sessions.get(session_id))
         if self._session_context_provider is not None:

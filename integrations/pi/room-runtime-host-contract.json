@@ -3,8 +3,9 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "91ed4d51ff7454cf6503b1697af3df4acb767b06",
+  "minimumHandlersCommit": "cc58c5379e88a6e87d96d6bc00960ac978ba702a",
   "requiredMethods": [
+    "session.control_state",
     "room.dispatch",
     "room.cancel"
   ],
@@ -33,6 +34,7 @@
   "requiredSourceMarkers": {
     "protocol": ["export const PROTOCOL_VERSION = \"2\" as const;"],
     "runtimeHost": [
+      "case \"session.control_state\"",
       "case \"room.dispatch\"",
       "case \"room.cancel\"",
       "roomSkillPolicy: optionalRoomSkillPolicy(params)",
@@ -128,6 +130,7 @@
       "export function agentSessionCanaryResponse"
     ],
     "session": [
+      "rag-ime.pi-session-control-state.v1",
       "SKILL_REVISION_MISMATCH",
       "loadReason: \"stage_required\"",
       "requiredRoomSkill(options.roomSkillPolicy)",

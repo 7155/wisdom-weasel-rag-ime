@@ -56,6 +56,7 @@ for line in sys.stdin:
         result(request, {"protocol": "rag-ime.pi-runtime-host", "protocolVersion": "2", "hostVersion": "test",
                          "piVersion": "0.80.7", "capabilities": {"multiSession": True, "maxSessions": 4,
                          "settledEvents": True, "dynamicTools": True, "managedPlugins": True,
+                         "sessionControlState": True,
                          "transientContext": True,
                          "statelessCompletion": True,
                          "conversationFork": True,
@@ -110,7 +111,21 @@ for line in sys.stdin:
         })
         result(request, {"snapshot": session, "evictedSessionId": None,
                          "roomSkillLoad": room_skill_load})
+    elif method == "session.control_state":
+        session = sessions[session_id]
+        result(request, {
+            "schemaVersion": "rag-ime.pi-session-control-state.v1",
+            "sessionId": session_id,
+            "isIdle": session.get("isIdle", True),
+            "isCompacting": False,
+            "activeTurn": None,
+            "roomCapability": session.get("roomCapability"),
+            "activeRoom": None,
+            "sequence": sequence,
+        })
     elif method == "session.snapshot":
+        if os.environ.get("TEST_SESSION_SNAPSHOT_HANG") == "1":
+            time.sleep(2)
         result(request, sessions[session_id])
     elif method == "session.commands":
         result(request, {"commands": [{"name": "skill:rag-ime-plugin-creator",
@@ -627,6 +642,86 @@ class PiRuntimeV2Tests(unittest.TestCase):
         finally:
             release_observer.set()
             remove_observer()
+
+    def test_room_handoff_uses_control_state_instead_of_full_snapshot(
+        self,
+    ) -> None:
+        self.runtime.stop()
+        state = {"room": False}
+
+        def context_provider(_session):
+            if not state["room"]:
+                return {}
+            return {
+                "roomCapability": {
+                    "manifestId": "manifest:handoff",
+                    "manifestHash": "a" * 64,
+                    "promptCompileReceiptId": "prompt:handoff",
+                    "promptPlanHash": "b" * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:handoff",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "capabilityEpoch": 2,
+                    "rootId": "root:handoff",
+                    "dispatchId": "dispatch:handoff",
+                    "generation": 0,
+                    "contextEpoch": 1,
+                    "contextEpochReason": "session_open",
+                    "runtimeBindingHash": "c" * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "providerContext": "bounded-room-context",
+                "roomRecoveryContext": "bounded-room-recovery",
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                command_timeout_seconds=1.0,
+                provider_environment={
+                    "TEST_ROOM_TYPES": "1",
+                    "TEST_SESSION_SNAPSHOT_HANG": "1",
+                },
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        state["room"] = True
+
+        receipt = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:handoff",
+                "dispatchId": "dispatch:handoff",
+                "generation": 0,
+                "capabilityEpoch": 2,
+                "idempotencyKey": "handoff:1",
+            },
+            message="Execute the handed-off Room task.",
+            lease_token="lease:handoff",
+        )
+
+        self.assertEqual(receipt["receiptKind"], "dispatch_accepted")
+        requests = [
+            json.loads(line)
+            for line in (
+                self.root / "agent" / "host-requests.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        methods = [item["method"] for item in requests]
+        self.assertEqual(methods.count("session.open"), 2)
+        self.assertIn("session.control_state", methods)
+        self.assertNotIn("session.snapshot", methods)
+        self.assertLess(
+            methods.index("session.control_state"),
+            methods.index("session.close"),
+        )
 
     def test_room_dispatch_reuses_session_for_delta_and_task_switch_epoch(self) -> None:
         self.runtime.stop()

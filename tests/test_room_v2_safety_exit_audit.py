@@ -212,7 +212,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             contract["minimumHandlersCommit"],
-            "91ed4d51ff7454cf6503b1697af3df4acb767b06",
+            "cc58c5379e88a6e87d96d6bc00960ac978ba702a",
         )
         self.assertEqual(contract["sourceRepository"], "https://github.com/7155/pi.git")
         self.assertEqual(
@@ -253,7 +253,10 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
             "return record ? structuredClone(record) : undefined;",
             contract["requiredSourceMarkers"]["contextInspection"],
         )
-        self.assertEqual(set(contract["requiredMethods"]), {"room.dispatch", "room.cancel"})
+        self.assertEqual(
+            set(contract["requiredMethods"]),
+            {"session.control_state", "room.dispatch", "room.cancel"},
+        )
         build = (REPO / "scripts/build_managed_pi_runtime_v2.py").read_text(encoding="utf-8")
         self.assertIn('"git", "merge-base", "--is-ancestor"', build)
         self.assertIn("Pi source does not contain the reviewed Room runtime handler commit", build)
