@@ -7,6 +7,12 @@ from .text_utils import compact_whitespace, truncate_text
 
 WINDOW_CONTEXT_SCHEMA_VERSION = "rag-ime.window-context.v1"
 GENERATION_WINDOW_CONTEXT_PROJECTION = "generation_text"
+WINDOW_CONTEXT_CAPTURE_MODES = frozenset(
+    {
+        "accessibility_semantics",
+        "terminal_visible_range",
+    }
+)
 _FORBIDDEN_VISUAL_KEYS = frozenset(
     {
         "dataBase64",
@@ -70,14 +76,16 @@ def validate_window_context(value: object) -> dict[str, object]:
         raise ValueError("windowContext must be an object")
     if str(value.get("schemaVersion") or "") != WINDOW_CONTEXT_SCHEMA_VERSION:
         raise ValueError("windowContext schemaVersion is invalid")
-    if str(value.get("captureMode") or "") != "accessibility_semantics":
-        raise ValueError("windowContext must use accessibility_semantics")
+    capture_mode = str(value.get("captureMode") or "")
+    if capture_mode not in WINDOW_CONTEXT_CAPTURE_MODES:
+        raise ValueError("windowContext captureMode is unsupported")
     if _contains_forbidden_visual_key(value):
         raise ValueError("windowContext must not contain screenshots, OCR, or coordinates")
     if str(value.get("privacyDisposition") or "allowed") != "allowed":
         return {}
 
     application = value.get("application") if isinstance(value.get("application"), Mapping) else {}
+    node_value_limit = 4_000 if capture_mode == "terminal_visible_range" else 800
     nodes: list[dict[str, object]] = []
     raw_nodes = value.get("nodes") if isinstance(value.get("nodes"), list) else []
     for raw in raw_nodes[:160]:
@@ -97,7 +105,7 @@ def validate_window_context(value: object) -> dict[str, object]:
         }
         subrole = _text(raw.get("subrole"), 80)
         label = _text(raw.get("label"), 240)
-        value_text = "" if secure else _text(raw.get("value"), 800)
+        value_text = "" if secure else _text(raw.get("value"), node_value_limit)
         if subrole:
             node["subrole"] = subrole
         if label:
@@ -113,7 +121,7 @@ def validate_window_context(value: object) -> dict[str, object]:
     )
     return {
         "schemaVersion": WINDOW_CONTEXT_SCHEMA_VERSION,
-        "captureMode": "accessibility_semantics",
+        "captureMode": capture_mode,
         "snapshotId": _text(value.get("snapshotId"), 200),
         "revision": _integer(value.get("revision"), default=1, minimum=1, maximum=2_147_483_647),
         "capturedAtMs": _integer(value.get("capturedAtMs"), default=0, minimum=0, maximum=10**16),
@@ -143,6 +151,10 @@ def project_window_context_for_generation(value: object) -> dict[str, object]:
 
     if not isinstance(value, Mapping):
         return {}
+    capture_mode = str(value.get("captureMode") or "")
+    if capture_mode not in WINDOW_CONTEXT_CAPTURE_MODES:
+        capture_mode = "accessibility_semantics"
+    node_value_limit = 4_000 if capture_mode == "terminal_visible_range" else 800
     raw_nodes = value.get("nodes") if isinstance(value.get("nodes"), list) else []
     candidates: list[dict[str, object]] = []
     seen_text: set[str] = set()
@@ -152,7 +164,7 @@ def project_window_context_for_generation(value: object) -> dict[str, object]:
         role = _text(raw.get("role"), 80)
         if role in _NON_TEXT_ROLES:
             continue
-        node_value = _text(raw.get("value"), 800)
+        node_value = _text(raw.get("value"), node_value_limit)
         label = _text(raw.get("label"), 240)
         readable_text = node_value or (label if role in _LABEL_TEXT_ROLES else "")
         if not readable_text:
@@ -182,7 +194,7 @@ def project_window_context_for_generation(value: object) -> dict[str, object]:
         return {}
     return {
         "schemaVersion": WINDOW_CONTEXT_SCHEMA_VERSION,
-        "captureMode": "accessibility_semantics",
+        "captureMode": capture_mode,
         "projection": GENERATION_WINDOW_CONTEXT_PROJECTION,
         "nodes": candidates,
         "nodeCount": len(candidates),

@@ -2270,22 +2270,67 @@ index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd8
 +    let windowTitle = window.flatMap {
 +      accessibilityStringAttribute(kAXTitleAttribute as CFString, element: $0)
 +    }?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
++    let terminalBundleIds: Set<String> = [
++      "com.apple.Terminal",
++      "com.googlecode.iterm2",
++      "com.mitchellh.ghostty",
++      "dev.warp.Warp-Stable",
++    ]
++    let isTerminalSurface = terminalBundleIds.contains(sourceAppBundleId)
++    func terminalVisibleText(_ element: AXUIElement) -> String {
++      var rangeObject: AnyObject?
++      guard AXUIElementCopyAttributeValue(
++        element,
++        kAXVisibleCharacterRangeAttribute as CFString,
++        &rangeObject
++      ) == .success,
++        let rangeObject,
++        CFGetTypeID(rangeObject) == AXValueGetTypeID() else { return "" }
++      let rangeValue = unsafeBitCast(rangeObject, to: AXValue.self)
++      var visibleRange = CFRange(location: 0, length: 0)
++      guard AXValueGetValue(rangeValue, .cfRange, &visibleRange),
++        visibleRange.location >= 0,
++        visibleRange.length > 0 else { return "" }
++      let boundedLength = min(8_000, visibleRange.length)
++      let boundedRange = CFRange(
++        location: visibleRange.location + max(0, visibleRange.length - boundedLength),
++        length: boundedLength
++      )
++      guard let visible = accessibilityString(for: boundedRange, in: element) else { return "" }
++      let patterns = [
++        #"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+"#,
++        #"\bsk-[A-Za-z0-9_-]{8,}\b"#,
++        #"\bghp_[A-Za-z0-9]{12,}\b"#,
++        #"\bAKIA[A-Z0-9]{12,}\b"#,
++        #"(?i)\b(password|token)\s*=\s*[^\s]+"#,
++        #"(?i)Authorization:\s*[^\r\n]+"#,
++      ]
++      return patterns.reduce(visible) { value, pattern in
++        value.replacingOccurrences(
++          of: pattern,
++          with: "[REDACTED]",
++          options: .regularExpression
++        )
++      }
++    }
 +    let deadline = Date().addingTimeInterval(0.14)
 +    let nodeLimit = min(max(1, maxNodes), 160)
 +    let depthLimit = min(max(1, maxDepth), 10)
-+    let attributeNames: [CFString] = [
++    var attributeNames: [CFString] = [
 +      kAXRoleAttribute as CFString,
 +      kAXSubroleAttribute as CFString,
 +      kAXTitleAttribute as CFString,
 +      kAXDescriptionAttribute as CFString,
 +      kAXPlaceholderValueAttribute as CFString,
 +      kAXIdentifierAttribute as CFString,
-+      kAXValueAttribute as CFString,
 +      kAXEnabledAttribute as CFString,
 +      kAXFocusedAttribute as CFString,
 +      kAXSelectedAttribute as CFString,
 +      kAXChildrenAttribute as CFString,
 +    ]
++    if !isTerminalSurface {
++      attributeNames.insert(kAXValueAttribute as CFString, at: 6)
++    }
 +    func attributes(_ element: AXUIElement) -> [String: Any] {
 +      var copied: CFArray?
 +      guard AXUIElementCopyMultipleAttributeValues(
@@ -2354,14 +2399,22 @@ index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd8
 +        || metadata.contains("passcode")
 +        || metadata.contains("密码")
 +        || metadata.contains("口令")
-+      let rawValue = secure ? "" : stringValue(values[kAXValueAttribute as String])
-+      let value = String(rawValue.prefix(800))
++      let isFocused = boolValue(values[kAXFocusedAttribute as String], fallback: false)
++      let isTerminalTextSurface = isTerminalSurface
++        && (isFocused || role == "AXTextArea" || role == "AXTextField")
++      let rawValue = secure
++        ? ""
++        : (isTerminalTextSurface
++          ? terminalVisibleText(element)
++          : stringValue(values[kAXValueAttribute as String]))
++      let value = isTerminalSurface
++        ? String(rawValue.suffix(4_000))
++        : String(rawValue.prefix(800))
 +      let basis = !identifier.isEmpty
 +        ? "id:\(parentRef)|\(identifier)|\(role)|\(siblingIndex)"
 +        : "\(parentRef)|\(role)|\(subrole)|\(label)|\(siblingIndex)"
 +      let digest = ragImeStableTextHash(basis).replacingOccurrences(of: "sha256:", with: "")
 +      let nodeRef = "ax_\(digest.prefix(20))"
-+      let isFocused = boolValue(values[kAXFocusedAttribute as String], fallback: false)
 +      let actions = actionNames(element)
 +      let node = RagImeWindowContextNode(
 +        nodeRef: nodeRef,
@@ -2398,7 +2451,9 @@ index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd8
 +      NSWorkspace.shared.frontmostApplication?.bundleIdentifier == sourceAppBundleId else { return nil }
 +    return RagImeWindowContextSnapshot(
 +      schemaVersion: "rag-ime.window-context.v1",
-+      captureMode: "accessibility_semantics",
++      captureMode: isTerminalSurface
++        ? "terminal_visible_range"
++        : "accessibility_semantics",
 +      snapshotId: "axsnap_\(UUID().uuidString)",
 +      revision: max(1, captureEpoch),
 +      capturedAtMs: Int(Date().timeIntervalSince1970 * 1000),
@@ -2645,7 +2700,18 @@ index 0000000000000000000000000000000000000000..bcfdebf0f726e5997c6bc8ecbe3c03a2
 +      throw RagImeSidecarError.transport("sidecar_url missing; passive input path does not run CLI fallback")
 +    }
 +    do {
-+      let outputData = try postJSON(request, to: endpoint("rime-suggest", base: sidecarURL))
++      // The server's model budget does not include HTTP serialization,
++      // retrieval assembly, or scheduler jitter. A fixed 1.2 s client timeout
++      // can therefore discard a valid response that arrives just afterwards.
++      let requestTimeout = max(
++        timeoutSeconds,
++        TimeInterval(request.latencyBudgetMs) / 1_000 + 0.8
++      )
++      let outputData = try postJSON(
++        request,
++        to: endpoint("rime-suggest", base: sidecarURL),
++        timeoutOverride: requestTimeout
++      )
 +      Self.recordSidecarSuccess()
 +      return try JSONDecoder().decode(RagImeSidecarResponse.self, from: outputData)
 +    } catch {
@@ -5631,6 +5697,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +  private var ragImePanelUpdateGeneration: UInt = 0
 +  private var ragImeReuseChromiumPanelPosition = false
 +  private var ragImeChromiumAssistantAnchor: NSPoint?
++  private var ragImeChromiumAssistantAnchorCapturedAt: Date = .distantPast
 +  private var ragImeDeferredDeactivateWorkItem: DispatchWorkItem?
 +  private var ragImeDeferredDeactivateGeneration: UInt = 0
 +  private var ragImeDeferredDeactivateApp: String = ""
@@ -6310,6 +6377,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      invalidateRagImeForegroundTransaction(reason: "front_app_changed")
 +      dismissRagImeAssistantOverlay(reason: "front_app_changed")
 +      ragImeChromiumAssistantAnchor = nil
++      ragImeChromiumAssistantAnchorCapturedAt = .distantPast
 +      currentApp = resolvedBundleId
 +      if session != 0 {
 +        updateAppOptions()
@@ -6412,6 +6480,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      self.finalizeRagImeActiveInputBuffer(reason: "deactivate_server", app: deactivatedApp)
 +      self.invalidateRagImeForegroundTransaction(reason: "deactivate_server")
 +      self.ragImeChromiumAssistantAnchor = nil
++      self.ragImeChromiumAssistantAnchorCapturedAt = .distantPast
 +      self.client = nil
 +      self.traceRagImeFrontendEvent("deactivate_server_applied", fields: [
 +        "frontAppBundleId": deactivatedApp,
@@ -7889,7 +7958,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    visualContext: RagImeVisualContext? = nil
 +  ) -> Bool {
 +    guard requireRagImeActiveRagEnabled(trigger: "context") else { return false }
-+    guard !enforceRagImeFastPrivacyGuard(), ragImePrivacyDisposition == "allowed" else { return false }
++    guard !enforceRagImeDeterministicPrivacyGuard() else { return false }
 +    guard let sidecarClient = ragImeSidecarClient else { return false }
 +    ragImeFrontendRevision += 1
 +    ragImeSelectionEpoch += 1
@@ -7905,6 +7974,10 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      beforeLimit: 1200,
 +      afterLimit: 120
 +    ).snapshot
++    let imkPrivacyFallbackAllowed = imkForeground != nil
++      && ragImeSelectedTextProvider.fastSensitiveFieldStatus(
++        sourceAppBundleId: currentApp
++      ).privacyDisposition == "allowed"
 +    let clientContext = ragImeCompactWhitespace(
 +      syncRagImeCommittedContextFromClient(excludingMarkedText: ragImeDisplayPreedit)
 +    )
@@ -7941,6 +8014,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +          windowContext: windowContext,
 +          accessibilityForeground: accessibilityForeground,
 +          imkForeground: imkForeground,
++          imkPrivacyFallbackAllowed: imkPrivacyFallbackAllowed,
 +          clientContext: clientContext,
 +          semanticQuery: semanticQuery,
 +          expectedApp: expectedApp,
@@ -7961,6 +8035,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    windowContext: RagImeWindowContextSnapshot?,
 +    accessibilityForeground: RagImeForegroundTextSnapshot?,
 +    imkForeground: RagImeForegroundTextSnapshot?,
++    imkPrivacyFallbackAllowed: Bool,
 +    clientContext: String,
 +    semanticQuery: String,
 +    expectedApp: String,
@@ -7974,8 +8049,8 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      selectionEpoch == ragImeSelectionEpoch,
 +      expectedApp == currentApp,
 +      inputSourceId == (SquirrelInstaller.currentInputSourceID() ?? ""),
-+      !enforceRagImeFastPrivacyGuard(),
-+      ragImePrivacyDisposition == "allowed" else {
++      !enforceRagImeDeterministicPrivacyGuard(),
++      (ragImePrivacyDisposition == "allowed" || imkPrivacyFallbackAllowed) else {
 +      traceRagImeFrontendEvent("active_rag_window_context_capture_dropped", fields: [
 +        "reason": "foreground_transaction_changed",
 +        "frontendRevision": frontendRevision,
@@ -8037,7 +8112,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      selectionEpoch: selectionEpoch,
 +      panelSessionId: panelSessionId,
 +      frontAppBundleId: expectedApp,
-+      privacyDisposition: ragImePrivacyDisposition,
++      privacyDisposition: "allowed",
 +      surroundingBefore: surroundingBefore,
 +      surroundingAfter: surroundingAfter,
 +      canReplaceSelection: false,
@@ -9579,19 +9654,35 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      return
 +    }
 +    let probeDurationMs = max(0, Int(Date().timeIntervalSince1970 * 1000) - probeStartedAtMs)
++    let fastStatus = ragImeSelectedTextProvider.fastSensitiveFieldStatus(
++      sourceAppBundleId: request.frontAppBundleId
++    )
++    let allowedByImeCommitLedger =
++      privacyStatus.isTransientUnknown
++      && fastStatus.privacyDisposition == "allowed"
++      && request.foregroundText.source == "ime_commit_ledger"
++      && request.foregroundText.commitTextMatched
++    let effectivePrivacyStatus = allowedByImeCommitLedger
++      ? RagImeSensitiveFieldStatus(
++        isSensitive: false,
++        reason: "",
++        resolverPath: "ime_commit_ledger_fallback",
++        appPid: currentRagImeFrontAppPid()
++      )
++      : privacyStatus
 +    traceRagImePrivacyDiagnostic("privacy_probe_completed", fields: [
 +      "requestSeq": request.requestSeq,
 +      "attempt": privacyAttempt,
 +      "durationMs": probeDurationMs,
 +      "resolverPath": privacyStatus.resolverPath,
 +      "axErrorCode": privacyStatus.axErrorCode,
-+      "decision": privacyStatus.privacyDisposition,
-+      "reason": privacyStatus.reason,
-+      "appPid": privacyStatus.appPid,
++      "decision": effectivePrivacyStatus.privacyDisposition,
++      "reason": effectivePrivacyStatus.reason,
++      "appPid": effectivePrivacyStatus.appPid,
 +    ])
-+    guard privacyStatus.reason.isEmpty, !privacyStatus.isSensitive else {
-+      _ = applyRagImePrivacyStatus(privacyStatus, source: "privacy_probe")
-+      if privacyStatus.isTransientUnknown,
++    guard effectivePrivacyStatus.reason.isEmpty, !effectivePrivacyStatus.isSensitive else {
++      _ = applyRagImePrivacyStatus(effectivePrivacyStatus, source: "privacy_probe")
++      if effectivePrivacyStatus.isTransientUnknown,
 +        scheduleRagImeForegroundPrivacyRetry(
 +          request,
 +          preliminaryFingerprint: preliminaryFingerprint,
@@ -9599,32 +9690,32 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +          sidecarClient: sidecarClient,
 +          captureAttempt: captureAttempt,
 +          privacyAttempt: privacyAttempt,
-+          reason: privacyStatus.reason
++          reason: effectivePrivacyStatus.reason
 +        ) {
 +        return
 +      }
 +      failRagImeForegroundContextCapture(
 +        request,
 +        fingerprint: preliminaryFingerprint,
-+        reason: privacyStatus.isSensitive ? "privacy_probe_sensitive" : "privacy_probe_unknown",
-+        imkReason: privacyStatus.reason,
++        reason: effectivePrivacyStatus.isSensitive ? "privacy_probe_sensitive" : "privacy_probe_unknown",
++        imkReason: effectivePrivacyStatus.reason,
 +        inputGeneration: inputGeneration
 +      )
 +      return
 +    }
-+    guard !applyRagImePrivacyStatus(privacyStatus, source: "privacy_probe"),
++    guard !applyRagImePrivacyStatus(effectivePrivacyStatus, source: "privacy_probe"),
 +          ragImePrivacyDisposition == "allowed" else {
 +      failRagImeForegroundContextCapture(
 +        request,
 +        fingerprint: preliminaryFingerprint,
 +        reason: "privacy_probe_unknown",
-+        imkReason: privacyStatus.reason,
++        imkReason: effectivePrivacyStatus.reason,
 +        inputGeneration: inputGeneration
 +      )
 +      return
 +    }
 +
-+    guard let privacyLease = issueRagImePrivacyLease(for: request, status: privacyStatus) else {
++    guard let privacyLease = issueRagImePrivacyLease(for: request, status: effectivePrivacyStatus) else {
 +      _ = applyRagImePrivacyStatus(
 +        RagImeSensitiveFieldStatus(
 +          isSensitive: false,
@@ -11124,7 +11215,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +
 +  func currentRagImeInputAnchor() -> NSPoint? {
 +    guard let client else { return nil }
-+    if ragImeUsesChromiumCaretCompatibility(), let anchor = ragImeChromiumAssistantAnchor {
++    if ragImeUsesChromiumCaretCompatibility(),
++       Date().timeIntervalSince(ragImeChromiumAssistantAnchorCapturedAt) <= 2.0,
++       let anchor = ragImeChromiumAssistantAnchor {
 +      return anchor
 +    }
 +    var inputPos = NSRect()
@@ -11138,6 +11231,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    let anchor = NSPoint(x: inputPos.minX, y: inputPos.minY)
 +    if ragImeUsesChromiumCaretCompatibility() {
 +      ragImeChromiumAssistantAnchor = anchor
++      ragImeChromiumAssistantAnchorCapturedAt = Date()
 +    }
 +    return anchor
 +  }
@@ -11747,6 +11841,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    let imkResult = ragImeFinalizedFieldContextFromInputClient()
 +    let compactImkText = ragImeCompactWhitespace(imkResult.text)
 +    let captureEpoch = ragImeSelectionEpoch
++    let fastPrivacyStatusAtFinalize = ragImeSelectedTextProvider.fastSensitiveFieldStatus(
++      sourceAppBundleId: app
++    )
 +    let inputSourceId = SquirrelInstaller.currentInputSourceID() ?? ""
 +    traceRagImeFrontendEvent("input_segment_capture_scheduled", fields: [
 +      "reason": reason,
@@ -11797,12 +11894,23 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      )
 +      DispatchQueue.main.async { [weak self] in
 +        guard let self else { return }
-+        let privacyRejected = self.applyRagImePrivacyStatus(
-+          privacyStatus,
-+          source: "input_segment_finalize"
-+        )
++        // Some Electron clients expose IMKTextInput but no focused AX element.
++        // A successful current-field IMK capture plus the deterministic secure
++        // input/app guard is a bounded authorization fallback; confirmed
++        // sensitive metadata still wins.
++        let allowedByTextInputClient =
++          privacyStatus.isTransientUnknown
++          && fastPrivacyStatusAtFinalize.privacyDisposition == "allowed"
++          && imkResult.failureReason.isEmpty
++          && !compactImkText.isEmpty
++        let privacyRejected = allowedByTextInputClient
++          ? false
++          : self.applyRagImePrivacyStatus(
++            privacyStatus,
++            source: "input_segment_finalize"
++          )
 +        guard !privacyRejected,
-+          privacyStatus.privacyDisposition == "allowed",
++          (privacyStatus.privacyDisposition == "allowed" || allowedByTextInputClient),
 +          let capture else {
 +          self.traceRagImeFrontendEvent("input_segment_finalize_suppressed", fields: [
 +            "reason": reason,
@@ -12317,6 +12425,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +        ragImeReuseChromiumPanelPosition = usesChromiumCompatibility
 +        if usesChromiumCompatibility && validPosition {
 +          ragImeChromiumAssistantAnchor = NSPoint(x: inputPos.minX, y: inputPos.minY)
++          ragImeChromiumAssistantAnchorCapturedAt = Date()
 +        }
 +      } else if panel.position.height <= 0 {
 +        let mouse = NSEvent.mouseLocation
@@ -12328,7 +12437,9 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +                 highlighted: highlighted, page: page, lastPage: lastPage, update: true)
 +    if preedit.isEmpty && candidates.isEmpty {
 +      ragImeReuseChromiumPanelPosition = false
-+      ragImeChromiumAssistantAnchor = nil
++      // The assistant overlay arrives just after Rime clears its composition.
++      // Keep the last valid Chromium caret briefly so Codex/chat surfaces do
++      // not fall back to their often-invalid character-index-zero rectangle.
      }
    }
  

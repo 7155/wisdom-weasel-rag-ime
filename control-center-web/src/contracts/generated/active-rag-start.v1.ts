@@ -18,7 +18,7 @@ export interface ActiveRagStartV1 {
   frontAppBundleId?: string;
   windowContext?: {
     schemaVersion: 'rag-ime.window-context.v1';
-    captureMode: 'accessibility_semantics';
+    captureMode: 'accessibility_semantics' | 'terminal_visible_range';
     snapshotId: string;
     revision: number;
     capturedAtMs?: number;

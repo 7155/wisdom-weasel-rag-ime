@@ -96,6 +96,44 @@ class WindowContextTests(unittest.TestCase):
         self.assertNotIn("提交并关闭", str(projected))
         self.assertNotIn("项目计划", str(projected))
 
+    def test_terminal_visible_range_survives_validation_and_generation_projection(self) -> None:
+        visible_tail = "故障输出" * 1_000
+        terminal = {
+            **_window_context(),
+            "captureMode": "terminal_visible_range",
+            "nodes": [
+                {
+                    **_window_context()["nodes"][0],
+                    "value": visible_tail,
+                }
+            ],
+        }
+
+        validated = validate_window_context(terminal)
+        projected = project_window_context_for_generation(validated)
+
+        self.assertEqual(validated["captureMode"], "terminal_visible_range")
+        self.assertEqual(projected["captureMode"], "terminal_visible_range")
+        self.assertGreater(len(projected["nodes"][0]["value"]), 800)
+        self.assertLessEqual(len(projected["nodes"][0]["value"]), 4_000)
+
+        packet = build_active_rag_context_packet(
+            scene="active_rag",
+            current_context="修复终端测试失败",
+            selected_text="修复终端测试失败",
+            selected_text_hash="hash",
+            frontend_revision=1,
+            selection_epoch=1,
+            panel_session_id="terminal-panel",
+            project="test",
+            app="com.mitchellh.ghostty",
+            evidence=(),
+            window_context=validated,
+        )
+        self.assertEqual(packet["windowContext"]["captureMode"], "terminal_visible_range")
+        self.assertEqual(packet["windowContext"]["nodeCount"], 1)
+        self.assertTrue(packet["windowContext"]["truncated"])
+
     def test_validator_rejects_visual_and_coordinate_payloads(self) -> None:
         for forbidden in (
             {"dataBase64": "abc"},

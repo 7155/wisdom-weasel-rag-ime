@@ -685,14 +685,15 @@ class ManagementService:
     def history_page(self, request: PageRequest) -> dict[str, object]:
         cursor = _cursor_int(request.cursor)
         query = f"%{request.query}%"
+        source_filter_sql, source_filter_params = _history_source_filter(request.status)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT id, created_at_ms, source, committed_text, recent_context, app,
                        project, provider_name, context_group_id, context_group_level
                 FROM input_events AS event
                 WHERE (? = 0 OR event.id < ?)
-                  AND (? = '' OR event.source = ?)
+                  AND ({source_filter_sql})
                   AND (? = '' OR event.committed_text LIKE ? OR event.app LIKE ? OR event.project LIKE ?)
                   AND NOT EXISTS (
                     SELECT 1
@@ -707,7 +708,16 @@ class ManagementService:
                   )
                 ORDER BY event.id DESC LIMIT ?
                 """,
-                (cursor, cursor, request.status, request.status, request.query, query, query, query, request.limit + 1),
+                (
+                    cursor,
+                    cursor,
+                    *source_filter_params,
+                    request.query,
+                    query,
+                    query,
+                    query,
+                    request.limit + 1,
+                ),
             ).fetchall()
         has_more = len(rows) > request.limit
         rows = rows[: request.limit]
@@ -716,6 +726,10 @@ class ManagementService:
                 "id": int(row["id"]),
                 "createdAtMs": int(row["created_at_ms"]),
                 "source": str(row["source"]),
+                "sourceCategory": _history_source_category(
+                    str(row["source"]),
+                    str(row["provider_name"]),
+                ),
                 "app": str(row["app"]),
                 "project": str(row["project"]),
                 "provider": str(row["provider_name"]),
@@ -825,6 +839,10 @@ class ManagementService:
                 "id": int(row["id"]),
                 "createdAtMs": int(row["created_at_ms"]),
                 "source": str(row["source"]),
+                "sourceCategory": _history_source_category(
+                    str(row["source"]),
+                    str(row["provider_name"]),
+                ),
                 "text": str(row["committed_text"]),
                 "textChars": len(str(row["committed_text"])),
                 "app": str(row["app"]),
@@ -4644,6 +4662,45 @@ def _snapshot_revision(snapshot: Mapping[str, object] | None) -> str:
     if snapshot is None:
         return "missing"
     return canonical_payload_sha256(snapshot)
+
+
+def _history_source_category(source: str, provider: str = "") -> str:
+    normalized = f"{source} {provider}".strip().lower()
+    if "voice" in normalized or "asr" in normalized:
+        return "voice"
+    if (
+        source.strip().lower() == "squirrel_rime_sidecar"
+        or "rime-sidecar:" in normalized
+        or "assistant" in normalized
+        or "model" in normalized
+    ):
+        return "assistant_candidate"
+    if "squirrel" in normalized or "rime" in normalized:
+        return "rime_commit"
+    if "import" in normalized or "codex_history" in normalized:
+        return "import"
+    return "other"
+
+
+def _history_source_filter(value: str) -> tuple[str, tuple[object, ...]]:
+    normalized = compact_whitespace(value).lower()
+    if not normalized:
+        return "1 = 1", ()
+    if normalized not in {"rime_commit", "assistant_candidate", "voice", "import"}:
+        return "LOWER(source) = ?", (normalized,)
+    normalized_fields = "LOWER(source || ' ' || provider_name)"
+    category_sql = (
+        "CASE "
+        f"WHEN {normalized_fields} LIKE '%voice%' OR {normalized_fields} LIKE '%asr%' THEN 'voice' "
+        "WHEN LOWER(source) = 'squirrel_rime_sidecar' "
+        f"OR {normalized_fields} LIKE '%rime-sidecar:%' "
+        f"OR {normalized_fields} LIKE '%assistant%' "
+        f"OR {normalized_fields} LIKE '%model%' THEN 'assistant_candidate' "
+        f"WHEN {normalized_fields} LIKE '%squirrel%' OR {normalized_fields} LIKE '%rime%' THEN 'rime_commit' "
+        f"WHEN {normalized_fields} LIKE '%import%' OR {normalized_fields} LIKE '%codex_history%' THEN 'import' "
+        "ELSE 'other' END = ?"
+    )
+    return category_sql, (normalized,)
 
 
 def _history_subject_snapshot(conn: sqlite3.Connection, event_id: int) -> dict[str, object]:

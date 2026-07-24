@@ -19,6 +19,7 @@ class MemoryCurationTests(unittest.TestCase):
         result = build_memory_curation_model_bundle(bundle)
 
         self.assertEqual(result["inputs"][0]["ref"], "E1")
+        self.assertEqual(result["inputs"][0]["localContext"], "前文正在排查上下文注入")
         self.assertEqual(result["existingAtoms"][0]["ref"], "P1")
         self.assertEqual(result["existingAtoms"][0]["atomId"], "atom:no-fragment-context")
         self.assertEqual(result["existingGroups"][0]["ref"], "G1")
@@ -272,6 +273,7 @@ def _source_bundle(*, include_feedback: bool = True) -> dict[str, object]:
                 "sourceEventIds": [101],
                 "createdAtMs": 1,
                 "text": "输入法的单词碎片不能直接注入 Agent 上下文",
+                "recentContext": "前文正在排查上下文注入",
                 "app": "com.openai.codex",
                 "contextGroupId": "app:codex",
                 "finalized": True,

@@ -114,6 +114,9 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
                         "createdAtMs": 1,
                         "sourceEventIds": [11],
                         "text": "继续整理个人记忆",
+                        "recentContext": "前一轮正在讨论输入法历史记录",
+                        "app": "com.openai.codex",
+                        "contextGroupId": "app:codex",
                     }
                 ],
                 "activityContext": {
@@ -165,6 +168,11 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
         self.assertNotIn("evidenceId", context_json)
         self.assertTrue(projected["activityContext"]["corroborationOnly"])
         self.assertFalse(projected["activityContext"]["maySupportFacts"])
+        self.assertEqual(
+            projected["inputs"][0]["localContext"],
+            "前一轮正在讨论输入法历史记录",
+        )
+        self.assertEqual(projected["inputs"][0]["app"], "com.openai.codex")
 
     def test_owner_bundle_samples_long_fragment_provenance_across_full_range(self) -> None:
         projected = _owner_memory_model_bundle(
@@ -377,8 +385,8 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
         self.assertEqual(captured["authorization"], "Bearer secret")
         self.assertEqual(captured["userAgent"], "rag-ime/1.0 curl-compatible")
         self.assertEqual(captured["payload"]["response_format"], {"type": "json_object"})
-        self.assertEqual(captured["payload"]["thinking"], {"type": "disabled"})
-        self.assertNotIn("reasoning_effort", captured["payload"])
+        self.assertEqual(captured["payload"]["thinking"], {"type": "enabled"})
+        self.assertEqual(captured["payload"]["reasoning_effort"], "low")
         self.assertEqual(captured["payload"]["max_tokens"], 3072)
         self.assertFalse(captured["payload"]["stream"])
         system_prompt = captured["payload"]["messages"][0]["content"]

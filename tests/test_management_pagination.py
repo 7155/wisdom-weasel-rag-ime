@@ -51,6 +51,34 @@ class ManagementPaginationTests(unittest.TestCase):
         self.assertNotIn("recentContext", first["items"][0])
         self.assertTrue(first["items"][0]["textHash"].startswith("sha256:"))
 
+    def test_history_source_filter_uses_display_categories_not_exact_storage_values(self) -> None:
+        cases = (
+            ("squirrel_input_segment", "squirrel:accessibility", "rime_commit"),
+            ("voice_streaming_asr", "voice_streaming_asr", "voice"),
+            ("squirrel_rime_sidecar", "rime-sidecar:model", "assistant_candidate"),
+            ("codex_history_import", "local", "import"),
+        )
+        for offset, (source, provider, _category) in enumerate(cases):
+            self.core.record_event(
+                InputEvent(
+                    event_id=None,
+                    created_at_ms=1_900_000_010_000 + offset,
+                    source=source,
+                    committed_text=f"分类来源 {source}",
+                    privacy_disposition="allowed",
+                    app="com.openai.codex",
+                    project="wisdom-weasel-rag-ime",
+                    provider_name=provider,
+                )
+            )
+
+        for source, _provider, category in cases:
+            page = self.service.management.history_page(
+                page_request({"limit": 20, "status": category})
+            )
+            self.assertEqual([item["source"] for item in page["items"]], [source])
+            self.assertEqual(page["items"][0]["sourceCategory"], category)
+
     def test_memory_apps_only_count_complete_inputs_and_keep_app_provenance(self) -> None:
         self.core.record_event(
             InputEvent(

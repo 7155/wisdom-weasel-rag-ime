@@ -63,7 +63,11 @@ export const contractSchemas = {
             "const": "rag-ime.window-context.v1"
           },
           "captureMode": {
-            "const": "accessibility_semantics"
+            "type": "string",
+            "enum": [
+              "accessibility_semantics",
+              "terminal_visible_range"
+            ]
           },
           "snapshotId": {
             "type": "string",
@@ -8556,6 +8560,32 @@ export const contractSchemas = {
       },
       "contextGroupLevel": {
         "type": "string"
+      },
+      "captureMetadata": {
+        "type": "object",
+        "properties": {
+          "captureSource": {
+            "type": "string"
+          },
+          "fallbackReason": {
+            "type": "string"
+          },
+          "fieldContextChars": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "imeBufferChars": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "selectedTextSha256": {
+            "type": "string"
+          },
+          "selectionRule": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "privacyDisposition": {
         "type": "string",

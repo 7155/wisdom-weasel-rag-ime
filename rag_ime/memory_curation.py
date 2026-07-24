@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 
 from .memory_ingest import normalize_text
+from .sensitive_content import redact_sensitive_text
 from .text_utils import compact_whitespace, stable_text_hash, truncate_text
 
 
@@ -57,6 +58,11 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
         source_ids = _positive_ints(item.get("sourceEventIds") or [item.get("eventId")])
         if not text or not source_ids:
             continue
+        local_context = compact_whitespace(
+            redact_sensitive_text(item.get("recentContext"))
+        )
+        if local_context == text:
+            local_context = ""
         evidence.append(
             {
                 "ref": f"E{len(evidence) + 1}",
@@ -65,6 +71,7 @@ def build_memory_curation_model_bundle(bundle: Mapping[str, object]) -> dict[str
                 "app": compact_whitespace(str(item.get("app") or ""))[:120],
                 "createdAtMs": _int(item.get("createdAtMs")),
                 "contextGroupId": compact_whitespace(str(item.get("contextGroupId") or ""))[:120],
+                "localContext": local_context[-800:],
             }
         )
 

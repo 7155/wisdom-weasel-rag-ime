@@ -19,7 +19,10 @@
       "required": ["schemaVersion", "captureMode", "snapshotId", "revision", "application", "nodes"],
       "properties": {
         "schemaVersion": {"const": "rag-ime.window-context.v1"},
-        "captureMode": {"const": "accessibility_semantics"},
+        "captureMode": {
+          "type": "string",
+          "enum": ["accessibility_semantics", "terminal_visible_range"]
+        },
         "snapshotId": {"type": "string", "maxLength": 200},
         "revision": {"type": "integer", "minimum": 1},
         "capturedAtMs": {"type": "integer", "minimum": 0},

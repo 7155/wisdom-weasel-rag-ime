@@ -78,6 +78,41 @@ class JsonContractTests(unittest.TestCase):
             {"text": "旧客户端仍可解析，但服务端会按 unknown no-store"},
             "foreground-commit.v1.json",
         )
+        validate_contract(
+            {
+                "text": "输入框最终内容",
+                "source": "squirrel_input_segment",
+                "privacyDisposition": "allowed",
+                "captureMetadata": {
+                    "captureSource": "text_input_client",
+                    "fallbackReason": "",
+                    "fieldContextChars": 8,
+                    "imeBufferChars": 8,
+                    "selectedTextSha256": "",
+                    "selectionRule": "field_context_if_not_shorter_else_ime_buffer",
+                },
+            },
+            "foreground-commit.v1.json",
+        )
+        validate_contract(
+            {
+                "selectedText": "修复当前命令失败",
+                "privacyDisposition": "allowed",
+                "frontAppBundleId": "com.mitchellh.ghostty",
+                "windowContext": {
+                    "schemaVersion": "rag-ime.window-context.v1",
+                    "captureMode": "terminal_visible_range",
+                    "snapshotId": "axsnap-terminal",
+                    "revision": 1,
+                    "application": {
+                        "bundleId": "com.mitchellh.ghostty",
+                        "name": "Ghostty",
+                    },
+                    "nodes": [],
+                },
+            },
+            "active-rag-start.v1.json",
+        )
 
         with self.assertRaises(ContractValidationError):
             validate_contract(

@@ -153,6 +153,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('currentApp == "com.microsoft.VSCode"', patch_text)
         self.assertIn("ragImeReuseChromiumPanelPosition", patch_text)
         self.assertIn("ragImeChromiumAssistantAnchor", patch_text)
+        self.assertIn("ragImeChromiumAssistantAnchorCapturedAt", patch_text)
+        self.assertIn("Date().timeIntervalSince(ragImeChromiumAssistantAnchorCapturedAt) <= 2.0", patch_text)
+        empty_panel_cleanup = patch_text[
+            patch_text.index("if preedit.isEmpty && candidates.isEmpty {") :
+        ]
+        self.assertNotIn("ragImeChromiumAssistantAnchor = nil", empty_panel_cleanup[:600])
         self.assertIn('ragImeBoolEnvEnabled("RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING", default: true)', patch_text)
         self.assertIn("let maximumTTL = containsResult ? 30000 : (isPendingFeedback ? 12000 : 2000)", patch_text)
         self.assertIn("ragImeOverlayExpiresAt = isExplicitOverlay", patch_text)
@@ -933,9 +939,9 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             status_model.index('return isSensitive ? "sensitive" : "allowed"'),
         )
 
-        # Every request, including post-commit prediction, must pass the full
-        # field-level probe. The IME ledger is only a text fallback after that
-        # probe allows the field. Full AX work remains off the IMK main thread.
+        # Every request still performs the full field probe. When an Electron
+        # client exposes no AX focused element, a same-transaction IME ledger
+        # may authorize the bounded fallback after deterministic guards pass.
         probe = section(
             "func probeRagImeForegroundPrivacyAndContext(",
             "func applyRagImeForegroundPrivacyProbe",
@@ -949,6 +955,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         )
         probe_after_full_status = probe[probe.index("ragImeSelectedTextProvider.sensitiveFieldStatus(") :]
         self.assertIn("DispatchQueue.main.async", probe_after_full_status)
+        self.assertIn("allowedByImeCommitLedger", patch_text)
+        self.assertIn('resolverPath: "ime_commit_ledger_fallback"', patch_text)
         active_context = section(
             "func startRagImeActiveRagAssistFromContext(",
             "func finishRagImeActiveRagAssistFromContext(",
@@ -986,6 +994,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("DispatchQueue.main.async", finalized_input)
         self.assertIn('source: "input_segment_finalize"', finalized_input)
         self.assertIn('privacyStatus.privacyDisposition == "allowed"', finalized_input)
+        self.assertIn("allowedByTextInputClient", finalized_input)
+        self.assertIn("fastPrivacyStatusAtFinalize", finalized_input)
         self.assertLess(
             finalized_input.index("ragImeForegroundContextQueue.async"),
             finalized_input.index("ragImeSelectedTextProvider.sensitiveFieldStatus("),
@@ -1042,8 +1052,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         apply_probe_start = patch_text.index("func applyRagImeForegroundPrivacyProbe")
         apply_probe_end = patch_text.index("func finishRagImeForegroundContextCapture(", apply_probe_start)
         apply_probe = patch_text[apply_probe_start:apply_probe_end]
-        self.assertIn("privacyStatus.reason.isEmpty", apply_probe)
-        self.assertIn("privacyStatus.isSensitive", apply_probe)
+        self.assertIn("effectivePrivacyStatus.reason.isEmpty", apply_probe)
+        self.assertIn("effectivePrivacyStatus.isSensitive", apply_probe)
         self.assertIn("failRagImeForegroundContextCapture(", apply_probe)
         self.assertIn("privacy_probe_unknown", apply_probe)
 
@@ -1433,10 +1443,18 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("struct RagImeWindowContextSnapshot: Codable", patch_text)
         self.assertIn("func captureWindowContext(", patch_text)
         self.assertIn("AXUIElementCopyMultipleAttributeValues(", patch_text)
+        self.assertIn("kAXVisibleCharacterRangeAttribute", patch_text)
+        self.assertIn('captureMode: isTerminalSurface', patch_text)
+        self.assertIn('"terminal_visible_range"', patch_text)
+        self.assertIn("if !isTerminalSurface", patch_text)
+        self.assertIn('isFocused || role == "AXTextArea" || role == "AXTextField"', patch_text)
+        self.assertIn("String(rawValue.suffix(4_000))", patch_text)
+        self.assertIn("[REDACTED]", patch_text)
         self.assertIn("DispatchQueue.main.async(execute: closeUI)", patch_text)
         self.assertIn("let provider = ragImeSelectedTextProvider", patch_text)
         self.assertIn("let status = provider.sensitiveFieldStatus(", patch_text)
-        self.assertIn('captureMode: "accessibility_semantics"', patch_text)
+        self.assertIn('captureMode: isTerminalSurface', patch_text)
+        self.assertIn(': "accessibility_semantics"', patch_text)
         self.assertIn('reason: "private_browsing_window"', patch_text)
         self.assertIn(
             "NSWorkspace.shared.frontmostApplication?.bundleIdentifier == sourceAppBundleId",
@@ -1448,6 +1466,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("let useClientContext = clientContext.count > capturedBefore.count", patch_text)
         self.assertIn("context.isEmpty ? semanticQuery : context", patch_text)
         self.assertIn("postActiveRagStatus", patch_text)
+        self.assertIn("TimeInterval(request.latencyBudgetMs) / 1_000 + 0.8", patch_text)
+        self.assertIn("timeoutOverride: requestTimeout", patch_text)
         self.assertIn("active_rag_status_poll_scheduled", patch_text)
         self.assertIn("response.pollAfterMs", patch_text)
         self.assertIn("latencyBudgetMs: 15000", patch_text)
@@ -1491,6 +1511,8 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("ragImeForegroundContextQueue.async", quick_path)
         self.assertIn("captureWindowContext(", quick_path)
         self.assertIn("let accessibilityForeground = imkForeground == nil", quick_path)
+        self.assertIn("imkPrivacyFallbackAllowed", quick_path)
+        self.assertIn("enforceRagImeDeterministicPrivacyGuard()", quick_path)
         self.assertIn('"usesScreenCapture": visualContext != nil', quick_path)
         self.assertNotIn("captureRagImeCurrentAppVisualContext(", quick_path)
         self.assertNotIn("CGWindowListCreateImage(", quick_path)

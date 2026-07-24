@@ -115,7 +115,7 @@ def _take_budgeted_window_context(
     budget = max(0, min(int(remaining_tokens), int(maximum_tokens)))
     compact: dict[str, object] = {
         "schemaVersion": str(projected.get("schemaVersion") or ""),
-        "captureMode": "accessibility_semantics",
+        "captureMode": str(projected.get("captureMode") or "accessibility_semantics"),
         "projection": str(projected.get("projection") or ""),
         "sourceNodeCount": max(0, int(projected.get("sourceNodeCount") or 0)),
         "nodes": [],
@@ -157,7 +157,25 @@ def _take_budgeted_window_context(
         )
         if consumed + node_tokens > budget:
             compact["truncated"] = True
-            continue
+            value = str(node.get("value") or "")
+            base_node = {key: item for key, item in node.items() if key != "value"}
+            base_tokens = max(
+                1,
+                estimate_tokens(
+                    " ".join(
+                        str(base_node.get(key) or "")
+                        for key in ("role", "subrole", "label")
+                    )
+                ),
+            )
+            value_budget = budget - consumed - base_tokens
+            if value_budget <= 0:
+                continue
+            bounded_value = tail_for_token_budget(value, value_budget)
+            if not bounded_value:
+                continue
+            node = {**base_node, "value": bounded_value}
+            node_tokens = base_tokens + estimate_tokens(bounded_value)
         selected_nodes.append(node)
         consumed += node_tokens
     compact["nodes"] = selected_nodes

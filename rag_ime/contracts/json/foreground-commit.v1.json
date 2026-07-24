@@ -18,6 +18,18 @@
     "source": {"type": "string"},
     "contextGroupId": {"type": "string"},
     "contextGroupLevel": {"type": "string"},
+    "captureMetadata": {
+      "type": "object",
+      "properties": {
+        "captureSource": {"type": "string"},
+        "fallbackReason": {"type": "string"},
+        "fieldContextChars": {"type": "integer", "minimum": 0},
+        "imeBufferChars": {"type": "integer", "minimum": 0},
+        "selectedTextSha256": {"type": "string"},
+        "selectionRule": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
     "privacyDisposition": {"type": "string", "enum": ["allowed", "sensitive", "unknown"]},
     "sensitiveField": {"type": "boolean"},
     "secureInput": {"type": "boolean"}

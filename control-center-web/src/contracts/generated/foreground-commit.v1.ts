@@ -19,6 +19,14 @@ export interface ForegroundCommitV1 {
   source?: string;
   contextGroupId?: string;
   contextGroupLevel?: string;
+  captureMetadata?: {
+    captureSource?: string;
+    fallbackReason?: string;
+    fieldContextChars?: number;
+    imeBufferChars?: number;
+    selectedTextSha256?: string;
+    selectionRule?: string;
+  };
   privacyDisposition?: 'allowed' | 'sensitive' | 'unknown';
   sensitiveField?: boolean;
   secureInput?: boolean;

@@ -63,7 +63,7 @@ export function HistoryFeature() {
     .map((item) => ({
       ...item,
       created: formatTime(item.createdAtMs),
-      sourceLabel: sourceLabel(stringValue(item.source)),
+      sourceLabel: sourceLabel(stringValue(item.source), stringValue(item.sourceCategory)),
       text: stringValue(item.textPreview, `已脱敏 · ${numberValue(item.textChars)} 字`),
     } as Record<string, unknown>)), [pages.data]);
   const sources = new Set(rows.map((row) => stringValue(row.source)).filter(Boolean));
@@ -113,8 +113,8 @@ export function HistoryFeature() {
             <Field className="history-filter-toolbar__source" htmlFor="history-source-filter" label="来源">
               <Select id="history-source-filter" onValueChange={setFilter} options={[
                 { value: '', label: '全部来源' },
-                { value: 'rime_commit', label: 'Rime 提交' },
-                { value: 'assistant_candidate', label: '助手候选' },
+                { value: 'rime_commit', label: '输入法' },
+                { value: 'assistant_candidate', label: '模型候选' },
                 { value: 'voice', label: '语音' },
                 { value: 'import', label: '导入' },
               ]} value={filter} />
@@ -293,7 +293,7 @@ function HistoryDetailDialog({
           <div className="history-detail__body">
             <dl className="history-detail__facts">
               <DetailFact label="时间" value={formatTime(item.createdAtMs)} />
-              <DetailFact label="来源" value={sourceLabel(stringValue(item.source))} />
+              <DetailFact label="来源" value={sourceLabel(stringValue(item.source), stringValue(item.sourceCategory))} />
               <DetailFact label="应用" value={applicationLabel(stringValue(item.app))} />
               <DetailFact label="项目" value={projectLabel(stringValue(item.project))} />
               <DetailFact label="识别或候选服务" value={providerLabel(stringValue(item.provider))} />
@@ -333,7 +333,11 @@ function DetailFact({ label, value }: { label: string; value: string }) {
   return <div><dt>{label}</dt><dd>{value || '未记录'}</dd></div>;
 }
 
-function sourceLabel(source: string): string {
+function sourceLabel(source: string, category = ''): string {
+  if (category === 'rime_commit') return '输入法';
+  if (category === 'voice') return '语音';
+  if (category === 'assistant_candidate') return '模型候选';
+  if (category === 'import') return '导入';
   const normalized = source.toLocaleLowerCase('en-US');
   if (normalized.includes('rime')) return '输入法';
   if (normalized.includes('voice')) return '语音';
