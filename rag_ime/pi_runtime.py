@@ -16,7 +16,7 @@ from typing import Any, Callable, Mapping
 from urllib.parse import quote, urlsplit
 from urllib.request import getproxies
 
-from .agent_execution_policy import execution_policy_prompt
+from .agent_core_policy import core_agent_policy_prompt
 from .agent_events import AgentEventHub
 from .agent_blocks import extract_completed_agent_blocks, normalize_trusted_agent_blocks
 from .agent_tool_block_bridge import AgentToolBlockBuffer
@@ -387,9 +387,9 @@ class PiRuntimeConfig:
             session.get("roleVersion") or "1",
         )
         role_book_prompt = str(self.role_book_resolver(session) or "").strip()
-        core_prompt = (
-            f"{role.safety_policy_prompt.strip()}\n\n"
-            f"{execution_policy_prompt(session)}"
+        core_prompt = core_agent_policy_prompt(
+            role.safety_policy_prompt,
+            session,
         )
         persona_prompt = compose_persona_layer(
             role.persona_prompt,

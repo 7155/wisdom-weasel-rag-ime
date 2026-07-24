@@ -491,20 +491,22 @@ def loaded_tool_receipt_evidence(
     *,
     session_ids: dict[str, str],
     dispatches: list[dict[str, Any]],
-) -> dict[str, list[dict[str, str]]]:
-    """Read every disclosed Tool schema, including loads never invoked.
+) -> dict[str, list[dict[str, Any]]]:
+    """Read every governed load so the effective Pi registry can be audited.
 
-    Compaction restores the exact disclosure set held by Pi, not merely the
-    subset that later produced invocation receipts. Keeping this oracle on an
-    independent database query catches both missing and invented recovery IDs.
+    A tool can have bootstrap, Dispatch-rebind, and explicit model-load rows.
+    The independent query keeps all of them; compaction comparison later selects
+    the newest receipt for each schema that Pi actually exposes to the model.
     """
 
-    result: dict[str, list[dict[str, str]]] = {}
+    result: dict[str, list[dict[str, Any]]] = {}
     with sqlite3.connect(db_path) as connection:
         for index, member in enumerate(("A", "B", "C")):
             rows = connection.execute(
                 """
-                SELECT disclosure.receipt_id, disclosure.tool_name
+                SELECT disclosure.receipt_id,
+                       disclosure.tool_name,
+                       disclosure.created_at_ms
                 FROM room_v2_tool_disclosure_receipts AS disclosure
                 JOIN room_v2_capability_manifests AS manifest
                   ON manifest.manifest_id = disclosure.manifest_id
@@ -521,10 +523,32 @@ def loaded_tool_receipt_evidence(
                 ),
             ).fetchall()
             result[member] = [
-                {"receiptId": str(row[0]), "toolName": str(row[1])}
+                {
+                    "receiptId": str(row[0]),
+                    "toolName": str(row[1]),
+                    "createdAtMs": int(row[2]),
+                }
                 for row in rows
             ]
     return result
+
+
+def _effective_loaded_tool_receipts(
+    loaded: list[dict[str, Any]],
+    disclosed_names: set[str],
+) -> list[dict[str, str]]:
+    """Mirror Pi's one-current-receipt-per-disclosed-schema registry contract."""
+
+    latest_by_name: dict[str, dict[str, str]] = {}
+    for item in loaded:
+        name = str(item.get("toolName") or "")
+        receipt_id = str(item.get("receiptId") or "")
+        if name in disclosed_names and receipt_id:
+            latest_by_name[name] = {
+                "receiptId": receipt_id,
+                "toolName": name,
+            }
+    return [latest_by_name[name] for name in sorted(latest_by_name)]
 
 
 def _statuses(value: dict[str, Any]) -> list[str]:
@@ -681,7 +705,8 @@ def _compact_members(
     requester: JsonRequester,
     session_ids: dict[str, str],
     tool_receipts: dict[str, dict[str, dict[str, Any]]],
-    loaded_tool_receipts: dict[str, list[dict[str, str]]],
+    loaded_tool_receipts: dict[str, list[dict[str, Any]]],
+    disclosed_tool_names: dict[str, set[str]],
     skill_receipts: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
@@ -706,11 +731,18 @@ def _compact_members(
             timeout=args.turn_timeout,
         )
         transition = latest_transition(args.db_path, session_id)
+        effective_tool_receipts = _effective_loaded_tool_receipts(
+            loaded_tool_receipts[member],
+            disclosed_tool_names[member],
+        )
         expected_tool_ids = {
-            item["receiptId"] for item in loaded_tool_receipts[member]
+            item["receiptId"] for item in effective_tool_receipts
         }
         expected_tool_names = {
-            item["toolName"] for item in loaded_tool_receipts[member]
+            item["toolName"] for item in effective_tool_receipts
+        }
+        all_loaded_tool_ids = {
+            item["receiptId"] for item in loaded_tool_receipts[member]
         }
         invoked_tool_ids = {
             receipt_id
@@ -769,6 +801,9 @@ def _compact_members(
             "expectedToolReceiptNames": sorted(expected_tool_names),
             "loadedWithoutInvocationReceiptIds": sorted(
                 expected_tool_ids - invoked_tool_ids
+            ),
+            "supersededOrHiddenLoadReceiptIds": sorted(
+                all_loaded_tool_ids - expected_tool_ids
             ),
             "checks": checks,
             "passed": all(checks.values()),
@@ -1235,6 +1270,7 @@ def run(
             requester=requester,
             timeout=args.turn_timeout,
             text_markers=MARKERS,
+            governed_tool_receipts=loaded_tool_receipts[member],
         )
         for member, session_id in session_ids.items()
     }
@@ -1304,7 +1340,9 @@ def run(
             for value in before.values()
         ),
         "progressiveDiscovery": all(
-            progressive_discovery_check([value["promptGovernance"]])
+            value["promptGovernance"]["stableRoomBootstrapSchemasExact"]
+            is True
+            and progressive_discovery_check([value["promptGovernance"]])
             for value in before.values()
         ),
         "boundedUsefulRag": bounded_useful_rag_check(before),
@@ -1347,6 +1385,19 @@ def run(
         session_ids=session_ids,
         tool_receipts=tool_receipts,
         loaded_tool_receipts=loaded_tool_receipts,
+        disclosed_tool_names={
+            member: {
+                str(name)
+                for name in (
+                    before[member]["currentProviderContext"].get(
+                        "disclosedBackendTools"
+                    )
+                    or []
+                )
+                if str(name).strip()
+            }
+            for member in ("A", "B", "C")
+        },
         skill_receipts=skill_receipts,
     )
     continuity = _session_continuity_probe(

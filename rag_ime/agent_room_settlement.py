@@ -123,25 +123,26 @@ class RoomSettleLifecycleService:
                 raise RoomKernelFenceError(
                     "Room settle capability is no longer active"
                 )
-            return self._repair_result(
+            details = (
+                replay.get("details")
+                if isinstance(replay.get("details"), Mapping)
+                else {}
+            )
+            reason = str(details.get("reason") or "missing_room_commit")
+            return self._follow_up_result(
                 settle_receipt=settle_receipt,
                 settle_attempt=settle_attempt,
-                reason=str(
-                    (
-                        replay.get("details")
-                        if isinstance(replay.get("details"), Mapping)
-                        else {}
-                    ).get("reason")
-                    or "missing_room_commit"
-                ),
+                reason=reason,
                 receipt=replay,
+                follow_up_kind=_follow_up_kind(reason),
             )
         if invocation is None:
-            return self._record_repair(
+            return self._record_follow_up(
                 room_id=room_id,
                 settle_receipt=settle_receipt,
                 settle_attempt=settle_attempt,
                 reason="missing_room_commit",
+                follow_up_kind="continue",
             )
 
         try:
@@ -151,11 +152,12 @@ class RoomSettleLifecycleService:
                 now_ms=timestamp,
             )
         except RoomCommitProposalError as exc:
-            return self._record_repair(
+            return self._record_follow_up(
                 room_id=room_id,
                 settle_receipt=settle_receipt,
                 settle_attempt=settle_attempt,
                 reason=str(exc),
+                follow_up_kind="repair_commit",
             )
 
         result = self.application.settle(
@@ -175,13 +177,14 @@ class RoomSettleLifecycleService:
             "replayed": False,
         }
 
-    def _record_repair(
+    def _record_follow_up(
         self,
         *,
         room_id: str,
         settle_receipt: Mapping[str, object],
         settle_attempt: int,
         reason: str,
+        follow_up_kind: str,
     ) -> dict[str, object]:
         result = self.application.settle(
             room_id,
@@ -190,20 +193,22 @@ class RoomSettleLifecycleService:
                 "guardReason": _bounded(reason, 500),
             },
         )
-        return self._repair_result(
+        return self._follow_up_result(
             settle_receipt=settle_receipt,
             settle_attempt=settle_attempt,
             reason=reason,
             receipt=result["receipt"],
+            follow_up_kind=follow_up_kind,
         )
 
-    def _repair_result(
+    def _follow_up_result(
         self,
         *,
         settle_receipt: Mapping[str, object],
         settle_attempt: int,
         reason: str,
         receipt: Mapping[str, object],
+        follow_up_kind: str,
     ) -> dict[str, object]:
         if receipt.get("receiptKind") == "settle_blocked":
             return {
@@ -214,21 +219,31 @@ class RoomSettleLifecycleService:
                 "reason": _bounded(reason, 500),
                 "guardReceipt": dict(receipt),
             }
+        if follow_up_kind not in {"continue", "repair_commit"}:
+            raise RuntimeError("Room settle follow-up kind is invalid")
+        follow_up_key = str(receipt["receiptId"])
         return {
             "schemaVersion": "wisdom-weasel.room-settle-lifecycle-result.v1",
-            "state": "repair",
+            "state": follow_up_kind,
             "dispatchId": settle_receipt["dispatchId"],
             "settleAttempt": settle_attempt,
             "reason": _bounded(reason, 500),
-            "repairKey": str(receipt["receiptId"]),
-            "message": self._repair_instruction(
+            "followUpKey": follow_up_key,
+            "message": self._follow_up_instruction(
                 dispatch_id=str(settle_receipt["dispatchId"]),
                 reason=reason,
+                follow_up_kind=follow_up_kind,
             ),
             "guardReceipt": dict(receipt),
         }
 
-    def _repair_instruction(self, *, dispatch_id: str, reason: str) -> str:
+    def _follow_up_instruction(
+        self,
+        *,
+        dispatch_id: str,
+        reason: str,
+        follow_up_kind: str,
+    ) -> str:
         task = self.kernel.task(str(self.kernel.dispatch(dispatch_id)["taskId"]))
         criterion_ids = [
             str(item)
@@ -236,15 +251,40 @@ class RoomSettleLifecycleService:
             if str(item).strip()
         ]
         allowed = json.dumps(criterion_ids, ensure_ascii=False)
+        if follow_up_kind == "continue":
+            lead = (
+                "当前受管任务还没有合法收工。一次模型回答结束不等于任务完成。"
+                "先读取当前 Task，找出尚未满足的验收项；若仍有合法下一步，"
+                "且该动作不同于已经失败的尝试、能够产生新证据，才继续使用"
+                "已授权工具推进并核验证据。若没有这种合法新动作，立即选择 "
+                "handoff、wait 或 blocked，而不是继续空转。"
+            )
+        else:
+            lead = (
+                "责任提交没有通过确定性校验："
+                f"{_bounded(reason, 300)}。若任务本身仍未完成，先继续干活；"
+                "若已经完成，只修正提交字段和证据，不要重做已通过的工作；"
+                "若当前模型无法完成且没有合法新动作，改为 handoff、wait 或 "
+                "blocked。"
+            )
         return (
-            "收工检查未通过："
-            f"{_bounded(reason, 300)}。请重新调用 room_commit，明确选择 "
+            '<managed-task-follow-up origin="room-kernel" '
+            f'kind="{follow_up_kind}">'
+            "这是 Kernel 生成的受管执行接续，不是用户提出了新需求。"
+            f"{lead}"
+            "handoff 必须说明建议接手的参与者或模型能力、已完成工作、失败证据"
+            "和准确接手点；wait 必须只向用户提出一个最小必要问题，并写明等待"
+            "信号与恢复条件；blocked 必须写明缺口、证据和恢复条件。"
+            "续作次数是硬预算，不得重复同一失败动作、提示或调用来消耗它。"
+            "不要复述进度，也不要为了结束本轮而虚构等待、阻塞或完成。"
+            "只有已经形成合法生命周期出口时，才调用 room_commit，明确选择 "
             "deliver、handoff、wait 或 blocked，并填写 result、evidenceRefs 与 "
             "requirementCoverage。requirementCoverage 只能使用当前 Task 的 "
             f"acceptanceCriterionIds={allowed}；不得填写 requirementItemIds；"
             "没有验收条件时必须传空数组。handoff 还要填写 "
             "targetParticipantId、nextTask 和 nextIntentKind。"
             "不要只在自然语言里声称完成。"
+            "</managed-task-follow-up>"
         )
 
     def _canonical_commit(
@@ -410,6 +450,11 @@ class RoomSettleLifecycleService:
         if staged_post is not None:
             commit["postInvocationReceiptId"] = staged_post["receiptId"]
         return commit
+
+
+def _follow_up_kind(reason: str) -> str:
+    return "continue" if reason == "missing_room_commit" else "repair_commit"
+
 
 def _invocation_arguments(value: Mapping[str, object] | None) -> Mapping[str, object]:
     if not isinstance(value, Mapping):

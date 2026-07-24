@@ -493,6 +493,65 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         self.assertFalse(evidence["initialProductSchemasHaveLoadReceipts"])
         self.assertFalse(evidence["progressiveProductSchemasValid"])
 
+    def test_prompt_governance_accepts_exact_governed_room_bootstrap(self) -> None:
+        cards = "\n".join(
+            json.dumps(
+                {
+                    "name": name,
+                    "when": ["受管 Room 生命周期需要"],
+                    "notFor": ["普通对话"],
+                    "input": "精确参数",
+                    "output": "治理回执",
+                    "does": "处理 Room 生命周期。",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            for name in ("room_state", "room_post", "room_commit")
+        )
+        prompt = (
+            "当前受管 Room Dispatch 已授权执行"
+            f"\n<available_skills>{cards}</available_skills>"
+            f"\n<available_product_tools>{cards}</available_product_tools>"
+        )
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=1,
+                    system_prompt=prompt,
+                    messages=[{"role": "user", "content": "work"}],
+                    tools=[
+                        {"name": "tool_load"},
+                        {"name": "room_state"},
+                        {"name": "room_post"},
+                        {"name": "room_commit"},
+                    ],
+                    previous_messages=None,
+                )
+            ]
+        }
+
+        governed = CANARY.provider_prompt_governance_evidence(
+            context,
+            {"room_state", "room_post", "room_commit"},
+        )
+        ungoverned = CANARY.provider_prompt_governance_evidence(context)
+
+        self.assertTrue(governed["stableRoomBootstrapSchemasExact"])
+        self.assertEqual(
+            governed["governedProductSchemasBeforeFirstCapture"],
+            ["room_commit", "room_post", "room_state"],
+        )
+        self.assertEqual(
+            governed["unprovenancedInitialProductSchemaNames"],
+            [],
+        )
+        self.assertTrue(governed["initialProductSchemasHaveLoadReceipts"])
+        self.assertTrue(governed["progressiveProductSchemasValid"])
+        self.assertTrue(CANARY.progressive_discovery_check([governed]))
+        self.assertFalse(ungoverned["initialProductSchemasHaveLoadReceipts"])
+        self.assertFalse(CANARY.progressive_discovery_check([ungoverned]))
+
     def test_prompt_governance_rejects_truncated_routing_card_values(self) -> None:
         card = json.dumps(
             {

@@ -22,6 +22,12 @@ from rag_ime.agent_room_skills import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = REPO_ROOT / "integrations/pi/room-skill-policy.json"
 SKILLS_ROOT = REPO_ROOT / "integrations/pi/skills"
+GENERAL_WORK_SKILLS = (
+    "grill-me",
+    "improve-codebase-architecture",
+    "managed-task-execution",
+    "quality-gate",
+)
 
 
 def _frontmatter(path: Path) -> dict[str, object]:
@@ -34,6 +40,52 @@ def _frontmatter(path: Path) -> dict[str, object]:
 
 
 class RoomNativeSkillTests(unittest.TestCase):
+    def test_general_work_skills_are_thin_progressive_entries(self) -> None:
+        expected_keys = {
+            "name",
+            "description",
+            "when",
+            "notFor",
+            "input",
+            "output",
+            "does",
+        }
+
+        for skill_id in GENERAL_WORK_SKILLS:
+            with self.subTest(skill_id=skill_id):
+                path = SKILLS_ROOT / skill_id / "SKILL.md"
+                frontmatter = _frontmatter(path)
+                body = path.read_text(encoding="utf-8").split("---", 2)[2]
+                self.assertEqual(set(frontmatter), expected_keys)
+                self.assertEqual(frontmatter["name"], skill_id)
+                self.assertTrue(frontmatter["when"])
+                self.assertTrue(frontmatter["notFor"])
+                self.assertLessEqual(len(body.splitlines()), 80)
+                self.assertNotIn("create a Dispatch", body)
+                self.assertNotIn("mark work complete", body)
+
+        architecture = (
+            SKILLS_ROOT / "improve-codebase-architecture/SKILL.md"
+        ).read_text(encoding="utf-8")
+        grilling = (SKILLS_ROOT / "grill-me/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        managed = (
+            SKILLS_ROOT / "managed-task-execution/SKILL.md"
+        ).read_text(encoding="utf-8")
+        quality = (SKILLS_ROOT / "quality-gate/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("File size alone is not evidence", architecture)
+        self.assertIn("Ask exactly one decision question", grilling)
+        self.assertIn("ordinary chat", managed)
+        self.assertIn("distinct, authorized action", managed)
+        self.assertIn("another participant or model capability", managed)
+        self.assertIn("ask only the smallest question", managed)
+        self.assertIn("bounded diagnosis and fallbacks are exhausted", managed)
+        self.assertIn("Kernel owns terminal truth", managed)
+        self.assertIn("immutable original request", quality)
+
     def test_ten_room_skills_are_native_pi_skills_with_compact_routing_cards(self) -> None:
         policy = RoomSkillPolicy(POLICY_PATH, SKILLS_ROOT)
         expected_keys = {"name", "when", "notFor", "input", "output", "does"}
@@ -65,6 +117,8 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertTrue(all(set(item) == expected_catalog_keys for item in catalog))
         self.assertEqual(set(loaded), expected_catalog_keys | {"body", "contentRevision"})
         self.assertIn("## Output Contract", loaded["body"])
+        self.assertIn("current model cannot finish", loaded["body"])
+        self.assertIn("exact takeover point", loaded["body"])
         self.assertEqual(len(loaded["contentRevision"]), 64)
         self.assertFalse(any("body" in item for item in catalog))
         self.assertNotIn("nextCandidates", loaded)

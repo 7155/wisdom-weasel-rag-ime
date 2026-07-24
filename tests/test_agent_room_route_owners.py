@@ -5,6 +5,7 @@ import unittest
 
 from rag_ime.agent_room_route_owners import (
     ROOM_ROUTE_OWNER_CENSUS,
+    room_message_owner,
     room_route_owner,
     validate_room_route_owner_census,
 )
@@ -21,17 +22,40 @@ from rag_ime.agent_wake_application import AgentWakeApplicationService
 class AgentRoomRouteOwnerTests(unittest.TestCase):
     def test_every_audited_room_binding_route_has_exactly_one_kernel_owner(self) -> None:
         validate_room_route_owner_census(AgentService)
-        self.assertEqual(len(ROOM_ROUTE_OWNER_CENSUS), 16)
+        self.assertEqual(len(ROOM_ROUTE_OWNER_CENSUS), 17)
         self.assertTrue(
             all(
                 room_route_owner(route.route_id, has_room_binding=True) == "kernel"
                 for route in ROOM_ROUTE_OWNER_CENSUS
+                if route.route_id != "room.message.conversation"
             )
+        )
+        self.assertEqual(
+            room_route_owner(
+                "room.message.conversation",
+                has_room_binding=True,
+            ),
+            "reject",
+        )
+
+    def test_room_message_semantics_have_one_owner_each(self) -> None:
+        self.assertEqual(room_message_owner(work_item_id=""), "session")
+        self.assertEqual(
+            room_message_owner(work_item_id="work-item:confirmed"),
+            "kernel",
+        )
+        self.assertEqual(
+            {
+                route.route_id
+                for route in ROOM_ROUTE_OWNER_CENSUS
+                if route.route_id.startswith("room.message.")
+            },
+            {"room.message.conversation", "room.message.execute"},
         )
 
     def test_each_legacy_owner_enforces_its_kernel_fence(self) -> None:
         guarded = (
-            (RoomLegacyDispatchService, "post_message", "room.message.mention"),
+            (RoomLegacyDispatchService, "post_message", "room.message.execute"),
             (RoomWorkApplicationService, "assign_room_work", "work_item.assign"),
             (RoomWorkApplicationService, "submit_room_work", "work_item.submit"),
             (RoomWorkApplicationService, "accept_room_work", "work_item.accept"),
@@ -44,6 +68,10 @@ class AgentRoomRouteOwnerTests(unittest.TestCase):
         for owner, method_name, route_id in guarded:
             with self.subTest(owner=owner.__name__, entrypoint=method_name):
                 source = inspect.getsource(getattr(owner, method_name))
+                if owner is RoomLegacyDispatchService:
+                    source += inspect.getsource(
+                        RoomLegacyDispatchService._post_session_messages
+                    )
                 self.assertIn(route_id, source)
                 self.assertIn("guard_legacy_room_route", source)
 

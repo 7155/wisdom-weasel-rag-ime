@@ -95,16 +95,20 @@ class AgentEventProjectionService:
         binding = self.room_kernel.session_binding(
             event.session_id
         )
+        registered_turn_for_event = getattr(
+            self.room_turns,
+            "registered_turn_for_event",
+            None,
+        )
+        conversation_turn_id = (
+            registered_turn_for_event(event)
+            if callable(registered_turn_for_event)
+            else ""
+        )
         if self.room_kernel.mode in {
             "cohort",
             "kernel_only",
-        }:
-            # A committed/revoked Dispatch may still emit trailing private
-            # Session deltas before agent_settled. Without a live Kernel
-            # binding they must not fall through to the legacy mapper, which
-            # would invent a second public Root from the private turn id.
-            if binding is None:
-                return
+        } and binding is not None:
             mapped_type, public_data = room_event_projection(event)
             if event.event_type == "message_completed":
                 mapped_type = "participant_activity"
@@ -159,8 +163,17 @@ class AgentEventProjectionService:
                 now_ms=event.created_at_ms,
             )
             return
-        room_turn_id = self.room_turns.turn_for_event(
-            event
+        if (
+            self.room_kernel.mode in {"cohort", "kernel_only"}
+            and not conversation_turn_id
+        ):
+            # A committed/revoked managed Dispatch may still emit trailing
+            # private deltas. Only an explicitly registered conversation is
+            # allowed to use the Session-backed public mapper.
+            return
+        room_turn_id = (
+            conversation_turn_id
+            or self.room_turns.turn_for_event(event)
         )
         if self.room_turns.is_cancelled(
             event.session_id,

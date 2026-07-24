@@ -35,6 +35,9 @@ _ROUTING_CARD_FIELDS = frozenset(
 )
 _SKILL_CATALOG_TAG = "available_skills"
 _PRODUCT_TOOL_CATALOG_TAG = "available_product_tools"
+_ROOM_BOOTSTRAP_TOOL_NAMES = frozenset(
+    {"room_state", "room_post", "room_commit"}
+)
 _FORBIDDEN_MEMORY_METADATA = (
     "相关度：",
     "相关度:",
@@ -705,7 +708,10 @@ def _human_dispatch_requirement_projection(
     return originals, supplements
 
 
-def provider_prompt_governance_evidence(context: dict[str, Any]) -> dict[str, Any]:
+def provider_prompt_governance_evidence(
+    context: dict[str, Any],
+    governed_tool_names: set[str] | None = None,
+) -> dict[str, Any]:
     """Return content-free evidence for the managed Room prompt owners."""
 
     raw_calls = context.get("modelCalls")
@@ -772,8 +778,17 @@ def provider_prompt_governance_evidence(context: dict[str, Any]) -> dict[str, An
         and isinstance(details.get("tool"), dict)
         and isinstance(details["tool"].get("name"), str)
     }
-    initial_product_schemas_have_load_receipts = initial_product_tools <= (
-        loaded_before_first_capture
+    governed_before_first_capture = (
+        set(governed_tool_names or ()) & first_product_tool_names
+    )
+    proven_initial_product_tools = (
+        loaded_before_first_capture | governed_before_first_capture
+    )
+    unprovenanced_initial_product_tools = (
+        initial_product_tools - proven_initial_product_tools
+    )
+    initial_product_schemas_have_load_receipts = (
+        not unprovenanced_initial_product_tools
     )
     return {
         "schemaVersion": "wisdom-weasel.provider-prompt-governance-evidence.v1",
@@ -872,18 +887,28 @@ def provider_prompt_governance_evidence(context: dict[str, Any]) -> dict[str, An
             initial_product_tools
         ),
         "initialProductSchemaNames": sorted(initial_product_tools),
+        "stableRoomBootstrapSchemasExact": (
+            initial_product_tools == _ROOM_BOOTSTRAP_TOOL_NAMES
+        ),
         "initialProductSchemasDeferred": bool(prompts)
         and bool(first_product_tool_names)
         and not initial_product_tools,
         "loadedProductSchemasBeforeFirstCapture": sorted(
             loaded_before_first_capture & first_product_tool_names
         ),
+        "governedProductSchemasBeforeFirstCapture": sorted(
+            governed_before_first_capture
+        ),
+        "unprovenancedInitialProductSchemaNames": sorted(
+            unprovenanced_initial_product_tools
+        ),
         "initialProductSchemasHaveLoadReceipts": bool(prompts)
         and bool(first_product_tool_names)
         and initial_product_schemas_have_load_receipts,
         "progressiveProductSchemasValid": bool(prompts)
         and bool(first_product_tool_names)
-        and initial_product_schemas_have_load_receipts,
+        and initial_product_schemas_have_load_receipts
+        and not unprovenanced_initial_product_tools,
     }
 
 
@@ -900,13 +925,15 @@ def progressive_discovery_check(
         return False
     # Native approvals may suspend and resume the same Session in a new Pi
     # process. The first captured call of that process can therefore already
-    # contain schemas disclosed before suspension. Provenance, not capture
+    # contain schemas disclosed before suspension. Managed Room bootstrap tools
+    # are also disclosed before the first model call. Provenance, not capture
     # timing, is the invariant: every visible product schema must be backed by
-    # an earlier successful tool_load result in the model-visible transcript.
+    # an earlier model-visible tool_load or an exact governed load receipt.
     return all(
         set(item.get("initialProductSchemaNames") or [])
         <= (
             set(item.get("loadedProductSchemasBeforeFirstCapture") or [])
+            | set(item.get("governedProductSchemasBeforeFirstCapture") or [])
             | recovered[index]
         )
         and item.get("catalogBlocksExactlyOnceEveryCall") is True
@@ -926,6 +953,7 @@ def debug_evidence(
     timeout: float = 15,
     text_markers: Mapping[str, str] | None = None,
     turn_id: str = "",
+    governed_tool_receipts: list[Mapping[str, object]] | None = None,
 ) -> dict[str, Any]:
     path = f"/api/agent/sessions/{encoded(session_id)}/debug-context"
     if turn_id:
@@ -997,6 +1025,22 @@ def debug_evidence(
     )
     message_queue = snapshot.get("messageQueue") or {}
     transcript = debug.get("transcript") or {}
+    first_model_capture_ms = min(
+        (
+            int(call.get("capturedAtMs") or 0)
+            for call in context.get("modelCalls", [])
+            if isinstance(call, Mapping)
+            and int(call.get("capturedAtMs") or 0) > 0
+        ),
+        default=0,
+    )
+    governed_tool_names = {
+        str(item.get("toolName") or "")
+        for item in governed_tool_receipts or []
+        if str(item.get("toolName") or "").strip()
+        and first_model_capture_ms > 0
+        and int(item.get("createdAtMs") or 0) <= first_model_capture_ms
+    }
     return {
         "turnId": debug.get("turnId"),
         "currentProviderContext": current_provider_context,
@@ -1016,7 +1060,10 @@ def debug_evidence(
             context,
             text_markers,
         ),
-        "promptGovernance": provider_prompt_governance_evidence(context),
+        "promptGovernance": provider_prompt_governance_evidence(
+            context,
+            governed_tool_names,
+        ),
         "toolNames": tool_names,
         "roomCommitCalls": sum(name == "room_commit" for name in tool_names),
         "pendingContinuations": len(message_queue.get("steering") or [])

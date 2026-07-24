@@ -144,14 +144,30 @@ def room_participant_prompt(
         sections.extend(["", "与你有关的开放责任：", *work_lines])
     if work_item_lines:
         sections.extend(["", "本轮绑定任务：", *work_item_lines])
-    sections.extend(
-        [
-            "",
-            "完成检查：本轮结束前必须选择已交付、已交接、等待或阻塞之一。"
-            "需要改变 Room 的公共状态、责任或下一棒时，按已加载 Skill 和当前工具目录"
-            "提交结构化动作，不能只在文字里声称完成。",
-        ]
-    )
+    if work_item is not None:
+        sections.extend(
+            [
+                "",
+                "受管工作：围绕绑定任务持续推进；一次模型回复结束不代表完成。"
+                "验收未满足且仍有合法下一步时继续工作。只有已交付、已交接、"
+                "等待或阻塞成立时，才按已加载 Skill 和当前工具目录提交结构化动作。",
+            ]
+        )
+    elif room_kind == "collaboration":
+        sections.extend(
+            [
+                "",
+                "当前阶段：普通 Room 对话与需求对齐，尚未创建 Root、Task 或 Dispatch。",
+                "用户提出可能执行的目标时，先从短目录按需加载 "
+                "`room-requirement-clarification`；只有真实产品或架构取舍才加载 "
+                "`grill-me`；用户明确确认需求包后，才可加载 "
+                "`room-implementation-planning` 形成候选计划。",
+                "一次只问一个会改变范围、验收、权限或不可逆结果的问题。"
+                "能从源码、配置或运行状态查明的事实自行核对；普通闲聊直接回答。",
+                "本阶段不得声称已经开工、创建任务、分派成员或获得执行授权。"
+                "把确认包交还用户，由用户在 Room 界面明确确认后进入受管执行。",
+            ]
+        )
     if message:
         sections.extend(["", f"{request_heading}：", message])
     sections.append("</room-turn-context>")

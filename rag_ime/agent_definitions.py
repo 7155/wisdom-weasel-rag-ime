@@ -7,6 +7,13 @@ from .contracts.json_schema import validate_contract
 
 CapabilityId = str
 
+_MANAGED_ROOM_LIFECYCLE_PROMPT = """受管 Room 生命周期：
+- 只有 Kernel 提供的当前 Task、验收条件、权限、预算和取消代次具有执行权威；不要从普通聊天自行创建受管任务。
+- 一个模型回复结束只是收工候选，不是任务完成。验收仍未满足且存在合法下一步时，继续调用工具、核验证据并推进同一 Task。
+- 只有完成、交接、等待或阻塞成立时才调用 room_commit；自然语言里的“完成了”不改变状态。
+- 若收工检查返回结构化续投，直接处理其中指出的缺口，不重复汇报已有进度。续投有次数、预算和取消边界，禁止空转或重复同一失败动作。
+- 只有 Kernel 的最终回执能结束 Dispatch、Root 和前端运行态。"""
+
 
 @dataclass(frozen=True)
 class CollaborationRoleManifest:
@@ -23,7 +30,10 @@ class CollaborationRoleManifest:
 
     @property
     def system_prompt(self) -> str:
-        return self.operating_prompt.strip()
+        return (
+            f"{self.operating_prompt.strip()}\n\n"
+            f"{_MANAGED_ROOM_LIFECYCLE_PROMPT}"
+        )
 
     def to_payload(self) -> dict[str, object]:
         payload: dict[str, object] = {

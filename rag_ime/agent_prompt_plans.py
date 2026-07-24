@@ -26,6 +26,7 @@ PROMPT_LAYER_SPECS = (
 
 _RULE_OWNER_SIGNATURES = (
     ("authorization", "core_rails", ("只有受控审批回执有效", "原生控制中心")),
+    ("durable-memory", "core_rails", ("<durable-memory-policy>", "memory_capture")),
     ("role-memory", "persona", ("<agent-role-book>",)),
     ("settle-decision", "collaboration_role", ("收工前", "已交付、已交接")),
     ("progressive-capability", "agent_template_policy", ("skill_load", "tool_load")),

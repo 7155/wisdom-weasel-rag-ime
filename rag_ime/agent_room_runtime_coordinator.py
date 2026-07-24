@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
-from .agent_execution_policy import execution_policy_prompt
+from .agent_core_policy import core_agent_policy_prompt
 from .agent_definition_compiler import AgentDefinitionCompiler
 from .agent_personas import AgentPersonaStore
 from .agent_prompt_plans import (
@@ -524,12 +524,12 @@ def _prompt_layers(
         PromptLayer(
             "core_rails",
             "pi-core-safety",
-            "pi-core-safety:v1",
-            (
-                f"{persona.safety_policy_prompt.strip()}\n\n"
-                f"{execution_policy_prompt(session)}"
+            "pi-core-safety:v2",
+            core_agent_policy_prompt(
+                persona.safety_policy_prompt,
+                session,
             ),
-            ("safety", "authorization"),
+            ("safety", "authorization", "durable-memory"),
         ),
         PromptLayer(
             "persona",

@@ -13,7 +13,20 @@ class RoomRouteOwner:
 
 
 ROOM_ROUTE_OWNER_CENSUS = (
-    RoomRouteOwner("room.message.mention", "_post_room_message_once", "room_router", "kernel", "reject_legacy"),
+    RoomRouteOwner(
+        "room.message.conversation",
+        "_post_room_message_once",
+        "session",
+        "reject",
+        "conversation_only",
+    ),
+    RoomRouteOwner(
+        "room.message.execute",
+        "_post_room_message_once",
+        "reject",
+        "kernel",
+        "work_item_required",
+    ),
     RoomRouteOwner("intercom.send", "send_room_intercom", "intercom", "kernel", "reject_legacy"),
     RoomRouteOwner("intercom.ask", "send_room_intercom", "intercom", "kernel", "reject_legacy"),
     RoomRouteOwner("intercom.reply", "send_room_intercom", "intercom", "kernel", "reject_legacy"),
@@ -32,6 +45,12 @@ ROOM_ROUTE_OWNER_CENSUS = (
 )
 
 
+def room_message_owner(*, work_item_id: str) -> str:
+    """Resolve the two intentionally different Room message semantics."""
+
+    return "kernel" if str(work_item_id or "").strip() else "session"
+
+
 def room_route_owner(route_id: str, *, has_room_binding: bool) -> str:
     for route in ROOM_ROUTE_OWNER_CENSUS:
         if route.route_id == route_id:
@@ -44,7 +63,10 @@ def validate_room_route_owner_census(service_type: type[object]) -> None:
     if len(route_ids) != len(set(route_ids)):
         raise RuntimeError("Room route owner census contains duplicate route ids")
     for route in ROOM_ROUTE_OWNER_CENSUS:
-        if route.room_binding_owner != "kernel":
+        if (
+            route.enforcement != "conversation_only"
+            and route.room_binding_owner != "kernel"
+        ):
             raise RuntimeError(f"RoomBinding route has a non-Kernel owner: {route.route_id}")
         if not callable(getattr(service_type, route.entrypoint, None)):
             raise RuntimeError(f"Room route entrypoint is missing: {route.entrypoint}")

@@ -383,14 +383,30 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             "blocked",
         )
 
-    def test_missing_commit_repairs_twice_then_blocks_and_replays_exact_attempt(self) -> None:
+    def test_missing_commit_continues_twice_then_blocks_and_replays_exact_attempt(self) -> None:
         first = self._settle(1)
         first_replay = self._settle(1)
         second = self._settle(2)
         third = self._settle(3)
         third_replay = self._settle(3)
 
-        self.assertEqual(first["state"], "repair")
+        self.assertEqual(first["state"], "continue")
+        self.assertIn(
+            '<managed-task-follow-up origin="room-kernel" kind="continue">',
+            first["message"],
+        )
+        self.assertIn("不是用户提出了新需求", first["message"])
+        self.assertIn("一次模型回答结束不等于任务完成", first["message"])
+        self.assertIn("能够产生新证据", first["message"])
+        self.assertIn(
+            "若没有这种合法新动作，立即选择 handoff、wait 或 blocked",
+            first["message"],
+        )
+        self.assertIn("建议接手的参与者或模型能力", first["message"])
+        self.assertIn("只向用户提出一个最小必要问题", first["message"])
+        self.assertIn("续作次数是硬预算", first["message"])
+        self.assertIn("不得重复同一失败动作", first["message"])
+        self.assertTrue(first["followUpKey"])
         self.assertEqual(first_replay["guardReceipt"], first["guardReceipt"])
         self.assertEqual(second["guardReceipt"]["details"]["attempt"], 2)
         self.assertEqual(third["state"], "blocked")
@@ -417,13 +433,19 @@ class RoomSettleLifecycleTests(unittest.TestCase):
 
         settled = self._settle()
 
-        self.assertEqual(settled["state"], "repair")
+        self.assertEqual(settled["state"], "repair_commit")
+        self.assertTrue(settled["followUpKey"])
         self.assertIn("outside the current Task", settled["reason"])
         self.assertIn(
             'acceptanceCriterionIds=["criterion:settle"]',
             settled["message"],
         )
+        self.assertIn('kind="repair_commit"', settled["message"])
         self.assertIn("不得填写 requirementItemIds", settled["message"])
+        self.assertIn(
+            "若当前模型无法完成且没有合法新动作",
+            settled["message"],
+        )
         self.assertEqual(
             self.service.room_kernel.dispatch("dispatch:settle")["state"],
             "running",

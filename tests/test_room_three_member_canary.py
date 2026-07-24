@@ -349,10 +349,42 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             self.assertEqual(
                 evidence["B"],
                 [
-                    {"receiptId": "load-B-used", "toolName": "room_state"},
-                    {"receiptId": "load-B-unused", "toolName": "room_collaborate"},
+                    {
+                        "receiptId": "load-B-used",
+                        "toolName": "room_state",
+                        "createdAtMs": 2,
+                    },
+                    {
+                        "receiptId": "load-B-unused",
+                        "toolName": "room_collaborate",
+                        "createdAtMs": 20,
+                    },
                 ],
             )
+
+    def test_effective_tool_receipts_keep_latest_model_visible_schema_only(
+        self,
+    ) -> None:
+        loaded = [
+            {"receiptId": "bootstrap-state", "toolName": "room_state"},
+            {"receiptId": "bootstrap-memory", "toolName": "ime_memory"},
+            {"receiptId": "rebind-state", "toolName": "room_state"},
+            {"receiptId": "load-read", "toolName": "workspace_read"},
+            {"receiptId": "load-hidden", "toolName": "workspace_shell"},
+        ]
+
+        effective = CANARY._effective_loaded_tool_receipts(
+            loaded,
+            {"room_state", "workspace_read"},
+        )
+
+        self.assertEqual(
+            effective,
+            [
+                {"receiptId": "rebind-state", "toolName": "room_state"},
+                {"receiptId": "load-read", "toolName": "workspace_read"},
+            ],
+        )
 
     @staticmethod
     def _dispatch(

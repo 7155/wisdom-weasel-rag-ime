@@ -60,13 +60,14 @@ describe('Rooms experience', () => {
     expect(errorSlot).toBeInTheDocument();
     expect(errorSlot).toBeEmptyDOMElement();
     expect(errorSlot?.nextElementSibling).toHaveClass('room-timeline');
-    expect(errorSlot?.nextElementSibling?.nextElementSibling).toHaveClass('room-composer-shell');
+    expect(errorSlot?.nextElementSibling?.nextElementSibling).toHaveClass('room-composer-dock');
     await user.type(composer, '并行核对边界');
     await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     const request = transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request;
     expect(request?.params).toEqual({ roomId: 'room-a' });
     expect(request?.body).toMatchObject({ message: '并行核对边界' });
+    expect(request?.body).not.toHaveProperty('workItemId');
     expect(transport.subscriptionCalls[0]?.request).toMatchObject({
       pathId: 'agent.room.events',
       params: { roomId: 'room-a' },
@@ -96,6 +97,109 @@ describe('Rooms experience', () => {
     expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true);
 
     pending.resolve({ ok: true });
+  });
+
+  it('starts managed execution only after an explicit confirmed WorkItem', async () => {
+    const workItem = managedWorkItem('room-a', 'work:confirmed');
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '需求对齐 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', []),
+      'agent.room.workItem.create': { ok: true, workItem },
+      'agent.room.message': { ok: true, accepted: true, workItem },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await screen.findByText('还没有公开 Post');
+    expect(screen.getByText('对话与对齐')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '确认并开始' }));
+    await user.type(screen.getByRole('textbox', { name: '受管任务目标' }), '修复对话重复与延迟');
+    await user.type(screen.getByRole('textbox', { name: '受管任务交付物' }), '实现、测试和审计记录');
+    fireEvent.change(screen.getByRole('textbox', { name: '受管任务验收条件' }), {
+      target: { value: '消息只出现一次\n发送后立即可见' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: '受管任务禁区' }), {
+      target: { value: '不得修改参考项目\n不得绕过取消栅栏' },
+    });
+    await user.click(screen.getByRole('button', { name: '开始受管执行' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter(({ request }) => request.pathId === 'agent.room.message'),
+    ).toHaveLength(1));
+    const createRequest = transport.requests.find(
+      ({ request }) => request.pathId === 'agent.room.workItem.create',
+    )?.request;
+    expect(createRequest?.body).toMatchObject({
+      objective: '修复对话重复与延迟',
+      expectedOutput: '实现、测试和审计记录',
+      currentOwnerParticipantId: 'room-a:p1',
+      acceptanceCriteria: [
+        '消息只出现一次',
+        '发送后立即可见',
+        '不得违反：不得修改参考项目',
+        '不得违反：不得绕过取消栅栏',
+      ],
+    });
+    const startRequest = transport.requests.find(
+      ({ request }) => request.pathId === 'agent.room.message',
+    )?.request;
+    expect(startRequest?.body).toMatchObject({
+      workItemId: 'work:confirmed',
+      participantIds: ['room-a:p1'],
+    });
+    expect(String(
+      (startRequest?.body as Record<string, unknown> | undefined)?.message,
+    )).toContain('确认开始受管执行');
+    expect(await screen.findByText('受管执行')).toBeInTheDocument();
+    expect(screen.getByText('修复对话重复与延迟')).toBeInTheDocument();
+  });
+
+  it('reuses the saved WorkItem when managed start delivery is retried', async () => {
+    const workItem = managedWorkItem('room-a', 'work:retry');
+    let startAttempts = 0;
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '重试 Room')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', []),
+      'agent.room.workItem.create': { ok: true, workItem },
+      'agent.room.message': () => {
+        startAttempts += 1;
+        if (startAttempts === 1) throw new Error('temporary delivery failure');
+        return { ok: true, accepted: true, workItem };
+      },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    await screen.findByText('还没有公开 Post');
+    await user.click(screen.getByRole('button', { name: '确认并开始' }));
+    await user.type(screen.getByRole('textbox', { name: '受管任务目标' }), '完成可重试任务');
+    await user.type(screen.getByRole('textbox', { name: '受管任务交付物' }), '一份结果');
+    await user.type(screen.getByRole('textbox', { name: '受管任务验收条件' }), '结果可复核');
+    await user.click(screen.getByRole('button', { name: '开始受管执行' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '任务定义已保存，但受管执行尚未启动。请重试本次确认。',
+    );
+    expect(screen.getByRole('textbox', { name: '受管任务目标' })).toHaveValue('完成可重试任务');
+    await user.click(screen.getByRole('button', { name: '开始受管执行' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter(({ request }) => request.pathId === 'agent.room.message'),
+    ).toHaveLength(2));
+    expect(
+      transport.requests.filter(({ request }) => request.pathId === 'agent.room.workItem.create'),
+    ).toHaveLength(1);
+    const starts = transport.requests.filter(
+      ({ request }) => request.pathId === 'agent.room.message',
+    );
+    expect(
+      (starts[0]?.request.body as Record<string, unknown> | undefined)?.clientMessageId,
+    ).toBe(
+      (starts[1]?.request.body as Record<string, unknown> | undefined)?.clientMessageId,
+    );
+    expect(screen.queryByRole('dialog', { name: '确认并开始' })).not.toBeInTheDocument();
   });
 
   it('retains an in-flight Room turn while navigating between Rooms', async () => {
@@ -862,7 +966,7 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     expect(await screen.findByText('还没有公开 Post')).toBeInTheDocument();
-    expect(screen.getByText('发一条消息，伙伴会立即接手并在这里持续显示进度。')).toBeInTheDocument();
+    expect(screen.getByText('先对话澄清目标、交付物、验收和禁区；确认后再开始受管执行。')).toBeInTheDocument();
     expect(screen.getByText('还没有公开 Post').closest('.ui-empty-state')?.querySelector('img')).toBeNull();
     expect(screen.getByRole('textbox', { name: 'Room 消息' })).toBeEnabled();
   });
@@ -1420,6 +1524,40 @@ function roomSummary(roomId: string, title: string): RoomSummary {
       { id: `${roomId}:p1`, sessionId: `${roomId}:s1`, roleId: 'companion-present-v1', roleVersion: '1', displayName: '智鼬', collaborationRole: 'coordinator', status: 'active', ordinal: 0 },
       { id: `${roomId}:p2`, sessionId: `${roomId}:s2`, roleId: 'companion-firstlight-v1', roleVersion: '1', displayName: '智鼬·初识', collaborationRole: 'researcher', status: 'active', ordinal: 1 },
     ],
+  };
+}
+
+function managedWorkItem(roomId: string, id: string): NonNullable<RoomSummary['workItems']>[number] {
+  return {
+    id,
+    roomId,
+    topicId: '',
+    rootTurnId: '',
+    rootWorkId: id,
+    parentWorkId: '',
+    objective: id === 'work:confirmed'
+      ? '修复对话重复与延迟'
+      : '完成可重试任务',
+    expectedOutput: id === 'work:confirmed'
+      ? '实现、测试和审计记录'
+      : '一份结果',
+    acceptanceCriteria: ['结果可复核'],
+    accountableParticipantId: `${roomId}:p1`,
+    currentOwnerParticipantId: `${roomId}:p1`,
+    offeredToParticipantId: '',
+    createdByParticipantId: '',
+    clientMessageId: `client:${id}`,
+    state: 'queued',
+    depth: 0,
+    revision: 0,
+    resultSummary: '',
+    artifactRefs: [],
+    evidenceRefs: [],
+    blocker: {},
+    acceptedTurnId: '',
+    createdAtMs: 1,
+    updatedAtMs: 1,
+    completedAtMs: null,
   };
 }
 

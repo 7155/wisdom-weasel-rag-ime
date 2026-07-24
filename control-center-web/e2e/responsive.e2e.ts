@@ -168,6 +168,21 @@ test('Room mobile drawer leaves the workspace full width and preserves narrow co
   }
 });
 
+test('Room drawer adopts mobile overlay semantics after a live resize', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/#/rooms');
+  const rail = page.locator('.rooms-rail');
+  await expect(rail).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(rail).toHaveAttribute('role', 'dialog');
+  await expect(rail).toHaveAttribute('aria-modal', 'true');
+  await page.getByRole('button', { name: '关闭 Rooms 列表' }).first().click();
+  await expect(rail).toBeHidden();
+  await expect(page.getByRole('button', { name: '打开 Rooms 列表' })).toBeFocused();
+  await expectNoHorizontalPageOverflow(page);
+});
+
 test('capability lifecycle labels stay whole on narrow screens', async ({ page }) => {
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });

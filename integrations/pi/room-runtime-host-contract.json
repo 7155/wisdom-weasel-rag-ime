@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "5972b99edd04a6f0cad8e8d2f5faa82e759b5662",
+  "minimumHandlersCommit": "0de9fad65d9d67862ba7a0fdf315b9cd09eaa6af",
   "requiredMethods": [
     "room.dispatch",
     "room.cancel"
@@ -15,6 +15,9 @@
     "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
     "skills": "packages/coding-agent/src/core/skills.ts",
     "discoveryTools": "packages/rag-ime-runtime-host/src/discovery-tools.ts",
+    "memoryCapture": "packages/rag-ime-runtime-host/src/memory-capture-tool.ts",
+    "roomToolBootstrap": "packages/rag-ime-runtime-host/src/room-tool-bootstrap.ts",
+    "runtimeToolNames": "packages/rag-ime-runtime-host/src/runtime-tool-names.ts",
     "toolBridge": "packages/rag-ime-runtime-host/src/tool-bridge.ts",
     "toolArtifacts": "packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts",
     "providerContextJournal": "packages/rag-ime-runtime-host/src/provider-context-journal.ts",
@@ -48,8 +51,24 @@
       "Cards contain name, when, notFor, input, output, and does; load only on a positive match."
     ],
     "discoveryTools": [
-      "Use tool_search for detail and tool_load for one schema.",
-      "tool: backendToolRouteEntry(loaded.tool)"
+      "Use tool_search for detail and tool_load for one to four exact schemas needed by the same next step.",
+      "const loaded = loadBackendTools(",
+      "tools: prepared.map((item) => ({",
+      "...backendToolRouteEntry(item.tool),"
+    ],
+    "memoryCapture": [
+      "export function createMemoryCaptureExtension",
+      "targetToolName: MEMORY_CAPTURE_TARGET",
+      "requestGovernedToolLoad("
+    ],
+    "roomToolBootstrap": [
+      "export const ROOM_BOOTSTRAP_TOOL_NAMES",
+      "for (const name of ROOM_BOOTSTRAP_TOOL_NAMES)",
+      "options.registry.disclose(item.name)"
+    ],
+    "runtimeToolNames": [
+      "export const TOOL_LOAD_TOOL_NAME = \"tool_load\";",
+      "export const MEMORY_CAPTURE_TOOL_NAME = \"memory_capture\";"
     ],
     "toolBridge": [
       "when?: string[];",
@@ -89,7 +108,8 @@
       "pendingRoomCancellationSurfaces"
     ],
     "roomSettleLifecycle": [
-      "origin: \"room_settle_guard\"",
+      "state !== \"continue\" && state !== \"repair_commit\"",
+      "const origin = state === \"continue\" ? \"room_goal_guard\" : \"room_commit_guard\";",
       "maxAttempts: 1",
       "event.message.stopReason === \"error\" || event.message.stopReason === \"aborted\""
     ],

@@ -7,7 +7,8 @@ from .contracts.json_schema import validate_contract
 
 _PROGRESSIVE_CAPABILITY_POLICY = """能力目录规则：
 - Skill 与 Tool 的初始目录只提供 name、when、notFor、input、output、does。先用这些字段判断是否适合当前任务；notFor 命中时不要加载。
-- 只有确定需要某一项时才调用 skill_load 或 tool_load。Skill 正文与 Tool schema 必须精确加载，不能为盘点、预热或激活而批量加载。
+- 只有确定需要时才加载：skill_load 每次读取一个精确 Skill 正文；tool_load 可为同一个具体下一步一次加载 1 至 4 个精确 Tool schema。
+- 不得为盘点、预热、激活、猜测后续用途或暴露整个目录而加载；多个 Tool 不属于同一步时分开按需加载。
 - loaded 只代表本轮已披露，不代表 authorized。调用仍受当前 Session 能力清单、审批和取消边界约束；加载失败时报告缺口，不猜参数。
 """
 

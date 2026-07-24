@@ -142,6 +142,15 @@ class RoomTurnRegistry:
         self,
         event: AgentEventEnvelope,
     ) -> str:
+        registered = self.registered_turn_for_event(event)
+        return registered or event.turn_id
+
+    def registered_turn_for_event(
+        self,
+        event: AgentEventEnvelope,
+    ) -> str:
+        """Return only an explicitly registered public Room conversation."""
+
         if not event.turn_id:
             return ""
         key = (event.session_id, event.turn_id)
@@ -180,7 +189,7 @@ class RoomTurnRegistry:
                     key
                 ] = cancelled_pending
                 return cancelled_pending
-        return event.turn_id
+        return ""
 
     def dispatch_for_event(
         self,

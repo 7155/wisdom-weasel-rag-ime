@@ -58,10 +58,10 @@ class LegacyRoomHost(Protocol):
 
 
 class RoomLegacyDispatchService:
-    """Quarantined compatibility path for pre-Kernel Room installations.
+    """Dispatch ordinary Room conversation through participant Sessions.
 
-    Formal Room traffic never enters this class. Keeping it outside the API
-    facade makes the remaining removal surface explicit and testable.
+    Managed work remains Kernel-only. The same Session-backed path is retained
+    for pre-Kernel installations so conversation mirroring has one owner.
     """
 
     def __init__(
@@ -82,6 +82,11 @@ class RoomLegacyDispatchService:
         requested_participant_ids: Sequence[str],
         work_item_id: str,
     ) -> dict[str, object]:
+        route_id = (
+            "room.message.execute"
+            if str(work_item_id or "").strip()
+            else "room.message.conversation"
+        )
         if self.host.room_kernel.mode in {"cohort", "kernel_only"}:
             return self.host.room_application.post_message(
                 room_id,
@@ -90,6 +95,47 @@ class RoomLegacyDispatchService:
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
             )
+        return self._post_session_messages(
+            room_id,
+            message=message,
+            client_message_id=client_message_id,
+            requested_participant_ids=requested_participant_ids,
+            work_item_id=work_item_id,
+            guard_legacy_route=True,
+            route_id=route_id,
+        )
+
+    def post_conversation(
+        self,
+        room_id: str,
+        *,
+        message: str,
+        client_message_id: str,
+        requested_participant_ids: Sequence[str],
+    ) -> dict[str, object]:
+        """Route an unbound Room conversation through ordinary Agent Sessions."""
+
+        return self._post_session_messages(
+            room_id,
+            message=message,
+            client_message_id=client_message_id,
+            requested_participant_ids=requested_participant_ids,
+            work_item_id="",
+            guard_legacy_route=False,
+            route_id="room.message.conversation",
+        )
+
+    def _post_session_messages(
+        self,
+        room_id: str,
+        *,
+        message: str,
+        client_message_id: str,
+        requested_participant_ids: Sequence[str],
+        work_item_id: str,
+        guard_legacy_route: bool,
+        route_id: str,
+    ) -> dict[str, object]:
         room = self.host.rooms.get(room_id)
         self.host._restore_legacy_room_participant_sessions(room)
         work_item: dict[str, object] | None = None
@@ -157,8 +203,12 @@ class RoomLegacyDispatchService:
         target_session_ids = [str(target["sessionId"]) for target in targets]
         if len(set(target_session_ids)) != len(target_session_ids):
             raise RuntimeError("Room routing produced duplicate participant Sessions")
-        for session_id in target_session_ids:
-            self.host._guard_legacy_room_route("room.message.mention", session_id)
+        if guard_legacy_route:
+            for session_id in target_session_ids:
+                self.host._guard_legacy_room_route(
+                    route_id,
+                    session_id,
+                )
 
         with self.host._room_turn_lock:
             for target, session_id in zip(targets, target_session_ids, strict=True):
@@ -360,6 +410,19 @@ class RoomLegacyDispatchService:
             "schemaVersion": "rag-ime.agent-room-message.v1",
             "ok": True,
             "accepted": bool(successful),
+            "status": "accepted" if successful else "rejected",
+            "executionOwner": (
+                "session" if work_item is None else "legacy_work_item"
+            ),
+            "phase": (
+                "alignment"
+                if work_item is None
+                and str(room.get("roomKind") or "collaboration")
+                == "collaboration"
+                else "conversation"
+                if work_item is None
+                else "execution"
+            ),
             "roomId": room_id,
             "roomTurnId": room_turn_id,
             "clientMessageId": client_message_id,

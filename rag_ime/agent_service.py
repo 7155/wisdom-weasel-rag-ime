@@ -79,7 +79,7 @@ from .agent_room_context_epochs import RoomSessionContextEpochStore
 from .agent_room_skills import RoomSkillPolicy, RoomSkillPolicyStore
 from .agent_room_requirements import RequirementGovernanceStore
 from .agent_room_peer_review import RoomPeerReviewStore
-from .agent_room_route_owners import room_route_owner
+from .agent_room_route_owners import room_message_owner, room_route_owner
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_work_application import RoomWorkApplicationService
 from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
@@ -1994,7 +1994,10 @@ class AgentService:
         *,
         room_turn_id: str,
     ) -> dict[str, object]:
-        if self.room_kernel.mode in {"cohort", "kernel_only"}:
+        if (
+            self.room_kernel.mode in {"cohort", "kernel_only"}
+            and room_turn_id in self.room_kernel.root_ids(room_id)
+        ):
             return self.room_kernel_application.cancel_root(
                 room_id,
                 room_turn_id,
@@ -2014,6 +2017,18 @@ class AgentService:
         work_item_id: str,
     ) -> dict[str, object]:
         if self.room_kernel.mode in {"cohort", "kernel_only"}:
+            owner = room_message_owner(work_item_id=work_item_id)
+            if owner == "session":
+                return self.room_legacy_dispatch.post_conversation(
+                    room_id,
+                    message=message,
+                    client_message_id=client_message_id,
+                    requested_participant_ids=requested_participant_ids,
+                )
+            if owner != "kernel":
+                raise RoomKernelFenceError(
+                    f"unsupported Room message owner: {owner}"
+                )
             return self.room_application.post_message(
                 room_id,
                 message=message,

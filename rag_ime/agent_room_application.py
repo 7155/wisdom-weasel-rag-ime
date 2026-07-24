@@ -119,6 +119,10 @@ class RoomApplicationService:
     ) -> dict[str, object]:
         if self.kernel.mode not in {"cohort", "kernel_only"}:
             raise RoomKernelFenceError("canonical Room ingress requires a managed Kernel")
+        if not work_item_id:
+            raise RoomKernelFenceError(
+                "managed Room execution requires a confirmed WorkItem"
+            )
 
         room = self.rooms.get(room_id)
         self.restore_participant_sessions(room)
@@ -451,7 +455,9 @@ class RoomApplicationService:
         work_item_id: str,
     ) -> tuple[dict[str, object] | None, str]:
         if not work_item_id:
-            return None, ""
+            raise RoomKernelFenceError(
+                "managed Room execution requires a confirmed WorkItem"
+            )
         return self.work_items.authoritative_owner(work_item_id, room_id=room_id)
 
     def _routing_profiles(

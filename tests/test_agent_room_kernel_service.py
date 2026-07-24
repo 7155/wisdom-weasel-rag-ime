@@ -205,15 +205,176 @@ class RoomKernelServiceTests(unittest.TestCase):
             workspace_roots=list(session.get("workspaceRoots") or []),
         )
 
-    def test_product_message_uses_one_async_kernel_fanout_path(self) -> None:
-        room = self.service.room(self.room_id)["room"]
-        participant_ids = [
-            str(participant["id"])
-            for participant in room["participants"]
-            if participant["status"] == "active"
+    def _create_work_item(
+        self,
+        suffix: str,
+        *,
+        objective: str,
+        expected_output: str = "提交可复核的结果与证据。",
+        acceptance_criteria: list[str] | None = None,
+    ) -> dict[str, object]:
+        return self.service.create_room_work_item(
+            self.room_id,
+            {
+                "objective": objective,
+                "expectedOutput": expected_output,
+                "acceptanceCriteria": acceptance_criteria
+                or ["结果满足目标并附带可复核证据"],
+                "currentOwnerParticipantId": self.participant["id"],
+                "clientMessageId": f"work:{suffix}",
+            },
+        )["workItem"]
+
+    def test_unbound_room_message_stays_in_session_alignment(self) -> None:
+        roots_before = self.service.room_kernel.root_ids(self.room_id)
+        participant_id = str(self.participant["id"])
+
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": "turn:alignment"},
+        ) as prompt:
+            accepted = self.service.post_room_message(
+                self.room_id,
+                {
+                    "message": "先和我对齐范围与验收，不要开工。",
+                    "clientMessageId": "client:alignment",
+                    "participantIds": [participant_id],
+                },
+            )
+
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual(accepted["executionOwner"], "session")
+        self.assertEqual(accepted["phase"], "alignment")
+        self.assertEqual(
+            self.service.room_kernel.root_ids(self.room_id),
+            roots_before,
+        )
+        request = prompt.call_args.args[1]
+        self.assertEqual(request["_contextSource"], "room")
+        self.assertIn("普通 Room 对话与需求对齐", request["_transientContext"])
+        self.assertIn("room-requirement-clarification", request["_transientContext"])
+        self.assertNotIn("本轮绑定任务", request["_transientContext"])
+
+    def test_kernel_execution_entry_rejects_an_unconfirmed_message(self) -> None:
+        roots_before = self.service.room_kernel.root_ids(self.room_id)
+
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "requires a confirmed WorkItem",
+        ):
+            self.service.room_application.post_message(
+                self.room_id,
+                message="没有确认任务时不得从内部入口偷偷开工。",
+                client_message_id="client:missing-work-item",
+                requested_participant_ids=[str(self.participant["id"])],
+                work_item_id="",
+            )
+
+        self.assertEqual(
+            self.service.room_kernel.root_ids(self.room_id),
+            roots_before,
+        )
+        self.assertEqual(self.factory.runtime.dispatched, [])
+
+    def test_alignment_turn_is_mirrored_once_and_unregistered_late_events_stay_private(
+        self,
+    ) -> None:
+        participant_id = str(self.participant["id"])
+        session_turn_id = "turn:alignment-events"
+        with patch.object(
+            self.service,
+            "prompt",
+            return_value={"turnId": session_turn_id},
+        ):
+            accepted = self.service.post_room_message(
+                self.room_id,
+                {
+                    "message": "先澄清验收，不要创建任务。",
+                    "clientMessageId": "client:alignment-events",
+                    "participantIds": [participant_id],
+                },
+            )
+
+        room_turn_id = str(accepted["roomTurnId"])
+        self.service.events.publish(
+            self.session_id,
+            "message_completed",
+            {
+                "message": {
+                    "schemaVersion": "rag-ime.agent-message.v1",
+                    "id": "message:alignment-events",
+                    "sessionId": self.session_id,
+                    "turnId": session_turn_id,
+                    "role": "assistant",
+                    "status": "completed",
+                    "blocks": [
+                        {
+                            "id": "text:alignment-events",
+                            "type": "text",
+                            "status": "completed",
+                            "presentationKind": "markdown",
+                            "data": {
+                                "text": "需要确认交付物格式和验收命令。"
+                            },
+                        }
+                    ],
+                    "attachments": [],
+                    "citations": [],
+                    "createdAtMs": 20,
+                    "completedAtMs": 21,
+                }
+            },
+            turn_id=session_turn_id,
+        )
+        self.service.events.publish(
+            self.session_id,
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=session_turn_id,
+        )
+
+        projected = [
+            event
+            for event in self.service.rooms.list_events(
+                self.room_id,
+                limit=200,
+            )
+            if event["turnId"] == room_turn_id
         ]
+        self.assertEqual(
+            [event["eventType"] for event in projected],
+            [
+                "user_message",
+                "route_decision",
+                "participant_message",
+                "turn_completed",
+            ],
+        )
+        self.assertIn("需要确认交付物格式", str(projected[2]))
+
+        count_before_late_event = len(
+            self.service.rooms.list_events(self.room_id, limit=200)
+        )
+        self.service.events.publish(
+            self.session_id,
+            "text_delta",
+            {"messageId": "late", "delta": "不应公开"},
+            turn_id="turn:unregistered-late",
+        )
+        self.assertEqual(
+            len(self.service.rooms.list_events(self.room_id, limit=200)),
+            count_before_late_event,
+        )
+
+    def test_confirmed_work_item_uses_one_async_kernel_path(self) -> None:
+        participant_id = str(self.participant["id"])
         client_message_id = "client:kernel-fanout"
         message = "请两位分别检查实现与测试，再汇总可验证结论。"
+        work_item = self._create_work_item(
+            "kernel-fanout",
+            objective=message,
+        )
 
         with patch.object(
             self.service,
@@ -225,28 +386,25 @@ class RoomKernelServiceTests(unittest.TestCase):
                 {
                     "message": message,
                     "clientMessageId": client_message_id,
-                    "participantIds": participant_ids,
+                    "participantIds": [participant_id],
+                    "workItemId": work_item["id"],
                 },
             )
 
         self.assertTrue(accepted["accepted"])
         self.assertEqual(accepted["status"], "queued")
         self.assertEqual(accepted["executionOwner"], "kernel")
-        self.assertEqual(len(accepted["dispatches"]), len(participant_ids))
+        self.assertEqual(len(accepted["dispatches"]), 1)
         self.assertEqual(
             [event["eventType"] for event in accepted["timelineEvents"]],
-            ["user_message"] + ["route_decision"] * len(participant_ids),
+            ["user_message", "route_decision"],
         )
         self.assertEqual(
             [
                 event["payload"].get("summary")
                 for event in accepted["timelineEvents"][1:]
             ],
-            [
-                f"{participant['displayName']} 已接手"
-                for participant in room["participants"]
-                if str(participant["id"]) in participant_ids
-            ],
+            [f"{self.participant['displayName']} 已接手"],
         )
         self.assertEqual(self.factory.runtime.dispatched, [])
         self.assertEqual(
@@ -275,7 +433,8 @@ class RoomKernelServiceTests(unittest.TestCase):
             {
                 "message": message,
                 "clientMessageId": client_message_id,
-                "participantIds": participant_ids,
+                "participantIds": [participant_id],
+                "workItemId": work_item["id"],
             },
         )
         self.assertTrue(replay["idempotentReplay"])
@@ -289,10 +448,10 @@ class RoomKernelServiceTests(unittest.TestCase):
     def test_agent_and_room_entry_race_is_rejected_before_creating_a_root(self) -> None:
         roots_before = self.service.room_kernel.root_ids(self.room_id)
 
-        with self.service.session_mode_gate.claim_agent(self.session_id):
+        with self.service._direct_agent_entry(self.session_id):
             with self.assertRaisesRegex(
                 ValueError,
-                "正在接收 Agent 消息",
+                "currently busy",
             ):
                 self.service.post_room_message(
                     self.room_id,
@@ -311,6 +470,10 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
 
     def test_pending_room_dispatch_rejects_direct_agent_prompt_cleanly(self) -> None:
+        work_item = self._create_work_item(
+            "room-owns-session",
+            objective="Room 先占用这个 Session",
+        )
         accepted = self.service.post_room_message(
             self.room_id,
             {
@@ -319,6 +482,7 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "participantIds": [
                     str(self.participant["id"])
                 ],
+                "workItemId": work_item["id"],
             },
         )
         self.assertEqual(accepted["status"], "queued")
@@ -333,12 +497,17 @@ class RoomKernelServiceTests(unittest.TestCase):
             )
 
     def test_managed_runtime_projects_live_text_and_tools_without_auto_publishing_a_post(self) -> None:
+        work_item = self._create_work_item(
+            "live-projection",
+            objective="检查实时投影",
+        )
         accepted = self.service.post_room_message(
             self.room_id,
             {
                 "message": "检查实时投影",
                 "clientMessageId": "client:live-projection",
                 "participantIds": [str(self.participant["id"])],
+                "workItemId": work_item["id"],
             },
         )
         dispatch = accepted["dispatches"][0]
@@ -422,12 +591,17 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertNotIn("room_post", [event["eventType"] for event in public])
 
     def test_managed_runtime_failure_blocks_kernel_and_revokes_capability(self) -> None:
+        work_item = self._create_work_item(
+            "runtime-failure",
+            objective="触发一次可审计的 Provider 失败",
+        )
         accepted = self.service.post_room_message(
             self.room_id,
             {
                 "message": "触发一次可审计的 Provider 失败",
                 "clientMessageId": "client:runtime-failure",
                 "participantIds": [str(self.participant["id"])],
+                "workItemId": work_item["id"],
             },
         )
         dispatch = accepted["dispatches"][0]
@@ -655,6 +829,8 @@ class RoomKernelServiceTests(unittest.TestCase):
         static_prompt = str(provider_payload["stableSystemPrompt"])
         room_context = str(provider_payload["providerContext"])
         self.assertEqual(static_prompt.count("执行权限：工作区托管"), 1)
+        self.assertEqual(static_prompt.count("<durable-memory-policy>"), 1)
+        self.assertEqual(static_prompt.count("memory_capture"), 1)
         self.assertNotIn(str(self.root.resolve()), static_prompt)
         self.assertNotIn(str(self.root.resolve()), room_context)
         for expected in (original, objective, criterion, blocker):

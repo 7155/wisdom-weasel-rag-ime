@@ -56,6 +56,21 @@ class RoomPromptPlanTests(unittest.TestCase):
         ):
             self._compile("receipt:semantic-owner", layers=layers)
 
+    def test_durable_memory_rule_is_rejected_outside_core_rails(self) -> None:
+        layers = list(self._layers())
+        layers[1] = PromptLayer(
+            **{
+                **layers[1].__dict__,
+                "content": "PERSONA\n<durable-memory-policy>memory_capture</durable-memory-policy>",
+            }
+        )
+
+        with self.assertRaisesRegex(
+            PromptProducerConflict,
+            "durable-memory rule belongs to core_rails",
+        ):
+            self._compile("receipt:memory-owner", layers=layers)
+
     def test_stable_prefix_is_byte_identical_when_dynamic_tail_appends(self) -> None:
         first_entry = self._entry("task_state", "task:1", "任务：实现 PromptPlan", 1)
         self._append("journal:1", first_entry, "task:1", 10)

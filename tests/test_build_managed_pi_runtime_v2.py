@@ -28,6 +28,15 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "contextInspection": Path("packages/rag-ime-runtime-host/src/debug-context.ts"),
                 "skills": Path("packages/coding-agent/src/core/skills.ts"),
                 "discoveryTools": Path("packages/rag-ime-runtime-host/src/discovery-tools.ts"),
+                "memoryCapture": Path(
+                    "packages/rag-ime-runtime-host/src/memory-capture-tool.ts"
+                ),
+                "roomToolBootstrap": Path(
+                    "packages/rag-ime-runtime-host/src/room-tool-bootstrap.ts"
+                ),
+                "runtimeToolNames": Path(
+                    "packages/rag-ime-runtime-host/src/runtime-tool-names.ts"
+                ),
                 "toolBridge": Path("packages/rag-ime-runtime-host/src/tool-bridge.ts"),
                 "toolArtifacts": Path("packages/rag-ime-runtime-host/src/tool-artifact-buffer.ts"),
                 "providerContextJournal": Path(
@@ -182,8 +191,14 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertEqual(
             skill_names,
             sorted([
-                "rag-ime-memory-curator", "rag-ime-plugin-creator",
-                "structured-result-presentation", *room_skill_names,
+                "grill-me",
+                "improve-codebase-architecture",
+                "managed-task-execution",
+                "quality-gate",
+                "rag-ime-memory-curator",
+                "rag-ime-plugin-creator",
+                "structured-result-presentation",
+                *room_skill_names,
             ]),
         )
         for name in skill_names:
