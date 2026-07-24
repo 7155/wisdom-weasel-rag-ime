@@ -922,12 +922,20 @@ class PiRuntimeHostManager:
 
     def session_snapshot(self, session_id: str) -> dict[str, object]:
         try:
-            self._ensure_for_sealed_room_operation(
+            prepared = self._ensure_for_sealed_room_operation(
                 session_id,
                 operation="message inspection",
                 ordinary_fallback=True,
             )
-            snapshot = self._require_client().send("session.snapshot", {"sessionId": session_id})
+            prepared_state = prepared.get("state")
+            snapshot = (
+                dict(prepared_state)
+                if isinstance(prepared_state, Mapping)
+                else self._require_client().send(
+                    "session.snapshot",
+                    {"sessionId": session_id},
+                )
+            )
         except AgentRuntimeError:
             return {"messages": [], "telemetry": None, "messageQueue": None}
         raw_messages = snapshot.get("messages") if isinstance(snapshot.get("messages"), list) else []
@@ -1013,11 +1021,14 @@ class PiRuntimeHostManager:
         }
 
     def debug_context(self, session_id: str, turn_id: str = "") -> dict[str, object]:
-        self._ensure_for_sealed_room_operation(
-            session_id,
-            operation="debug context",
-            ordinary_fallback=True,
-        )
+        with self._lock:
+            already_open = session_id in self._open_sessions
+        if not already_open:
+            self._ensure_for_sealed_room_operation(
+                session_id,
+                operation="debug context",
+                ordinary_fallback=True,
+            )
         params: dict[str, object] = {"sessionId": session_id}
         if str(turn_id).strip():
             params["turnId"] = str(turn_id).strip()

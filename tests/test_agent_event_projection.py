@@ -30,6 +30,14 @@ class _Observations:
             raise AssertionError("participant Room was not preserved")
 
 
+class _Sessions:
+    def __init__(self) -> None:
+        self.event_types: list[str] = []
+
+    def record_runtime_event(self, **values: object) -> None:
+        self.event_types.append(str(values["event_type"]))
+
+
 class _ForbiddenLegacyTurns:
     @staticmethod
     def turn_for_event(_event: object) -> str:
@@ -37,7 +45,46 @@ class _ForbiddenLegacyTurns:
 
 
 class AgentEventProjectionTests(unittest.TestCase):
-    def test_trailing_private_event_after_kernel_revoke_is_not_a_public_turn(self) -> None:
+    def test_transient_fragments_stay_out_of_durable_runtime_events(
+        self,
+    ) -> None:
+        sessions = _Sessions()
+        service = AgentEventProjectionService(
+            sessions=sessions,
+            room_kernel=_KernelWithoutBinding(),
+            rooms=_Rooms(),
+            agent_blocks=None,
+            observations=_Observations(),
+            room_kernel_projection=None,
+            room_events=None,
+            public_timeline=None,  # type: ignore[arg-type]
+            room_turns=_ForbiddenLegacyTurns(),
+            append_recent_message=lambda *_args: None,
+            record_assistant_evidence=lambda _event: {},
+            notify_intercom=lambda: None,
+        )
+        for sequence, event_type in enumerate(
+            ("text_delta", "tool_progress", "turn_completed"),
+            start=1,
+        ):
+            service.record(
+                AgentEventEnvelope(
+                    event_id=f"event:{sequence}",
+                    session_id="session:1",
+                    turn_id="turn:1",
+                    sequence=sequence,
+                    created_at_ms=sequence,
+                    event_type=event_type,
+                    payload={},
+                    resume_token=f"event:{sequence}",
+                )
+            )
+
+        self.assertEqual(sessions.event_types, ["turn_completed"])
+
+    def test_trailing_private_delta_after_kernel_revoke_is_not_persisted_or_public(
+        self,
+    ) -> None:
         observations = _Observations()
         service = AgentEventProjectionService(
             sessions=None,
@@ -66,7 +113,7 @@ class AgentEventProjectionTests(unittest.TestCase):
 
         service.mirror_to_room(event)
 
-        self.assertEqual(observations.count, 1)
+        self.assertEqual(observations.count, 0)
 
 
 if __name__ == "__main__":

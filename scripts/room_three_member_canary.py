@@ -240,6 +240,54 @@ def wait_for_three_member_settlement(
     raise TimeoutError(f"Room collaboration did not settle: {last}")
 
 
+def wait_for_sessions_quiescent(
+    base_url: str,
+    *,
+    requester: JsonRequester,
+    session_ids: Sequence[str],
+    timeout: float,
+    poll_interval: float = 0.1,
+) -> dict[str, Any]:
+    """Wait for the target Pi turns, not unrelated Agent work, to settle."""
+
+    targets = {
+        str(session_id).strip()
+        for session_id in session_ids
+        if str(session_id).strip()
+    }
+    deadline = time.monotonic() + max(0.01, float(timeout))
+    polls = 0
+    last_status: dict[str, Any] = {}
+    remaining = set(targets)
+    while time.monotonic() < deadline:
+        last_status = requester(
+            base_url,
+            "GET",
+            "/api/agent/runtime",
+            timeout=min(10.0, max(1.0, float(timeout))),
+        )
+        polls += 1
+        active = {
+            str(value).strip()
+            for value in last_status.get("activeSessionIds") or []
+            if str(value).strip()
+        }
+        remaining = targets & active
+        if not remaining:
+            return {
+                "passed": True,
+                "pollCount": polls,
+                "targetSessionIds": sorted(targets),
+                "remainingTargetSessionIds": [],
+                "runtimeStatus": str(last_status.get("status") or ""),
+            }
+        time.sleep(max(0.001, float(poll_interval)))
+    raise TimeoutError(
+        "Room dispatches committed but target Pi sessions did not settle: "
+        f"remaining={sorted(remaining)} runtime={last_status}"
+    )
+
+
 def managed_approval_evidence(
     base_url: str,
     *,
@@ -1391,6 +1439,15 @@ def run(
         {"rootId": root_id},
         timeout=30,
     )
+    runtime_quiescence = wait_for_sessions_quiescent(
+        args.base_url,
+        requester=requester,
+        session_ids=list(session_ids.values()),
+        timeout=min(
+            120.0,
+            max(30.0, float(args.turn_timeout)),
+        ),
+    )
     terminal_snapshot = requester(
         args.base_url,
         "GET",
@@ -1645,6 +1702,10 @@ def run(
         "workspaceManagedApprovalsExact": all(approval_checks.values()),
         "threeRecoveryPacketsValid": all(value["passed"] for value in compaction.values()),
         "sameSessionContinuesAfterRoom": continuity["passed"] is True,
+        "runtimeQuiescentAfterCommit": runtime_quiescence[
+            "passed"
+        ]
+        is True,
     }
     if bool(getattr(args, "require_cache_evidence", True)):
         checks["realProviderKvCacheObserved"] = prompt_checks[
@@ -1694,6 +1755,7 @@ def run(
         "transcriptIsolation": transcript,
         "compaction": compaction,
         "sessionContinuity": continuity,
+        "runtimeQuiescence": runtime_quiescence,
         "project": {
             "workspace": str(workspace),
             "calculatorSha256": hashlib.sha256(final_source.encode("utf-8")).hexdigest(),

@@ -9,6 +9,14 @@ from .agent_protocol import AgentEventEnvelope
 from .agent_room_public_timeline import RoomPublicTimelineProjector
 
 
+_TRANSIENT_RUNTIME_EVENT_TYPES = frozenset(
+    {
+        "text_delta",
+        "tool_progress",
+    }
+)
+
+
 class AgentEventProjectionService:
     """Persist private Agent events and project bounded Room events."""
 
@@ -53,16 +61,20 @@ class AgentEventProjectionService:
         self.record_runtime_failure = record_runtime_failure
 
     def record(self, event: AgentEventEnvelope) -> None:
-        self.sessions.record_runtime_event(
-            event_id=event.event_id,
-            session_id=event.session_id,
-            turn_id=event.turn_id,
-            sequence=event.sequence,
-            event_type=event.event_type,
-            created_at_ms=event.created_at_ms,
-            redacted_summary=_event_summary(event),
-            metrics=runtime_event_metrics(event),
-        )
+        # Token and progress deltas already live in the bounded in-memory SSE
+        # replay. Persisting each fragment makes the single Host event thread
+        # wait on hundreds of SQLite transactions before agent_settled.
+        if event.event_type not in _TRANSIENT_RUNTIME_EVENT_TYPES:
+            self.sessions.record_runtime_event(
+                event_id=event.event_id,
+                session_id=event.session_id,
+                turn_id=event.turn_id,
+                sequence=event.sequence,
+                event_type=event.event_type,
+                created_at_ms=event.created_at_ms,
+                redacted_summary=_event_summary(event),
+                metrics=runtime_event_metrics(event),
+            )
         if event.event_type != "message_completed":
             return
         message = event.payload.get("message")
@@ -82,14 +94,15 @@ class AgentEventProjectionService:
         participant = self.rooms.participant_for_session(
             event.session_id
         )
-        self.observations.enqueue_agent_event(
-            event,
-            room_id=(
-                str(participant.get("roomId") or "")
-                if participant is not None
-                else ""
-            ),
-        )
+        if event.event_type not in _TRANSIENT_RUNTIME_EVENT_TYPES:
+            self.observations.enqueue_agent_event(
+                event,
+                room_id=(
+                    str(participant.get("roomId") or "")
+                    if participant is not None
+                    else ""
+                ),
+            )
         if participant is None:
             return
         binding = self.room_kernel.session_binding(
@@ -156,10 +169,11 @@ class AgentEventProjectionService:
                     source_event_id=event.event_id,
                     created_at_ms=event.created_at_ms,
                 )
-            self.room_kernel_projection.sync_room(
-                room_id,
-                now_ms=event.created_at_ms,
-            )
+            if event.event_type not in _TRANSIENT_RUNTIME_EVENT_TYPES:
+                self.room_kernel_projection.sync_room(
+                    room_id,
+                    now_ms=event.created_at_ms,
+                )
             return
         if (
             self.room_kernel.mode in {"cohort", "kernel_only"}

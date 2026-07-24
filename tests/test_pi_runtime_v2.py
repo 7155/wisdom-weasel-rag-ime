@@ -813,11 +813,9 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(methods.count("session.open"), 1)
         self.assertNotIn("session.close", methods)
         self.assertEqual(
-            methods[-6:],
+            methods[-4:],
             [
-                "session.snapshot",
                 "session.debug.context",
-                "session.snapshot",
                 "session.snapshot",
                 "session.snapshot",
                 "session.compact",
@@ -1881,6 +1879,28 @@ class PiRuntimeV2Tests(unittest.TestCase):
         requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
         self.assertIn("session.steer", [row["method"] for row in requests])
         self.assertIn("session.follow_up", [row["method"] for row in requests])
+
+    def test_debug_context_reads_a_resident_busy_session_without_snapshot(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.prompt(
+            session_id,
+            "hang-without-settled",
+            client_message_id="debug-active",
+        )
+
+        self.assertEqual(self.runtime.debug_context(session_id), {})
+
+        requests = [
+            json.loads(line)
+            for line in (
+                self.root / "agent" / "host-requests.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        methods = [item["method"] for item in requests]
+        self.assertEqual(methods[-1], "session.debug.context")
+        self.assertNotIn("session.snapshot", methods)
 
     def test_abort_ack_without_agent_settled_escalates_to_durable_host_tree_kill(self) -> None:
         session_id = str(self.first["id"])

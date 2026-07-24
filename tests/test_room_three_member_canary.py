@@ -21,6 +21,57 @@ SPEC.loader.exec_module(CANARY)
 
 
 class RoomThreeMemberCanaryTest(unittest.TestCase):
+    def test_quiescence_waits_only_for_target_sessions(self) -> None:
+        statuses = iter(
+            [
+                {
+                    "status": "busy",
+                    "activeSessionIds": [
+                        "session-A",
+                        "session-unrelated",
+                    ],
+                },
+                {
+                    "status": "busy",
+                    "activeSessionIds": ["session-unrelated"],
+                },
+            ]
+        )
+
+        result = CANARY.wait_for_sessions_quiescent(
+            "http://127.0.0.1:8768",
+            requester=lambda *_args, **_kwargs: next(statuses),
+            session_ids=["session-A", "session-B"],
+            timeout=1,
+            poll_interval=0.001,
+        )
+
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["pollCount"], 2)
+        self.assertEqual(result["remainingTargetSessionIds"], [])
+        self.assertEqual(result["runtimeStatus"], "busy")
+
+    def test_quiescence_times_out_when_target_session_stays_busy(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            TimeoutError,
+            "target Pi sessions did not settle",
+        ):
+            CANARY.wait_for_sessions_quiescent(
+                "http://127.0.0.1:8768",
+                requester=lambda *_args, **_kwargs: {
+                    "status": "busy",
+                    "activeSessionIds": [
+                        "session-A",
+                        "session-unrelated",
+                    ],
+                },
+                session_ids=["session-A"],
+                timeout=0.01,
+                poll_interval=0.001,
+            )
+
     def test_project_memory_check_accepts_meaning_not_one_exact_sentence(self) -> None:
         self.assertTrue(
             CANARY._is_useful_project_memory(
