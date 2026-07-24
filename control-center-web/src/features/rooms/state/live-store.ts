@@ -5,7 +5,7 @@ import {
   abortRoomTurn,
   appendOptimisticRoomMessage,
   createRoomProjection,
-  reduceRoomEvent,
+  reduceRoomEvents,
   replayRoomEventSnapshot,
   type RoomEventSnapshot,
   type RoomProjectionState,
@@ -57,21 +57,15 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
   },
   applyEvents(roomId, events) {
     const current = roomProjection(roomId);
-    let projection = current;
-    let snapshotRequired = false;
+    const projection = reduceRoomEvents(current, events);
     const changedTurnIds = new Set<string>();
     for (const event of events) {
-      const reduced = reduceRoomEvent(projection, event);
-      projection = reduced.state;
-      snapshotRequired ||= reduced.disposition === 'snapshot-required';
-      if (reduced.disposition === 'applied' && event.turnId) {
-        changedTurnIds.add(event.turnId);
-      }
+      if (event.turnId) changedTurnIds.add(event.turnId);
     }
     if (projection !== current) {
       replaceProjection(set, get, roomId, projection, changedTurnIds);
     }
-    return snapshotRequired;
+    return projection.needsSnapshot;
   },
   appendOptimistic(roomId, input) {
     const current = roomProjection(roomId);

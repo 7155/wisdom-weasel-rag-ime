@@ -353,6 +353,50 @@ export function reduceAgentEvent(
   return { state: next, disposition: 'applied' };
 }
 
+export function reduceAgentEvents(
+  state: AgentProjectionState,
+  events: readonly UiAgentEvent[],
+): AgentProjectionState {
+  let next = state;
+  let index = 0;
+  while (index < events.length) {
+    const event = events[index];
+    if (!event) break;
+    if (!canStartAgentDeltaBatch(next, event)) {
+      next = reduceAgentEvent(next, event).state;
+      index += 1;
+      continue;
+    }
+
+    let end = index + 1;
+    let delta = text(event.payload.delta);
+    let last = event;
+    while (end < events.length) {
+      const candidate = events[end];
+      if (!candidate || !canMergeAgentDelta(last, candidate)) break;
+      delta += text(candidate.payload.delta);
+      last = candidate;
+      end += 1;
+    }
+
+    const reduced = reduceAgentEvent(next, {
+      ...event,
+      payload: { ...event.payload, delta },
+    });
+    next = reduced.state;
+    if (reduced.disposition === 'applied' && last !== event) {
+      next = {
+        ...next,
+        lastSequence: last.sequence,
+        lastEventId: last.eventId,
+        resumeToken: last.resumeToken,
+      };
+    }
+    index = end;
+  }
+  return next;
+}
+
 export function appendOptimisticAgentMessage(
   state: AgentProjectionState,
   input: OptimisticAgentMessageInput,
@@ -1131,6 +1175,45 @@ function cloneState(state: AgentProjectionState): AgentProjectionState {
     actGate: { ...state.actGate },
     ...(state.gap ? { gap: { ...state.gap } } : {}),
   };
+}
+
+function canStartAgentDeltaBatch(
+  state: AgentProjectionState,
+  event: UiAgentEvent,
+): boolean {
+  return (
+    event.eventType === 'text_delta'
+    && event.sessionId === state.sessionId
+    && !state.needsSnapshot
+    && event.sequence > state.lastSequence
+    && (state.lastSequence === 0 || event.sequence === state.lastSequence + 1)
+  );
+}
+
+function canMergeAgentDelta(
+  previous: UiAgentEvent,
+  candidate: UiAgentEvent,
+): boolean {
+  if (
+    candidate.eventType !== 'text_delta'
+    || candidate.sessionId !== previous.sessionId
+    || candidate.turnId !== previous.turnId
+    || candidate.sequence !== previous.sequence + 1
+    || candidate.payload.replaceBlock === true
+  ) {
+    return false;
+  }
+  return sameDeltaField(previous.payload, candidate.payload, 'messageId')
+    && sameDeltaField(previous.payload, candidate.payload, 'blockId')
+    && sameDeltaField(previous.payload, candidate.payload, 'contentIndex');
+}
+
+function sameDeltaField(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+  key: string,
+): boolean {
+  return left[key] === right[key];
 }
 
 function writableTurn(

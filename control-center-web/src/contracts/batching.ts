@@ -25,11 +25,7 @@ export function createEventBatcher<Event, Handle = ReturnType<typeof setTimeout>
   const intervalMs = clamp(options.intervalMs ?? 20, 16, 33);
   const scheduler =
     options.scheduler ??
-    ({
-      schedule: (callback: () => void, delayMs: number) =>
-        globalThis.setTimeout(callback, delayMs),
-      cancel: (handle: ReturnType<typeof setTimeout>) => globalThis.clearTimeout(handle),
-    } as unknown as BatchScheduler<Handle>);
+    (defaultFrameScheduler() as unknown as BatchScheduler<Handle>);
   let pending: Event[] = [];
   let scheduled: Handle | undefined;
 
@@ -90,6 +86,22 @@ export function createRoomDeltaBatcher(
     intervalMs,
     isDelta: (event) => event.eventType === 'participant_delta',
   });
+}
+
+function defaultFrameScheduler(): BatchScheduler<number | ReturnType<typeof setTimeout>> {
+  if (
+    typeof globalThis.requestAnimationFrame === 'function'
+    && typeof globalThis.cancelAnimationFrame === 'function'
+  ) {
+    return {
+      schedule: (callback) => globalThis.requestAnimationFrame(callback),
+      cancel: (handle) => globalThis.cancelAnimationFrame(handle as number),
+    };
+  }
+  return {
+    schedule: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
+    cancel: (handle) => globalThis.clearTimeout(handle),
+  };
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

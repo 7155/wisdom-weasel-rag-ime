@@ -82,7 +82,9 @@ export function AgentTimeline({
     const turn = projection?.turnsById[turnId];
     const messages = turn?.messageIds
       .map((messageId) => projection?.messagesById[messageId])
-      .filter((item): item is AgentMessageProjection => item?.role === 'assistant') ?? [];
+      .filter((item): item is AgentMessageProjection => (
+        item?.role === 'assistant' && item.status !== 'streaming'
+      )) ?? [];
     return messagePreview(messages.at(-1));
   })));
   const timelineComponents = useMemo(() => ({

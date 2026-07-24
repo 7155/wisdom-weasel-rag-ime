@@ -8,6 +8,7 @@ import {
   discardOptimisticAgentMessage,
   failOptimisticAgentMessage,
   reduceAgentEvent,
+  reduceAgentEvents,
 } from './agent-reducer';
 import { parseAgentEvent } from './validators';
 import { agentEventFixture as agentEvent } from '@/test/fixtures/events';
@@ -22,6 +23,54 @@ describe('AgentEventReducer', () => {
     expect(replay.disposition).toBe('ignored-duplicate');
     expect(replay.state).toBe(second.state);
     expect(textOf(second.state.messagesById['turn-1:assistant'])).toBe('你好');
+  });
+
+  it('coalesces a frame-sized delta burst without losing its exact cursor', () => {
+    const events = Array.from({ length: 200 }, (_, index) => (
+      agentEvent(index + 1, 'text_delta', {
+        delta: String.fromCharCode(97 + (index % 26)),
+        contentIndex: 0,
+        replaceBlock: index === 0,
+      })
+    ));
+    const state = reduceAgentEvents(createAgentProjection('session-1'), events);
+
+    expect(textOf(state.messagesById['turn-1:assistant'])).toBe(
+      events.map((event) => String(event.payload.delta)).join(''),
+    );
+    expect(state.lastSequence).toBe(200);
+    expect(state.lastEventId).toBe('session-1:200');
+    expect(state.resumeToken).toBe('session-1:200');
+  });
+
+  it('keeps replacement boundaries and gaps deterministic inside a delta batch', () => {
+    const segmented = reduceAgentEvents(createAgentProjection('session-1'), [
+      agentEvent(1, 'text_delta', { delta: '前', replaceBlock: true }),
+      agentEvent(2, 'text_delta', { delta: '段' }),
+      agentEvent(3, 'text_delta', { delta: '后', replaceBlock: true }),
+      agentEvent(4, 'text_delta', { delta: '段' }),
+    ]);
+    expect(segmented.turnsById['turn-1'].messageIds).toEqual([
+      'turn-1:assistant',
+      'turn-1:assistant:segment:3',
+    ]);
+    expect(textOf(segmented.messagesById['turn-1:assistant'])).toBe('前段');
+    expect(textOf(segmented.messagesById['turn-1:assistant:segment:3'])).toBe('后段');
+
+    const initial = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'status_changed', { status: 'working' }),
+    ).state;
+    const gapped = reduceAgentEvents(initial, [
+      agentEvent(3, 'text_delta', { delta: '丢失前序' }),
+      agentEvent(4, 'text_delta', { delta: '不得越过栅栏' }),
+    ]);
+    expect(gapped.needsSnapshot).toBe(true);
+    expect(gapped.lastSequence).toBe(1);
+    expect(gapped.gap).toMatchObject({
+      expectedSequence: 2,
+      receivedSequence: 3,
+    });
   });
 
   it('keeps completed turns referentially stable while the active tail streams', () => {

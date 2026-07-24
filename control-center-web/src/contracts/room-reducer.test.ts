@@ -5,6 +5,7 @@ import {
   createRoomProjection,
   parseRoomEventSnapshot,
   reduceRoomEvent,
+  reduceRoomEvents,
   replayRoomEventSnapshot,
   roomActivityLaneIdentity,
 } from './room-reducer';
@@ -31,6 +32,53 @@ describe('RoomEventReducer', () => {
     expect(second.state.messagesById['room-message-1'].text).toBe('并行');
     expect(gap.disposition).toBe('snapshot-required');
     expect(gap.state.needsSnapshot).toBe(true);
+  });
+
+  it('coalesces participant deltas while preserving the final Room cursor', () => {
+    const events = Array.from({ length: 200 }, (_, index) => roomEvent(
+      index + 1,
+      'participant_delta',
+      {
+        delta: String.fromCharCode(97 + (index % 26)),
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        contentIndex: 0,
+      },
+    ));
+    const state = reduceRoomEvents(createRoomProjection('room-1'), events);
+
+    expect(state.messagesById[
+      'room-execution\u001froom-turn-1\u001fparticipant-1\u001fdispatch-1\u001froom-message-1'
+    ].text).toBe(events.map((event) => String(event.payload.delta)).join(''));
+    expect(state.lastSequence).toBe(200);
+    expect(state.lastEventId).toBe('room-1:200');
+    expect(state.resumeToken).toBe('room-1:200');
+  });
+
+  it('keeps completed Room turns referentially stable while another lane streams', () => {
+    const user = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'user_message', { messageId: 'stable-user', text: '旧任务' }),
+    ).state;
+    const completedEvent = roomEvent(2, 'turn_completed', { status: 'completed' });
+    completedEvent.participantId = null;
+    completedEvent.sourceSessionId = '';
+    const completed = reduceRoomEvent(user, completedEvent).state;
+    const stableTurn = completed.turnsById['room-turn-1'];
+    const stableMessage = completed.messagesById['stable-user'];
+    const nextTurnEvent = {
+      ...roomEvent(3, 'participant_delta', {
+        messageId: 'next-reply',
+        delta: '新任务流式内容',
+      }),
+      turnId: 'room-turn-2',
+    };
+    const streamed = reduceRoomEvent(completed, nextTurnEvent).state;
+
+    expect(streamed.turnsById['room-turn-1']).toBe(stableTurn);
+    expect(streamed.messagesById['stable-user']).toBe(stableMessage);
+    expect(streamed.turnsById['room-turn-2']).toBeDefined();
+    expect(completed.turnsById['room-turn-2']).toBeUndefined();
   });
 
   it('keeps the user message and participant reply in one completed room turn', () => {

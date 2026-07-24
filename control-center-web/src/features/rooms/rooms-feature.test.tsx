@@ -1056,6 +1056,50 @@ describe('Rooms experience', () => {
     expect(transport.subscriptionCalls.at(-1)?.request.lastEventId).toBe('room-a:3');
   });
 
+  it('refreshes Room metadata without tearing down the live timeline subscription', async () => {
+    let snapshotCalls = 0;
+    let roomGetCalls = 0;
+    const refreshed = roomSummary('room-a', '刷新后的 Room');
+    refreshed.configRevision = 2;
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '原 Room')] },
+      'agent.room.snapshot': () => {
+        snapshotCalls += 1;
+        return roomSnapshot('room-a', [
+          roomEvent('room-a', 1, 'user_message', { text: '保持可见的消息' }),
+        ]);
+      },
+      'agent.room.get': () => {
+        roomGetCalls += 1;
+        return { ok: true, room: refreshed };
+      },
+      'agent.room.message': { ok: true },
+      'agent.rooms.create': { ok: true },
+    } });
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+    expect(await screen.findByText('保持可见的消息')).toBeInTheDocument();
+    expect(transport.activeSubscriptionCount()).toBe(1);
+
+    transport.emit(
+      'agent.room.events',
+      roomEvent('room-a', 2, 'room_config_changed', { configRevision: 2 }),
+    );
+    transport.emit(
+      'agent.room.events',
+      roomEvent('room-a', 3, 'participant_activity', {
+        activityKind: 'work',
+        summary: '工作状态已更新',
+      }),
+    );
+
+    await waitFor(() => expect(roomGetCalls).toBe(1));
+    expect(snapshotCalls).toBe(1);
+    expect(transport.subscriptionCalls).toHaveLength(1);
+    expect(transport.activeSubscriptionCount()).toBe(1);
+    expect(screen.getAllByText('刷新后的 Room').length).toBeGreaterThan(0);
+    expect(screen.getByText('保持可见的消息')).toBeInTheDocument();
+  });
+
   it('cancels a late snapshot when the user selects another Room', async () => {
     const first = deferred<ReturnType<typeof roomSnapshot>>();
     const transport = new MockControlTransport({ routes: {

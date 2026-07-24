@@ -7,7 +7,7 @@ import {
   createAgentProjection,
   discardOptimisticAgentMessage,
   failOptimisticAgentMessage,
-  reduceAgentEvent,
+  reduceAgentEvents,
   type AgentProjectionState,
   type AgentSnapshot,
 } from '@/contracts/agent-reducer';
@@ -51,8 +51,9 @@ export const useAgentLiveStore = create<AgentLiveStore>((set, get) => ({
     }));
   },
   applyEvents(sessionId, events) {
-    let projection = get().projections[sessionId] ?? createAgentProjection(sessionId);
-    for (const event of events) projection = reduceAgentEvent(projection, event).state;
+    const current = get().projections[sessionId] ?? createAgentProjection(sessionId);
+    const projection = reduceAgentEvents(current, events);
+    if (projection === current) return current.needsSnapshot;
     set((state) => ({
       projections: { ...state.projections, [sessionId]: projection },
     }));

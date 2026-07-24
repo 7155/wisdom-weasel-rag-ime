@@ -1987,6 +1987,31 @@ describe('Agent experience', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('模型目录暂时不可用，对话记录仍可查看');
   });
 
+  it('makes the model and tool controls ready while a slow history snapshot is still loading', async () => {
+    const pendingSnapshot = deferred<unknown>();
+    const transport = productionTransport({
+      'agent.session.snapshot': () => pendingSnapshot.promise,
+    });
+    renderAgent(transport);
+
+    expect(await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5\.4/ },
+      { timeout: 5_000 },
+    )).toBeEnabled();
+    expect(await screen.findByRole(
+      'button',
+      { name: /当前权限可用工具：13 个/ },
+      { timeout: 5_000 },
+    )).toBeEnabled();
+    expect(useAgentLiveStore.getState().projections['session-preview']?.messageOrder ?? []).toEqual([]);
+
+    pendingSnapshot.resolve(previewAgentSnapshot('session-preview'));
+    await waitFor(() => expect(
+      useAgentLiveStore.getState().projections['session-preview']?.messageOrder,
+    ).toHaveLength(4));
+  });
+
   it('keeps persisted conversation visible when the Pi command catalog fails', async () => {
     const transport = productionTransport({
       'agent.session.commands': () => { throw new Error('commands unavailable'); },

@@ -1,5 +1,11 @@
 import { AtSign, Send } from 'lucide-react';
-import { startTransition, useEffect, useRef, useState } from 'react';
+import {
+  startTransition,
+  useEffect,
+  useRef,
+  useState,
+  type CompositionEvent,
+} from 'react';
 
 import { IconButton } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
@@ -44,6 +50,7 @@ export function RoomComposer({
   onSend: (value: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composingRef = useRef(false);
   const [composerDraft, setComposerDraft] = useState(draft);
   const [mention, setMention] = useState<RoomMentionDraft>();
   const [activeIndex, setActiveIndex] = useState(0);
@@ -68,6 +75,14 @@ export function RoomComposer({
 
   function publishDraft(value: string): void {
     startTransition(() => onDraftChange(value));
+  }
+
+  function endComposition(event: CompositionEvent<HTMLTextAreaElement>): void {
+    const value = event.currentTarget.value;
+    composingRef.current = false;
+    setComposerDraft(value);
+    publishDraft(value);
+    syncMention(value, event.currentTarget.selectionStart);
   }
 
   function syncMention(value: string, caret: number | null): void {
@@ -170,11 +185,17 @@ export function RoomComposer({
           maxLength={8_000}
           value={composerDraft}
           disabled={!roomCanSend}
+          autoCapitalize="none"
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
           onChange={(event) => {
             setComposerDraft(event.target.value);
-            publishDraft(event.target.value);
+            if (!composingRef.current) publishDraft(event.target.value);
             syncMention(event.target.value, event.target.selectionStart);
           }}
+          onCompositionStart={() => { composingRef.current = true; }}
+          onCompositionEnd={endComposition}
           onClick={(event) => (
             syncMention(event.currentTarget.value, event.currentTarget.selectionStart)
           )}
@@ -184,7 +205,11 @@ export function RoomComposer({
             }
           }}
           onKeyDown={(event) => {
-            if (event.nativeEvent.isComposing) return;
+            if (
+              composingRef.current
+              || event.nativeEvent.isComposing
+              || event.nativeEvent.keyCode === 229
+            ) return;
             if (mention && mentionCandidates.length) {
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();

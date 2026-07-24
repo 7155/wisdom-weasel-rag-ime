@@ -247,6 +247,50 @@ export function reduceRoomEvent(
   return { state: next, disposition: 'applied' };
 }
 
+export function reduceRoomEvents(
+  state: RoomProjectionState,
+  events: readonly UiRoomEvent[],
+): RoomProjectionState {
+  let next = state;
+  let index = 0;
+  while (index < events.length) {
+    const event = events[index];
+    if (!event) break;
+    if (!canStartRoomDeltaBatch(next, event)) {
+      next = reduceRoomEvent(next, event).state;
+      index += 1;
+      continue;
+    }
+
+    let end = index + 1;
+    let delta = text(event.payload.delta);
+    let last = event;
+    while (end < events.length) {
+      const candidate = events[end];
+      if (!candidate || !canMergeRoomDelta(last, candidate)) break;
+      delta += text(candidate.payload.delta);
+      last = candidate;
+      end += 1;
+    }
+
+    const reduced = reduceRoomEvent(next, {
+      ...event,
+      payload: { ...event.payload, delta },
+    });
+    next = reduced.state;
+    if (reduced.disposition === 'applied' && last !== event) {
+      next = {
+        ...next,
+        lastSequence: last.sequence,
+        lastEventId: last.eventId,
+        resumeToken: last.resumeToken,
+      };
+    }
+    index = end;
+  }
+  return next;
+}
+
 export function appendOptimisticRoomMessage(
   state: RoomProjectionState,
   input: OptimisticRoomMessageInput,
@@ -682,7 +726,7 @@ function replaceProvisionalMessage(
   delete state.messagesById[provisionalId];
   state.messagesById[message.id] = message;
 
-  const turn = state.turnsById[provisional.turnId];
+  const turn = writableTurn(state, provisional.turnId);
   if (turn) {
     turn.messageIds = turn.messageIds.filter(
       (id) => id !== provisionalId && id !== message.id,
@@ -810,7 +854,7 @@ function attachMessage(state: RoomProjectionState, message: RoomMessageProjectio
 }
 
 function detachMessage(state: RoomProjectionState, message: RoomMessageProjection): void {
-  const turn = state.turnsById[message.turnId];
+  const turn = writableTurn(state, message.turnId);
   if (!turn) return;
   turn.messageIds = turn.messageIds.filter((id) => id !== message.id);
   if (turn.messageIds.length === 0 && turn.activityIds.length === 0) {
@@ -825,7 +869,7 @@ function ensureTurn(
   nowMs: number,
 ): RoomTurnProjection {
   const turnId = requestedTurnId || 'unscoped';
-  let turn = state.turnsById[turnId];
+  let turn = writableTurn(state, turnId);
   if (!turn) {
     turn = {
       id: turnId,
@@ -1025,30 +1069,81 @@ function cloneState(state: RoomProjectionState): RoomProjectionState {
     messageOrder: [...state.messageOrder],
     activitiesById: { ...state.activitiesById },
     activityOrder: [...state.activityOrder],
-    turnsById: Object.fromEntries(
-      Object.entries(state.turnsById).map(([id, turn]) => [
-        id,
-        {
-          ...turn,
-          messageIds: [...turn.messageIds],
-          activityIds: [...turn.activityIds],
-          participantIds: [...turn.participantIds],
-          terminalParticipantIds: [...(turn.terminalParticipantIds ?? [])],
-          failedParticipantIds: [...(turn.failedParticipantIds ?? [])],
-          abortedParticipantIds: [...(turn.abortedParticipantIds ?? [])],
-          dispatchIds: [...(turn.dispatchIds ?? [])],
-          terminalDispatchIds: [...(turn.terminalDispatchIds ?? [])],
-          failedDispatchIds: [...(turn.failedDispatchIds ?? [])],
-          abortedDispatchIds: [...(turn.abortedDispatchIds ?? [])],
-          dispatchParticipantIds: { ...(turn.dispatchParticipantIds ?? {}) },
-        },
-      ]),
-    ),
+    // Match Pi's component-local updates: only the active turn is copied when
+    // an event mutates it, while completed history stays referentially stable.
+    turnsById: { ...state.turnsById },
     turnOrder: [...state.turnOrder],
     optimisticByClientMessageId: { ...state.optimisticByClientMessageId },
     diagnostics: [...state.diagnostics],
     ...(state.gap ? { gap: { ...state.gap } } : {}),
   };
+}
+
+function canStartRoomDeltaBatch(
+  state: RoomProjectionState,
+  event: UiRoomEvent,
+): boolean {
+  return (
+    event.eventType === 'participant_delta'
+    && event.roomId === state.roomId
+    && !state.needsSnapshot
+    && event.sequence > state.lastSequence
+    && (state.lastSequence === 0 || event.sequence === state.lastSequence + 1)
+  );
+}
+
+function canMergeRoomDelta(
+  previous: UiRoomEvent,
+  candidate: UiRoomEvent,
+): boolean {
+  if (
+    candidate.eventType !== 'participant_delta'
+    || candidate.roomId !== previous.roomId
+    || candidate.turnId !== previous.turnId
+    || candidate.topicId !== previous.topicId
+    || candidate.participantId !== previous.participantId
+    || candidate.sourceSessionId !== previous.sourceSessionId
+    || candidate.sequence !== previous.sequence + 1
+  ) {
+    return false;
+  }
+  return sameDeltaField(previous.payload, candidate.payload, 'rootId')
+    && sameDeltaField(previous.payload, candidate.payload, 'dispatchId')
+    && sameDeltaField(previous.payload, candidate.payload, 'messageId')
+    && sameDeltaField(previous.payload, candidate.payload, 'blockId')
+    && sameDeltaField(previous.payload, candidate.payload, 'contentIndex');
+}
+
+function sameDeltaField(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+  key: string,
+): boolean {
+  return left[key] === right[key];
+}
+
+function writableTurn(
+  state: RoomProjectionState,
+  turnId: string,
+): RoomTurnProjection | undefined {
+  const current = state.turnsById[turnId];
+  if (!current) return undefined;
+  const copy: RoomTurnProjection = {
+    ...current,
+    messageIds: [...current.messageIds],
+    activityIds: [...current.activityIds],
+    participantIds: [...current.participantIds],
+    terminalParticipantIds: [...(current.terminalParticipantIds ?? [])],
+    failedParticipantIds: [...(current.failedParticipantIds ?? [])],
+    abortedParticipantIds: [...(current.abortedParticipantIds ?? [])],
+    dispatchIds: [...(current.dispatchIds ?? [])],
+    terminalDispatchIds: [...(current.terminalDispatchIds ?? [])],
+    failedDispatchIds: [...(current.failedDispatchIds ?? [])],
+    abortedDispatchIds: [...(current.abortedDispatchIds ?? [])],
+    dispatchParticipantIds: { ...(current.dispatchParticipantIds ?? {}) },
+  };
+  state.turnsById[turnId] = copy;
+  return copy;
 }
 
 function record(value: unknown): Record<string, unknown> {

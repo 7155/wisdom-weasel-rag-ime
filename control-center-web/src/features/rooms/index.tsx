@@ -17,11 +17,6 @@ import {
   SegmentedControl,
   Select,
 } from '@/components/primitives';
-import { createRoomDeltaBatcher } from '@/contracts/batching';
-import {
-  parseRoomEventSnapshot,
-} from '@/contracts/room-reducer';
-import type { UiRoomEvent } from '@/contracts/ui-events';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { roleItems } from '@/features/agent/types';
@@ -38,6 +33,7 @@ import {
 } from './managed/RoomStartWorkDialog';
 import { RoomTurn } from './timeline/RoomTurn';
 import { selectPublicRoomTurnOrder } from './runtime/room-execution-lanes';
+import { useRoomLiveSession } from './runtime/use-room-live-session';
 import { useRoomLiveStore } from './state/live-store';
 import './rooms.css';
 
@@ -294,100 +290,37 @@ export function RoomsFeature() {
     if (!selectedId) {
       setDraft('');
       setError('');
-      setSnapshotLoading(false);
       return;
     }
     setDraft(roomDraftsRef.current.get(selectedId) ?? '');
     setError(roomErrorsRef.current.get(selectedId)?.message ?? '');
-    let active = true;
-    let generation = 0;
-    let reloadQueued = false;
-    let unsubscribe: (() => void) | undefined;
-    let snapshotController: AbortController | undefined;
-    useRoomLiveStore.getState().ensure(selectedId);
-    setSnapshotLoading(true);
-
-    const scheduleSnapshotReload = () => {
-      if (!active || reloadQueued) return;
-      reloadQueued = true;
-      queueMicrotask(() => {
-        reloadQueued = false;
-        if (active) void loadSnapshotAndSubscribe();
-      });
-    };
-    const batcher = createRoomDeltaBatcher((events) => {
-      if (!active) return;
-      const snapshotRequired = useRoomLiveStore
-        .getState()
-        .applyEvents(selectedId, events);
-      if (snapshotRequired) scheduleSnapshotReload();
-    });
-
-    async function loadSnapshotAndSubscribe(): Promise<void> {
-      const requestGeneration = ++generation;
-      batcher.clear();
-      unsubscribe?.();
-      unsubscribe = undefined;
-      snapshotController?.abort();
-      snapshotController = new AbortController();
-      try {
-        const value = await transport.request({
-          pathId: 'agent.room.snapshot',
-          params: { roomId: selectedId },
-          signal: snapshotController.signal,
-        });
-        if (!active || requestGeneration !== generation) return;
-        const snapshot = parseRoomEventSnapshot(value);
-        useRoomLiveStore.getState().replaySnapshot(selectedId, snapshot);
-        setSnapshotLoading(false);
-        const snapshotRoom = snapshot.room as unknown as RoomSummary;
-        setRooms((current) => current.map((item) => item.id === snapshotRoom.id ? snapshotRoom : item));
-        clearRoomConnectionError(selectedId);
-        const subscriptionGeneration = requestGeneration;
-        unsubscribe = transport.subscribe<UiRoomEvent>(
-          {
-            pathId: 'agent.room.events',
-            params: { roomId: selectedId },
-            lastEventId: snapshot.resumeToken,
-          },
-          {
-            next: (event) => {
-              if (!active || subscriptionGeneration !== generation) return;
-              batcher.push(event);
-              if (
-                ['room_config_changed', 'topic_changed', 'artifact_changed'].includes(event.eventType)
-                || (event.eventType === 'participant_activity' && event.payload.activityKind === 'work')
-              ) {
-                scheduleSnapshotReload();
-              }
-            },
-            error: (streamError) => {
-              if (active && subscriptionGeneration === generation) {
-                setRoomError(selectedId, publicErrorText(streamError, 'Room 实时连接暂时中断，请稍后重试。'), 'connection');
-              }
-            },
-            snapshotRequired: () => {
-              if (active && subscriptionGeneration === generation) scheduleSnapshotReload();
-            },
-          },
-        );
-      } catch (loadError) {
-        if (active && requestGeneration === generation && !isAbortError(loadError)) {
-          setRoomError(selectedId, publicErrorText(loadError, '暂时无法读取 Room 对话，请稍后重试。'), 'connection');
-          setSnapshotLoading(false);
-        }
-      }
-    }
-
-    void loadSnapshotAndSubscribe();
-    return () => {
-      active = false;
-      generation += 1;
-      snapshotController?.abort();
-      batcher.clear();
-      unsubscribe?.();
-    };
-  }, [selectedId, transport]);
+  }, [selectedId]);
+  useRoomLiveSession({
+    roomId: selectedId,
+    transport,
+    onLoadingChange: setSnapshotLoading,
+    onSnapshot: (_roomId, snapshot) => {
+      const snapshotRoom = snapshot.room as unknown as RoomSummary;
+      setRooms((current) => current.map((item) => (
+        item.id === snapshotRoom.id ? snapshotRoom : item
+      )));
+    },
+    onMetadata: (roomId, value) => {
+      const refreshedRoom = roomFromGetResponse(value, roomId);
+      if (!refreshedRoom) return;
+      setRooms((current) => current.map((item) => (
+        item.id === refreshedRoom.id ? refreshedRoom : item
+      )));
+    },
+    onConnectionRestored: clearRoomConnectionError,
+    onConnectionError: (roomId, liveError, fallback) => {
+      setRoomError(
+        roomId,
+        publicErrorText(liveError, fallback),
+        'connection',
+      );
+    },
+  });
 
   const room = rooms.find((item) => item.id === selectedId);
   const activeParticipants = room?.participants.filter((participant) => participant.status === 'active') ?? [];
@@ -1229,6 +1162,17 @@ function roomWorkItem(value: unknown): RoomWorkItem | undefined {
     : undefined;
 }
 
+function roomFromGetResponse(value: unknown, roomId: string): RoomSummary | undefined {
+  const candidate = record(record(value).room);
+  return (
+    candidate.id === roomId
+    && typeof candidate.title === 'string'
+    && Array.isArray(candidate.participants)
+  )
+    ? candidate as unknown as RoomSummary
+    : undefined;
+}
+
 function managedWorkStartMessage(draft: ManagedWorkDraft): string {
   const sections = [
     '确认开始受管执行。',
@@ -1277,5 +1221,3 @@ function collaborationRoleLabel(role: RoomParticipant['collaborationRole']): str
   if (role === 'specialist') return '领域专家';
   return '实施与交付';
 }
-
-function isAbortError(value: unknown): boolean { return value instanceof DOMException && value.name === 'AbortError'; }

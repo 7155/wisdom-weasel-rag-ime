@@ -416,9 +416,10 @@ function AgentWorkspace() {
       }
       if (notices.length) setError(notices.join(' '));
     }
-    void (async () => {
-      if (await loadSnapshot()) await loadSessionCatalogs();
-    })();
+    // History recovery owns the stream cursor; model, command and tool
+    // catalogs are independent and should become interactive immediately.
+    void loadSnapshot();
+    void loadSessionCatalogs();
     return () => { active = false; batcher.clear(); unsubscribe(); };
   }, [ensure, selectedId, transport]);
 

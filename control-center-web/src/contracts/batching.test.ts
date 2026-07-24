@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createEventBatcher, type BatchScheduler } from './batching';
-import { createAgentProjection, reduceAgentEvent } from './agent-reducer';
+import { createAgentProjection, reduceAgentEvents } from './agent-reducer';
 import { agentEventFixture as agentEvent } from '@/test/fixtures/events';
 
 describe('delta batching', () => {
@@ -14,7 +14,7 @@ describe('delta batching', () => {
       intervalMs: 20,
       isDelta: (event: ReturnType<typeof agentEvent>) => event.eventType === 'text_delta',
       commit(events: readonly ReturnType<typeof agentEvent>[]) {
-        for (const event of events) state = reduceAgentEvent(state, event).state;
+        state = reduceAgentEvents(state, events);
         commits += 1;
       },
     });
