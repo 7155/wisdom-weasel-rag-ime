@@ -1,8 +1,27 @@
 export const ROOM_RUNTIME_PROTOCOL_VERSION = "2" as const;
 
-export const ROOM_RUNTIME_METHODS = ["room.dispatch", "room.cancel"] as const;
+export const ROOM_RUNTIME_METHODS = [
+  "session.control_state",
+  "room.dispatch",
+  "room.cancel",
+] as const;
 
 export type RoomRuntimeMethod = (typeof ROOM_RUNTIME_METHODS)[number];
+
+export type SessionControlStateParams = {
+  sessionId: string;
+};
+
+export type SessionControlStateReceipt = {
+  schemaVersion: "rag-ime.pi-session-control-state.v1";
+  sessionId: string;
+  isIdle: boolean;
+  isCompacting: boolean;
+  activeTurn?: Record<string, unknown>;
+  roomCapability?: Record<string, unknown>;
+  activeRoom?: Record<string, unknown>;
+  sequence: number;
+};
 
 export type RoomDispatchParams = {
   sessionId: string;
@@ -44,7 +63,11 @@ export type RoomCancelReceipt = {
 };
 
 export type RoomRuntimeRequest =
+  | { method: "session.control_state"; params: SessionControlStateParams }
   | { method: "room.dispatch"; params: RoomDispatchParams }
   | { method: "room.cancel"; params: RoomCancelParams };
 
-export type RoomRuntimeReceipt = RoomDispatchReceipt | RoomCancelReceipt;
+export type RoomRuntimeReceipt =
+  | SessionControlStateReceipt
+  | RoomDispatchReceipt
+  | RoomCancelReceipt;

@@ -173,12 +173,17 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         script = (ROOT / "scripts" / "build_managed_pi_runtime_v2.py").read_text(
             encoding="utf-8"
         )
+        adapter = (ROOT / "integrations" / "pi" / "room-runtime-host.ts").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn('product_commit.encode("ascii")', script)
         self.assertIn('"productCommit": product_commit', script)
         self.assertIn('manifest["createdAtMs"] = product_commit_ms', script)
         self.assertIn("_verified_room_runtime_contract", script)
         self.assertIn("source_contract_sha256=room_runtime_contract_sha256", script)
+        for method in ("session.control_state", "room.dispatch", "room.cancel"):
+            self.assertIn(f'"{method}"', adapter)
 
     def test_staged_smoke_uses_current_dispatch_and_continuation_contract(self) -> None:
         script = (ROOT / "scripts" / "smoke_room_v2_staged_runtime.py").read_text(
