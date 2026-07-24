@@ -71,6 +71,7 @@ from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
 from .deployment_status import audit_installed_product
 from .embeddings import embed_query, embedding_provider_from_env
+from .foreground_app_semantics import enrich_window_context_with_app_semantics
 from .foreground_privacy import assess_foreground_write, storage_receipt
 from .frontend_gateway import FrontendGateway
 from .history_context import build_prediction_context
@@ -2008,6 +2009,9 @@ class DebugImeService:
         if payload.get("visualContext"):
             raise ValueError("visualContext is disabled; provide AX windowContext instead")
         window_context = validate_window_context(payload.get("windowContext"))
+        window_context = validate_window_context(
+            enrich_window_context_with_app_semantics(window_context)
+        )
         return ActiveRagStartRequest(
             selected_text=selected_text,
             selected_text_hash=(

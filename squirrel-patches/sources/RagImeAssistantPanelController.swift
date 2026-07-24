@@ -824,6 +824,42 @@ private struct RagImeAssistantContextInspectorDocument {
     if !appName.isEmpty || !windowTitle.isEmpty {
       windowLines.append([appName, windowTitle].filter { !$0.isEmpty }.joined(separator: " · "))
     }
+    let applicationSemantics = object(windowContext["applicationSemantics"])
+    if string(applicationSemantics["source"]) == "zed_workspace_state" {
+      let projectName = string(applicationSemantics["projectName"])
+      let activeFile = string(applicationSemantics["activeFile"])
+      let contentOrigin = string(applicationSemantics["contentOrigin"])
+      let excerptStartLine = integer(applicationSemantics["editorExcerptStartLine"])
+      let editorExcerpt = string(applicationSemantics["editorExcerpt"])
+      let projectEntries = array(applicationSemantics["projectEntries"])
+        .map { string($0) }
+        .filter { !$0.isEmpty }
+      windowLines.append("Zed 工作区状态 · 只读本地语义，可能滞后")
+      if !projectName.isEmpty { windowLines.append("项目：\(projectName)") }
+      if !activeFile.isEmpty { windowLines.append("活动文件：\(activeFile)") }
+      if !editorExcerpt.isEmpty {
+        let lineLabel = excerptStartLine > 0 ? "（从第 \(excerptStartLine) 行附近）" : ""
+        windowLines.append("编辑区\(lineLabel)：\n\(editorExcerpt)")
+      }
+      if !projectEntries.isEmpty {
+        windowLines.append("项目根目录：\n" + projectEntries.map { "• \($0)" }.joined(separator: "\n"))
+      }
+      if contentOrigin == "workspace_file" {
+        windowLines.append("编辑内容来源：磁盘文件，未保存修改可能尚未包含")
+      } else if contentOrigin == "zed_recovery_buffer" {
+        windowLines.append("编辑内容来源：Zed 恢复缓冲")
+      } else if contentOrigin == "sensitive_file_blocked" {
+        windowLines.append("编辑内容来源：敏感文件，正文已阻止读取")
+      }
+    }
+    if windowNodes.isEmpty,
+      sourceNodeCount <= 1,
+      applicationSemantics.isEmpty,
+      appName.caseInsensitiveCompare("Zed") == .orderedSame {
+      windowLines.append(
+        "Zed 当前未返回可读 AX 节点，本轮仅保留应用和窗口标题。"
+      )
+    }
     for (index, value) in windowNodes.enumerated() {
       let node = object(value)
       let role = string(node["role"])
@@ -861,7 +897,7 @@ private struct RagImeAssistantContextInspectorDocument {
       let detail = captureMode.isEmpty ? "AX 未返回可读节点" : "AX 未返回可读节点（\(captureMode)，\(nodeCount) 个节点）"
       windowLines.append(detail)
     }
-    appendSection("AX 文本上下文", windowLines.joined(separator: "\n"))
+    appendSection("窗口语义上下文", windowLines.joined(separator: "\n"))
 
     let planning = object(contextView["planning"])
     let planningItems = array(planning["items"])

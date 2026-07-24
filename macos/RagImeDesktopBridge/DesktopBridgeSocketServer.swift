@@ -149,6 +149,10 @@ final class DesktopBridgeSocketServer {
 
     private func handleClient(_ fd: Int32) {
         defer { Darwin.close(fd) }
+        let currentFlags = fcntl(fd, F_GETFL, 0)
+        if currentFlags >= 0 {
+            _ = fcntl(fd, F_SETFL, currentFlags & ~O_NONBLOCK)
+        }
         var peerUID: uid_t = 0
         var peerGID: gid_t = 0
         guard getpeereid(fd, &peerUID, &peerGID) == 0, peerUID == geteuid() else {

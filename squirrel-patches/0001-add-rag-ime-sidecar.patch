@@ -215,7 +215,7 @@ new file mode 100644
 index 0000000..1111111
 --- /dev/null
 +++ b/sources/RagImeAssistantPanelController.swift
-@@ -0,0 +1,1133 @@
+@@ -0,0 +1,1169 @@
 +import AppKit
 +import QuartzCore
 +
@@ -1042,6 +1042,42 @@ index 0000000..1111111
 +    if !appName.isEmpty || !windowTitle.isEmpty {
 +      windowLines.append([appName, windowTitle].filter { !$0.isEmpty }.joined(separator: " · "))
 +    }
++    let applicationSemantics = object(windowContext["applicationSemantics"])
++    if string(applicationSemantics["source"]) == "zed_workspace_state" {
++      let projectName = string(applicationSemantics["projectName"])
++      let activeFile = string(applicationSemantics["activeFile"])
++      let contentOrigin = string(applicationSemantics["contentOrigin"])
++      let excerptStartLine = integer(applicationSemantics["editorExcerptStartLine"])
++      let editorExcerpt = string(applicationSemantics["editorExcerpt"])
++      let projectEntries = array(applicationSemantics["projectEntries"])
++        .map { string($0) }
++        .filter { !$0.isEmpty }
++      windowLines.append("Zed 工作区状态 · 只读本地语义，可能滞后")
++      if !projectName.isEmpty { windowLines.append("项目：\(projectName)") }
++      if !activeFile.isEmpty { windowLines.append("活动文件：\(activeFile)") }
++      if !editorExcerpt.isEmpty {
++        let lineLabel = excerptStartLine > 0 ? "（从第 \(excerptStartLine) 行附近）" : ""
++        windowLines.append("编辑区\(lineLabel)：\n\(editorExcerpt)")
++      }
++      if !projectEntries.isEmpty {
++        windowLines.append("项目根目录：\n" + projectEntries.map { "• \($0)" }.joined(separator: "\n"))
++      }
++      if contentOrigin == "workspace_file" {
++        windowLines.append("编辑内容来源：磁盘文件，未保存修改可能尚未包含")
++      } else if contentOrigin == "zed_recovery_buffer" {
++        windowLines.append("编辑内容来源：Zed 恢复缓冲")
++      } else if contentOrigin == "sensitive_file_blocked" {
++        windowLines.append("编辑内容来源：敏感文件，正文已阻止读取")
++      }
++    }
++    if windowNodes.isEmpty,
++      sourceNodeCount <= 1,
++      applicationSemantics.isEmpty,
++      appName.caseInsensitiveCompare("Zed") == .orderedSame {
++      windowLines.append(
++        "Zed 当前未返回可读 AX 节点，本轮仅保留应用和窗口标题。"
++      )
++    }
 +    for (index, value) in windowNodes.enumerated() {
 +      let node = object(value)
 +      let role = string(node["role"])
@@ -1079,7 +1115,7 @@ index 0000000..1111111
 +      let detail = captureMode.isEmpty ? "AX 未返回可读节点" : "AX 未返回可读节点（\(captureMode)，\(nodeCount) 个节点）"
 +      windowLines.append(detail)
 +    }
-+    appendSection("AX 文本上下文", windowLines.joined(separator: "\n"))
++    appendSection("窗口语义上下文", windowLines.joined(separator: "\n"))
 +
 +    let planning = object(contextView["planning"])
 +    let planningItems = array(planning["items"])
@@ -2327,23 +2363,53 @@ index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd8
 +      kAXFocusedAttribute as CFString,
 +      kAXSelectedAttribute as CFString,
 +      kAXChildrenAttribute as CFString,
++      kAXVisibleChildrenAttribute as CFString,
++      "AXChildrenInNavigationOrder" as CFString,
++      kAXContentsAttribute as CFString,
 +    ]
 +    if !isTerminalSurface {
 +      attributeNames.insert(kAXValueAttribute as CFString, at: 6)
 +    }
 +    func attributes(_ element: AXUIElement) -> [String: Any] {
 +      var copied: CFArray?
-+      guard AXUIElementCopyMultipleAttributeValues(
++      let result = AXUIElementCopyMultipleAttributeValues(
 +        element,
 +        attributeNames as CFArray,
 +        [],
 +        &copied
-+      ) == .success,
++      )
++      if result == .success,
 +        let values = copied as? [Any],
-+        values.count == attributeNames.count else { return [:] }
-+      return Dictionary(uniqueKeysWithValues: zip(attributeNames, values).map {
-+        ($0.0 as String, $0.1)
++        values.count == attributeNames.count {
++        return Dictionary(uniqueKeysWithValues: zip(attributeNames, values).map {
++          ($0.0 as String, $0.1)
++        })
++      }
++      return Dictionary(uniqueKeysWithValues: attributeNames.map { attribute in
++        var value: AnyObject?
++        let result = AXUIElementCopyAttributeValue(element, attribute, &value)
++        return (attribute as String, result == .success ? (value ?? NSNull()) : NSNull())
 +      })
++    }
++    func childElements(_ values: [String: Any]) -> [AXUIElement] {
++      let childAttributes = [
++        kAXChildrenAttribute as String,
++        kAXVisibleChildrenAttribute as String,
++        "AXChildrenInNavigationOrder",
++        kAXContentsAttribute as String,
++      ]
++      var result: [AXUIElement] = []
++      var seen = Set<CFHashCode>()
++      for attribute in childAttributes {
++        guard let children = values[attribute] as? [AXUIElement] else { continue }
++        for child in children {
++          let identity = CFHash(child)
++          guard !seen.contains(identity) else { continue }
++          seen.insert(identity)
++          result.append(child)
++        }
++      }
++      return result
 +    }
 +    func stringValue(_ value: Any?) -> String {
 +      if let text = value as? String {
@@ -2440,8 +2506,8 @@ index 0000000000000000000000000000000000000000..002769da641ef82750cfe5469e534bd8
 +        if !actions.isEmpty { parts.append("actions=\(actions.joined(separator: ","))") }
 +        semanticLines.append(String(parts.joined(separator: " ").prefix(1000)))
 +      }
-+      if !secure, depth < depthLimit,
-+        let children = values[kAXChildrenAttribute as String] as? [AXUIElement] {
++      if !secure, depth < depthLimit {
++        let children = childElements(values)
 +        for (index, child) in children.enumerated() {
 +          queue.append((child, nodeRef, depth + 1, index))
 +        }

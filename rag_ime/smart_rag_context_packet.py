@@ -126,6 +126,19 @@ def _take_budgeted_window_context(
             "mustNotOverrideCurrentInput": True,
         },
     }
+    application = projected.get("application")
+    if isinstance(application, Mapping):
+        compact["application"] = {
+            key: text
+            for key in ("name", "windowTitle")
+            if (text := compact_whitespace(str(application.get(key) or "")))
+        }
+    application_semantics = _take_budgeted_application_semantics(
+        projected.get("applicationSemantics"),
+        budget=max(0, budget - _window_context_estimated_tokens(compact)),
+    )
+    if application_semantics:
+        compact["applicationSemantics"] = application_semantics
     header_tokens = _window_context_estimated_tokens(compact)
     header_tokens = min(budget, header_tokens)
     consumed = header_tokens
@@ -194,6 +207,26 @@ def _window_context_estimated_tokens(context: Mapping[str, object]) -> int:
     if not projected:
         return 0
     text_parts: list[str] = []
+    application = projected.get("application")
+    if isinstance(application, Mapping):
+        text_parts.extend(
+            str(application.get(key) or "")
+            for key in ("name", "windowTitle")
+        )
+    application_semantics = projected.get("applicationSemantics")
+    if isinstance(application_semantics, Mapping):
+        text_parts.extend(
+            str(application_semantics.get(key) or "")
+            for key in (
+                "projectName",
+                "activeFile",
+                "editorExcerpt",
+                "contentOrigin",
+            )
+        )
+        entries = application_semantics.get("projectEntries")
+        if isinstance(entries, list):
+            text_parts.extend(str(entry) for entry in entries[:48])
     nodes = projected.get("nodes") if isinstance(projected.get("nodes"), list) else []
     for node in nodes[:48]:
         if not isinstance(node, Mapping):
@@ -203,6 +236,95 @@ def _window_context_estimated_tokens(context: Mapping[str, object]) -> int:
             for key in ("role", "subrole", "label", "value")
         )
     return estimate_tokens(" ".join(text_parts))
+
+
+def _take_budgeted_application_semantics(
+    value: object,
+    *,
+    budget: int,
+) -> dict[str, object]:
+    if not isinstance(value, Mapping) or budget <= 0:
+        return {}
+    compact: dict[str, object] = {
+        "source": str(value.get("source") or ""),
+        "freshness": str(value.get("freshness") or ""),
+        "projectName": compact_whitespace(str(value.get("projectName") or "")),
+        "activeFile": compact_whitespace(str(value.get("activeFile") or "")),
+        "editorExcerptStartLine": max(
+            1,
+            int(value.get("editorExcerptStartLine") or 1),
+        ),
+        "projectEntries": [],
+        "projectEntriesScope": str(value.get("projectEntriesScope") or ""),
+        "contentOrigin": str(value.get("contentOrigin") or ""),
+        "trust": {
+            "maySupportIntent": True,
+            "maySupportFacts": False,
+            "mayLagUnsavedChanges": bool(
+                isinstance(value.get("trust"), Mapping)
+                and value["trust"].get("mayLagUnsavedChanges") is True
+            ),
+            "mustNotOverrideCurrentInput": True,
+        },
+    }
+    consumed = estimate_tokens(
+        " ".join(
+            str(compact.get(key) or "")
+            for key in (
+                "source",
+                "freshness",
+                "projectName",
+                "activeFile",
+                "contentOrigin",
+            )
+        )
+    )
+    raw_entries = value.get("projectEntries")
+    entry_reserve = 0
+    if isinstance(raw_entries, list):
+        entry_reserve = min(
+            160,
+            max(0, budget // 5),
+            sum(
+                estimate_tokens(compact_whitespace(str(entry or "")))
+                for entry in raw_entries[:48]
+            ),
+        )
+    excerpt_budget = max(0, budget - consumed - entry_reserve)
+    excerpt = _head_for_token_budget(
+        str(value.get("editorExcerpt") or ""),
+        excerpt_budget,
+    )
+    if excerpt:
+        compact["editorExcerpt"] = excerpt
+        consumed += estimate_tokens(excerpt)
+    if isinstance(raw_entries, list):
+        selected_entries: list[str] = []
+        for raw_entry in raw_entries[:48]:
+            entry = compact_whitespace(str(raw_entry or ""))
+            entry_tokens = estimate_tokens(entry)
+            if not entry or consumed + entry_tokens > budget:
+                continue
+            selected_entries.append(entry)
+            consumed += entry_tokens
+        compact["projectEntries"] = selected_entries
+    return compact
+
+
+def _head_for_token_budget(text: str, budget: int) -> str:
+    if not text or budget <= 0:
+        return ""
+    if estimate_tokens(text) <= budget:
+        return text
+    lower = 0
+    upper = len(text)
+    while lower < upper:
+        midpoint = (lower + upper + 1) // 2
+        if estimate_tokens(text[:midpoint]) <= max(0, budget - 1):
+            lower = midpoint
+        else:
+            upper = midpoint - 1
+    return text[:lower].rstrip() + ("…" if lower > 0 else "")
 
 
 def build_active_rag_context_packet(

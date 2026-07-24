@@ -36,6 +36,13 @@ def truncate_text(text: str, max_chars: int) -> str:
     return text[: max(0, max_chars - 1)].rstrip() + "…"
 
 
+def truncate_preserving_layout(text: str, max_chars: int) -> str:
+    normalized = (text or "").replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max(0, max_chars - 1)].rstrip() + "…"
+
+
 def split_sentences(text: str) -> list[str]:
     parts = [compact_whitespace(part) for part in _SENTENCE_SPLIT_RE.split(text or "")]
     return [part for part in parts if part]

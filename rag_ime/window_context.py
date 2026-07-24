@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from .text_utils import compact_whitespace, truncate_text
+from .text_utils import compact_whitespace, truncate_preserving_layout, truncate_text
 
 
 WINDOW_CONTEXT_SCHEMA_VERSION = "rag-ime.window-context.v1"
@@ -68,7 +68,7 @@ _LABEL_TEXT_ROLES = frozenset(
 
 
 def validate_window_context(value: object) -> dict[str, object]:
-    """Normalize bounded AX semantics and reject visual/coordinate payloads."""
+    """Normalize bounded foreground semantics and reject visual payloads."""
 
     if value in (None, {}):
         return {}
@@ -119,7 +119,7 @@ def validate_window_context(value: object) -> dict[str, object]:
         compact_whitespace(str(value.get("semanticText") or "")),
         12_000,
     )
-    return {
+    validated: dict[str, object] = {
         "schemaVersion": WINDOW_CONTEXT_SCHEMA_VERSION,
         "captureMode": capture_mode,
         "snapshotId": _text(value.get("snapshotId"), 200),
@@ -138,15 +138,19 @@ def validate_window_context(value: object) -> dict[str, object]:
         "truncated": value.get("truncated") is True or len(raw_nodes) > len(nodes),
         "semanticText": semantic_text,
     }
+    application_semantics = _application_semantics(value.get("applicationSemantics"))
+    if application_semantics:
+        validated["applicationSemantics"] = application_semantics
+    return validated
 
 
 def project_window_context_for_generation(value: object) -> dict[str, object]:
-    """Keep readable AX text for generation without leaking the control tree.
+    """Keep bounded foreground text without leaking the AX control tree.
 
     Desktop operation consumes the full validated tree. The stateless generation
-    path only needs the text the user is reading or editing, so structural
-    groups, buttons, actions, node references, app chrome, and window metadata
-    are intentionally excluded here.
+    path keeps readable AX text plus an explicitly sourced, read-only application
+    projection. Structural groups, buttons, actions, node references, process
+    identifiers, and absolute workspace paths are intentionally excluded.
     """
 
     if not isinstance(value, Mapping):
@@ -154,6 +158,18 @@ def project_window_context_for_generation(value: object) -> dict[str, object]:
     capture_mode = str(value.get("captureMode") or "")
     if capture_mode not in WINDOW_CONTEXT_CAPTURE_MODES:
         capture_mode = "accessibility_semantics"
+    raw_application = value.get("application")
+    application = raw_application if isinstance(raw_application, Mapping) else {}
+    application_name = _text(application.get("name"), 160)
+    window_title = _text(application.get("windowTitle"), 240)
+    orientation = {
+        key: text
+        for key, text in (
+            ("name", application_name),
+            ("windowTitle", window_title),
+        )
+        if text
+    }
     node_value_limit = 4_000 if capture_mode == "terminal_visible_range" else 800
     raw_nodes = value.get("nodes") if isinstance(value.get("nodes"), list) else []
     candidates: list[dict[str, object]] = []
@@ -190,9 +206,10 @@ def project_window_context_for_generation(value: object) -> dict[str, object]:
         if len(candidates) >= 48:
             break
 
-    if not candidates:
+    application_semantics = _application_semantics(value.get("applicationSemantics"))
+    if not candidates and not orientation and not application_semantics:
         return {}
-    return {
+    projected: dict[str, object] = {
         "schemaVersion": WINDOW_CONTEXT_SCHEMA_VERSION,
         "captureMode": capture_mode,
         "projection": GENERATION_WINDOW_CONTEXT_PROJECTION,
@@ -206,6 +223,63 @@ def project_window_context_for_generation(value: object) -> dict[str, object]:
             "mustNotOverrideCurrentInput": True,
         },
     }
+    if orientation:
+        projected["application"] = orientation
+    if application_semantics:
+        projected["applicationSemantics"] = application_semantics
+    return projected
+
+
+def _application_semantics(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    if str(value.get("source") or "") != "zed_workspace_state":
+        return {}
+    raw_trust = value.get("trust")
+    trust = raw_trust if isinstance(raw_trust, Mapping) else {}
+    projected: dict[str, object] = {
+        "source": "zed_workspace_state",
+        "freshness": "best_effort_local_state",
+        "projectName": _project_name(value.get("projectName")),
+        "activeFile": _relative_file(value.get("activeFile")),
+        "editorExcerpt": truncate_preserving_layout(
+            str(value.get("editorExcerpt") or ""),
+            8_000,
+        ),
+        "editorExcerptStartLine": _integer(
+            value.get("editorExcerptStartLine"),
+            default=1,
+            minimum=1,
+            maximum=10_000_000,
+        ),
+        "projectEntries": _project_entries(value.get("projectEntries")),
+        "projectEntriesScope": "workspace_root",
+        "contentOrigin": (
+            "zed_recovery_buffer"
+            if str(value.get("contentOrigin") or "") == "zed_recovery_buffer"
+            else (
+                "sensitive_file_blocked"
+                if str(value.get("contentOrigin") or "") == "sensitive_file_blocked"
+                else "workspace_file"
+            )
+        ),
+        "trust": {
+            "maySupportIntent": True,
+            "maySupportFacts": False,
+            "mayLagUnsavedChanges": trust.get("mayLagUnsavedChanges") is True,
+            "mustNotOverrideCurrentInput": True,
+        },
+    }
+    if not any(
+        (
+            projected["projectName"],
+            projected["activeFile"],
+            projected["editorExcerpt"],
+            projected["projectEntries"],
+        )
+    ):
+        return {}
+    return projected
 
 
 def _contains_forbidden_visual_key(value: object, *, depth: int = 0) -> bool:
@@ -244,4 +318,41 @@ def _strings(value: object, *, limit: int, maximum: int) -> list[str]:
             result.append(text)
         if len(result) >= limit:
             break
+    return result
+
+
+def _project_name(value: object) -> str:
+    text = _text(value, 160)
+    return "" if text in {".", ".."} or "/" in text or "\\" in text else text
+
+
+def _relative_file(value: object) -> str:
+    text = _text(value, 500)
+    if (
+        not text
+        or text.startswith(("/", "~"))
+        or "\\" in text
+        or any(part in {"", ".", ".."} for part in text.split("/"))
+    ):
+        return ""
+    return text
+
+
+def _project_entries(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value[:48]:
+        text = _text(item, 240)
+        name = text[:-1] if text.endswith("/") else text
+        if (
+            not name
+            or name in {".", ".."}
+            or "/" in name
+            or "\\" in name
+        ):
+            continue
+        normalized = f"{name}/" if text.endswith("/") else name
+        if normalized not in result:
+            result.append(normalized)
     return result

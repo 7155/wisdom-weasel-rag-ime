@@ -139,6 +139,11 @@ class DesktopBridgeClientTests(unittest.TestCase):
             with self.subTest(symbol=symbol):
                 self.assertNotIn(symbol, source)
         self.assertIn("AXUIElementCopyMultipleAttributeValues", source)
+        self.assertIn("currentFlags & ~O_NONBLOCK", source)
+        self.assertIn("kAXVisibleChildrenAttribute", source)
+        self.assertIn('"AXChildrenInNavigationOrder"', source)
+        self.assertIn("kAXContentsAttribute", source)
+        self.assertIn("semanticChildren", source)
         self.assertIn("AXObserverAddNotification", source)
         self.assertIn("refreshSnapshotForAction", source)
         self.assertIn("desktop_changed_after_approval", source)

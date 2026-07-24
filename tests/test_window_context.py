@@ -94,7 +94,88 @@ class WindowContextTests(unittest.TestCase):
         self.assertNotIn("nodeRef", str(projected))
         self.assertNotIn("actions", str(projected))
         self.assertNotIn("提交并关闭", str(projected))
-        self.assertNotIn("项目计划", str(projected))
+        self.assertEqual(
+            projected["application"],
+            {"name": "Editor", "windowTitle": "项目计划"},
+        )
+
+    def test_generation_projection_keeps_window_orientation_when_ax_tree_is_window_only(self) -> None:
+        context = _window_context()
+        context["application"] = {
+            "pid": 42,
+            "bundleId": "dev.zed.Zed",
+            "name": "Zed",
+            "windowTitle": "SGGL — two_sum.py",
+        }
+        context["nodes"] = [
+            {
+                "nodeRef": "ax_window",
+                "parentRef": "",
+                "depth": 0,
+                "role": "AXWindow",
+                "label": "SGGL — two_sum.py",
+                "secure": False,
+                "actions": ["AXRaise"],
+            }
+        ]
+
+        projected = project_window_context_for_generation(validate_window_context(context))
+
+        self.assertEqual(projected["nodes"], [])
+        self.assertEqual(projected["nodeCount"], 0)
+        self.assertEqual(projected["sourceNodeCount"], 1)
+        self.assertEqual(
+            projected["application"],
+            {"name": "Zed", "windowTitle": "SGGL — two_sum.py"},
+        )
+        self.assertNotIn("pid", str(projected))
+        self.assertNotIn("bundleId", str(projected))
+        packet = build_active_rag_context_packet(
+            scene="active_rag",
+            current_context="解释当前屏幕",
+            selected_text="解释当前屏幕",
+            selected_text_hash="hash",
+            frontend_revision=1,
+            selection_epoch=1,
+            panel_session_id="zed-window-only",
+            project="SGGL",
+            app="dev.zed.Zed",
+            evidence=(),
+            window_context=validate_window_context(context),
+        )
+        self.assertEqual(
+            packet["windowContext"]["application"]["windowTitle"],
+            "SGGL — two_sum.py",
+        )
+
+    def test_application_semantics_rejects_absolute_and_traversal_paths(self) -> None:
+        context = _window_context()
+        context["applicationSemantics"] = {
+            "source": "zed_workspace_state",
+            "projectName": "/Users/example/SecretProject",
+            "activeFile": "/Users/example/SecretProject/main.py",
+            "editorExcerpt": "1: print('safe excerpt')",
+            "projectEntries": [
+                "/Users/example/SecretProject",
+                "../outside",
+                "src/",
+                "README.md",
+            ],
+            "contentOrigin": "workspace_file",
+        }
+
+        projected = project_window_context_for_generation(
+            validate_window_context(context)
+        )
+
+        semantics = projected["applicationSemantics"]
+        self.assertEqual(semantics["projectName"], "")
+        self.assertEqual(semantics["activeFile"], "")
+        self.assertEqual(semantics["projectEntries"], ["src/", "README.md"])
+        self.assertIn("safe excerpt", semantics["editorExcerpt"])
+        serialized = json.dumps(projected, ensure_ascii=False)
+        self.assertNotIn("/Users/example", serialized)
+        self.assertNotIn("../outside", serialized)
 
     def test_terminal_visible_range_survives_validation_and_generation_projection(self) -> None:
         visible_tail = "故障输出" * 1_000
@@ -200,7 +281,10 @@ class WindowContextTests(unittest.TestCase):
         payload = json.loads(messages[1]["content"])
 
         self.assertEqual(payload["contextPacket"]["windowContext"]["nodeCount"], 1)
-        self.assertNotIn("application", payload["contextPacket"]["windowContext"])
+        self.assertEqual(
+            payload["contextPacket"]["windowContext"]["application"],
+            {"name": "Editor", "windowTitle": "项目计划"},
+        )
         self.assertNotIn("提交并关闭", messages[1]["content"])
         self.assertIn("不能覆盖当前输入", messages[0]["content"])
         self.assertNotIn("must-not-survive", messages[1]["content"])

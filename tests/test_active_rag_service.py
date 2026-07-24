@@ -178,6 +178,47 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertNotIn("你是 macOS 输入法", str(context_view))
         self.assertEqual(ready["diagnostics"]["progress"]["stage"], "ready")
 
+    def test_active_rag_provider_context_view_keeps_sourced_application_semantics(self) -> None:
+        provider = FakeActiveRagProvider(("已结合编辑区和项目目录",))
+        service = ActiveRagService(completion_provider=provider)
+        request = ActiveRagStartRequest(
+            selected_text="解释终端上方代码",
+            selected_text_hash=stable_text_hash("解释终端上方代码"),
+            frontend_revision=1,
+            selection_epoch=1,
+            context="解释终端上方代码",
+            window_context={
+                "schemaVersion": "rag-ime.window-context.v1",
+                "captureMode": "accessibility_semantics",
+                "application": {
+                    "name": "Zed",
+                    "windowTitle": "Project — main.py",
+                },
+                "nodes": [],
+                "applicationSemantics": {
+                    "source": "zed_workspace_state",
+                    "freshness": "best_effort_local_state",
+                    "projectName": "Project",
+                    "activeFile": "src/main.py",
+                    "editorExcerpt": "1: print('hello')",
+                    "editorExcerptStartLine": 1,
+                    "projectEntries": ["src/", "README.md"],
+                    "contentOrigin": "workspace_file",
+                    "trust": {"mayLagUnsavedChanges": True},
+                },
+            },
+        )
+
+        with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
+            started = service.start(request)
+            ready = _wait_ready(service, str(started["sessionId"]))
+
+        semantics = ready["diagnostics"]["contextView"]["windowContext"]["applicationSemantics"]
+        self.assertEqual(semantics["activeFile"], "src/main.py")
+        self.assertIn("print('hello')", semantics["editorExcerpt"])
+        self.assertTrue(semantics["trust"]["mayLagUnsavedChanges"])
+        self.assertNotIn("/Volumes/", json.dumps(semantics))
+
     def test_active_rag_trace_observer_runs_without_enabling_the_jsonl_journal(self) -> None:
         records: list[dict[str, object]] = []
         service = ActiveRagService(

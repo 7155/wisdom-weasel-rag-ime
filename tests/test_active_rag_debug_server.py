@@ -58,6 +58,57 @@ class ActiveRagDebugServerTests(unittest.TestCase):
         self.assertEqual(request.window_context["application"]["windowTitle"], "项目计划")
         self.assertEqual(request.window_context["nodes"][0]["value"], "真实窗口语义")
 
+    def test_debug_service_enriches_and_revalidates_application_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=Path(temp_dir) / "active-rag-zed.sqlite",
+                    seed_if_empty=False,
+                )
+            )
+            semantics = {
+                "source": "zed_workspace_state",
+                "projectName": "Project",
+                "activeFile": "src/main.py",
+                "editorExcerpt": "1: print('hello')",
+                "editorExcerptStartLine": 1,
+                "projectEntries": ["src/", "README.md"],
+                "contentOrigin": "workspace_file",
+                "trust": {"mayLagUnsavedChanges": True},
+            }
+            with patch(
+                "rag_ime.debug_server.enrich_window_context_with_app_semantics",
+                side_effect=lambda context: {
+                    **context,
+                    "applicationSemantics": semantics,
+                },
+            ):
+                request = service._active_rag_request_from_payload(
+                    {
+                        "selectedText": "解释终端上方代码",
+                        "privacyDisposition": "allowed",
+                        "windowContext": {
+                            "schemaVersion": "rag-ime.window-context.v1",
+                            "captureMode": "accessibility_semantics",
+                            "snapshotId": "axsnap_zed",
+                            "revision": 1,
+                            "privacyDisposition": "allowed",
+                            "application": {
+                                "pid": 42,
+                                "bundleId": "dev.zed.Zed",
+                                "name": "Zed",
+                                "windowTitle": "Project — main.py",
+                            },
+                            "nodes": [],
+                        },
+                    }
+                )
+
+        app_semantics = request.window_context["applicationSemantics"]
+        self.assertEqual(app_semantics["activeFile"], "src/main.py")
+        self.assertTrue(app_semantics["trust"]["mayLagUnsavedChanges"])
+        self.assertNotIn("absolutePath", json.dumps(app_semantics))
+
     def test_debug_service_blocks_sensitive_active_rag_without_storing_hash_or_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             service = DebugImeService(

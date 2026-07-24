@@ -655,7 +655,7 @@ final class DesktopAccessibilityService {
             let value = String(rawValue.prefix(800))
             let children = secure || depth >= maxDepth
                 ? []
-                : elementArrayValue(attributes[kAXChildrenAttribute as String])
+                : semanticChildren(attributes)
             let record = ElementRecord(
                 ref: nodeRef,
                 parentRef: parentRef,
@@ -697,6 +697,9 @@ final class DesktopAccessibilityService {
             kAXPositionAttribute as CFString,
             kAXSizeAttribute as CFString,
             kAXChildrenAttribute as CFString,
+            kAXVisibleChildrenAttribute as CFString,
+            "AXChildrenInNavigationOrder" as CFString,
+            kAXContentsAttribute as CFString,
         ]
         var copied: CFArray?
         let error = AXUIElementCopyMultipleAttributeValues(element, names as CFArray, [], &copied)
@@ -708,6 +711,26 @@ final class DesktopAccessibilityService {
         return Dictionary(uniqueKeysWithValues: zip(names, values).map { name, value in
             (name as String, value)
         })
+    }
+
+    private func semanticChildren(_ attributes: [String: Any]) -> [AXUIElement] {
+        let childAttributes = [
+            kAXChildrenAttribute as String,
+            kAXVisibleChildrenAttribute as String,
+            "AXChildrenInNavigationOrder",
+            kAXContentsAttribute as String,
+        ]
+        var children: [AXUIElement] = []
+        var seen = Set<CFHashCode>()
+        for attribute in childAttributes {
+            for child in elementArrayValue(attributes[attribute]) {
+                let identity = CFHash(child)
+                guard !seen.contains(identity) else { continue }
+                seen.insert(identity)
+                children.append(child)
+            }
+        }
+        return children
     }
 
     private func copyActions(_ element: AXUIElement) -> [String] {
