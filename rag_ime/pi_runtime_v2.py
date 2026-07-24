@@ -1999,6 +1999,42 @@ class PiRuntimeHostManager:
                 except KeyError:
                     pass
 
+    def close_session(self, session_id: str) -> bool:
+        """Retire one idle hosted Session without restarting the shared Host."""
+
+        normalized = str(session_id or "").strip()
+        if not normalized:
+            raise ValueError("session_id is required")
+        with self._lifecycle_lock:
+            with self._lock:
+                state = self._states.get(normalized)
+                if state is not None and state.turn_id:
+                    raise PiRuntimeError(
+                        "Session must settle before its runtime policy changes"
+                    )
+                client = self._client
+                opened = normalized in self._open_sessions
+            if opened and client is not None and client.running:
+                response = client.send(
+                    "session.close",
+                    {"sessionId": normalized},
+                )
+                if response.get("closed") is not True:
+                    raise PiRuntimeError(
+                        "managed Pi Host did not close the requested Session"
+                    )
+            with self._lock:
+                self._open_sessions.discard(normalized)
+                retired = self._states.pop(normalized, None)
+                if retired is not None and retired.abort_timer is not None:
+                    retired.abort_timer.cancel()
+                self._schedule_idle_locked()
+            try:
+                self.sessions.set_status(normalized, "idle")
+            except KeyError:
+                pass
+            return opened
+
     def _require_client(self) -> PiRuntimeHostClient:
         with self._lock:
             client = self._client

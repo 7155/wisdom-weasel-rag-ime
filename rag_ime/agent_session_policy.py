@@ -290,7 +290,13 @@ class AgentSessionPolicyService:
                 for value in runtime.get("openSessionIds") or []
             }
         ):
-            self.runtime.stop()
+            close_session = getattr(self.runtime, "close_session", None)
+            if callable(close_session):
+                close_session(session_id)
+            else:
+                # Third-party Runtime drivers may only implement the stable
+                # stop boundary. Pi v2 retires the one affected Session.
+                self.runtime.stop()
         roots = payload.get("workspaceRoots")
         if roots is not None and not isinstance(roots, list):
             raise ValueError("workspaceRoots must be an array")

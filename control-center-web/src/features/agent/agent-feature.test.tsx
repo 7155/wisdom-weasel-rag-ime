@@ -1552,33 +1552,30 @@ describe('Agent experience', () => {
     expect(window.location.hash).toBe('#/configuration');
   });
 
-  it('persists Pi and Codex Skill source switches through the current session settings route', async () => {
+  it('applies one optimistic context-resource profile through one settings request', async () => {
     const transport = featureTransport();
     const user = userEvent.setup();
     renderAgent(transport);
 
-    const contextButton = await screen.findByRole('button', { name: '项目指令：未加载' });
+    const contextButton = await screen.findByRole('button', { name: '上下文资源：核心' });
     await user.click(contextButton);
-    expect(screen.getByRole('switch', { name: '加载 AGENTS.md / CLAUDE.md' })).not.toBeChecked();
-    await user.click(screen.getByRole('switch', { name: '加载 Pi Skills' }));
-    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
-      request: expect.objectContaining({
-        pathId: 'agent.session.mode.update',
-        params: { sessionId: 'session-preview' },
-        body: expect.objectContaining({ piSkillsEnabled: true }),
-      }),
-    })));
+    await user.click(screen.getByRole('radio', { name: /扩展/ }));
 
-    const codexSwitch = screen.getByRole('switch', { name: '加载 Codex Skills' });
-    await waitFor(() => expect(codexSwitch).toBeEnabled());
-    await user.click(codexSwitch);
+    expect(screen.getByRole('button', { name: '上下文资源：扩展' })).toBeInTheDocument();
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
         pathId: 'agent.session.mode.update',
         params: { sessionId: 'session-preview' },
-        body: expect.objectContaining({ codexSkillsEnabled: true }),
+        body: expect.objectContaining({
+          projectContextEnabled: true,
+          piSkillsEnabled: true,
+          codexSkillsEnabled: true,
+        }),
       }),
     })));
+    expect(transport.requests.filter(
+      (call) => call.request.pathId === 'agent.session.mode.update',
+    )).toHaveLength(1);
   });
 
   it('requires a native workspace choice before enabling coordinator mode', async () => {

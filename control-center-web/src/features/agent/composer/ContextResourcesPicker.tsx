@@ -1,5 +1,11 @@
-import { BookOpenText } from 'lucide-react';
-import * as Switch from '@radix-ui/react-switch';
+import * as RadioGroup from '@radix-ui/react-radio-group';
+import {
+  BookOpenText,
+  Check,
+  Layers3,
+  LoaderCircle,
+} from 'lucide-react';
+import { useState } from 'react';
 
 import {
   Button,
@@ -7,89 +13,90 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/primitives';
+import {
+  CONTEXT_RESOURCE_PROFILES,
+  contextResourceProfileId,
+  contextResourceProfileLabel,
+  contextResourceSelection,
+  type ContextResourceSelection,
+} from '../context-resource-profile';
 import type { SessionSummary } from '../types';
 
 export function ContextResourcesPicker({
   session,
   disabled,
-  onProjectContextChange,
-  onPiSkillsChange,
-  onCodexSkillsChange,
+  pending,
+  onChange,
 }: {
   session?: SessionSummary;
   disabled: boolean;
-  onProjectContextChange: (enabled: boolean) => void;
-  onPiSkillsChange: (enabled: boolean) => void;
-  onCodexSkillsChange: (enabled: boolean) => void;
+  pending: boolean;
+  onChange: (selection: ContextResourceSelection) => void;
 }) {
-  const projectContextEnabled = session?.projectContextEnabled === true;
-  const piSkillsEnabled = session?.piSkillsEnabled === true;
-  const codexSkillsEnabled = session?.codexSkillsEnabled === true;
+  const [open, setOpen] = useState(false);
+  const selection = contextResourceSelection(session);
+  const profileId = contextResourceProfileId(selection);
+  const profileLabel = contextResourceProfileLabel(selection);
+
+  function choose(value: string): void {
+    const profile = CONTEXT_RESOURCE_PROFILES.find((item) => item.id === value);
+    if (!profile) return;
+    setOpen(false);
+    onChange(profile.selection);
+  }
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          aria-label={`项目指令：${projectContextEnabled ? '已加载' : '未加载'}`}
+          aria-busy={pending || undefined}
+          aria-label={`上下文资源：${profileLabel}`}
           className="agent-composer__picker agent-composer__project-context"
-          data-enabled={projectContextEnabled || piSkillsEnabled || codexSkillsEnabled || undefined}
+          data-enabled={profileId !== 'core' || undefined}
           size="small"
-          title="项目指令与 Skill 来源"
+          title={`上下文资源：${profileLabel}`}
           variant="quiet"
           disabled={!session || disabled}
-          leadingIcon={<BookOpenText size={15} />}
+          leadingIcon={pending
+            ? <LoaderCircle className="ui-spin" size={15} />
+            : <BookOpenText size={15} />}
         >
-          项目指令
+          上下文 · {profileLabel}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="agent-picker-popover agent-project-context-picker">
         <header>
           <BookOpenText size={16} />
-          <span><strong>上下文资源</strong><small>当前对话的项目指令与 Skill 来源</small></span>
+          <span><strong>上下文资源</strong><small>统一装入同一套 Pi 资源目录</small></span>
         </header>
-        <label className="agent-project-context-picker__toggle">
-          <span>
-            <strong>加载 AGENTS.md / CLAUDE.md</strong>
-            <small>从全局目录和当前工作区祖先目录按 Pi 原生顺序读取</small>
-          </span>
-          <Switch.Root
-            aria-label="加载 AGENTS.md / CLAUDE.md"
-            checked={projectContextEnabled}
-            disabled={disabled}
-            onCheckedChange={onProjectContextChange}
-          >
-            <Switch.Thumb />
-          </Switch.Root>
-        </label>
-        <label className="agent-project-context-picker__toggle">
-          <span>
-            <strong>加载 Pi Skills</strong>
-            <small>读取 Pi 用户 Skill 目录；输入法自己的 Skills 不受此开关影响</small>
-          </span>
-          <Switch.Root
-            aria-label="加载 Pi Skills"
-            checked={piSkillsEnabled}
-            disabled={disabled}
-            onCheckedChange={onPiSkillsChange}
-          >
-            <Switch.Thumb />
-          </Switch.Root>
-        </label>
-        <label className="agent-project-context-picker__toggle">
-          <span>
-            <strong>加载 Codex Skills</strong>
-            <small>读取 Codex 与通用 Agents Skill 目录；默认关闭</small>
-          </span>
-          <Switch.Root
-            aria-label="加载 Codex Skills"
-            checked={codexSkillsEnabled}
-            disabled={disabled}
-            onCheckedChange={onCodexSkillsChange}
-          >
-            <Switch.Thumb />
-          </Switch.Root>
-        </label>
+        <RadioGroup.Root
+          aria-label="上下文资源范围"
+          className="agent-project-context-picker__profiles"
+          value={profileId === 'custom' ? '' : profileId}
+          onValueChange={choose}
+        >
+          {CONTEXT_RESOURCE_PROFILES.map((profile) => (
+            <RadioGroup.Item
+              key={profile.id}
+              value={profile.id}
+              disabled={disabled}
+            >
+              <Layers3 size={15} aria-hidden="true" />
+              <span>
+                <strong>{profile.label}</strong>
+                <small>{profile.description}</small>
+              </span>
+              {profileId === profile.id ? <Check size={15} aria-hidden="true" /> : null}
+            </RadioGroup.Item>
+          ))}
+        </RadioGroup.Root>
+        {profileId === 'custom' ? (
+          <p className="agent-project-context-picker__custom" role="status">
+            当前为旧版自定义组合；选择上方任一范围即可统一。
+          </p>
+        ) : null}
         <p className="agent-picker-popover__note">
-          切换后会重建 Pi Runtime；历史消息不变，下一轮使用新的上下文资源设置。
+          本项目 Skills 始终可用；选择会立即显示，空闲 Runtime 在后台换代，历史消息不变。
         </p>
       </PopoverContent>
     </Popover>

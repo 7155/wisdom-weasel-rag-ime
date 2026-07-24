@@ -26,6 +26,7 @@ import {
   nextEnabledCommandIndex,
   type ComposerCommand,
 } from './command-catalog';
+import type { ContextResourceSelection } from '../context-resource-profile';
 import { ContextResourcesPicker } from './ContextResourcesPicker';
 import { ModelPicker } from './ModelPicker';
 import { PermissionPicker } from './PermissionPicker';
@@ -76,9 +77,7 @@ export function AgentComposer({
   onCancelEdit,
   onPermissionChange,
   onWorkspaceRootsChange,
-  onProjectContextChange = () => {},
-  onPiSkillsChange = () => {},
-  onCodexSkillsChange = () => {},
+  onContextResourcesChange = () => {},
   onModelChange,
   modelPickerRequest = 0,
   permissionPickerRequest = 0,
@@ -113,9 +112,7 @@ export function AgentComposer({
   onCancelEdit?: () => void;
   onPermissionChange: (selection: AgentPermissionSelection) => void;
   onWorkspaceRootsChange: () => void;
-  onProjectContextChange?: (enabled: boolean) => void;
-  onPiSkillsChange?: (enabled: boolean) => void;
-  onCodexSkillsChange?: (enabled: boolean) => void;
+  onContextResourcesChange?: (selection: ContextResourceSelection) => void;
   onModelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
   modelPickerRequest?: number;
   permissionPickerRequest?: number;
@@ -383,10 +380,9 @@ export function AgentComposer({
             <PermissionPicker session={session} persona={persona} tools={tools} disabled={busy || sending} requestOpen={permissionPickerRequest} onChange={onPermissionChange} onWorkspaceRootsChange={onWorkspaceRootsChange} />
             <ContextResourcesPicker
               session={session}
-              disabled={busy || sending || contextResourcesChanging}
-              onProjectContextChange={onProjectContextChange}
-              onPiSkillsChange={onPiSkillsChange}
-              onCodexSkillsChange={onCodexSkillsChange}
+              disabled={busy || sending}
+              pending={contextResourcesChanging}
+              onChange={onContextResourcesChange}
             />
             <ToolPicker tools={tools} status={toolCatalogStatus} session={session} disabled={!session || busy || sending} requestOpen={toolPickerRequest} onSelect={onToolSelect} />
             <ModelPicker

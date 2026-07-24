@@ -7,10 +7,8 @@ import { AgentComposer } from './AgentComposer';
 afterEach(cleanup);
 
 describe('AgentComposer context resources', () => {
-  it('controls project instructions, Pi Skills, and Codex Skills independently', async () => {
-    const onProjectContextChange = vi.fn();
-    const onPiSkillsChange = vi.fn();
-    const onCodexSkillsChange = vi.fn();
+  it('selects one atomic resource profile through the shared catalog entry', async () => {
+    const onContextResourcesChange = vi.fn();
     const user = userEvent.setup();
     render(
       <TooltipProvider>
@@ -46,21 +44,19 @@ describe('AgentComposer context resources', () => {
           onStop={vi.fn()}
           onPermissionChange={vi.fn()}
           onWorkspaceRootsChange={vi.fn()}
-          onProjectContextChange={onProjectContextChange}
-          onPiSkillsChange={onPiSkillsChange}
-          onCodexSkillsChange={onCodexSkillsChange}
+          onContextResourcesChange={onContextResourcesChange}
           onModelChange={vi.fn()}
         />
       </TooltipProvider>,
     );
 
-    await user.click(screen.getByRole('button', { name: '项目指令：已加载' }));
-    await user.click(screen.getByRole('switch', { name: '加载 AGENTS.md / CLAUDE.md' }));
-    await user.click(screen.getByRole('switch', { name: '加载 Pi Skills' }));
-    await user.click(screen.getByRole('switch', { name: '加载 Codex Skills' }));
+    await user.click(screen.getByRole('button', { name: '上下文资源：项目' }));
+    await user.click(screen.getByRole('radio', { name: /扩展/ }));
 
-    expect(onProjectContextChange).toHaveBeenCalledWith(false);
-    expect(onPiSkillsChange).toHaveBeenCalledWith(true);
-    expect(onCodexSkillsChange).toHaveBeenCalledWith(true);
+    expect(onContextResourcesChange).toHaveBeenCalledWith({
+      projectContextEnabled: true,
+      piSkillsEnabled: true,
+      codexSkillsEnabled: true,
+    });
   });
 });

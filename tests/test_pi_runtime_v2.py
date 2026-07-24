@@ -1414,6 +1414,31 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(opened[0]["params"]["toolManifest"][0]["name"], "ime_memory")
         self.assertEqual(opened[0]["params"]["thinkingLevel"], "max")
 
+    def test_close_session_keeps_other_hosted_sessions_ready(self) -> None:
+        first_id = str(self.first["id"])
+        second_id = str(self.second["id"])
+        self.runtime.ensure(first_id)
+        self.runtime.ensure(second_id)
+
+        self.assertTrue(self.runtime.close_session(first_id))
+
+        status = self.runtime.runtime_status()
+        self.assertEqual(status["openSessionIds"], [second_id])
+        self.assertEqual(self.store.get(first_id)["status"], "idle")
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        closed = [
+            row["params"]["sessionId"]
+            for row in requests
+            if row["method"] == "session.close"
+        ]
+        self.assertEqual(closed, [first_id])
+        self.assertTrue(self.runtime._client and self.runtime._client.running)  # noqa: SLF001
+
     def test_surface_profile_disables_project_context_files(self) -> None:
         surface = self.store.create(
             title="输入法联想 · test",

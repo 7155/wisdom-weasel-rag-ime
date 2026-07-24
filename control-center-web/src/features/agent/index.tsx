@@ -18,6 +18,7 @@ import { NewSessionDialog, type NewSessionInput } from './sessions/NewSessionDia
 import { AgentStatusPanel } from './status/AgentStatusPanel';
 import { useMediaQuery, useModalPanel } from './overlay-dialog';
 import { agentProjection, useAgentLiveStore } from './state/live-store';
+import { useContextResourceController } from './state/use-context-resource-controller';
 import { useModelSelectionController } from './state/use-model-selection-controller';
 import { AgentTimeline } from './timeline/AgentTimeline';
 import { isAgentTurnConflict, publicAgentErrorText } from './public-error';
@@ -69,7 +70,6 @@ function AgentWorkspace() {
   const [loading, setLoading] = useState(true);
   const [sendingSessionIds, setSendingSessionIds] = useState<Set<string>>(() => new Set());
   const [stoppingSessionIds, setStoppingSessionIds] = useState<Set<string>>(() => new Set());
-  const [contextResourcesChangingSessionIds, setContextResourcesChangingSessionIds] = useState<Set<string>>(() => new Set());
   const [modelPickerRequest, setModelPickerRequest] = useState(0);
   const [permissionPickerRequest, setPermissionPickerRequest] = useState(0);
   const [toolPickerRequest, setToolPickerRequest] = useState(0);
@@ -109,9 +109,19 @@ function AgentWorkspace() {
     errorText,
   });
   const modelChanging = modelSelection.changingSessionIds.has(selectedId);
+  const contextResources = useContextResourceController({
+    transport,
+    updateSession: (updated) => {
+      setSessions((current) => current.map((item) => (
+        item.id === updated.id ? updated : item
+      )));
+    },
+    setSessionError,
+    errorText,
+  });
   const stopping = stoppingSessionIds.has(selectedId);
   const rewriteResolving = rewriteResolvingSessionIds.has(selectedId);
-  const contextResourcesChanging = contextResourcesChangingSessionIds.has(selectedId);
+  const contextResourcesChanging = contextResources.changingSessionIds.has(selectedId);
 
   function selectSessionId(sessionId: string): void {
     selectedIdRef.current = sessionId;
@@ -211,9 +221,6 @@ function AgentWorkspace() {
     updatePendingSession(setRewriteResolvingSessionIds, sessionId, pending);
   }
 
-  function setSessionContextResourcesChanging(sessionId: string, pending: boolean): void {
-    updatePendingSession(setContextResourcesChangingSessionIds, sessionId, pending);
-  }
   const ensure = useAgentLiveStore((state) => state.ensure);
   const activeTurnId = useAgentLiveStore((state) => latestActiveTurnId(
     state.projections[selectedId],
@@ -1068,40 +1075,6 @@ function AgentWorkspace() {
     }
   }
 
-  async function changeContextResource(
-    key: 'projectContextEnabled' | 'piSkillsEnabled' | 'codexSkillsEnabled',
-    enabled: boolean,
-  ): Promise<void> {
-    if (!session || session[key] === enabled) return;
-    setSessionContextResourcesChanging(session.id, true);
-    try {
-      const explicit = session.toolAllowlistMode === 'explicit';
-      const response = await transport.request<Record<string, unknown>>({
-        pathId: 'agent.session.mode.update',
-        params: { sessionId: session.id },
-        body: {
-          mode: session.mode,
-          executionMode: session.executionMode ?? 'per_action',
-          workspaceRoots: session.workspaceRoots,
-          toolProfileVersion: session.toolProfileVersion ?? 'control-center-v1',
-          toolAllowlistMode: explicit ? 'explicit' : 'profile',
-          ...(explicit ? { allowedTools: session.allowedTools ?? [] } : {}),
-          [key]: enabled,
-        },
-      });
-      const updated = isRecord(response.session)
-        ? response.session as unknown as SessionSummary
-        : { ...session, [key]: enabled };
-      setSessions((current) => current.map((item) => item.id === session.id ? updated : item));
-      setSessionError(session.id, '');
-    } catch (requestError) {
-      const label = key === 'projectContextEnabled' ? '项目指令' : key === 'piSkillsEnabled' ? 'Pi Skills' : 'Codex Skills';
-      setSessionError(session.id, `${label} 设置没有更新。${errorText(requestError)}`);
-    } finally {
-      setSessionContextResourcesChanging(session.id, false);
-    }
-  }
-
   function changeModel(provider: string, modelId: string, level: ThinkingLevel): void {
     if (!session || !catalog) return;
     const targetModel = catalog.providers.find((item) => item.id === provider)?.models.find((item) => item.id === modelId);
@@ -1153,7 +1126,7 @@ function AgentWorkspace() {
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
-          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || rewriteResolving || contextResourcesChanging} modelChanging={modelChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={persistSelectedDraft} onAttachmentsChange={setSelectedAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery, value) => void send(delivery, value)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onProjectContextChange={(enabled) => void changeContextResource('projectContextEnabled', enabled)} onPiSkillsChange={(enabled) => void changeContextResource('piSkillsEnabled', enabled)} onCodexSkillsChange={(enabled) => void changeContextResource('codexSkillsEnabled', enabled)} onModelChange={changeModel} />
+          <AgentComposer draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || rewriteResolving} modelChanging={modelChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={persistSelectedDraft} onAttachmentsChange={setSelectedAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery, value) => void send(delivery, value)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onContextResourcesChange={(selection) => contextResources.select(session, selection)} onModelChange={changeModel} />
         ) : <AgentComposerPending />}
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />
