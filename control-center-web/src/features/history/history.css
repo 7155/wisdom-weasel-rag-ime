@@ -122,6 +122,7 @@
 .history-detail__body { display: grid; gap: 20px; min-width: 0; }
 
 .history-detail__facts,
+.history-detail__context-grid,
 .history-detail__feedback-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -130,6 +131,7 @@
 }
 
 .history-detail__facts > div,
+.history-detail__context-grid > div,
 .history-detail__feedback-grid > div {
   display: grid;
   grid-template-columns: minmax(88px, 0.42fr) minmax(0, 1fr);
@@ -139,11 +141,14 @@
 }
 
 .history-detail__facts dt,
+.history-detail__context-grid dt,
 .history-detail__feedback-grid dt { color: var(--color-text-tertiary); }
 .history-detail__facts dd,
+.history-detail__context-grid dd,
 .history-detail__feedback-grid dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--color-text-primary); }
 
 .history-detail__text,
+.history-detail__context,
 .history-detail__feedback { min-width: 0; padding-top: 16px; border-top: 1px solid var(--color-border); }
 
 .history-detail__section-heading {
@@ -158,7 +163,8 @@
 .history-detail__section-heading h3 { margin: 0; font-size: 13px; }
 .history-detail__section-heading small { color: var(--color-text-tertiary); font-size: 13px; }
 
-.history-detail__text pre {
+.history-detail__text pre,
+.history-detail__context pre {
   max-height: 300px;
   margin: 0;
   padding: 12px;
@@ -190,6 +196,7 @@
   }
   .ui-dialog.history-detail-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
   .history-detail__facts,
+  .history-detail__context-grid,
   .history-detail__feedback-grid { grid-template-columns: 1fr; }
   .history-detail__section-heading { align-items: flex-start; }
 }

@@ -763,6 +763,7 @@ class ManagementService:
             row = conn.execute(
                 """
                 SELECT event.id, event.created_at_ms, event.source, event.committed_text,
+                       event.recent_context, event.capture_metadata_json,
                        event.app, event.project, event.candidate_rank,
                        event.provider_name, event.context_group_id,
                        event.context_group_level, state.accepted_count,
@@ -832,6 +833,11 @@ class ManagementService:
             feedback["latestAction"] = str(latest_action["action_type"])
             feedback["latestActionAtMs"] = int(latest_action["created_at_ms"])
 
+        auxiliary_context = _history_auxiliary_context(
+            committed_text=str(row["committed_text"]),
+            recent_context=str(row["recent_context"]),
+            capture_metadata=_json_mapping(row["capture_metadata_json"]),
+        )
         return {
             **self.revision().payload(),
             "ok": True,
@@ -855,6 +861,7 @@ class ManagementService:
                 ),
                 "groupId": str(row["context_group_id"]),
                 "groupLevel": str(row["context_group_level"]),
+                "auxiliaryContext": auxiliary_context,
                 "status": (
                     "hidden"
                     if bool(row["hidden"]) or bool(row["deleted"])
@@ -4701,6 +4708,50 @@ def _history_source_filter(value: str) -> tuple[str, tuple[object, ...]]:
         "ELSE 'other' END = ?"
     )
     return category_sql, (normalized,)
+
+
+def _history_auxiliary_context(
+    *,
+    committed_text: str,
+    recent_context: str,
+    capture_metadata: Mapping[str, object],
+) -> dict[str, object]:
+    stored_text = str(recent_context or "").replace("\x00", "")
+    visible_text = stored_text[:8_000]
+    context_comparison = "".join(compact_whitespace(stored_text).split()).casefold()
+    input_comparison = "".join(compact_whitespace(committed_text).split()).casefold()
+
+    def metadata_count(key: str) -> int:
+        try:
+            return max(0, min(int(capture_metadata.get(key) or 0), 1_000_000))
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        "available": bool(stored_text),
+        "text": visible_text,
+        "textChars": len(stored_text),
+        "truncated": len(visible_text) < len(stored_text),
+        "hasAdditionalText": bool(
+            context_comparison
+            and input_comparison
+            and context_comparison != input_comparison
+        ),
+        "captureSource": _safe_reference_identifier(
+            capture_metadata.get("captureSource")
+        ),
+        "captureMode": _safe_reference_identifier(
+            capture_metadata.get("captureMode")
+        ),
+        "fallbackReason": _safe_reference_identifier(
+            capture_metadata.get("fallbackReason")
+        ),
+        "fieldContextChars": metadata_count("fieldContextChars"),
+        "imeBufferChars": metadata_count("imeBufferChars"),
+        # Ordinary input events do not carry a stable Active RAG session ID.
+        # Never guess a model request by app and timestamp.
+        "modelRequestLinked": False,
+    }
 
 
 def _history_subject_snapshot(conn: sqlite3.Connection, event_id: int) -> dict[str, object]:

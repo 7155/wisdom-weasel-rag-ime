@@ -262,10 +262,13 @@ function HistoryDetailDialog({
 }) {
   const detail = useHistoryDetail(eventId);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [contextCopyState, setContextCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const response = asRecord(detail.data);
   const item = asRecord(response.item);
   const feedback = asRecord(item.feedback);
+  const auxiliaryContext = asRecord(item.auxiliaryContext);
   const text = stringValue(item.text);
+  const auxiliaryText = stringValue(auxiliaryContext.text);
   const candidateRank = item.candidateRank === null ? 0 : numberValue(item.candidateRank);
   const hasFeedback = feedback.available === true;
 
@@ -279,8 +282,22 @@ function HistoryDetailDialog({
     }
   };
 
+  const copyAuxiliaryContext = async () => {
+    if (!auxiliaryText) return;
+    try {
+      await writeClipboardText(auxiliaryText);
+      setContextCopyState('copied');
+    } catch {
+      setContextCopyState('failed');
+    }
+  };
+
   return (
-    <Dialog onOpenChange={(open) => { setCopyState('idle'); onOpenChange(open); }} open={eventId !== null}>
+    <Dialog onOpenChange={(open) => {
+      setCopyState('idle');
+      setContextCopyState('idle');
+      onOpenChange(open);
+    }} open={eventId !== null}>
       <DialogContent className="history-detail-dialog">
         <DialogHeader>
           <DialogTitle>输入详情</DialogTitle>
@@ -308,6 +325,31 @@ function HistoryDetailDialog({
               </div>
               <pre tabIndex={0}>{text}</pre>
               {copyState === 'failed' ? <p className="history-detail__copy-error" role="status">复制失败，可直接选择上方全文复制。</p> : null}
+            </section>
+            <section aria-labelledby="history-detail-context" className="history-detail__context">
+              <div className="history-detail__section-heading">
+                <div>
+                  <h3 id="history-detail-context">辅助上下文</h3>
+                  <small>{auxiliaryContext.available === true
+                    ? `${numberValue(auxiliaryContext.textChars)} 字 · ${auxiliaryContext.hasAdditionalText === true ? '包含附近文本' : '仅当前输入'}`
+                    : '这条记录没有保存附近文本'}</small>
+                </div>
+                {auxiliaryContext.available === true ? (
+                  <Button leadingIcon={contextCopyState === 'copied' ? <Check size={14} /> : <Copy size={14} />} onClick={() => void copyAuxiliaryContext()} size="small" variant="quiet">
+                    {contextCopyState === 'copied' ? '已复制' : '复制上下文'}
+                  </Button>
+                ) : null}
+              </div>
+              <dl className="history-detail__context-grid">
+                <DetailFact label="采集方式" value={captureSourceLabel(stringValue(auxiliaryContext.captureSource), stringValue(auxiliaryContext.captureMode))} />
+                <DetailFact label="模型请求" value={auxiliaryContext.modelRequestLinked === true ? '已关联' : '未关联'} />
+                <DetailFact label="输入控件文本" value={numberValue(auxiliaryContext.fieldContextChars) > 0 ? `${numberValue(auxiliaryContext.fieldContextChars)} 字` : '未记录'} />
+                <DetailFact label="输入法缓冲区" value={numberValue(auxiliaryContext.imeBufferChars) > 0 ? `${numberValue(auxiliaryContext.imeBufferChars)} 字` : '未记录'} />
+              </dl>
+              {auxiliaryText ? <pre tabIndex={0}>{auxiliaryText}</pre> : <p className="history-detail__empty">没有可查看的辅助上下文。</p>}
+              {auxiliaryContext.truncated === true ? <p className="history-detail__empty">内容较长，当前显示前 8000 字。</p> : null}
+              {stringValue(auxiliaryContext.fallbackReason) ? <p className="history-detail__empty">采集降级：{captureFallbackLabel(stringValue(auxiliaryContext.fallbackReason))}</p> : null}
+              {contextCopyState === 'failed' ? <p className="history-detail__copy-error" role="status">复制失败，可直接选择上方内容复制。</p> : null}
             </section>
             <section aria-labelledby="history-detail-feedback" className="history-detail__feedback">
               <div className="history-detail__section-heading"><div><h3 id="history-detail-feedback">反馈与状态</h3><small>服务端已保存的真实状态</small></div></div>
@@ -379,6 +421,22 @@ function groupLevelLabel(level: string): string {
   if (level === 'app') return '当前应用';
   if (level === 'global') return '全部应用';
   return level ? '已分组' : '未记录';
+}
+
+function captureSourceLabel(source: string, mode: string): string {
+  if (mode === 'terminal_visible_range') return '终端可见范围';
+  if (mode === 'accessibility_semantics' || source === 'accessibility') return 'Accessibility 文本';
+  if (source === 'text_input_client') return '当前输入控件';
+  if (source === 'ime_active_buffer') return '输入法缓冲区';
+  if (source === 'stored_event_context') return '事件上下文';
+  return source ? '其他采集方式' : '未记录';
+}
+
+function captureFallbackLabel(reason: string): string {
+  if (reason === 'document_length_unavailable') return '应用未提供文档长度，改用输入法缓冲区';
+  if (reason === 'focused_element_unavailable') return '应用未提供可读取的焦点文本控件';
+  if (reason === 'ax_string_for_range_failed') return '应用不支持按字符范围读取';
+  return '应用未提供完整的辅助文本';
 }
 
 function latestActionLabel(action: string): string {

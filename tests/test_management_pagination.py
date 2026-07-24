@@ -79,6 +79,48 @@ class ManagementPaginationTests(unittest.TestCase):
             self.assertEqual([item["source"] for item in page["items"]], [source])
             self.assertEqual(page["items"][0]["sourceCategory"], category)
 
+    def test_history_detail_exposes_saved_auxiliary_context_without_guessing_model_request(self) -> None:
+        self.core.record_event(
+            InputEvent(
+                event_id=None,
+                created_at_ms=1_900_000_020_000,
+                source="squirrel_input_segment",
+                committed_text="继续修复历史详情",
+                privacy_disposition="allowed",
+                recent_context="前面正在检查来源筛选。继续修复历史详情",
+                app="com.openai.codex",
+                project="wisdom-weasel-rag-ime",
+                provider_name="squirrel:accessibility",
+                capture_metadata={
+                    "captureSource": "accessibility",
+                    "fallbackReason": "",
+                    "fieldContextChars": 21,
+                    "imeBufferChars": 8,
+                    "selectedTextSha256": "must-not-be-returned",
+                },
+            )
+        )
+        with sqlite3.connect(self.db_path) as conn:
+            event_id = int(
+                conn.execute(
+                    "SELECT MAX(id) FROM input_events WHERE source = 'squirrel_input_segment'"
+                ).fetchone()[0]
+            )
+
+        page = self.service.management.history_page(page_request({"limit": 1}))
+        detail = self.service.management.history_detail(event_id)
+        auxiliary = detail["item"]["auxiliaryContext"]
+
+        self.assertNotIn("auxiliaryContext", page["items"][0])
+        self.assertTrue(detail["rawTextVisible"])
+        self.assertEqual(auxiliary["text"], "前面正在检查来源筛选。继续修复历史详情")
+        self.assertEqual(auxiliary["captureSource"], "accessibility")
+        self.assertEqual(auxiliary["fieldContextChars"], 21)
+        self.assertEqual(auxiliary["imeBufferChars"], 8)
+        self.assertTrue(auxiliary["hasAdditionalText"])
+        self.assertFalse(auxiliary["modelRequestLinked"])
+        self.assertNotIn("selectedTextSha256", auxiliary)
+
     def test_memory_apps_only_count_complete_inputs_and_keep_app_provenance(self) -> None:
         self.core.record_event(
             InputEvent(

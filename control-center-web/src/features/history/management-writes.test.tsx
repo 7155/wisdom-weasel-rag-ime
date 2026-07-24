@@ -45,6 +45,10 @@ describe('History WorkContract UI', () => {
     expect(within(dialog).getByText('2 次')).toBeInTheDocument();
     expect(within(dialog).getByText('1 次')).toBeInTheDocument();
     expect(within(dialog).getByText('智鼬输入法')).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: '辅助上下文' })).toBeInTheDocument();
+    expect(within(dialog).getByText('前面正在核对来源筛选，随后完成了当前输入。')).toBeInTheDocument();
+    expect(within(dialog).getByText('Accessibility 文本')).toBeInTheDocument();
+    expect(within(dialog).getByText('未关联')).toBeInTheDocument();
     expect(within(dialog).queryByText('wisdom-weasel-rag-ime')).not.toBeInTheDocument();
     expect(findRequest(transport, 'history.detail')).toMatchObject({ query: { eventId: 81 } });
     expect(historyPage().items[0]).not.toHaveProperty('text');
@@ -216,6 +220,19 @@ function historyDetail() {
       candidateRank: 1,
       groupId: 'document:test',
       groupLevel: 'document',
+      auxiliaryContext: {
+        available: true,
+        text: '前面正在核对来源筛选，随后完成了当前输入。',
+        textChars: 22,
+        truncated: false,
+        hasAdditionalText: true,
+        captureSource: 'accessibility',
+        captureMode: 'accessibility_semantics',
+        fallbackReason: '',
+        fieldContextChars: 22,
+        imeBufferChars: 8,
+        modelRequestLinked: false,
+      },
       status: 'active',
       feedback: {
         available: true,
