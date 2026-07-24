@@ -78,6 +78,68 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self.assertIn("inputSchema", loaded["items"][0])
         self.assertNotIn("room_commit", str(loaded["items"][0]["inputSchema"]))
 
+    def test_tool_load_batch_records_all_receipts_atomically_in_input_order(self) -> None:
+        manifest = self._compile()
+        receipts, created = self.store.tool_load_batch(
+            manifest_id=manifest["manifestId"],
+            manifest_hash=manifest["manifestHash"],
+            loads=(
+                {"receiptId": "load:post", "toolName": "room_post"},
+                {"receiptId": "load:state", "toolName": "room_state"},
+            ),
+            runtime_registry=self._registry(),
+            created_at_ms=3,
+        )
+
+        self.assertTrue(created)
+        self.assertEqual(
+            [receipt["toolName"] for receipt in receipts],
+            ["room_post", "room_state"],
+        )
+        replayed, replay_created = self.store.tool_load_batch(
+            manifest_id=manifest["manifestId"],
+            manifest_hash=manifest["manifestHash"],
+            loads=(
+                {"receiptId": "load:post", "toolName": "room_post"},
+                {"receiptId": "load:state", "toolName": "room_state"},
+            ),
+            runtime_registry=self._registry(),
+            created_at_ms=3,
+        )
+        self.assertFalse(replay_created)
+        self.assertEqual(replayed, receipts)
+
+        with self.assertRaisesRegex(KeyError, "workspace_missing"):
+            self.store.tool_load_batch(
+                manifest_id=manifest["manifestId"],
+                manifest_hash=manifest["manifestHash"],
+                loads=(
+                    {"receiptId": "load:collaborate", "toolName": "room_collaborate"},
+                    {"receiptId": "load:missing", "toolName": "workspace_missing"},
+                ),
+                runtime_registry=self._registry(),
+                created_at_ms=4,
+            )
+        with self.assertRaises(KeyError):
+            self.store._disclosure("load:collaborate")
+
+        with self.assertRaisesRegex(
+            CapabilityManifestConflict,
+            "receipt identity changed",
+        ):
+            self.store.tool_load_batch(
+                manifest_id=manifest["manifestId"],
+                manifest_hash=manifest["manifestHash"],
+                loads=(
+                    {"receiptId": "load:new", "toolName": "room_collaborate"},
+                    {"receiptId": "load:state", "toolName": "room_post"},
+                ),
+                runtime_registry=self._registry(),
+                created_at_ms=3,
+            )
+        with self.assertRaises(KeyError):
+            self.store._disclosure("load:new")
+
     def test_room_delivery_schema_accepts_managed_file_blocks(self) -> None:
         schema = room_runtime_registry()["room_post"]["inputSchema"]
         self.assertIn("file", str(schema))

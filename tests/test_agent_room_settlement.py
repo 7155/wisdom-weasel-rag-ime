@@ -183,6 +183,40 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "createdAtMs": 10,
             }
         )["result"]
+        requirement_coverage = list(
+            extra.get("requirementCoverage", ["criterion:settle"])
+        )
+        quality_gate = extra.pop(
+            "qualityGate",
+            {
+                "originalRequestChecked": True,
+                "verdict": (
+                    "ready_to_deliver"
+                    if decision == "deliver"
+                    else "not_ready"
+                ),
+                "items": [
+                    {
+                        "criterionId": "criterion:settle",
+                        "status": (
+                            "pass"
+                            if "criterion:settle" in requirement_coverage
+                            else "not_verified"
+                        ),
+                        "evidenceRefs": (
+                            ["evidence:settle"]
+                            if "criterion:settle" in requirement_coverage
+                            else []
+                        ),
+                    }
+                ],
+                "residualRisks": (
+                    []
+                    if decision == "deliver"
+                    else [f"lifecycle_exit:{decision}"]
+                ),
+            },
+        )
         result = self.service.execute_room_capability_tool(
             self.session_id,
             "room_commit",
@@ -190,7 +224,8 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "decision": decision,
                 "result": f"result:{decision}",
                 "evidenceRefs": ["evidence:settle"],
-                "requirementCoverage": ["criterion:settle"],
+                "requirementCoverage": requirement_coverage,
+                "qualityGate": quality_gate,
                 **extra,
             },
             tool_call_id=f"call:commit:{decision}",
@@ -278,6 +313,11 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             )["state"],
             "revoked",
         )
+        self.assertEqual(
+            receipt["details"]["qualityGateVerdict"],
+            "ready_to_deliver",
+        )
+        self.assertTrue(receipt["details"]["qualityGateReceiptId"])
 
     def test_staged_room_post_is_the_single_published_body(self) -> None:
         staged = self._invoke_post("public evidence from room_post")
@@ -451,6 +491,54 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             "running",
         )
         self.assertEqual(self.service.room_kernel_snapshot(self.room_id)["posts"], [])
+
+    def test_tool_boundary_rejects_missing_structured_quality_gate(self) -> None:
+        with self.assertRaisesRegex(ValueError, "qualityGate"):
+            self._invoke_commit("deliver", qualityGate=None)
+
+    def test_quality_gate_pass_requires_fresh_committed_evidence(self) -> None:
+        self._invoke_commit(
+            "deliver",
+            qualityGate={
+                "originalRequestChecked": True,
+                "verdict": "ready_to_deliver",
+                "items": [
+                    {
+                        "criterionId": "criterion:settle",
+                        "status": "pass",
+                        "evidenceRefs": ["evidence:not-committed"],
+                    }
+                ],
+                "residualRisks": [],
+            },
+        )
+
+        settled = self._settle()
+
+        self.assertEqual(settled["state"], "repair_commit")
+        self.assertIn("also appear in evidenceRefs", settled["reason"])
+
+    def test_non_passing_quality_gate_cannot_deliver(self) -> None:
+        self._invoke_commit(
+            "deliver",
+            qualityGate={
+                "originalRequestChecked": True,
+                "verdict": "not_ready",
+                "items": [
+                    {
+                        "criterionId": "criterion:settle",
+                        "status": "pass",
+                        "evidenceRefs": ["evidence:settle"],
+                    }
+                ],
+                "residualRisks": ["verification pending"],
+            },
+        )
+
+        settled = self._settle()
+
+        self.assertEqual(settled["state"], "repair_commit")
+        self.assertIn("ready_to_deliver", settled["reason"])
 
 
 if __name__ == "__main__":

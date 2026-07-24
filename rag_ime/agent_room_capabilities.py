@@ -45,6 +45,55 @@ _RICH_BLOCK_INPUT_SCHEMA = {
     },
 }
 
+_QUALITY_GATE_INPUT_SCHEMA = {
+    "type": "object",
+    "required": [
+        "originalRequestChecked",
+        "verdict",
+        "items",
+        "residualRisks",
+    ],
+    "properties": {
+        "originalRequestChecked": {
+            "type": "boolean",
+            "description": "只有重新核对不可变原始需求后才能传 true。",
+        },
+        "verdict": {
+            "enum": ["ready_to_deliver", "not_ready"],
+        },
+        "items": {
+            "type": "array",
+            "maxItems": 64,
+            "description": (
+                "必须逐项覆盖当前 Task 的全部 acceptanceCriterionIds，"
+                "不得增加、遗漏或重复 criterionId。"
+            ),
+            "items": {
+                "type": "object",
+                "required": ["criterionId", "status", "evidenceRefs"],
+                "properties": {
+                    "criterionId": {"type": "string", "minLength": 1},
+                    "status": {
+                        "enum": ["pass", "fail", "not_verified"],
+                    },
+                    "evidenceRefs": {
+                        "type": "array",
+                        "maxItems": 64,
+                        "items": {"type": "string", "minLength": 1},
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+        "residualRisks": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {"type": "string", "minLength": 1},
+        },
+    },
+    "additionalProperties": False,
+}
+
 
 def room_runtime_registry() -> dict[str, dict[str, object]]:
     """Canonical Room-only Provider surface; legacy names never enter the catalog."""
@@ -137,6 +186,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "description": (
                 "Submit a governed continuation or completion proposal exactly once "
                 "for the active Dispatch, then end the model turn immediately. "
+                "Every proposal must include a structured quality gate over every "
+                "current acceptance criterion. "
                 "For deliver, copy acceptance.criteria[].criterionId exactly from "
                 "the provider-only Room task context into requirementCoverage."
             ),
@@ -147,7 +198,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             ),
             "notFor": ("普通公开发言、私有进度或没有证据的完成声明",),
             "input": (
-                "决定、结果、证据和 Room task 中原样 criterionId；"
+                "决定、结果、逐项质量门、证据和 Room task 中原样 criterionId；"
                 "交接时再给目标与下一任务，无验收项传空数组"
             ),
             "output": "受管提议已暂存回执；收到后必须立即结束本轮，不再调用任何工具",
@@ -159,6 +210,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "required": [
                     "decision",
                     "result",
+                    "qualityGate",
                     "evidenceRefs",
                     "requirementCoverage",
                 ],
@@ -167,6 +219,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "enum": ["deliver", "handoff", "wait", "blocked"]
                     },
                     "result": {"type": "string", "minLength": 1},
+                    "qualityGate": _QUALITY_GATE_INPUT_SCHEMA,
                     "evidenceRefs": {
                         "type": "array",
                         "maxItems": 64,
@@ -410,42 +463,91 @@ class RoomCapabilityManifestStore:
         runtime_registry: Mapping[str, Mapping[str, object]] | None,
         created_at_ms: int,
     ) -> tuple[dict[str, object], bool]:
-        manifest = self._manifest(manifest_id, manifest_hash)
-        canonical = _canonical_tool(tool_name)
-        tool = _manifest_tool(manifest, canonical)
-        pinned_schema = tool.get("inputSchema")
-        if not isinstance(pinned_schema, Mapping):
-            raise CapabilityManifestConflict("capability manifest has no pinned tool schema")
-        schema = dict(pinned_schema)
-        source = (runtime_registry or {}).get(canonical)
-        if source is not None:
-            if not isinstance(source, Mapping) or not isinstance(
-                source.get("inputSchema"), Mapping
-            ):
-                raise CapabilityManifestConflict(
-                    "runtime registry no longer provides disclosed tool"
-                )
-            if _hash_json(dict(source["inputSchema"])) != tool["schemaHash"]:
-                raise CapabilityManifestConflict(
-                    "runtime tool schema hash differs from manifest"
-                )
-        if _hash_json(schema) != tool["schemaHash"]:
-            raise CapabilityManifestConflict("pinned tool schema hash differs from manifest")
-        return self._record_disclosure(
-            receipt_id=receipt_id,
-            manifest=manifest,
-            kind="load",
-            query="",
-            tool_name=canonical,
-            schema_hash=str(tool["schemaHash"]),
-            items=[
+        receipts, created = self.tool_load_batch(
+            manifest_id=manifest_id,
+            manifest_hash=manifest_hash,
+            loads=(
                 {
-                    **{key: tool[key] for key in _MODEL_TOOL_CATALOG_KEYS},
-                    "inputSchema": schema,
-                }
-            ],
+                    "receiptId": receipt_id,
+                    "toolName": tool_name,
+                },
+            ),
+            runtime_registry=runtime_registry,
             created_at_ms=created_at_ms,
         )
+        return receipts[0], created
+
+    def tool_load_batch(
+        self,
+        *,
+        manifest_id: str,
+        manifest_hash: str,
+        loads: Sequence[Mapping[str, object]],
+        runtime_registry: Mapping[str, Mapping[str, object]] | None,
+        created_at_ms: int,
+    ) -> tuple[list[dict[str, object]], bool]:
+        if not 1 <= len(loads) <= 4:
+            raise ValueError("tool load batch must contain between one and four items")
+        manifest = self._manifest(manifest_id, manifest_hash)
+        payloads: list[dict[str, object]] = []
+        receipt_ids: set[str] = set()
+        tool_names: set[str] = set()
+        for load in loads:
+            receipt_id = _required(
+                str(load.get("receiptId") or ""),
+                "receipt_id",
+            )
+            canonical = _canonical_tool(str(load.get("toolName") or ""))
+            if receipt_id in receipt_ids:
+                raise ValueError("tool load batch receiptId values must be unique")
+            if canonical in tool_names:
+                raise ValueError("tool load batch toolName values must be unique")
+            receipt_ids.add(receipt_id)
+            tool_names.add(canonical)
+            tool = _manifest_tool(manifest, canonical)
+            pinned_schema = tool.get("inputSchema")
+            if not isinstance(pinned_schema, Mapping):
+                raise CapabilityManifestConflict(
+                    "capability manifest has no pinned tool schema"
+                )
+            schema = dict(pinned_schema)
+            source = (runtime_registry or {}).get(canonical)
+            if source is not None:
+                if not isinstance(source, Mapping) or not isinstance(
+                    source.get("inputSchema"), Mapping
+                ):
+                    raise CapabilityManifestConflict(
+                        "runtime registry no longer provides disclosed tool"
+                    )
+                if _hash_json(dict(source["inputSchema"])) != tool["schemaHash"]:
+                    raise CapabilityManifestConflict(
+                        "runtime tool schema hash differs from manifest"
+                    )
+            if _hash_json(schema) != tool["schemaHash"]:
+                raise CapabilityManifestConflict(
+                    "pinned tool schema hash differs from manifest"
+                )
+            payloads.append(
+                self._disclosure_receipt(
+                    receipt_id=receipt_id,
+                    manifest=manifest,
+                    kind="load",
+                    query="",
+                    tool_name=canonical,
+                    schema_hash=str(tool["schemaHash"]),
+                    items=[
+                        {
+                            **{
+                                key: tool[key]
+                                for key in _MODEL_TOOL_CATALOG_KEYS
+                            },
+                            "inputSchema": schema,
+                        }
+                    ],
+                    created_at_ms=created_at_ms,
+                )
+            )
+        return self._record_disclosures(payloads)
 
     def authorize_invocation(
         self,
@@ -868,6 +970,27 @@ class RoomCapabilityManifestStore:
             created_at_ms=created_at_ms,
         )
 
+    def runtime_tool_load_batch(
+        self,
+        *,
+        session_id: str,
+        loads: Sequence[Mapping[str, object]],
+        created_at_ms: int,
+        runtime_registry: Mapping[str, Mapping[str, object]] | None = None,
+    ) -> tuple[list[dict[str, object]], bool]:
+        binding = self.runtime_binding(session_id)
+        if binding is None:
+            raise ToolAuthorizationError(
+                "Session has no active Room Capability Manifest"
+            )
+        return self.tool_load_batch(
+            manifest_id=str(binding["manifestId"]),
+            manifest_hash=str(binding["manifestHash"]),
+            loads=loads,
+            runtime_registry=runtime_registry,
+            created_at_ms=created_at_ms,
+        )
+
     def restore_runtime_tool_disclosures(
         self,
         *,
@@ -1003,7 +1126,32 @@ class RoomCapabilityManifestStore:
         items: list[dict[str, object]],
         created_at_ms: int,
     ) -> tuple[dict[str, object], bool]:
-        payload = {
+        payload = self._disclosure_receipt(
+            receipt_id=receipt_id,
+            manifest=manifest,
+            kind=kind,
+            query=query,
+            tool_name=tool_name,
+            schema_hash=schema_hash,
+            items=items,
+            created_at_ms=created_at_ms,
+        )
+        payloads, created = self._record_disclosures([payload])
+        return payloads[0], created
+
+    @staticmethod
+    def _disclosure_receipt(
+        *,
+        receipt_id: str,
+        manifest: Mapping[str, object],
+        kind: str,
+        query: str,
+        tool_name: str,
+        schema_hash: str,
+        items: list[dict[str, object]],
+        created_at_ms: int,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
             "schemaVersion": "wisdom-weasel.room-tool-disclosure-receipt.v1",
             "receiptId": _required(receipt_id, "receipt_id"),
             "manifestId": manifest["manifestId"], "manifestHash": manifest["manifestHash"],
@@ -1012,31 +1160,70 @@ class RoomCapabilityManifestStore:
             "createdAtMs": _non_negative(created_at_ms, "created_at_ms"),
         }
         validate_contract(payload, "room-tool-disclosure-receipt.v1.json")
-        payload_hash = _hash_json({key: value for key, value in payload.items() if key != "receiptId"})
-        with self._connect(immediate=True) as conn:
-            existing = conn.execute(
-                "SELECT * FROM room_v2_tool_disclosure_receipts WHERE receipt_id = ?",
-                (payload["receiptId"],),
-            ).fetchone()
-            if existing is not None:
-                stored = _disclosure_payload(existing)
-                if stored != payload:
-                    raise CapabilityManifestConflict("tool disclosure receipt identity changed")
-                return stored, False
-            conn.execute(
-                """
-                INSERT INTO room_v2_tool_disclosure_receipts(
-                    receipt_id, manifest_id, manifest_hash, receipt_kind, query_text,
-                    tool_name, schema_hash, payload_hash, payload_json, created_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    payload["receiptId"], payload["manifestId"], payload["manifestHash"],
-                    kind, query, tool_name, schema_hash, payload_hash,
-                    _json(payload), payload["createdAtMs"],
-                ),
+        return payload
+
+    def _record_disclosures(
+        self,
+        payloads: Sequence[Mapping[str, object]],
+    ) -> tuple[list[dict[str, object]], bool]:
+        if not payloads:
+            raise ValueError("tool disclosure batch cannot be empty")
+        normalized = [dict(payload) for payload in payloads]
+        receipt_ids = [str(payload["receiptId"]) for payload in normalized]
+        if len(receipt_ids) != len(set(receipt_ids)):
+            raise CapabilityManifestConflict(
+                "tool disclosure receipt identities must be unique"
             )
-        return payload, True
+        created = False
+        with self._connect(immediate=True) as conn:
+            existing_rows = {
+                str(row["receipt_id"]): row
+                for row in conn.execute(
+                    f"""
+                    SELECT * FROM room_v2_tool_disclosure_receipts
+                    WHERE receipt_id IN ({','.join('?' for _ in receipt_ids)})
+                    """,
+                    receipt_ids,
+                ).fetchall()
+            }
+            for payload in normalized:
+                receipt_id = str(payload["receiptId"])
+                existing = existing_rows.get(receipt_id)
+                if existing is not None:
+                    if _disclosure_payload(existing) != payload:
+                        raise CapabilityManifestConflict(
+                            "tool disclosure receipt identity changed"
+                        )
+                    continue
+                payload_hash = _hash_json(
+                    {
+                        key: value
+                        for key, value in payload.items()
+                        if key != "receiptId"
+                    }
+                )
+                conn.execute(
+                    """
+                    INSERT INTO room_v2_tool_disclosure_receipts(
+                        receipt_id, manifest_id, manifest_hash, receipt_kind, query_text,
+                        tool_name, schema_hash, payload_hash, payload_json, created_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        payload["receiptId"],
+                        payload["manifestId"],
+                        payload["manifestHash"],
+                        payload["kind"],
+                        payload["query"],
+                        payload["toolName"],
+                        payload["schemaHash"],
+                        payload_hash,
+                        _json(payload),
+                        payload["createdAtMs"],
+                    ),
+                )
+                created = True
+        return normalized, created
 
     def _manifest(self, manifest_id: str, manifest_hash: str) -> dict[str, object]:
         with self._connect() as conn:

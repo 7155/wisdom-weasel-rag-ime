@@ -14,6 +14,7 @@ from rag_ime.agent_room_kernel_contracts import (
     PARTICIPANT_BINDING_SCHEMA_VERSION,
     ROOM_BINDING_SCHEMA_VERSION,
     ROOM_COMMIT_SCHEMA_VERSION,
+    ROOM_QUALITY_GATE_RECEIPT_SCHEMA_VERSION,
     ROOM_POST_SCHEMA_VERSION,
     ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
     ROOM_SETTLE_RESULT_SCHEMA_VERSION,
@@ -70,9 +71,17 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 DISPATCH_ENVELOPE_SCHEMA_VERSION,
             ),
             "roomCommit": (
-                "room-commit.v2.json",
-                "https://wisdom-weasel.local/contracts/room-commit.v2.json",
+                "room-commit.v3.json",
+                "https://wisdom-weasel.local/contracts/room-commit.v3.json",
                 ROOM_COMMIT_SCHEMA_VERSION,
+            ),
+            "roomQualityGateReceipt": (
+                "room-quality-gate-receipt.v1.json",
+                (
+                    "https://wisdom-weasel.local/contracts/"
+                    "room-quality-gate-receipt.v1.json"
+                ),
+                ROOM_QUALITY_GATE_RECEIPT_SCHEMA_VERSION,
             ),
             "eventEnvelope": (
                 "room-event-envelope.v2.json",
@@ -198,6 +207,27 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "action": "complete",
                 "contentHash": "sha256:abc",
                 "postProposal": None,
+                "qualityGateReceipt": {
+                    "schemaVersion": (
+                        "wisdom-weasel.room-quality-gate-receipt.v1"
+                    ),
+                    "receiptId": "quality:1",
+                    "rootId": "root:1",
+                    "taskId": "task:1",
+                    "dispatchId": "dispatch:1",
+                    "generation": 0,
+                    "originalRequestChecked": True,
+                    "verdict": "ready_to_deliver",
+                    "items": [
+                        {
+                            "criterionId": "requirement:1",
+                            "status": "pass",
+                            "evidenceRefs": ["test:test_route"],
+                        }
+                    ],
+                    "residualRisks": [],
+                    "createdAtMs": 2,
+                },
                 "evidenceRefs": ["test:test_route"],
                 "requirementCoverage": ["requirement:1"],
                 "createdAtMs": 2,

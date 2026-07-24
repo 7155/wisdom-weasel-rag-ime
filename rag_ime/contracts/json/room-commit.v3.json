@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-commit.v3.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "commitId",
+    "dispatchId",
+    "action",
+    "contentHash",
+    "postProposal",
+    "qualityGateReceipt",
+    "evidenceRefs",
+    "requirementCoverage",
+    "createdAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "wisdom-weasel.room-commit.v3"
+    },
+    "commitId": {"type": "string", "minLength": 1},
+    "dispatchId": {"type": "string", "minLength": 1},
+    "action": {
+      "type": "string",
+      "enum": ["post", "dispatch", "wait", "complete", "block"]
+    },
+    "contentHash": {"type": "string", "minLength": 1},
+    "postProposal": {"type": ["object", "null"]},
+    "postInvocationReceiptId": {"type": "string", "minLength": 1},
+    "continuation": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["decision"],
+          "properties": {
+            "decision": {
+              "type": "string",
+              "enum": ["dispatch", "wait", "block", "complete"]
+            },
+            "childTask": {"type": "object"},
+            "childDispatch": {"type": "object"}
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {"decision": {"const": "dispatch"}},
+                "required": ["decision"]
+              },
+              "then": {"required": ["childTask", "childDispatch"]}
+            }
+          ]
+        }
+      ]
+    },
+    "qualityGateReceipt": {
+      "$ref": "#/$defs/qualityGateReceipt"
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "requirementCoverage": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "qualityGateReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "receiptId",
+        "rootId",
+        "taskId",
+        "dispatchId",
+        "generation",
+        "originalRequestChecked",
+        "verdict",
+        "items",
+        "residualRisks",
+        "createdAtMs"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "wisdom-weasel.room-quality-gate-receipt.v1"
+        },
+        "receiptId": {"type": "string", "minLength": 1},
+        "rootId": {"type": "string", "minLength": 1},
+        "taskId": {"type": "string", "minLength": 1},
+        "dispatchId": {"type": "string", "minLength": 1},
+        "generation": {"type": "integer", "minimum": 0},
+        "originalRequestChecked": {"type": "boolean"},
+        "verdict": {
+          "type": "string",
+          "enum": ["ready_to_deliver", "not_ready"]
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["criterionId", "status", "evidenceRefs"],
+            "properties": {
+              "criterionId": {"type": "string", "minLength": 1},
+              "status": {
+                "type": "string",
+                "enum": ["pass", "fail", "not_verified"]
+              },
+              "evidenceRefs": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {"type": "string", "minLength": 1}
+              }
+            }
+          }
+        },
+        "residualRisks": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "createdAtMs": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

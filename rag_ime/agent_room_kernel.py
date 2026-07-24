@@ -13,6 +13,10 @@ from .agent_room_kernel_contracts import (
     KERNEL_RECEIPT_SCHEMA_VERSION,
     validate_kernel_contract,
 )
+from .agent_room_quality_gate import (
+    RoomQualityGateError,
+    validate_quality_gate_receipt,
+)
 from .db import apply_database_migrations
 
 
@@ -1256,6 +1260,11 @@ class RoomKernelStore:
         resource_usage: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         validate_kernel_contract("roomCommit", payload)
+        quality_gate_receipt = payload.get("qualityGateReceipt")
+        if not isinstance(quality_gate_receipt, Mapping):
+            raise RoomKernelFenceError(
+                "RoomCommit requires a structured qualityGateReceipt"
+            )
         if post_proposal is not None:
             validate_kernel_contract("roomPost", post_proposal)
         if (payload.get("action") == "post") != (post_proposal is not None):
@@ -1300,6 +1309,42 @@ class RoomKernelStore:
         with self._connect(immediate=True) as conn:
             dispatch = self._dispatch_row(conn, str(payload["dispatchId"]))
             root = self._root_row(conn, str(dispatch["root_id"]))
+            task_row = conn.execute(
+                "SELECT payload_json FROM room_kernel_tasks WHERE task_id = ?",
+                (str(dispatch["task_id"]),),
+            ).fetchone()
+            if task_row is None:
+                raise RoomKernelFenceError(
+                    "RoomCommit Task is missing"
+                )
+            task_payload = json.loads(str(task_row["payload_json"]))
+            try:
+                validate_quality_gate_receipt(
+                    quality_gate_receipt,
+                    decision=decision,
+                    root_id=str(root["root_id"]),
+                    task_id=str(dispatch["task_id"]),
+                    dispatch_id=str(dispatch["dispatch_id"]),
+                    generation=int(generation),
+                    task_criteria=[
+                        str(item)
+                        for item in task_payload.get(
+                            "acceptanceCriterionIds",
+                            [],
+                        )
+                        if str(item).strip()
+                    ],
+                    evidence_refs=[
+                        str(item)
+                        for item in payload.get("evidenceRefs", [])
+                    ],
+                    requirement_coverage=[
+                        str(item)
+                        for item in payload.get("requirementCoverage", [])
+                    ],
+                )
+            except RoomQualityGateError as exc:
+                raise RoomKernelFenceError(str(exc)) from exc
             invocation = None
             if invocation_receipt_id:
                 invocation = conn.execute(
@@ -1444,7 +1489,34 @@ class RoomKernelStore:
                         post_proposal["createdAtMs"],
                 ),
             )
-            receipt = self._receipt(conn, root_id=str(root["root_id"]), command_id=None, receipt_kind="accepted", status="applied", generation=generation, details={"commitId": payload["commitId"], "settleDecision": decision, "continuationId": continuation_id, "childTaskId": child_task_payload["taskId"] if child_task_payload is not None else None, "childDispatchId": child_dispatch["dispatchId"] if child_dispatch is not None else None}, now_ms=now_ms)
+            receipt = self._receipt(
+                conn,
+                root_id=str(root["root_id"]),
+                command_id=None,
+                receipt_kind="accepted",
+                status="applied",
+                generation=generation,
+                details={
+                    "commitId": payload["commitId"],
+                    "settleDecision": decision,
+                    "continuationId": continuation_id,
+                    "childTaskId": (
+                        child_task_payload["taskId"]
+                        if child_task_payload is not None
+                        else None
+                    ),
+                    "childDispatchId": (
+                        child_dispatch["dispatchId"]
+                        if child_dispatch is not None
+                        else None
+                    ),
+                    "qualityGateReceiptId": quality_gate_receipt[
+                        "receiptId"
+                    ],
+                    "qualityGateVerdict": quality_gate_receipt["verdict"],
+                },
+                now_ms=now_ms,
+            )
             if invocation is not None:
                 execution_payload = {
                     "schemaVersion": "wisdom-weasel.room-tool-execution-receipt.v1",

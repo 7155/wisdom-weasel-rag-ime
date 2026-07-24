@@ -35,7 +35,10 @@ class RoomKernelCoreTests(unittest.TestCase):
             acceptance_criteria=criteria,
             now_ms=1,
         )
-        self.store.create_task(task("task:1"), now_ms=2)
+        self.store.create_task(
+            task("task:1", criteria=criteria),
+            now_ms=2,
+        )
 
     def test_all_legacy_entries_normalize_to_one_shadow_dispatch(self) -> None:
         shadow = RoomKernelStore(self.db_path, mode="shadow")
@@ -248,7 +251,11 @@ class RoomKernelCoreTests(unittest.TestCase):
         )
         task_a = child_task("task:a2", parent="task:b1", target="participant:a")
         second_commit = {
-            **commit("commit:b-to-a", "dispatch:b1"),
+            **commit(
+                "commit:b-to-a",
+                "dispatch:b1",
+                task_id="task:b1",
+            ),
             "action": "dispatch",
             "continuation": {
                 "decision": "dispatch",
@@ -279,7 +286,11 @@ class RoomKernelCoreTests(unittest.TestCase):
             )
             self.store.apply_commit(
                 {
-                    **commit(f"commit:hop-{hop - 1}", parent),
+                    **commit(
+                        f"commit:hop-{hop - 1}",
+                        parent,
+                        task_id=parent_task,
+                    ),
                     "action": "dispatch",
                     "continuation": {
                         "decision": "dispatch",
@@ -304,7 +315,11 @@ class RoomKernelCoreTests(unittest.TestCase):
             )
             self.store.apply_commit(
                 {
-                    **commit("commit:hop-12", parent),
+                    **commit(
+                        "commit:hop-12",
+                        parent,
+                        task_id=parent_task,
+                    ),
                     "action": "dispatch",
                     "continuation": {
                         "decision": "dispatch",
@@ -470,6 +485,50 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(limits["input_token_used"], 1200)
         self.assertEqual(limits["tool_call_used"], 2)
 
+    def test_kernel_rejects_missing_or_forged_quality_gate_receipts(self) -> None:
+        self.seed()
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:quality", key="quality"),
+            now_ms=10,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:quality",
+            "running",
+            now_ms=11,
+        )
+        missing = commit(
+            "commit:quality-missing",
+            "dispatch:quality",
+            coverage=("ac:1",),
+        )
+        del missing["qualityGateReceipt"]
+        with self.assertRaisesRegex(ValueError, "qualityGateReceipt"):
+            self.store.apply_commit(
+                missing,
+                generation=0,
+                now_ms=12,
+            )
+
+        forged = commit(
+            "commit:quality-forged",
+            "dispatch:quality",
+            coverage=("ac:1",),
+        )
+        forged["qualityGateReceipt"]["taskId"] = "task:other"
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "does not match the committing Dispatch",
+        ):
+            self.store.apply_commit(
+                forged,
+                generation=0,
+                now_ms=13,
+            )
+        self.assertEqual(
+            self.store.counts("root:1")["commits"],
+            0,
+        )
+
     def test_deadline_and_dispatch_count_are_kernel_owned_hard_limits(self) -> None:
         self.seed(budget=100, criteria=())
         with sqlite3.connect(self.db_path) as conn:
@@ -500,7 +559,15 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.store.enqueue_dispatch(dispatch("dispatch:stale", key="stale"), now_ms=10)
         before = self.store.counts("root:1")
         cancellation = self.store.cancel_root("root:1", now_ms=20)
-        receipt = self.store.apply_commit(commit("commit:stale", "dispatch:stale"), generation=0, now_ms=21)
+        receipt = self.store.apply_commit(
+            commit(
+                "commit:stale",
+                "dispatch:stale",
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=21,
+        )
         after = self.store.counts("root:1")
 
         self.assertEqual(cancellation["generation"], 1)
@@ -638,7 +705,12 @@ def root(root_id: str) -> dict[str, object]:
     }
 
 
-def task(task_id: str, *, root_id: str = "root:1") -> dict[str, object]:
+def task(
+    task_id: str,
+    *,
+    root_id: str = "root:1",
+    criteria: tuple[str, ...] = ("ac:1",),
+) -> dict[str, object]:
     return {
         "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
         "taskId": task_id,
@@ -649,7 +721,7 @@ def task(task_id: str, *, root_id: str = "root:1") -> dict[str, object]:
         "objective": "Complete bounded work.",
         "expectedOutput": "A tested result.",
         "requirementItemIds": ["requirement:1"],
-        "acceptanceCriterionIds": ["ac:1"],
+        "acceptanceCriterionIds": list(criteria),
         "revision": 0,
         "state": "active",
     }
@@ -660,9 +732,10 @@ def child_task(
     *,
     parent: str,
     target: str,
+    criteria: tuple[str, ...] = (),
 ) -> dict[str, object]:
     return {
-        **task(task_id),
+        **task(task_id, criteria=criteria),
         "parentTaskId": parent,
         "ownerParticipantId": target,
         "assigneeParticipantId": target,
@@ -708,7 +781,16 @@ def commit(
     dispatch_id: str,
     *,
     coverage: tuple[str, ...] = (),
+    task_id: str = "task:1",
 ) -> dict[str, object]:
+    items = [
+        {
+            "criterionId": criterion_id,
+            "status": "pass",
+            "evidenceRefs": ["test:room-kernel"],
+        }
+        for criterion_id in coverage
+    ]
     return {
         "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
         "commitId": commit_id,
@@ -716,6 +798,19 @@ def commit(
         "action": "complete",
         "contentHash": "sha256:test",
         "postProposal": None,
+        "qualityGateReceipt": {
+            "schemaVersion": "wisdom-weasel.room-quality-gate-receipt.v1",
+            "receiptId": f"quality:{commit_id}",
+            "rootId": "root:1",
+            "taskId": task_id,
+            "dispatchId": dispatch_id,
+            "generation": 0,
+            "originalRequestChecked": True,
+            "verdict": "ready_to_deliver",
+            "items": items,
+            "residualRisks": [],
+            "createdAtMs": 12,
+        },
         "evidenceRefs": ["test:room-kernel"],
         "requirementCoverage": list(coverage),
         "createdAtMs": 12,

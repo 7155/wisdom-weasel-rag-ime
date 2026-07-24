@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-quality-gate-receipt.v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "receiptId",
+    "rootId",
+    "taskId",
+    "dispatchId",
+    "generation",
+    "originalRequestChecked",
+    "verdict",
+    "items",
+    "residualRisks",
+    "createdAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "wisdom-weasel.room-quality-gate-receipt.v1"
+    },
+    "receiptId": {"type": "string", "minLength": 1},
+    "rootId": {"type": "string", "minLength": 1},
+    "taskId": {"type": "string", "minLength": 1},
+    "dispatchId": {"type": "string", "minLength": 1},
+    "generation": {"type": "integer", "minimum": 0},
+    "originalRequestChecked": {"type": "boolean"},
+    "verdict": {
+      "type": "string",
+      "enum": ["ready_to_deliver", "not_ready"]
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["criterionId", "status", "evidenceRefs"],
+        "properties": {
+          "criterionId": {"type": "string", "minLength": 1},
+          "status": {
+            "type": "string",
+            "enum": ["pass", "fail", "not_verified"]
+          },
+          "evidenceRefs": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "residualRisks": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

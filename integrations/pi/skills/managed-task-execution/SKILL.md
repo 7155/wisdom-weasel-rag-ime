@@ -36,8 +36,11 @@ notFor:
    completion. If the Kernel returns a governed follow-up, resume from the
    authoritative task state and the exact missing acceptance item. Do not spend
    that follow-up restating progress or consuming the continuation budget.
-7. Before proposing completion or formal handoff, load `quality-gate` and close
-   every failed or unverified required item.
+7. Before any lifecycle exit, build the structured quality receipt required by
+   the active `room_commit` schema. Re-read the immutable original request,
+   cover every current acceptance criterion exactly once, attach fresh evidence
+   to every `pass`, and keep failed or unverified items explicit. The Kernel,
+   not this Skill, decides whether the receipt permits settlement.
 8. Propose exactly one legal exit:
    - completed with evidence;
    - handed off with completed work, remaining work, reason, and next owner;
@@ -67,9 +70,10 @@ deadline, cancellation, fences, and budget.
 
 Return the current outcome, evidence, unmet acceptance items, and one lifecycle
 recommendation. In a managed Room, use its canonical state, post, and commit
-tools exactly as the loaded schema requires. Do not call `room_commit` merely
-because one Provider response is ending; call it only for a valid lifecycle
-exit.
+tools exactly as the loaded schema requires. `requirementCoverage` must equal
+the `qualityGate.items` whose status is `pass`; a delivery claim also requires
+`ready_to_deliver`. Do not call `room_commit` merely because one Provider
+response is ending; call it only for a valid lifecycle exit.
 
 ## Boundaries
 

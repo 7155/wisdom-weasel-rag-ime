@@ -12,6 +12,13 @@ from .agent_room_continuations import (
 )
 from .agent_room_kernel import RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_application import RoomKernelApplicationService
+from .agent_room_kernel_contracts import (
+    ROOM_COMMIT_SCHEMA_VERSION,
+)
+from .agent_room_quality_gate import (
+    RoomQualityGateError,
+    canonicalize_quality_gate,
+)
 from .agent_rooms import AgentRoomStore
 
 
@@ -278,8 +285,11 @@ class RoomSettleLifecycleService:
             "续作次数是硬预算，不得重复同一失败动作、提示或调用来消耗它。"
             "不要复述进度，也不要为了结束本轮而虚构等待、阻塞或完成。"
             "只有已经形成合法生命周期出口时，才调用 room_commit，明确选择 "
-            "deliver、handoff、wait 或 blocked，并填写 result、evidenceRefs 与 "
-            "requirementCoverage。requirementCoverage 只能使用当前 Task 的 "
+            "deliver、handoff、wait 或 blocked，并填写 result、qualityGate、"
+            "evidenceRefs 与 requirementCoverage。qualityGate.items 必须逐项覆盖"
+            "当前 Task 的全部验收条件；pass 项必须附新鲜证据，"
+            "requirementCoverage 必须与 pass 项完全一致。requirementCoverage "
+            "只能使用当前 Task 的 "
             f"acceptanceCriterionIds={allowed}；不得填写 requirementItemIds；"
             "没有验收条件时必须传空数组。handoff 还要填写 "
             "targetParticipantId、nextTask 和 nextIntentKind。"
@@ -332,6 +342,26 @@ class RoomSettleLifecycleService:
                 )
             if not evidence_refs:
                 raise RoomCommitProposalError("deliver requires at least one evidenceRef")
+        try:
+            quality_gate_receipt = canonicalize_quality_gate(
+                proposal=arguments.get("qualityGate"),
+                decision=decision,
+                task_criteria=[
+                    str(item)
+                    for item in task.get("acceptanceCriterionIds", [])
+                    if str(item).strip()
+                ],
+                root_id=str(root["rootId"]),
+                task_id=str(dispatch["taskId"]),
+                dispatch_id=str(dispatch["dispatchId"]),
+                generation=int(dispatch["generation"]),
+                evidence_refs=evidence_refs,
+                requirement_coverage=requirement_coverage,
+                invocation_receipt_id=str(invocation["receiptId"]),
+                now_ms=now_ms,
+            )
+        except RoomQualityGateError as exc:
+            raise RoomCommitProposalError(str(exc)) from exc
         commit_id = _stable_id(
             "room-commit",
             str(invocation["receiptId"]),
@@ -433,16 +463,18 @@ class RoomSettleLifecycleService:
             "result": result,
             "evidenceRefs": evidence_refs,
             "requirementCoverage": requirement_coverage,
+            "qualityGateReceipt": quality_gate_receipt,
             "continuation": continuation,
         }
         commit = {
-            "schemaVersion": "wisdom-weasel.room-commit.v2",
+            "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
             "commitId": commit_id,
             "dispatchId": dispatch["dispatchId"],
             "action": "post",
             "contentHash": f"sha256:{_sha256_json(material)}",
             "postProposal": post_proposal,
             "continuation": continuation,
+            "qualityGateReceipt": quality_gate_receipt,
             "evidenceRefs": evidence_refs,
             "requirementCoverage": requirement_coverage,
             "createdAtMs": now_ms,

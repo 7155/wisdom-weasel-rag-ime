@@ -1004,6 +1004,91 @@ class RoomKernelServiceTests(unittest.TestCase):
             "state": "pending",
         }
 
+    def _quality_gate_receipt(
+        self,
+        commit_id: str,
+        dispatch_id: str,
+        *,
+        action: str,
+        criteria: tuple[str, ...] = (),
+        coverage: tuple[str, ...] = (),
+        evidence_refs: tuple[str, ...] = (),
+        created_at_ms: int,
+    ) -> dict[str, object]:
+        passed = set(coverage)
+        verdict = (
+            "ready_to_deliver"
+            if action == "complete"
+            else "not_ready"
+        )
+        return {
+            "schemaVersion": "wisdom-weasel.room-quality-gate-receipt.v1",
+            "receiptId": f"quality:{commit_id}",
+            "rootId": "root:service",
+            "taskId": "task:service",
+            "dispatchId": dispatch_id,
+            "generation": 0,
+            "originalRequestChecked": True,
+            "verdict": verdict,
+            "items": [
+                {
+                    "criterionId": criterion_id,
+                    "status": (
+                        "pass"
+                        if criterion_id in passed
+                        else "not_verified"
+                    ),
+                    "evidenceRefs": (
+                        list(evidence_refs)
+                        if criterion_id in passed
+                        else []
+                    ),
+                }
+                for criterion_id in criteria
+            ],
+            "residualRisks": (
+                []
+                if verdict == "ready_to_deliver"
+                else ["continuation_pending"]
+            ),
+            "createdAtMs": created_at_ms,
+        }
+
+    @staticmethod
+    def _quality_gate_proposal(
+        *,
+        verdict: str,
+        criteria: tuple[str, ...] = (),
+        coverage: tuple[str, ...] = (),
+        evidence_refs: tuple[str, ...] = (),
+    ) -> dict[str, object]:
+        passed = set(coverage)
+        return {
+            "originalRequestChecked": True,
+            "verdict": verdict,
+            "items": [
+                {
+                    "criterionId": criterion_id,
+                    "status": (
+                        "pass"
+                        if criterion_id in passed
+                        else "not_verified"
+                    ),
+                    "evidenceRefs": (
+                        list(evidence_refs)
+                        if criterion_id in passed
+                        else []
+                    ),
+                }
+                for criterion_id in criteria
+            ],
+            "residualRisks": (
+                []
+                if verdict == "ready_to_deliver"
+                else ["continuation_pending"]
+            ),
+        }
+
     def _cancel_command(self, *, generation: int = 0) -> dict[str, object]:
         return {
             "schemaVersion": KERNEL_COMMAND_SCHEMA_VERSION,
@@ -1046,6 +1131,37 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         return str(result["invocationReceipt"]["receiptId"])
 
+    def test_service_loads_one_to_four_room_tools_in_one_atomic_batch(self) -> None:
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+
+        result = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "loads": [
+                    {
+                        "receiptId": "load:batch:state",
+                        "toolName": "room_state",
+                    },
+                    {
+                        "receiptId": "load:batch:post",
+                        "toolName": "room_post",
+                    },
+                ],
+                "createdAtMs": 4,
+            }
+        )["result"]
+
+        self.assertEqual(
+            result["schemaVersion"],
+            "wisdom-weasel.room-tool-load-batch-receipt.v1",
+        )
+        self.assertTrue(result["created"])
+        self.assertEqual(
+            [item["toolName"] for item in result["items"]],
+            ["room_state", "room_post"],
+        )
+
     def test_rich_post_crosses_real_settle_commit_snapshot_and_provider_journal(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
         self.service.room_kernel_worker.run_once()
@@ -1084,6 +1200,12 @@ class RoomKernelServiceTests(unittest.TestCase):
             "action": "post",
             "contentHash": "sha256:rich",
             "postProposal": {**proposal, "blocks": private},
+            "qualityGateReceipt": self._quality_gate_receipt(
+                "commit:rich",
+                "dispatch:service",
+                action="post",
+                created_at_ms=30,
+            ),
             "evidenceRefs": [],
             "requirementCoverage": [],
             "createdAtMs": 30,
@@ -1612,6 +1734,12 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "publicationSource": {"kind": "room_commit", "ref": "commit:service"},
                 "createdAtMs": 30,
             },
+            "qualityGateReceipt": self._quality_gate_receipt(
+                "commit:service",
+                "dispatch:service",
+                action="post",
+                created_at_ms=30,
+            ),
             "evidenceRefs": ["test:service"],
             "requirementCoverage": [],
             "createdAtMs": 30,
@@ -1687,6 +1815,12 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "publicationSource": {"kind": "room_commit", "ref": "commit:invalid-post"},
                 "createdAtMs": 31,
             },
+            "qualityGateReceipt": self._quality_gate_receipt(
+                "commit:invalid-post",
+                "dispatch:service",
+                action="post",
+                created_at_ms=31,
+            ),
             "evidenceRefs": [],
             "requirementCoverage": [],
             "createdAtMs": 31,
@@ -1887,6 +2021,12 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "publicationSource": {"kind": "room_commit", "ref": "commit:capability-service"},
                 "createdAtMs": 6,
             },
+            "qualityGateReceipt": self._quality_gate_receipt(
+                "commit:capability-service",
+                "dispatch:service",
+                action="post",
+                created_at_ms=6,
+            ),
             "evidenceRefs": [],
             "requirementCoverage": [],
             "createdAtMs": 6,
@@ -2302,6 +2442,9 @@ class RoomKernelServiceTests(unittest.TestCase):
             {
                 "decision": "deliver",
                 "result": f"delivered:{dispatch_id}",
+                "qualityGate": self._quality_gate_proposal(
+                    verdict="ready_to_deliver",
+                ),
                 "evidenceRefs": [f"evidence:{dispatch_id}"],
                 "requirementCoverage": [],
             },
@@ -2695,6 +2838,9 @@ class RoomKernelServiceTests(unittest.TestCase):
             {
                 "decision": "wait",
                 "result": "等待下一步输入",
+                "qualityGate": self._quality_gate_proposal(
+                    verdict="not_ready",
+                ),
                 "evidenceRefs": [],
                 "requirementCoverage": [],
             },
@@ -2948,6 +3094,28 @@ class RoomKernelServiceTests(unittest.TestCase):
             linked_by="managed-test-runner",
             created_at_ms=2,
         )
+        with sqlite3.connect(self.service.db_path) as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM room_kernel_tasks WHERE task_id = ?",
+                ("task:service",),
+            ).fetchone()
+            assert row is not None
+            task_payload = json.loads(str(row[0]))
+            task_payload["acceptanceCriterionIds"] = ["criterion:service"]
+            conn.execute(
+                """UPDATE room_kernel_tasks
+                   SET payload_json = ?
+                   WHERE task_id = ?""",
+                (
+                    json.dumps(
+                        task_payload,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                    "task:service",
+                ),
+            )
 
         first_dispatch = self._dispatch()
         self.service.room_kernel.enqueue_dispatch(first_dispatch, now_ms=3)
@@ -2979,6 +3147,15 @@ class RoomKernelServiceTests(unittest.TestCase):
                 "publicationSource": {"kind": "room_commit", "ref": "commit:e2e-post"},
                 "createdAtMs": 4,
             },
+            "qualityGateReceipt": self._quality_gate_receipt(
+                "commit:e2e-post",
+                "dispatch:service",
+                action="post",
+                criteria=("criterion:service",),
+                coverage=("criterion:service",),
+                evidence_refs=("verification:service",),
+                created_at_ms=4,
+            ),
             "evidenceRefs": ["verification:service"],
             "requirementCoverage": ["criterion:service"],
             "createdAtMs": 4,
@@ -3019,6 +3196,12 @@ class RoomKernelServiceTests(unittest.TestCase):
             {
                 "decision": "deliver",
                 "result": "完成",
+                "qualityGate": self._quality_gate_proposal(
+                    verdict="ready_to_deliver",
+                    criteria=("criterion:service",),
+                    coverage=("criterion:service",),
+                    evidence_refs=("verification:service",),
+                ),
                 "evidenceRefs": ["verification:service"],
                 "requirementCoverage": ["criterion:service"],
             },
@@ -3032,6 +3215,15 @@ class RoomKernelServiceTests(unittest.TestCase):
             "action": "complete",
             "contentHash": "sha256:e2e-complete",
             "postProposal": None,
+            "qualityGateReceipt": self._quality_gate_receipt(
+                "commit:e2e-complete",
+                "dispatch:complete",
+                action="complete",
+                criteria=("criterion:service",),
+                coverage=("criterion:service",),
+                evidence_refs=("verification:service",),
+                created_at_ms=6,
+            ),
             "evidenceRefs": ["verification:service"],
             "requirementCoverage": ["criterion:service"],
             "createdAtMs": 6,

@@ -30,12 +30,13 @@ notFor:
 
 ## Output Contract
 
-Return:
+Return the exact structure consumed by the active `room_commit.qualityGate`
+field:
 
-- original-request coverage;
-- acceptance matrix and evidence references;
-- failed and unverified items;
-- regression and operational risks;
+- `originalRequestChecked: true` only after re-reading the immutable request;
+- one `items[]` entry for every current acceptance `criterionId`;
+- `pass`, `fail`, or `not_verified`, with fresh `evidenceRefs` on every pass;
+- `residualRisks`;
 - `ready_to_deliver` or `not_ready`.
 
 ## Boundaries
@@ -43,4 +44,6 @@ Return:
 This Skill does not lower thresholds, rewrite screenshots to match a defect,
 approve its own sensitive action, emit a Room commit, set Goal or Root terminal
 state, or unlock the frontend. It provides evidence for the authoritative
-lifecycle owner.
+lifecycle owner. The Kernel validates the structured receipt, binds it to the
+active Root, Task, Dispatch, generation and evidence set, and rejects a
+completion whose receipt is missing, incomplete or contradictory.

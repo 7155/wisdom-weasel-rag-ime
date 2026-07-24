@@ -1599,6 +1599,41 @@ class AgentService:
         return {"ok": True, "result": receipt}
 
     def room_capability_tool_load(self, payload: Mapping[str, object]) -> dict[str, object]:
+        raw_loads = payload.get("loads")
+        if raw_loads is not None:
+            if (
+                not isinstance(raw_loads, Sequence)
+                or isinstance(raw_loads, (str, bytes))
+                or not 1 <= len(raw_loads) <= 4
+                or not all(isinstance(item, Mapping) for item in raw_loads)
+            ):
+                raise ValueError(
+                    "tool load batch must contain one to four load objects"
+                )
+            receipts, created = self.room_capabilities.runtime_tool_load_batch(
+                session_id=_required_text(payload, "sessionId"),
+                loads=[
+                    {
+                        "receiptId": _required_text(item, "receiptId"),
+                        "toolName": _required_text(item, "toolName"),
+                    }
+                    for item in raw_loads
+                    if isinstance(item, Mapping)
+                ],
+                created_at_ms=int(
+                    payload.get("createdAtMs") or int(time.time() * 1000)
+                ),
+            )
+            return {
+                "ok": True,
+                "result": {
+                    "schemaVersion": (
+                        "wisdom-weasel.room-tool-load-batch-receipt.v1"
+                    ),
+                    "items": receipts,
+                    "created": created,
+                },
+            }
         receipt, _ = self.room_capabilities.runtime_tool_load(
             session_id=_required_text(payload, "sessionId"),
             receipt_id=_required_text(payload, "receiptId"),

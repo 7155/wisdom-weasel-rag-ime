@@ -116,6 +116,7 @@ import type { RoleBookRevisionDraftV1 } from './generated/role-book-revision-dra
 import type { RoomBindingV2 } from './generated/room-binding.v2';
 import type { RoomCapabilityManifestV1 } from './generated/room-capability-manifest.v1';
 import type { RoomCommitV2 } from './generated/room-commit.v2';
+import type { RoomCommitV3 } from './generated/room-commit.v3';
 import type { RoomContextEntryV1 } from './generated/room-context-entry.v1';
 import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.v2';
 import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
@@ -124,6 +125,7 @@ import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
 import type { RoomLegacyRefV1 } from './generated/room-legacy-ref.v1';
 import type { RoomParticipantBindingV2 } from './generated/room-participant-binding.v2';
 import type { RoomPostV2 } from './generated/room-post.v2';
+import type { RoomQualityGateReceiptV1 } from './generated/room-quality-gate-receipt.v1';
 import type { RoomRolloutPolicyV1 } from './generated/room-rollout-policy.v1';
 import type { RoomRolloutReceiptV1 } from './generated/room-rollout-receipt.v1';
 import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
@@ -256,6 +258,7 @@ export type {
   RoomBindingV2,
   RoomCapabilityManifestV1,
   RoomCommitV2,
+  RoomCommitV3,
   RoomContextEntryV1,
   RoomDispatchEnvelopeV2,
   RoomEventEnvelopeV2,
@@ -264,6 +267,7 @@ export type {
   RoomLegacyRefV1,
   RoomParticipantBindingV2,
   RoomPostV2,
+  RoomQualityGateReceiptV1,
   RoomRolloutPolicyV1,
   RoomRolloutReceiptV1,
   RoomRootExecutionV2,
@@ -397,6 +401,7 @@ export interface ContractTypeMap {
   'room-binding.v2': RoomBindingV2;
   'room-capability-manifest.v1': RoomCapabilityManifestV1;
   'room-commit.v2': RoomCommitV2;
+  'room-commit.v3': RoomCommitV3;
   'room-context-entry.v1': RoomContextEntryV1;
   'room-dispatch-envelope.v2': RoomDispatchEnvelopeV2;
   'room-event-envelope.v2': RoomEventEnvelopeV2;
@@ -405,6 +410,7 @@ export interface ContractTypeMap {
   'room-legacy-ref.v1': RoomLegacyRefV1;
   'room-participant-binding.v2': RoomParticipantBindingV2;
   'room-post.v2': RoomPostV2;
+  'room-quality-gate-receipt.v1': RoomQualityGateReceiptV1;
   'room-rollout-policy.v1': RoomRolloutPolicyV1;
   'room-rollout-receipt.v1': RoomRolloutReceiptV1;
   'room-root-execution.v2': RoomRootExecutionV2;
