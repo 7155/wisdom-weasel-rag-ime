@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from rag_ime.agent_room_kernel import RoomKernelStore
-from rag_ime.agent_room_kernel_worker import RoomKernelWorker
+from rag_ime.agent_room_kernel_worker import KernelCommandBus, RoomKernelWorker
 from tests.test_agent_room_kernel import dispatch, root, task
 
 
@@ -224,6 +224,36 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertEqual(runtime.cancellations[0]["generation"], 1)
         self.assertEqual(self.store.root("root:1")["state"], "cancelled")
         self.assertEqual(self.store.abort_scope("dispatch:cancel")["state"], "cancelled")
+
+    def test_passive_command_bus_defers_runtime_cancel_to_effect_owner(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:passive", key="worker:passive"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime()
+        worker = RoomKernelWorker(
+            self.store,
+            runtime,
+            clock_ms=self.clock,
+        )
+        worker.run_once()
+        passive_bus = KernelCommandBus(
+            self.store,
+            worker,
+            runtime_effects_enabled=False,
+        )
+
+        result = passive_bus.cancel_root("root:1")
+
+        self.assertEqual(result["runtimeReceipts"], [])
+        self.assertEqual(runtime.cancellations, [])
+        self.assertEqual(self.store.root("root:1")["state"], "cancelling")
+
+        receipts = worker.drain_cancel_outbox()
+
+        self.assertEqual(receipts[0]["receiptKind"], "cancel_applied")
+        self.assertEqual(len(runtime.cancellations), 1)
+        self.assertEqual(self.store.root("root:1")["state"], "cancelled")
 
     def test_cancel_target_reaches_runtime_without_terminalizing_root(self) -> None:
         self.store.enqueue_dispatch(dispatch("dispatch:target", key="worker:target"), now_ms=3)

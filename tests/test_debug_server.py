@@ -305,6 +305,39 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertTrue(seeded["ok"])
         self.assertGreaterEqual(seeded["seeded"], 1)
 
+    def test_only_agent_gateway_owns_room_runtime_effects(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"RAG_IME_ROOM_KERNEL_MODE": "kernel_only"},
+            clear=False,
+        ):
+            sidecar = DebugImeService(
+                DebugServerConfig(
+                    db_path=Path(self.tmp.name) / "passive-sidecar.sqlite",
+                    seed_if_empty=False,
+                    server_name="sidecar server",
+                )
+            )
+            gateway = DebugImeService(
+                DebugServerConfig(
+                    db_path=Path(self.tmp.name) / "active-gateway.sqlite",
+                    seed_if_empty=False,
+                    server_name="agent gateway",
+                )
+            )
+        try:
+            self.assertFalse(sidecar.agent.room_kernel_worker_loop.running)
+            self.assertFalse(
+                sidecar.agent.room_kernel_commands.runtime_effects_enabled
+            )
+            self.assertTrue(gateway.agent.room_kernel_worker_loop.running)
+            self.assertTrue(
+                gateway.agent.room_kernel_commands.runtime_effects_enabled
+            )
+        finally:
+            sidecar.close()
+            gateway.close()
+
     def test_explicit_memory_prepare_drains_empty_batches_until_one_draft(self) -> None:
         db_path = Path(self.tmp.name) / "manual-curation-drain.sqlite"
         service = DebugImeService(

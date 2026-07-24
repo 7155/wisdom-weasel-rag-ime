@@ -395,9 +395,11 @@ class DebugImeService:
             project=config.project,
             memory_embedding_provider=getattr(self.core, "embedding_provider", None),
             # Only the dedicated 8768 Agent Gateway owns the durable scheduler.
-            # The 8766 Sidecar and local preview servers share the same SQLite
-            # database but must never race to claim the same wake schedule.
+            # It also owns Room Runtime effects. The 8766 Sidecar and local
+            # preview servers share SQLite but may only enqueue durable work;
+            # they must never race the Gateway for a Dispatch or Pi Host.
             wake_scheduler_enabled=config.server_name == "agent gateway",
+            room_kernel_worker_enabled=config.server_name == "agent gateway",
         )
         self.personal_context_observability = PersonalContextObservability(
             config.db_path,

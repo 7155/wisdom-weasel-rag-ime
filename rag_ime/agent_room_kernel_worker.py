@@ -210,9 +210,16 @@ class KernelCommandBus:
     cannot accidentally take a second path.
     """
 
-    def __init__(self, store: RoomKernelStore, worker: RoomKernelWorker) -> None:
+    def __init__(
+        self,
+        store: RoomKernelStore,
+        worker: RoomKernelWorker,
+        *,
+        runtime_effects_enabled: bool = True,
+    ) -> None:
         self.store = store
         self.worker = worker
+        self.runtime_effects_enabled = bool(runtime_effects_enabled)
 
     def create_root_task(
         self,
@@ -247,9 +254,23 @@ class KernelCommandBus:
         return self.store.enqueue_dispatches(payloads, now_ms=now_ms)
 
     def control(self, command: Mapping[str, object]) -> dict[str, object]:
+        if not self.runtime_effects_enabled:
+            return {
+                "kernelReceipt": self.store.apply_control_command(command),
+                "runtimeReceipts": [],
+                "runtimeCancelFailures": {},
+            }
         return self.worker.apply_control_command(command)
 
     def cancel_root(self, root_id: str) -> dict[str, object]:
+        if not self.runtime_effects_enabled:
+            return {
+                "kernelReceipt": self.store.cancel_root(
+                    root_id,
+                    now_ms=self.worker.clock_ms(),
+                ),
+                "runtimeReceipts": [],
+            }
         return self.worker.cancel_root(root_id)
 
     def commit(

@@ -143,6 +143,7 @@ class AgentService:
         wake_scheduler_enabled: bool = False,
         wake_scheduler_poll_seconds: float = 1.0,
         room_kernel_mode: KernelMode = "off",
+        room_kernel_worker_enabled: bool = True,
         room_runner_secrets: Mapping[str, bytes | str] | None = None,
         room_delivery_gate_enforcement: bool = False,
         room_artifact_hash_provider: Callable[[str], str] | None = None,
@@ -310,6 +311,9 @@ class AgentService:
             for signer_id, key in (collaboration_profile_signers or {}).items()
         }
         self._room_kernel_poll_seconds = room_kernel_poll_seconds
+        self._room_kernel_worker_enabled = bool(
+            room_kernel_worker_enabled
+        )
         self.observations = ObservationHub(db_path)
         self.room_events = AgentRoomEventHub(self.rooms)
         self.room_public_timeline = RoomPublicTimelineProjector(
@@ -631,7 +635,8 @@ class AgentService:
             pending_turns=self._pending_room_turn_by_session,
             user_priority_sessions=self._room_user_priority_sessions,
         )
-        self.room_kernel_worker_loop.start()
+        if self._room_kernel_worker_enabled:
+            self.room_kernel_worker_loop.start()
 
     def bind_approval_executor(
         self,
@@ -2893,7 +2898,11 @@ class AgentService:
             invalidate_room_approvals=self.sessions.invalidate_room_approvals,
             learning_observer=self.room_kernel_runtime.record_learning_signal,
         )
-        self.room_kernel_commands = KernelCommandBus(self.room_kernel, self.room_kernel_worker)
+        self.room_kernel_commands = KernelCommandBus(
+            self.room_kernel,
+            self.room_kernel_worker,
+            runtime_effects_enabled=self._room_kernel_worker_enabled,
+        )
         self.room_kernel_worker_loop = RoomKernelWorkerLoop(
             self.room_kernel_worker,
             on_change=self._sync_all_room_kernel_projections,
@@ -3287,6 +3296,7 @@ def agent_service_from_environment(
     project: str = "",
     memory_embedding_provider: EmbeddingProvider | None = None,
     wake_scheduler_enabled: bool = True,
+    room_kernel_worker_enabled: bool = True,
 ) -> AgentService:
     room_kernel_mode = _room_kernel_mode_from_environment()
     return AgentService(
@@ -3300,6 +3310,7 @@ def agent_service_from_environment(
         memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
         room_kernel_mode=room_kernel_mode,
+        room_kernel_worker_enabled=room_kernel_worker_enabled,
         room_runner_secrets=_room_runner_secrets_from_provider(),
         room_delivery_gate_enforcement=_room_delivery_gate_enforcement(room_kernel_mode),
         room_artifact_hash_provider=_room_artifact_hash_provider_from_environment(),
@@ -3342,6 +3353,7 @@ def agent_service_from_settings(
     project: str = "",
     memory_embedding_provider: EmbeddingProvider | None = None,
     wake_scheduler_enabled: bool = True,
+    room_kernel_worker_enabled: bool = True,
 ) -> AgentService:
     runtime_config = pi_runtime_config_from_settings(settings)
     agent = settings.get("agent") if isinstance(settings.get("agent"), Mapping) else {}
@@ -3373,6 +3385,7 @@ def agent_service_from_settings(
         memory_embedding_provider=memory_embedding_provider,
         wake_scheduler_enabled=wake_scheduler_enabled,
         room_kernel_mode=room_kernel_mode,
+        room_kernel_worker_enabled=room_kernel_worker_enabled,
         room_runner_secrets=_room_runner_secrets_from_provider(),
         room_delivery_gate_enforcement=_room_delivery_gate_enforcement(room_kernel_mode),
         room_artifact_hash_provider=_room_artifact_hash_provider_from_environment(),

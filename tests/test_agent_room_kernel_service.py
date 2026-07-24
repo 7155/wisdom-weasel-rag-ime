@@ -148,6 +148,22 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.service.close()
         self.tmp.cleanup()
 
+    def test_passive_service_does_not_start_room_runtime_worker(self) -> None:
+        passive = AgentService(
+            db_path=self.root / "passive.sqlite",
+            runtime_factory=KernelRuntimeFactory(self.root / "passive"),
+            room_kernel_mode="cohort",
+            room_kernel_worker_enabled=False,
+            room_kernel_poll_seconds=0.01,
+        )
+        try:
+            self.assertFalse(passive.room_kernel_worker_loop.running)
+            self.assertFalse(
+                passive.room_kernel_commands.runtime_effects_enabled
+            )
+        finally:
+            passive.close()
+
     def _seed(self) -> None:
         self.service.room_kernel.create_root(
             {
