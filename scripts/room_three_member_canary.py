@@ -50,12 +50,28 @@ EXPECTED_SKILLS = {
 EXPECTED_INTENTS = ("execute", "review", "close")
 SESSION_CONTINUITY_PROMPT = "SESSION-CONTINUITY-AFTER-ROOM"
 SESSION_CONTINUITY_REPLY = "SESSION-CONTINUITY-OK"
+DEFAULT_WORKFLOW_TIMEOUT_MULTIPLIER = 3.0
 _PROJECT_MEMORY_SIGNAL_GROUPS = (
     ("代码任务",),
     ("最小改动", "最小修改"),
     ("测试",),
     ("交付", "证据"),
 )
+
+
+def workflow_timeout_seconds(args: argparse.Namespace) -> float:
+    """Keep one Provider turn and the whole collaboration on separate clocks."""
+
+    explicit = getattr(args, "workflow_timeout", None)
+    if explicit is not None:
+        value = float(explicit)
+        if value <= 0:
+            raise ValueError("workflow_timeout must be positive")
+        return value
+    return max(
+        float(args.turn_timeout),
+        float(args.turn_timeout) * DEFAULT_WORKFLOW_TIMEOUT_MULTIPLIER,
+    )
 
 
 def _is_useful_project_memory(block: str) -> bool:
@@ -1420,7 +1436,7 @@ def run(
             root_id,
             requester=requester,
             sessions=session_ids,
-            timeout=args.turn_timeout,
+            timeout=workflow_timeout_seconds(args),
         )
     except BaseException:
         cancel_root(

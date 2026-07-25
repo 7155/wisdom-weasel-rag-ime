@@ -766,6 +766,90 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             ["workspace_read"],
         )
 
+    def test_prompt_governance_accepts_atomic_batch_tool_load_receipts(self) -> None:
+        cards = "\n".join(
+            json.dumps(
+                {
+                    "name": name,
+                    "when": ["当前步骤需要"],
+                    "notFor": ["schema 已激活"],
+                    "input": "精确参数",
+                    "output": "工具结果",
+                    "does": "执行工作区操作。",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            for name in ("workspace_read", "workspace_shell")
+        )
+        prompt = (
+            "当前受管 Room Dispatch 已授权执行"
+            "\n<skill_capability_families></skill_capability_families>"
+            "\n<product_tool_capability_families>"
+            "</product_tool_capability_families>"
+            "\n<available_skills></available_skills>"
+            f"\n<available_product_tools>{cards}"
+            "</available_product_tools>"
+        )
+        messages = [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "name": "tool_load",
+                        "arguments": {
+                            "names": ["workspace_read", "workspace_shell"]
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "toolResult",
+                "toolName": "tool_load",
+                "details": {
+                    "schemaVersion": "rag-ime.tool-load-batch.v1",
+                    "tools": [
+                        {
+                            "tool": {"name": "workspace_read"},
+                            "disclosed": True,
+                        },
+                        {
+                            "tool": {"name": "workspace_shell"},
+                            "disclosed": True,
+                        },
+                    ],
+                },
+            },
+        ]
+        context = {
+            "modelCalls": [
+                _model_call(
+                    index=11,
+                    system_prompt=prompt,
+                    messages=messages,
+                    tools=[
+                        {"name": "tool_load"},
+                        {"name": "workspace_read"},
+                        {"name": "workspace_shell"},
+                    ],
+                    previous_messages=None,
+                )
+            ]
+        }
+
+        evidence = CANARY.provider_prompt_governance_evidence(context, set())
+
+        self.assertTrue(
+            evidence["activeDeferredMutuallyExclusiveEveryCall"]
+        )
+        self.assertEqual(evidence["activeDeferredToolOverlapNames"], [])
+        self.assertEqual(
+            evidence["historicalActivatedToolCardNames"],
+            ["workspace_read", "workspace_shell"],
+        )
+        self.assertTrue(evidence["initialProductSchemasHaveLoadReceipts"])
+
     def test_prompt_governance_detects_duplicate_original_requirement_projection(self) -> None:
         original = "原始需求只应进入 Provider 上下文一次"
         clean_dispatch = "\n".join(

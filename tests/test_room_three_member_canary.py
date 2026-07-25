@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,24 @@ SPEC.loader.exec_module(CANARY)
 
 
 class RoomThreeMemberCanaryTest(unittest.TestCase):
+    def test_workflow_timeout_is_distinct_from_one_provider_turn(self) -> None:
+        self.assertEqual(
+            CANARY.workflow_timeout_seconds(
+                SimpleNamespace(turn_timeout=300, workflow_timeout=None)
+            ),
+            900,
+        )
+        self.assertEqual(
+            CANARY.workflow_timeout_seconds(
+                SimpleNamespace(turn_timeout=300, workflow_timeout=480)
+            ),
+            480,
+        )
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            CANARY.workflow_timeout_seconds(
+                SimpleNamespace(turn_timeout=300, workflow_timeout=0)
+            )
+
     def test_quiescence_waits_only_for_target_sessions(self) -> None:
         statuses = iter(
             [

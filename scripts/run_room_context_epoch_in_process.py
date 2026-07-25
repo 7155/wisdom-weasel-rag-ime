@@ -878,6 +878,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                     "workspace": workspace,
                     "pi_session_dir": runtime.session_dir,
                     "turn_timeout": args.turn_timeout,
+                    "workflow_timeout": args.workflow_timeout,
                     "participant_roles": participant_roles,
                     "thinking_level": (
                         str(args.thinking_level or "").strip()
@@ -1085,6 +1086,15 @@ def parse_args() -> argparse.Namespace:
         help="Optional private diagnostic copy retained only when the canary fails",
     )
     parser.add_argument("--turn-timeout", type=float, default=240)
+    parser.add_argument(
+        "--workflow-timeout",
+        type=float,
+        help=(
+            "Absolute timeout for the full three-member collaboration. "
+            "Defaults to three times --turn-timeout so one Provider-call "
+            "budget is not reused as the A/B/C workflow deadline."
+        ),
+    )
     parser.add_argument("--epochs", type=int, choices=(1, 2, 3), default=1)
     parser.add_argument("--workload-file", type=Path, action="append")
     parser.add_argument(

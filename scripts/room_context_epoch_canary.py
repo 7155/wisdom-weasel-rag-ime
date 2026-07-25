@@ -611,12 +611,19 @@ def _loaded_tool_result_names(messages: list[Any]) -> set[str]:
             names.add(str(tool["name"]))
         tools = details.get("tools")
         if isinstance(tools, list):
-            names.update(
-                str(item["name"])
-                for item in tools
-                if isinstance(item, dict)
-                and isinstance(item.get("name"), str)
-            )
+            for item in tools:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                if isinstance(name, str):
+                    names.add(name)
+                    continue
+                nested_tool = item.get("tool")
+                if (
+                    isinstance(nested_tool, dict)
+                    and isinstance(nested_tool.get("name"), str)
+                ):
+                    names.add(str(nested_tool["name"]))
     return names
 
 
@@ -922,17 +929,9 @@ def provider_prompt_governance_evidence(
             candidate_messages = first_provider_context.get("messages")
             if isinstance(candidate_messages, list):
                 first_provider_messages = candidate_messages
-    loaded_before_first_capture = {
-        str(details["tool"]["name"])
-        for message in first_provider_messages
-        if isinstance(message, dict)
-        and message.get("role") == "toolResult"
-        and message.get("toolName") == "tool_load"
-        and isinstance((details := message.get("details")), dict)
-        and details.get("disclosed") is True
-        and isinstance(details.get("tool"), dict)
-        and isinstance(details["tool"].get("name"), str)
-    }
+    loaded_before_first_capture = _loaded_tool_result_names(
+        first_provider_messages
+    )
     governed_before_first_capture = (
         governed_tool_set & initial_product_tools
     )
