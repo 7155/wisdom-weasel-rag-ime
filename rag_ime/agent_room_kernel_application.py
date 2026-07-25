@@ -1016,8 +1016,6 @@ class RoomKernelApplicationService:
                 ).hexdigest(),
                 created_at_ms=int(commit.get("createdAtMs") or 0),
             )
-        if receipt.get("details", {}).get("childDispatchId"):
-            self.wake_worker()
         post = proposal
         if post is not None and receipt.get("status") == "applied":
             post, _ = self.context.publish_post(post)
@@ -1050,6 +1048,11 @@ class RoomKernelApplicationService:
                 ),
             )
         self.projection.sync_room(room_id)
+        if receipt.get("status") == "applied":
+            # A child Dispatch may depend on this Commit's public Room fact.
+            # Wake only after the context ledger and UI projection can both
+            # expose that fact; waking earlier races the closer's next prompt.
+            self.wake_worker()
         if _receipt_completes_root_candidate(receipt):
             # Reuse the canonical finalization authority. Parallel commits stay
             # running until the last active Dispatch makes the Root quiescent.

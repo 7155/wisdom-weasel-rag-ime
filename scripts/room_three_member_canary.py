@@ -9,7 +9,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, NamedTuple, Sequence
 
 from room_context_epoch_canary import (
     JsonRequester,
@@ -25,7 +25,9 @@ from room_context_epoch_canary import (
 )
 from room_project_task_canary import (
     MISSING_READ_PATH,
+    README_SOURCE,
     TEST_COMMAND,
+    TEST_SOURCE,
     _approved_project_source,
     _independent_project_verification,
 )
@@ -57,6 +59,167 @@ _PROJECT_MEMORY_SIGNAL_GROUPS = (
     ("测试",),
     ("交付", "证据"),
 )
+NATURAL_REQUEST_STYLE = "natural"
+SCRIPTED_REQUEST_STYLE = "scripted"
+_NATURAL_REQUEST_FORBIDDEN_TERMS = (
+    "room_state",
+    "room_post",
+    "room_commit",
+    "room_collaborate",
+    "skill_load",
+    "tool_load",
+    "workspace_list",
+    "workspace_search",
+    "workspace_read",
+    "workspace_patch",
+    "workspace_shell",
+    "participantRef",
+    "evidenceRef",
+    "acceptanceAliases",
+    "/usr/bin/python3",
+)
+
+
+class CollaborationRequest(NamedTuple):
+    style: str
+    objective: str
+    expected_output: str
+    acceptance_criteria: tuple[str, ...]
+    message: str
+
+    def model_visible_text(self) -> str:
+        return "\n".join(
+            (
+                self.objective,
+                self.expected_output,
+                *self.acceptance_criteria,
+                self.message,
+            )
+        )
+
+
+def collaboration_request(
+    style: str,
+    *,
+    a_name: str,
+    b_name: str,
+    c_name: str,
+    workspace: Path,
+) -> CollaborationRequest:
+    if style == NATURAL_REQUEST_STYLE:
+        acceptance_criteria = (
+            "现有项目测试全部通过，并且交付证据能说明修改前的问题与修改后的结果。",
+            (
+                "分数归一化在空输入、正数和负数输入下均符合项目已有约定，"
+                "保持输入顺序且不修改调用方传入的数据。"
+            ),
+            "只修改必要的生产实现；现有测试和项目说明保持不变。",
+            "一位伙伴在实现期间完成独立复核，覆盖实现逻辑、边界情况和测试意图。",
+            "另一位伙伴在实现完成后独立验证最终状态，并负责最终验收。",
+            "三位伙伴的责任、复核结论和最终交付在同一个 Room 任务中可追溯。",
+        )
+        return CollaborationRequest(
+            style=style,
+            objective="三位伙伴协作修复隔离项目中的分数归一化功能。",
+            expected_output=(
+                "项目测试通过，仅必要的实现发生变化，并留下实现、独立复核和"
+                "最终验收三部分可核验证据。"
+            ),
+            acceptance_criteria=acceptance_criteria,
+            message=(
+                f"@{a_name} 请三位伙伴协作完成这个已经确认的小项目。"
+                "以工作区现有说明和测试为准，修复分数归一化功能。"
+                f"你负责实现，同时安排 {b_name} 做不阻塞你的独立复核；"
+                f"完成实现后，再由 {c_name} 负责最终验收。"
+                "只做必要改动，不修改测试或项目说明。请自行选择能力和执行方法，"
+                "在所有验收条件都有可核验证据后给出简洁交付。"
+                "能从项目中查明的问题先自行查证，只有真正需要用户决定的取舍再询问。"
+            ),
+        )
+    if style != SCRIPTED_REQUEST_STYLE:
+        raise ValueError(f"unsupported collaboration request style: {style}")
+
+    acceptance_criteria = (
+        (
+            f"A 先用 workspace_read 读取不存在的 {MISSING_READ_PATH} 一次并失败，"
+            "不得同参数重试；随后读取 calculator.py 与 test_calculator.py"
+        ),
+        (
+            f"A 修改前运行 {TEST_COMMAND} 得到非零退出，再仅修改 calculator.py，"
+            "修改后同一命令退出码为 0"
+        ),
+        (
+            f"A 在实现前用 room_collaborate 点名 B 做只读测试意图复核，然后继续自己的实现；"
+            f"完成后用 room_post 公开 {MARKERS['A']}，再用一次 room_commit 正式交给 C 验收"
+        ),
+        (
+            "B 作为并行 child Task 独立读取 calculator.py 与 test_calculator.py，"
+            f"不得调用 workspace_patch 或 workspace_shell；公开 {MARKERS['B']} 后 deliver 自己的 Task"
+        ),
+        (
+            f"C 独立读取两份文件并运行 {TEST_COMMAND} 成功，全程不得调用 workspace_patch；"
+            f"公开 {MARKERS['C']}"
+        ),
+        (
+            "同一个 Root 内只有 D1(A,execute)，D1 用 room_collaborate 派生 D2(B,review) 后继续，"
+            "再用正式 handoff 从 D1 派生 D3(C,close)；"
+            "三人分别调用 room_state、room_post、room_commit，最终 deliver 覆盖全部验收条件"
+        ),
+    )
+    all_acceptance_aliases = [
+        f"AC-{index}"
+        for index in range(1, len(acceptance_criteria) + 1)
+    ]
+    return CollaborationRequest(
+        style=style,
+        objective="THREE-MEMBER-ROOM-CANARY：三成员完成、复核并验收隔离项目",
+        expected_output=(
+            "只修改 calculator.py；A 一边实现一边点名 B 做并行只读复核，"
+            "A 再正式交给 C 独立验收；公开三条唯一 RoomPost 并由 C 完成最终 deliver"
+        ),
+        acceptance_criteria=acceptance_criteria,
+        message=(
+            f"@{a_name} 执行 THREE-MEMBER-ROOM-CANARY。先调用 room_state 一次，"
+            f"从返回的成员列表按 displayName 找到并行审查员 {b_name} 和最终验收者 {c_name}。"
+            "精确加载 room_collaborate，并只调用一次：targetParticipantRef 使用 B 的 participantRef，"
+            'intent=review，acceptance=["AC-4"]；objective 必须要求 B 先 room_state，'
+            "再独立加载 workspace_read 并读取 calculator.py 与 test_calculator.py，"
+            "不得调用 workspace_patch 或 workspace_shell；随后 room_post 必须 kind=evidence，content 以 "
+            f"{MARKERS['B']} 开头；最后 room_commit decision=deliver，summary={COMMIT_RESULTS['B']}，"
+            "evidence 使用 B 当前 Task 的 AC 别名与 workspace_read 返回的 evidenceRef，residualRisks=[]。"
+            "expectedOutput 必须写明 B 交付只读测试意图复核与文件证据。"
+            "room_collaborate 返回后你必须继续当前 Dispatch，不得等待 B，也不得把它当责任移交。"
+            f"精确加载 workspace_read，只读取不存在的 {workspace / MISSING_READ_PATH} 一次，"
+            "收到失败后不得同参数重试；再加载 workspace_list 查看目录，加载 workspace_search 搜索 "
+            "ROOM_PROJECT_TASK，然后读取 calculator.py 和 test_calculator.py。"
+            f"加载 workspace_shell 并只运行 {TEST_COMMAND}，allowNetwork=false；工作区托管会在范围内自动执行，"
+            "确认修改前测试非零退出；再加载 workspace_patch，只修改 calculator.py 实现 "
+            "normalize_scores；随后再次运行同一测试命令，确认退出码为 0。"
+            f"调用 room_post，kind=evidence，content 必须以 {MARKERS['A']} 开头，只写公开结果。"
+            "然后只调用一次 room_commit：decision=handoff，"
+            f"summary={COMMIT_RESULTS['A']}，evidence 覆盖 AC-1、AC-2、AC-3 并只引用成功工具的 "
+            f"evidenceRef，residualRisks 写明由 C 最终验收；targetParticipantRef 必须使用 "
+            f"room_state 中 {c_name} 的 participantRef，intent=close，"
+            f"acceptanceAliases={json.dumps(all_acceptance_aliases, ensure_ascii=False)}。"
+            "nextTask 必须要求 C："
+            "先 room_state，并保留它返回的状态 evidenceRef 和 AC-1 至 AC-4 "
+            "各自的已接受 evidenceRefs；独立加载 workspace_read 并读取 "
+            "calculator.py、test_calculator.py；"
+            f"运行 {TEST_COMMAND}，不得调用 workspace_patch，room_post kind=evidence 且以 {MARKERS['C']} 开头，"
+            f"最后 room_commit decision=deliver、summary={COMMIT_RESULTS['C']}，"
+            "evidence 中 AC-1 至 AC-4 只引用 room_state 对应别名返回的已接受 "
+            "evidenceRefs，AC-5 只引用 C 自己成功的读取与测试 evidenceRef，"
+            "AC-6 引用 room_state 本次状态读取的 evidenceRef；不得引用 postRef，"
+            "residualRisks=[]。"
+            "handoff 的 expectedOutput 必须写明 C 交付独立验收证据并关闭 Root。"
+            "每次 room_commit 后立即结束本轮。"
+        ),
+    )
+
+
+def natural_request_leaks(request: CollaborationRequest) -> list[str]:
+    text = request.model_visible_text()
+    return sorted(term for term in _NATURAL_REQUEST_FORBIDDEN_TERMS if term in text)
 
 
 def workflow_timeout_seconds(args: argparse.Namespace) -> float:
@@ -205,6 +368,60 @@ def _public_posts_from_timeline_snapshot(
     )
 
 
+def natural_public_post_checks(
+    public_posts: list[dict[str, Any]],
+    *,
+    posts_by_member: Mapping[str, list[dict[str, Any]]],
+    timeline_truncated: object,
+) -> dict[str, bool]:
+    """Require one terminal Post per member without duplicating its content."""
+
+    terminal_summary_not_double_posted = all(
+        {
+            " ".join(str(item.get("content") or "").split())
+            for item in posts_by_member[member]
+            if isinstance(item.get("publicationSource"), Mapping)
+            and item["publicationSource"].get("kind") == "room_post"
+        }.isdisjoint(
+            {
+                " ".join(str(item.get("content") or "").split())
+                for item in posts_by_member[member]
+                if isinstance(item.get("publicationSource"), Mapping)
+                and item["publicationSource"].get("kind") == "room_commit"
+            }
+        )
+        for member in posts_by_member
+    )
+    return {
+        "timelineSnapshotComplete": timeline_truncated is False,
+        "uniquePostIds": len(
+            {
+                str(item.get("postId") or "")
+                for item in public_posts
+                if str(item.get("postId") or "")
+            }
+        )
+        == len(public_posts),
+        "eachMemberPublished": all(
+            posts_by_member[member] for member in posts_by_member
+        ),
+        "oneTerminalPostPerMember": all(
+            sum(
+                isinstance(item.get("publicationSource"), Mapping)
+                and item["publicationSource"].get("kind") == "room_commit"
+                for item in posts_by_member[member]
+            )
+            == 1
+            for member in ("A", "B", "C")
+        ),
+        "terminalSummaryNotDoublePosted": terminal_summary_not_double_posted,
+        "postsRemainReadable": all(
+            0 < len(str(item.get("content") or "")) <= 2400
+            for item in public_posts
+        ),
+    }
+
+
 def wait_for_three_member_settlement(
     base_url: str,
     room_id: str,
@@ -281,7 +498,6 @@ def wait_for_three_member_settlement(
             }
         if last["rootState"] in {
             "blocked",
-            "waiting",
             "completed",
             "failed",
             "cancelled",
@@ -403,6 +619,135 @@ def managed_approval_checks(
         ),
         "receiptsPresent": all(
             isinstance(item.get("receipt"), dict)
+            for values in approvals.values()
+            for item in values
+        ),
+    }
+
+
+def _approval_command(item: Mapping[str, Any]) -> str:
+    preview = item.get("preview")
+    action = (
+        preview.get("actionPayload")
+        if isinstance(preview, Mapping)
+        else None
+    )
+    return (
+        str(action.get("command") or "").strip()
+        if isinstance(action, Mapping)
+        else ""
+    )
+
+
+def _test_command_states(
+    approvals: Mapping[str, list[dict[str, Any]]],
+    member: str,
+) -> list[str]:
+    return [
+        str(item.get("state") or "")
+        for item in approvals.get(member, [])
+        if item.get("toolId") == "workspace_shell"
+        and _approval_command(item) == TEST_COMMAND
+    ]
+
+
+def _workspace_shell_commands(
+    approvals: Mapping[str, list[dict[str, Any]]],
+) -> list[str]:
+    return [
+        command
+        for values in approvals.values()
+        for item in values
+        if item.get("toolId") == "workspace_shell"
+        if (command := _approval_command(item))
+    ]
+
+
+def _is_standalone_sleep_command(command: str) -> bool:
+    parts = command.strip().split()
+    if len(parts) != 2 or parts[0] not in {"sleep", "/bin/sleep", "/usr/bin/sleep"}:
+        return False
+    try:
+        float(parts[1])
+    except ValueError:
+        return False
+    return True
+
+
+def natural_managed_approval_checks(
+    approvals: dict[str, list[dict[str, Any]]],
+) -> dict[str, bool]:
+    """Validate policy and effects without requiring one scripted call list."""
+
+    a_test_states = _test_command_states(approvals, "A")
+    c_test_states = _test_command_states(approvals, "C")
+    shell_commands = _workspace_shell_commands(approvals)
+    a_patches = [
+        item
+        for item in approvals.get("A", [])
+        if item.get("toolId") == "workspace_patch"
+    ]
+    return {
+        "aRedGreenTestObserved": (
+            "failed" in a_test_states
+            and "applied" in a_test_states
+            and a_test_states.index("failed") < a_test_states.index("applied")
+        ),
+        "aSingleAppliedPatch": (
+            sum(item.get("state") == "applied" for item in a_patches) == 1
+            and len(a_patches) <= 2
+        ),
+        "reviewersDidNotPatch": all(
+            item.get("toolId") != "workspace_patch"
+            for member in ("B", "C")
+            for item in approvals.get(member, [])
+        ),
+        "noShellPatchWrapper": all(
+            "apply_patch" not in command
+            for command in shell_commands
+        ),
+        "noStandaloneSleepPolling": all(
+            not _is_standalone_sleep_command(command)
+            for command in shell_commands
+        ),
+        "cFinalTestObserved": "applied" in c_test_states,
+        "onlyWorkspaceActions": all(
+            item.get("toolId") in {"workspace_patch", "workspace_shell"}
+            for values in approvals.values()
+            for item in values
+        ),
+        "shellNetworkDenied": all(
+            item["receipt"].get("networkAllowed") is False
+            for values in approvals.values()
+            for item in values
+            if item.get("toolId") == "workspace_shell"
+            and isinstance(item.get("receipt"), Mapping)
+            and (
+                "networkAllowed" in item["receipt"]
+                or item["receipt"].get("mutationApplied") is True
+                or "exitCode" in item["receipt"]
+            )
+        )
+        and all(
+            not isinstance(item.get("receipt"), Mapping)
+            or item["receipt"].get("networkAllowed") is not True
+            for values in approvals.values()
+            for item in values
+            if item.get("toolId") == "workspace_shell"
+        ),
+        "policyOwned": all(
+            str(item.get("decidedBy") or "")
+            == "execution-policy:workspace_managed"
+            for values in approvals.values()
+            for item in values
+        ),
+        "nothingPending": all(
+            str(item.get("state") or "") != "pending"
+            for values in approvals.values()
+            for item in values
+        ),
+        "receiptsPresent": all(
+            isinstance(item.get("receipt"), Mapping)
             for values in approvals.values()
             for item in values
         ),
@@ -584,6 +929,56 @@ def _member_tool_receipts(
             for tool in tools
         }
     return result
+
+
+def repeated_failed_invocation_commands(
+    db_path: Path,
+    *,
+    session_ids: Mapping[str, str],
+    dispatches: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Find exact failed command replays, not distinct failures of one Tool."""
+
+    repeated: list[dict[str, Any]] = []
+    with sqlite3.connect(db_path) as connection:
+        for index, member in enumerate(("A", "B", "C")):
+            rows = connection.execute(
+                """
+                SELECT invocation.canonical_tool_name,
+                       invocation.command_hash,
+                       COUNT(DISTINCT invocation.receipt_id)
+                FROM room_v2_tool_invocation_receipts invocation
+                JOIN room_v2_capability_manifests manifest
+                  ON manifest.manifest_id = invocation.manifest_id
+                 AND manifest.manifest_hash = invocation.manifest_hash
+                JOIN room_v2_capability_runtime_bindings binding
+                  ON binding.manifest_id = manifest.manifest_id
+                 AND binding.session_id = ?
+                JOIN room_v2_tool_execution_receipts execution
+                  ON execution.invocation_receipt_id = invocation.receipt_id
+                 AND execution.status = 'failed'
+                WHERE manifest.dispatch_id = ?
+                GROUP BY invocation.canonical_tool_name,
+                         invocation.command_hash
+                HAVING COUNT(DISTINCT invocation.receipt_id) > 1
+                ORDER BY invocation.canonical_tool_name,
+                         invocation.command_hash
+                """,
+                (
+                    session_ids[member],
+                    str(dispatches[index].get("dispatchId") or ""),
+                ),
+            ).fetchall()
+            repeated.extend(
+                {
+                    "member": member,
+                    "toolName": str(row[0]),
+                    "commandHash": str(row[1]),
+                    "count": int(row[2]),
+                }
+                for row in rows
+            )
+    return repeated
 
 
 def loaded_tool_receipt_evidence(
@@ -905,6 +1300,68 @@ def tool_workload_checks(
     return checks
 
 
+def natural_tool_workload_checks(
+    receipts: dict[str, dict[str, dict[str, Any]]],
+    *,
+    approvals: Mapping[str, list[dict[str, Any]]],
+    repeated_failed_commands: Sequence[Mapping[str, Any]],
+) -> dict[str, bool]:
+    """Validate outcomes without prescribing discovery calls in the request."""
+
+    a = receipts["A"]
+    a_patch = _statuses(a["workspace_patch"])
+    b = receipts["B"]
+    c = receipts["C"]
+    a_test_states = _test_command_states(approvals, "A")
+    c_test_states = _test_command_states(approvals, "C")
+    checks = {
+        "aReadProject": a["workspace_read"]["appliedExecutionCount"] >= 2,
+        "aReproducedThenFixed": (
+            "failed" in a_test_states
+            and "applied" in a_test_states
+            and a_test_states.index("failed") < a_test_states.index("applied")
+        ),
+        "aChangedImplementationOnce": (
+            1 <= len(a_patch) <= 2
+            and a_patch[-1] == "applied"
+            and a_patch.count("applied") == 1
+        ),
+        "aStartedOneParallelReview": _statuses(a["room_collaborate"])
+        == ["applied"],
+        # room_commit is the one terminal publication path. A separate
+        # room_post is optional for genuine progress, never required merely
+        # to duplicate the terminal handoff.
+        "aPublishedAndHandedOff": _bounded_commit_statuses(
+            a["room_commit"]
+        ),
+        "bReviewedIndependently": (
+            b["workspace_read"]["appliedExecutionCount"] >= 2
+            and b["workspace_patch"]["invocationCount"] == 0
+            and b["room_collaborate"]["invocationCount"] == 0
+        ),
+        "bPublishedAndCommitted": _bounded_commit_statuses(
+            b["room_commit"]
+        ),
+        "cVerifiedIndependently": (
+            c["workspace_read"]["appliedExecutionCount"] >= 2
+            and "applied" in c_test_states
+            and c["workspace_patch"]["invocationCount"] == 0
+            and c["room_collaborate"]["invocationCount"] == 0
+        ),
+        "cPublishedAndDelivered": (
+            _bounded_commit_statuses(c["room_commit"])
+        ),
+        "noRepeatedFailedToolLoop": not repeated_failed_commands,
+        "everyInvocationHasOneLoadReceipt": all(
+            evidence["invocationCount"] == 0
+            or len(evidence["loadReceiptIds"]) == 1
+            for member in receipts.values()
+            for evidence in member.values()
+        ),
+    }
+    return checks
+
+
 def _transcript_path(session_dir: Path, expected_sha256: str) -> Path:
     for path in sorted(session_dir.glob("*.jsonl")):
         if hashlib.sha256(path.read_bytes()).hexdigest() == expected_sha256:
@@ -1162,6 +1619,21 @@ def _user_texts(snapshot: Mapping[str, Any]) -> list[str]:
     return _role_texts(snapshot, "user")
 
 
+def _room_session_turn_visible(
+    snapshot: Mapping[str, Any],
+    _request: CollaborationRequest,
+) -> bool:
+    """The Agent window exposes the same Session's Room assistant turn.
+
+    The original Room requirement belongs to the managed Room projection, not
+    to a copied user transcript entry. Requiring the model to echo that text
+    made this check a false positive for verbose models and a false negative
+    for concise ones.
+    """
+
+    return bool(_assistant_texts(snapshot))
+
+
 def _runtime_transcript_ref(db_path: Path, session_id: str) -> str:
     with sqlite3.connect(db_path) as connection:
         row = connection.execute(
@@ -1205,9 +1677,11 @@ def _session_continuity_probe(
     *,
     requester: JsonRequester,
     session_id: str,
+    participant_id: str,
     room_id: str,
     root_id: str,
     public_posts: list[dict[str, Any]],
+    request: CollaborationRequest,
 ) -> dict[str, Any]:
     before = requester(
         args.base_url,
@@ -1266,23 +1740,34 @@ def _session_continuity_probe(
     public_a_posts = [
         item
         for item in public_posts
-        if MARKERS["A"] in str(item.get("content") or "")
+        if str(item.get("authorActorRef") or "") == participant_id
+        and isinstance(item.get("publicationSource"), Mapping)
+        and item["publicationSource"].get("kind") == "room_commit"
     ]
+    public_a_marker = next(
+        (
+            str(item.get("content") or "")[:160]
+            for item in public_a_posts
+            if str(item.get("content") or "").strip()
+        ),
+        "",
+    )
     provider_mode = str(getattr(args, "provider_mode", "") or "")
     checks = {
         "sameTranscript": bool(transcript_before)
         and transcript_before == transcript_after,
-        "publicRoomDeliveryVisibleInAgentWindow": MARKERS["A"]
-        in before_serialized,
+        "roomSessionTurnVisibleInAgentWindow": _room_session_turn_visible(
+            before,
+            request,
+        ),
         "samePublicDeliveryVisibleInRoom": len(public_a_posts) == 1,
         "ordinaryPromptAccepted": accepted.get("accepted") is True,
         "ordinarySessionIdle": str(after.get("status") or "") == "idle",
         "providerSawRoomHistory": (
             SESSION_CONTINUITY_PROMPT in context_text
             and (
-                "THREE-MEMBER-ROOM-CANARY" in context_text
-                or MARKERS["A"] in context_text
-                or COMMIT_RESULTS["A"] in context_text
+                request.objective in context_text
+                or (bool(public_a_marker) and public_a_marker in context_text)
             )
         ),
         "noDuplicateContinuationPrompt": (
@@ -1312,9 +1797,12 @@ def _session_continuity_probe(
             "status": before.get("status"),
             "messageCount": len(before.get("items") or []),
             "assistantCount": prior_assistant_count,
-            "containsPrivateRoomTask": "THREE-MEMBER-ROOM-CANARY"
-            in before_serialized,
-            "containsOwnPublicPost": MARKERS["A"] in before_serialized,
+            "containsRoomSessionTurn": _room_session_turn_visible(
+                before,
+                request,
+            ),
+            "containsOwnPublicPost": bool(public_a_marker)
+            and public_a_marker in before_serialized,
         },
         "agentWindowAfter": {
             "status": after.get("status"),
@@ -1328,9 +1816,8 @@ def _session_continuity_probe(
             "turnId": debug.get("turnId"),
             "modelCallCount": len(context.get("modelCalls") or []),
             "containsRoomTaskOrDelivery": (
-                "THREE-MEMBER-ROOM-CANARY" in context_text
-                or MARKERS["A"] in context_text
-                or COMMIT_RESULTS["A"] in context_text
+                request.objective in context_text
+                or (bool(public_a_marker) and public_a_marker in context_text)
             ),
         },
         "checks": checks,
@@ -1400,33 +1887,30 @@ def run(
         for member in ("A", "B", "C")
     }
 
-    acceptance_criteria = [
-        (
-            f"A 先用 workspace_read 读取不存在的 {MISSING_READ_PATH} 一次并失败，"
-            "不得同参数重试；随后读取 calculator.py 与 test_calculator.py"
-        ),
-        (
-            f"A 修改前运行 {TEST_COMMAND} 得到非零退出，再仅修改 calculator.py，"
-            "修改后同一命令退出码为 0"
-        ),
-        (
-            f"A 在实现前用 room_collaborate 点名 B 做只读测试意图复核，然后继续自己的实现；"
-            f"完成后用 room_post 公开 {MARKERS['A']}，再用一次 room_commit 正式交给 C 验收"
-        ),
-        (
-            "B 作为并行 child Task 独立读取 calculator.py 与 test_calculator.py，"
-            f"不得调用 workspace_patch 或 workspace_shell；公开 {MARKERS['B']} 后 deliver 自己的 Task"
-        ),
-        (
-            f"C 独立读取两份文件并运行 {TEST_COMMAND} 成功，全程不得调用 workspace_patch；"
-            f"公开 {MARKERS['C']}"
-        ),
-        (
-            "同一个 Root 内只有 D1(A,execute)，D1 用 room_collaborate 派生 D2(B,review) 后继续，"
-            "再用正式 handoff 从 D1 派生 D3(C,close)；"
-            "三人分别调用 room_state、room_post、room_commit，最终 deliver 覆盖全部验收条件"
-        ),
-    ]
+    a_name = str(members["A"]["displayName"])
+    b_name = str(members["B"]["displayName"])
+    c_name = str(members["C"]["displayName"])
+    request_style = str(
+        getattr(args, "request_style", SCRIPTED_REQUEST_STYLE)
+        or SCRIPTED_REQUEST_STYLE
+    )
+    request = collaboration_request(
+        request_style,
+        a_name=a_name,
+        b_name=b_name,
+        c_name=c_name,
+        workspace=workspace,
+    )
+    request_leaks = (
+        natural_request_leaks(request)
+        if request.style == NATURAL_REQUEST_STYLE
+        else []
+    )
+    if request_leaks:
+        raise RuntimeError(
+            "natural Room request leaks execution vocabulary: "
+            + ", ".join(request_leaks)
+        )
     work = requester(
         args.base_url,
         "POST",
@@ -1435,62 +1919,15 @@ def run(
             "currentOwnerParticipantId": participant_ids["A"],
             "createdByParticipantId": participant_ids["C"],
             "clientMessageId": f"three-member-work-{stamp}",
-            "objective": "THREE-MEMBER-ROOM-CANARY：三成员完成、复核并验收隔离项目",
-            "expectedOutput": (
-                "只修改 calculator.py；A 一边实现一边点名 B 做并行只读复核，"
-                "A 再正式交给 C 独立验收；"
-                "公开三条唯一 RoomPost 并由 C 完成最终 deliver"
-            ),
-            "acceptanceCriteria": acceptance_criteria,
+            "objective": request.objective,
+            "expectedOutput": request.expected_output,
+            "acceptanceCriteria": list(request.acceptance_criteria),
             "state": "active",
         },
     )["workItem"]
 
-    a_name = str(members["A"]["displayName"])
-    b_name = str(members["B"]["displayName"])
-    c_name = str(members["C"]["displayName"])
-    all_acceptance_aliases = [
-        f"AC-{index}"
-        for index in range(1, len(acceptance_criteria) + 1)
-    ]
-    message = (
-        f"@{a_name} 执行 THREE-MEMBER-ROOM-CANARY。先调用 room_state 一次，"
-        f"从返回的成员列表按 displayName 找到并行审查员 {b_name} 和最终验收者 {c_name}。"
-        "精确加载 room_collaborate，并只调用一次：targetParticipantRef 使用 B 的 participantRef，"
-        'intent=review，acceptance=["AC-4"]；objective 必须要求 B 先 room_state，'
-        "再独立加载 workspace_read 并读取 calculator.py 与 test_calculator.py，"
-        "不得调用 workspace_patch 或 workspace_shell；随后 room_post 必须 kind=evidence，content 以 "
-        f"{MARKERS['B']} 开头；最后 room_commit decision=deliver，summary={COMMIT_RESULTS['B']}，"
-        "evidence 使用 B 当前 Task 的 AC 别名与 workspace_read 返回的 evidenceRef，residualRisks=[]。"
-        "expectedOutput 必须写明 B 交付只读测试意图复核与文件证据。"
-        "room_collaborate 返回后你必须继续当前 Dispatch，不得等待 B，也不得把它当责任移交。"
-        f"精确加载 workspace_read，只读取不存在的 {workspace / MISSING_READ_PATH} 一次，"
-        "收到失败后不得同参数重试；再加载 workspace_list 查看目录，加载 workspace_search 搜索 "
-        "ROOM_PROJECT_TASK，然后读取 calculator.py 和 test_calculator.py。"
-        f"加载 workspace_shell 并只运行 {TEST_COMMAND}，allowNetwork=false；工作区托管会在范围内自动执行，"
-        "确认修改前测试非零退出；再加载 workspace_patch，只修改 calculator.py 实现 "
-        "normalize_scores；随后再次运行同一测试命令，确认退出码为 0。"
-        f"调用 room_post，kind=evidence，content 必须以 {MARKERS['A']} 开头，只写公开结果。"
-        "然后只调用一次 room_commit：decision=handoff，"
-        f"summary={COMMIT_RESULTS['A']}，evidence 覆盖 AC-1、AC-2、AC-3 并只引用成功工具的 "
-        f"evidenceRef，residualRisks 写明由 C 最终验收；targetParticipantRef 必须使用 "
-        f"room_state 中 {c_name} 的 participantRef，intent=close，"
-        f"acceptanceAliases={json.dumps(all_acceptance_aliases, ensure_ascii=False)}。"
-        "nextTask 必须要求 C："
-        "先 room_state，并保留它返回的状态 evidenceRef 和 AC-1 至 AC-4 "
-        "各自的已接受 evidenceRefs；独立加载 workspace_read 并读取 "
-        "calculator.py、test_calculator.py；"
-        f"运行 {TEST_COMMAND}，不得调用 workspace_patch，room_post kind=evidence 且以 {MARKERS['C']} 开头，"
-        f"最后 room_commit decision=deliver、summary={COMMIT_RESULTS['C']}，"
-        "evidence 中 AC-1 至 AC-4 只引用 room_state 对应别名返回的已接受 "
-        "evidenceRefs，AC-5 只引用 C 自己成功的读取与测试 evidenceRef，"
-        "AC-6 引用 room_state 本次状态读取的 evidenceRef；不得引用 postRef，"
-        "residualRisks=[]。"
-        "handoff 的 expectedOutput 必须写明 C 交付独立验收证据并关闭 Root。"
-        "每次 room_commit 后立即结束本轮。"
-    )
     message_payload = {
-        "message": message,
+        "message": request.message,
         "clientMessageId": f"three-member-message-{stamp}",
         "workItemId": work["id"],
     }
@@ -1594,13 +2031,34 @@ def run(
         tasks=terminal_tasks,
         dispatches=ordered_terminal_dispatches,
     )
-    tool_checks = tool_workload_checks(tool_receipts)
     approvals = managed_approval_evidence(
         args.base_url,
         requester=requester,
         session_ids=session_ids,
     )
-    approval_checks = managed_approval_checks(approvals)
+    repeated_failed_commands = (
+        repeated_failed_invocation_commands(
+            args.db_path,
+            session_ids=session_ids,
+            dispatches=ordered_terminal_dispatches,
+        )
+        if request.style == NATURAL_REQUEST_STYLE
+        else []
+    )
+    tool_checks = (
+        natural_tool_workload_checks(
+            tool_receipts,
+            approvals=approvals,
+            repeated_failed_commands=repeated_failed_commands,
+        )
+        if request.style == NATURAL_REQUEST_STYLE
+        else tool_workload_checks(tool_receipts)
+    )
+    approval_checks = (
+        natural_managed_approval_checks(approvals)
+        if request.style == NATURAL_REQUEST_STYLE
+        else managed_approval_checks(approvals)
+    )
     skill_receipts = skill_receipt_evidence(
         args.db_path,
         ordered_terminal_dispatches,
@@ -1616,17 +2074,6 @@ def run(
             and value["items"][0]["capabilityEpoch"]
             == int(ordered_terminal_dispatches[index].get("capabilityEpoch") or -1)
         )
-    before = {
-        member: debug_evidence(
-            args.base_url,
-            session_id,
-            requester=requester,
-            timeout=args.turn_timeout,
-            text_markers=MARKERS,
-            governed_tool_receipts=loaded_tool_receipts[member],
-        )
-        for member, session_id in session_ids.items()
-    }
     public_posts = _public_posts_from_timeline_snapshot(
         public_timeline_snapshot,
         root_id=root_id,
@@ -1639,35 +2086,75 @@ def run(
         ]
         for member in ("A", "B", "C")
     }
-    public_post_checks = {
-        "timelineSnapshotComplete": (
-            public_timeline_snapshot.get("truncated") is False
-        ),
-        "exactCount": len(public_posts) == 6,
-        "twoPerMember": all(len(posts_by_member[member]) == 2 for member in posts_by_member),
-        "immediateEvidencePublished": all(
-            sum(
-                item["publicationSource"].get("kind") == "room_post"
-                and MARKERS[member] in str(item.get("content") or "")
-                for item in posts_by_member[member]
+    visibility_markers = MARKERS
+    if request.style == NATURAL_REQUEST_STYLE:
+        visibility_markers = {
+            member: next(
+                (
+                    str(item.get("content") or "")[:160]
+                    for item in posts_by_member[member]
+                    if str(item.get("content") or "").strip()
+                ),
+                f"natural-room-post-{member}",
             )
-            == 1
             for member in ("A", "B", "C")
+        }
+    before = {
+        member: debug_evidence(
+            args.base_url,
+            session_id,
+            requester=requester,
+            timeout=args.turn_timeout,
+            text_markers=visibility_markers,
+            governed_tool_receipts=loaded_tool_receipts[member],
         )
-        if all(len(posts_by_member[member]) == 2 for member in posts_by_member)
-        else False,
-        "commitSummariesPublished": all(
-            sum(
-                item["publicationSource"].get("kind") == "room_commit"
-                and COMMIT_RESULTS[member] in str(item.get("content") or "")
-                for item in posts_by_member[member]
-            )
-            == 1
-            for member in ("A", "B", "C")
-        )
-        if all(len(posts_by_member[member]) == 2 for member in posts_by_member)
-        else False,
+        for member, session_id in session_ids.items()
     }
+    if request.style == NATURAL_REQUEST_STYLE:
+        public_post_checks = natural_public_post_checks(
+            public_posts,
+            posts_by_member=posts_by_member,
+            timeline_truncated=public_timeline_snapshot.get("truncated"),
+        )
+    else:
+        public_post_checks = {
+            "timelineSnapshotComplete": (
+                public_timeline_snapshot.get("truncated") is False
+            ),
+            "exactCount": len(public_posts) == 6,
+            "twoPerMember": all(
+                len(posts_by_member[member]) == 2
+                for member in posts_by_member
+            ),
+            "immediateEvidencePublished": all(
+                sum(
+                    item["publicationSource"].get("kind") == "room_post"
+                    and MARKERS[member] in str(item.get("content") or "")
+                    for item in posts_by_member[member]
+                )
+                == 1
+                for member in ("A", "B", "C")
+            )
+            if all(
+                len(posts_by_member[member]) == 2
+                for member in posts_by_member
+            )
+            else False,
+            "commitSummariesPublished": all(
+                sum(
+                    item["publicationSource"].get("kind") == "room_commit"
+                    and COMMIT_RESULTS[member] in str(item.get("content") or "")
+                    for item in posts_by_member[member]
+                )
+                == 1
+                for member in ("A", "B", "C")
+            )
+            if all(
+                len(posts_by_member[member]) == 2
+                for member in posts_by_member
+            )
+            else False,
+        }
     visibility = {
         member: value["providerRoomPostVisibility"]
         for member, value in before.items()
@@ -1756,6 +2243,14 @@ def run(
     )
     independent = _independent_project_verification(workspace)
     final_source = (workspace / "calculator.py").read_text(encoding="utf-8")
+    unchanged_project_inputs = {
+        "README.md": (workspace / "README.md").read_text(encoding="utf-8")
+        == README_SOURCE,
+        "test_calculator.py": (
+            workspace / "test_calculator.py"
+        ).read_text(encoding="utf-8")
+        == TEST_SOURCE,
+    }
     compaction = _compact_members(
         args,
         requester=requester,
@@ -1785,9 +2280,11 @@ def run(
         args,
         requester=requester,
         session_id=session_ids["A"],
+        participant_id=participant_ids["A"],
         room_id=room_id,
         root_id=root_id,
         public_posts=public_posts,
+        request=request,
     )
     terminal_receipt = finalized.get("receipt") or {}
     checks = {
@@ -1814,6 +2311,9 @@ def run(
         "privateSessionHistories": transcript["passed"] is True,
         "projectImplementationApproved": _approved_project_source(final_source),
         "independentTestsPass": independent["exitCode"] == 0,
+        "testsAndInstructionsUnchanged": all(
+            unchanged_project_inputs.values()
+        ),
         "workspaceManagedApprovalsExact": all(approval_checks.values()),
         "threeRecoveryPacketsValid": all(value["passed"] for value in compaction.values()),
         "sameSessionContinuesAfterRoom": continuity["passed"] is True,
@@ -1834,11 +2334,21 @@ def run(
                 for value in compaction.values()
             )
         )
+    if request.style == NATURAL_REQUEST_STYLE:
+        checks["naturalRequestHasNoExecutionScript"] = not request_leaks
     return {
         "schemaVersion": SCHEMA_VERSION,
         "roomId": room_id,
         "rootId": root_id,
         "workItemId": str(work["id"]),
+        "request": {
+            "style": request.style,
+            "objective": request.objective,
+            "expectedOutput": request.expected_output,
+            "acceptanceCriteria": list(request.acceptance_criteria),
+            "message": request.message,
+            "executionVocabularyLeaks": request_leaks,
+        },
         "members": {
             member: {
                 "participantId": participant_ids[member],
@@ -1859,6 +2369,7 @@ def run(
         "publicPostChecks": public_post_checks,
         "approvals": approvals,
         "approvalChecks": approval_checks,
+        "repeatedFailedToolCommands": repeated_failed_commands,
         "toolReceipts": tool_receipts,
         "loadedToolReceipts": loaded_tool_receipts,
         "toolChecks": tool_checks,
@@ -1876,6 +2387,7 @@ def run(
             "calculatorSha256": hashlib.sha256(final_source.encode("utf-8")).hexdigest(),
             "calculatorBytes": len(final_source.encode("utf-8")),
             "independentTest": independent,
+            "unchangedInputs": unchanged_project_inputs,
         },
         "checks": checks,
     }

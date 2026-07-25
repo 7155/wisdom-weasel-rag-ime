@@ -387,6 +387,13 @@ class RenderRoomProviderContextAuditTest(unittest.TestCase):
             )
             self.assertEqual(result["toolExecutionCount"], 1)
             self.assertTrue(result["checks"]["workspaceReadResultsBounded"])
+            self.assertTrue(
+                result["checks"]["roomInternalControlMetadataAbsent"]
+            )
+            self.assertNotIn(
+                "roomDynamicMetadataAbsent",
+                result["checks"],
+            )
             self.assertEqual(
                 json.loads(
                     (

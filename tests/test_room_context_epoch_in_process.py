@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,22 @@ SPEC.loader.exec_module(RUNNER)
 
 
 class RoomContextEpochInProcessTest(unittest.TestCase):
+    def test_isolated_shell_rejection_tells_the_model_not_to_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory).resolve()
+            prepared = SimpleNamespace(
+                command="git status --short",
+                cwd=workspace,
+                roots=(workspace,),
+                allow_network=False,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "do not retry"):
+                RUNNER._isolated_project_command_executor(
+                    prepared,
+                    workspace=workspace,
+                )
+
     def test_report_session_ids_cover_every_collaboration_member(self) -> None:
         report = {
             "members": {

@@ -255,7 +255,11 @@ class RoomCapabilityManifestTests(unittest.TestCase):
     def test_room_collaboration_requires_at_least_one_parent_acceptance_alias(
         self,
     ) -> None:
-        schema = room_runtime_registry()["room_collaborate"]["inputSchema"]
+        tool = room_runtime_registry()["room_collaborate"]
+        schema = tool["inputSchema"]
+        self.assertTrue(
+            any("最终验收" in value for value in tool["notFor"])
+        )
         self.assertIn("acceptance", schema["required"])
         self.assertIn(
             "不得填写当前参与者自己",
@@ -282,6 +286,9 @@ class RoomCapabilityManifestTests(unittest.TestCase):
     def test_room_commit_schema_leaves_quality_verdict_to_kernel(self) -> None:
         tool = room_runtime_registry()["room_commit"]
         schema = tool["inputSchema"]
+        self.assertTrue(
+            any("最终验收" in value for value in tool["when"])
+        )
         self.assertEqual(
             set(schema["required"]),
             {"decision", "summary", "evidence", "residualRisks"},
@@ -307,6 +314,19 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self.assertIn("仅 handoff", acceptance_aliases)
         self.assertIn("deliver", acceptance_aliases)
         self.assertIn("禁止填写", acceptance_aliases)
+        intent = schema["properties"]["intent"]["description"]
+        self.assertIn("最终验收", intent)
+        self.assertIn("必须用 close", intent)
+        self.assertIn("review", intent)
+        self.assertIn("不负责最终收口", intent)
+        self.assertIn(
+            "不要为同一终态摘要再单独 room_post",
+            schema["properties"]["publicSummary"]["description"],
+        )
+        self.assertIn(
+            "即将 room_commit",
+            " ".join(room_runtime_registry()["room_post"]["notFor"]),
+        )
 
     def test_room_commit_schema_keeps_decision_fields_mutually_exclusive(
         self,
@@ -336,6 +356,13 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             },
             {
                 **base,
+                "decision": "wait",
+                "waitingFor": "participant",
+                "waitingForParticipantRef": "P-2",
+                "resumeCondition": "成员公开复核结果",
+            },
+            {
+                **base,
                 "decision": "blocked",
                 "blocker": "缺少授权输入",
                 "attemptedAlternatives": ["检查当前配置"],
@@ -351,7 +378,17 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             {**valid[1], "blocker": "不属于 handoff"},
             {**valid[1], "acceptanceAliases": []},
             {**valid[2], "targetParticipantRef": "P-2"},
-            {**valid[3], "question": "不属于 blocked"},
+            {
+                **base,
+                "decision": "wait",
+                "waitingFor": "participant",
+                "resumeCondition": "成员公开复核结果",
+            },
+            {
+                **valid[2],
+                "waitingForParticipantRef": "P-2",
+            },
+            {**valid[4], "question": "不属于 blocked"},
         )
         for payload in invalid:
             with self.assertRaises(ContractValidationError):

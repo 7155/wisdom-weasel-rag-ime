@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from rag_ime.agent_room_kernel import RoomKernelFenceError, RoomKernelStore
+from rag_ime.agent_room_context import RoomContextLedgerStore
 from rag_ime.agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     KERNEL_COMMAND_SCHEMA_VERSION,
@@ -268,6 +269,307 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(self.store.task("task:1")["state"], "completed")
         self.assertEqual(self.store.task("task:b1")["state"], "completed")
         self.assertEqual(self.store.task("task:a2")["state"], "active")
+
+    def test_close_barrier_waits_for_peer_public_result(self) -> None:
+        self.seed(max_hops=3, criteria=())
+        self.store.create_task(
+            child_task(
+                "task:peer",
+                parent="task:1",
+                target="participant:b",
+            ),
+            now_ms=3,
+        )
+        first, peer = self.store.enqueue_dispatches(
+            (
+                dispatch(
+                    "dispatch:closer-parent",
+                    key="closer-parent",
+                    target="participant:a",
+                ),
+                dispatch(
+                    "dispatch:peer",
+                    key="peer",
+                    target="participant:b",
+                    task_id="task:peer",
+                ),
+            ),
+            now_ms=10,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:closer-parent",
+            "running",
+            now_ms=11,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:peer",
+            "running",
+            now_ms=11,
+        )
+        self.assertEqual(
+            self.store.close_barrier_dispatch_ids(
+                "dispatch:closer-parent"
+            ),
+            ["dispatch:peer"],
+        )
+        closing_dispatch = dispatch(
+            "dispatch:closer",
+            key="closer",
+            target="participant:c",
+            hop=1,
+            parent=str(first[0]["dispatchId"]),
+            task_id="task:closer",
+        )
+        closing_commit = {
+            **commit(
+                "commit:closer-parent",
+                "dispatch:closer-parent",
+            ),
+            "action": "post",
+            "postProposal": post_proposal(
+                "commit:closer-parent",
+                "dispatch:closer-parent",
+                task_id="task:1",
+                author="participant:a",
+            ),
+            "continuation": {
+                "decision": "dispatch",
+                "childTask": child_task(
+                    "task:closer",
+                    parent="task:1",
+                    target="participant:c",
+                ),
+                "childDispatch": closing_dispatch,
+                "waitForDispatchIds": [str(peer[0]["dispatchId"])],
+            },
+        }
+        self.store.apply_commit(
+            closing_commit,
+            generation=0,
+            now_ms=12,
+            post_proposal=closing_commit["postProposal"],
+        )
+        RoomContextLedgerStore(self.db_path).publish_post(
+            closing_commit["postProposal"]
+        )
+        self.assertIsNone(self.store.pending_dispatch(now_ms=13))
+
+        peer_commit = {
+            **commit(
+                "commit:peer",
+                "dispatch:peer",
+                task_id="task:peer",
+            ),
+            "action": "post",
+            "postProposal": post_proposal(
+                "commit:peer",
+                "dispatch:peer",
+                task_id="task:peer",
+                author="participant:b",
+            ),
+            "continuation": {"decision": "complete"},
+        }
+        self.store.apply_commit(
+            peer_commit,
+            generation=0,
+            now_ms=14,
+            post_proposal=peer_commit["postProposal"],
+        )
+        self.assertIsNone(self.store.pending_dispatch(now_ms=15))
+
+        RoomContextLedgerStore(self.db_path).publish_post(
+            peer_commit["postProposal"]
+        )
+        ready = self.store.pending_dispatch(now_ms=16)
+        self.assertIsNotNone(ready)
+        self.assertEqual(ready["dispatchId"], "dispatch:closer")
+
+    def test_participant_wait_resumes_once_after_exact_result_is_public(
+        self,
+    ) -> None:
+        self.seed(max_hops=3, criteria=())
+        self.store.create_task(
+            child_task(
+                "task:peer",
+                parent="task:1",
+                target="participant:b",
+            ),
+            now_ms=3,
+        )
+        self.store.enqueue_dispatches(
+            (
+                dispatch(
+                    "dispatch:waiter",
+                    key="waiter",
+                    target="participant:a",
+                ),
+                dispatch(
+                    "dispatch:peer",
+                    key="peer",
+                    target="participant:b",
+                    task_id="task:peer",
+                ),
+            ),
+            now_ms=10,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:waiter",
+            "running",
+            now_ms=11,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:peer",
+            "running",
+            now_ms=11,
+        )
+        waiting = wait_commit(
+            "commit:waiter",
+            "dispatch:waiter",
+            dependency_id="dispatch:peer",
+        )
+        self.store.apply_commit(
+            waiting,
+            generation=0,
+            now_ms=12,
+            post_proposal=waiting["postProposal"],
+        )
+        RoomContextLedgerStore(self.db_path).publish_post(
+            waiting["postProposal"]
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "waiting")
+
+        peer_commit = {
+            **commit(
+                "commit:peer",
+                "dispatch:peer",
+                task_id="task:peer",
+            ),
+            "action": "post",
+            "postProposal": post_proposal(
+                "commit:peer",
+                "dispatch:peer",
+                task_id="task:peer",
+                author="participant:b",
+            ),
+            "continuation": {"decision": "complete"},
+        }
+        receipt = self.store.apply_commit(
+            peer_commit,
+            generation=0,
+            now_ms=13,
+            post_proposal=peer_commit["postProposal"],
+        )
+        resumed = receipt["details"]["resumedDispatchIds"]
+        self.assertEqual(len(resumed), 1)
+        resume_dispatch_id = resumed[0]
+        self.assertEqual(
+            self.store.continuation("commit:waiter")[
+                "childDispatchId"
+            ],
+            resume_dispatch_id,
+        )
+        self.assertEqual(self.store.task("task:1")["state"], "active")
+        self.assertEqual(self.store.root("root:1")["state"], "running")
+        self.assertIsNone(self.store.pending_dispatch(now_ms=14))
+
+        RoomContextLedgerStore(self.db_path).publish_post(
+            peer_commit["postProposal"]
+        )
+        ready = self.store.pending_dispatch(now_ms=15)
+        self.assertIsNotNone(ready)
+        self.assertEqual(ready["dispatchId"], resume_dispatch_id)
+        replay = self.store.apply_commit(
+            peer_commit,
+            generation=0,
+            now_ms=16,
+            post_proposal=peer_commit["postProposal"],
+        )
+        self.assertEqual(replay["status"], "noop")
+        self.assertEqual(self.store.counts("root:1")["dispatches"], 3)
+
+    def test_already_finished_participant_waits_for_own_post_before_resume(
+        self,
+    ) -> None:
+        self.seed(max_hops=3, criteria=())
+        self.store.create_task(
+            child_task(
+                "task:peer",
+                parent="task:1",
+                target="participant:b",
+            ),
+            now_ms=3,
+        )
+        self.store.enqueue_dispatches(
+            (
+                dispatch(
+                    "dispatch:waiter",
+                    key="waiter",
+                    target="participant:a",
+                ),
+                dispatch(
+                    "dispatch:peer",
+                    key="peer",
+                    target="participant:b",
+                    task_id="task:peer",
+                ),
+            ),
+            now_ms=10,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:waiter",
+            "running",
+            now_ms=11,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:peer",
+            "running",
+            now_ms=11,
+        )
+        peer_commit = {
+            **commit(
+                "commit:peer",
+                "dispatch:peer",
+                task_id="task:peer",
+            ),
+            "action": "post",
+            "postProposal": post_proposal(
+                "commit:peer",
+                "dispatch:peer",
+                task_id="task:peer",
+                author="participant:b",
+            ),
+            "continuation": {"decision": "complete"},
+        }
+        self.store.apply_commit(
+            peer_commit,
+            generation=0,
+            now_ms=12,
+            post_proposal=peer_commit["postProposal"],
+        )
+        RoomContextLedgerStore(self.db_path).publish_post(
+            peer_commit["postProposal"]
+        )
+
+        waiting = wait_commit(
+            "commit:waiter",
+            "dispatch:waiter",
+            dependency_id="dispatch:peer",
+        )
+        receipt = self.store.apply_commit(
+            waiting,
+            generation=0,
+            now_ms=13,
+            post_proposal=waiting["postProposal"],
+        )
+        resume_dispatch_id = receipt["details"]["resumedDispatchIds"][0]
+        self.assertIsNone(self.store.pending_dispatch(now_ms=14))
+
+        RoomContextLedgerStore(self.db_path).publish_post(
+            waiting["postProposal"]
+        )
+        ready = self.store.pending_dispatch(now_ms=15)
+        self.assertIsNotNone(ready)
+        self.assertEqual(ready["dispatchId"], resume_dispatch_id)
 
     def test_fifteen_agent_mentions_are_stopped_by_system_hop_ceiling(self) -> None:
         self.seed(budget=100, max_hops=12, max_depth=4, criteria=())
@@ -815,6 +1117,67 @@ def commit(
         "requirementCoverage": list(coverage),
         "createdAtMs": 12,
     }
+
+
+def post_proposal(
+    commit_id: str,
+    dispatch_id: str,
+    *,
+    task_id: str,
+    author: str,
+) -> dict[str, object]:
+    return {
+        "schemaVersion": "wisdom-weasel.room-post.v2",
+        "postId": f"post:{commit_id}",
+        "roomId": "room:1",
+        "rootId": "root:1",
+        "generation": 0,
+        "taskId": task_id,
+        "dispatchId": dispatch_id,
+        "authorActorRef": author,
+        "kind": "result",
+        "visibility": "room",
+        "content": f"public result for {dispatch_id}",
+        "idempotencyKey": f"post:{commit_id}",
+        "publicationSource": {
+            "kind": "room_commit",
+            "ref": commit_id,
+        },
+        "createdAtMs": 12,
+    }
+
+
+def wait_commit(
+    commit_id: str,
+    dispatch_id: str,
+    *,
+    dependency_id: str,
+) -> dict[str, object]:
+    proposal = post_proposal(
+        commit_id,
+        dispatch_id,
+        task_id="task:1",
+        author="participant:a",
+    )
+    payload = commit(commit_id, dispatch_id)
+    payload.update(
+        {
+            "action": "post",
+            "postProposal": proposal,
+            "continuation": {
+                "decision": "wait",
+                "waitingFor": "participant",
+                "waitingForParticipantId": "participant:b",
+                "waitingForDispatchId": dependency_id,
+                "resumeCondition": "peer result is public",
+            },
+        }
+    )
+    payload["qualityGateReceipt"] = {
+        **payload["qualityGateReceipt"],
+        "verdict": "not_ready",
+    }
+    return payload
 
 
 def control_command(

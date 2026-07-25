@@ -107,6 +107,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "notFor": (
                 "当前责任必须转交给对方",
                 "必须等对方结果才能继续当前步骤",
+                "用户已指定该成员在你完成后接管最终验收、收口或下一阶段",
                 "只想公开说一句话或私下自言自语",
             ),
             "input": (
@@ -160,10 +161,13 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         },
         "room_post": {
             "description": (
-                "立即发布一条公开 Room 消息；它不会收工、完成或转移当前责任。"
+                "立即发布一条公开 Room 中途消息；它不会收工、完成或转移当前责任。"
             ),
-            "when": ("需要向 Room 公开事实、进度、问题、答复或证据",),
-            "notFor": ("私有推理、自言自语、创建任务或提交责任终态",),
+            "when": ("仍要继续当前责任，并需公开事实、进度、问题或答复",),
+            "notFor": (
+                "私有推理、自言自语、创建任务或提交责任终态",
+                "即将 room_commit 且同一内容可作为 publicSummary 一次发布",
+            ),
             "input": "消息类型、公开内容、可选通知对象与结构化块",
             "output": "published、postRef 与 deduplicated；postRef 不是验收 evidenceRef",
             "does": "立即发布一条可重放、可去重的公共 Room 消息。",
@@ -203,6 +207,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             "when": (
                 "完成实现或修复后，需要提交验收覆盖与证据",
                 "当前责任已形成交付、交接、等待或阻塞出口",
+                "用户指定另一成员在当前工作完成后负责最终验收、收口或下一阶段",
                 "处理复核意见后，需要重新提交可复核结果",
             ),
             "notFor": (
@@ -214,7 +219,10 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 " publicSummary/blocks"
             ),
             "output": "受管提议已暂存；Kernel 随后返回权威提交或可修复原因",
-            "does": "提交当前责任的唯一生命周期出口并触发 Kernel 收工门。",
+            "does": (
+                "提交当前责任的唯一生命周期出口，触发 Kernel 收工门，并发布"
+                "唯一的 result、handoff、wait 或 blocked 终态 Post。"
+            ),
             "risk": "R1",
             "operation": "room.commit",
             "inputSchema": {
@@ -250,7 +258,9 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     "publicSummary": {
                         "description": (
-                            "可选的公开交付摘要；不替代先前 room_post，也不填写"
+                            "可选的公开终态摘要；Kernel 会把它发布为本次"
+                            " result/handoff/wait/blocked Post。先前中途 room_post"
+                            " 保留，但不要为同一终态摘要再单独 room_post；不填写"
                             " Kernel verdict。"
                         ),
                         "type": "string",
@@ -263,7 +273,11 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "minLength": 1,
                     },
                     "intent": {
-                        "description": "仅 handoff：下一项 Task 的协作意图。",
+                        "description": (
+                            "仅 handoff：下一项 Task 的协作意图。最终验收、"
+                            "最终质量门或负责关闭 Root 必须用 close；review "
+                            "只用于不负责最终收口的独立审查。"
+                        ),
                         "enum": [
                             "execute",
                             "review",
@@ -295,9 +309,28 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "items": _ACCEPTANCE_ALIAS_SCHEMA,
                     },
                     "waitingFor": {
+                        "description": (
+                            "仅 wait：等待 user、另一位 participant 或外部信号。"
+                            "等待 participant 时还必须填写 waitingForParticipantRef。"
+                        ),
                         "enum": ["user", "participant", "external"]
                     },
-                    "resumeCondition": {"type": "string", "minLength": 1},
+                    "waitingForParticipantRef": {
+                        "description": (
+                            "仅 waitingFor=participant：从 room_state 逐字复制需要"
+                            "等待的成员 participantRef；Kernel 会绑定其当前受管"
+                            " Dispatch，并在该结果提交后生成一次有界 resume。"
+                        ),
+                        "type": "string",
+                        "minLength": 1,
+                    },
+                    "resumeCondition": {
+                        "description": (
+                            "恢复当前责任所需的可观察信号；不得只写稍后再试。"
+                        ),
+                        "type": "string",
+                        "minLength": 1,
+                    },
                     "question": {"type": "string", "minLength": 1},
                     "blocker": {"type": "string", "minLength": 1},
                     "attemptedAlternatives": {
@@ -361,6 +394,11 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                                     {"required": ["expectedOutput"]},
                                     {"required": ["acceptanceAliases"]},
                                     {"required": ["waitingFor"]},
+                                    {
+                                        "required": [
+                                            "waitingForParticipantRef"
+                                        ]
+                                    },
                                     {"required": ["resumeCondition"]},
                                     {"required": ["question"]},
                                     {"required": ["blocker"]},
@@ -384,6 +422,11 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                             "not": {
                                 "anyOf": [
                                     {"required": ["waitingFor"]},
+                                    {
+                                        "required": [
+                                            "waitingForParticipantRef"
+                                        ]
+                                    },
                                     {"required": ["resumeCondition"]},
                                     {"required": ["question"]},
                                     {"required": ["blocker"]},
@@ -425,6 +468,36 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     {
                         "if": {
+                            "properties": {
+                                "decision": {"const": "wait"},
+                                "waitingFor": {"const": "participant"},
+                            },
+                            "required": ["decision", "waitingFor"],
+                        },
+                        "then": {
+                            "required": ["waitingForParticipantRef"]
+                        },
+                    },
+                    {
+                        "if": {
+                            "properties": {
+                                "decision": {"const": "wait"},
+                                "waitingFor": {
+                                    "enum": ["user", "external"]
+                                },
+                            },
+                            "required": ["decision", "waitingFor"],
+                        },
+                        "then": {
+                            "not": {
+                                "required": [
+                                    "waitingForParticipantRef"
+                                ]
+                            }
+                        },
+                    },
+                    {
+                        "if": {
                             "properties": {"decision": {"const": "blocked"}},
                             "required": ["decision"],
                         },
@@ -437,6 +510,11 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                                     {"required": ["expectedOutput"]},
                                     {"required": ["acceptanceAliases"]},
                                     {"required": ["waitingFor"]},
+                                    {
+                                        "required": [
+                                            "waitingForParticipantRef"
+                                        ]
+                                    },
                                     {"required": ["resumeCondition"]},
                                     {"required": ["question"]},
                                 ]

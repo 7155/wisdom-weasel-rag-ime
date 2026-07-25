@@ -438,7 +438,12 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "displayName": "受控命令",
         "description": "经原生批准后，在授权工作区的 macOS 沙箱中运行有界命令",
         "when": ("协调 Session 必须运行构建、测试或诊断命令",),
-        "notFor": ("可由读取或精确修改工具完成，或命令越过授权边界",),
+        "notFor": (
+            "已知文本可由 workspace_read 或 workspace_patch 完成",
+            "用 apply_patch、heredoc 等 Shell 包装修改文件",
+            "用 sleep 或轮询等待其他 Room 成员",
+            "命令越过授权边界",
+        ),
         "input": "命令、工作目录、超时和网络开关",
         "output": "退出状态、标准输出、错误输出和执行回执",
         "does": "在授权工作区受控运行命令。",
@@ -927,6 +932,11 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
 }
 
 _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]] = {
+    ("workspace_list", "path"): {
+        "type": "string",
+        "maxLength": 1_024,
+        "description": "可省略或传空字符串以列出当前授权工作区根目录。",
+    },
     ("workspace_list", "limit"): {"type": "integer", "minimum": 1, "maximum": 300},
     ("workspace_read", "limit"): {
         "type": "integer",
@@ -947,6 +957,11 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]
         "minLength": 1,
         "maxLength": 200,
         "pattern": r"^[^\r\n\u0000]+$",
+    },
+    ("workspace_search", "path"): {
+        "type": "string",
+        "maxLength": 1_024,
+        "description": "可省略或传空字符串以搜索全部授权工作区。",
     },
 }
 
@@ -1447,7 +1462,16 @@ class ControlToolGateway:
             response["roomInvocationReceipt"] = dict(invocation)
         elif room_authorization is not None:
             sealed_receipt = _auto_approved_room_execution_receipt(response)
-            if sealed_receipt is not None:
+            auto_approved = (
+                isinstance(response.get("result"), Mapping)
+                and response["result"].get("autoApproved") is True
+            )
+            if auto_approved:
+                if sealed_receipt is None:
+                    raise ValueError(
+                        "automatic Room Tool approval completed without "
+                        "an execution receipt"
+                    )
                 response["roomExecutionReceipt"] = sealed_receipt
                 validate_contract(response, "agent-tool-result.v1.json")
                 return response
@@ -1968,20 +1992,7 @@ class ControlToolGateway:
             ("workspace_shell", "run"),
         }:
             self.sessions.require_workspace_act(session_id)
-        try:
-            result = self._apply_approved_operation(approval)
-        except Exception as exc:
-            if room_invocation_receipt_id:
-                self._record_failed_room_product_tool(
-                    session_id=session_id,
-                    authorization={
-                        "invocationReceipt": {
-                            "receiptId": room_invocation_receipt_id,
-                        }
-                    },
-                    error=exc,
-                )
-            raise
+        result = self._apply_approved_operation(approval)
         return self._seal_room_approval_execution(
             approval=approval,
             result=result,

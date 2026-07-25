@@ -937,6 +937,41 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertNotIn("查看输入法、模型", overview["description"])
         self.assertIn("Agent、模型、记忆、输入", overview["output"])
 
+    def test_workspace_shell_card_routes_edits_and_room_waits_to_their_owners(
+        self,
+    ) -> None:
+        coordinator = self.store.create(
+            title="workspace tool card",
+            mode="coordinator",
+            workspace_roots=[self.tmp.name],
+            created_at_ms=2,
+        )
+        manifests = self.gateway.runtime_manifests(coordinator)
+        shell = next(item for item in manifests if item["name"] == "workspace_shell")
+
+        self.assertTrue(any("workspace_patch" in value for value in shell["notFor"]))
+        self.assertTrue(any("apply_patch" in value for value in shell["notFor"]))
+        self.assertTrue(
+            any("sleep" in value and "Room" in value for value in shell["notFor"])
+        )
+
+    def test_workspace_root_path_accepts_an_omitted_or_empty_value(self) -> None:
+        coordinator = self.store.create(
+            title="workspace root schema",
+            mode="coordinator",
+            workspace_roots=[self.tmp.name],
+            created_at_ms=2,
+        )
+        manifests = {
+            item["name"]: item
+            for item in self.gateway.runtime_manifests(coordinator)
+        }
+
+        for name in ("workspace_list", "workspace_search"):
+            path_schema = manifests[name]["parameters"]["properties"]["path"]
+            self.assertNotIn("minLength", path_schema)
+            self.assertIn("空字符串", path_schema["description"])
+
     def test_memory_capture_is_r0_and_does_not_create_an_approval(self) -> None:
         AgentMemorySourceStore(
             self.store.db_path,

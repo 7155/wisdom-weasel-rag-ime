@@ -306,7 +306,9 @@ class RoomSettleLifecycleService:
             f"当前验收别名只有 {allowed}；不要填写数据库 criterionId，"
             "不要自报 pass 或 verdict。Kernel 会核对回执、计算覆盖与终态。"
             "handoff 还要填写 targetParticipantRef、nextTask、expectedOutput "
-            "intent 与 acceptanceAliases；wait 要填写 waitingFor 和 resumeCondition；"
+            "intent 与 acceptanceAliases；wait 要填写 waitingFor 和 resumeCondition，"
+            "等待 participant 时还要从 room_state 逐字复制 "
+            "waitingForParticipantRef；"
             "blocked 要填写 blocker、attemptedAlternatives 和 unlockCondition。"
             "不要只在自然语言里声称完成。"
             "</managed-task-follow-up>"
@@ -480,8 +482,61 @@ class RoomSettleLifecycleService:
             ) as exc:
                 raise RoomCommitProposalError(str(exc)) from exc
         elif decision == "wait":
-            _required_text(arguments, "waitingFor")
-            _required_text(arguments, "resumeCondition")
+            waiting_for = _required_text(arguments, "waitingFor")
+            continuation.update(
+                {
+                    "waitingFor": waiting_for,
+                    "resumeCondition": _required_text(
+                        arguments,
+                        "resumeCondition",
+                    ),
+                }
+            )
+            question = str(arguments.get("question") or "").strip()
+            if question:
+                continuation["question"] = question
+            if waiting_for == "participant":
+                room = self.rooms.get(str(root["roomId"]))
+                participant_refs = participant_ref_map(
+                    room["participants"]
+                )
+                try:
+                    waiting_participant_id = resolve_participant_ref(
+                        arguments.get("waitingForParticipantRef"),
+                        participant_refs,
+                    )
+                    if (
+                        waiting_participant_id
+                        == dispatch["targetParticipantId"]
+                    ):
+                        raise RoomCommitProposalError(
+                            "wait target must differ from the current participant"
+                        )
+                    waiting_dispatch = (
+                        self.kernel.wait_target_dispatch(
+                            root_id=str(root["rootId"]),
+                            participant_id=waiting_participant_id,
+                            generation=int(root["generation"]),
+                            exclude_dispatch_id=str(
+                                dispatch["dispatchId"]
+                            ),
+                        )
+                    )
+                except (
+                    ParticipantReferenceError,
+                    RoomKernelFenceError,
+                ) as exc:
+                    raise RoomCommitProposalError(str(exc)) from exc
+                continuation.update(
+                    {
+                        "waitingForParticipantId": (
+                            waiting_participant_id
+                        ),
+                        "waitingForDispatchId": waiting_dispatch[
+                            "dispatchId"
+                        ],
+                    }
+                )
         elif decision == "blocked":
             _required_text(arguments, "blocker")
             attempted = arguments.get("attemptedAlternatives")

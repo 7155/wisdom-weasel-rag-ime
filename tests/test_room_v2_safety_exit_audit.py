@@ -212,7 +212,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             contract["minimumHandlersCommit"],
-            "cc58c5379e88a6e87d96d6bc00960ac978ba702a",
+            "6f4bfd6d8131a94c94f3475661e26b7c88163a52",
         )
         self.assertEqual(contract["sourceRepository"], "https://github.com/7155/pi.git")
         self.assertEqual(

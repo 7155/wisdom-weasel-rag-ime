@@ -361,6 +361,11 @@ class AgentApprovalApplicationService:
                     )
                     receipt["externalActionPending"] = False
                     external_action_pending = False
+        if not external_action_pending:
+            receipt = self._seal_missing_room_execution_receipt(
+                decided,
+                receipt,
+            )
         return self.host.sessions.complete_approval(
             approval_id,
             state=(
@@ -372,6 +377,55 @@ class AgentApprovalApplicationService:
             ),
             receipt=receipt,
         )
+
+    def _seal_missing_room_execution_receipt(
+        self,
+        approval: Mapping[str, object],
+        receipt: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Give failed approval execution the same single terminal owner as success."""
+
+        sealed = dict(receipt)
+        invocation_receipt_id = _room_invocation_receipt_id(approval)
+        if (
+            not invocation_receipt_id
+            or isinstance(sealed.get("roomExecutionReceipt"), Mapping)
+        ):
+            return sealed
+        status = (
+            "applied"
+            if sealed.get("mutationApplied") is True
+            else "failed"
+        )
+        result_hash = hashlib.sha256(
+            json.dumps(
+                sealed,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        try:
+            execution = self.host.record_room_product_tool_execution(
+                str(approval.get("sessionId") or ""),
+                invocation_receipt_id,
+                status=status,
+                result_hash=result_hash,
+            )
+        except Exception as exc:
+            sealed["roomExecutionWarning"] = (
+                "Room 工具执行终态未写入："
+                + _public_error(exc)
+            )
+            return sealed
+        room_receipt = execution.get("executionReceipt")
+        if isinstance(room_receipt, Mapping):
+            sealed["roomExecutionReceipt"] = dict(room_receipt)
+        else:
+            sealed["roomExecutionWarning"] = (
+                "Room 工具执行终态没有返回执行回执"
+            )
+        return sealed
 
     def checkpoint_applied(
         self,

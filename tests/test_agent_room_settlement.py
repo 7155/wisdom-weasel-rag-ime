@@ -10,6 +10,14 @@ from rag_ime.agent_room_kernel_contracts import (
     ROOM_TASK_SCHEMA_VERSION,
     ROOT_EXECUTION_SCHEMA_VERSION,
 )
+from rag_ime.agent_room_quality_gate import (
+    RoomQualityGateError,
+    canonicalize_quality_gate,
+)
+from rag_ime.agent_room_references import (
+    participant_ref_map,
+    ref_for_participant,
+)
 from rag_ime.agent_service import AgentService
 
 
@@ -568,6 +576,108 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             "wait",
         )
 
+    def test_participant_wait_binds_one_exact_dispatch(self) -> None:
+        target_task_id = "task:participant-wait-target"
+        target_dispatch_id = "dispatch:participant-wait-target"
+        self.service.room_kernel.create_task(
+            {
+                "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
+                "taskId": target_task_id,
+                "rootId": "root:settle",
+                "parentTaskId": "task:settle",
+                "ownerParticipantId": str(self.target["id"]),
+                "assigneeParticipantId": str(self.target["id"]),
+                "objective": "Publish one independent review.",
+                "expectedOutput": "A public review result.",
+                "requirementItemIds": ["requirement:settle"],
+                "acceptanceCriterionIds": ["criterion:settle"],
+                "revision": 0,
+                "state": "active",
+            },
+            now_ms=self.now_ms + 3,
+        )
+        self.service.room_kernel.enqueue_dispatch(
+            {
+                "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
+                "dispatchId": target_dispatch_id,
+                "rootId": "root:settle",
+                "taskId": target_task_id,
+                "parentDispatchId": "dispatch:settle",
+                "generation": 0,
+                "hopCount": 1,
+                "depth": 1,
+                "budgetCost": 1,
+                "targetSessionId": str(self.target["sessionId"]),
+                "targetParticipantId": str(self.target["id"]),
+                "triggerId": "trigger:participant-wait-target",
+                "intentKind": "review",
+                "idempotencyKey": target_dispatch_id,
+                "attempt": 0,
+                "capabilityEpoch": 7,
+                "runtimeProfileRevision": "runtime-profile:settle-v1",
+                "state": "pending",
+            },
+            now_ms=self.now_ms + 4,
+        )
+        self.service.room_kernel_worker.clock_ms = lambda: self.now_ms + 5
+        peer_dispatch = self.service.room_kernel_worker.run_once()
+        self.assertIsNotNone(peer_dispatch)
+        self.assertEqual(
+            self.service.room_kernel.dispatch(target_dispatch_id)["state"],
+            "running",
+        )
+        refs = participant_ref_map(
+            self.service.rooms.get(self.room_id)["participants"]
+        )
+        target_ref = ref_for_participant(self.target["id"], refs)
+        self.assertIsNotNone(target_ref)
+        self._invoke_commit(
+            "wait",
+            waitingFor="participant",
+            waitingForParticipantRef=target_ref,
+            resumeCondition="独立复核结果已公开",
+        )
+
+        settled = self._settle()
+
+        commit_id = str(
+            settled["settleResult"]["receipt"]["details"]["commitId"]
+        )
+        continuation = self.service.room_kernel.continuation(commit_id)
+        self.assertEqual(
+            continuation["payload"]["waitingForParticipantId"],
+            self.target["id"],
+        )
+        self.assertEqual(
+            continuation["payload"]["waitingForDispatchId"],
+            target_dispatch_id,
+        )
+
+    def test_commit_wakes_worker_after_public_projection(self) -> None:
+        order: list[str] = []
+        original_publish = self.service.room_context_ledger.publish_post
+        original_sync = self.service.room_kernel_projection.sync_room
+
+        def publish(post: dict[str, object]):
+            order.append("post")
+            return original_publish(post)
+
+        def sync(room_id: str, **kwargs: object):
+            order.append("projection")
+            return original_sync(room_id, **kwargs)
+
+        self.service.room_kernel_application.context.publish_post = publish
+        self.service.room_kernel_application.projection.sync_room = sync
+        self.service.room_kernel_application.wake_worker = (
+            lambda: order.append("wake")
+        )
+        self._invoke_commit("deliver")
+
+        self._settle()
+
+        self.assertLess(order.index("post"), order.index("projection"))
+        self.assertLess(order.index("projection"), order.index("wake"))
+
     def test_blocked_decision_moves_root_and_task_to_blocked(self) -> None:
         self._invoke_commit("blocked")
 
@@ -676,7 +786,8 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         settled = self._settle()
 
         self.assertEqual(settled["state"], "repair_commit")
-        self.assertIn("not an authoritative", settled["reason"])
+        self.assertIn("non-authoritative refs for AC-1", settled["reason"])
+        self.assertIn("byte-for-byte evidenceRefs", settled["reason"])
 
     def test_non_passing_quality_gate_cannot_deliver(self) -> None:
         self._invoke_commit(
@@ -688,6 +799,68 @@ class RoomSettleLifecycleTests(unittest.TestCase):
 
         self.assertEqual(settled["state"], "repair_commit")
         self.assertIn("every AC", settled["reason"])
+
+
+class RoomQualityGateDiagnosticTests(unittest.TestCase):
+    def test_unknown_refs_report_every_affected_acceptance_alias(self) -> None:
+        criteria = ("criterion:one", "criterion:two", "criterion:three")
+        with self.assertRaises(RoomQualityGateError) as raised:
+            canonicalize_quality_gate(
+                evidence_proposal=[
+                    {
+                        "acceptance": "AC-1",
+                        "refs": ["evidence:valid:one"],
+                    },
+                    {
+                        "acceptance": "AC-2",
+                        "refs": ["evidence:mistyped:two"],
+                    },
+                    {
+                        "acceptance": "AC-3",
+                        "refs": ["evidence:mistyped:three"],
+                    },
+                ],
+                residual_risks=[],
+                decision="deliver",
+                root_id="root:diagnostic",
+                task_id="task:diagnostic",
+                dispatch_id="dispatch:diagnostic",
+                generation=0,
+                task_criteria=criteria,
+                acceptance_aliases={
+                    "AC-1": criteria[0],
+                    "AC-2": criteria[1],
+                    "AC-3": criteria[2],
+                },
+                requirement_context={
+                    "originalRequirements": ["完成三个验收条件"],
+                    "catalog": {
+                        "acceptanceCriteria": [
+                            {
+                                "criterionId": criteria[0],
+                                "proofs": [
+                                    {
+                                        "receiptId": "evidence:valid:one",
+                                        "exitStatus": 0,
+                                    }
+                                ],
+                            },
+                            {"criterionId": criteria[1], "proofs": []},
+                            {"criterionId": criteria[2], "proofs": []},
+                        ]
+                    },
+                },
+                accepted_evidence_by_criterion={},
+                runtime_evidence_refs=[],
+                invocation_receipt_id="invoke:diagnostic",
+                now_ms=100,
+            )
+
+        message = str(raised.exception)
+        self.assertNotIn("AC-1", message)
+        self.assertIn("AC-2, AC-3", message)
+        self.assertIn("latest room_state", message)
+        self.assertNotIn("evidence:mistyped", message)
 
 
 if __name__ == "__main__":

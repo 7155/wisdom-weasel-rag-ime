@@ -32,6 +32,7 @@ from rag_ime.agent_room_kernel_contracts import (
 )
 from rag_ime.agent_service import AgentService, _room_kernel_mode_from_environment
 from rag_ime.agent_tools import ControlToolGateway
+from rag_ime.agent_workspace import WorkspaceHarness
 from rag_ime.debug_server import DebugRequestHandler
 from rag_ime.pi_runtime import PiRuntimeConfig
 from tests.test_pi_runtime_v2 import FAKE_HOST
@@ -2655,7 +2656,11 @@ class RoomKernelServiceTests(unittest.TestCase):
                 },
                 "createdAtMs": 10,
             },
-            "continuation": {"decision": "wait"},
+            "continuation": {
+                "decision": "wait",
+                "waitingFor": "external",
+                "resumeCondition": "test explicitly resumes the fixture",
+            },
             "qualityGateReceipt": self._quality_gate_receipt(
                 commit_id,
                 dispatch_id,
@@ -2812,6 +2817,87 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(
             receipt["roomExecutionReceipt"]["status"],
             "applied",
+        )
+
+    def test_workspace_managed_failure_keeps_the_original_error_and_one_receipt(
+        self,
+    ) -> None:
+        session = self.service.sessions.get(self.session_id)
+        self.service.sessions.set_runtime_policy(
+            self.session_id,
+            mode=str(session.get("mode") or "coordinator"),
+            tool_profile_version=str(
+                session.get("toolProfileVersion") or "control-center-v1"
+            ),
+            execution_mode="workspace_managed",
+            grant_workspace_scope=True,
+            allowed_tools=(
+                list(session.get("allowedTools") or [])
+                if session.get("toolAllowlistMode") == "explicit"
+                else None
+            ),
+            workspace_roots=[str(self.root)],
+        )
+
+        def reject_command(_prepared):
+            raise RuntimeError("test executor rejected this command")
+
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=SimpleNamespace(),
+            core=SimpleNamespace(),
+            project="wisdom-weasel-rag-ime",
+            workspace_harness=WorkspaceHarness(executor=reject_command),
+            collaboration=self.service,
+        )
+        self.service.bind_tool_manifest_provider(gateway.runtime_manifests)
+        self.service.bind_approval_executor(gateway.apply_approval)
+        gateway.bind_auto_approval_executor(
+            self.service.auto_approve_pending
+        )
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:room-failed-shell",
+                "toolName": "workspace_shell",
+                "createdAtMs": 5,
+            }
+        )["result"]
+
+        response = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": self.session_id,
+                "tool": "workspace_shell",
+                "toolCallId": "tool:room-failed-shell",
+                "loadReceiptId": loaded["receiptId"],
+                "args": {
+                    "op": "run",
+                    "command": "printf ok",
+                    "cwd": str(self.root),
+                    "allowNetwork": False,
+                },
+            }
+        )
+
+        self.assertTrue(response["result"]["autoApproved"])
+        self.assertEqual(
+            response["result"]["approval"]["state"],
+            "failed",
+        )
+        self.assertIn(
+            "test executor rejected this command",
+            response["result"]["receipt"]["error"],
+        )
+        execution = response["roomExecutionReceipt"]
+        self.assertEqual(execution["status"], "failed")
+        self.assertEqual(
+            self.service.room_capabilities.execution_receipt(
+                str(execution["invocationReceiptId"])
+            ),
+            execution,
         )
 
     def test_room_dispatch_exposes_the_complete_normal_agent_tool_surface(self) -> None:

@@ -45,7 +45,7 @@ class RoomContinuationFactory:
         acceptance_criterion_ids: Sequence[str],
         context_evidence_refs: Sequence[str] = (),
         kind: str,
-    ) -> dict[str, dict[str, object]]:
+    ) -> dict[str, object]:
         if kind not in {"handoff", "collaboration"}:
             raise ValueError("Room continuation kind is invalid")
         target = self.rooms.participant(target_participant_id)
@@ -159,7 +159,21 @@ class RoomContinuationFactory:
             ),
             "state": "pending",
         }
-        return {"childTask": task, "childDispatch": dispatch}
+        result: dict[str, object] = {
+            "childTask": task,
+            "childDispatch": dispatch,
+        }
+        if kind == "handoff" and intent_kind == "close":
+            wait_for = self.kernel.close_barrier_dispatch_ids(
+                str(parent_dispatch["dispatchId"])
+            )
+            if wait_for:
+                # A final closer must observe results from work that was
+                # already running in the same execution wave. Keep the
+                # dependency in Kernel metadata rather than exposing internal
+                # Dispatch IDs to the model.
+                result["waitForDispatchIds"] = wait_for
+        return result
 
 
 def _stable_id(prefix: str, *parts: str) -> str:

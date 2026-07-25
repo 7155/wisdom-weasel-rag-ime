@@ -103,6 +103,7 @@ def canonicalize_quality_gate(
         refs.update(runtime_refs)
 
     submitted: dict[str, list[str]] = {}
+    aliases_with_unknown_refs: list[str] = []
     for index, raw_item in enumerate(evidence_proposal):
         if not isinstance(raw_item, Mapping):
             raise RoomQualityGateError(
@@ -129,11 +130,18 @@ def canonicalize_quality_gate(
             )
         unknown_refs = set(item_evidence) - authoritative_refs[criterion_id]
         if unknown_refs:
-            raise RoomQualityGateError(
-                "submitted evidence is not an authoritative successful receipt "
-                "for its AC alias"
-            )
+            aliases_with_unknown_refs.append(alias)
         submitted[criterion_id] = item_evidence
+    if aliases_with_unknown_refs:
+        affected = ", ".join(aliases_with_unknown_refs[:12])
+        remainder = len(aliases_with_unknown_refs) - 12
+        if remainder > 0:
+            affected = f"{affected} (+{remainder} more)"
+        raise RoomQualityGateError(
+            "room_commit.evidence has non-authoritative refs for "
+            f"{affected}; replace only those refs with byte-for-byte "
+            "evidenceRefs from the latest room_state or successful Tool results"
+        )
 
     items: list[dict[str, object]] = []
     evidence_refs: list[str] = []

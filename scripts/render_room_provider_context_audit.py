@@ -1313,7 +1313,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         "systemPromptStableWithinEachTurn": prompt_stable_within_turn,
         "contextBlocksExactlyOncePerTurn": context_block_counts_valid,
         "agentMdDefaultOff": agent_md_absent,
-        "roomDynamicMetadataAbsent": (
+        "roomInternalControlMetadataAbsent": (
             surface == "agent"
             or room_metadata_absent
         ),

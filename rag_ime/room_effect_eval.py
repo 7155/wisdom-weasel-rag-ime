@@ -5,7 +5,7 @@ import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from .agent_room_capabilities import room_runtime_registry
+from .agent_room_capabilities import _tool_routing_score, room_runtime_registry
 from .agent_room_skills import RoomSkillPolicy
 from .agent_prompt_plans import PROMPT_LAYER_SPECS, _model_visible_projection_content
 from .agent_roles import agent_role, agent_role_catalog
@@ -72,14 +72,21 @@ def evaluate_room_task_effects(
         skill_false_negative += len(set(expected_skills) - set(actual_skills))
 
         query = str(value.get("toolQuery") or "").casefold()
+        ranked_tools = sorted(
+            (
+                (
+                    _tool_routing_score(query, {"name": name, **spec}),
+                    name,
+                )
+                for name, spec in registry.items()
+            ),
+            key=lambda item: (-item[0], item[1]),
+        )
+        best_score = ranked_tools[0][0] if query and ranked_tools else 0
         actual_tools = [
             name
-            for name, spec in registry.items()
-            if query
-            and (
-                query in name.casefold()
-                or query in str(spec.get("description") or "").casefold()
-            )
+            for score, name in ranked_tools
+            if best_score > 0 and score == best_score
         ]
         expected_tools = _strings(value.get("expectedTools"))
         tool_true_positive += len(set(actual_tools) & set(expected_tools))

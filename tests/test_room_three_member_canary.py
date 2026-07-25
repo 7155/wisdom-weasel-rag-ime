@@ -80,6 +80,68 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             ["room_post", "room_commit", "room_post", "room_commit"],
         )
 
+    def test_natural_posts_publish_each_terminal_summary_once(self) -> None:
+        terminal_posts = {
+            member: [
+                {
+                    "postId": f"terminal-{member}",
+                    "kind": "result",
+                    "content": f"{member} 已完成",
+                    "publicationSource": {"kind": "room_commit"},
+                }
+            ]
+            for member in ("A", "B", "C")
+        }
+        progress = {
+            "postId": "progress-A",
+            "kind": "progress",
+            "content": "A 仍在继续实现",
+            "publicationSource": {"kind": "room_post"},
+        }
+        terminal_posts["A"].insert(0, progress)
+        public_posts = [
+            item
+            for member in ("A", "B", "C")
+            for item in terminal_posts[member]
+        ]
+
+        checks = CANARY.natural_public_post_checks(
+            public_posts,
+            posts_by_member=terminal_posts,
+            timeline_truncated=False,
+        )
+
+        self.assertTrue(all(checks.values()))
+        independent_evidence = {
+            "postId": "evidence-B",
+            "kind": "evidence",
+            "content": "B 发现当前实现仍是占位符",
+            "publicationSource": {"kind": "room_post"},
+        }
+        terminal_posts["B"].insert(0, independent_evidence)
+        evidence_checks = CANARY.natural_public_post_checks(
+            [*public_posts, independent_evidence],
+            posts_by_member=terminal_posts,
+            timeline_truncated=False,
+        )
+        self.assertTrue(all(evidence_checks.values()))
+
+        duplicate_summary = {
+            "postId": "duplicate-C",
+            "kind": "evidence",
+            "content": "C 已完成",
+            "publicationSource": {"kind": "room_post"},
+        }
+        terminal_posts["C"].insert(0, duplicate_summary)
+        duplicate_checks = CANARY.natural_public_post_checks(
+            [*public_posts, independent_evidence, duplicate_summary],
+            posts_by_member=terminal_posts,
+            timeline_truncated=False,
+        )
+        self.assertFalse(
+            duplicate_checks["terminalSummaryNotDoublePosted"]
+        )
+
     def test_workflow_timeout_is_distinct_from_one_provider_turn(self) -> None:
         self.assertEqual(
             CANARY.workflow_timeout_seconds(
@@ -97,6 +159,35 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             CANARY.workflow_timeout_seconds(
                 SimpleNamespace(turn_timeout=300, workflow_timeout=0)
             )
+
+    def test_natural_request_does_not_disclose_execution_script(self) -> None:
+        request = CANARY.collaboration_request(
+            CANARY.NATURAL_REQUEST_STYLE,
+            a_name="实现伙伴",
+            b_name="复核伙伴",
+            c_name="验收伙伴",
+            workspace=Path("/private/tmp/project"),
+        )
+
+        self.assertEqual(request.style, "natural")
+        self.assertEqual(CANARY.natural_request_leaks(request), [])
+        self.assertIn("自行选择能力和执行方法", request.message)
+        self.assertNotIn("calculator.py", request.model_visible_text())
+        self.assertNotIn("test_calculator.py", request.model_visible_text())
+
+    def test_natural_request_leak_guard_detects_tool_contract_terms(self) -> None:
+        request = CANARY.CollaborationRequest(
+            style="natural",
+            objective="修复项目",
+            expected_output="测试通过",
+            acceptance_criteria=("调用 workspace_read",),
+            message="然后 room_commit",
+        )
+
+        self.assertEqual(
+            CANARY.natural_request_leaks(request),
+            ["room_commit", "workspace_read"],
+        )
 
     def test_quiescence_waits_only_for_target_sessions(self) -> None:
         statuses = iter(
@@ -127,6 +218,48 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         self.assertEqual(result["pollCount"], 2)
         self.assertEqual(result["remainingTargetSessionIds"], [])
         self.assertEqual(result["runtimeStatus"], "busy")
+
+    def test_settlement_waits_while_root_is_waiting_on_running_children(
+        self,
+    ) -> None:
+        snapshots = iter(
+            [
+                self._kernel_snapshot(
+                    root_state="waiting",
+                    dispatch_states=("committed", "running", "running"),
+                ),
+                self._kernel_snapshot(
+                    root_state="waiting",
+                    dispatch_states=("committed", "committed", "committed"),
+                ),
+            ]
+        )
+
+        def requester(
+            _base_url: str,
+            method: str,
+            path: str,
+            **_kwargs: object,
+        ) -> dict[str, object]:
+            self.assertEqual(method, "GET")
+            if path.startswith("/api/agent/approvals"):
+                return {"items": []}
+            self.assertIn("/kernel/snapshot", path)
+            return next(snapshots)
+
+        result = CANARY.wait_for_three_member_settlement(
+            "http://in-process.invalid",
+            "room-1",
+            "root-1",
+            requester=requester,
+            sessions={"A": "session-a", "B": "session-b", "C": "session-c"},
+            timeout=1,
+        )
+
+        self.assertEqual(
+            result["dispatchStates"],
+            ["committed", "committed", "committed"],
+        )
 
     def test_quiescence_times_out_when_target_session_stays_busy(
         self,
@@ -350,7 +483,6 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                 room_state=["applied"],
                 workspace_read=["applied", "applied"],
                 workspace_shell=["applied"],
-                room_post=["applied"],
                 room_commit=["applied"],
             ),
         }
@@ -422,6 +554,270 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         approvals["C"][0]["decidedBy"] = "native-control-center"
         self.assertFalse(
             CANARY.managed_approval_checks(approvals)["policyOwned"]
+        )
+
+    def test_natural_approval_checks_accept_discovery_and_distinct_failures(
+        self,
+    ) -> None:
+        approvals = {
+            "A": [
+                self._approval(
+                    "workspace_shell",
+                    "applied",
+                    1,
+                    command='rg -n "normalize" .',
+                ),
+                self._approval(
+                    "workspace_shell",
+                    "failed",
+                    2,
+                    command=CANARY.TEST_COMMAND,
+                ),
+                self._approval("workspace_patch", "applied", 3),
+                self._approval(
+                    "workspace_shell",
+                    "failed",
+                    4,
+                    command="git status --short",
+                ),
+                self._approval(
+                    "workspace_shell",
+                    "applied",
+                    5,
+                    command=CANARY.TEST_COMMAND,
+                ),
+            ],
+            "B": [],
+            "C": [
+                self._approval(
+                    "workspace_shell",
+                    "applied",
+                    6,
+                    command=CANARY.TEST_COMMAND,
+                )
+            ],
+        }
+
+        self.assertTrue(
+            all(CANARY.natural_managed_approval_checks(approvals).values())
+        )
+        approvals["A"][3]["receipt"].pop("networkAllowed")
+        self.assertTrue(
+            CANARY.natural_managed_approval_checks(approvals)[
+                "shellNetworkDenied"
+            ]
+        )
+        approvals["C"][0]["receipt"]["networkAllowed"] = True
+        self.assertFalse(
+            CANARY.natural_managed_approval_checks(approvals)[
+                "shellNetworkDenied"
+            ]
+        )
+        approvals["C"][0]["receipt"]["networkAllowed"] = False
+        approvals["A"].append(
+            self._approval(
+                "workspace_shell",
+                "failed",
+                7,
+                command="apply_patch <<'PATCH'\nPATCH",
+            )
+        )
+        self.assertFalse(
+            CANARY.natural_managed_approval_checks(approvals)[
+                "noShellPatchWrapper"
+            ]
+        )
+        approvals["A"].pop()
+        approvals["A"].append(
+            self._approval(
+                "workspace_shell",
+                "applied",
+                8,
+                command="sleep 2",
+            )
+        )
+        self.assertFalse(
+            CANARY.natural_managed_approval_checks(approvals)[
+                "noStandaloneSleepPolling"
+            ]
+        )
+
+    def test_natural_tool_workload_checks_outcomes_not_scripted_discovery(
+        self,
+    ) -> None:
+        receipts = {
+            "A": self._tool_set(
+                room_state=["applied"],
+                room_collaborate=["applied"],
+                workspace_read=["applied", "applied"],
+                workspace_patch=["applied"],
+                workspace_shell=["applied", "failed", "applied"],
+                room_commit=["applied"],
+            ),
+            "B": self._tool_set(
+                room_state=["applied"],
+                workspace_read=["applied", "applied"],
+                room_commit=["applied"],
+            ),
+            "C": self._tool_set(
+                room_state=["applied"],
+                workspace_read=["applied", "applied"],
+                workspace_shell=["applied"],
+                room_post=["applied"],
+                room_commit=["applied"],
+            ),
+        }
+        approvals = {
+            "A": [
+                self._approval(
+                    "workspace_shell",
+                    "failed",
+                    1,
+                    command=CANARY.TEST_COMMAND,
+                ),
+                self._approval("workspace_patch", "applied", 2),
+                self._approval(
+                    "workspace_shell",
+                    "applied",
+                    3,
+                    command=CANARY.TEST_COMMAND,
+                ),
+            ],
+            "B": [],
+            "C": [
+                self._approval(
+                    "workspace_shell",
+                    "applied",
+                    4,
+                    command=CANARY.TEST_COMMAND,
+                )
+            ],
+        }
+
+        checks = CANARY.natural_tool_workload_checks(
+            receipts,
+            approvals=approvals,
+            repeated_failed_commands=[],
+        )
+
+        self.assertTrue(all(checks.values()))
+        checks = CANARY.natural_tool_workload_checks(
+            receipts,
+            approvals=approvals,
+            repeated_failed_commands=[
+                {
+                    "member": "A",
+                    "toolName": "workspace_shell",
+                    "commandHash": "same",
+                    "count": 2,
+                }
+            ],
+        )
+        self.assertFalse(checks["noRepeatedFailedToolLoop"])
+
+    def test_agent_window_continuity_uses_same_session_turn_not_copied_posts(
+        self,
+    ) -> None:
+        request = CANARY.collaboration_request(
+            CANARY.NATURAL_REQUEST_STYLE,
+            a_name="实现伙伴",
+            b_name="复核伙伴",
+            c_name="验收伙伴",
+            workspace=Path("/private/tmp/project"),
+        )
+        snapshot = {
+            "items": [
+                {
+                    "role": "assistant",
+                    "blocks": [
+                        {
+                            "type": "text",
+                            "data": {"text": "已交接最终验收。"},
+                        }
+                    ],
+                },
+            ]
+        }
+
+        self.assertTrue(
+            CANARY._room_session_turn_visible(snapshot, request)
+        )
+        self.assertNotIn(request.message, json.dumps(snapshot, ensure_ascii=False))
+        self.assertNotIn("最终验收结论", json.dumps(snapshot, ensure_ascii=False))
+
+    def test_repeated_failed_invocations_group_by_exact_command_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "failed-replays.sqlite"
+            with sqlite3.connect(database) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE room_v2_capability_manifests(
+                        manifest_id TEXT PRIMARY KEY,
+                        manifest_hash TEXT NOT NULL,
+                        dispatch_id TEXT NOT NULL
+                    );
+                    CREATE TABLE room_v2_capability_runtime_bindings(
+                        manifest_id TEXT NOT NULL,
+                        session_id TEXT NOT NULL
+                    );
+                    CREATE TABLE room_v2_tool_invocation_receipts(
+                        receipt_id TEXT PRIMARY KEY,
+                        manifest_id TEXT NOT NULL,
+                        manifest_hash TEXT NOT NULL,
+                        canonical_tool_name TEXT NOT NULL,
+                        command_hash TEXT NOT NULL
+                    );
+                    CREATE TABLE room_v2_tool_execution_receipts(
+                        invocation_receipt_id TEXT NOT NULL,
+                        status TEXT NOT NULL
+                    );
+                    """
+                )
+                for member in ("A", "B", "C"):
+                    connection.execute(
+                        "INSERT INTO room_v2_capability_manifests VALUES (?, ?, ?)",
+                        (f"manifest-{member}", "hash", f"dispatch-{member}"),
+                    )
+                    connection.execute(
+                        "INSERT INTO room_v2_capability_runtime_bindings VALUES (?, ?)",
+                        (f"manifest-{member}", f"session-{member}"),
+                    )
+                for receipt_id, command_hash in (
+                    ("invoke-a-1", "same-command"),
+                    ("invoke-a-2", "same-command"),
+                    ("invoke-a-3", "different-command"),
+                ):
+                    connection.execute(
+                        "INSERT INTO room_v2_tool_invocation_receipts "
+                        "VALUES (?, 'manifest-A', 'hash', 'workspace_shell', ?)",
+                        (receipt_id, command_hash),
+                    )
+                    connection.execute(
+                        "INSERT INTO room_v2_tool_execution_receipts VALUES (?, 'failed')",
+                        (receipt_id,),
+                    )
+
+            repeated = CANARY.repeated_failed_invocation_commands(
+                database,
+                session_ids={
+                    member: f"session-{member}" for member in ("A", "B", "C")
+                },
+                dispatches=[
+                    {"dispatchId": f"dispatch-{member}"}
+                    for member in ("A", "B", "C")
+                ],
+            )
+
+        self.assertEqual(
+            repeated,
+            [
+                {
+                    "member": "A",
+                    "toolName": "workspace_shell",
+                    "commandHash": "same-command",
+                    "count": 2,
+                }
+            ],
         )
 
     def test_private_transcript_evidence_rejects_cross_session_tool_ids(self) -> None:
@@ -760,22 +1156,62 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         }
 
     @staticmethod
+    def _kernel_snapshot(
+        *,
+        root_state: str,
+        dispatch_states: tuple[str, str, str],
+    ) -> dict[str, object]:
+        return {
+            "roots": [{"rootId": "root-1", "state": root_state}],
+            "tasks": [
+                {"rootId": "root-1", "taskId": f"task-{index}"}
+                for index in range(1, 4)
+            ],
+            "dispatches": [
+                {
+                    "rootId": "root-1",
+                    "taskId": f"task-{index}",
+                    "dispatchId": f"dispatch-{index}",
+                    "hopCount": 0 if index == 1 else 1,
+                    "state": state,
+                }
+                for index, state in enumerate(dispatch_states, start=1)
+            ],
+        }
+
+    @staticmethod
     def _receipt(statuses: list[str]) -> dict[str, object]:
         return {
             "invocationCount": len(statuses),
+            "appliedExecutionCount": statuses.count("applied"),
             "loadReceiptIds": ["load:one"] if statuses else [],
             "items": [{"status": status} for status in statuses],
         }
 
     @staticmethod
-    def _approval(tool: str, state: str, requested_at_ms: int) -> dict[str, object]:
+    def _approval(
+        tool: str,
+        state: str,
+        requested_at_ms: int,
+        *,
+        command: str = "",
+        network_allowed: bool = False,
+    ) -> dict[str, object]:
         return {
             "approvalId": f"approval:{requested_at_ms}",
             "toolId": tool,
             "state": state,
             "requestedAtMs": requested_at_ms,
             "decidedBy": "execution-policy:workspace_managed",
-            "receipt": {"summary": "done"},
+            "preview": {
+                "actionPayload": {
+                    "command": command,
+                }
+            },
+            "receipt": {
+                "summary": "done",
+                "networkAllowed": network_allowed,
+            },
         }
 
     @classmethod

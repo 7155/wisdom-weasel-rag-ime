@@ -552,14 +552,10 @@ class RoomKernelStore:
         if self.mode not in {"cohort", "test", "kernel_only"}:
             return None
         with self._connect() as conn:
-            row = conn.execute(
-                """SELECT o.payload_json FROM room_kernel_outbox o
-                   JOIN room_kernel_dispatches d USING(dispatch_id)
-                   WHERE o.state = 'pending' AND o.shadow_only = 0
-                     AND o.available_at_ms <= ? AND d.state = 'pending'
-                   ORDER BY o.available_at_ms, o.outbox_id LIMIT 1""",
-                (int(now_ms),),
-            ).fetchone()
+            row = self._first_ready_outbox(
+                conn,
+                now_ms=now_ms,
+            )
         return json.loads(str(row["payload_json"])) if row is not None else None
 
     def dispatch_enqueued_at(self, dispatch_id: str) -> int:
@@ -584,15 +580,11 @@ class RoomKernelStore:
         if self.mode not in {"cohort", "test", "kernel_only"}:
             return None
         with self._connect(immediate=True) as conn:
-            row = conn.execute(
-                """SELECT o.*, d.state AS dispatch_state, d.target_session_id
-                   FROM room_kernel_outbox o JOIN room_kernel_dispatches d USING(dispatch_id)
-                   WHERE o.state = 'pending' AND o.shadow_only = 0
-                     AND o.available_at_ms <= ? AND d.state = 'pending'
-                     AND (? = '' OR o.dispatch_id = ?)
-                   ORDER BY o.available_at_ms, o.outbox_id LIMIT 1""",
-                (int(now_ms), dispatch_id, dispatch_id),
-            ).fetchone()
+            row = self._first_ready_outbox(
+                conn,
+                now_ms=now_ms,
+                dispatch_id=dispatch_id,
+            )
             if row is None:
                 return None
             root = self._root_row(conn, str(row["root_id"]))
@@ -637,6 +629,150 @@ class RoomKernelStore:
             conn.execute("UPDATE room_kernel_dispatches SET state = 'leased', updated_at_ms = ? WHERE dispatch_id = ?", (int(now_ms), row["dispatch_id"]))
             conn.execute("UPDATE room_kernel_outbox SET state = 'leased', updated_at_ms = ? WHERE outbox_id = ?", (int(now_ms), row["outbox_id"]))
             return {"leaseId": lease_id, "leaseToken": token, "dispatchId": str(row["dispatch_id"]), "generation": int(row["generation"]), "expiresAtMs": expires}
+
+    def _first_ready_outbox(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        now_ms: int,
+        dispatch_id: str = "",
+    ) -> sqlite3.Row | None:
+        rows = conn.execute(
+            """SELECT o.*, d.state AS dispatch_state, d.target_session_id
+               FROM room_kernel_outbox o
+               JOIN room_kernel_dispatches d USING(dispatch_id)
+               WHERE o.state = 'pending' AND o.shadow_only = 0
+                 AND o.available_at_ms <= ? AND d.state = 'pending'
+                 AND (? = '' OR o.dispatch_id = ?)
+               ORDER BY o.available_at_ms, o.outbox_id""",
+            (int(now_ms), dispatch_id, dispatch_id),
+        ).fetchall()
+        for row in rows:
+            if self._dispatch_dependencies_ready(
+                conn,
+                str(row["dispatch_id"]),
+            ):
+                return row
+        return None
+
+    def _dispatch_dependencies_ready(
+        self,
+        conn: sqlite3.Connection,
+        dispatch_id: str,
+    ) -> bool:
+        continuation = conn.execute(
+            """SELECT commit_id,payload_json
+               FROM room_kernel_continuations
+               WHERE child_dispatch_id = ?
+                 AND decision IN ('dispatch','wait')""",
+            (dispatch_id,),
+        ).fetchone()
+        if continuation is None:
+            return True
+        if not self._commit_result_is_public(
+            conn,
+            str(continuation["commit_id"]),
+        ):
+            return False
+        payload = json.loads(str(continuation["payload_json"]))
+        raw_dependencies = payload.get("waitForDispatchIds")
+        if raw_dependencies is None:
+            raw_dependencies = []
+        if not isinstance(raw_dependencies, list):
+            raise RoomKernelFenceError(
+                "Dispatch continuation dependencies are invalid"
+            )
+        waiting_for_dispatch = str(
+            payload.get("waitingForDispatchId") or ""
+        ).strip()
+        dependency_ids = list(
+            dict.fromkeys(
+                [
+                    *(
+                        str(value).strip()
+                        for value in raw_dependencies
+                    ),
+                    *([waiting_for_dispatch] if waiting_for_dispatch else []),
+                ]
+            )
+        )
+        if not dependency_ids:
+            return True
+        if any(not value for value in dependency_ids):
+            raise RoomKernelFenceError(
+                "Dispatch continuation has an invalid dependency"
+            )
+        placeholders = ",".join("?" for _ in dependency_ids)
+        rows = conn.execute(
+            f"""SELECT dispatch_id, state
+                FROM room_kernel_dispatches
+                WHERE dispatch_id IN ({placeholders})""",
+            dependency_ids,
+        ).fetchall()
+        states = {
+            str(row["dispatch_id"]): str(row["state"])
+            for row in rows
+        }
+        if set(states) != set(dependency_ids):
+            raise RoomKernelFenceError(
+                "Dispatch continuation dependency is missing"
+            )
+        if any(states[value] != "committed" for value in dependency_ids):
+            return False
+        return all(
+            self._dispatch_result_is_public(conn, dependency_id)
+            for dependency_id in dependency_ids
+        )
+
+    @staticmethod
+    def _dispatch_result_is_public(
+        conn: sqlite3.Connection,
+        dispatch_id: str,
+    ) -> bool:
+        commit = conn.execute(
+            """SELECT commit_id,payload_json
+               FROM room_kernel_commits
+               WHERE dispatch_id=?""",
+            (dispatch_id,),
+        ).fetchone()
+        if commit is None:
+            raise RoomKernelFenceError(
+                "committed Dispatch has no canonical RoomCommit"
+            )
+        return RoomKernelStore._commit_result_is_public(
+            conn,
+            str(commit["commit_id"]),
+            payload=json.loads(str(commit["payload_json"])),
+        )
+
+    @staticmethod
+    def _commit_result_is_public(
+        conn: sqlite3.Connection,
+        commit_id: str,
+        *,
+        payload: Mapping[str, object] | None = None,
+    ) -> bool:
+        if payload is None:
+            commit = conn.execute(
+                """SELECT payload_json FROM room_kernel_commits
+                   WHERE commit_id=?""",
+                (commit_id,),
+            ).fetchone()
+            if commit is None:
+                raise RoomKernelFenceError(
+                    "continuation has no canonical RoomCommit"
+                )
+            payload = json.loads(str(commit["payload_json"]))
+        if payload.get("action") != "post":
+            return True
+        published = conn.execute(
+            """SELECT 1 FROM room_v2_posts
+               WHERE publication_source_kind='room_commit'
+                 AND publication_source_ref=?
+               LIMIT 1""",
+            (commit_id,),
+        ).fetchone()
+        return published is not None
 
     def reconcile_expired_leases(self, *, now_ms: int) -> list[dict[str, object]]:
         receipts: list[dict[str, object]] = []
@@ -1489,6 +1625,14 @@ class RoomKernelStore:
                         post_proposal["createdAtMs"],
                 ),
             )
+            resumed_dispatch_ids, blocked_waits = (
+                self._resume_ready_participant_waits(
+                    conn,
+                    root_id=str(root["root_id"]),
+                    generation=generation,
+                    now_ms=now_ms,
+                )
+            )
             receipt = self._receipt(
                 conn,
                 root_id=str(root["root_id"]),
@@ -1510,6 +1654,8 @@ class RoomKernelStore:
                         if child_dispatch is not None
                         else None
                     ),
+                    "resumedDispatchIds": resumed_dispatch_ids,
+                    "blockedWaitContinuations": blocked_waits,
                     "qualityGateReceiptId": quality_gate_receipt[
                         "receiptId"
                     ],
@@ -1544,6 +1690,224 @@ class RoomKernelStore:
                     ),
                 )
             return receipt
+
+    def _resume_ready_participant_waits(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        generation: int,
+        now_ms: int,
+    ) -> tuple[list[str], list[dict[str, str]]]:
+        """Resume exact participant waits once, without model polling."""
+
+        root = self._root_row(conn, root_id)
+        if (
+            int(root["generation"]) != int(generation)
+            or str(root["state"])
+            not in {"running", "waiting"}
+        ):
+            return [], []
+        rows = conn.execute(
+            """SELECT * FROM room_kernel_continuations
+               WHERE root_id=? AND decision='wait' AND state='applied'
+                 AND child_dispatch_id IS NULL
+               ORDER BY created_at_ms,continuation_id""",
+            (root_id,),
+        ).fetchall()
+        resumed: list[str] = []
+        blocked: list[dict[str, str]] = []
+        for continuation in rows:
+            payload = json.loads(str(continuation["payload_json"]))
+            dependency_id = str(
+                payload.get("waitingForDispatchId") or ""
+            ).strip()
+            if (
+                payload.get("waitingFor") != "participant"
+                or not dependency_id
+            ):
+                continue
+            dependency = conn.execute(
+                """SELECT * FROM room_kernel_dispatches
+                   WHERE dispatch_id=? AND root_id=? AND generation=?""",
+                (dependency_id, root_id, int(generation)),
+            ).fetchone()
+            if dependency is None:
+                reason = "participant wait dependency is missing or stale"
+                self._block_wait_continuation(
+                    conn,
+                    continuation,
+                    reason=reason,
+                    now_ms=now_ms,
+                )
+                blocked.append(
+                    {
+                        "continuationId": str(
+                            continuation["continuation_id"]
+                        ),
+                        "reason": reason,
+                    }
+                )
+                break
+            if str(dependency["state"]) != "committed":
+                continue
+            task_row = conn.execute(
+                """SELECT state FROM room_kernel_tasks
+                   WHERE task_id=? AND root_id=?""",
+                (continuation["task_id"], root_id),
+            ).fetchone()
+            if task_row is None or str(task_row["state"]) != "waiting":
+                reason = "participant wait task is no longer resumable"
+                self._block_wait_continuation(
+                    conn,
+                    continuation,
+                    reason=reason,
+                    now_ms=now_ms,
+                )
+                blocked.append(
+                    {
+                        "continuationId": str(
+                            continuation["continuation_id"]
+                        ),
+                        "reason": reason,
+                    }
+                )
+                break
+            parent = self._dispatch_row(
+                conn,
+                str(continuation["parent_dispatch_id"]),
+            )
+            parent_payload = _dispatch_payload(parent)
+            parent_epoch = int(parent_payload["capabilityEpoch"])
+            active_same_wave = self._capability_peer_dispatch_ids(
+                conn,
+                parent,
+                states=_ACTIVE_DISPATCH_STATES,
+            )
+            capability_epoch = (
+                parent_epoch if active_same_wave else parent_epoch + 1
+            )
+            continuation_id = str(continuation["continuation_id"])
+            resume_dispatch_id = _stable_id(
+                "room-dispatch-resume",
+                continuation_id,
+                dependency_id,
+            )
+            resume_dispatch = {
+                "schemaVersion": parent_payload["schemaVersion"],
+                "dispatchId": resume_dispatch_id,
+                "rootId": root_id,
+                "taskId": str(continuation["task_id"]),
+                "parentDispatchId": str(parent["dispatch_id"]),
+                "generation": int(generation),
+                "hopCount": int(parent_payload["hopCount"]) + 1,
+                "depth": int(parent_payload["depth"]),
+                "budgetCost": 1,
+                "targetSessionId": str(parent["target_session_id"]),
+                "targetParticipantId": str(
+                    parent["target_participant_id"]
+                ),
+                "triggerId": continuation_id,
+                "intentKind": "resume",
+                "idempotencyKey": (
+                    f"room-resume:{continuation_id}:{dependency_id}"
+                ),
+                "attempt": int(parent_payload.get("attempt") or 0) + 1,
+                "capabilityEpoch": capability_epoch,
+                "runtimeProfileRevision": str(
+                    parent_payload["runtimeProfileRevision"]
+                ),
+                "state": "pending",
+            }
+            try:
+                child, _ = self._enqueue_dispatch(
+                    conn,
+                    resume_dispatch,
+                    shadow_only=self.mode
+                    not in {"cohort", "test", "kernel_only"},
+                    now_ms=now_ms,
+                )
+            except RoomKernelFenceError as exc:
+                reason = str(exc)[:500]
+                self._block_wait_continuation(
+                    conn,
+                    continuation,
+                    reason=reason,
+                    now_ms=now_ms,
+                )
+                blocked.append(
+                    {
+                        "continuationId": continuation_id,
+                        "reason": reason,
+                    }
+                )
+                break
+            conn.execute(
+                """UPDATE room_kernel_continuations
+                   SET child_dispatch_id=?
+                   WHERE continuation_id=? AND child_dispatch_id IS NULL""",
+                (child["dispatchId"], continuation_id),
+            )
+            conn.execute(
+                """UPDATE room_kernel_tasks
+                   SET state='active',updated_at_ms=?
+                   WHERE task_id=? AND state='waiting'""",
+                (int(now_ms), continuation["task_id"]),
+            )
+            conn.execute(
+                """UPDATE room_kernel_roots
+                   SET state='running',updated_at_ms=?
+                   WHERE root_id=? AND state IN ('running','waiting')""",
+                (int(now_ms), root_id),
+            )
+            resumed.append(str(child["dispatchId"]))
+        return resumed, blocked
+
+    @staticmethod
+    def _block_wait_continuation(
+        conn: sqlite3.Connection,
+        continuation: sqlite3.Row,
+        *,
+        reason: str,
+        now_ms: int,
+    ) -> None:
+        conn.execute(
+            """UPDATE room_kernel_continuations
+               SET state='blocked' WHERE continuation_id=?""",
+            (continuation["continuation_id"],),
+        )
+        conn.execute(
+            """UPDATE room_kernel_tasks
+               SET state='blocked',updated_at_ms=? WHERE task_id=?""",
+            (int(now_ms), continuation["task_id"]),
+        )
+        conn.execute(
+            """UPDATE room_kernel_roots
+               SET state='blocked',updated_at_ms=? WHERE root_id=?""",
+            (int(now_ms), continuation["root_id"]),
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO room_kernel_dead_letters(
+               dead_letter_id,root_id,dispatch_id,reason_code,
+               payload_json,created_at_ms)
+               VALUES (?,?,?,'wait_resume_blocked',?,?)""",
+            (
+                _stable_id(
+                    "room-dead-letter",
+                    str(continuation["parent_dispatch_id"]),
+                    "wait_resume_blocked",
+                ),
+                continuation["root_id"],
+                continuation["parent_dispatch_id"],
+                _json(
+                    {
+                        "continuationId": continuation["continuation_id"],
+                        "reason": reason,
+                    }
+                ),
+                int(now_ms),
+            ),
+        )
 
     def cancel_target(
         self, *, root_id: str, target_kind: Literal["task", "dispatch"], target_id: str, now_ms: int
@@ -1858,29 +2222,118 @@ class RoomKernelStore:
         with self._connect() as owned:
             return _dispatch_payload(self._dispatch_row(owned, dispatch_id))
 
-    def has_active_capability_peer(self, dispatch_id: str) -> bool:
-        """Return whether another live Dispatch shares this Root execution wave."""
+    def active_capability_peer_dispatch_ids(
+        self,
+        dispatch_id: str,
+    ) -> list[str]:
+        """Return live peer Dispatches in the current capability wave."""
 
         with self._connect() as conn:
             dispatch = self._dispatch_row(conn, dispatch_id)
-            current = _dispatch_payload(dispatch)
-            rows = conn.execute(
-                f"""SELECT payload_json FROM room_kernel_dispatches
-                    WHERE root_id = ? AND dispatch_id != ?
-                      AND state IN ({','.join('?' for _ in _ACTIVE_DISPATCH_STATES)})
-                    """,
-                (
-                    dispatch["root_id"],
-                    dispatch_id,
-                    *_ACTIVE_DISPATCH_STATES,
-                ),
-            ).fetchall()
+            return self._capability_peer_dispatch_ids(
+                conn,
+                dispatch,
+                states=_ACTIVE_DISPATCH_STATES,
+            )
+
+    def close_barrier_dispatch_ids(self, dispatch_id: str) -> list[str]:
+        """Return same-wave work whose public result must precede a closer."""
+
+        with self._connect() as conn:
+            dispatch = self._dispatch_row(conn, dispatch_id)
+            return self._capability_peer_dispatch_ids(
+                conn,
+                dispatch,
+                states=(*_ACTIVE_DISPATCH_STATES, "committed"),
+            )
+
+    @staticmethod
+    def _capability_peer_dispatch_ids(
+        conn: sqlite3.Connection,
+        dispatch: sqlite3.Row,
+        *,
+        states: tuple[str, ...],
+    ) -> list[str]:
+        current = _dispatch_payload(dispatch)
+        rows = conn.execute(
+            f"""SELECT dispatch_id,payload_json
+                FROM room_kernel_dispatches
+                WHERE root_id=? AND dispatch_id!=?
+                  AND state IN ({','.join('?' for _ in states)})
+                ORDER BY created_at_ms,dispatch_id""",
+            (
+                dispatch["root_id"],
+                dispatch["dispatch_id"],
+                *states,
+            ),
+        ).fetchall()
         epoch = int(current["capabilityEpoch"])
-        return any(
-            int(json.loads(str(row["payload_json"]))["capabilityEpoch"])
-            == epoch
+        return [
+            str(row["dispatch_id"])
             for row in rows
-        )
+            if int(
+                json.loads(str(row["payload_json"]))["capabilityEpoch"]
+            )
+            == epoch
+        ][:32]
+
+    def has_active_capability_peer(self, dispatch_id: str) -> bool:
+        """Return whether another live Dispatch shares this Root execution wave."""
+
+        return bool(self.active_capability_peer_dispatch_ids(dispatch_id))
+
+    def wait_target_dispatch(
+        self,
+        *,
+        root_id: str,
+        participant_id: str,
+        generation: int,
+        exclude_dispatch_id: str = "",
+    ) -> dict[str, object]:
+        """Bind a participant wait to one exact active or latest result."""
+
+        root_id = _required(root_id, "root_id")
+        participant_id = _required(participant_id, "participant_id")
+        with self._connect() as conn:
+            root = self._root_row(conn, root_id)
+            if int(root["generation"]) != int(generation):
+                raise RoomKernelFenceError(
+                    "wait target generation is stale"
+                )
+            row = conn.execute(
+                f"""SELECT * FROM room_kernel_dispatches
+                    WHERE root_id=? AND target_participant_id=?
+                      AND dispatch_id!=?
+                      AND generation=?
+                      AND state IN (
+                        {','.join('?' for _ in (*_ACTIVE_DISPATCH_STATES, 'committed'))}
+                      )
+                    ORDER BY
+                      CASE state
+                        WHEN 'pending' THEN 0
+                        WHEN 'leased' THEN 0
+                        WHEN 'running' THEN 0
+                        WHEN 'retry_wait' THEN 0
+                        WHEN 'timer_wait' THEN 0
+                        ELSE 1
+                      END,
+                      updated_at_ms DESC,
+                      dispatch_id DESC
+                    LIMIT 1""",
+                (
+                    root_id,
+                    participant_id,
+                    str(exclude_dispatch_id or ""),
+                    int(generation),
+                    *_ACTIVE_DISPATCH_STATES,
+                    "committed",
+                ),
+            ).fetchone()
+        if row is None:
+            raise RoomKernelFenceError(
+                "wait target has no active or committed Dispatch"
+            )
+        return _dispatch_payload(row)
 
     def commit(self, commit_id: str) -> dict[str, object]:
         with self._connect() as conn:

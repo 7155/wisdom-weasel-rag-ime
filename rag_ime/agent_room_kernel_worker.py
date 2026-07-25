@@ -316,8 +316,9 @@ def _default_dispatch_message(_dispatch: Mapping[str, object]) -> str:
         "AC 是 Acceptance Criterion（验收条件）的短别名；AC-1 就是 room_state "
         "当前验收清单的第一项。收工只调用 room_commit：evidence.acceptance "
         "只能填写 room_state 的 acceptanceAliases 返回的 AC-1、AC-2 等当前任务"
-        "验收别名，refs 只能填写"
-        "成功工具结果返回的 evidenceRef；不要填写数据库 criterionId，也不要自报 "
+        "验收别名；每个 AC 只提交直接支撑它的最小 refs 集合。refs 必须逐字复制"
+        "最新 room_state 或成功工具结果返回的完整 evidenceRef，不得重写、拼接或"
+        "猜测；不要填写数据库 criterionId，也不要自报 "
         "已通过或最终裁决，真实状态由 Kernel 判定。"
     )
 

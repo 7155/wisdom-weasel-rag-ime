@@ -25,6 +25,26 @@ class AgentDefinitionCompatibilityTests(unittest.TestCase):
         self.assertEqual(len({item["roleId"] for item in personas}), len(personas))
         self.assertEqual(len({item["templateId"] for item in templates}), len(templates))
 
+    def test_room_lifecycle_distinguishes_parallel_help_from_sequential_handoff(
+        self,
+    ) -> None:
+        prompt = collaboration_role("implementer", "1").system_prompt
+
+        self.assertIn("最终验收或收口", prompt)
+        self.assertIn("顺序责任转移", prompt)
+        self.assertIn("不要提前把该成员作为并行子任务", prompt)
+        self.assertIn("也不要用 wait 等待对方回填", prompt)
+        self.assertIn("intent 必须是 close", prompt)
+        self.assertIn("每个 AC 只提交直接支撑它的最小引用集合", prompt)
+        self.assertIn("不得重写、拼接、猜测", prompt)
+        self.assertIn("不运行\nsleep 或轮询命令等待参与者", prompt)
+        self.assertIn("精确文本修改使用 workspace_patch", prompt)
+        self.assertIn("workspace_shell\n只用于必须由命令完成的构建、测试和诊断", prompt)
+        self.assertIn(
+            "同一交付摘要不要先用 room_post 重复发布",
+            prompt,
+        )
+
 
 class AgentDefinitionCompilerTests(unittest.TestCase):
     def setUp(self) -> None:

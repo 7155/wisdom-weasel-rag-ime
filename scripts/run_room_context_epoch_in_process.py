@@ -414,7 +414,11 @@ def _isolated_project_command_executor(
         or prepared.roots != (resolved_workspace,)
         or prepared.allow_network
     ):
-        raise RuntimeError("isolated Room project executor rejected an unexpected command")
+        raise RuntimeError(
+            "isolated Room project policy rejected this command; do not retry it. "
+            "Inspect project files with read-only workspace tools and reserve Shell "
+            "for the test command authorized by the project instructions"
+        )
     started_at_ms = int(time.time() * 1_000)
     try:
         completed = subprocess.run(
@@ -891,6 +895,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                         args.provider_mode == "configured"
                     ),
                     "provider_mode": args.provider_mode,
+                    "request_style": args.collaboration_request_style,
                 }
                 if args.scenario == AGENT_SESSION_SCENARIO:
                     report = run_agent_session_canary(
@@ -1003,6 +1008,11 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             "model": runtime.model,
             "providerMode": args.provider_mode,
             "scenario": args.scenario,
+            "collaborationRequestStyle": (
+                args.collaboration_request_style
+                if args.scenario == COLLABORATION_SCENARIO
+                else None
+            ),
             "providerEvidence": (
                 "network-audit-and-provider-usage"
                 if checks.get("externalProviderRequestObserved") is True
@@ -1093,6 +1103,15 @@ def parse_args() -> argparse.Namespace:
             "Absolute timeout for the full three-member collaboration. "
             "Defaults to three times --turn-timeout so one Provider-call "
             "budget is not reused as the A/B/C workflow deadline."
+        ),
+    )
+    parser.add_argument(
+        "--collaboration-request-style",
+        choices=("scripted", "natural"),
+        default="scripted",
+        help=(
+            "Use the deterministic protocol script, or a natural user goal "
+            "that does not disclose Tool names, parameters, or call order."
         ),
     )
     parser.add_argument("--epochs", type=int, choices=(1, 2, 3), default=1)
