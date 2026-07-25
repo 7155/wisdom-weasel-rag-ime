@@ -13,12 +13,9 @@ from .agent_templates import agent_template, agent_template_catalog
 
 
 _REQUIRED_SKILL_HEADINGS = (
-    "## Enter When",
-    "## Inputs",
     "## Workflow",
     "## Output Contract",
-    "## Exit Conditions",
-    "## Hard Boundaries",
+    "## Boundaries",
 )
 _PLACEHOLDER_TERMS = ("tbd", "todo", "待补充", "placeholder")
 

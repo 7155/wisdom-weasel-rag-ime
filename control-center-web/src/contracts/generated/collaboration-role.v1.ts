@@ -54,18 +54,18 @@ export interface CollaborationRoleV1 {
    * @maxItems 4
    */
   allowedCommitDecisions:
-    | ['dispatch' | 'wait' | 'blocked' | 'complete']
-    | ['dispatch' | 'wait' | 'blocked' | 'complete', 'dispatch' | 'wait' | 'blocked' | 'complete']
+    | ['deliver' | 'handoff' | 'wait' | 'blocked']
+    | ['deliver' | 'handoff' | 'wait' | 'blocked', 'deliver' | 'handoff' | 'wait' | 'blocked']
     | [
-        'dispatch' | 'wait' | 'blocked' | 'complete',
-        'dispatch' | 'wait' | 'blocked' | 'complete',
-        'dispatch' | 'wait' | 'blocked' | 'complete',
+        'deliver' | 'handoff' | 'wait' | 'blocked',
+        'deliver' | 'handoff' | 'wait' | 'blocked',
+        'deliver' | 'handoff' | 'wait' | 'blocked',
       ]
     | [
-        'dispatch' | 'wait' | 'blocked' | 'complete',
-        'dispatch' | 'wait' | 'blocked' | 'complete',
-        'dispatch' | 'wait' | 'blocked' | 'complete',
-        'dispatch' | 'wait' | 'blocked' | 'complete',
+        'deliver' | 'handoff' | 'wait' | 'blocked',
+        'deliver' | 'handoff' | 'wait' | 'blocked',
+        'deliver' | 'handoff' | 'wait' | 'blocked',
+        'deliver' | 'handoff' | 'wait' | 'blocked',
       ];
   /**
    * @minItems 1

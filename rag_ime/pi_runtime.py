@@ -35,7 +35,6 @@ from .agent_runtime_driver import (
     SessionContextProvider,
 )
 from .agent_roles import PersonaManifest, agent_role
-from .agent_definitions import collaboration_role
 from .agent_prompt_plans import compose_persona_layer
 from .agent_sessions import AgentSessionStore
 from .agent_templates import agent_template, progressive_capability_policy
@@ -87,27 +86,17 @@ def _empty_role_book_prompt(_session: Mapping[str, object]) -> str:
     return ""
 
 
-def _session_collaboration_prompt(
+def _session_mode_prompt(
     session: Mapping[str, object],
     template_id: str,
 ) -> str:
-    role_id = {
-        "planner": "coordinator",
-        "researcher": "researcher",
-        "worker": "implementer",
-        "reviewer": "reviewer",
-        "delegate": "specialist",
-    }.get(template_id)
-    if role_id is None and str(session.get("mode") or "assistant") == "coordinator":
-        role_id = "coordinator"
-    if role_id is None:
+    if template_id or str(session.get("mode") or "assistant") != "coordinator":
         return ""
-    prefix = (
-        "这是一次有界任务委派，不是长期群聊。\n"
-        if template_id
-        else ""
-    )
-    return f"{prefix}{collaboration_role(role_id).system_prompt}"
+    return """<session-mode kind="coordinator">
+这是普通 Agent Session 的协调模式，不是 Room，也没有 Room Dispatch。
+你可以直接完成当前工作；只有当一个子任务边界清楚、可独立验收并且并行确实有益时，
+才使用已披露的委派能力。保留主任务责任，核对返回证据，再向用户交付。
+</session-mode>"""
 
 
 def _render_session_prompt(layers: list[tuple[str, str]]) -> str:
@@ -402,7 +391,7 @@ class PiRuntimeConfig:
                 template_id,
                 session.get("agentTemplateVersion") or "1",
             )
-        collaboration = _session_collaboration_prompt(session, template_id)
+        session_mode_prompt = _session_mode_prompt(session, template_id)
         if template is not None:
             capability_prompt = (
                 template.runtime_prompt
@@ -420,8 +409,8 @@ class PiRuntimeConfig:
             ("core_rails", core_prompt),
             ("persona", persona_prompt),
         ]
-        if collaboration:
-            layers.append(("collaboration_role", collaboration))
+        if session_mode_prompt:
+            layers.append(("session_mode_policy", session_mode_prompt))
         layers.append(("agent_template_policy", capability_prompt))
         return _render_session_prompt(layers)
 
@@ -2468,7 +2457,7 @@ def _visible_message_text(role: str, text: str) -> str:
     if role != "user":
         return text
     tagged = re.search(
-        r"<rag-ime-user-query>\s*(.*?)\s*</rag-ime-user-query>",
+        r"<(?:agent|rag-ime)-user-query>\s*(.*?)\s*</(?:agent|rag-ime)-user-query>",
         text,
         flags=re.DOTALL,
     )
@@ -2494,7 +2483,12 @@ def _public_fork_candidate_text(value: object, *, role: str = "user") -> str:
     )
     if any(
         marker in visible
-        for marker in ("<rag-ime-deep-search-context", "<rag-ime-user-query>")
+        for marker in (
+            "<agent-deep-search-context",
+            "<agent-user-query",
+            "<rag-ime-deep-search-context",
+            "<rag-ime-user-query",
+        )
     ):
         return ""
     return visible

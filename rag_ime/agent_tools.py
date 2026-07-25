@@ -37,11 +37,11 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "id": "ime_overview",
         "domain": "overview",
         "displayName": "控制中心概览",
-        "description": "查看输入法、模型、记忆和最近活动的整体状态",
+        "description": "查看 Agent、模型、记忆、输入和最近活动的整体状态",
         "when": ("用户询问智鼬整体状态、能力或最近活动",),
         "notFor": ("已明确要检查某一个具体子系统",),
         "input": "可选查询与返回条数",
-        "output": "输入法、模型、记忆和最近活动概览",
+        "output": "Agent、模型、记忆、输入和最近活动概览",
         "does": "汇总控制中心整体状态。",
         "operations": ("status", "capabilities", "recent_activity"),
         "resultPresentation": "status",
@@ -967,7 +967,7 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
         "query", "limit", "kind", "bookId", "traceId", "runId", "instruction",
         "targetId", "text", "reason", "memoryKind", "evidenceIds", "claimKey",
         "idempotencyKey", "proposalId", "draftId", "mode", "trigger",
-        "claim", "sourceId", "captureScope",
+        "claim", "sourceId", "captureScope", "basis", "futureUse", "supersedes",
     ),
     "agent_role_book": (
         "revisionId", "draftId", "limit", "updates", "changeSummary",
@@ -1008,7 +1008,13 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("agent_schedule", "retry"): ("scheduleId",),
     ("ime_memory", "read"): ("bookId",),
     ("ime_memory", "trace"): ("traceId",),
-    ("ime_memory", "capture"): ("kind", "claim", "reason"),
+    ("ime_memory", "capture"): (
+        "kind",
+        "claim",
+        "captureScope",
+        "basis",
+        "futureUse",
+    ),
     ("ime_memory", "curation_prepare"): ("trigger",),
     ("ime_memory", "maintenance_preview"): ("trigger",),
     ("ime_memory", "maintenance_review"): ("runId",),
@@ -1061,8 +1067,8 @@ _RUNTIME_TOOL_USAGE: dict[str, str] = {
     "ime_memory": (
         "Session 启动快照只在首轮注入一次。Timeline 不能单独证明稳定事实。"
         "无事实问题/流程噪声/失败回执/重复问句/临时指令 not_for_memory；禁止原样复制长输入。"
-        "普通聊天禁 curation_prepare，但跨会话仍有价值的用户陈述可静默 capture；"
-        "capture 只标记 Evidence，不创建 Atom；task_completion/explicit_request/idle_batch 且有事实时才整理；"
+        "普通聊天禁 curation_prepare；候选捕获只使用常驻 memory_capture，不从本工具调用 capture。"
+        "task_completion/explicit_request/idle_batch 且有事实时才整理；"
     ),
     "ime_browser": (
         "先用 tabs 或 snapshot 获取真实 tabId、snapshotId 与 refId。"
@@ -1074,6 +1080,15 @@ _RUNTIME_TOOL_USAGE: dict[str, str] = {
         "需要补充最近工作、能力、性格或经验教训时，先引用真实 Evidence，"
         "再用 propose_revision 提交 personality/capabilities/recentWork/lessonsAndLimits/activeCommitments。"
         "propose_revision 只保存 draft，不能激活或改变身份、权限、安全策略和工具白名单。"
+    ),
+}
+
+_RUNTIME_TOOL_PROJECTIONS: dict[str, tuple[dict[str, str], ...]] = {
+    "ime_memory": (
+        {
+            "name": "memory_capture",
+            "operation": "capture",
+        },
     ),
 }
 
@@ -1258,20 +1273,30 @@ class ControlToolGateway:
                 operations,
             )
             usage = _RUNTIME_TOOL_USAGE.get(str(manifest["id"]), "")
-            manifests.append(
-                {
-                    "name": manifest["id"],
-                    "description": f"{manifest['description']}。{usage}" if usage else manifest["description"],
-                    "parameters": parameter_schema,
-                    "when": list(spec["when"]),
-                    "notFor": list(spec["notFor"]),
-                    "input": spec["input"],
-                    "output": spec["output"],
-                    "does": spec["does"],
-                    "profile": session.get("toolProfileVersion") or "control-center-v1",
-                    "risk": manifest.get("riskLevel") or "R0",
-                }
-            )
+            base_description = str(manifest["description"]).rstrip("。")
+            item: dict[str, object] = {
+                "name": manifest["id"],
+                "description": f"{base_description}。{usage}" if usage else base_description,
+                "parameters": parameter_schema,
+                "when": list(spec["when"]),
+                "notFor": list(spec["notFor"]),
+                "input": spec["input"],
+                "output": spec["output"],
+                "does": spec["does"],
+                "profile": session.get("toolProfileVersion") or "control-center-v1",
+                "risk": manifest.get("riskLevel") or "R0",
+            }
+            projections = [
+                dict(projection)
+                for projection in _RUNTIME_TOOL_PROJECTIONS.get(
+                    str(manifest["id"]),
+                    (),
+                )
+                if projection["operation"] in operations
+            ]
+            if projections:
+                item["runtimeProjections"] = projections
+            manifests.append(item)
         return manifests
 
     def _manifest_items(
@@ -5166,25 +5191,53 @@ class ControlToolGateway:
     def _memory(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
         if operation == "capture":
-            capture = AgentMemorySourceStore(
-                self.sessions.db_path,
-                project=self.project,
-            ).capture_hint(
-                session_id=session_id,
-                kind=_bounded_text(args.get("kind"), maximum=40),
-                claim=_bounded_text(args.get("claim"), maximum=800),
-                scope=_bounded_text(args.get("captureScope"), maximum=24)
-                or "project",
-                reason=_bounded_text(args.get("reason"), maximum=500),
-                source_id=_bounded_text(args.get("sourceId"), maximum=240),
-                evidence_ids=[
-                    _bounded_text(value, maximum=240)
-                    for value in args.get("evidenceIds") or []
-                    if _bounded_text(value, maximum=240)
-                ]
-                if isinstance(args.get("evidenceIds"), (list, tuple))
-                else [],
-            )
+            try:
+                capture = AgentMemorySourceStore(
+                    self.sessions.db_path,
+                    project=self.project,
+                ).capture_hint(
+                    session_id=session_id,
+                    kind=_bounded_text(args.get("kind"), maximum=40),
+                    claim=_bounded_text(args.get("claim"), maximum=800),
+                    scope=_bounded_text(args.get("captureScope"), maximum=24)
+                    or "project",
+                    basis=_bounded_text(args.get("basis"), maximum=40),
+                    future_use=_bounded_text(args.get("futureUse"), maximum=300),
+                    supersedes=_bounded_text(args.get("supersedes"), maximum=800),
+                    source_id=_bounded_text(args.get("sourceId"), maximum=240),
+                    evidence_ids=[
+                        _bounded_text(value, maximum=240)
+                        for value in args.get("evidenceIds") or []
+                        if _bounded_text(value, maximum=240)
+                    ]
+                    if isinstance(args.get("evidenceIds"), (list, tuple))
+                    else [],
+                )
+            except ValueError as exc:
+                message = str(exc)
+                reason_code = next(
+                    (
+                        code
+                        for marker, code in (
+                            ("workflow noise or transient input", "not_durable"),
+                            ("sensitive content", "sensitive"),
+                            ("no active user evidence", "no_user_evidence"),
+                            ("missing or outside this session", "needs_source"),
+                            ("source is not eligible", "conflict_needs_review"),
+                            ("unsupported memory capture basis", "invalid_basis"),
+                            ("only a correction", "invalid_correction"),
+                        )
+                        if marker in message
+                    ),
+                    "invalid_candidate",
+                )
+                return {
+                    "summary": "这条内容没有进入记忆候选层",
+                    "candidate": "rejected",
+                    "createsDurableMemory": False,
+                    "reasonCode": reason_code,
+                    "retryable": reason_code == "needs_source",
+                }
             return {
                 "summary": "已标记一条待后台整理的记忆候选，不创建正式 Atom",
                 **capture,
@@ -6577,6 +6630,26 @@ def _runtime_memory_tool_parameter_schema(
                 "type": "string",
                 "enum": ["user", "project"],
             },
+            "basis": {
+                "type": "string",
+                "enum": [
+                    "explicit_user_request",
+                    "explicit_user_statement",
+                    "user_correction",
+                    "repeated_user_signal",
+                    "verified_outcome",
+                ],
+            },
+            "futureUse": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300,
+            },
+            "supersedes": {
+                "type": "string",
+                "maxLength": 800,
+                "description": "仅 correction 可填写；写被纠正的旧说法，不写内部 ID。",
+            },
         }
     )
     branches: list[dict[str, object]] = []
@@ -6615,6 +6688,16 @@ def _runtime_memory_tool_parameter_schema(
                 "captureScope": {
                     "type": "string",
                     "enum": ["user", "project"],
+                },
+                "basis": {
+                    "type": "string",
+                    "enum": [
+                        "explicit_user_request",
+                        "explicit_user_statement",
+                        "user_correction",
+                        "repeated_user_signal",
+                        "verified_outcome",
+                    ],
                 },
             }
         elif operation == "maintenance_status":

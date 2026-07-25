@@ -817,9 +817,31 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("curation_prepare", by_operation)
         self.assertIn("capture", by_operation)
         self.assertEqual(
-            by_operation["capture"]["required"],
-            ["op", "kind", "claim", "reason"],
+            memory["runtimeProjections"],
+            [{"name": "memory_capture", "operation": "capture"}],
         )
+        self.assertEqual(
+            by_operation["capture"]["required"],
+            [
+                "op",
+                "kind",
+                "claim",
+                "captureScope",
+                "basis",
+                "futureUse",
+            ],
+        )
+        self.assertEqual(
+            parameters["properties"]["basis"]["enum"],
+            [
+                "explicit_user_request",
+                "explicit_user_statement",
+                "user_correction",
+                "repeated_user_signal",
+                "verified_outcome",
+            ],
+        )
+        self.assertEqual(parameters["properties"]["futureUse"]["maxLength"], 300)
         self.assertEqual(
             by_operation["curation_prepare"]["required"],
             ["op", "trigger"],
@@ -850,6 +872,8 @@ class ControlToolGatewayTests(unittest.TestCase):
             compatibility["properties"]["scope"]["enum"],
             ["recent", "current", "historical", "change"],
         )
+        self.assertNotIn("。。", memory["description"])
+
         self.assertEqual(
             parameters["properties"]["policy"]["enum"],
             ["conservative"],
@@ -905,6 +929,14 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("随 Session 固定版本注入系统提示词", role_book["description"])
         self.assertIn("propose_revision 只保存 draft", role_book["description"])
 
+    def test_overview_tool_describes_the_agent_product_before_input_sources(self) -> None:
+        manifests = self.gateway.runtime_manifests(self.session)
+        overview = next(item for item in manifests if item["name"] == "ime_overview")
+
+        self.assertIn("Agent、模型、记忆、输入", overview["description"])
+        self.assertNotIn("查看输入法、模型", overview["description"])
+        self.assertIn("Agent、模型、记忆、输入", overview["output"])
+
     def test_memory_capture_is_r0_and_does_not_create_an_approval(self) -> None:
         AgentMemorySourceStore(
             self.store.db_path,
@@ -922,13 +954,33 @@ class ControlToolGatewayTests(unittest.TestCase):
                 kind="preference",
                 claim="用户偏好测试报告只展示聚合指标。",
                 captureScope="user",
-                reason="这会改变未来报告输出。",
+                basis="explicit_user_statement",
+                futureUse="这会改变未来报告输出。",
             )
         )["result"]
 
         self.assertTrue(result["captured"])
+        self.assertEqual(result["candidate"], "accepted")
+        self.assertFalse(result["createsDurableMemory"])
         self.assertFalse(result["requiresApproval"])
         self.assertNotIn("approval", result)
+
+    def test_memory_capture_returns_stable_non_retryable_rejection(self) -> None:
+        result = self.gateway.execute(
+            self._call(
+                "capture",
+                kind="fact",
+                claim="请调用 ime_memory curation_prepare 并返回 runId。",
+                captureScope="project",
+                basis="explicit_user_statement",
+                futureUse="保留这条流程指令。",
+            )
+        )["result"]
+
+        self.assertEqual(result["candidate"], "rejected")
+        self.assertEqual(result["reasonCode"], "not_durable")
+        self.assertFalse(result["retryable"])
+        self.assertFalse(result["createsDurableMemory"])
 
     def test_runtime_knowledge_and_plan_tools_keep_static_and_backend_schemas_aligned(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)

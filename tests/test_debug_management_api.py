@@ -1208,7 +1208,7 @@ class DebugManagementApiTests(unittest.TestCase):
 
         self.assertIn("notion", route)
         self.assertIn("defaultOrganizationInstruction", route)
-        self.assertIn("少量长期主题", route["defaultOrganizationInstruction"])
+        self.assertIn("个人、项目与长期工作主题", route["defaultOrganizationInstruction"])
         self.assertIn("submitConfigured", route["notion"])
         self.assertIn("pollConfigured", route["notion"])
         self.assertFalse(route["notion"]["ready"])

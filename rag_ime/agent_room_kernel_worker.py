@@ -312,8 +312,13 @@ def _default_dispatch_message(_dispatch: Mapping[str, object]) -> str:
     # private trigger, never the transport envelope or its internal IDs.
     return (
         "执行当前受管 Room 任务；任务事实与责任以本轮 Room Context 为准。"
-        "提交 deliver 时，把 acceptance.criteria[].criterionId 原样放入 "
-        "requirementCoverage，禁止自造标签。"
+        "需要确认当前责任、验收或成员时先调用 room_state。"
+        "AC 是 Acceptance Criterion（验收条件）的短别名；AC-1 就是 room_state "
+        "当前验收清单的第一项。收工只调用 room_commit：evidence.acceptance "
+        "只能填写 room_state 的 acceptanceAliases 返回的 AC-1、AC-2 等当前任务"
+        "验收别名，refs 只能填写"
+        "成功工具结果返回的 evidenceRef；不要填写数据库 criterionId，也不要自报 "
+        "已通过或最终裁决，真实状态由 Kernel 判定。"
     )
 
 

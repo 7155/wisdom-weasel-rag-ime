@@ -93,10 +93,10 @@ const layerIcons: Record<ContextLayerId, LucideIcon> = {
   'tool-results': PackageOpen,
 };
 
-const roleBookPattern = /<agent-role-book\b[^>]*>([\s\S]*?)<\/agent-role-book>/giu;
+const roleBookPattern = /<agent-profile\b[^>]*>([\s\S]*?)<\/agent-profile>/giu;
+const workflowStatePattern = /<workflow-state\b[^>]*>([\s\S]*?)<\/workflow-state>/giu;
 const managedContextPattern = /<rag-ime-context\b[^>]*>([\s\S]*?)<\/rag-ime-context>/giu;
 const sessionMemoryPattern = typedContextPattern('session_memory');
-const workflowControlPattern = typedContextPattern('workflow_control');
 const goalPattern = typedContextPattern('goal');
 const lifecycleHookPattern = typedContextPattern('lifecycle_hook');
 const timelineSectionPattern = /(?:^|\n)###\s+近期时间线\s*\n([\s\S]*?)(?=\n###\s+|\s*$)/giu;
@@ -322,7 +322,7 @@ function contextLayerSources(
   latestCall: DebugModelCall | undefined,
 ): LayerSource[] {
   const roleBooks = captures(systemPrompt, roleBookPattern);
-  const workflowControls = captures(systemPrompt, workflowControlPattern);
+  const workflowStates = captures(systemPrompt, workflowStatePattern);
   const goals = captures(systemPrompt, goalPattern);
   const lifecycleHooks = captures(systemPrompt, lifecycleHookPattern);
   const sessionBlocks = captures(systemPrompt, sessionMemoryPattern);
@@ -332,6 +332,7 @@ function contextLayerSources(
   const sessionWithoutTimeline = sessionContent.replace(timelineSectionPattern, '\n').trim();
   const systemWithoutManagedLayers = systemPrompt
     .replace(roleBookPattern, '\n')
+    .replace(workflowStatePattern, '\n')
     .replace(managedContextPattern, '\n')
     .replace(/\n{3,}/gu, '\n\n')
     .trim();
@@ -365,14 +366,14 @@ function contextLayerSources(
       Boolean(systemPrompt),
       contentIdentifiers(systemWithoutManagedLayers),
     ),
-    layer('role-book', 'Role Book', '<agent-role-book>', roleBooks.join('\n'), Boolean(systemPrompt)),
+    layer('role-book', '伙伴画像', '<agent-profile>', roleBooks.join('\n'), Boolean(systemPrompt)),
     layer(
       'workflow-control',
-      'Workflow Control',
-      'type="workflow_control"',
-      workflowControls.join('\n'),
+      '工作状态',
+      '<workflow-state>',
+      workflowStates.join('\n'),
       Boolean(systemPrompt),
-      contentIdentifiers(workflowControls.join('\n')),
+      contentIdentifiers(workflowStates.join('\n')),
     ),
     layer(
       'goal',
@@ -597,7 +598,7 @@ function emptySnapshot(): ContextXraySnapshot {
     available: false,
     layers: [
       unavailable('system', 'System', '最终 systemPrompt'),
-      unavailable('role-book', 'Role Book', '<agent-role-book>'),
+      unavailable('role-book', '伙伴画像', '<agent-profile>'),
       unavailable('session-memory', 'Session Memory', 'type="session_memory"'),
       unavailable('timeline', 'Timeline', 'Session Memory · 近期时间线'),
       unavailable('skills', 'Skills', 'systemPromptOptions.skills'),

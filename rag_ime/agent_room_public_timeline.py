@@ -18,6 +18,7 @@ _ROOM_POST_PUBLIC_FIELDS = (
     "kind",
     "visibility",
     "content",
+    "mentions",
     "blocks",
     "idempotencyKey",
     "publicationSource",

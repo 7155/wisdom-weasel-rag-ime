@@ -40,7 +40,7 @@ def _frontmatter(path: Path) -> dict[str, object]:
 
 
 class RoomNativeSkillTests(unittest.TestCase):
-    def test_general_work_skills_are_thin_progressive_entries(self) -> None:
+    def test_general_work_skills_are_bounded_progressive_entries(self) -> None:
         expected_keys = {
             "name",
             "description",
@@ -60,7 +60,11 @@ class RoomNativeSkillTests(unittest.TestCase):
                 self.assertEqual(frontmatter["name"], skill_id)
                 self.assertTrue(frontmatter["when"])
                 self.assertTrue(frontmatter["notFor"])
-                self.assertLessEqual(len(body.splitlines()), 80)
+                # Full bodies arrive only through skill_load Tool Results. They
+                # may be structured enough to guide real work, but stay bounded.
+                self.assertLessEqual(len(body.splitlines()), 120)
+                self.assertLessEqual(len(body.encode()), 6_000)
+                self.assertIn("## Self-Check", body)
                 self.assertNotIn("create a Dispatch", body)
                 self.assertNotIn("mark work complete", body)
 
@@ -76,21 +80,32 @@ class RoomNativeSkillTests(unittest.TestCase):
         quality = (SKILLS_ROOT / "quality-gate/SKILL.md").read_text(
             encoding="utf-8"
         )
+        review = (SKILLS_ROOT / "independent-review/SKILL.md").read_text(
+            encoding="utf-8"
+        )
         self.assertIn("File size alone is not evidence", architecture)
+        self.assertIn("**depth**", architecture)
+        self.assertIn("**deletion test**", architecture)
         self.assertIn("Ask exactly one decision question", grilling)
         self.assertIn("ordinary chat", managed)
-        self.assertIn("distinct, authorized action", managed)
+        self.assertIn("materially different legal", managed)
         self.assertIn("another participant or model capability", managed)
-        self.assertIn("ask only the smallest question", managed)
-        self.assertIn("bounded diagnosis and fallbacks are exhausted", managed)
-        self.assertIn("Kernel owns terminal truth", managed)
-        self.assertIn("immutable original request", quality)
+        self.assertIn("two consecutive attempts", managed)
+        self.assertIn("The Kernel binds", quality)
+        self.assertIn("derives coverage and readiness", quality)
+        self.assertIn("human-readable aliases", quality)
+        self.assertIn("No completion claim without fresh", quality)
+        self.assertIn("Do not send", quality)
+        self.assertIn("acceptanceAliases", quality)
+        self.assertIn("decision=handoff", quality)
+        self.assertIn("do not send", review)
+        self.assertIn("acceptanceAliases", review)
 
-    def test_ten_room_skills_are_native_pi_skills_with_compact_routing_cards(self) -> None:
+    def test_nine_governed_skills_are_native_pi_skills_with_compact_routing_cards(self) -> None:
         policy = RoomSkillPolicy(POLICY_PATH, SKILLS_ROOT)
         expected_keys = {"name", "when", "notFor", "input", "output", "does"}
 
-        self.assertEqual(len(policy.skill_ids), 10)
+        self.assertEqual(len(policy.skill_ids), 9)
         for skill_id, routing in zip(policy.skill_ids, policy.catalog(), strict=True):
             with self.subTest(skill_id=skill_id):
                 path = SKILLS_ROOT / skill_id / "SKILL.md"
@@ -106,19 +121,27 @@ class RoomNativeSkillTests(unittest.TestCase):
                 self.assertNotIn("body", routing)
                 encoded = json.dumps(routing, ensure_ascii=False, separators=(",", ":"))
                 self.assertLessEqual(len(encoded.encode()), 450, encoded)
+                body = path.read_text(encoding="utf-8").split("---", 2)[2]
+                self.assertLessEqual(len(body.encode()), 6_000)
+                self.assertIn("## Workflow", body)
+                self.assertIn("## Output Contract", body)
+                self.assertIn("## Self-Check", body)
+                self.assertIn("## Boundaries", body)
 
     def test_exact_load_adds_only_one_skill_body_and_revision(self) -> None:
         policy = RoomSkillPolicy(POLICY_PATH, SKILLS_ROOT)
         expected_catalog_keys = {"name", "when", "notFor", "input", "output", "does"}
 
         catalog = policy.catalog()
-        loaded = policy.load_exact("room-structured-handoff")
+        loaded = policy.load_exact("structured-handoff")
 
         self.assertTrue(all(set(item) == expected_catalog_keys for item in catalog))
         self.assertEqual(set(loaded), expected_catalog_keys | {"body", "contentRevision"})
         self.assertIn("## Output Contract", loaded["body"])
         self.assertIn("current model cannot finish", loaded["body"])
         self.assertIn("exact takeover point", loaded["body"])
+        self.assertIn("## Five-Part Packet", loaded["body"])
+        self.assertIn("## Complete Example", loaded["body"])
         self.assertEqual(len(loaded["contentRevision"]), 64)
         self.assertFalse(any("body" in item for item in catalog))
         self.assertNotIn("nextCandidates", loaded)
@@ -138,35 +161,32 @@ class RoomNativeSkillTests(unittest.TestCase):
             self.assertNotIn(duplicated_field, serialized)
 
     def test_real_confusions_are_excluded_by_skill_source_truth(self) -> None:
-        debugging = _frontmatter(SKILLS_ROOT / "room-systematic-debugging/SKILL.md")
-        implementation = _frontmatter(SKILLS_ROOT / "room-test-driven-implementation/SKILL.md")
-        handoff = _frontmatter(SKILLS_ROOT / "room-structured-handoff/SKILL.md")
-        closure = _frontmatter(SKILLS_ROOT / "room-delivery-closure/SKILL.md")
+        debugging = _frontmatter(SKILLS_ROOT / "systematic-debugging/SKILL.md")
+        implementation = _frontmatter(SKILLS_ROOT / "test-driven-implementation/SKILL.md")
+        handoff = _frontmatter(SKILLS_ROOT / "structured-handoff/SKILL.md")
+        quality = _frontmatter(SKILLS_ROOT / "quality-gate/SKILL.md")
 
         self.assertTrue(any("普通实现" in item for item in debugging["notFor"]))
         self.assertTrue(any("未知故障" in item for item in implementation["notFor"]))
         self.assertTrue(any("最终收口" in item for item in handoff["notFor"]))
-        self.assertTrue(any("仍需接手" in item for item in closure["notFor"]))
+        self.assertTrue(any("降低阈值" in item for item in quality["notFor"]))
 
-    def test_unique_stage_is_required_but_ambiguous_stage_is_suggestion_only(self) -> None:
+    def test_governed_stages_select_one_exact_skill(self) -> None:
         policy = RoomSkillPolicy(POLICY_PATH, SKILLS_ROOT)
 
         required = policy.select_stage("requirements")
-        ambiguous = policy.select_stage("review")
+        review = policy.select_stage("review")
         missing = policy.select_stage("unknown-stage")
 
         self.assertEqual(required["selection"], "required")
-        self.assertEqual(required["skillId"], "room-requirement-clarification")
+        self.assertEqual(required["skillId"], "requirement-alignment")
         self.assertEqual(required["candidateSkillIds"], [])
-        self.assertEqual(ambiguous["selection"], "suggested")
-        self.assertEqual(
-            ambiguous["candidateSkillIds"],
-            ["room-delivery-self-check", "room-independent-vision-review"],
-        )
-        self.assertIsNone(ambiguous["skillId"])
+        self.assertEqual(review["selection"], "required")
+        self.assertEqual(review["skillId"], "independent-review")
+        self.assertEqual(review["candidateSkillIds"], [])
         self.assertEqual(missing["selection"], "none")
         self.assertEqual(missing["candidateSkillIds"], [])
-        for result in (required, ambiguous, missing):
+        for result in (required, review, missing):
             self.assertFalse(any("dispatch" in key.lower() for key in result))
 
     def test_next_candidates_are_advice_and_have_no_dispatch_side_effect(self) -> None:
@@ -187,9 +207,9 @@ class RoomNativeSkillTests(unittest.TestCase):
                     name: conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
                     for name in dispatch_tables
                 }
-            advice = store.next_candidates("room-requirement-clarification")
+            advice = store.next_candidates("requirement-alignment")
 
-            self.assertEqual(advice, ["room-solution-convergence"])
+            self.assertEqual(advice, ["solution-convergence"])
             with sqlite3.connect(Path(tmp) / "room.sqlite") as conn:
                 self.assertEqual(
                     conn.execute("SELECT COUNT(*) FROM room_v2_skill_load_receipts").fetchone()[0],
@@ -224,8 +244,8 @@ class RoomSkillReceiptTests(unittest.TestCase):
             "task_id": "task:1",
             "dispatch_id": "dispatch:1",
             "session_id": "session:1",
-            "skill_id": "room-requirement-clarification",
-            "skill_hash": self.policy.skill_hash("room-requirement-clarification"),
+            "skill_id": "requirement-alignment",
+            "skill_hash": self.policy.skill_hash("requirement-alignment"),
             "catalog_revision": "a" * 64,
             "load_reason": "stage_required",
             "capability_epoch": 4,
@@ -289,7 +309,7 @@ class RoomSkillReceiptTests(unittest.TestCase):
                 catalog_revision="b" * 64,
             )
 
-        path = self.skills_root / "room-requirement-clarification/SKILL.md"
+        path = self.skills_root / "requirement-alignment/SKILL.md"
         path.write_text(path.read_text(encoding="utf-8") + "\nchanged\n", encoding="utf-8")
         with self.assertRaises(SkillContentRevisionMismatch):
             self._restore(receipt)
@@ -297,7 +317,7 @@ class RoomSkillReceiptTests(unittest.TestCase):
     def test_compaction_restore_keeps_the_pinned_policy_version(self) -> None:
         receipt, _ = self._pin()
         raw = json.loads(self.policy_path.read_text(encoding="utf-8"))
-        raw["version"] = 2
+        raw["version"] = int(raw["version"]) + 1
         self.policy_path.write_text(
             json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
@@ -426,9 +446,10 @@ class RoomSkillReceiptTests(unittest.TestCase):
         self.assertEqual(restored["restoredFromReceiptId"], second["receiptId"])
         self.assertEqual(first["capabilityEpoch"], second["capabilityEpoch"])
 
-    def test_receipt_cannot_be_created_from_multi_candidate_suggestion(self) -> None:
+    def test_receipt_requires_an_explicit_skill_id(self) -> None:
         selection = self.policy.select_stage("review")
-        self.assertEqual(selection["selection"], "suggested")
+        self.assertEqual(selection["selection"], "required")
+        self.assertEqual(selection["skillId"], "independent-review")
         with self.assertRaisesRegex(ValueError, "explicit skillId"):
             self._pin(skill_id="")
 

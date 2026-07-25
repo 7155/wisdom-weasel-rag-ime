@@ -648,7 +648,9 @@ class AgentMemorySourceStore:
         kind: str,
         claim: str,
         scope: str,
-        reason: str,
+        basis: str,
+        future_use: str,
+        supersedes: str = "",
         source_id: str = "",
         evidence_ids: list[str] | tuple[str, ...] = (),
         created_at_ms: int | None = None,
@@ -659,7 +661,9 @@ class AgentMemorySourceStore:
         normalized_kind = compact_whitespace(kind).lower()
         normalized_scope = compact_whitespace(scope).lower() or "project"
         normalized_claim = compact_whitespace(claim)[:800]
-        normalized_reason = compact_whitespace(reason)[:500]
+        normalized_basis = compact_whitespace(basis).lower()
+        normalized_future_use = compact_whitespace(future_use)[:300]
+        normalized_supersedes = compact_whitespace(supersedes)[:800]
         requested_source = compact_whitespace(source_id)
         normalized_evidence = list(
             dict.fromkeys(
@@ -680,12 +684,22 @@ class AgentMemorySourceStore:
             raise ValueError("unsupported memory capture kind")
         if normalized_scope not in {"user", "project"}:
             raise ValueError("memory capture scope must be user or project")
-        if not normalized_claim or not normalized_reason:
-            raise ValueError("memory capture requires claim and reason")
+        if normalized_basis not in {
+            "explicit_user_request",
+            "explicit_user_statement",
+            "user_correction",
+            "repeated_user_signal",
+            "verified_outcome",
+        }:
+            raise ValueError("unsupported memory capture basis")
+        if not normalized_claim or not normalized_future_use:
+            raise ValueError("memory capture requires claim and future use")
+        if normalized_supersedes and normalized_kind != "correction":
+            raise ValueError("only a correction may declare superseded content")
         if memory_evidence_exclusion_reason(normalized_claim):
             raise ValueError("memory capture claim is workflow noise or transient input")
         if looks_sensitive(normalized_claim) or contains_sensitive_content(
-            f"{normalized_claim} {normalized_reason}"
+            f"{normalized_claim} {normalized_future_use} {normalized_supersedes}"
         ):
             raise ValueError("sensitive content cannot be captured as a memory hint")
 
@@ -767,16 +781,28 @@ class AgentMemorySourceStore:
 
             resolved_source_id = str(source["source_id"])
             hint_id = f"capture:{uuid.uuid4()}"
+            existing = conn.execute(
+                """
+                SELECT hint_id
+                FROM memory_capture_hints
+                WHERE source_id = ? AND kind = ? AND normalized_claim = ?
+                """,
+                (resolved_source_id, normalized_kind, normalized_claim),
+            ).fetchone()
             conn.execute(
                 """
                 INSERT INTO memory_capture_hints(
                     hint_id, source_id, kind, normalized_claim, scope, reason,
+                    basis, future_use, supersedes,
                     evidence_ids_json, captured_by_session_id,
                     captured_by_role_id, status, created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                 ON CONFLICT(source_id, kind, normalized_claim) DO UPDATE SET
                     scope = excluded.scope,
                     reason = excluded.reason,
+                    basis = excluded.basis,
+                    future_use = excluded.future_use,
+                    supersedes = excluded.supersedes,
                     evidence_ids_json = excluded.evidence_ids_json,
                     captured_by_session_id = excluded.captured_by_session_id,
                     captured_by_role_id = excluded.captured_by_role_id,
@@ -789,7 +815,10 @@ class AgentMemorySourceStore:
                     normalized_kind,
                     normalized_claim,
                     normalized_scope,
-                    normalized_reason,
+                    normalized_future_use,
+                    normalized_basis,
+                    normalized_future_use,
+                    normalized_supersedes,
                     json.dumps(normalized_evidence, ensure_ascii=False),
                     normalized_session,
                     str(source["role_id"] or ""),
@@ -809,11 +838,19 @@ class AgentMemorySourceStore:
             "schemaVersion": "rag-ime.memory-capture-hint.v1",
             "ok": True,
             "captured": True,
+            "candidate": (
+                "deduplicated"
+                if existing is not None
+                else "queued_for_review"
+                if normalized_kind == "correction"
+                else "accepted"
+            ),
             "hintId": str(stored[0]),
             "sourceId": resolved_source_id,
             "kind": normalized_kind,
             "scope": normalized_scope,
             "createsAtom": False,
+            "createsDurableMemory": False,
             "requiresApproval": False,
         }
 

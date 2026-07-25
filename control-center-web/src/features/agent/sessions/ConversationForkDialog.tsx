@@ -257,6 +257,8 @@ function forkCandidates(value: unknown): ForkCandidate[] {
       && (item.role === 'user' || item.role === 'assistant')
       && !item.text.includes('<rag-ime-deep-search-context')
       && !item.text.includes('<rag-ime-user-query>')
+      && !item.text.includes('<agent-deep-search-context')
+      && !item.text.includes('<agent-user-query>')
   )).map((item) => ({
     entryId: text(item.entryId),
     text: text(item.text).trim(),

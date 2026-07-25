@@ -545,7 +545,7 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(ordinary["actGate"]["reason"], "plan_required")
         self.assertEqual(room["plan"]["status"], "draft")
         self.assertTrue(room["actGate"]["allowed"])
-        self.assertIn("Room Dispatch", room["actGate"]["message"])
+        self.assertIn("当前 Room 任务已经开始", room["actGate"]["message"])
 
     def test_thread_goal_budget_pause_and_evidence_audit_control_act_gate(self) -> None:
         session = self.store.create(title="goal", created_at_ms=100)

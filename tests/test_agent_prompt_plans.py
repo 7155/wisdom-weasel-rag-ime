@@ -46,7 +46,7 @@ class RoomPromptPlanTests(unittest.TestCase):
         layers[1] = PromptLayer(
             **{
                 **layers[1].__dict__,
-                "content": "PERSONA\n收工前必须选择已交付、已交接、等待或阻塞",
+                "content": "PERSONA\n<room-work>完成后调用 room_commit</room-work>",
             }
         )
 
@@ -93,13 +93,31 @@ class RoomPromptPlanTests(unittest.TestCase):
         )
         stable_prompt = str(first_provider["stableSystemPrompt"])
         positions = [
-            stable_prompt.index(f'order="{order}"') for order in range(1, 6)
+            stable_prompt.index(f'order="{order}"') for order in range(1, 5)
         ]
         self.assertEqual(positions, sorted(positions))
+        self.assertNotIn('name="room_profile_overlay"', stable_prompt)
         self.assertNotIn(" ref=", stable_prompt)
         self.assertNotIn("sha256:", stable_prompt)
         self.assertIn("任务：实现 PromptPlan", first_provider["providerContext"])
         self.assertIn("预算剩余 42", second_provider["providerContext"])
+
+    def test_non_empty_room_profile_overlay_is_rendered(self) -> None:
+        layers = list(self._layers())
+        layers[4] = PromptLayer(
+            "room_profile_overlay",
+            "profile-room-kernel-compiler",
+            "profile:review",
+            "<room-profile>独立复核</room-profile>",
+            ("room-overlay",),
+        )
+        self._compile("receipt:profile", layers=layers)
+
+        prompt = str(
+            self.store.provider_payload("receipt:profile")["stableSystemPrompt"]
+        )
+        self.assertIn('name="room_profile_overlay"', prompt)
+        self.assertIn("<room-profile>独立复核</room-profile>", prompt)
 
     def test_crash_before_provider_receipt_replays_same_pending_plan(self) -> None:
         entry = self._entry("room_post", "post:1", "未封口事实", 1)
@@ -267,10 +285,13 @@ class RoomPromptPlanTests(unittest.TestCase):
             ]
         )
 
-        self.assertIn('criterionId: "criterion:required"', visible)
-        self.assertIn("通过验收", visible)
+        self.assertIn("AC-1 | 待验收 | 通过验收", visible)
+        self.assertNotIn("criterion:required", visible)
         self.assertIn("原始需求（不可改写）", visible)
         self.assertIn("永久保留原始需求", visible)
+        self.assertIn("原始需求用于核对全链边界", visible)
+        self.assertIn("只执行下面的当前任务", visible)
+        self.assertIn("只使用当前任务列出的 AC 验收别名", visible)
         self.assertIn("当前任务", visible)
         self.assertIn("目标：完成实现", visible)
         self.assertIn("预期产物：可复核改动", visible)

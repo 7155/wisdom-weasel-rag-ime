@@ -75,7 +75,7 @@
         "isDefault": {"type": "boolean"}
       }
     },
-    "safetyPolicyVersion": {"type": "string", "const": "control-center-safe-v1"},
+    "safetyPolicyVersion": {"type": "string", "const": "agent-core-v2"},
     "selectableModes": {
       "type": "array",
       "minItems": 1,

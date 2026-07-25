@@ -37,7 +37,7 @@ READ_BOUNDARY_SOURCE = "".join(
     f'第{index:04d}行 "quoted" \\\\ path 智鼬数据\n'
     for index in range(4_200)
 )
-EXPECTED_SKILL = "room-test-driven-implementation"
+EXPECTED_SKILL = "test-driven-implementation"
 EXPECTED_TOOLS = {
     "workspace_list",
     "workspace_search",
@@ -570,7 +570,7 @@ def _debug_context(
         "progressiveDiscovery": progressive_discovery_check([governance]),
         "systemPromptChecks": {
             "roleBookExactlyOnce": bool(prompts)
-            and all(prompt.count("<agent-role-book>") == 1 for prompt in prompts),
+            and all(prompt.count("<agent-profile>") == 1 for prompt in prompts),
             "noUnpinnedRoleFallback": all(
                 "revision_not_pinned" not in prompt for prompt in prompts
             ),

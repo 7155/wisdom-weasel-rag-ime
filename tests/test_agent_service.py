@@ -1801,7 +1801,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(created_role["runtimeCharacteristics"]["suitableTasks"], ["温和复盘", "日常记录"])
         private_role = self.service.personas.resolve(created_role["roleId"], created_role["version"])
         self.assertIn("智鼬·雨天", private_role.system_prompt)
-        self.assertIn("只有受控审批回执有效", private_role.system_prompt)
+        self.assertIn("能力可见不等于获得许可", private_role.system_prompt)
         session = self.service.create_session(
             {
                 "title": "雨天整理",
@@ -3039,13 +3039,15 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(first["sessionCreated"])
         self.assertFalse(second["sessionCreated"])
         self.assertEqual(first["sessionId"], second["sessionId"])
-        self.assertTrue(str(first["session"]["title"]).startswith("输入助手 "))
+        self.assertTrue(str(first["session"]["title"]).startswith("记忆检索 "))
         self.assertEqual(first["evidenceCount"], 1)
         sent = prompt.call_args_list[0].args[1]
         self.assertIn(
-            "<rag-ime-user-query>\n最近我在做什么？\n</rag-ime-user-query>",
+            "<agent-user-query>\n最近我在做什么？\n</agent-user-query>",
             sent,
         )
+        self.assertIn("<agent-deep-search-context>", sent)
+        self.assertNotIn("输入法深度查找任务", sent)
         self.assertIn("控制中心使用连续 Pi Session", sent)
         self.assertIn("任何写操作仍必须经过原生审批", sent)
         self.assertNotIn(RUNTIME_PROMPT_ENVELOPE_PREFIX, sent)

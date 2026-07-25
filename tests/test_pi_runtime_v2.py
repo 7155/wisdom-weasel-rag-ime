@@ -128,7 +128,7 @@ for line in sys.stdin:
             time.sleep(2)
         result(request, sessions[session_id])
     elif method == "session.commands":
-        result(request, {"commands": [{"name": "skill:rag-ime-plugin-creator",
+        result(request, {"commands": [{"name": "skill:plugin-creator",
                                         "description": "Create and propose a managed plugin", "source": "skill"}]})
     elif method == "models.list":
         result(request, {"models": [model]})
@@ -505,7 +505,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 },
                 "roomSkillPolicy": {
                     "selection": "required",
-                    "skillId": "room-test-driven-implementation",
+                    "skillId": "test-driven-implementation",
                     "skillHash": "d" * 64,
                 },
             },
@@ -524,7 +524,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(opened["params"]["roomProviderContext"]["journalId"], "journal:1")
         self.assertEqual(
             opened["params"]["roomSkillPolicy"]["skillId"],
-            "room-test-driven-implementation",
+            "test-driven-implementation",
         )
 
     def test_typed_room_rpc_is_negotiated_and_correlated_across_the_host_process(self) -> None:
@@ -1811,8 +1811,8 @@ class PiRuntimeV2Tests(unittest.TestCase):
             self.runtime.command_catalog(session_id),
             [
                 {
-                    "name": "skill:rag-ime-plugin-creator",
-                    "invocation": "/skill:rag-ime-plugin-creator",
+                    "name": "skill:plugin-creator",
+                    "invocation": "/skill:plugin-creator",
                     "description": "Create and propose a managed plugin",
                     "source": "skill",
                 }
@@ -1886,8 +1886,8 @@ class PiRuntimeV2Tests(unittest.TestCase):
         first_id = str(self.first["id"])
         self.runtime.prompt(
             first_id,
-            "<rag-ime-deep-search-context>private evidence</rag-ime-deep-search-context>\n"
-            "<rag-ime-user-query>最近做了什么？</rag-ime-user-query>\n"
+            "<agent-deep-search-context>private evidence</agent-deep-search-context>\n"
+            "<agent-user-query>最近做了什么？</agent-user-query>\n"
             "本地时间：2026-07-16",
         )
         _wait_until(lambda: self.store.get(first_id)["status"] == "idle")

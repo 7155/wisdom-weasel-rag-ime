@@ -22,6 +22,64 @@ SPEC.loader.exec_module(CANARY)
 
 
 class RoomThreeMemberCanaryTest(unittest.TestCase):
+    def test_public_posts_come_from_the_ui_timeline_and_include_both_sources(
+        self,
+    ) -> None:
+        events = []
+        for index, source in enumerate(
+            ("room_post", "room_commit", "room_post", "room_commit"),
+            start=1,
+        ):
+            events.append(
+                {
+                    "eventType": "room_post",
+                    "payload": {
+                        "post": {
+                            "postId": f"post-{index}",
+                            "rootId": "root-1",
+                            "createdAtMs": index,
+                            "publicationSource": {
+                                "kind": source,
+                                "ref": f"source-{index}",
+                            },
+                        }
+                    },
+                }
+            )
+        events.append(
+            {
+                "eventType": "room_post",
+                "payload": {
+                    "post": {
+                        "postId": "other-root",
+                        "rootId": "root-2",
+                        "createdAtMs": 0,
+                        "publicationSource": {
+                            "kind": "room_post",
+                            "ref": "other",
+                        },
+                    }
+                },
+            }
+        )
+
+        posts = CANARY._public_posts_from_timeline_snapshot(
+            {"events": events},
+            root_id="root-1",
+        )
+
+        self.assertEqual(
+            [item["postId"] for item in posts],
+            ["post-1", "post-2", "post-3", "post-4"],
+        )
+        self.assertEqual(
+            [
+                item["publicationSource"]["kind"]
+                for item in posts
+            ],
+            ["room_post", "room_commit", "room_post", "room_commit"],
+        )
+
     def test_workflow_timeout_is_distinct_from_one_provider_turn(self) -> None:
         self.assertEqual(
             CANARY.workflow_timeout_seconds(
@@ -197,12 +255,19 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                 "pa",
                 acceptance_criterion_ids=[f"criterion-{index}" for index in range(6)],
             ),
-            self._task("t2", "t1", "pb", acceptance_criterion_ids=[]),
+            self._task(
+                "t2",
+                "t1",
+                "pb",
+                acceptance_criterion_ids=["criterion-3"],
+            ),
             self._task(
                 "t3",
                 "t1",
                 "pc",
-                acceptance_criterion_ids=["criterion-3", "criterion-4", "criterion-5"],
+                acceptance_criterion_ids=[
+                    f"criterion-{index}" for index in range(6)
+                ],
             ),
         ]
         dispatches = [
@@ -213,7 +278,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
 
         self.assertEqual(
             CANARY.task_acceptance_counts(tasks, dispatches),
-            {"A": 6, "B": 0, "C": 3},
+            {"A": 6, "B": 1, "C": 6},
         )
 
     def test_tool_workload_requires_parallel_review_and_formal_handoff(self) -> None:
@@ -249,6 +314,12 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         self.assertTrue(all(checks.values()))
         receipts["B"]["workspace_patch"] = self._receipt(["applied"])
         self.assertFalse(CANARY.tool_workload_checks(receipts)["bStayedReadOnly"])
+        receipts["B"]["room_collaborate"] = self._receipt(["failed"])
+        self.assertFalse(
+            CANARY.tool_workload_checks(receipts)[
+                "bDidNotDelegateItsOwnReview"
+            ]
+        )
 
     def test_tool_workload_rejects_unbounded_executor_retries(self) -> None:
         receipts = {
@@ -380,8 +451,19 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
 
             b_path = root / "B.jsonl"
             b_payload = json.loads(b_path.read_text(encoding="utf-8"))
-            b_payload["leak"] = "tool-A"
-            b_path.write_text(json.dumps(b_payload) + "\n", encoding="utf-8")
+            leaked_result = {
+                "type": "message",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "tool-A",
+                    "toolName": "workspace_read",
+                    "content": [{"type": "text", "text": "private result leaked"}],
+                },
+            }
+            b_path.write_text(
+                "\n".join((json.dumps(b_payload), json.dumps(leaked_result))) + "\n",
+                encoding="utf-8",
+            )
             contexts["B"]["transcript"]["sha256"] = hashlib.sha256(
                 b_path.read_bytes()
             ).hexdigest()

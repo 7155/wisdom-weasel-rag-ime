@@ -1889,6 +1889,66 @@ class RoomKernelStore:
                 raise KeyError(commit_id)
             return json.loads(str(row["payload_json"]))
 
+    def accepted_evidence_by_criterion(
+        self,
+        root_id: str,
+    ) -> dict[str, list[str]]:
+        """Project evidence already accepted by the Kernel for one Root."""
+
+        with self._connect() as conn:
+            root = self._root_row(conn, root_id)
+            criterion_order = [
+                str(value)
+                for value in json.loads(
+                    str(root["acceptance_criteria_json"])
+                )
+                if str(value).strip()
+            ]
+            accepted_criteria = set(criterion_order)
+            rows = conn.execute(
+                """SELECT payload_json
+                   FROM room_kernel_commits
+                   WHERE root_id = ?
+                   ORDER BY created_at_ms, commit_id""",
+                (root_id,),
+            ).fetchall()
+        collected: dict[str, list[str]] = {}
+        for row in rows:
+            payload = json.loads(str(row["payload_json"]))
+            gate = payload.get("qualityGateReceipt")
+            if not isinstance(gate, Mapping):
+                continue
+            for item in gate.get("items") or []:
+                if (
+                    not isinstance(item, Mapping)
+                    or item.get("status") != "pass"
+                ):
+                    continue
+                criterion_id = str(item.get("criterionId") or "").strip()
+                if criterion_id not in accepted_criteria:
+                    continue
+                target = collected.setdefault(criterion_id, [])
+                for raw_ref in item.get("evidenceRefs") or []:
+                    evidence_ref = str(raw_ref or "").strip()
+                    if (
+                        evidence_ref
+                        and evidence_ref not in target
+                        and len(target) < 64
+                    ):
+                        target.append(evidence_ref)
+        projected: dict[str, list[str]] = {}
+        remaining = 32
+        for ref_index in range(4):
+            for criterion_id in criterion_order:
+                refs = collected.get(criterion_id, ())
+                if ref_index >= len(refs) or remaining <= 0:
+                    continue
+                projected.setdefault(criterion_id, []).append(
+                    refs[ref_index]
+                )
+                remaining -= 1
+        return projected
+
     def continuation(self, commit_id: str) -> dict[str, object]:
         with self._connect() as conn:
             row = conn.execute(
@@ -1931,7 +1991,7 @@ class RoomKernelStore:
             parent = self._dispatch_row(conn, parent_dispatch_id)
             rows = conn.execute(
                 """SELECT payload_json FROM room_kernel_receipts
-                   WHERE root_id=? AND receipt_kind='accepted'
+                   WHERE root_id=? AND receipt_kind IN ('accepted','duplicate')
                    ORDER BY created_at_ms, receipt_id""",
                 (str(parent["root_id"]),),
             ).fetchall()

@@ -15,7 +15,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     visualProfile: { avatarAssetId: 'rag-ime-timeline-future-v1', symbolName: 'point.3.connected.trianglepath.dotted', accentToken: 'rose' },
     defaults: { modelPolicy: 'fixed', memoryPolicy: 'personal-evidence-v1', toolProfileVersion: 'control-center-v1', modelProfile: 'gpt/gpt-5.6-sol', thinkingLevel: 'max' },
     runtimeCharacteristics: { intelligence: '最高', speed: '较慢', context: '超长上下文，面向长期时间线', suitableTasks: ['复杂架构与深度实现', '多 Agent 主持和独立验收'], unsuitableTasks: ['只需快速扫读的低风险整理'], isDefault: true },
-    safetyPolicyVersion: 'control-center-safe-v1', selectableModes: ['assistant', 'coordinator'],
+    safetyPolicyVersion: 'agent-core-v2', selectableModes: ['assistant', 'coordinator'],
   },
   {
     schemaVersion: 'rag-ime.agent-persona.v1',
@@ -37,7 +37,7 @@ export const previewPersonas: AgentPersonaV1[] = [
       modelProfile: 'gpt/gpt-5.6-terra', thinkingLevel: 'max',
     },
     runtimeCharacteristics: { intelligence: '高', speed: '均衡', context: '长上下文，聚焦当前现场', suitableTasks: ['日常协作与项目推进', '整理证据并形成下一步'], unsuitableTasks: ['需要最深推演的复杂实现主持'], isDefault: false },
-    safetyPolicyVersion: 'control-center-safe-v1',
+    safetyPolicyVersion: 'agent-core-v2',
     selectableModes: ['assistant', 'coordinator'],
   },
   {
@@ -60,7 +60,7 @@ export const previewPersonas: AgentPersonaV1[] = [
       modelProfile: 'gpt/gpt-5.6-luna', thinkingLevel: 'max',
     },
     runtimeCharacteristics: { intelligence: '中高', speed: '快速', context: '长上下文，擅长线索巡检', suitableTasks: ['快速理解意图与初步检索', '轻量执行和下一步整理'], unsuitableTasks: ['复杂架构主持', '高风险独立决策'], isDefault: false },
-    safetyPolicyVersion: 'control-center-safe-v1',
+    safetyPolicyVersion: 'agent-core-v2',
     selectableModes: ['assistant', 'coordinator'],
   },
   {
@@ -71,7 +71,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     visualProfile: { avatarAssetId: 'rag-ime-timeline-flash-v1', symbolName: 'bolt', accentToken: 'neutral' },
     defaults: { modelPolicy: 'fixed', memoryPolicy: 'personal-evidence-v1', toolProfileVersion: 'control-center-v1', modelProfile: 'gpt/gpt-5.6-luna', thinkingLevel: 'low' },
     runtimeCharacteristics: { intelligence: '普通', speed: '极速', context: '超长上下文，擅长高速扫描', suitableTasks: ['超长材料高速扫读与提取', '归类、去重和格式转换'], unsuitableTasks: ['复杂推理', '复杂实现', '高风险决定', '最终验收'], isDefault: false },
-    safetyPolicyVersion: 'control-center-safe-v1', selectableModes: ['assistant', 'coordinator'],
+    safetyPolicyVersion: 'agent-core-v2', selectableModes: ['assistant', 'coordinator'],
   },
 ];
 

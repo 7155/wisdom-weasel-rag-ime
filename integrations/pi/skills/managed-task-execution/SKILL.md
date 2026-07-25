@@ -1,87 +1,109 @@
 ---
 name: managed-task-execution
-description: Keep an explicit Goal, Task, or Room Dispatch moving until it is verified, legitimately handed off, waiting, blocked, cancelled, or accepted. Use only when the runtime supplies managed work state; never use it to turn ordinary chat into a task loop.
+description: Keep an explicit Goal, Task, or Room Dispatch moving until acceptance is evidenced or a legitimate handoff, wait, block, or observed cancellation requires exit.
 when:
-  - 当前 Session 有显式 Goal、Task 或 Room Dispatch，需要持续执行和验收
-does: 围绕当前责任执行、验证、记录证据，并选择一个合法生命周期出口。
-input: 原始需求、当前任务、验收条件、阻塞、交接、权限和预算状态。
-output: 实际产物、验证证据、剩余工作和完成、交接、等待或阻塞建议。
+  - 当前 Session 已收到权威 Goal、Task 或 Room Dispatch，需要持续执行和验收
+does: 围绕当前责任选择可产生新证据的下一步，执行、验证，并提出一个合法生命周期出口。
+input: 原始需求、当前责任、验收别名、权限、预算、阻塞、交接和取消状态。
+output: 实际产物、验证证据、剩余验收和完成、交接、等待或阻塞建议；取消只报告 Runtime 已观察到的状态。
 notFor:
-  - 普通闲聊、开放讨论或没有受管任务状态的对话
-  - 通过反复自我提醒制造无限循环
+  - 普通聊天、需求对齐、开放讨论、未确认计划或没有受管任务状态的对话
+  - 通过重复提示、重复失败动作或空转制造无限循环
 ---
 
 # Managed Task Execution
 
-## Workflow
+## Core Principle
 
-1. Verify that the runtime supplied an authoritative Goal, Task, or Room
-   Dispatch. For Room work, the state must include the confirmed original-goal
-   reference, current responsibility, and acceptance conditions. If those are
-   absent or contradict a later user correction, do not reconstruct them from
-   chat history; report the managed task as blocked for requirement repair.
-2. Read blockers, handoff, permission mode, cancellation generation, and
-   remaining budget. Treat peer Room Sessions as independent owners of their
-   assigned Tasks, not as subordinate reasoning branches.
-3. Choose the smallest concrete next action that advances one unmet acceptance
-   condition.
-4. Execute through already authorized tools. Capture real outputs and verify
-   effects before updating progress.
-5. Continue in the same native Agent loop while acceptance remains unmet and a
-   distinct, authorized action can produce new evidence for an unmet criterion.
-   A tool result is input to the next decision, not a reason to stop. A failed
-   action should produce a bounded diagnosis or materially different fallback,
-   never the same call or prompt again.
-6. Treat the end of one model response as a settle candidate, not task
-   completion. If the Kernel returns a governed follow-up, resume from the
-   authoritative task state and the exact missing acceptance item. Do not spend
-   that follow-up restating progress or consuming the continuation budget.
-7. Before any lifecycle exit, build the structured quality receipt required by
-   the active `room_commit` schema. Re-read the immutable original request,
-   cover every current acceptance criterion exactly once, attach fresh evidence
-   to every `pass`, and keep failed or unverified items explicit. The Kernel,
-   not this Skill, decides whether the receipt permits settlement.
-8. Propose exactly one legal exit:
-   - completed with evidence;
-   - handed off with completed work, remaining work, reason, and next owner;
-   - waiting with the awaited signal and resume condition;
-   - blocked with evidence and the missing decision or capability;
-   - cancelled with no further tool activity.
+Persistence means repeatedly choosing a legal action that can change the
+evidence state. It does not mean repeating a prompt, retrying the same failed
+call, or keeping a model alive after no-progress and cancellation gates.
 
-## Bounded Continuation
+## Work Loop
 
-Stop trying and propose a lifecycle exit as soon as there is no distinct legal
-action that can advance acceptance:
+1. Confirm that the runtime supplied authoritative managed work. Read the
+   original request, current responsibility, acceptance aliases, permissions,
+   cancellation state, remaining budget, blockers, and latest handoff. If they
+   conflict with a later user correction, stop for requirement repair instead
+   of guessing.
+2. Choose the smallest authorized action that can create new evidence for one
+   unmet acceptance check. A tool result is input to the next decision, not a
+   reason to stop.
+3. Execute, inspect the actual effect, and record the evidence. Do not count a
+   successful tool transport as successful product behavior.
+4. Continue while acceptance remains unmet and a materially different legal
+   action can advance it. After a failure, diagnose or try a distinct fallback;
+   never repeat the same call or prompt to appear persistent.
+5. Treat the end of a model response as a settle candidate, not completion. If
+   the Kernel returns a bounded continuation, resume from the named missing
+   acceptance item without restating the entire task.
+6. Before a delivery claim, follow the already loaded `quality-gate` body. If
+   it is absent and the current stage requires it, load that exact Skill once;
+   do not reload an active Skill. The Kernel decides whether the resulting
+   evidence permits settlement.
+7. Propose exactly one next lifecycle action:
+   - deliver when all required acceptance has eligible evidence;
+   - handoff when another participant or model capability is a better fit;
+   - wait when one user decision, permission, credential, or external signal
+     is required;
+   - blocked when acceptance is unreachable or bounded alternatives are
+     exhausted;
+   - when cancellation is visible, stop immediately and report the last
+     accepted state. Cancellation is a Runtime observation, not a
+     `room_commit` decision.
 
-- use `handoff` when another participant or model capability is a better fit;
-  include completed work, failure evidence, unmet criteria, the recommended
-  capability or model, and the exact takeover point;
-- use `wait` when a user decision, permission, credential, or external signal
-  is required; ask only the smallest question that can resume work and record
-  the awaited signal and resume condition;
-- use `blocked` when acceptance is unreachable, a required capability is
-  unavailable, or bounded diagnosis and fallbacks are exhausted.
+## Progress Ledger
 
-Never burn follow-ups, retries, budget, or context to appear persistent. The
-model proposes the exit; the Kernel owns terminal truth and enforces attempts,
-deadline, cancellation, fences, and budget.
+Before another automatic continuation, compare:
 
-## Exit Contract
+```text
+unmet acceptance | blocker | evidence set | last action | proposed next action
+```
 
-Return the current outcome, evidence, unmet acceptance items, and one lifecycle
-recommendation. In a managed Room, use its canonical state, post, and commit
-tools exactly as the loaded schema requires. `requirementCoverage` must equal
-the `qualityGate.items` whose status is `pass`; a delivery claim also requires
-`ready_to_deliver`. Every evidence string used by a passing quality item must
-also appear unchanged in the top-level `evidenceRefs`; use that top-level array
-as the evidence union, not as a separate summary. Do not call `room_commit`
-merely because one Provider response is ending; call it only for a valid
-lifecycle exit.
+Continue only when the next action is legal and can materially change at least
+one field. Preserve failed approaches that rule out a branch; do not repeat
+them after compaction or handoff.
+
+## No-Progress Exit
+
+Stop automatic work when two consecutive attempts leave the same unmet
+acceptance, blocker, evidence set, and proposed next action, or when the Kernel
+reports that the continuation/repair budget is exhausted. Handoff, wait, or
+block with the observed evidence and exact resume condition. Do not spend
+context or budget proving determination.
+
+## Lifecycle Packet
+
+- **deliver**: completed behavior, changed artifacts, evidence by acceptance
+  alias, and residual risk;
+- **handoff**: receiver capability, exact takeover point, evidence, remaining
+  acceptance, and expected output;
+- **wait**: who or what is awaited, one necessary question if applicable, and
+  an objective resume condition;
+- **blocked**: blocker, attempted materially different alternatives, and an
+  unlock condition;
+- **observed cancellation**: last accepted state and confirmation that no
+  further action or late write was attempted; do not call `room_commit` after
+  cancellation.
+
+## Output Contract
+
+Return the current outcome, changed artifacts, evidence, unmet acceptance,
+failed approaches worth preserving, residual risks, and one lifecycle
+recommendation. In Room work, use the already loaded Room state, public post,
+collaboration, and commit Tools according to their exact schemas.
+
+## Self-Check
+
+- Did the last action change an artifact, observation, decision, or evidence?
+- Am I continuing because acceptance is open, not because the response ended?
+- Is the next step inside current permission, budget, and cancellation state?
+- If I cannot finish, did I identify a specific receiver, question, or unlock
+  condition instead of asking the Kernel to loop again?
 
 ## Boundaries
 
-Do not activate this Skill for Room intake, ordinary chat, planning before user
-confirmation, or any conversation without authoritative managed state. Do not
-invent acceptance, treat Tool loading as authorization, keep working after
-cancellation or a staged commit, create empty evidence, or mark the
-authoritative Goal, Task, Dispatch, or Root complete yourself.
+Do not activate this Skill for intake or ordinary chat, invent requirements,
+interpret Tool disclosure as authorization, continue after cancellation,
+change a staged handoff, claim terminal state, or create a new owner through
+free-text `@`.

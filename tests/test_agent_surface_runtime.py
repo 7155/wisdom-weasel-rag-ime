@@ -234,6 +234,20 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
         self.assertEqual(result["thinkingLevel"], "off")
         self.assertEqual(self.runtime.completions[0]["thinkingLevel"], "off")
 
+    def test_missing_surface_thinking_setting_defaults_to_high_reasoning(self) -> None:
+        self.settings["activeRag"].pop("quickThinkingLevel")
+
+        result = self.surface.complete(
+            {
+                "privacyDisposition": "allowed",
+                "requestId": "surface-request-default-thinking",
+                "currentRequest": "根据当前上下文继续完成请求",
+            }
+        )
+
+        self.assertEqual(result["thinkingLevel"], "high")
+        self.assertEqual(self.runtime.completions[0]["thinkingLevel"], "high")
+
     def test_provider_unwraps_candidate_json_before_it_reaches_the_ime(self) -> None:
         self.runtime.completion_text = '{"candidate":"完整前台文本已经优先进入 RAG。","role":"answer"}'
         self.runtime.completion_deltas = [self.runtime.completion_text]

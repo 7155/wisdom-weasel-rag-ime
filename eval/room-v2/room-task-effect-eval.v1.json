@@ -7,14 +7,14 @@
     "skillRecall": 1.0,
     "toolPrecision": 1.0,
     "toolRecall": 1.0,
-    "catalogBytes": 5656,
-    "loadBodyBytes": 15646,
-    "skillCatalogBytes": 5656,
-    "skillBodyBytes": 15646,
-    "progressiveDisclosureRatio": 0.3615,
-    "toolCatalogBytes": 348,
-    "toolSchemaBytes": 759,
-    "toolProgressiveDisclosureRatio": 0.4585,
+    "catalogBytes": 3398,
+    "loadBodyBytes": 27113,
+    "skillCatalogBytes": 3398,
+    "skillBodyBytes": 27113,
+    "progressiveDisclosureRatio": 0.1253,
+    "toolCatalogBytes": 1028,
+    "toolSchemaBytes": 9234,
+    "toolProgressiveDisclosureRatio": 0.1113,
     "promptErrorCount": 0,
     "chainBreakCount": 0,
     "contextNoiseCount": 0
@@ -42,10 +42,10 @@
       "id": "planning",
       "stage": "planning",
       "actualSkills": [
-        "room-implementation-planning"
+        "implementation-planning"
       ],
       "expectedSkills": [
-        "room-implementation-planning"
+        "implementation-planning"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -62,10 +62,10 @@
       "id": "implementation",
       "stage": "implementation",
       "actualSkills": [
-        "room-test-driven-implementation"
+        "test-driven-implementation"
       ],
       "expectedSkills": [
-        "room-test-driven-implementation"
+        "test-driven-implementation"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -82,10 +82,10 @@
       "id": "review",
       "stage": "vision-review",
       "actualSkills": [
-        "room-independent-vision-review"
+        "independent-review"
       ],
       "expectedSkills": [
-        "room-independent-vision-review"
+        "independent-review"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -102,10 +102,10 @@
       "id": "clarification",
       "stage": "requirements",
       "actualSkills": [
-        "room-requirement-clarification"
+        "requirement-alignment"
       ],
       "expectedSkills": [
-        "room-requirement-clarification"
+        "requirement-alignment"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -122,10 +122,10 @@
       "id": "evidence-delivery",
       "stage": "closure",
       "actualSkills": [
-        "room-delivery-closure"
+        "quality-gate"
       ],
       "expectedSkills": [
-        "room-delivery-closure"
+        "quality-gate"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -142,10 +142,10 @@
       "id": "blocked",
       "stage": "handoff",
       "actualSkills": [
-        "room-structured-handoff"
+        "structured-handoff"
       ],
       "expectedSkills": [
-        "room-structured-handoff"
+        "structured-handoff"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -162,10 +162,10 @@
       "id": "handoff",
       "stage": "handoff",
       "actualSkills": [
-        "room-structured-handoff"
+        "structured-handoff"
       ],
       "expectedSkills": [
-        "room-structured-handoff"
+        "structured-handoff"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -194,10 +194,10 @@
       "id": "self-check-not-review",
       "stage": "self-check",
       "actualSkills": [
-        "room-delivery-self-check"
+        "quality-gate"
       ],
       "expectedSkills": [
-        "room-delivery-self-check"
+        "quality-gate"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -214,10 +214,10 @@
       "id": "debug-not-implement",
       "stage": "debugging",
       "actualSkills": [
-        "room-systematic-debugging"
+        "systematic-debugging"
       ],
       "expectedSkills": [
-        "room-systematic-debugging"
+        "systematic-debugging"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -234,10 +234,10 @@
       "id": "solution-not-plan",
       "stage": "solution",
       "actualSkills": [
-        "room-solution-convergence"
+        "solution-convergence"
       ],
       "expectedSkills": [
-        "room-solution-convergence"
+        "solution-convergence"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -254,10 +254,10 @@
       "id": "feedback-not-review",
       "stage": "feedback",
       "actualSkills": [
-        "room-review-feedback-resolution"
+        "review-feedback-resolution"
       ],
       "expectedSkills": [
-        "room-review-feedback-resolution"
+        "review-feedback-resolution"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [

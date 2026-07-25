@@ -15,6 +15,7 @@
     "expectedOutput": {"type": "string", "minLength": 1},
     "requirementItemIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "acceptanceCriterionIds": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "contextEvidenceRefs": {"type": "array", "items": {"type": "string", "minLength": 1}},
     "revision": {"type": "integer", "minimum": 0},
     "state": {"type": "string", "enum": ["pending", "active", "review", "waiting", "blocked", "completed", "failed", "cancelled"]}
   }

@@ -25,6 +25,20 @@ _MODEL_SKILL_CATALOG_KEYS = (
     "output",
     "does",
 )
+_LEGACY_SKILL_ALIASES = {
+    "room-requirement-clarification": "requirement-alignment",
+    "room-solution-convergence": "solution-convergence",
+    "room-implementation-planning": "implementation-planning",
+    "room-test-driven-implementation": "test-driven-implementation",
+    "room-systematic-debugging": "systematic-debugging",
+    "room-independent-vision-review": "independent-review",
+    "room-review-feedback-resolution": "review-feedback-resolution",
+    "room-structured-handoff": "structured-handoff",
+    "room-delivery-self-check": "quality-gate",
+    "room-delivery-closure": "quality-gate",
+    "rag-ime-memory-curator": "memory-curation",
+    "rag-ime-plugin-creator": "plugin-creator",
+}
 
 
 class RoomSkillPolicyConflict(RuntimeError):
@@ -104,12 +118,18 @@ class RoomSkillPolicy:
         return tuple(self._by_id)
 
     def skill_path(self, skill_id: str) -> Path:
-        skill_id = _required_text(skill_id, "skillId")
+        skill_id = self.canonical_skill_id(skill_id)
         if "/" in skill_id or "\\" in skill_id or skill_id in {".", ".."}:
             raise ValueError("skillId must be an exact native Skill name")
         return self.skills_root / skill_id / "SKILL.md"
 
+    @staticmethod
+    def canonical_skill_id(skill_id: object) -> str:
+        value = _required_text(skill_id, "skillId")
+        return _LEGACY_SKILL_ALIASES.get(value, value)
+
     def skill_hash(self, skill_id: str) -> str:
+        skill_id = self.canonical_skill_id(skill_id)
         if skill_id not in self._by_id:
             raise ValueError(f"Skill is not governed by Room policy: {skill_id}")
         content = self.skill_path(skill_id).read_text(encoding="utf-8")
@@ -117,6 +137,7 @@ class RoomSkillPolicy:
         return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
     def skill_body(self, skill_id: str) -> str:
+        skill_id = self.canonical_skill_id(skill_id)
         if skill_id not in self._by_id:
             raise ValueError(f"Skill is not governed by Room policy: {skill_id}")
         return _native_skill_body(self.skill_path(skill_id).read_text(encoding="utf-8"))
@@ -129,7 +150,7 @@ class RoomSkillPolicy:
     def load_exact(self, skill_id: str) -> dict[str, object]:
         """Load exactly one governed native Skill; fuzzy names are rejected."""
 
-        skill_id = _required_text(skill_id, "skillId")
+        skill_id = self.canonical_skill_id(skill_id)
         if skill_id not in self._by_id:
             raise ValueError(f"Skill is not governed by Room policy: {skill_id}")
         return {
@@ -190,7 +211,8 @@ class RoomSkillPolicy:
         return result
 
     def next_candidates(self, skill_id: str) -> list[str]:
-        entry = self._by_id.get(_required_text(skill_id, "skillId"))
+        skill_id = self.canonical_skill_id(skill_id)
+        entry = self._by_id.get(skill_id)
         if entry is None:
             raise ValueError(f"Skill is not governed by Room policy: {skill_id}")
         return list(entry["nextCandidates"])  # type: ignore[arg-type]
@@ -259,7 +281,9 @@ class RoomSkillPolicyStore:
         task_id = _required_text(task_id, "taskId")
         dispatch_id = _required_text(dispatch_id, "dispatchId")
         session_id = _required_text(session_id, "sessionId")
-        skill_id = _required_text(skill_id, "explicit skillId")
+        skill_id = self.policy.canonical_skill_id(
+            _required_text(skill_id, "explicit skillId")
+        )
         skill_hash = _required_hash(skill_hash, "skillHash")
         catalog_revision = _required_hash(catalog_revision, "catalogRevision")
         load_reason = _required_text(load_reason, "loadReason")

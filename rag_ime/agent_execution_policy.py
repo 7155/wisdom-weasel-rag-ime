@@ -155,22 +155,43 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
         session.get("executionMode"),
         tool_profile_version=session.get("toolProfileVersion"),
     )
+    scope_granted = workspace_scope_is_granted(session)
     guidance = {
         READ_ONLY_EXECUTION_MODE: (
-            "只读操作自动执行；所有外部写入和 Shell 均被运行时拒绝。"
+            "本轮是只读模式。可以直接查看、检索和分析；\n"
+            "文件写入、Shell 和其他外部改变不会执行。"
         ),
         PER_ACTION_EXECUTION_MODE: (
-            "只读操作自动执行；每项外部写入和 Shell 都必须等待原生批准。"
+            "本轮是每次确认模式。查看、检索和分析可以直接进行；\n"
+            "每次文件写入、Shell 或外部改变前等待原生批准。"
         ),
         WORKSPACE_MANAGED_EXECUTION_MODE: (
-            "已批准工作区范围内的文件写入和受控 Shell 自动执行；"
-            "越过范围时必须请求扩展授权。"
+            (
+                "本轮是工作区托管模式。已批准工作区内的文件修改和受控 Shell 可以直接完成；\n"
+                "越出范围或触发危险系统动作时再请求确认。"
+            )
+            if scope_granted
+            else (
+                "本轮选择工作区托管，但工作区范围尚未确认。查看、检索和分析可以直接进行；\n"
+                "第一次写入或 Shell 等待一次原生范围批准，之后范围内自动，越界再问。"
+            )
         ),
         FULL_TRUST_EXECUTION_MODE: (
-            "符合策略的操作自动执行；运行时重启、系统级动作和整库恢复仍保留人工门禁。"
+            (
+                "本轮是完全信任模式。当前工作区内符合策略的动作可以直接完成；\n"
+                "越出工作区、危险系统动作和整库恢复仍需确认。"
+            )
+            if scope_granted
+            else (
+                "本轮选择完全信任，但工作区边界尚未确认。查看、检索和分析可以直接进行；\n"
+                "第一次写入或 Shell 等待一次原生范围批准；确认后范围内自动，"
+                "危险系统动作和整库恢复仍需确认。"
+            )
         ),
     }[mode]
     return (
-        f"执行权限：{execution_mode_label(mode)}。{guidance}"
-        "任何模式都不得越过工作区、取消栅栏、审计、哈希复验和危险命令禁区。"
+        f'<execution-mode mode="{mode}">\n'
+        f"{guidance}\n\n"
+        "取消、审计和迟到写入保护始终有效。\n"
+        "</execution-mode>"
     )

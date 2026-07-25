@@ -58,10 +58,14 @@ class RoomContextLedgerStore:
         source = dict(source) if isinstance(source, Mapping) else {}
         source_kind = str(source.get("kind") or "").strip()
         source_ref = str(source.get("ref") or "").strip()
-        if source_kind not in {"user", "room_commit"}:
-            raise ValueError("Room Post requires explicit user or room_commit publication")
-        if source_kind == "room_commit" and not source_ref:
-            raise ValueError("Room Post from room_commit requires a commit ref")
+        if source_kind not in {"user", "room_commit", "room_post"}:
+            raise ValueError(
+                "Room Post requires explicit user, room_post or room_commit publication"
+            )
+        if source_kind in {"room_commit", "room_post"} and not source_ref:
+            raise ValueError(
+                f"Room Post from {source_kind} requires a source ref"
+            )
         blocks = validate_persisted_blocks(
             normalized.get("blocks"),
             allowed_visibility=frozenset({"room_post", "root_post"}),
@@ -90,6 +94,7 @@ class RoomContextLedgerStore:
         root_id = _required_text(normalized.get("rootId"), "rootId")
         room_id = _required_text(normalized.get("roomId"), "roomId")
         generation = _non_negative_int(normalized.get("generation"), "generation")
+        dispatch_id = str(normalized.get("dispatchId") or "").strip()
         idempotency_key = _required_text(
             normalized.get("idempotencyKey"),
             "idempotencyKey",
@@ -115,6 +120,46 @@ class RoomContextLedgerStore:
                         "Room Post identity was reused with different immutable content"
                     )
                 return self._post_payload(conn, existing), False
+
+            if source_kind == "room_post":
+                if not dispatch_id:
+                    raise ProjectionGenerationMismatch(
+                        "Room Post has no active Dispatch fence"
+                    )
+                live_row = conn.execute(
+                    """
+                    SELECT
+                        root.room_id,
+                        root.generation AS root_generation,
+                        root.state AS root_state,
+                        dispatch.root_id AS dispatch_root_id,
+                        dispatch.task_id,
+                        dispatch.generation AS dispatch_generation,
+                        dispatch.target_participant_id,
+                        dispatch.state AS dispatch_state
+                    FROM room_kernel_roots AS root
+                    JOIN room_kernel_dispatches AS dispatch
+                      ON dispatch.root_id = root.root_id
+                    WHERE root.root_id = ? AND dispatch.dispatch_id = ?
+                    """,
+                    (root_id, dispatch_id),
+                ).fetchone()
+                if (
+                    live_row is None
+                    or str(live_row["room_id"]) != room_id
+                    or str(live_row["dispatch_root_id"]) != root_id
+                    or int(live_row["root_generation"]) != generation
+                    or int(live_row["dispatch_generation"]) != generation
+                    or str(live_row["root_state"]) != "running"
+                    or str(live_row["dispatch_state"]) != "running"
+                    or str(live_row["task_id"])
+                    != str(normalized.get("taskId") or "")
+                    or str(live_row["target_participant_id"])
+                    != str(normalized.get("authorActorRef") or "")
+                ):
+                    raise ProjectionGenerationMismatch(
+                        "Room Post arrived after its Dispatch generation stopped"
+                    )
 
             entry, _created = self._append_entry_conn(
                 conn,
@@ -164,6 +209,28 @@ class RoomContextLedgerStore:
             if row is None:  # pragma: no cover - protected by the transaction
                 raise RuntimeError("Room Post write did not persist")
             return self._post_payload(conn, row), True
+
+    def recent_posts(
+        self,
+        root_id: str,
+        *,
+        limit: int = 5,
+    ) -> list[dict[str, object]]:
+        bounded_limit = max(1, min(int(limit), 20))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM room_v2_posts
+                WHERE root_id = ?
+                ORDER BY created_at_ms DESC, post_id DESC
+                LIMIT ?
+                """,
+                (_required_text(root_id, "rootId"), bounded_limit),
+            ).fetchall()
+            return [
+                self._post_payload(conn, row)
+                for row in reversed(rows)
+            ]
 
     def append_entry(
         self,

@@ -7,12 +7,39 @@ from .contracts.json_schema import validate_contract
 
 CapabilityId = str
 
-_MANAGED_ROOM_LIFECYCLE_PROMPT = """受管 Room 生命周期：
-- 只有 Kernel 提供的当前 Task、验收条件、权限、预算和取消代次具有执行权威；不要从普通聊天自行创建受管任务。
-- 一个模型回复结束只是收工候选，不是任务完成。验收仍未满足且存在合法下一步时，继续调用工具、核验证据并推进同一 Task。
-- 只有完成、交接、等待或阻塞成立时才调用 room_commit；自然语言里的“完成了”不改变状态。
-- 若收工检查返回结构化续投，直接处理其中指出的缺口，不重复汇报已有进度。续投有次数、预算和取消边界，禁止空转或重复同一失败动作。
-- 只有 Kernel 的最终回执能结束 Dispatch、Root 和前端运行态。"""
+_MANAGED_ROOM_LIFECYCLE_PROMPT = """<room-work>
+## 责任边界
+根任务原始需求是不可变的上位边界，开始与收工都要核对；它不会自动扩大
+本轮责任。当前 Dispatch 是你这一轮唯一的受管责任，只执行当前 Task/Dispatch，
+并只提交当前任务给出的验收别名，不执行父任务或其他成员的步骤。
+岗位只是工作视角，不形成主从层级；当前 Dispatch 的持有者对产物和证据负责。
+
+## 推进与协作
+先读当前任务、验收和已有证据。上下文足够时直接推进；责任、验收别名、
+成员引用或状态修订不清楚时调用 room_state，以最新回执为准。
+存在能产生新证据的合法下一步时，继续调用已授权工具完成它，而不是停在计划、
+进度说明或自我评价。
+
+需要另一位成员并行帮助、而你仍继续当前责任时，用 room_collaborate；
+它不会转移你的责任，也不适合安静等待对方。需要把当前责任交给另一位成员时，
+用 room_commit 的 handoff，并给出准确接手点、预期产物和当前验收别名。
+公开事实、问题、进展和交付摘要用 room_post；普通聊天或自由 @ 不创建任务。
+room_post 返回的 postRef 只是公开消息引用，不是验收 evidenceRef。
+
+## 四种生命周期出口
+- deliver：当前每个 AC 都已有成功工具结果返回的权威 evidenceRef。
+- handoff：当前责任需要由明确参与者继续，且交接内容足以直接接手。
+- wait：只缺一个明确的用户、参与者或外部信号，并已写明恢复条件。
+- blocked：合理替代路径已经穷尽，并已写明阻塞、尝试和解锁条件。
+
+room_commit.evidence 只使用当前 AC 别名和成功工具结果返回的 evidenceRef；
+不提交数据库 criterionId、pass、verdict 或自行计算的覆盖率。缺少验收证据时，
+继续完成一个能产生新证据的动作，或选择 handoff、wait、blocked。
+room_commit 被受管层暂存后立即结束本轮，不再调用其他工具。
+
+只有结构化回执改变任务状态。模型提出下一步，Kernel 负责去重、深度、预算、
+取消、迟到写入、证据绑定和最终完成裁决。
+</room-work>"""
 
 
 @dataclass(frozen=True)
@@ -66,12 +93,13 @@ class CollaborationProfileManifest:
 
     @property
     def system_prompt(self) -> str:
+        if self.profile_id == "standard-room":
+            return ""
         guidance = "\n".join(f"- {item}" for item in self.prompt_guidance)
         return (
-            f"协作 Profile：{self.display_name}。{self.summary}\n"
-            f"适用岗位：{', '.join(self.collaboration_role_refs)}。\n"
-            f"Room 路由覆盖层：\n{guidance}\n"
-            "这个覆盖层只收紧当前 Room 的路由和公开信息边界，不改变 Persona、岗位职责、任务模板、能力授权或安全规则。"
+            f'<room-profile name="{self.profile_id}">\n'
+            f"{guidance}\n"
+            "</room-profile>"
         )
 
     def to_payload(self) -> dict[str, object]:
@@ -102,9 +130,13 @@ _COLLABORATION_ROLES = (
         responsibilities=("确认任务边界与验收条件", "提出有理由的交接或完成决定"),
         entry_conditions=("存在可执行任务或需要协调的阻塞",),
         exit_conditions=("任务已交接、等待、阻塞升级或满足完成条件",),
-        allowed_commit_decisions=("dispatch", "wait", "blocked", "complete"),
+        allowed_commit_decisions=("deliver", "handoff", "wait", "blocked"),
         capability_restrictions=_ALL_CAPABILITIES,
-        operating_prompt="""你是协调者，负责维护原始需求、任务边界、负责人和交付状态。适用于多步骤或多 Agent 任务。先固定原始需求与中文验收条件，再决定直接处理还是按研究、实施、审查等岗位分派。工具和证据只用于核对与编排，不替专业岗位捏造结论。需要交接时必须写明任务编号、接收者、输入证据、权限、预期产物与验收条件；收到结果后负责整合验收。收工前明确已交付、已交接、等待或阻塞。边界：不替专业岗位作无证据判断，不让同一触发重复开火。""",
+        operating_prompt="""<work-lens kind="coordinator">
+本轮以协调视角工作：维护任务边界、责任和公开交付状态。
+当前 Dispatch 要求直接产物时也完成自己的责任；只有专业能力或并行收益明确时
+才协作或交接，并核对返回证据。
+</work-lens>""",
     ),
     CollaborationRoleManifest(
         role_id="researcher",
@@ -114,9 +146,12 @@ _COLLABORATION_ROLES = (
         responsibilities=("核对来源与时间", "提交发现、证据和未解决缺口"),
         entry_conditions=("任务需要外部或本地证据",),
         exit_conditions=("材料性发现已提交或证据缺口已报告",),
-        allowed_commit_decisions=("dispatch", "wait", "blocked", "complete"),
+        allowed_commit_decisions=("deliver", "handoff", "wait", "blocked"),
         capability_restrictions=("delegation", "memory", "rag"),
-        operating_prompt="""你是研究员，负责查找、核对和压缩证据。适用于历史输入、Topic Book、项目资料与近期记录的事实调查。先定义问题和完成标准，再用只读工具取回最少但足够的材料，区分事实、推断、冲突和缺口。发现足够材料后提交来源、结论、缺口和下一步；需要实施或复核时主动交接并写清验收条件。收工前明确已交付、已交接、等待或阻塞。边界：不写状态，不把命中或模型记忆当事实。""",
+        operating_prompt="""<work-lens kind="researcher">
+本轮以研究视角工作：查清事实、来源、冲突和缺口，
+不修改被调查对象。
+</work-lens>""",
     ),
     CollaborationRoleManifest(
         role_id="implementer",
@@ -126,9 +161,12 @@ _COLLABORATION_ROLES = (
         responsibilities=("执行已授权改动", "提交产物、验证和剩余风险"),
         entry_conditions=("输入和验收条件已经足够明确",),
         exit_conditions=("产物已验证、交接、等待或报告阻塞",),
-        allowed_commit_decisions=("dispatch", "wait", "blocked", "complete"),
+        allowed_commit_decisions=("deliver", "handoff", "wait", "blocked"),
         capability_restrictions=("control", "delegation", "memory", "rag"),
-        operating_prompt="""你是实施者，负责把明确方案变成真实、可验证的产物。适用于已给出边界、权限和验收条件的修改任务。先核对依赖和已有工作，再使用受控工具完成最小正确改动；以差异、测试和工具回执作为证据。完成后主动把改动、验证、剩余风险交给审查员或协调者；缺权限或输入时提交可操作阻塞。收工前明确已交付、已交接、等待或阻塞。边界：不扩大范围，不绕审批，不以自报完成代替验收。""",
+        operating_prompt="""<work-lens kind="implementer">
+本轮以实施视角工作：把已确认方案变成可验证产物，
+提交改动与验证；不要代替独立审查。
+</work-lens>""",
     ),
     CollaborationRoleManifest(
         role_id="reviewer",
@@ -138,9 +176,12 @@ _COLLABORATION_ROLES = (
         responsibilities=("按严重度报告发现", "区分已证实问题与剩余风险"),
         entry_conditions=("存在可审查的产物和验收依据",),
         exit_conditions=("复核结论和证据已提交",),
-        allowed_commit_decisions=("dispatch", "wait", "blocked", "complete"),
+        allowed_commit_decisions=("deliver", "handoff", "wait", "blocked"),
         capability_restrictions=("delegation", "memory", "rag", "review"),
-        operating_prompt="""你是审查员，负责独立复核产物是否满足原始需求和验收条件。适用于计划、代码、证据或运行结果审查。使用只读工具检查真实差异、测试、取消路径和剩余风险；发现按严重度优先，每项给出位置、影响和证据。存在问题时交回实施者并附修复验收条件；通过时说明通过范围与未验证项。收工前明确已交付、已交接、等待或阻塞。边界：不修改被审对象，不把风格偏好包装成缺陷。""",
+        operating_prompt="""<work-lens kind="reviewer">
+本轮以审查视角工作：独立按原始需求和验收检查产物，
+不替作者修正被审对象。
+</work-lens>""",
     ),
     CollaborationRoleManifest(
         role_id="specialist",
@@ -150,9 +191,12 @@ _COLLABORATION_ROLES = (
         responsibilities=("回答有界专业问题", "暴露假设、证据和不确定性"),
         entry_conditions=("任务需要明确领域知识",),
         exit_conditions=("专业判断和适用边界已提交",),
-        allowed_commit_decisions=("wait", "blocked", "complete"),
+        allowed_commit_decisions=("deliver", "handoff", "wait", "blocked"),
         capability_restrictions=("memory", "rag"),
-        operating_prompt="""你是领域专家，负责在一个明确专业边界内给出可追溯判断。适用于需要特定领域知识、术语或约束核对的任务。先声明适用范围和关键假设，再用允许的知识与记忆工具核验证据，输出判断、依据、不确定性和适用边界。判断足以支持下一步时交给规划、实施或审查岗位并给出验收提示；证据不足时报告缺口。收工前明确已交付、已交接、等待或阻塞。边界：不越界替代用户或高风险专业决策。""",
+        operating_prompt="""<work-lens kind="specialist">
+本轮以领域专家视角工作：在明确专业边界内给出判断、依据与不确定性，
+不越界替用户作高风险决定。
+</work-lens>""",
     ),
 )
 
@@ -168,12 +212,7 @@ _COLLABORATION_PROFILES = (
         capability_requests=_ALL_CAPABILITIES,
         required_gate_ids=("settle-decision-required",),
         prompt_guidance=(
-            "中途需要另一位成员并行处理、当前责任仍继续时，只用 room_collaborate；自由 @ 和普通消息不创建任务",
-            "需要转移当前责任时，只用 room_commit 的 handoff 决定；提交后立即结束本轮，由 Kernel 创建下一 Task 和 Dispatch",
-            "必须等对方结果才能继续时，不用 room_collaborate；选择 handoff 或 wait，并写清下一任务、预期产物和验收条件",
-            "同一触发事件只生成一次路由决定，重连、快照和实时流不得重复开火",
-            "只把公开 Post、结构化任务状态和已确认资料投影进 Room；Session 私有过程保持私有",
-            "适合通用 Room；需要研究后独立复核时改用更严格的证据复核 Profile",
+            "标准 Room 没有额外提示词；公共协作合同由系统统一提供",
         ),
     ),
     CollaborationProfileManifest(
@@ -185,10 +224,9 @@ _COLLABORATION_PROFILES = (
         capability_requests=("delegation", "memory", "rag", "review"),
         required_gate_ids=("evidence-required", "peer-review-required"),
         prompt_guidance=(
-            "适用于研究结论需要第二视角复核的任务，不用于直接写入或跳过实施",
-            "缺少来源可追溯的研究产物时，不创建审查 Dispatch",
-            "研究者和审查者必须使用不同运行槽；审查输入固定为原始问题与公开证据包",
-            "审查未通过时保留原发现和复核证据，不覆盖或伪装为通过",
+            "研究产物必须带可追溯来源。",
+            "独立复核必须由不同 Session 完成。",
+            "复核者只看原始问题和公开证据包。",
         ),
     ),
 )

@@ -87,9 +87,13 @@ class AgentRoomWorkStore:
         normalized_depth = int(depth)
         if not 1 <= normalized_depth <= MAX_ASSIGNMENT_DEPTH:
             raise ValueError("agent room work item depth must be between 1 and 3")
-        criteria = [str(value) for value in acceptance_criteria]
-        if len(criteria) > 8 or any(len(value) > 500 for value in criteria):
-            raise ValueError("acceptance_criteria exceeds the Room work limits")
+        criteria = _text_list(
+            acceptance_criteria,
+            "acceptance_criteria",
+            maximum_items=8,
+            maximum_length=500,
+            required=True,
+        )
         normalized_objective = _required_text(objective, "objective", maximum=8_000)
         normalized_expected = _required_text(
             expected_output,

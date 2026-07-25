@@ -216,7 +216,12 @@ class RequirementGovernanceTests(unittest.TestCase):
             "等待正式安装环境",
         )
 
-        rendered = RoomTaskContextProjector(self.store).render(
+        rendered = RoomTaskContextProjector(
+            self.store,
+            accepted_evidence_provider=lambda root_id: {
+                "criterion:req": [f"accepted:{root_id}"]
+            },
+        ).render(
             {
                 "taskId": "task:1",
                 "parentTaskId": None,
@@ -249,6 +254,12 @@ class RequirementGovernanceTests(unittest.TestCase):
         )
         self.assertTrue(
             packet["acceptance"]["criteria"][0]["passed"]
+        )
+        self.assertEqual(
+            packet["acceptance"]["criteria"][0][
+                "acceptedEvidenceRefs"
+            ],
+            ["accepted:root:1"],
         )
         self.assertEqual(
             packet["blockers"]["obstacles"][0]["statement"],

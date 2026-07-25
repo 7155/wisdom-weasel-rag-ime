@@ -746,6 +746,17 @@ class AgentService:
                     "does": tool["does"],
                     "profile": "room-kernel-v2",
                     "risk": tool["risk"],
+                    **(
+                        {
+                            "runtimeProjections": [
+                                dict(item)
+                                for item in tool["runtimeProjections"]
+                                if isinstance(item, Mapping)
+                            ]
+                        }
+                        if tool.get("runtimeProjections")
+                        else {}
+                    ),
                 }
                 for tool in manifest["tools"]
                 if isinstance(tool, Mapping) and tool.get("authorized") is True

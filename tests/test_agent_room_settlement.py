@@ -168,6 +168,84 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             },
             now_ms=self.now_ms + 2,
         )
+        self.service.room_requirements.append_anchor(
+            anchor_id="requirement-anchor:settle",
+            root_id="root:settle",
+            original_content="完成受管 Room 任务并以证据通过验收。",
+            created_by="user:local",
+            provenance={"roomEventId": "event:settle"},
+            created_at_ms=self.now_ms,
+        )
+        self.service.room_requirements.revise_catalog(
+            catalog_revision_id="catalog:settle",
+            root_id="root:settle",
+            expected_current_revision=0,
+            anchor_refs=("requirement-anchor:settle",),
+            items=(
+                {
+                    "itemId": "requirement:settle",
+                    "kind": "explicit_user_requirement",
+                    "statement": "完成受管 Room 任务",
+                    "origin": "derived_catalog",
+                    "state": "active",
+                    "sourceSpans": [
+                        {
+                            "anchorId": "requirement-anchor:settle",
+                            "startByte": 0,
+                            "endByte": len(
+                                "完成受管 Room 任务并以证据通过验收。".encode()
+                            ),
+                        }
+                    ],
+                    "supersedes": [],
+                    "ambiguity": "",
+                    "confirmation": "user-confirmed",
+                },
+            ),
+            acceptance_criteria=(
+                {
+                    "criterionId": "criterion:settle",
+                    "itemId": "requirement:settle",
+                    "acceptanceCriterionFullNameZh": "受管任务验收标准",
+                    "criterionKind": "requirement",
+                    "expectedReceiptTypes": ["test"],
+                    "statement": "受管任务测试通过",
+                },
+            ),
+            change_reason="测试冻结的验收目录",
+            provenance={
+                "derivedFrom": ["requirement-anchor:settle"],
+                "notOriginalText": True,
+            },
+            created_by="agent:requirements",
+            created_at_ms=self.now_ms + 1,
+        )
+        self.service.room_requirements.record_verification_receipt(
+            {
+                "schemaVersion": "wisdom-weasel.typed-verification-receipt.v1",
+                "receiptId": "evidence:settle",
+                "rootId": "root:settle",
+                "catalogRevisionId": "catalog:settle",
+                "receiptType": "test",
+                "sourceCommit": "commit:settle",
+                "environment": "local-test",
+                "commandOrAction": "python -m unittest",
+                "exitStatus": 0,
+                "outputHash": "a" * 64,
+                "artifactHash": "b" * 64,
+                "verifier": "managed-test-runner",
+                "createdAtMs": self.now_ms + 2,
+            }
+        )
+        self.service.room_requirements.link_proof(
+            proof_id="proof:settle",
+            root_id="root:settle",
+            catalog_revision_id="catalog:settle",
+            criterion_id="criterion:settle",
+            receipt_id="evidence:settle",
+            linked_by="managed-test-runner",
+            created_at_ms=self.now_ms + 2,
+        )
         self.service.room_kernel_worker.run_once()
 
     def _invoke_commit(
@@ -183,49 +261,39 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "createdAtMs": 10,
             }
         )["result"]
-        requirement_coverage = list(
-            extra.get("requirementCoverage", ["criterion:settle"])
+        evidence = extra.pop(
+            "evidence",
+            (
+                [{"acceptance": "AC-1", "refs": ["evidence:settle"]}]
+                if decision in {"deliver", "handoff"}
+                else []
+            ),
         )
-        quality_gate = extra.pop(
-            "qualityGate",
-            {
-                "originalRequestChecked": True,
-                "verdict": (
-                    "ready_to_deliver"
-                    if decision == "deliver"
-                    else "not_ready"
-                ),
-                "items": [
-                    {
-                        "criterionId": "criterion:settle",
-                        "status": (
-                            "pass"
-                            if "criterion:settle" in requirement_coverage
-                            else "not_verified"
-                        ),
-                        "evidenceRefs": (
-                            ["evidence:settle"]
-                            if "criterion:settle" in requirement_coverage
-                            else []
-                        ),
-                    }
-                ],
-                "residualRisks": (
-                    []
-                    if decision == "deliver"
-                    else [f"lifecycle_exit:{decision}"]
-                ),
-            },
-        )
+        decision_fields: dict[str, object] = {}
+        if decision == "wait":
+            decision_fields = {
+                "waitingFor": "external",
+                "resumeCondition": "外部依赖恢复",
+            }
+        elif decision == "blocked":
+            decision_fields = {
+                "blocker": "当前环境无法继续",
+                "attemptedAlternatives": ["已验证本地替代方案"],
+                "unlockCondition": "提供可用环境",
+            }
         result = self.service.execute_room_capability_tool(
             self.session_id,
             "room_commit",
             {
                 "decision": decision,
-                "result": f"result:{decision}",
-                "evidenceRefs": ["evidence:settle"],
-                "requirementCoverage": requirement_coverage,
-                "qualityGate": quality_gate,
+                "summary": f"result:{decision}",
+                "evidence": evidence,
+                "residualRisks": (
+                    []
+                    if decision == "deliver"
+                    else [f"lifecycle_exit:{decision}"]
+                ),
+                **decision_fields,
                 **extra,
             },
             tool_call_id=f"call:commit:{decision}",
@@ -246,7 +314,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         result = self.service.execute_room_capability_tool(
             self.session_id,
             "room_post",
-            {"content": content},
+            {"kind": "progress", "content": content},
             tool_call_id="call:post",
             load_receipt_id=str(loaded["receiptId"]),
         )
@@ -296,7 +364,10 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         root = self.service.room_kernel.root("root:settle")
         self.assertEqual(root["state"], "completed")
         self.assertTrue(root["terminalReceiptId"])
-        posts = self.service.room_kernel_snapshot(self.room_id)["posts"]
+        posts = self.service.room_context_ledger.recent_posts(
+            "root:settle",
+            limit=10,
+        )
         self.assertEqual([post["content"] for post in posts], ["result:deliver"])
         public_events = self.service.room_snapshot(self.room_id)["events"]
         terminal_events = [
@@ -319,20 +390,24 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         )
         self.assertTrue(receipt["details"]["qualityGateReceiptId"])
 
-    def test_staged_room_post_is_the_single_published_body(self) -> None:
-        staged = self._invoke_post("public evidence from room_post")
+    def test_room_post_is_immediate_and_commit_publishes_final_summary(self) -> None:
+        published = self._invoke_post("public evidence from room_post")
         self._invoke_commit("deliver")
 
         settled = self._settle()
 
         self.assertEqual(
             settled["settleResult"]["post"]["content"],
-            "public evidence from room_post",
+            "result:deliver",
         )
-        posts = self.service.room_kernel_snapshot(self.room_id)["posts"]
-        self.assertEqual(len(posts), 1)
+        posts = self.service.room_context_ledger.recent_posts(
+            "root:settle",
+            limit=10,
+        )
+        self.assertEqual(len(posts), 2)
         self.assertEqual(posts[0]["content"], "public evidence from room_post")
-        invocation_id = str(staged["invocationReceipt"]["receiptId"])
+        self.assertEqual(posts[1]["content"], "result:deliver")
+        invocation_id = str(published["invocationReceipt"]["receiptId"])
         self.assertEqual(
             self.service.room_capabilities.execution_receipt(invocation_id)["status"],
             "applied",
@@ -341,9 +416,11 @@ class RoomSettleLifecycleTests(unittest.TestCase):
     def test_handoff_creates_one_bounded_child_dispatch(self) -> None:
         self._invoke_commit(
             "handoff",
-            targetParticipantId=str(self.target["id"]),
+            targetParticipantRef="P1",
+            intent="review",
             nextTask="独立复核证据并回传结论",
-            nextIntentKind="review",
+            expectedOutput="公开复核结论与证据",
+            acceptanceAliases=["AC-1"],
         )
 
         settled = self._settle()
@@ -366,6 +443,10 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         self.assertEqual(child["capabilityEpoch"], 8)
         self.assertEqual(child["state"], "pending")
         self.assertEqual(
+            child_task["contextEvidenceRefs"],
+            ["evidence:settle"],
+        )
+        self.assertEqual(
             self.service.room_kernel.task("task:settle")["state"],
             "completed",
         )
@@ -375,7 +456,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             )["decision"],
             "dispatch",
         )
-        skill_id = "room-independent-vision-review"
+        skill_id = "independent-review"
         pinned, created = self.service.room_skill_receipts.pin_skill(
             receipt_id="skill:handoff-child",
             root_id="root:settle",
@@ -392,6 +473,85 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         )
         self.assertTrue(created)
         self.assertEqual(pinned["capabilityEpoch"], 8)
+
+        self.service.room_kernel_worker.run_once()
+        loaded_state = self.service.room_capability_tool_load(
+            {
+                "sessionId": str(self.target["sessionId"]),
+                "receiptId": "load:handoff-child-state",
+                "toolName": "room_state",
+                "createdAtMs": self.now_ms + 21,
+            }
+        )["result"]
+        state = self.service.execute_room_capability_tool(
+            str(self.target["sessionId"]),
+            "room_state",
+            {},
+            tool_call_id="call:handoff-child-state",
+            load_receipt_id=str(loaded_state["receiptId"]),
+        )["result"]
+        self.assertEqual(
+            state["acceptanceAliases"],
+            [
+                {
+                    "acceptance": "AC-1",
+                    "statement": "受管任务测试通过",
+                    "verified": True,
+                    "evidenceRefs": ["evidence:settle"],
+                }
+            ],
+        )
+
+        loaded_commit = self.service.room_capability_tool_load(
+            {
+                "sessionId": str(self.target["sessionId"]),
+                "receiptId": "load:handoff-child-commit",
+                "toolName": "room_commit",
+                "createdAtMs": self.now_ms + 22,
+            }
+        )["result"]
+        self.service.execute_room_capability_tool(
+            str(self.target["sessionId"]),
+            "room_commit",
+            {
+                "decision": "deliver",
+                "summary": "独立复核完成",
+                "evidence": [
+                    {
+                        "acceptance": "AC-1",
+                        "refs": ["evidence:settle"],
+                    }
+                ],
+                "residualRisks": [],
+            },
+            tool_call_id="call:handoff-child-commit",
+            load_receipt_id=str(loaded_commit["receiptId"]),
+        )
+        child_settled = self.service.settle_room_runtime(
+            {
+                "schemaVersion": "wisdom-weasel.room-runtime-settle-request.v1",
+                "sessionId": str(self.target["sessionId"]),
+                "dispatchId": child_id,
+                "rootId": "root:settle",
+                "generation": 0,
+                "capabilityEpoch": 8,
+                "settleScopeId": "scope:handoff-child",
+                "settleAttempt": 1,
+                "resourceUsage": {
+                    "inputTokens": 80,
+                    "outputTokens": 20,
+                    "toolCalls": 2,
+                    "toolCost": 2,
+                    "retryCount": 0,
+                    "repairCount": 0,
+                },
+            }
+        )["result"]
+        self.assertEqual(child_settled["state"], "committed")
+        self.assertEqual(
+            self.service.room_kernel.root("root:settle")["state"],
+            "completed",
+        )
 
     def test_wait_decision_moves_root_and_task_to_waiting(self) -> None:
         self._invoke_commit("wait")
@@ -443,7 +603,10 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             first["message"],
         )
         self.assertIn("建议接手的参与者或模型能力", first["message"])
-        self.assertIn("只向用户提出一个最小必要问题", first["message"])
+        self.assertIn(
+            "waitingFor=user 时才向用户提出一个最小必要问题",
+            first["message"],
+        )
         self.assertIn("续作次数是硬预算", first["message"])
         self.assertIn("不得重复同一失败动作", first["message"])
         self.assertTrue(first["followUpKey"])
@@ -468,7 +631,12 @@ class RoomSettleLifecycleTests(unittest.TestCase):
     def test_deliver_cannot_forge_acceptance_coverage(self) -> None:
         self._invoke_commit(
             "deliver",
-            requirementCoverage=["criterion:not-owned-by-this-task"],
+            evidence=[
+                {
+                    "acceptance": "AC-9",
+                    "refs": ["evidence:settle"],
+                }
+            ],
         )
 
         settled = self._settle()
@@ -476,21 +644,10 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         self.assertEqual(settled["state"], "repair_commit")
         self.assertTrue(settled["followUpKey"])
         self.assertIn("outside the current Task", settled["reason"])
-        self.assertIn(
-            'acceptanceCriterionIds=["criterion:settle"]',
-            settled["message"],
-        )
+        self.assertIn('["AC-1"]', settled["message"])
         self.assertIn('kind="repair_commit"', settled["message"])
-        self.assertIn("不得填写 requirementItemIds", settled["message"])
-        self.assertIn(
-            "originalRequestChecked、verdict、items、residualRisks "
-            "只能放在 qualityGate 内",
-            settled["message"],
-        )
-        self.assertIn(
-            "每条证据引用必须从顶层 evidenceRefs 逐字复制",
-            settled["message"],
-        )
+        self.assertIn("不要填写数据库 criterionId", settled["message"])
+        self.assertIn("不要自报 pass 或 verdict", settled["message"])
         self.assertIn(
             "若当前模型无法完成且没有合法新动作",
             settled["message"],
@@ -501,53 +658,36 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(self.service.room_kernel_snapshot(self.room_id)["posts"], [])
 
-    def test_tool_boundary_rejects_missing_structured_quality_gate(self) -> None:
-        with self.assertRaisesRegex(ValueError, "qualityGate"):
-            self._invoke_commit("deliver", qualityGate=None)
+    def test_tool_boundary_rejects_missing_structured_evidence(self) -> None:
+        with self.assertRaisesRegex(ValueError, "evidence"):
+            self._invoke_commit("deliver", evidence=None)
 
     def test_quality_gate_pass_requires_fresh_committed_evidence(self) -> None:
         self._invoke_commit(
             "deliver",
-            qualityGate={
-                "originalRequestChecked": True,
-                "verdict": "ready_to_deliver",
-                "items": [
-                    {
-                        "criterionId": "criterion:settle",
-                        "status": "pass",
-                        "evidenceRefs": ["evidence:not-committed"],
-                    }
-                ],
-                "residualRisks": [],
-            },
+            evidence=[
+                {
+                    "acceptance": "AC-1",
+                    "refs": ["evidence:not-committed"],
+                }
+            ],
         )
 
         settled = self._settle()
 
         self.assertEqual(settled["state"], "repair_commit")
-        self.assertIn("also appear in evidenceRefs", settled["reason"])
+        self.assertIn("not an authoritative", settled["reason"])
 
     def test_non_passing_quality_gate_cannot_deliver(self) -> None:
         self._invoke_commit(
             "deliver",
-            qualityGate={
-                "originalRequestChecked": True,
-                "verdict": "not_ready",
-                "items": [
-                    {
-                        "criterionId": "criterion:settle",
-                        "status": "pass",
-                        "evidenceRefs": ["evidence:settle"],
-                    }
-                ],
-                "residualRisks": ["verification pending"],
-            },
+            evidence=[],
         )
 
         settled = self._settle()
 
         self.assertEqual(settled["state"], "repair_commit")
-        self.assertIn("ready_to_deliver", settled["reason"])
+        self.assertIn("every AC", settled["reason"])
 
 
 if __name__ == "__main__":

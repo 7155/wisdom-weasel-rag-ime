@@ -38,14 +38,15 @@ class RoomTaskEffectEvalTests(unittest.TestCase):
         policy = RoomSkillPolicy(self.policy_path, self.skills_root)
         catalog = policy.catalog()
         expected_keys = {"name", "when", "notFor", "input", "output", "does"}
-        self.assertEqual(len(catalog), 10)
+        self.assertEqual(len(catalog), 9)
         self.assertTrue(all(set(item) == expected_keys for item in catalog))
-        loaded = policy.load_exact("room-structured-handoff")
+        loaded = policy.load_exact("structured-handoff")
         self.assertEqual(set(loaded), expected_keys | {"body", "contentRevision"})
         self.assertIn("## Output Contract", loaded["body"])
         self.assertNotIn("room-delivery-closure", loaded["body"])
-        with self.assertRaises(ValueError):
-            policy.load_exact("structured-handoff")
+        legacy = policy.load_exact("room-structured-handoff")
+        self.assertEqual(legacy["name"], "structured-handoff")
+        self.assertNotIn("room-structured-handoff", {item["name"] for item in catalog})
         with self.assertRaises(ValueError):
             policy.load_exact("../room-structured-handoff")
 

@@ -1,75 +1,122 @@
 ---
 name: quality-gate
-description: Verify a claimed delivery against the immutable original request, current requirement directory, acceptance conditions, and fresh evidence. Use before requesting review, handing off completed work, or claiming a task is done.
+description: Gather fresh evidence for a delivery claim and map it to the confirmed acceptance checks; the Kernel, not the model, decides whether work may settle.
 when:
-  - 即将声称完成、请求评审、正式移交或发布交付
-does: 逐项对账原始需求和验收证据，明确通过、失败与未验证项。
-input: 原始需求、可修订需求目录、改动、测试、运行证据和剩余风险。
-output: 覆盖矩阵、失败或未验证项、证据引用和是否可交付的建议。
+  - 即将交付、移交、复核或发布结果
+does: 按原始需求和验收收集新鲜证据。
+input: 原始需求、验收别名、改动、证据、产物和风险。
+output: 各项证据提议、失败、未验证项、风险和下一步。
 notFor:
-  - 工作仍在早期探索且没有交付主张
-  - 用旧日志、模型自述或降低门槛替代新鲜验证
+  - 尚无交付主张，或用自述、旧日志和降低阈值冒充验证
 ---
 
 # Quality Gate
 
+This Skill prepares evidence. It does not approve delivery and it does not
+compute the authoritative final status.
+
+## Core Principle
+
+No completion claim without fresh, claim-shaped evidence. Tests, diffs, UI
+inspection, Provider payloads, installed-runtime receipts, and external results
+prove different things; one green command cannot stand in for all of them.
+The Kernel binds human-readable aliases to authoritative criteria and decides
+whether the current responsibility may settle.
+
 ## Workflow
 
-1. Re-read the immutable original request. Treat the derived requirement
-   directory as editable navigation, never as a replacement for the original.
-2. Build a compact matrix of each requirement and acceptance condition:
-   `pass`, `fail`, or `not_verified`.
-3. Attach fresh evidence to every pass: focused diff, test result, runtime
-   receipt, Provider payload, artifact, or inspected UI state as appropriate.
-4. Check negative paths proportional to risk: cancellation, retry,
-   idempotency, permission boundary, recovery, compatibility, and stale state.
-5. Separate implementation defects from test-environment or external-provider
-   failures. Never turn an unavailable check into a pass.
-6. State remaining risks and their owner. Recommend delivery only when all
-   required items pass or an authorized owner explicitly waives them.
+1. Re-read the immutable original request and the current confirmed
+   requirement directory. The directory is navigation; it never replaces the
+   user's words.
+2. List every current acceptance check using the short human-readable aliases
+   supplied in task context. Do not invent backend IDs or omit an inconvenient
+   item.
+3. For each check, collect fresh evidence appropriate to the claim: focused
+   diff, test output, installed-runtime receipt, Provider payload, artifact,
+   inspected UI state, or an explicit external result.
+4. Classify the evidence proposal as `pass`, `fail`, or `not_verified`.
+   A `pass` needs at least one inspectable reference. An unavailable check is
+   `not_verified`, never a pass.
+5. Test negative paths proportional to risk: cancellation, retry, idempotency,
+   permission boundary, recovery, compatibility, stale state, migration, and
+   rollback where relevant.
+6. Separate product defects from test/canary defects and external Provider
+   instability. Record residual risk and its owner.
+7. Translate the proposal into the active lifecycle Tool's exact public schema.
+   For `room_commit`, include only verified items as
+   `{"acceptance":"AC-1","refs":["<evidenceRef>"]}` inside `evidence`.
+   Put failed or unverified observations in the summary and residual risks, then
+   continue, hand off, wait, or report blocked as appropriate. The Kernel binds
+   aliases to authoritative criteria, verifies eligible receipts and freshness,
+   derives coverage and readiness, and either accepts settlement or returns the
+   exact missing item.
+
+   For `decision=deliver`, send `decision`, `summary`, `evidence`, and
+   `residualRisks`, plus only optional `publicSummary` or `blocks`. Do not send
+   `acceptanceAliases`: that field exists only for `decision=handoff` to define
+   the next Task's acceptance. A current Task's AC coverage always belongs in
+   `evidence`.
+
+## Evidence Matrix
+
+For each acceptance alias, record:
+
+| Field | Required meaning |
+|---|---|
+| Claim | The observable behavior being asserted |
+| Evidence | Fresh successful `evidenceRef` or inspectable artifact |
+| Scope | Environment, revision, model, data, viewport, or runtime tested |
+| Result | `pass`, `fail`, or `not_verified` |
+| Gap | What remains unknown or failed |
+
+Use evidence that matches the claim:
+
+- source or contract claim -> focused diff plus contract test;
+- runtime claim -> real request, state transition, and returned effect;
+- UI claim -> actual interaction plus visible and accessibility state;
+- Provider-context claim -> final `systemPrompt + messages + tools` payload;
+- installed-product claim -> clean commit, install provenance, health, and
+  launch evidence.
+
+## Gate Outcomes
+
+- **deliver recommendation**: every required alias has eligible fresh evidence
+  and no unresolved blocker contradicts it;
+- **continue**: an authorized action can still produce missing evidence;
+- **handoff**: another participant or model capability is needed;
+- **wait**: one user, permission, credential, or external signal is required;
+- **blocked**: bounded alternatives are exhausted or the requirement is
+  unreachable.
+
+These are proposals. Do not write the Kernel's verdict yourself.
 
 ## Output Contract
 
-Return the exact structure consumed by the active `room_commit.qualityGate`
-field:
+Return:
 
-- `originalRequestChecked: true` only after re-reading the immutable request;
-- one `items[]` entry for every current acceptance `criterionId`;
-- `pass`, `fail`, or `not_verified`, with fresh `evidenceRefs` on every pass;
-- copy every pass-item evidence string into the top-level
-  `room_commit.evidenceRefs` unchanged; the top-level array is the evidence
-  union, not a separate summary;
-- set `room_commit.requirementCoverage` to exactly the `criterionId` values
-  whose item status is `pass`; do not include `fail` or `not_verified`;
-- `residualRisks`;
-- `ready_to_deliver` or `not_ready`.
+- `original_request_checked`;
+- one item per acceptance alias with `status` and `evidence_refs`;
+- failed and unverified observations;
+- residual risks and owners;
+- a recommendation: deliver, continue, handoff, wait, or blocked.
 
-The four fields above must remain inside `qualityGate`; do not emit any of them
-beside it:
+The recommendation is advisory. The matrix is a working result, not a Tool
+payload. When calling `room_commit`, never send `status`, `evidence_refs`,
+`criterionId`, `pass`, `verdict`, a coverage set, Root status, or frontend
+completion state. Use only the exact fields in the loaded `room_commit` schema.
 
-```json
-{
-  "qualityGate": {
-    "originalRequestChecked": true,
-    "verdict": "ready_to_deliver",
-    "items": [],
-    "residualRisks": []
-  }
-}
-```
+## Self-Check
 
-Before calling `room_commit`, perform this mechanical equality check:
-
-```text
-union(qualityGate pass item evidenceRefs) ⊆ room_commit.evidenceRefs
-set(qualityGate pass criterionId) == set(room_commit.requirementCoverage)
-```
+- Did I verify the user's original words, not only a derived checklist?
+- Is every `pass` backed by a fresh successful reference from this revision?
+- Did I distinguish product failure, canary failure, and Provider instability?
+- Did I preserve failures and unverified items instead of lowering a threshold?
+- Would an independent reviewer be able to reproduce the claim?
 
 ## Boundaries
 
-This Skill does not lower thresholds, rewrite screenshots to match a defect,
-approve its own sensitive action, emit a Room commit, set Goal or Root terminal
-state, or unlock the frontend. It provides evidence for the authoritative
-lifecycle owner. The Kernel validates the structured receipt, binds it to the
-active Root, Task, Dispatch, generation and evidence set, and rejects a
-completion whose receipt is missing, incomplete or contradictory.
+Do not waive requirements, self-approve sensitive work, manufacture evidence,
+reuse stale evidence without proving it still applies, rewrite screenshots or
+fixtures to match a defect, call a missing check "not relevant" without a
+confirmed requirement change, or claim that the Skill itself completed the
+task.

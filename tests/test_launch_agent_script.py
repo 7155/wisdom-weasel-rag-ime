@@ -731,7 +731,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
             portable_room_policy = portable_pi_root / "room-skill-policy.json"
             portable_room_skills = portable_pi_root / "skills"
             portable_room_skill = (
-                portable_room_skills / "room-delivery-closure" / "SKILL.md"
+                portable_room_skills / "quality-gate" / "SKILL.md"
             )
             RoomSkillPolicy(portable_room_policy, portable_room_skills)
             portable_room_policy_text = portable_room_policy.read_text(encoding="utf-8")
@@ -744,7 +744,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 / "Agent"
                 / "config"
                 / "skills"
-                / "rag-ime-memory-curator"
+                / "memory-curation"
                 / "SKILL.md"
             )
             managed_memory_skill_text = managed_memory_skill.read_text(encoding="utf-8")
@@ -793,13 +793,13 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 / "integrations"
                 / "pi"
                 / "skills"
-                / "room-delivery-closure"
+                / "quality-gate"
                 / "SKILL.md"
             ).read_text(encoding="utf-8"),
         )
         self.assertNotIn("must-not-be-installed", managed_extension_text)
-        self.assertIn("remember_preview", managed_memory_skill_text)
-        self.assertIn("agent_role_book", managed_memory_skill_text)
+        self.assertIn("authorized Evidence -> one Current Atom", managed_memory_skill_text)
+        self.assertIn("native review boundary", managed_memory_skill_text)
         self.assertEqual(
             managed_memory_skill_text,
             (
@@ -807,7 +807,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 / "integrations"
                 / "pi"
                 / "skills"
-                / "rag-ime-memory-curator"
+                / "memory-curation"
                 / "SKILL.md"
             ).read_text(encoding="utf-8"),
         )

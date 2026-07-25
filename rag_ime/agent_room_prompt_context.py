@@ -82,16 +82,9 @@ def room_participant_prompt(
             str(work.get("offeredToParticipantId") or ""),
         }:
             continue
-        relation = (
-            "待接收"
-            if str(work.get("offeredToParticipantId") or "") == target_id
-            else "当前负责"
-            if str(work.get("currentOwnerParticipantId") or "") == target_id
-            else "最终负责"
-        )
+        relation = _work_relation(work, target_id)
         work_lines.append(
-            f"- {work.get('id')} "
-            f"[{state}; {relation}; revision={work.get('revision', 0)}] "
+            f"- {relation}，{_work_state(state)}："
             f"{_bounded_text(work.get('objective'), maximum=320)}"
         )
         if len(work_lines) >= 4:
@@ -101,14 +94,13 @@ def room_participant_prompt(
     )
     transcript_note = (
         f"- 另有 {total_omitted} 条较早未读消息已越过本次上下文窗口；"
-        "需要时以话题摘要、Artifact 和 WorkItem 为准。"
+        "需要时查看话题摘要、公开产物或任务状态。"
         if total_omitted > 0
         else ""
     )
     work_item_lines: list[str] = []
     if work_item is not None:
         work_item_lines = [
-            f"WorkItem ID：{_bounded_text(work_item.get('id'), maximum=320)}",
             f"目标：{_bounded_text(work_item.get('objective'), maximum=1_000)}",
             (
                 "预期产物："
@@ -120,16 +112,16 @@ def room_participant_prompt(
             ),
         ]
     sections = [
-        '<room-turn-context visibility="provider-only" mode="incremental">',
+        "<room-context>",
         (
             f"Room：{_bounded_text(room.get('title'), maximum=120)}；"
-            f"类型：{room_kind}；话题：{topic_title}；当前岗位：{role}"
+            f"话题：{topic_title}；你本轮以 {role} 视角参与"
         ),
     ]
     if topic_summary:
         sections.append(f"话题摘要：{topic_summary}")
     if scenario_prompt:
-        sections.append(f"群组设定：{scenario_prompt}")
+        sections.append(f"Room 补充设定（不改变权限）：{scenario_prompt}")
     if transcript_lines or transcript_note:
         sections.extend(
             [
@@ -141,36 +133,25 @@ def room_participant_prompt(
         if transcript_note:
             sections.append(transcript_note)
     if work_lines:
-        sections.extend(["", "与你有关的开放责任：", *work_lines])
+        sections.extend(["", "与你有关的未结责任：", *work_lines])
     if work_item_lines:
-        sections.extend(["", "本轮绑定任务：", *work_item_lines])
-    if work_item is not None:
-        sections.extend(
-            [
-                "",
-                "受管工作：围绕绑定任务持续推进；一次模型回复结束不代表完成。"
-                "验收未满足且仍有合法下一步时继续工作。只有已交付、已交接、"
-                "等待或阻塞成立时，才按已加载 Skill 和当前工具目录提交结构化动作。",
-            ]
-        )
+        sections.extend(["", "当前受管任务：", *work_item_lines])
     elif room_kind == "collaboration":
         sections.extend(
             [
                 "",
-                "当前阶段：普通 Room 对话与需求对齐，尚未创建 Root、Task 或 Dispatch。",
-                "用户提出可能执行的目标时，先从短目录按需加载 "
-                "`room-requirement-clarification`；只有真实产品或架构取舍才加载 "
-                "`grill-me`；用户明确确认需求包后，才可加载 "
-                "`room-implementation-planning` 形成候选计划。",
-                "一次只问一个会改变范围、验收、权限或不可逆结果的问题。"
-                "能从源码、配置或运行状态查明的事实自行核对；普通闲聊直接回答。",
-                "本阶段不得声称已经开工、创建任务、分派成员或获得执行授权。"
-                "把确认包交还用户，由用户在 Room 界面明确确认后进入受管执行。",
+                "当前阶段：需求对齐，尚未进入受管执行。",
+                "普通闲聊直接回答。用户提出工作目标时，先确认范围、验收和禁区；"
+                "缺口会改变结果时，若 requirement-alignment 已在 <loaded_skill> 中就"
+                "直接遵循，否则精确加载；只有需要主动挑战重大产品或架构取舍时，"
+                "才以同样规则使用 grill-me。",
+                "能从源码、配置或运行状态查明的事实自行核对；一次只问一个真正需要"
+                "用户决定的问题。用户确认前，不声称已经开工、分派或获得执行授权。",
             ]
         )
     if message:
         sections.extend(["", f"{request_heading}：", message])
-    sections.append("</room-turn-context>")
+    sections.append("</room-context>")
     return "\n".join(sections)[:ROOM_CONTEXT_PROMPT_CHAR_BUDGET]
 
 
@@ -186,11 +167,10 @@ def room_intercom_prompt(
     kind = str(item.get("kind") or "send")
     action = str(item.get("workAction") or "")
     return (
-        "请处理本回合上下文中刚收到的房间协作投递。"
-        f"来源是 {source.get('displayName')}，类型是 {kind}。"
+        f"你刚收到来自 {source.get('displayName')} 的 Room 协作消息。"
         + (
-            f"关联 WorkItem {work.get('id')}，责任动作是 "
-            f"{action or 'message'}。"
+            f"它与当前任务“{_bounded_text(work.get('objective'), maximum=320)}”有关，"
+            f"协作动作是 {_work_action(action)}。"
             if work is not None
             else ""
         )
@@ -199,12 +179,40 @@ def room_intercom_prompt(
             "发布答复，不要只在私有 Session 中说已经回复。"
             if kind == "ask"
             else (
-                "这是对先前问题的答复；将它作为当前任务证据继续。"
+                "这是对先前问题的答复；将它作为当前任务输入继续，但消息本身不是"
+                "验收 evidenceRef，关键事实仍需用可核对来源或成功工具回执验证。"
                 if kind == "reply"
-                else "仅在当前任务需要时使用，不必机械复述。"
+            else "仅在当前任务需要时使用，不必机械复述。"
             )
         )
     )
+
+
+def _work_relation(work: Mapping[str, object], target_id: str) -> str:
+    if str(work.get("offeredToParticipantId") or "") == target_id:
+        return "待你接手"
+    if str(work.get("currentOwnerParticipantId") or "") == target_id:
+        return "由你推进"
+    return "由你负责验收"
+
+
+def _work_state(value: str) -> str:
+    return {
+        "queued": "等待开始",
+        "active": "进行中",
+        "review": "等待复核",
+        "blocked": "已阻塞",
+    }.get(value, "未结")
+
+
+def _work_action(value: str) -> str:
+    return {
+        "assignment": "移交责任",
+        "handoff": "移交责任",
+        "collaborate": "并行协助",
+        "review": "独立复核",
+        "message": "补充信息",
+    }.get(value, "补充信息")
 
 
 def agent_message_text(message: Mapping[str, object]) -> str:

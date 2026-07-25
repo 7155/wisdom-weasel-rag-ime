@@ -90,7 +90,38 @@ def _registry_entry(value: Mapping[str, object]) -> dict[str, object]:
         "operation": f"product.{name}",
         "inputSchema": dict(schema),
     }
+    projections = _runtime_projections(value.get("runtimeProjections"), name)
+    if projections:
+        entry["runtimeProjections"] = projections
     return entry
+
+
+def _runtime_projections(value: object, tool_name: str) -> list[dict[str, str]]:
+    if value is None:
+        return []
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"product Tool {tool_name} runtimeProjections must be an array")
+    projections: list[dict[str, str]] = []
+    seen_names: set[str] = set()
+    seen_operations: set[str] = set()
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError(
+                f"product Tool {tool_name} runtimeProjections entries must be objects"
+            )
+        name = _required(item.get("name"), f"{tool_name}.runtimeProjections.name")
+        operation = _required(
+            item.get("operation"),
+            f"{tool_name}.runtimeProjections.operation",
+        )
+        if name in seen_names or operation in seen_operations:
+            raise ValueError(
+                f"product Tool {tool_name} runtimeProjections must be unique"
+            )
+        seen_names.add(name)
+        seen_operations.add(operation)
+        projections.append({"name": name, "operation": operation})
+    return projections
 
 
 def _strings(value: object, field: str) -> list[str]:

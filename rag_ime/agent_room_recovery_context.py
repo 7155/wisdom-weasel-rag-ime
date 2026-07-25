@@ -43,7 +43,7 @@ def room_compaction_recovery_context(
         for value in covered_criterion_ids
         if bounded_text(value, maximum=240)
     }
-    acceptance = _unique_records(
+    internal_acceptance = _unique_records(
         (
             _compact_mapping(
                 {
@@ -53,18 +53,17 @@ def room_compaction_recovery_context(
                     "statement": bounded_text(
                         item.get("statement"), maximum=1_000
                     ),
-                    "covered": bounded_text(
-                        item.get("criterionId"), maximum=240
-                    ) in covered,
-                    "proofVerified": item.get("passed") is True,
-                    "passed": (
+                    "evidenceAvailable": (
                         item.get("passed") is True
-                        or (
-                            task_state == "completed"
-                            and bounded_text(
-                                item.get("criterionId"), maximum=240
-                            ) in covered
-                        )
+                        or bounded_text(
+                            item.get("criterionId"), maximum=240
+                        ) in covered
+                    ),
+                    "kernelVerified": (
+                        task_state == "completed"
+                        and bounded_text(
+                            item.get("criterionId"), maximum=240
+                        ) in covered
                     ),
                 }
             )
@@ -75,6 +74,24 @@ def room_compaction_recovery_context(
         key="criterionId",
         fallback_key="statement",
     )
+    # Provider recovery uses the same public AC aliases as room_state and
+    # room_commit. Database criterion IDs never become model instructions.
+    acceptance = [
+        {
+            "alias": f"AC-{index}",
+            "statement": bounded_text(item.get("statement"), maximum=1_000),
+            "status": (
+                "verified"
+                if item.get("kernelVerified") is True
+                else (
+                    "evidence_available"
+                    if item.get("evidenceAvailable") is True
+                    else "pending"
+                )
+            ),
+        }
+        for index, item in enumerate(internal_acceptance, start=1)
+    ]
     blockers_source = _mapping(source.get("blockers"))
     blockers = _unique_records(
         (

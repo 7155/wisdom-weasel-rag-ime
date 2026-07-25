@@ -29,6 +29,11 @@
     "kind": {"type": "string", "minLength": 1},
     "visibility": {"enum": ["room", "root"]},
     "content": {"type": "string", "minLength": 1},
+    "mentions": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {"type": "string", "minLength": 1}
+    },
     "blocks": {
       "type": "array",
       "items": {
@@ -55,7 +60,7 @@
       "type": "object",
       "required": ["kind", "ref"],
       "properties": {
-        "kind": {"enum": ["user", "room_commit"]},
+        "kind": {"enum": ["user", "room_commit", "room_post"]},
         "ref": {"type": "string", "minLength": 1}
       },
       "additionalProperties": false

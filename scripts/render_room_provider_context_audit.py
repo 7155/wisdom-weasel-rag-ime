@@ -264,6 +264,12 @@ def _safe_file_part(value: object) -> str:
 
 
 def _extract_context_blocks(prompt: str, context_type: str) -> list[str]:
+    if context_type in {"workflow_state", "workflow_control"}:
+        return re.findall(
+            r"<workflow-state\b[^>]*>.*?</workflow-state>",
+            prompt,
+            re.DOTALL,
+        )
     pattern = re.compile(
         rf'<rag-ime-context\s+type="{re.escape(context_type)}">.*?'
         r"</rag-ime-context>",
@@ -412,6 +418,145 @@ def _usage(call: dict[str, Any]) -> dict[str, Any]:
     return dict(usage) if isinstance(usage, dict) else {}
 
 
+def _content_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, list):
+        return ""
+    return "".join(
+        str(item.get("text") or "")
+        for item in value
+        if isinstance(item, dict) and item.get("type") == "text"
+    )
+
+
+def _skill_load_calls(call: dict[str, Any]) -> list[dict[str, Any]]:
+    assistant = call.get("assistantMessage")
+    content = assistant.get("content") if isinstance(assistant, dict) else None
+    if not isinstance(content, list):
+        return []
+    return [
+        item
+        for item in content
+        if isinstance(item, dict)
+        and item.get("type") == "toolCall"
+        and item.get("name") == "skill_load"
+    ]
+
+
+def _skill_load_context_epoch_evidence(
+    calls: list[tuple[int, int, dict[str, Any]]],
+    recovery_prompts: list[str],
+) -> tuple[list[dict[str, Any]], bool, bool]:
+    """Prove skill_load is append-only until compaction creates a new epoch."""
+
+    ordered = sorted(calls, key=lambda item: _call_sort_key(item[2]))
+    evidence: list[dict[str, Any]] = []
+    for position, (turn_number, call_index, call) in enumerate(ordered):
+        tool_calls = _skill_load_calls(call)
+        if not tool_calls:
+            continue
+        next_item = ordered[position + 1] if position + 1 < len(ordered) else None
+        for tool_call in tool_calls:
+            tool_call_id = str(tool_call.get("id") or "")
+            skill_name = str(
+                (
+                    tool_call.get("arguments")
+                    if isinstance(tool_call.get("arguments"), dict)
+                    else {}
+                ).get("name")
+                or ""
+            )
+            next_turn_number = next_item[0] if next_item is not None else 0
+            next_call_index = next_item[1] if next_item is not None else 0
+            next_call = next_item[2] if next_item is not None else {}
+            before_context = (
+                call.get("providerContext")
+                if isinstance(call.get("providerContext"), dict)
+                else {}
+            )
+            after_context = (
+                next_call.get("providerContext")
+                if isinstance(next_call.get("providerContext"), dict)
+                else {}
+            )
+            before_prompt = str(before_context.get("systemPrompt") or "")
+            after_prompt = str(after_context.get("systemPrompt") or "")
+            messages = (
+                after_context.get("messages")
+                if isinstance(after_context.get("messages"), list)
+                else []
+            )
+            matching_results = [
+                message
+                for message in messages
+                if isinstance(message, dict)
+                and message.get("role") == "toolResult"
+                and message.get("toolName") == "skill_load"
+                and str(message.get("toolCallId") or "") == tool_call_id
+            ]
+            result_text = (
+                _content_text(matching_results[-1].get("content"))
+                if matching_results
+                else ""
+            )
+            expected_open = (
+                f'<loaded_skill name="{skill_name}" revision="sha256:'
+            )
+            prompt_bytes_unchanged = (
+                next_item is not None
+                and next_turn_number == turn_number
+                and before_prompt.encode("utf-8") == after_prompt.encode("utf-8")
+            )
+            valid_tool_result = (
+                bool(skill_name)
+                and len(matching_results) == 1
+                and result_text.startswith(expected_open)
+                and result_text.endswith("</loaded_skill>")
+            )
+            restore_counts = [
+                prompt.count(result_text)
+                for prompt in recovery_prompts
+                if result_text
+            ]
+            evidence.append(
+                {
+                    "turn": turn_number,
+                    "callIndex": call_index,
+                    "nextTurn": next_turn_number,
+                    "nextCallIndex": next_call_index,
+                    "toolCallId": tool_call_id,
+                    "skillName": skill_name,
+                    "promptBeforeUtf8Bytes": len(before_prompt.encode("utf-8")),
+                    "promptAfterUtf8Bytes": len(after_prompt.encode("utf-8")),
+                    "promptBeforeSha256": _sha256_text(before_prompt),
+                    "promptAfterSha256": _sha256_text(after_prompt),
+                    "promptBytesUnchanged": prompt_bytes_unchanged,
+                    "toolResultUtf8Bytes": len(result_text.encode("utf-8")),
+                    "toolResultSha256": (
+                        _sha256_text(result_text) if result_text else ""
+                    ),
+                    "validLoadedSkillToolResult": valid_tool_result,
+                    "toolResultAbsentFromCurrentEpochPrompt": (
+                        bool(result_text) and result_text not in after_prompt
+                    ),
+                    "recoveryPromptExactOccurrenceCounts": restore_counts,
+                }
+            )
+
+    append_only = bool(evidence) and all(
+        item["promptBytesUnchanged"] is True
+        and item["validLoadedSkillToolResult"] is True
+        and item["toolResultAbsentFromCurrentEpochPrompt"] is True
+        for item in evidence
+    )
+    restored_after_compaction = bool(evidence) and bool(recovery_prompts) and all(
+        sum(item["recoveryPromptExactOccurrenceCounts"]) == 1
+        for item in evidence
+    )
+    return evidence, append_only, restored_after_compaction
+
+
 def _call_sort_key(call: dict[str, Any]) -> tuple[int, int]:
     return (int(call.get("capturedAtMs") or 0), int(call.get("index") or 0))
 
@@ -461,17 +606,14 @@ def _workflow_control_contradictions(
     )
     for prompt_index, prompt in enumerate(prompts, start=1):
         for block_index, block in enumerate(
-            _extract_context_blocks(prompt, "workflow_control"),
+            _extract_context_blocks(prompt, "workflow_state"),
             start=1,
         ):
-            normalized = block.lower()
-            status = next(
-                (
-                    candidate
-                    for candidate in ("completed", "cancelled", "canceled")
-                    if f"plan · {candidate}" in normalized
-                ),
-                "",
+            status = (
+                "completed"
+                if "计划：全部完成" in block
+                or re.search(r"计划：\s*(\d+)/\1\s*项完成", block)
+                else ""
             )
             approval_marker = next(
                 (marker for marker in unapproved_markers if marker in block),
@@ -504,7 +646,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         else "room"
     )
     audited_context_types = (
-        "workflow_control",
+        "workflow_state",
         "room_context",
         "session_memory",
     )
@@ -660,7 +802,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
             )
         else:
             expected_context_counts = {
-                "workflow_control": 1,
+                "workflow_state": 1,
                 "room_context": (
                     1
                     if surface == "room" and turn_id not in ordinary_turn_ids
@@ -862,6 +1004,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
 
     checks = report.get("checks") if isinstance(report.get("checks"), dict) else {}
     recovery_packets_valid = True
+    recovery_prompts: list[str] = []
     if surface == "agent":
         after = report.get("afterCompaction")
         current = (
@@ -875,6 +1018,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
             else ""
         )
         audited_prompts.append(prompt)
+        recovery_prompts.append(prompt)
         recovery_packets_valid = (
             checks.get("compactionRecoveryValid") is True
             and len(compactions) == 1
@@ -942,6 +1086,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
                 else ""
             )
             audited_prompts.append(prompt)
+            recovery_prompts.append(prompt)
             packet = _recovery_packet(prompt)
             recovery_packets_valid = (
                 recovery_packets_valid
@@ -1138,6 +1283,11 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         if surface == "agent"
         else transcript_isolation.get("passed") is True
     )
+    (
+        skill_load_epoch_evidence,
+        skill_load_append_only,
+        loaded_skills_restored_after_compaction,
+    ) = _skill_load_context_epoch_evidence(all_calls, recovery_prompts)
     workflow_control_contradictions = _workflow_control_contradictions(
         audited_prompts
     )
@@ -1194,6 +1344,17 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         "roomContextAbsentFromSessionTranscript": session_transcripts_private,
         "oneExactRecoveryPacketPerCompaction": recovery_packets_valid,
     }
+    if surface == "agent":
+        audit_checks.update(
+            {
+                "skillLoadAppendsOnlyToolResultInCurrentEpoch": (
+                    skill_load_append_only
+                ),
+                "loadedSkillBodiesRestoredExactlyAfterCompaction": (
+                    loaded_skills_restored_after_compaction
+                ),
+            }
+        )
 
     metadata = {
         "schemaVersion": SCHEMA_VERSION,
@@ -1224,7 +1385,30 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         "toolExecutionSummaries": tool_execution_summaries,
         "recoveryPromptFiles": recovery_prompt_files,
         "transcriptFiles": transcript_files,
+        "skillLoadContextEpochEvidence": skill_load_epoch_evidence,
     }
+    _write_json(
+        output_dir / "context-epoch-invariants.json",
+        {
+            "schemaVersion": SCHEMA_VERSION,
+            "surface": surface,
+            "invariant": (
+                "Within one Context Epoch, skill_load must not modify any "
+                "existing systemPrompt byte; it may only append a Tool Result. "
+                "Exact loaded Skill bodies may enter systemPrompt only after "
+                "compaction creates the next Context Epoch."
+            ),
+            "skillLoadEvidence": skill_load_epoch_evidence,
+            "skillLoadAppendsOnlyToolResultInCurrentEpoch": (
+                skill_load_append_only if surface == "agent" else None
+            ),
+            "loadedSkillBodiesRestoredExactlyAfterCompaction": (
+                loaded_skills_restored_after_compaction
+                if surface == "agent"
+                else None
+            ),
+        },
+    )
     _write_json(output_dir / "audit.json", metadata)
 
     readme = [
@@ -1265,6 +1449,7 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         "- [动态 Room / Session 上下文](room-contexts.md)",
         "- [外网请求证据](external-network-audit.json)",
         "- [压缩记录](compaction-records.json)",
+        "- [Context Epoch 字节不变量](context-epoch-invariants.json)",
         "- [逐调用对象与字节/hash 清单](audit.json)",
         *[
             f"- [压缩后完整恢复上下文 {index}]({name})"

@@ -84,21 +84,19 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
             "当前任务：验证一份恢复包",
             "验收：每项只出现一次",
             "阻塞：等待环境",
-            "criterion:exact",
             "skill:exact",
             "tool:exact",
         ):
             self.assertEqual(rendered.count(fact), 1)
+        self.assertNotIn("criterion:exact", rendered)
 
         self.assertEqual(
             packet["acceptance"],
             [
                 {
-                    "criterionId": "criterion:exact",
-                    "covered": True,
-                    "passed": False,
-                    "proofVerified": False,
+                    "alias": "AC-1",
                     "statement": "验收：每项只出现一次",
+                    "status": "evidence_available",
                 }
             ],
         )
@@ -129,6 +127,7 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
             "participant:owner",
             "participant:worker",
             "dispatch:parent",
+            "criterion:exact",
             "hopCount",
             "depth",
         ):
@@ -137,6 +136,56 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
     def test_invalid_task_context_fails_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "valid JSON"):
             room_compaction_recovery_context("not-json")
+
+    def test_acceptance_uses_public_aliases_and_compact_statuses(self) -> None:
+        rendered = room_compaction_recovery_context(
+            json.dumps(
+                {
+                    "requirements": {"original": [], "items": []},
+                    "task": {
+                        "objective": "恢复当前任务",
+                        "expectedOutput": "恢复包",
+                        "state": "completed",
+                    },
+                    "acceptance": {
+                        "criteria": [
+                            {
+                                "criterionId": "criterion:verified",
+                                "statement": "已由 Kernel 验证",
+                                "passed": True,
+                            },
+                            {
+                                "criterionId": "criterion:pending",
+                                "statement": "仍待证据",
+                                "passed": False,
+                            },
+                        ]
+                    },
+                    "blockers": {"obstacles": []},
+                    "continuation": {},
+                },
+                ensure_ascii=False,
+            ),
+            covered_criterion_ids=("criterion:verified",),
+        )
+
+        packet = json.loads(rendered)
+        self.assertEqual(
+            packet["acceptance"],
+            [
+                {
+                    "alias": "AC-1",
+                    "statement": "已由 Kernel 验证",
+                    "status": "verified",
+                },
+                {
+                    "alias": "AC-2",
+                    "statement": "仍待证据",
+                    "status": "pending",
+                },
+            ],
+        )
+        self.assertNotIn("criterion:", rendered)
 
 
 if __name__ == "__main__":

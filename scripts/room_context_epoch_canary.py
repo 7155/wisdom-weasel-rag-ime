@@ -24,7 +24,7 @@ from typing import Any, Mapping, Protocol
 _SESSION_MEMORY_OPEN = '<rag-ime-context type="session_memory">'
 _SESSION_MEMORY_CLOSE = "</rag-ime-context>"
 _LIFECYCLE_HOOK_OPEN = '<rag-ime-context type="lifecycle_hook"'
-_MANAGED_ROOM_AUTHORITY = "当前受管 Room Dispatch 已授权执行"
+_MANAGED_ROOM_AUTHORITY = "当前 Dispatch 是你这一轮唯一的受管责任"
 _CONFLICTING_ROOM_WORKFLOW_TEXT = (
     "计划尚未批准",
     "先创建执行计划并提交审阅",
@@ -760,7 +760,7 @@ def _human_dispatch_requirement_projection(
         "原始需求（不可改写）：",
         "当前任务：",
         "补充要求：",
-        "验收条件 acceptance.criteria（提交时原样使用 criterionId）：",
+        "验收条件（提交证据时使用 AC 编号）：",
         "当前阻塞：",
     }
     current = ""
@@ -1143,6 +1143,7 @@ def progressive_discovery_check(
         )
         and item.get("catalogBlocksExactlyOnceEveryCall") is True
         and item.get("routingCardFieldContractEveryCall") is True
+        and item.get("activeDeferredMutuallyExclusiveEveryCall") is True
         and (
             item.get("managedRoomAuthorityEveryCall") is not True
             or (
@@ -1151,10 +1152,6 @@ def progressive_discovery_check(
                 )
                 is True
                 and item.get("stageCardsBoundedEveryCall") is True
-                and item.get(
-                    "activeDeferredMutuallyExclusiveEveryCall"
-                )
-                is True
             )
         )
         and item.get("routingCardContentCompleteEveryCall") is True
@@ -1361,14 +1358,12 @@ def _recovery_packet_evidence(
             packet.get("originalRequirements") or []
         ),
         "acceptanceCount": len(acceptance),
-        "acceptancePassedCount": sum(
-            item.get("passed") is True for item in acceptance
+        "acceptanceVerifiedCount": sum(
+            item.get("status") == "verified" for item in acceptance
         ),
-        "acceptanceCoveredCount": sum(
-            item.get("covered") is True for item in acceptance
-        ),
-        "acceptanceProofVerifiedCount": sum(
-            item.get("proofVerified") is True for item in acceptance
+        "acceptanceEvidenceAvailableCount": sum(
+            item.get("status") in {"verified", "evidence_available"}
+            for item in acceptance
         ),
         "blockerCount": len(packet.get("blockers") or []),
         "taskState": str(task.get("state") or "")
@@ -1904,10 +1899,10 @@ def run(
                 "acceptanceCount"
             ]
             == item["afterCompaction"]["recoveryPacket"][
-                "acceptancePassedCount"
+                "acceptanceVerifiedCount"
             ]
             == item["afterCompaction"]["recoveryPacket"][
-                "acceptanceCoveredCount"
+                "acceptanceEvidenceAvailableCount"
             ]
             and item["afterCompaction"]["recoveryPacket"]["taskState"]
             == "completed"

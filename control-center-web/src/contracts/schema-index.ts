@@ -3432,7 +3432,7 @@ export const contractSchemas = {
       },
       "safetyPolicyVersion": {
         "type": "string",
-        "const": "control-center-safe-v1"
+        "const": "agent-core-v2"
       },
       "selectableModes": {
         "type": "array",
@@ -7539,10 +7539,10 @@ export const contractSchemas = {
         "items": {
           "type": "string",
           "enum": [
-            "dispatch",
+            "deliver",
+            "handoff",
             "wait",
-            "blocked",
-            "complete"
+            "blocked"
           ]
         }
       },
@@ -15202,6 +15202,14 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1
       },
+      "mentions": {
+        "type": "array",
+        "maxItems": 16,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
       "blocks": {
         "type": "array",
         "items": {
@@ -15312,7 +15320,8 @@ export const contractSchemas = {
           "kind": {
             "enum": [
               "user",
-              "room_commit"
+              "room_commit",
+              "room_post"
             ]
           },
           "ref": {
@@ -16145,6 +16154,13 @@ export const contractSchemas = {
         }
       },
       "acceptanceCriterionIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "contextEvidenceRefs": {
         "type": "array",
         "items": {
           "type": "string",

@@ -15,6 +15,7 @@ export interface RoomTaskV2 {
   expectedOutput: string;
   requirementItemIds: string[];
   acceptanceCriterionIds: string[];
+  contextEvidenceRefs?: string[];
   revision: number;
   state:
     'pending' | 'active' | 'review' | 'waiting' | 'blocked' | 'completed' | 'failed' | 'cancelled';

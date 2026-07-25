@@ -27,10 +27,12 @@ from .text_utils import compact_whitespace, now_ms
 
 HISTORICAL_MEMORY_CURATION_SCHEMA_VERSION = "rag-ime.historical-memory-curation.v1"
 DEFAULT_HISTORICAL_CURATION_INSTRUCTION = (
-    "这是一次完整历史迁移。只保留跨会话仍有价值的个人事实、稳定偏好、明确决定、长期约束、"
+    "这是 Agent 记忆系统的一次完整历史迁移。用户最终发送的内容、Agent/Room 对话摘要、"
+    "已应用工具回执，以及输入法或语音形成的最终输入都只是候选证据；模型输出和 Room 私有过程"
+    "不能自行成为用户事实。只保留跨会话仍有价值的个人事实、稳定偏好、明确决定、长期约束、"
     "持续项目状态与仍有效计划；临时运行状态、单次按钮或页面操作、调试探针、重复残句和一次性问答"
     "不得进入长期记忆。新旧事实冲突时必须复用稳定 claimKey 让旧版本失效，不能让相互矛盾的当前"
-    "Atom 并存。主题书应少而稳定，并且所有结论必须引用本批真实证据。"
+    "Atom 并存。主题书应少而稳定，所有结论必须引用本批真实证据，并继续经过现有审核与应用流程。"
 )
 
 _TRANSIENT_STATE_RE = re.compile(

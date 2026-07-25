@@ -12,6 +12,12 @@ from .agent_room_capabilities import (
     RoomCapabilityManifestStore,
     ToolAuthorizationError,
 )
+from .agent_room_acceptance import (
+    AcceptanceAliasError,
+    acceptance_alias_map,
+    acceptance_cards,
+    resolve_acceptance_aliases,
+)
 from .agent_room_context import RoomContextLedgerStore
 from .agent_room_continuations import (
     RoomContinuationFactory,
@@ -24,6 +30,12 @@ from .agent_room_kernel_worker import KernelCommandBus
 from .agent_room_learning_governance import RoomLearningGovernanceStore
 from .agent_room_peer_review import RoomPeerReviewStore
 from .agent_room_public_timeline import RoomPublicTimelineProjector
+from .agent_room_references import (
+    ParticipantReferenceError,
+    participant_ref_map,
+    ref_for_participant,
+    resolve_participant_ref,
+)
 from .agent_room_requirements import RequirementGovernanceStore
 from .agent_rooms import AgentRoomStore
 
@@ -180,18 +192,41 @@ class RoomKernelApplicationService:
                 "Room state projection lost its Root or Task"
             )
         room = self.rooms.get(room_id)
-        participants = [
-            {
-                "participantId": str(item["id"]),
-                "displayName": str(item["displayName"]),
-                "collaborationRole": str(item["collaborationRole"]),
-                "status": str(item["status"]),
-                "isCurrent": str(item["id"])
-                == str(dispatch["targetParticipantId"]),
-            }
-            for item in room["participants"]
-            if isinstance(item, Mapping) and item.get("status") == "active"
-        ]
+        participant_refs = participant_ref_map(room["participants"])
+        running_participants = {
+            str(item.get("targetParticipantId") or "")
+            for item in snapshot["dispatches"]
+            if isinstance(item, Mapping)
+            and item.get("rootId") == root_id
+            and item.get("state") in {"queued", "running"}
+        }
+        participants = []
+        for item in room["participants"]:
+            if not isinstance(item, Mapping) or item.get("status") != "active":
+                continue
+            participant_id = str(item["id"])
+            is_current = participant_id == str(
+                dispatch["targetParticipantId"]
+            )
+            participants.append(
+                {
+                    "participantRef": ref_for_participant(
+                        participant_id,
+                        participant_refs,
+                    ),
+                    "displayName": str(item["displayName"]),
+                    "availability": (
+                        "current"
+                        if is_current
+                        else "busy"
+                        if participant_id in running_participants
+                        else "available"
+                    ),
+                    "capabilitySummary": str(
+                        item.get("collaborationRole") or "collaborator"
+                    ),
+                }
+            )
         pending_targets = [
             {
                 "dispatchId": str(item.get("dispatchId") or ""),
@@ -200,42 +235,63 @@ class RoomKernelApplicationService:
             for item in snapshot["pendingTargets"]
             if isinstance(item, Mapping) and item.get("rootId") == root_id
         ]
-        return {
+        recent_changes = [
+            {
+                "kind": str(post.get("kind") or ""),
+                "content": " ".join(
+                    str(post.get("content") or "").split()
+                )[:320],
+                "authorParticipantRef": ref_for_participant(
+                    post.get("authorActorRef"),
+                    participant_refs,
+                ),
+            }
+            for post in self.context.recent_posts(root_id, limit=5)
+        ]
+        acceptance = acceptance_cards(
+            task.get("acceptanceCriterionIds") or [],
+            self.requirements.dispatch_context(dispatch_id),
+            accepted_evidence_by_criterion=(
+                self.kernel.accepted_evidence_by_criterion(root_id)
+            ),
+        )
+        model_state = {
             "schemaVersion": "wisdom-weasel.room-state-tool.v1",
-            "roomId": room_id,
-            "root": {
-                key: root.get(key)
-                for key in ("rootId", "state", "generation", "owner")
+            "mode": "managed",
+            "currentResponsibility": {
+                "objective": str(task.get("objective") or ""),
+                "expectedOutput": str(task.get("expectedOutput") or ""),
+                "state": str(dispatch.get("state") or ""),
             },
-            "task": {
-                key: task.get(key)
-                for key in (
-                    "taskId",
-                    "state",
-                    "ownerParticipantId",
-                    "assigneeParticipantId",
-                    "objective",
-                    "expectedOutput",
-                    "acceptanceCriterionIds",
-                )
-            },
-            "dispatch": {
-                key: dispatch.get(key)
-                for key in (
-                    "dispatchId",
-                    "parentDispatchId",
-                    "state",
-                    "intentKind",
-                    "targetParticipantId",
-                    "hopCount",
-                    "depth",
-                    "generation",
-                    "capabilityEpoch",
-                )
-            },
+            "acceptanceAliases": acceptance,
+            "canSettle": (
+                root.get("state") == "running"
+                and dispatch.get("state") == "running"
+            ),
             "participants": participants,
-            "pendingCancellationTargets": pending_targets,
+            "recentPublicChanges": recent_changes,
+            "pendingCancellationTargets": len(pending_targets),
         }
+        revision_material = {
+            **model_state,
+            "routing": {
+                "rootId": root["rootId"],
+                "taskId": task["taskId"],
+                "dispatchId": dispatch["dispatchId"],
+                "generation": root["generation"],
+                "participantRefs": participant_refs,
+            },
+        }
+        revision = hashlib.sha256(
+            json.dumps(
+                revision_material,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        model_state["stateRevision"] = f"sha256:{revision}"
+        return model_state
 
     def execute_capability_tool(
         self,
@@ -268,20 +324,31 @@ class RoomKernelApplicationService:
                 root_id=str(live["rootId"]),
                 dispatch_id=str(live["dispatchId"]),
             )
+            state_revision = str(result.get("stateRevision") or "")
+            revision_hash = state_revision.removeprefix("sha256:")
+            prior = self.capabilities.latest_runtime_execution(
+                session_id=session_id,
+                dispatch_id=str(live["dispatchId"]),
+                tool_name="room_state",
+                exclude_invocation_receipt_id=str(invocation["receiptId"]),
+            )
+            result["unchanged"] = bool(
+                prior is not None
+                and prior.get("resultHash") == revision_hash
+            )
             execution_receipt, _ = self.capabilities.record_runtime_execution(
                 session_id=session_id,
                 invocation_receipt_id=str(invocation["receiptId"]),
                 status="applied",
-                result_hash=hashlib.sha256(
-                    json.dumps(
-                        result,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest(),
+                result_hash=revision_hash,
                 created_at_ms=int(time.time() * 1000),
             )
+            result = {
+                "evidenceRef": str(
+                    execution_receipt["executionReceiptId"]
+                ),
+                **result,
+            }
         elif canonical == "room_collaborate":
             result, execution_receipt = self._execute_collaboration(
                 session_id=session_id,
@@ -289,18 +356,11 @@ class RoomKernelApplicationService:
                 invocation=invocation,
             )
         elif canonical == "room_post":
-            result = {
-                "accepted": True,
-                "executionPerformed": False,
-                "settlementStaged": True,
-                "canonicalTool": canonical,
-                "invocationReceiptId": invocation["receiptId"],
-                "next": "room_commit_or_end_model_turn",
-                "modelInstruction": (
-                    "RoomPost 已暂存。若当前责任尚未提交，只调用 room_commit 一次；"
-                    "否则立即结束本轮。"
-                ),
-            }
+            result, execution_receipt = self._execute_post(
+                session_id=session_id,
+                live=live,
+                invocation=invocation,
+            )
         else:
             result = {
                 "accepted": True,
@@ -325,6 +385,99 @@ class RoomKernelApplicationService:
         if execution_receipt is not None:
             response["executionReceipt"] = execution_receipt
         return response
+
+    def _execute_post(
+        self,
+        *,
+        session_id: str,
+        live: Mapping[str, object],
+        invocation: Mapping[str, object],
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        command = invocation.get("canonicalCommand")
+        arguments = (
+            command.get("arguments")
+            if isinstance(command, Mapping)
+            else None
+        )
+        if not isinstance(arguments, Mapping):
+            raise RoomKernelFenceError(
+                "Room Post invocation has no canonical arguments"
+            )
+        dispatch = self.kernel.dispatch(str(live["dispatchId"]))
+        root = self.kernel.root(str(live["rootId"]))
+        room = self.rooms.get(str(live["roomId"]))
+        refs = participant_ref_map(room["participants"])
+        raw_mentions = arguments.get("mentions") or []
+        if not isinstance(raw_mentions, list):
+            raise RoomKernelFenceError("Room Post mentions must be an array")
+        try:
+            mentions = [
+                resolve_participant_ref(value, refs)
+                for value in raw_mentions
+            ]
+        except ParticipantReferenceError as exc:
+            raise RoomKernelFenceError(str(exc)) from exc
+        receipt_id = str(invocation["receiptId"])
+        post_id = _stable_id("room-post", receipt_id)
+        now_ms = int(time.time() * 1000)
+        post: dict[str, object] = {
+            "schemaVersion": "wisdom-weasel.room-post.v2",
+            "postId": post_id,
+            "roomId": root["roomId"],
+            "rootId": root["rootId"],
+            "generation": root["generation"],
+            "taskId": dispatch["taskId"],
+            "dispatchId": dispatch["dispatchId"],
+            "authorActorRef": dispatch["targetParticipantId"],
+            "kind": str(arguments.get("kind") or ""),
+            "visibility": "room",
+            "content": str(arguments.get("content") or "").strip(),
+            "mentions": list(dict.fromkeys(mentions)),
+            "idempotencyKey": post_id,
+            "publicationSource": {
+                "kind": "room_post",
+                "ref": receipt_id,
+            },
+            "createdAtMs": now_ms,
+        }
+        if arguments.get("blocks") is not None:
+            post["blocks"] = list(
+                normalize_trusted_agent_blocks(
+                    arguments["blocks"],
+                    source_kind="room_post",
+                    source_ref=receipt_id,
+                    visibility="room_post",
+                    generation=int(root["generation"]),
+                )
+            )
+        published, created = self.context.publish_post(post)
+        self.public_timeline.publish_post(
+            published,
+            participant_id=str(dispatch["targetParticipantId"]),
+            source_session_id=str(dispatch["targetSessionId"]),
+            topic_id=str(room.get("activeTopicId") or ""),
+        )
+        result = {
+            "published": True,
+            "postRef": post_id,
+            "deduplicated": not created,
+            "currentResponsibilityContinues": True,
+        }
+        execution_receipt, _ = self.capabilities.record_runtime_execution(
+            session_id=session_id,
+            invocation_receipt_id=receipt_id,
+            status="applied",
+            result_hash=hashlib.sha256(
+                json.dumps(
+                    published,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
+            created_at_ms=now_ms,
+        )
+        return result, execution_receipt
 
     def _execute_collaboration(
         self,
@@ -375,26 +528,57 @@ class RoomKernelApplicationService:
             raise RoomKernelFenceError(
                 "Room collaboration invocation has no canonical arguments"
             )
-        raw_criteria = arguments.get("acceptanceCriterionIds") or []
-        if not isinstance(raw_criteria, list):
+        raw_acceptance = arguments.get("acceptance") or []
+        if not isinstance(raw_acceptance, list):
             raise RoomKernelFenceError(
-                "Room collaboration acceptanceCriterionIds must be an array"
+                "Room collaboration acceptance must be an array"
             )
         parent = self.kernel.dispatch(parent_dispatch_id)
         parent_task = self.kernel.task(str(parent["taskId"]))
+        room = self.rooms.get(str(live["roomId"]))
+        participant_refs = participant_ref_map(room["participants"])
+        alias_map = acceptance_alias_map(
+            parent_task.get("acceptanceCriterionIds") or []
+        )
+        try:
+            target_participant_id = resolve_participant_ref(
+                arguments.get("targetParticipantRef"),
+                participant_refs,
+            )
+            criteria = resolve_acceptance_aliases(
+                raw_acceptance,
+                alias_map,
+            )
+        except (AcceptanceAliasError, ParticipantReferenceError) as exc:
+            raise RoomKernelFenceError(str(exc)) from exc
+        evidence_refs = arguments.get("evidenceRefs") or []
+        if not isinstance(evidence_refs, list):
+            raise RoomKernelFenceError(
+                "Room collaboration evidenceRefs must be an array"
+            )
+        objective = str(arguments.get("objective") or "")
+        trigger_id = _stable_id(
+            "room-collaboration",
+            parent_dispatch_id,
+            target_participant_id,
+            " ".join(objective.split()),
+        )
         try:
             continuation = self.continuations.build(
                 parent_dispatch=parent,
                 parent_task=parent_task,
                 room_id=str(live["roomId"]),
-                target_participant_id=str(
-                    arguments.get("targetParticipantId") or ""
-                ),
-                trigger_id=invocation_receipt_id,
-                intent_kind=str(arguments.get("intentKind") or "execute"),
-                objective=str(arguments.get("objective") or ""),
+                target_participant_id=target_participant_id,
+                trigger_id=trigger_id,
+                intent_kind=str(arguments.get("intent") or "execute"),
+                objective=objective,
                 expected_output=str(arguments.get("expectedOutput") or ""),
-                acceptance_criterion_ids=raw_criteria,
+                acceptance_criterion_ids=criteria,
+                context_evidence_refs=[
+                    str(value)
+                    for value in evidence_refs
+                    if str(value or "").strip()
+                ],
                 kind="collaboration",
             )
         except RoomContinuationProposalError as exc:
@@ -866,17 +1050,11 @@ class RoomKernelApplicationService:
                 ),
             )
         self.projection.sync_room(room_id)
-        requirement_context = self.requirements.dispatch_context(
-            str(dispatch["dispatchId"])
-        )
-        if (
-            _receipt_completes_root_candidate(receipt)
-            and not _requires_explicit_delivery_finalization(
-                requirement_context
-            )
-        ):
+        if _receipt_completes_root_candidate(receipt):
             # Reuse the canonical finalization authority. Parallel commits stay
             # running until the last active Dispatch makes the Root quiescent.
+            # Enforced environments still fail closed in finalize_root when an
+            # independent delivery preview is absent or invalid.
             self.finalize(
                 str(root["rootId"]),
                 now_ms=int(
@@ -1042,33 +1220,31 @@ def _collaboration_tool_result(
         raise RoomKernelFenceError(
             "Room collaboration Kernel receipt has no child identity"
         )
+    command = invocation.get("canonicalCommand")
+    arguments = (
+        command.get("arguments")
+        if isinstance(command, Mapping)
+        else {}
+    )
     return {
         "accepted": True,
-        "executionPerformed": True,
-        "currentDispatchContinues": True,
-        "canonicalTool": "room_collaborate",
-        "correlationId": invocation["receiptId"],
-        "childTaskId": details["childTaskId"],
-        "childDispatchId": details["childDispatchId"],
-        "kernelReceipt": dict(kernel_receipt),
-        "next": "continue_current_dispatch",
-        "modelInstruction": (
-            "协作任务已进入同一 Root 的受管队列。继续当前任务；"
-            "不要把本次点名当作责任移交，也不要仅因已点名而结束本轮。"
+        "enqueued": True,
+        "deduplicated": (
+            kernel_receipt.get("receiptKind") == "duplicate"
+            or kernel_receipt.get("status") == "noop"
         ),
+        "targetParticipantRef": (
+            arguments.get("targetParticipantRef")
+            if isinstance(arguments, Mapping)
+            else None
+        ),
+        "currentResponsibilityContinues": True,
     }
 
 
-def _requires_explicit_delivery_finalization(
-    requirement_context: Mapping[str, object] | None,
-) -> bool:
-    if requirement_context is None:
-        return False
-    catalog = requirement_context.get("catalog")
-    return (
-        isinstance(catalog, Mapping)
-        and bool(catalog.get("acceptanceCriteria"))
-    )
+def _stable_id(prefix: str, *parts: str) -> str:
+    digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+    return f"{prefix}:{digest[:40]}"
 
 
 def _validated_post_proposal(

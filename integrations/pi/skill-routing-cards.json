@@ -2,11 +2,11 @@
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
     "codexVisibleEntries": 48,
-    "piInstalledEntries": 3,
-    "canonicalCards": 41
+    "piInstalledEntries": 2,
+    "canonicalCards": 39
   },
   "coverage": {
-    "representedSourceEntries": 51,
+    "representedSourceEntries": 50,
     "duplicateSourceMultiplicity": {
       "openai-docs": 2,
       "codeagent": 2,
@@ -46,10 +46,14 @@
     {
       "name": "plugin-creator",
       "when": [
-        "用户要求创建新的个人 Codex 插件或补充插件目录结构",
-        "用户要求维护 plugin.json、个人 marketplace 条目、排序元数据或本地插件重装流程"
+        "用户要创建或更新 Agent Runtime 插件",
+        "需要维护 manifest、权限或安装提议"
       ],
-      "does": "创建或更新合法的 Codex 插件骨架、manifest 和个人 marketplace 配置。"
+      "does": "从统一入口创建、校验并提议安装插件。",
+      "notFor": [
+        "现有 Skill、Tool 或 Hook 已能满足",
+        "绕过审批、扩权或写入秘密"
+      ]
     },
     {
       "name": "review-agent",
@@ -393,39 +397,14 @@
       "does": "在对话中创建可视化或可交互的探索工具。"
     },
     {
-      "name": "rag-ime-plugin-creator",
+      "name": "memory-curation",
       "when": [
-        "创建、校验或申请安装受管插件"
+        "用户要求审阅、整理、纠正或遗忘长期记忆",
+        "已验证结果要形成待审记忆"
       ],
-      "does": "创建、校验并提交受管插件审批。",
-      "input": "目的、触发、最小权限和文件。",
-      "output": "插件草案、校验结果和待审提议。",
+      "does": "生成有来源、可审批和可回滚的记忆草案。",
       "notFor": [
-        "绕过审批、写入密钥或扩权"
-      ]
-    },
-    {
-      "name": "rag-ime-memory-curator",
-      "when": [
-        "审阅、变更或沉淀记忆与角色能力"
-      ],
-      "does": "通过持久信息门后生成待审草案。",
-      "input": "持久化意图、授权证据和角色版本。",
-      "output": "待审草案、证据和审批状态。",
-      "notFor": [
-        "普通聊天、未完成工作、直写数据库或绕过审批"
-      ]
-    },
-    {
-      "name": "structured-result-presentation",
-      "when": [
-        "结果需要卡片、清单、表格、引用或状态扫读"
-      ],
-      "does": "用受信任通道呈现最小结构化内容块。",
-      "input": "完成结果、公开证据和展示形态。",
-      "output": "可扫读内容块与不重复结论。",
-      "notFor": [
-        "短文本、私有推理、HTML 或脚本"
+        "普通聊天、临时进度或私有 Room 过程"
       ]
     }
   ]

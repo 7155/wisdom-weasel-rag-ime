@@ -2752,7 +2752,8 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             kind="preference",
             claim="用户偏好测试报告只展示聚合数据。",
             scope="user",
-            reason="这会改变未来报告默认输出。",
+            basis="explicit_user_statement",
+            future_use="这会改变未来报告默认输出。",
             created_at_ms=101,
         )
         organizer = _BundleCaptureOrganizer()

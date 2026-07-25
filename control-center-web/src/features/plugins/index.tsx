@@ -293,7 +293,7 @@ export function PluginsFeature() {
                 onClick={() => navigate({
                   pathname: '/agent',
                   search: new URLSearchParams({
-                    draft: '/skill:rag-ime-plugin-creator 帮我创建一个插件审阅草稿。先询问用途和权限边界，再生成并校验草稿；不要声称它已获准执行，也不要绕过第一方目录审查。',
+                    draft: '/skill:plugin-creator 帮我创建一个插件审阅草稿。先询问用途和权限边界，再生成并校验草稿；不要声称它已获准执行，也不要绕过第一方目录审查。',
                   }).toString(),
                 })}
               >创建审阅草稿</Button>

@@ -49,7 +49,7 @@ describe('PluginsFeature', () => {
     await user.click(await screen.findByRole('button', { name: '创建审阅草稿' }));
 
     expect(screen.getByTestId('test-location')).toHaveTextContent('/agent?draft=');
-    expect(screen.getByTestId('test-location')).toHaveTextContent('%2Fskill%3Arag-ime-plugin-creator');
+    expect(screen.getByTestId('test-location')).toHaveTextContent('%2Fskill%3Aplugin-creator');
     expect(screen.getByTestId('test-location')).toHaveTextContent('%E4%B8%8D%E8%A6%81%E5%A3%B0%E7%A7%B0%E5%AE%83%E5%B7%B2%E8%8E%B7%E5%87%86%E6%89%A7%E8%A1%8C');
   });
 

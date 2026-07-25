@@ -6,8 +6,13 @@ from rag_ime.agent_room_capabilities import ROOM_PUBLIC_TOOLS
 from rag_ime.agent_room_tool_catalog import compose_room_tool_catalog
 
 
-def _tool(name: str, *, operation: str = "read") -> dict[str, object]:
-    return {
+def _tool(
+    name: str,
+    *,
+    operation: str = "read",
+    runtime_projections: tuple[dict[str, str], ...] = (),
+) -> dict[str, object]:
+    tool: dict[str, object] = {
         "name": name,
         "description": f"Use {name}",
         "parameters": {
@@ -23,6 +28,11 @@ def _tool(name: str, *, operation: str = "read") -> dict[str, object]:
         "does": "读取真实证据。",
         "risk": "R0",
     }
+    if runtime_projections:
+        tool["runtimeProjections"] = [
+            dict(projection) for projection in runtime_projections
+        ]
+    return tool
 
 
 class RoomToolCatalogTests(unittest.TestCase):
@@ -67,6 +77,26 @@ class RoomToolCatalogTests(unittest.TestCase):
         self.assertIn("workspace_shell", plan.template_allowed)
         self.assertIn("workspace_shell", plan.role_allowed)
         self.assertIn("workspace_shell", plan.profile_allowed)
+
+    def test_runtime_projection_metadata_survives_room_catalog_compilation(self) -> None:
+        memory = _tool(
+            "ime_memory",
+            operation="capture",
+            runtime_projections=(
+                {"name": "memory_capture", "operation": "capture"},
+            ),
+        )
+
+        plan = compose_room_tool_catalog(
+            available=(memory,),
+            user_authorized=(memory,),
+            effective=(memory,),
+        )
+
+        self.assertEqual(
+            plan.runtime_registry["ime_memory"]["runtimeProjections"],
+            [{"name": "memory_capture", "operation": "capture"}],
+        )
 
 
 if __name__ == "__main__":

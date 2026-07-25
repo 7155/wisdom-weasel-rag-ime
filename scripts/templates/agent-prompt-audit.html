@@ -1,0 +1,1601 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:,">
+  <title>Agent Prompt 与上下文复核台</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6f5;
+      --surface: #ffffff;
+      --surface-muted: #eef2f0;
+      --line: #cfd8d3;
+      --line-strong: #aebcb5;
+      --text: #17201c;
+      --muted: #607068;
+      --accent: #087f6d;
+      --accent-soft: #d9f0eb;
+      --blue: #315f8c;
+      --blue-soft: #e3edf7;
+      --amber: #9a6410;
+      --amber-soft: #fff0ce;
+      --danger: #a43a43;
+      --danger-soft: #fbe4e6;
+      --code-bg: #111815;
+      --code-text: #e6eee9;
+      --focus: #1d73c9;
+      --shadow: 0 12px 28px rgba(18, 35, 27, 0.1);
+      --sidebar: 280px;
+      --inspector: 330px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #101613;
+        --surface: #18201c;
+        --surface-muted: #202b26;
+        --line: #33423a;
+        --line-strong: #53665c;
+        --text: #edf3ef;
+        --muted: #a1b0a8;
+        --accent: #50c8b0;
+        --accent-soft: #173c34;
+        --blue: #8db9e3;
+        --blue-soft: #1d354b;
+        --amber: #efbd65;
+        --amber-soft: #493719;
+        --danger: #ef8b92;
+        --danger-soft: #4c2529;
+        --code-bg: #0b100e;
+        --code-text: #e6eee9;
+        --focus: #6ab4ff;
+        --shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      letter-spacing: 0;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    .app {
+      display: grid;
+      grid-template-rows: 52px minmax(0, 1fr);
+      width: 100%;
+      height: 100%;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+      align-items: center;
+      min-width: 0;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .brand {
+      min-width: 0;
+      overflow: hidden;
+      font-size: 15px;
+      font-weight: 720;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .brand small {
+      margin-left: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .view-tabs,
+    .segment {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 3px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface-muted);
+    }
+
+    .view-tabs button,
+    .segment button {
+      height: 30px;
+      padding: 0 11px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .view-tabs button[aria-selected="true"],
+    .segment button[aria-selected="true"] {
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: 0 1px 3px rgba(20, 35, 27, 0.12);
+      font-weight: 650;
+    }
+
+    .top-actions {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .icon-button,
+    .command-button {
+      height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface);
+      cursor: pointer;
+    }
+
+    .icon-button {
+      width: 32px;
+      padding: 0;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .command-button {
+      padding: 0 11px;
+      font-weight: 600;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: var(--sidebar) minmax(0, 1fr) var(--inspector);
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .workspace.inspector-collapsed {
+      grid-template-columns: var(--sidebar) minmax(0, 1fr) 0;
+    }
+
+    .sidebar,
+    .inspector {
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    .sidebar {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      border-right: 1px solid var(--line);
+    }
+
+    .sidebar-tools {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .search {
+      width: 100%;
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface-muted);
+      color: var(--text);
+    }
+
+    .filter {
+      width: 100%;
+      height: 32px;
+      padding: 0 8px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    .list {
+      min-height: 0;
+      overflow: auto;
+      padding: 7px;
+    }
+
+    .list-section {
+      padding: 9px 8px 5px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 720;
+      text-transform: uppercase;
+    }
+
+    .list-item {
+      display: block;
+      width: 100%;
+      min-height: 54px;
+      margin: 0 0 3px;
+      padding: 8px 9px;
+      overflow: hidden;
+      border: 1px solid transparent;
+      border-radius: 5px;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .list-item:hover {
+      background: var(--surface-muted);
+    }
+
+    .list-item[aria-current="true"] {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .list-title {
+      display: block;
+      overflow: hidden;
+      font-weight: 650;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .list-meta {
+      display: block;
+      margin-top: 5px;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .main {
+      min-width: 0;
+      min-height: 0;
+      overflow: auto;
+      background: var(--bg);
+    }
+
+    .main-inner {
+      width: min(1400px, 100%);
+      min-height: 100%;
+      margin: 0 auto;
+      padding: 22px 24px 60px;
+    }
+
+    .object-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    .object-title {
+      min-width: 0;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      margin-bottom: 7px;
+      overflow-wrap: anywhere;
+      font-size: 22px;
+      line-height: 1.3;
+    }
+
+    h2 {
+      margin: 26px 0 10px;
+      font-size: 16px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .badge.good {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .badge.warn {
+      border-color: var(--amber);
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border-top: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .meta-cell {
+      min-width: 0;
+      padding: 10px 12px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .meta-label {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .meta-value {
+      overflow-wrap: anywhere;
+      line-height: 1.45;
+    }
+
+    .content-toolbar {
+      position: sticky;
+      top: -22px;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 20px 0 8px;
+      padding: 8px 0;
+      background: var(--bg);
+    }
+
+    pre {
+      width: 100%;
+      min-height: 180px;
+      margin: 0;
+      padding: 16px 18px;
+      overflow: auto;
+      border: 1px solid #25322c;
+      border-radius: 6px;
+      background: var(--code-bg);
+      color: var(--code-text);
+      font: 13px/1.65 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      tab-size: 2;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    pre.no-wrap {
+      white-space: pre;
+      overflow-wrap: normal;
+    }
+
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      border-top: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 18px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 8px;
+      font-size: 24px;
+    }
+
+    .route-prompts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .route-prompts .command-button {
+      height: auto;
+      min-height: 34px;
+      padding: 7px 10px;
+      text-align: left;
+    }
+
+    .finding-table,
+    .reference-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      background: var(--surface-muted);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .inspector {
+      display: grid;
+      grid-template-rows: 42px minmax(0, 1fr);
+      border-left: 1px solid var(--line);
+      transition: opacity 120ms ease;
+    }
+
+    .inspector-collapsed .inspector {
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    .inspector-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+      font-weight: 680;
+    }
+
+    .inspector-body {
+      min-height: 0;
+      overflow: auto;
+      padding: 12px;
+    }
+
+    .inspection-block {
+      padding: 12px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .inspection-block:first-child {
+      padding-top: 0;
+    }
+
+    .inspection-block h3 {
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: minmax(92px, 0.8fr) minmax(0, 1.2fr);
+      gap: 7px 10px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .kv dt {
+      color: var(--muted);
+    }
+
+    .kv dd {
+      min-width: 0;
+      margin: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .empty {
+      display: grid;
+      min-height: 280px;
+      place-items: center;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.6;
+    }
+
+    .notice {
+      padding: 11px 12px;
+      border-left: 3px solid var(--amber);
+      background: var(--amber-soft);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .comparison-column {
+      min-width: 0;
+      border: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .comparison-column > header {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface-muted);
+    }
+
+    .comparison-column > header h2 {
+      margin: 0;
+      font-size: 15px;
+    }
+
+    .comparison-source {
+      padding: 12px;
+      border-top: 1px solid var(--line);
+    }
+
+    .comparison-source:first-of-type {
+      border-top: 0;
+    }
+
+    .comparison-source h3 {
+      margin-bottom: 5px;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .comparison-source .subtitle {
+      margin-bottom: 9px;
+      font-size: 11px;
+    }
+
+    .comparison-source pre {
+      min-height: 220px;
+      max-height: 62vh;
+      padding: 12px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 20;
+      max-width: min(360px, calc(100vw - 36px));
+      padding: 10px 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 5px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 120ms ease, transform 120ms ease;
+      pointer-events: none;
+    }
+
+    .toast.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1120px) {
+      :root {
+        --sidebar: 250px;
+        --inspector: 290px;
+      }
+
+      .topbar {
+        grid-template-columns: minmax(160px, 1fr) auto;
+      }
+
+      .view-tabs {
+        order: 3;
+        grid-column: 1 / -1;
+        justify-content: center;
+        margin-bottom: 7px;
+      }
+
+      .app {
+        grid-template-rows: 96px minmax(0, 1fr);
+      }
+
+      .overview-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .comparison-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    @media (max-width: 840px) {
+      html,
+      body {
+        overflow: auto;
+      }
+
+      .app {
+        min-height: 100%;
+        height: auto;
+      }
+
+      .workspace,
+      .workspace.inspector-collapsed {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .sidebar {
+        min-height: 280px;
+        max-height: 44vh;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .main {
+        overflow: visible;
+      }
+
+      .main-inner {
+        padding: 18px 14px 40px;
+      }
+
+      .inspector {
+        display: none;
+      }
+
+      .top-actions .command-button {
+        display: none;
+      }
+
+      .meta-grid,
+      .overview-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">Agent Prompt 与上下文复核台 <small id="schema-version"></small></div>
+      <nav class="view-tabs" id="view-tabs" aria-label="复核视图"></nav>
+      <div class="top-actions">
+        <button class="command-button" id="copy-button" type="button">复制当前内容</button>
+        <button class="icon-button" id="inspector-toggle" type="button" aria-label="收起检查栏" title="收起检查栏">×</button>
+      </div>
+    </header>
+
+    <div class="workspace" id="workspace">
+      <aside class="sidebar">
+        <div class="sidebar-tools">
+          <input class="search" id="search" type="search" placeholder="搜索名称、来源或正文" autocomplete="off">
+          <select class="filter" id="scope-filter" aria-label="Prompt 范围筛选"></select>
+          <select class="filter" id="filter" aria-label="类别筛选"></select>
+        </div>
+        <div class="list" id="list"></div>
+      </aside>
+
+      <main class="main" id="main">
+        <div class="main-inner" id="main-inner"></div>
+      </main>
+
+      <aside class="inspector" id="inspector">
+        <div class="inspector-header">
+          <span>检查信息</span>
+          <button class="icon-button" id="inspector-close" type="button" aria-label="收起检查栏" title="收起检查栏">×</button>
+        </div>
+        <div class="inspector-body" id="inspector-body"></div>
+      </aside>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script id="audit-data" type="application/json">__AGENT_PROMPT_AUDIT_DATA__</script>
+  <script>
+    (() => {
+      "use strict";
+
+      const data = JSON.parse(document.getElementById("audit-data").textContent);
+      const views = [
+        ["overview", "总览"],
+        ["prompts", "Prompt"],
+        ["routes", "模型路由"],
+        ["skills", "Skill"],
+        ["tools", "Tool"],
+        ["contexts", "Provider 上下文"],
+        ["references", "跨项目对比"],
+      ];
+      const state = {
+        view: "overview",
+        query: "",
+        filter: "all",
+        promptScope: "core",
+        selectedKey: "",
+        scenario: "agent",
+        contextKind: "calls",
+        contextTab: "systemPrompt",
+        inspectorCollapsed: false,
+        wrap: true,
+      };
+      let currentCopyValue = "";
+      let toastTimer = 0;
+      const searchTextCache = new WeakMap();
+
+      const elements = {
+        workspace: document.getElementById("workspace"),
+        tabs: document.getElementById("view-tabs"),
+        search: document.getElementById("search"),
+        scopeFilter: document.getElementById("scope-filter"),
+        filter: document.getElementById("filter"),
+        list: document.getElementById("list"),
+        main: document.getElementById("main-inner"),
+        inspector: document.getElementById("inspector-body"),
+        inspectorToggle: document.getElementById("inspector-toggle"),
+        inspectorClose: document.getElementById("inspector-close"),
+        copy: document.getElementById("copy-button"),
+        toast: document.getElementById("toast"),
+      };
+
+      document.getElementById("schema-version").textContent = data.schemaVersion;
+
+      try {
+        state.inspectorCollapsed =
+          localStorage.getItem("agentPromptAudit.inspectorCollapsed") === "true";
+      } catch {
+        state.inspectorCollapsed = false;
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function pretty(value) {
+        if (typeof value === "string") return value;
+        return JSON.stringify(value ?? null, null, 2);
+      }
+
+      function byteSize(value) {
+        return new TextEncoder().encode(typeof value === "string" ? value : pretty(value)).length;
+      }
+
+      function formatNumber(value) {
+        return new Intl.NumberFormat("zh-CN").format(Number(value || 0));
+      }
+
+      function badge(value, tone = "") {
+        return `<span class="badge ${tone}">${escapeHtml(value)}</span>`;
+      }
+
+      function segment(items, selected, action) {
+        return `<div class="segment">${items.map(([key, label]) =>
+          `<button type="button" data-action="${action}" data-value="${escapeHtml(key)}" aria-selected="${key === selected}">${escapeHtml(label)}</button>`
+        ).join("")}</div>`;
+      }
+
+      function showToast(message) {
+        clearTimeout(toastTimer);
+        elements.toast.textContent = message;
+        elements.toast.classList.add("visible");
+        toastTimer = window.setTimeout(() => elements.toast.classList.remove("visible"), 1500);
+      }
+
+      function setInspectorCollapsed(value) {
+        state.inspectorCollapsed = value;
+        elements.workspace.classList.toggle("inspector-collapsed", value);
+        elements.inspectorToggle.textContent = value ? "‹" : "×";
+        elements.inspectorToggle.setAttribute("aria-label", value ? "展开检查栏" : "收起检查栏");
+        elements.inspectorToggle.title = value ? "展开检查栏" : "收起检查栏";
+        try {
+          localStorage.setItem("agentPromptAudit.inspectorCollapsed", String(value));
+        } catch {
+          // file:// and privacy-restricted browsers may not expose local storage.
+        }
+      }
+
+      function searchableJson(item) {
+        if (!item || typeof item !== "object") return pretty(item);
+        if (!searchTextCache.has(item)) searchTextCache.set(item, pretty(item));
+        return searchTextCache.get(item);
+      }
+
+      function filtered(items, textOf) {
+        const query = state.query.trim().toLocaleLowerCase();
+        if (!query) return items;
+        return items.filter((item) => textOf(item).toLocaleLowerCase().includes(query));
+      }
+
+      function promptItems() {
+        const hasQuery = state.query.trim().length > 0;
+        const inScope = (item) => {
+          // Search is global so an exact Prompt ID or title never appears missing
+          // merely because its review group is currently folded by the scope filter.
+          if (hasQuery) return true;
+          if (state.promptScope === "all") return true;
+          if (state.promptScope === "core") {
+            return ["agent-room-production", "memory-governance"].includes(item.display_group);
+          }
+          if (state.promptScope === "production") {
+            return [
+              "agent-room-production",
+              "memory-governance",
+              "auxiliary-production",
+            ].includes(item.display_group);
+          }
+          if (state.promptScope === "agent-room") {
+            return ["agent", "room", "agent-room"].includes(item.runtime_scope)
+              && item.display_group === "agent-room-production";
+          }
+          if (state.promptScope === "memory") return item.runtime_scope === "memory-governance";
+          if (state.promptScope === "auxiliary") return item.display_group === "auxiliary-production";
+          if (state.promptScope === "compatibility") {
+            return ["compatibility-history", "auxiliary-compatibility"].includes(item.display_group);
+          }
+          if (state.promptScope === "representative") return item.display_group === "representative";
+          if (state.promptScope === "evidence") return item.display_group === "runtime-evidence";
+          return true;
+        };
+        return filtered(
+          data.promptRecords.filter((item) =>
+            inScope(item) && (state.filter === "all" || item.category === state.filter)
+          ),
+          (item) => [
+            item.title,
+            item.prompt_id,
+            item.category,
+            item.display_group,
+            item.runtime_scope,
+            item.reachability,
+            item.owner,
+            item.model_route,
+            item.thinking_requirement,
+            item.source_path,
+            item.producer,
+            item.content,
+          ].join(" "),
+        );
+      }
+
+      function skillItems() {
+        return filtered(data.skills.skills, (item) => [item.name, item.path, item.content].join(" "));
+      }
+
+      function routeItems() {
+        return filtered(data.modelRequestRoutes || [], searchableJson);
+      }
+
+      function comparisonItems() {
+        const snapshots = new Map(
+          (data.references.sourceSnapshots || []).map((item) => [item.id, item]),
+        );
+        const prompts = new Map(data.promptRecords.map((item) => [item.prompt_id, item]));
+        return filtered(data.references.comparisonCases || [], (item) => [
+          item.id,
+          item.title,
+          item.question,
+          item.decision,
+          ...(item.localPromptIds || []).map((id) => searchableJson(prompts.get(id))),
+          ...(item.upstreamSnapshotIds || []).map((id) => searchableJson(snapshots.get(id))),
+        ].join(" "));
+      }
+
+      function toolItems() {
+        const product = data.tools.productTools.map((item) => ({ ...item, auditKind: "Product Tool" }));
+        const room = data.tools.roomTools.map((item) => ({ ...item, auditKind: "Room Tool" }));
+        const memory = [{ ...data.tools.modelVisibleMemoryCapture, auditKind: "Runtime Tool" }];
+        return filtered([...memory, ...room, ...product], searchableJson);
+      }
+
+      function currentScenario() {
+        return data.contexts.find((item) => item.key === state.scenario) || data.contexts[0];
+      }
+
+      function contextItems() {
+        const scenario = currentScenario();
+        const source = state.contextKind === "calls" ? scenario.calls : scenario.toolExecutions;
+        return filtered(source || [], searchableJson);
+      }
+
+      function listKey(item) {
+        if (state.view === "prompts") return item.prompt_id;
+        if (state.view === "routes") return item.id;
+        if (state.view === "skills") return item.name;
+        if (state.view === "tools") return `${item.auditKind}:${item.name}`;
+        if (state.view === "contexts") return item.file;
+        if (state.view === "references") return item.id;
+        return "";
+      }
+
+      function ensureSelection(items) {
+        if (!items.some((item) => listKey(item) === state.selectedKey)) {
+          state.selectedKey = items.length ? listKey(items[0]) : "";
+        }
+      }
+
+      function renderTabs() {
+        elements.tabs.innerHTML = views.map(([key, label]) =>
+          `<button type="button" data-view="${key}" aria-selected="${state.view === key}">${label}</button>`
+        ).join("");
+      }
+
+      function renderFilter() {
+        if (state.view === "prompts") {
+          const categories = [...new Set(data.promptRecords.map((item) => item.category))].sort();
+          elements.scopeFilter.hidden = false;
+          elements.scopeFilter.innerHTML = `
+            <option value="core">Agent / Room / 记忆（默认）</option>
+            <option value="production">全部生产可达</option>
+            <option value="agent-room">只看 Agent / Room</option>
+            <option value="memory">只看记忆治理</option>
+            <option value="auxiliary">只看辅助生产面</option>
+            <option value="compatibility">兼容与历史路径</option>
+            <option value="representative">组装与请求示例</option>
+            <option value="evidence">Pi Runtime 实测投影</option>
+            <option value="all">全部 Prompt</option>
+          `;
+          elements.scopeFilter.value = state.promptScope;
+          elements.filter.hidden = false;
+          elements.filter.innerHTML = `<option value="all">全部 Prompt 类别</option>` +
+            categories.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+          elements.filter.value = state.filter;
+          elements.search.placeholder = "搜索 Prompt 名称、来源或原文";
+          return;
+        }
+        if (state.view === "contexts") {
+          elements.scopeFilter.hidden = true;
+          elements.filter.hidden = false;
+          elements.filter.innerHTML = `
+            <option value="calls">模型调用</option>
+            <option value="toolExecutions">Tool 执行</option>
+          `;
+          elements.filter.value = state.contextKind;
+          elements.search.placeholder = "搜索调用、消息、Tool 或回执";
+          return;
+        }
+        elements.scopeFilter.hidden = true;
+        elements.filter.hidden = true;
+        elements.search.placeholder = state.view === "skills"
+          ? "搜索 Skill 名称、路径或正文"
+          : state.view === "routes"
+            ? "搜索模型路由、Owner、模型或传输"
+          : state.view === "tools"
+            ? "搜索 Tool 名称、用途或 schema"
+            : state.view === "references"
+              ? "搜索对比主题、Prompt 原文或源码"
+            : "搜索";
+      }
+
+      function renderList() {
+        if (state.view === "overview") {
+          elements.list.innerHTML = `<div class="empty">当前视图无需选择条目</div>`;
+          return;
+        }
+        const items = state.view === "prompts"
+          ? promptItems()
+          : state.view === "routes"
+            ? routeItems()
+          : state.view === "skills"
+            ? skillItems()
+            : state.view === "tools"
+              ? toolItems()
+              : state.view === "contexts"
+                ? contextItems()
+                : comparisonItems();
+        ensureSelection(items);
+        if (!items.length) {
+          elements.list.innerHTML = `<div class="empty">没有匹配条目</div>`;
+          return;
+        }
+        let previousSection = "";
+        elements.list.innerHTML = items.map((item) => {
+          const key = listKey(item);
+          let section = "";
+          let title = key;
+          let meta = "";
+          if (state.view === "prompts") {
+            section = item.display_group;
+            title = item.title || item.prompt_id;
+            meta = `${item.prompt_id} · ${item.utf8Bytes} B · ${item.source_path}`;
+          } else if (state.view === "routes") {
+            section = item.reachability;
+            title = item.title;
+            meta = `${item.model} · System=${item.systemInstruction}`;
+          } else if (state.view === "skills") {
+            section = "Skills";
+            title = item.name;
+            meta = `${item.utf8Bytes} B · ${item.path}`;
+          } else if (state.view === "tools") {
+            section = item.auditKind;
+            title = item.name;
+            meta = item.description || item.note || item.does || "";
+          } else if (state.view === "contexts") {
+            section = state.contextKind === "calls" ? currentScenario().label : `${currentScenario().label} Tool`;
+            title = state.contextKind === "calls"
+              ? `Turn ${item.runtimeTurnIndex} · Call ${item.callIndex}`
+              : (item.toolName || item.name || item.file);
+            meta = state.contextKind === "calls"
+              ? `${byteSize(item.systemPrompt)} B · ${item.messages.length} messages · ${item.tools.length} tools`
+              : item.file;
+          } else {
+            section = "对比主题";
+            title = item.title;
+            meta = item.question;
+          }
+          const heading = section !== previousSection
+            ? `<div class="list-section">${escapeHtml(section)}</div>`
+            : "";
+          previousSection = section;
+          return `${heading}<button class="list-item" type="button" data-select="${escapeHtml(key)}" aria-current="${key === state.selectedKey}">
+            <span class="list-title">${escapeHtml(title)}</span>
+            <span class="list-meta">${escapeHtml(meta)}</span>
+          </button>`;
+        }).join("");
+      }
+
+      function codeBlock(value) {
+        currentCopyValue = typeof value === "string" ? value : pretty(value);
+        return `<pre id="current-content" class="${state.wrap ? "" : "no-wrap"}">${escapeHtml(currentCopyValue)}</pre>`;
+      }
+
+      function toolbar(extra = "") {
+        return `<div class="content-toolbar">
+          ${extra}
+          ${segment([["wrap", "自动换行"], ["nowrap", "不换行"]], state.wrap ? "wrap" : "nowrap", "wrap")}
+        </div>`;
+      }
+
+      function renderOverview() {
+        const promptCount = data.promptRecords.length;
+        const routeCount = (data.modelRequestRoutes || []).length;
+        const skillCount = data.skills.skills.length;
+        const toolCount = data.tools.productTools.length + data.tools.roomTools.length + 1;
+        const calls = data.contexts.reduce((sum, item) => sum + (item.calls || []).length, 0);
+        currentCopyValue = pretty({
+          schemaVersion: data.schemaVersion,
+          promptCount,
+          routeCount,
+          skillCount,
+          toolCount,
+          providerCallCount: calls,
+          findings: data.findings,
+        });
+        elements.main.innerHTML = `
+          <div class="object-header">
+            <div class="object-title">
+              <h1>最终 Prompt 与 Provider 上下文总览</h1>
+              <p class="subtitle">同一份源码审计同时展示固定 Prompt、Skill、Tool，以及 Pi 真正组装出的 systemPrompt、messages、tools 和 Tool 回执。</p>
+              <div class="badges">${badge("Agent-first", "good")}${badge("Role Book 未固定 = 0 B", "good")}${badge("真实 KV 仍待 Provider 验证", "warn")}</div>
+            </div>
+          </div>
+          <div class="overview-grid">
+            <div class="metric"><span class="meta-label">Prompt 段</span><strong>${formatNumber(promptCount)}</strong></div>
+            <div class="metric"><span class="meta-label">模型请求路由</span><strong>${formatNumber(routeCount)}</strong></div>
+            <div class="metric"><span class="meta-label">Skill</span><strong>${formatNumber(skillCount)}</strong></div>
+            <div class="metric"><span class="meta-label">可发现 Tool</span><strong>${formatNumber(toolCount)}</strong></div>
+            <div class="metric"><span class="meta-label">确定性 Provider 调用</span><strong>${formatNumber(calls)}</strong></div>
+          </div>
+          <h2>当前结论</h2>
+          <table class="finding-table">
+            <thead><tr><th>状态</th><th>问题</th><th>当前结果</th></tr></thead>
+            <tbody>${data.findings.map((item) => `<tr><td>${badge(item.status, item.status.includes("passed") || item.status === "fixed" ? "good" : item.status.includes("live") ? "warn" : "")}</td><td>${escapeHtml(item.issue)}</td><td>${escapeHtml(item.result)}</td></tr>`).join("")}</tbody>
+          </table>
+          <h2>审查边界</h2>
+          <div class="notice">确定性对象审计证明真实 Pi Agent Loop/Tool Loop 的最终对象，但不冒充外部 Provider wire 或真实 KV cache。Prompt 冻结后还要各跑一次普通 Agent 与三成员 Room。</div>
+        `;
+        renderInspector({
+          "总 Prompt": promptCount,
+          "模型请求路由": routeCount,
+          "未分类生产者": data.promptSymbolInventory.unclassified.length,
+          "普通 Agent 调用": data.contexts.find((item) => item.key === "agent")?.calls.length || 0,
+          "Room 调用": data.contexts.find((item) => item.key === "room")?.calls.length || 0,
+        });
+      }
+
+      function selected(items) {
+        return items.find((item) => listKey(item) === state.selectedKey);
+      }
+
+      function renderPrompt() {
+        const item = selected(promptItems());
+        if (!item) return renderEmpty();
+        elements.main.innerHTML = `
+          <div class="object-header">
+            <div class="object-title">
+              <h1>${escapeHtml(item.title || item.prompt_id)}</h1>
+              <p class="subtitle">${escapeHtml(item.prompt_id)} · ${escapeHtml(item.source_path)}::${escapeHtml(item.producer)}</p>
+              <div class="badges">${badge(item.category)}${badge(item.reachability)}${badge(item.runtime_scope)}${badge(item.status, item.status === "active" ? "good" : "")}${badge(item.model_visible ? "模型可见" : "不注入")}</div>
+            </div>
+          </div>
+          <div class="meta-grid">
+            <div class="meta-cell"><span class="meta-label">真正 Owner</span><span class="meta-value">${escapeHtml(item.owner)}</span></div>
+            <div class="meta-cell"><span class="meta-label">模型路由</span><span class="meta-value">${escapeHtml(item.model_route)}</span></div>
+            <div class="meta-cell"><span class="meta-label">思考要求</span><span class="meta-value">${escapeHtml(item.thinking_requirement)}</span></div>
+            <div class="meta-cell"><span class="meta-label">注入阶段</span><span class="meta-value">${escapeHtml(item.injection_phase)}</span></div>
+            <div class="meta-cell"><span class="meta-label">触发条件</span><span class="meta-value">${escapeHtml(item.condition)}</span></div>
+            <div class="meta-cell"><span class="meta-label">大小</span><span class="meta-value">${formatNumber(item.utf8Bytes)} bytes · 约 ${formatNumber(item.estimatedTokens)} tokens</span></div>
+            <div class="meta-cell"><span class="meta-label">SHA-256</span><span class="meta-value">${escapeHtml(item.sha256)}</span></div>
+          </div>
+          ${toolbar()}
+          ${codeBlock(item.content)}
+        `;
+        renderInspector({
+          "Prompt ID": item.prompt_id,
+          "标题": item.title,
+          "类别": item.category,
+          "范围": item.runtime_scope,
+          "可达性": item.reachability,
+          "Owner": item.owner,
+          "模型路由": item.model_route,
+          "思考要求": item.thinking_requirement,
+          "来源": `${item.source_path}::${item.producer}`,
+          "字符": item.chars,
+          "UTF-8 bytes": item.utf8Bytes,
+          "估算 tokens": item.estimatedTokens,
+          "模型可见": item.model_visible,
+          "备注": item.notes || "无",
+        });
+      }
+
+      function renderRoute() {
+        const item = selected(routeItems());
+        if (!item) return renderEmpty();
+        const prompts = new Map(data.promptRecords.map((record) => [record.prompt_id, record]));
+        const linked = (item.promptIds || []).map((promptId) => {
+          const prompt = prompts.get(promptId);
+          const label = prompt ? `${prompt.title} · ${formatNumber(prompt.utf8Bytes)} B` : `${promptId} · 缺失`;
+          return `<button class="command-button" type="button" data-open-prompt="${escapeHtml(promptId)}">${escapeHtml(label)}</button>`;
+        }).join("");
+        elements.main.innerHTML = `
+          <div class="object-header">
+            <div class="object-title">
+              <h1>${escapeHtml(item.title)}</h1>
+              <p class="subtitle">${escapeHtml(item.id)} · ${escapeHtml(item.sourcePath)}</p>
+              <div class="badges">${badge(item.reachability, item.reachability.startsWith("production") ? "good" : "")}${badge(`System=${item.systemInstruction}`, item.systemInstruction === "none" ? "warn" : "")}${badge(item.sourceExists ? "源码存在" : "源码缺失", item.sourceExists ? "good" : "warn")}</div>
+            </div>
+          </div>
+          <div class="meta-grid">
+            <div class="meta-cell"><span class="meta-label">生命周期 Owner</span><span class="meta-value">${escapeHtml(item.owner)}</span></div>
+            <div class="meta-cell"><span class="meta-label">模型</span><span class="meta-value">${escapeHtml(item.model)}</span></div>
+            <div class="meta-cell"><span class="meta-label">思考要求</span><span class="meta-value">${escapeHtml(item.thinking)}</span></div>
+            <div class="meta-cell"><span class="meta-label">传输形态</span><span class="meta-value">${escapeHtml(item.transport)}</span></div>
+            <div class="meta-cell"><span class="meta-label">Tool</span><span class="meta-value">${escapeHtml(item.tools)}</span></div>
+            <div class="meta-cell"><span class="meta-label">源码</span><span class="meta-value">${escapeHtml(item.sourceRoot)} · ${escapeHtml(item.sourcePath)}</span></div>
+          </div>
+          <h2>本路由对应的 Prompt / 请求对象</h2>
+          <div class="route-prompts">${linked || '<span class="subtitle">没有模型可见 Prompt</span>'}</div>
+          ${item.requestExample ? `
+            <h2>${escapeHtml(item.requestExampleLabel || "模型输入示例")}</h2>
+            ${codeBlock(item.requestExample)}
+          ` : ""}
+          <h2>边界说明</h2>
+          <div class="notice">${escapeHtml(item.notes || "无")}</div>
+        `;
+        currentCopyValue = pretty(item);
+        renderInspector({
+          "路由 ID": item.id,
+          "可达性": item.reachability,
+          "Owner": item.owner,
+          "模型": item.model,
+          "思考": item.thinking,
+          "System Prompt": item.systemInstruction,
+          "Tool": item.tools,
+          "源码存在": item.sourceExists,
+          "缺失 Prompt 引用": (item.missingPromptIds || []).join(", ") || "无",
+        });
+      }
+
+      function renderSkill() {
+        const item = selected(skillItems());
+        if (!item) return renderEmpty();
+        elements.main.innerHTML = `
+          <div class="object-header">
+            <div class="object-title">
+              <h1>${escapeHtml(item.name)}</h1>
+              <p class="subtitle">${escapeHtml(item.path)}</p>
+              <div class="badges">${badge("渐进披露 Skill", "good")}${badge(`${formatNumber(item.utf8Bytes)} B`)}</div>
+            </div>
+          </div>
+          ${toolbar()}
+          ${codeBlock(item.content)}
+        `;
+        renderInspector({
+          "名称": item.name,
+          "来源": item.path,
+          "字符": item.chars,
+          "UTF-8 bytes": item.utf8Bytes,
+          "SHA-256": item.sha256,
+        });
+      }
+
+      function renderTool() {
+        const item = selected(toolItems());
+        if (!item) return renderEmpty();
+        elements.main.innerHTML = `
+          <div class="object-header">
+            <div class="object-title">
+              <h1>${escapeHtml(item.name)}</h1>
+              <p class="subtitle">${escapeHtml(item.description || item.note || item.does || "")}</p>
+              <div class="badges">${badge(item.auditKind, "good")}${item.bootstrap ? badge("Room 首轮完整加载") : ""}${item.deferred ? badge("渐进披露", "warn") : ""}</div>
+            </div>
+          </div>
+          ${toolbar()}
+          ${codeBlock(item)}
+        `;
+        renderInspector({
+          "名称": item.name,
+          "类型": item.auditKind,
+          "风险": item.risk || "由 Runtime 决定",
+          "完整 schema": Boolean(item.parameters || item.inputSchema),
+          "Bootstrap": Boolean(item.bootstrap),
+          "Deferred": Boolean(item.deferred),
+          "序列化大小": `${formatNumber(byteSize(item))} bytes`,
+        });
+      }
+
+      function renderContext() {
+        const scenario = currentScenario();
+        const items = contextItems();
+        const item = selected(items);
+        if (!scenario.available) {
+          currentCopyValue = "";
+          elements.main.innerHTML = `<div class="empty">该场景尚未生成确定性 Provider 对象审计</div>`;
+          renderInspector({ "场景": scenario.label, "状态": "未生成" });
+          return;
+        }
+        if (!item) return renderEmpty();
+        if (state.contextKind === "toolExecutions") {
+          elements.main.innerHTML = `
+            <div class="object-header">
+              <div class="object-title">
+                <h1>${escapeHtml(item.toolName || item.name || item.file)}</h1>
+                <p class="subtitle">${escapeHtml(scenario.label)} · ${escapeHtml(item.file)}</p>
+                <div class="badges">${badge("Tool 执行", "good")}${item.status ? badge(item.status, item.status === "failed" ? "warn" : "good") : ""}</div>
+              </div>
+            </div>
+            ${toolbar(segment([["agent", "普通 Agent"], ["room", "三成员 Room"]], state.scenario, "scenario"))}
+            ${codeBlock(item)}
+          `;
+          renderInspector({
+            "场景": scenario.label,
+            "文件": item.file,
+            "Tool": item.toolName || item.name || "未标注",
+            "状态": item.status || "见原始回执",
+            "序列化大小": `${formatNumber(byteSize(item))} bytes`,
+          });
+          return;
+        }
+        const contextTabs = [
+          ["providerContext", "完整 Provider 对象"],
+          ["systemPrompt", "System Prompt"],
+          ["messages", "Messages"],
+          ["tools", "Tools"],
+          ["assistantMessage", "模型回复"],
+          ["contextDelta", "本次增量"],
+          ["receipts", "调用 / 缓存回执"],
+        ];
+        const value = item[state.contextTab];
+        elements.main.innerHTML = `
+          <div class="object-header">
+            <div class="object-title">
+              <h1>${escapeHtml(scenario.label)} · Turn ${escapeHtml(item.runtimeTurnIndex)} · Call ${escapeHtml(item.callIndex)}</h1>
+              <p class="subtitle">${escapeHtml(item.sessionId)} · ${escapeHtml(item.turnId)}</p>
+              <div class="badges">${badge(`${formatNumber(byteSize(item.systemPrompt))} B system`)}${badge(`${item.messages.length} messages`)}${badge(`${item.tools.length} tools`)}${badge("确定性对象", "good")}</div>
+            </div>
+          </div>
+          ${toolbar(segment([["agent", "普通 Agent"], ["room", "三成员 Room"]], state.scenario, "scenario"))}
+          <div class="content-toolbar">${segment(contextTabs, state.contextTab, "contextTab")}</div>
+          ${codeBlock(value)}
+        `;
+        const cache = item.cacheEvidence || {};
+        renderInspector({
+          "场景": scenario.label,
+          "Turn": item.runtimeTurnIndex,
+          "Call": item.callIndex,
+          "System bytes": byteSize(item.systemPrompt),
+          "Messages": item.messages.length,
+          "Tools": item.tools.length,
+          "Cache read": cache.cacheReadInputTokens ?? cache.readTokens ?? "确定性模拟/未提供",
+          "捕获时间": item.capturedAtMs ? new Date(item.capturedAtMs).toLocaleString("zh-CN") : "未提供",
+          "文件": item.file,
+        });
+      }
+
+      function renderReferences() {
+        const item = selected(comparisonItems());
+        if (!item) return renderEmpty();
+        const prompts = new Map(data.promptRecords.map((entry) => [entry.prompt_id, entry]));
+        const snapshots = new Map(
+          (data.references.sourceSnapshots || []).map((entry) => [entry.id, entry]),
+        );
+        const skills = new Map(
+          ((data.skills && data.skills.skills) || []).map((entry) => [entry.name, entry]),
+        );
+        const local = (item.localPromptIds || []).map((id) => prompts.get(id)).filter(Boolean);
+        const localSkills = (item.localSkillNames || [])
+          .map((name) => skills.get(name))
+          .filter(Boolean);
+        const upstream = (item.upstreamSnapshotIds || []).map((id) => snapshots.get(id)).filter(Boolean);
+        const cafe = upstream.filter((entry) => entry.project === "Cafe");
+        const vcp = upstream.filter((entry) => entry.project === "VCP");
+        currentCopyValue = pretty({
+          comparison: item,
+          productPromptRecords: local,
+          productSkillRecords: localSkills,
+          upstreamSourceSnapshots: upstream,
+        });
+
+        function sourceBody(entry, isLocal = false) {
+          const title = isLocal ? entry.prompt_id : entry.label;
+          const path = isLocal
+            ? `${entry.source_path}::${entry.producer}`
+            : `${entry.path}:${entry.selection || "文件缺失"}`;
+          const kind = isLocal ? `${entry.category} · ${entry.injection_phase}` : entry.sourceKind;
+          const content = entry.content || "";
+          return `<section class="comparison-source">
+            <h3>${escapeHtml(title)}</h3>
+            <p class="subtitle">${escapeHtml(path)} · ${escapeHtml(kind)} · ${formatNumber(byteSize(content))} B</p>
+            <pre>${escapeHtml(content)}</pre>
+          </section>`;
+        }
+
+        function skillBody(entry) {
+          const content = entry.content || "";
+          return `<section class="comparison-source">
+            <h3>${escapeHtml(entry.name)} · 按需 Skill</h3>
+            <p class="subtitle">${escapeHtml(entry.path)} · skill_load 后完整生效 · ${formatNumber(byteSize(content))} B</p>
+            <pre>${escapeHtml(content)}</pre>
+          </section>`;
+        }
+
+        function sourceColumn(label, revision, entries, isLocal = false, skillEntries = []) {
+          const bodies = [
+            ...entries.map((entry) => sourceBody(entry, isLocal)),
+            ...skillEntries.map((entry) => skillBody(entry)),
+          ];
+          return `<section class="comparison-column">
+            <header>
+              <h2>${escapeHtml(label)}</h2>
+              <p class="subtitle">${escapeHtml(revision || "unknown")}</p>
+            </header>
+            ${bodies.length
+              ? bodies.join("")
+              : `<div class="empty">该主题没有对应原文</div>`}
+          </section>`;
+        }
+
+        const revisions = data.references.projectRevisions || {};
+        const statusTone = String(item.status || "").includes("待用户")
+          ? "warn"
+          : "good";
+        elements.main.innerHTML = `
+          <div class="object-header">
+            <div class="object-title">
+              <h1>${escapeHtml(item.title)}</h1>
+              <p class="subtitle">${escapeHtml(item.question)}</p>
+              <div class="badges">${badge(item.status || "未标记", statusTone)}${badge("本项目最终原文", "good")}${badge("Cafe 最终源码")}${badge("VCP 最终源码")}</div>
+            </div>
+          </div>
+          <div class="notice"><strong>当前取舍：</strong>${escapeHtml(item.decision)}</div>
+          <div class="notice"><strong>为什么这样取：</strong>${escapeHtml(item.whyBetter || "未说明")}</div>
+          <div class="notice"><strong>剩余验证：</strong>${escapeHtml(item.residualRisk || "无")}</div>
+          <div class="comparison-grid">
+            ${sourceColumn("本项目", revisions.Product, local, true, localSkills)}
+            ${sourceColumn("Cafe", revisions.Cafe, cafe)}
+            ${sourceColumn("VCP", revisions.VCP, vcp)}
+          </div>
+        `;
+        renderInspector({
+          "对比 ID": item.id,
+          "审定状态": item.status || "未标记",
+          "为什么更合适": item.whyBetter || "未说明",
+          "剩余风险": item.residualRisk || "无",
+          "本项目 Prompt": local.length,
+          "本项目 Skill": localSkills.length,
+          "Cafe 原文": cafe.length,
+          "VCP 原文": vcp.length,
+          "Product commit": revisions.Product || "unknown",
+          "Cafe commit": revisions.Cafe || "unknown",
+          "VCP commit": revisions.VCP || "unknown",
+        });
+      }
+
+      function renderInspector(values) {
+        elements.inspector.innerHTML = `
+          <div class="inspection-block">
+            <h3>当前对象</h3>
+            <dl class="kv">${Object.entries(values).map(([key, value]) =>
+              `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`
+            ).join("")}</dl>
+          </div>
+          <div class="inspection-block">
+            <h3>复核提醒</h3>
+            <p class="subtitle">检查触发条件、真正 owner、是否模型可见、是否与相邻层重复，以及未完成时的确定性出口。</p>
+          </div>
+        `;
+      }
+
+      function renderEmpty() {
+        currentCopyValue = "";
+        elements.main.innerHTML = `<div class="empty">没有可显示的对象</div>`;
+        renderInspector({ "状态": "空" });
+      }
+
+      function renderMain() {
+        if (state.view === "overview") renderOverview();
+        else if (state.view === "prompts") renderPrompt();
+        else if (state.view === "routes") renderRoute();
+        else if (state.view === "skills") renderSkill();
+        else if (state.view === "tools") renderTool();
+        else if (state.view === "contexts") renderContext();
+        else renderReferences();
+      }
+
+      function render() {
+        renderTabs();
+        renderFilter();
+        renderList();
+        renderMain();
+        setInspectorCollapsed(state.inspectorCollapsed);
+      }
+
+      elements.tabs.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-view]");
+        if (!button) return;
+        state.view = button.dataset.view;
+        state.selectedKey = "";
+        state.filter = "all";
+        state.query = "";
+        elements.search.value = "";
+        render();
+      });
+
+      elements.list.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-select]");
+        if (!button) return;
+        state.selectedKey = button.dataset.select;
+        renderList();
+        renderMain();
+      });
+
+      elements.search.addEventListener("input", () => {
+        state.query = elements.search.value;
+        state.selectedKey = "";
+        renderList();
+        renderMain();
+      });
+
+      elements.filter.addEventListener("change", () => {
+        if (state.view === "contexts") state.contextKind = elements.filter.value;
+        else state.filter = elements.filter.value;
+        state.selectedKey = "";
+        renderList();
+        renderMain();
+      });
+
+      elements.scopeFilter.addEventListener("change", () => {
+        state.promptScope = elements.scopeFilter.value;
+        state.selectedKey = "";
+        renderList();
+        renderMain();
+      });
+
+      elements.main.addEventListener("click", (event) => {
+        const promptLink = event.target.closest("[data-open-prompt]");
+        if (promptLink) {
+          state.view = "prompts";
+          state.promptScope = "all";
+          state.filter = "all";
+          state.query = "";
+          elements.search.value = "";
+          state.selectedKey = promptLink.dataset.openPrompt;
+          render();
+          return;
+        }
+        const button = event.target.closest("[data-action]");
+        if (!button) return;
+        const action = button.dataset.action;
+        const value = button.dataset.value;
+        if (action === "wrap") state.wrap = value === "wrap";
+        if (action === "scenario") {
+          state.scenario = value;
+          state.selectedKey = "";
+        }
+        if (action === "contextTab") state.contextTab = value;
+        renderList();
+        renderMain();
+      });
+
+      elements.copy.addEventListener("click", async () => {
+        if (!currentCopyValue) return showToast("当前没有可复制内容");
+        try {
+          await navigator.clipboard.writeText(currentCopyValue);
+          showToast("已复制当前内容");
+        } catch {
+          showToast("浏览器未授予剪贴板权限");
+        }
+      });
+
+      elements.inspectorToggle.addEventListener("click", () => {
+        setInspectorCollapsed(!state.inspectorCollapsed);
+      });
+      elements.inspectorClose.addEventListener("click", () => setInspectorCollapsed(true));
+
+      window.addEventListener("keydown", (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
+          event.preventDefault();
+          elements.search.focus();
+        }
+      });
+
+      render();
+    })();
+  </script>
+</body>
+</html>

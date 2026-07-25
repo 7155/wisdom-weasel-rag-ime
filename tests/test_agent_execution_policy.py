@@ -164,18 +164,49 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             )
 
     def test_prompt_describes_the_mode_without_leaking_internal_credentials(self) -> None:
-        prompt = execution_policy_prompt(
+        ungranted = execution_policy_prompt(
             {
                 "executionMode": WORKSPACE_MANAGED_EXECUTION_MODE,
                 "toolProfileVersion": "control-center-v1",
             }
         )
+        roots = ["/workspace/project"]
+        granted_session = {
+            "toolProfileVersion": "control-center-v1",
+            "workspaceRoots": roots,
+            "workspaceScopeSha256": workspace_scope_sha256(roots),
+            "workspaceScopeGrantedAtMs": 100,
+        }
+        managed = execution_policy_prompt(
+            {
+                **granted_session,
+                "executionMode": WORKSPACE_MANAGED_EXECUTION_MODE,
+            }
+        )
+        trusted_without_scope = execution_policy_prompt(
+            {
+                "executionMode": FULL_TRUST_EXECUTION_MODE,
+                "toolProfileVersion": "control-center-v1",
+            }
+        )
+        trusted = execution_policy_prompt(
+            {
+                **granted_session,
+                "executionMode": FULL_TRUST_EXECUTION_MODE,
+            }
+        )
 
-        self.assertIn("执行权限：工作区托管", prompt)
-        self.assertIn("范围内", prompt)
-        self.assertIn("取消栅栏", prompt)
-        self.assertNotIn("sha256", prompt.lower())
-        self.assertNotIn("token", prompt.lower())
+        self.assertIn('<execution-mode mode="workspace_managed">', ungranted)
+        self.assertIn("工作区范围尚未确认", ungranted)
+        self.assertIn("等待一次原生范围批准", ungranted)
+        self.assertIn("已批准工作区内", managed)
+        self.assertIn("完全信任", trusted_without_scope)
+        self.assertIn("工作区边界尚未确认", trusted_without_scope)
+        self.assertIn("当前工作区内符合策略的动作可以直接完成", trusted)
+        for prompt in (ungranted, managed, trusted_without_scope, trusted):
+            self.assertIn("取消、审计和迟到写入保护", prompt)
+            self.assertNotIn("sha256", prompt.lower())
+            self.assertNotIn("token", prompt.lower())
 
 
 if __name__ == "__main__":

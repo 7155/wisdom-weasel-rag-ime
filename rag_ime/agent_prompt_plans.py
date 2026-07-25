@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from .agent_room_acceptance import acceptance_alias_map
 from .agent_room_context import ProviderProjectionJournalStore
 from .contracts.json_schema import validate_contract
 from .db import apply_database_migrations
@@ -25,10 +26,10 @@ PROMPT_LAYER_SPECS = (
 )
 
 _RULE_OWNER_SIGNATURES = (
-    ("authorization", "core_rails", ("只有受控审批回执有效", "原生控制中心")),
+    ("authorization", "core_rails", ("<core-rails>", "能力可见不等于获得许可")),
     ("durable-memory", "core_rails", ("<durable-memory-policy>", "memory_capture")),
-    ("role-memory", "persona", ("<agent-role-book>",)),
-    ("settle-decision", "collaboration_role", ("收工前", "已交付、已交接")),
+    ("role-memory", "persona", ("<agent-profile>",)),
+    ("settle-decision", "collaboration_role", ("<room-work>", "room_commit")),
     ("progressive-capability", "agent_template_policy", ("skill_load", "tool_load")),
 )
 
@@ -62,9 +63,9 @@ def compose_persona_layer(persona_prompt: str, role_book_prompt: str = "") -> st
         return persona
     return (
         f"{persona}\n\n"
-        "<agent-role-book>\n"
+        "<agent-profile>\n"
         f"{role_book}\n"
-        "</agent-role-book>"
+        "</agent-profile>"
     )
 
 
@@ -486,10 +487,18 @@ def _provider_layer_prompt(layers: object) -> str:
         raise PromptPlanConflict("PromptPlan stable layer order changed")
     parts = ["<room-prompt-plan schema=\"wisdom-weasel.prompt-plan.v1\">\n"]
     for item in stable:
+        content = str(item.get("content") or "")
+        omitted = item.get("omitted") is True
+        if omitted:
+            if content:
+                raise PromptPlanConflict("Omitted PromptPlan layer contains content")
+            continue
+        if not content:
+            raise PromptPlanConflict("Active PromptPlan layer is empty")
         parts.extend(
             (
                 f'<layer order="{item["order"]}" name="{item["layer"]}">\n',
-                str(item.get("content") or ""),
+                content,
                 "\n</layer>\n",
             )
         )
@@ -641,6 +650,11 @@ def _render_dispatch_state(value: Mapping[str, object]) -> str:
     if originals:
         lines.append("原始需求（不可改写）：")
         lines.extend(f"- {text}" for text in dict.fromkeys(originals))
+        lines.append(
+            "执行边界：原始需求用于核对全链边界，不代表本轮要重做其中分配给"
+            "其他成员的步骤；本轮只执行下面的当前任务，并只使用当前任务列出的"
+            " AC 验收别名。"
+        )
 
     task = _visible_mapping(value.get("task"))
     objective = str(task.get("objective") or "").strip()
@@ -664,19 +678,49 @@ def _render_dispatch_state(value: Mapping[str, object]) -> str:
 
     acceptance = _visible_mapping(value.get("acceptance"))
     criteria = _visible_mappings(acceptance.get("criteria"))
+    alias_map = acceptance_alias_map(
+        [criterion.get("criterionId") for criterion in criteria]
+    )
     rendered_criteria: list[str] = []
     for criterion in criteria:
         criterion_id = str(criterion.get("criterionId") or "").strip()
         statement = str(criterion.get("statement") or "").strip()
         if not criterion_id or not statement:
             continue
+        alias = next(
+            (
+                value
+                for value, target in alias_map.items()
+                if target == criterion_id
+            ),
+            "",
+        )
         status = "已通过" if criterion.get("passed") is True else "待验收"
+        accepted_refs = [
+            str(item or "").strip()
+            for item in criterion.get("acceptedEvidenceRefs") or []
+            if str(item or "").strip()
+        ][:8]
+        evidence_suffix = (
+            f" | 已接受证据：{', '.join(accepted_refs)}"
+            if accepted_refs
+            else ""
+        )
         rendered_criteria.append(
-            f'- criterionId: "{criterion_id}" | {status} | {statement}'
+            f"- {alias} | {status} | {statement}{evidence_suffix}"
         )
     if rendered_criteria:
-        lines.append("验收条件 acceptance.criteria（提交时原样使用 criterionId）：")
+        lines.append("验收条件（提交证据时使用 AC 编号）：")
         lines.extend(rendered_criteria)
+
+    shared_evidence = [
+        str(item or "").strip()
+        for item in value.get("sharedEvidenceRefs") or []
+        if str(item or "").strip()
+    ]
+    if shared_evidence:
+        lines.append("父任务已公开证据：")
+        lines.extend(f"- {item}" for item in shared_evidence[:32])
 
     blockers = _visible_mapping(value.get("blockers"))
     obstacle_lines = [

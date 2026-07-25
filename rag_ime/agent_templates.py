@@ -5,14 +5,26 @@ from dataclasses import dataclass
 from .contracts.json_schema import validate_contract
 
 
-_PROGRESSIVE_CAPABILITY_POLICY = """能力目录规则：
-- 常驻上下文只给能力家族速查和当前阶段的精确卡片；完整 Skill/Tool 目录仍可用 skill_search/tool_search 查询，不需要为了盘点而加载。
-- 已激活与待披露必须互斥：Provider 已有完整 Tool schema 时直接调用；上下文已有完整 <loaded_skill> 正文时直接遵循。不得再次传给 tool_load/skill_load。
-- 精确卡片只提供 name、when、notFor、input、output、does。先用这些字段判断是否适合当前任务；notFor 命中时不要加载。
-- 只有确定需要时才加载：skill_load 每次读取一个精确 Skill 正文；tool_load 可为同一个具体下一步一次加载 1 至 4 个精确 Tool schema。
-- 不得为盘点、预热、激活、猜测后续用途或暴露整个目录而加载；多个 Tool 不属于同一步时分开按需加载。
-- load 只负责披露，不授予权限。调用仍受当前 Session 能力清单、审批和取消边界约束；加载失败时报告缺口，不猜参数。
-"""
+_PROGRESSIVE_CAPABILITY_POLICY = """<capability-policy>
+下面的能力家族用于发现“系统能做什么”；当前阶段卡片用于判断“现在是否该用”。
+能力家族索引在同一 Context Epoch 内保持稳定，因此它可能仍列出已经加载的名称；
+真正的已激活状态只看本轮 tools 与已经出现的 <loaded_skill>。
+
+完整 Tool schema 已经在本轮 tools 中时，直接调用，不再 load。
+完整 Skill 正文已经在 <loaded_skill> 中时，直接遵循，不再 load。
+
+先用短目录中的 when / notFor / input / output / does 判断是否匹配；
+notFor 命中时不要加载。目录不够时，Skill 用 skill_search，
+Tool 用 tool_search 找到精确名称。
+
+确定当前阶段需要后，每个 skill_load 调用一个精确 Skill；这只是单次调用
+的接口，不表示整个任务只能使用一个 Skill。通常只加载一个主 Skill；
+同一阶段确实需要两个互补 Skill 时，可以在同一模型轮次并列调用，最多两份，
+并以当前阶段的主 Skill 组织流程。不要同时加载互相竞争的完整流程。
+同一个下一步需要配套工具时，可以用 tool_load 一次加载 1 至 4 个精确
+Tool schema。不要为盘点、预热或猜测后续用途加载。
+加载只披露用法，不增加权限；调用仍受当前 Session 的审批、取消和工作区边界约束。
+</capability-policy>"""
 
 
 def progressive_capability_policy() -> str:
@@ -61,11 +73,7 @@ class AgentTemplate:
     def room_runtime_prompt(self) -> str:
         """Keep Room duties in the collaboration-role layer only."""
 
-        return (
-            "当前 Room 的责任、交接和收工方式由协作岗位层决定；"
-            "本层只规定能力如何渐进披露。\n\n"
-            f"{progressive_capability_policy()}"
-        )
+        return progressive_capability_policy()
 
     def to_payload(self) -> dict[str, object]:
         payload: dict[str, object] = {

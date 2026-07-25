@@ -168,6 +168,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
                     {
                         "objective": "通过 Control API 创建任务",
                         "expectedOutput": "可追踪结果",
+                        "acceptanceCriteria": ["任务可通过 HTTP 创建、查询并重新分派"],
                         "currentOwnerParticipantId": owner["id"],
                         "clientMessageId": "http-work-create",
                     }
@@ -308,6 +309,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
                 {
                     "objective": "错误归属",
                     "expectedOutput": "不应创建",
+                    "acceptanceCriteria": ["不应越过 Room 成员边界"],
                     "currentOwnerParticipantId": outsider["id"],
                     "clientMessageId": "outside-owner",
                 },
@@ -317,6 +319,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
             {
                 "objective": "合法任务",
                 "expectedOutput": "结果",
+                "acceptanceCriteria": ["结果已产生"],
                 "currentOwnerParticipantId": owner["id"],
                 "clientMessageId": "inside-owner",
             },
@@ -411,6 +414,23 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
                 },
             )
 
+    def test_create_requires_at_least_one_acceptance_criterion(self) -> None:
+        owner = self.participants[0]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "acceptance_criteria must not be empty",
+        ):
+            self.service.create_room_work_item(
+                str(self.room["id"]),
+                {
+                    "objective": "不能在没有验收条件时开工",
+                    "expectedOutput": "拒绝创建",
+                    "currentOwnerParticipantId": owner["id"],
+                    "clientMessageId": "missing-acceptance",
+                },
+            )
+
     def test_dispatch_claim_fails_closed_after_reassignment(self) -> None:
         owner, next_owner, _ = self.participants
         item = self.service.create_room_work_item(
@@ -418,6 +438,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
             {
                 "objective": "验证派发一致性",
                 "expectedOutput": "只交给正式 owner",
+                "acceptanceCriteria": ["只有正式 owner 收到派发"],
                 "currentOwnerParticipantId": owner["id"],
                 "clientMessageId": "claim-race",
             },
@@ -466,6 +487,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
             {
                 "objective": "路由前发生移交",
                 "expectedOutput": "旧 owner 不应收到任务",
+                "acceptanceCriteria": ["旧 owner 未收到任务"],
                 "currentOwnerParticipantId": owner["id"],
                 "clientMessageId": "dispatch-race",
             },
@@ -518,6 +540,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
             {
                 "objective": "派发失败可恢复",
                 "expectedOutput": "保留明确审计",
+                "acceptanceCriteria": ["派发游标恢复且留下审计"],
                 "currentOwnerParticipantId": owner["id"],
                 "clientMessageId": "dispatch-failure",
             },
@@ -583,7 +606,9 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
         self.assertEqual(prompt_payload["message"], "开始")
         transient_context = str(prompt_payload["_transientContext"])
         self.assertIn(objective, transient_context)
-        self.assertIn("本轮绑定任务", transient_context)
+        self.assertIn("当前受管任务", transient_context)
+        self.assertNotIn(str(item["id"]), transient_context)
+        self.assertNotIn("revision=", transient_context)
         session = self.service.sessions.get(str(owner["sessionId"]))
         role_book = self.service.role_books.routing_profile(
             str(owner["roleId"]),

@@ -19,7 +19,13 @@ export interface EventBatcherOptions<Event, Handle = unknown> {
   scheduler?: BatchScheduler<Handle>;
 }
 
-export function createEventBatcher<Event, Handle = ReturnType<typeof setTimeout>>(
+type DefaultSchedulerHandle = {
+  cancelled: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+  frame?: number;
+};
+
+export function createEventBatcher<Event, Handle = DefaultSchedulerHandle>(
   options: EventBatcherOptions<Event, Handle>,
 ): EventBatcher<Event> {
   const intervalMs = clamp(options.intervalMs ?? 20, 16, 33);
@@ -88,19 +94,46 @@ export function createRoomDeltaBatcher(
   });
 }
 
-function defaultFrameScheduler(): BatchScheduler<number | ReturnType<typeof setTimeout>> {
+function defaultFrameScheduler(): BatchScheduler<DefaultSchedulerHandle> {
   if (
     typeof globalThis.requestAnimationFrame === 'function'
     && typeof globalThis.cancelAnimationFrame === 'function'
   ) {
     return {
-      schedule: (callback) => globalThis.requestAnimationFrame(callback),
-      cancel: (handle) => globalThis.cancelAnimationFrame(handle as number),
+      schedule: (callback, delayMs) => {
+        const handle: DefaultSchedulerHandle = { cancelled: false };
+        // ProMotion displays can invoke requestAnimationFrame at 120 Hz. Wait
+        // for the batching interval first, then publish on the next paint.
+        handle.timer = globalThis.setTimeout(() => {
+          handle.timer = undefined;
+          if (handle.cancelled) return;
+          handle.frame = globalThis.requestAnimationFrame(() => {
+            handle.frame = undefined;
+            if (!handle.cancelled) callback();
+          });
+        }, delayMs);
+        return handle;
+      },
+      cancel: (handle) => {
+        handle.cancelled = true;
+        if (handle.timer !== undefined) globalThis.clearTimeout(handle.timer);
+        if (handle.frame !== undefined) globalThis.cancelAnimationFrame(handle.frame);
+      },
     };
   }
   return {
-    schedule: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
-    cancel: (handle) => globalThis.clearTimeout(handle),
+    schedule: (callback, delayMs) => {
+      const handle: DefaultSchedulerHandle = { cancelled: false };
+      handle.timer = globalThis.setTimeout(() => {
+        handle.timer = undefined;
+        if (!handle.cancelled) callback();
+      }, delayMs);
+      return handle;
+    },
+    cancel: (handle) => {
+      handle.cancelled = true;
+      if (handle.timer !== undefined) globalThis.clearTimeout(handle.timer);
+    },
   };
 }
 

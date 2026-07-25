@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from .agent_prompt_support import bounded_text
@@ -11,8 +11,16 @@ from .agent_room_kernel import RoomKernelFenceError
 class RoomTaskContextProjector:
     """Compose one immutable, bounded task packet for a Room Dispatch."""
 
-    def __init__(self, requirements: Any) -> None:
+    def __init__(
+        self,
+        requirements: Any,
+        *,
+        accepted_evidence_provider: Callable[
+            [str], Mapping[str, Sequence[object]]
+        ] | None = None,
+    ) -> None:
         self.requirements = requirements
+        self.accepted_evidence_provider = accepted_evidence_provider
 
     def render(
         self,
@@ -32,9 +40,12 @@ class RoomTaskContextProjector:
         requirement_ids = _string_set(
             task.get("requirementItemIds")
         )
-        criterion_ids = _string_set(
-            task.get("acceptanceCriterionIds")
-        )
+        criterion_order = [
+            str(value)
+            for value in task.get("acceptanceCriterionIds") or []
+            if str(value or "").strip()
+        ]
+        criterion_ids = set(criterion_order)
         raw_originals = _mappings(snapshot.get("originalRequirements"))[:8]
         originals = [
             {
@@ -66,13 +77,27 @@ class RoomTaskContextProjector:
             for item in _mappings(catalog.get("items"))
             if str(item.get("itemId") or "") in requirement_ids
         ][:64]
-        criteria = [
-            _acceptance_criterion(criterion)
+        catalog_criteria = {
+            str(criterion.get("criterionId") or ""): criterion
             for criterion in _mappings(
                 catalog.get("acceptanceCriteria")
             )
-            if str(criterion.get("criterionId") or "")
-            in criterion_ids
+        }
+        accepted_evidence = (
+            self.accepted_evidence_provider(str(dispatch["rootId"]))
+            if self.accepted_evidence_provider is not None
+            else {}
+        )
+        criteria = [
+            _acceptance_criterion(
+                catalog_criteria[criterion_id],
+                accepted_evidence_refs=accepted_evidence.get(
+                    criterion_id,
+                    (),
+                ),
+            )
+            for criterion_id in criterion_order
+            if criterion_id in catalog_criteria
         ][:64]
         packet = {
             "schemaVersion": "wisdom-weasel.room-task-context.v1",
@@ -134,6 +159,11 @@ class RoomTaskContextProjector:
                     }
                 ),
             },
+            "sharedEvidenceRefs": [
+                bounded_text(value, maximum=500)
+                for value in task.get("contextEvidenceRefs") or []
+                if str(value or "").strip()
+            ][:32],
             "blockers": {
                 "obstacles": [
                     _obstacle(value)
@@ -213,6 +243,8 @@ def _requirement_item(
 
 def _acceptance_criterion(
     value: Mapping[str, object],
+    *,
+    accepted_evidence_refs: Sequence[object] = (),
 ) -> dict[str, object]:
     proofs = [
         {
@@ -229,6 +261,13 @@ def _acceptance_criterion(
         }
         for proof in _mappings(value.get("proofs"))[:16]
     ]
+    inherited_refs = list(
+        dict.fromkeys(
+            str(raw_ref or "").strip()
+            for raw_ref in accepted_evidence_refs
+            if str(raw_ref or "").strip()
+        )
+    )[:32]
     return {
         "criterionId": bounded_text(
             value.get("criterionId"), maximum=240
@@ -245,10 +284,12 @@ def _acceptance_criterion(
             value.get("expectedReceiptTypes") or []
         )[:8],
         "proofs": proofs,
+        "acceptedEvidenceRefs": inherited_refs,
         "passed": any(
             int(proof.get("exitStatus") or 0) == 0
             for proof in proofs
-        ),
+        )
+        or bool(inherited_refs),
     }
 
 

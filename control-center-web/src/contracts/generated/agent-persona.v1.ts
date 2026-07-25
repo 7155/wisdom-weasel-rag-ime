@@ -61,7 +61,7 @@ export interface AgentPersonaV1 {
       | [string, string, string, string, string, string];
     isDefault: boolean;
   };
-  safetyPolicyVersion: 'control-center-safe-v1';
+  safetyPolicyVersion: 'agent-core-v2';
   /**
    * @minItems 1
    * @maxItems 2

@@ -83,7 +83,12 @@ class RoomKernelRuntimeCoordinator:
         self.skill_policy = skill_policy
         self.skill_receipts = skill_receipts
         self.requirements = requirements
-        self.task_context = RoomTaskContextProjector(requirements)
+        self.task_context = RoomTaskContextProjector(
+            requirements,
+            accepted_evidence_provider=(
+                kernel.accepted_evidence_by_criterion
+            ),
+        )
         self.learning = learning
         self.learning_runtime = learning_runtime
         self.definition_compiler = definition_compiler
@@ -585,7 +590,7 @@ def _profile_overlay_prompt(
     profile: CollaborationProfileManifest,
     guard: object,
 ) -> str:
-    parts = [profile.system_prompt.strip()]
+    parts = [profile.system_prompt.strip()] if profile.system_prompt.strip() else []
     if isinstance(guard, Mapping):
         condition = guard.get("condition")
         action = guard.get("action")

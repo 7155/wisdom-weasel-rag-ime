@@ -156,7 +156,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
     "activeRag": {
         "enabled": True,
         "quickModel": "deepseek/deepseek-v4-flash",
-        "quickThinkingLevel": "off",
+        "quickThinkingLevel": "high",
         "shortcut": "ctrl+.",
         "capture": {
             "accessibility": True,
@@ -295,7 +295,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
                     "key": "activeRag.quickThinkingLevel",
                     "type": "pi-thinking",
                     "label": "闪电生成思考",
-                    "default": "off",
+                    "default": "high",
                     "modelKey": "activeRag.quickModel",
                     "options": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
                 },
@@ -468,7 +468,13 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
     "display.badges.action": {"expert": True},
     "activeRag.shortcut": {"description": "显式生成快捷键", "applyMode": "restart_input_method", "restartComponent": "squirrel"},
     "activeRag.quickModel": {"description": "闪电按钮每次从 Pi 实时目录校验并调用的单次回复模型"},
-    "activeRag.quickThinkingLevel": {"description": "闪电按钮使用模型支持的思考档；关闭思考可降低首字延迟，且不创建会话、不加载工具"},
+    "activeRag.quickThinkingLevel": {
+        "description": (
+            "闪电生成默认使用高思考以保证指令理解和输出正确性；"
+            "关闭思考仅作为专家级低延迟覆盖，可能降低结果质量。"
+            "该请求不创建 Agent Session，也不加载工具"
+        )
+    },
     "activeRag.latencyBudgetMs": {"description": "显式多段生成的最长等待时间", "min": 1000, "max": 300000, "step": 1000, "unit": "ms"},
     "activeRag.allowRemoteModel": {"description": "只允许显式 Active RAG 使用远程模型", "risk": "sensitive", "validation": {"confirmText": "ALLOW REMOTE MODEL"}},
     "knowledgeLibrary.parser.mineru.enabled": {

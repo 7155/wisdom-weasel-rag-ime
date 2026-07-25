@@ -43,9 +43,9 @@ COMMIT_RESULTS = {
     "C": "COLLAB-C-COMMIT-RESULT",
 }
 EXPECTED_SKILLS = {
-    "A": "room-test-driven-implementation",
-    "B": "room-independent-vision-review",
-    "C": "room-delivery-closure",
+    "A": "test-driven-implementation",
+    "B": "independent-review",
+    "C": "quality-gate",
 }
 EXPECTED_INTENTS = ("execute", "review", "close")
 SESSION_CONTINUITY_PROMPT = "SESSION-CONTINUITY-AFTER-ROOM"
@@ -167,6 +167,42 @@ def _root_snapshot(
         if str(item.get("taskId") or "") in task_by_id
     ]
     return roots, tasks, dispatches
+
+
+def _public_posts_from_timeline_snapshot(
+    snapshot: Mapping[str, Any],
+    *,
+    root_id: str,
+) -> list[dict[str, Any]]:
+    """Read the UI-facing Room timeline, not the Kernel execution snapshot."""
+
+    posts_by_id: dict[str, dict[str, Any]] = {}
+    for event in snapshot.get("events") or []:
+        if (
+            not isinstance(event, Mapping)
+            or event.get("eventType") != "room_post"
+        ):
+            continue
+        payload = event.get("payload")
+        post = payload.get("post") if isinstance(payload, Mapping) else None
+        if (
+            not isinstance(post, Mapping)
+            or post.get("rootId") != root_id
+            or not isinstance(post.get("publicationSource"), Mapping)
+            or post["publicationSource"].get("kind")
+            not in {"room_post", "room_commit"}
+        ):
+            continue
+        post_id = str(post.get("postId") or "")
+        if post_id:
+            posts_by_id[post_id] = dict(post)
+    return sorted(
+        posts_by_id.values(),
+        key=lambda item: (
+            int(item.get("createdAtMs") or 0),
+            str(item.get("postId") or ""),
+        ),
+    )
 
 
 def wait_for_three_member_settlement(
@@ -838,6 +874,9 @@ def tool_workload_checks(
         b["workspace_patch"]["invocationCount"] == 0
         and b["workspace_shell"]["invocationCount"] == 0
     )
+    checks["bDidNotDelegateItsOwnReview"] = (
+        b["room_collaborate"]["invocationCount"] == 0
+    )
     checks["bPublicCommit"] = _statuses(b["room_post"]) == [
         "applied"
     ] and b_commit_bounded
@@ -851,6 +890,9 @@ def tool_workload_checks(
     ]
     checks["cIndependentTest"] = _statuses(c["workspace_shell"]) == ["applied"]
     checks["cNeverPatched"] = c["workspace_patch"]["invocationCount"] == 0
+    checks["cDidNotDelegateFinalAcceptance"] = (
+        c["room_collaborate"]["invocationCount"] == 0
+    )
     checks["cPublicCommit"] = _statuses(c["room_post"]) == [
         "applied"
     ] and c_commit_bounded
@@ -891,6 +933,7 @@ def private_transcript_evidence(
 ) -> dict[str, Any]:
     raw_text: dict[str, str] = {}
     tool_ids: dict[str, set[str]] = {}
+    parsed_transcripts: dict[str, list[dict[str, Any]]] = {}
     transcript_receipts: dict[str, dict[str, Any]] = {}
     for member, context in contexts.items():
         sha256 = str(context["transcript"].get("sha256") or "")
@@ -898,12 +941,34 @@ def private_transcript_evidence(
         content = path.read_text(encoding="utf-8")
         raw_text[member] = content
         parsed = [json.loads(line) for line in content.splitlines() if line.strip()]
+        parsed_transcripts[member] = parsed
         tool_ids[member] = _collect_tool_call_ids(parsed)
         transcript_receipts[member] = transcript_evidence(session_dir, sha256)
     a_ids = tool_ids["A"]
     b_ids = tool_ids["B"]
-    leaked_a = sorted(item for item in a_ids if item in raw_text["B"] or item in raw_text["C"])
-    leaked_b = sorted(item for item in b_ids if item in raw_text["C"])
+    leaked_a = sorted(
+        item
+        for item in a_ids
+        if item in _collect_tool_call_ids(parsed_transcripts["B"])
+        or item in _collect_tool_call_ids(parsed_transcripts["C"])
+    )
+    leaked_b = sorted(
+        item
+        for item in b_ids
+        if item in _collect_tool_call_ids(parsed_transcripts["C"])
+    )
+    referenced_a = sorted(
+        item
+        for item in a_ids
+        if item in raw_text["B"] or item in raw_text["C"]
+        if item not in leaked_a
+    )
+    referenced_b = sorted(
+        item
+        for item in b_ids
+        if item in raw_text["C"]
+        if item not in leaked_b
+    )
     return {
         "passed": (
             not leaked_a
@@ -917,6 +982,8 @@ def private_transcript_evidence(
         "toolCallIdCounts": {member: len(values) for member, values in tool_ids.items()},
         "leakedAToolCallIds": leaked_a,
         "leakedBToolCallIds": leaked_b,
+        "referencedAEvidenceIds": referenced_a,
+        "referencedBEvidenceIds": referenced_b,
         "transcripts": transcript_receipts,
     }
 
@@ -1382,15 +1449,19 @@ def run(
     a_name = str(members["A"]["displayName"])
     b_name = str(members["B"]["displayName"])
     c_name = str(members["C"]["displayName"])
+    all_acceptance_aliases = [
+        f"AC-{index}"
+        for index in range(1, len(acceptance_criteria) + 1)
+    ]
     message = (
         f"@{a_name} 执行 THREE-MEMBER-ROOM-CANARY。先调用 room_state 一次，"
         f"从返回的成员列表按 displayName 找到并行审查员 {b_name} 和最终验收者 {c_name}。"
-        "精确加载 room_collaborate，并只调用一次：targetParticipantId 使用 B 的稳定 id，"
-        "intentKind=review，acceptanceCriterionIds=[]；objective 必须要求 B 先 room_state，"
+        "精确加载 room_collaborate，并只调用一次：targetParticipantRef 使用 B 的 participantRef，"
+        'intent=review，acceptance=["AC-4"]；objective 必须要求 B 先 room_state，'
         "再独立加载 workspace_read 并读取 calculator.py 与 test_calculator.py，"
-        "不得调用 workspace_patch 或 workspace_shell；随后 room_post 的 content 以 "
-        f"{MARKERS['B']} 开头，最后 room_commit decision=deliver、"
-        f"result={COMMIT_RESULTS['B']}、requirementCoverage=[]、evidenceRefs 至少一项。"
+        "不得调用 workspace_patch 或 workspace_shell；随后 room_post 必须 kind=evidence，content 以 "
+        f"{MARKERS['B']} 开头；最后 room_commit decision=deliver，summary={COMMIT_RESULTS['B']}，"
+        "evidence 使用 B 当前 Task 的 AC 别名与 workspace_read 返回的 evidenceRef，residualRisks=[]。"
         "expectedOutput 必须写明 B 交付只读测试意图复核与文件证据。"
         "room_collaborate 返回后你必须继续当前 Dispatch，不得等待 B，也不得把它当责任移交。"
         f"精确加载 workspace_read，只读取不存在的 {workspace / MISSING_READ_PATH} 一次，"
@@ -1399,14 +1470,23 @@ def run(
         f"加载 workspace_shell 并只运行 {TEST_COMMAND}，allowNetwork=false；工作区托管会在范围内自动执行，"
         "确认修改前测试非零退出；再加载 workspace_patch，只修改 calculator.py 实现 "
         "normalize_scores；随后再次运行同一测试命令，确认退出码为 0。"
-        f"调用 room_post，content 必须以 {MARKERS['A']} 开头，只写公开结果。"
+        f"调用 room_post，kind=evidence，content 必须以 {MARKERS['A']} 开头，只写公开结果。"
         "然后只调用一次 room_commit：decision=handoff，"
-        f"result={COMMIT_RESULTS['A']}，requirementCoverage=[]，targetParticipantId 必须使用 "
-        f"room_state 中 {c_name} 的稳定 id，nextIntentKind=close。nextTask 必须要求 C："
-        "先 room_state，独立加载 workspace_read 并读取 calculator.py、test_calculator.py；"
-        f"运行 {TEST_COMMAND}，不得调用 workspace_patch，room_post 以 {MARKERS['C']} 开头，"
-        f"最后 room_commit decision=deliver、result={COMMIT_RESULTS['C']}，"
-        "从 Room task context 原样覆盖全部 acceptance.criteria[].criterionId。"
+        f"summary={COMMIT_RESULTS['A']}，evidence 覆盖 AC-1、AC-2、AC-3 并只引用成功工具的 "
+        f"evidenceRef，residualRisks 写明由 C 最终验收；targetParticipantRef 必须使用 "
+        f"room_state 中 {c_name} 的 participantRef，intent=close，"
+        f"acceptanceAliases={json.dumps(all_acceptance_aliases, ensure_ascii=False)}。"
+        "nextTask 必须要求 C："
+        "先 room_state，并保留它返回的状态 evidenceRef 和 AC-1 至 AC-4 "
+        "各自的已接受 evidenceRefs；独立加载 workspace_read 并读取 "
+        "calculator.py、test_calculator.py；"
+        f"运行 {TEST_COMMAND}，不得调用 workspace_patch，room_post kind=evidence 且以 {MARKERS['C']} 开头，"
+        f"最后 room_commit decision=deliver、summary={COMMIT_RESULTS['C']}，"
+        "evidence 中 AC-1 至 AC-4 只引用 room_state 对应别名返回的已接受 "
+        "evidenceRefs，AC-5 只引用 C 自己成功的读取与测试 evidenceRef，"
+        "AC-6 引用 room_state 本次状态读取的 evidenceRef；不得引用 postRef，"
+        "residualRisks=[]。"
+        "handoff 的 expectedOutput 必须写明 C 交付独立验收证据并关闭 Root。"
         "每次 room_commit 后立即结束本轮。"
     )
     message_payload = {
@@ -1469,6 +1549,12 @@ def run(
         "GET",
         f"/api/agent/rooms/{encoded(room_id)}/kernel/snapshot",
         timeout=10,
+    )
+    public_timeline_snapshot = requester(
+        args.base_url,
+        "GET",
+        f"/api/agent/rooms/{encoded(room_id)}/snapshot",
+        timeout=15,
     )
     terminal_roots, terminal_tasks, terminal_dispatches = _root_snapshot(
         terminal_snapshot,
@@ -1541,14 +1627,10 @@ def run(
         )
         for member, session_id in session_ids.items()
     }
-    public_posts = [
-        item
-        for item in terminal_snapshot.get("posts") or []
-        if isinstance(item, dict)
-        and item.get("rootId") == root_id
-        and isinstance(item.get("publicationSource"), dict)
-        and item["publicationSource"].get("kind") == "room_commit"
-    ]
+    public_posts = _public_posts_from_timeline_snapshot(
+        public_timeline_snapshot,
+        root_id=root_id,
+    )
     posts_by_member = {
         member: [
             item
@@ -1558,15 +1640,32 @@ def run(
         for member in ("A", "B", "C")
     }
     public_post_checks = {
-        "exactCount": len(public_posts) == 3,
-        "onePerMember": all(len(posts_by_member[member]) == 1 for member in posts_by_member),
-        "stagedBodiesPublished": all(
-            MARKERS[member] in str(posts_by_member[member][0].get("content") or "")
-            and COMMIT_RESULTS[member]
-            not in str(posts_by_member[member][0].get("content") or "")
+        "timelineSnapshotComplete": (
+            public_timeline_snapshot.get("truncated") is False
+        ),
+        "exactCount": len(public_posts) == 6,
+        "twoPerMember": all(len(posts_by_member[member]) == 2 for member in posts_by_member),
+        "immediateEvidencePublished": all(
+            sum(
+                item["publicationSource"].get("kind") == "room_post"
+                and MARKERS[member] in str(item.get("content") or "")
+                for item in posts_by_member[member]
+            )
+            == 1
             for member in ("A", "B", "C")
         )
-        if all(len(posts_by_member[member]) == 1 for member in posts_by_member)
+        if all(len(posts_by_member[member]) == 2 for member in posts_by_member)
+        else False,
+        "commitSummariesPublished": all(
+            sum(
+                item["publicationSource"].get("kind") == "room_commit"
+                and COMMIT_RESULTS[member] in str(item.get("content") or "")
+                for item in posts_by_member[member]
+            )
+            == 1
+            for member in ("A", "B", "C")
+        )
+        if all(len(posts_by_member[member]) == 2 for member in posts_by_member)
         else False,
     }
     visibility = {

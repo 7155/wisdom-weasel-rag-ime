@@ -5,6 +5,11 @@ import json
 import time
 from collections.abc import Callable, Mapping
 
+from .agent_room_acceptance import (
+    AcceptanceAliasError,
+    acceptance_alias_map,
+    resolve_acceptance_aliases,
+)
 from .agent_room_capabilities import RoomCapabilityManifestStore
 from .agent_room_continuations import (
     RoomContinuationFactory,
@@ -18,6 +23,11 @@ from .agent_room_kernel_contracts import (
 from .agent_room_quality_gate import (
     RoomQualityGateError,
     canonicalize_quality_gate,
+)
+from .agent_room_references import (
+    ParticipantReferenceError,
+    participant_ref_map,
+    resolve_participant_ref,
 )
 from .agent_rooms import AgentRoomStore
 
@@ -252,20 +262,16 @@ class RoomSettleLifecycleService:
         follow_up_kind: str,
     ) -> str:
         task = self.kernel.task(str(self.kernel.dispatch(dispatch_id)["taskId"]))
-        criterion_ids = [
-            str(item)
-            for item in task.get("acceptanceCriterionIds", [])
-            if str(item).strip()
-        ]
-        allowed = json.dumps(criterion_ids, ensure_ascii=False)
-        quality_gate_shape = (
-            '{"decision":"deliver|handoff|wait|blocked","result":"...",'
-            '"qualityGate":{"originalRequestChecked":true,'
-            '"verdict":"ready_to_deliver|not_ready","items":['
-            '{"criterionId":"<当前 Task 的原样 criterionId>",'
-            '"status":"pass|fail|not_verified","evidenceRefs":["<证据引用>"]}'
-            '],"residualRisks":[]},"evidenceRefs":["<同一证据引用>"],'
-            '"requirementCoverage":["<全部 pass criterionId>"]}'
+        aliases = list(
+            acceptance_alias_map(
+                task.get("acceptanceCriterionIds", [])
+            )
+        )
+        allowed = json.dumps(aliases, ensure_ascii=False)
+        commit_shape = (
+            '{"decision":"deliver|handoff|wait|blocked","summary":"...",'
+            '"evidence":[{"acceptance":"AC-1","refs":["<权威回执>"]}],'
+            '"residualRisks":[]}'
         )
         if follow_up_kind == "continue":
             lead = (
@@ -289,23 +295,19 @@ class RoomSettleLifecycleService:
             "这是 Kernel 生成的受管执行接续，不是用户提出了新需求。"
             f"{lead}"
             "handoff 必须说明建议接手的参与者或模型能力、已完成工作、失败证据"
-            "和准确接手点；wait 必须只向用户提出一个最小必要问题，并写明等待"
-            "信号与恢复条件；blocked 必须写明缺口、证据和恢复条件。"
+            "和准确接手点；wait 要写明等待对象、信号与恢复条件，只有 "
+            "waitingFor=user 时才向用户提出一个最小必要问题；blocked 必须写明"
+            "缺口、已尝试替代路径和恢复条件。"
             "续作次数是硬预算，不得重复同一失败动作、提示或调用来消耗它。"
             "不要复述进度，也不要为了结束本轮而虚构等待、阻塞或完成。"
             "只有已经形成合法生命周期出口时，才调用 room_commit，明确选择 "
-            "deliver、handoff、wait 或 blocked，并填写 result、qualityGate、"
-            "evidenceRefs 与 requirementCoverage。合法嵌套形状是 "
-            f"{quality_gate_shape}。originalRequestChecked、verdict、items、"
-            "residualRisks 只能放在 qualityGate 内，不能放到 room_commit 顶层。"
-            "qualityGate.items 必须逐项覆盖"
-            "当前 Task 的全部验收条件；pass 项必须附新鲜证据，"
-            "每条证据引用必须从顶层 evidenceRefs 逐字复制，不得改写或猜测；"
-            "requirementCoverage 必须与 pass 项完全一致。requirementCoverage "
-            "只能使用当前 Task 的 "
-            f"acceptanceCriterionIds={allowed}；不得填写 requirementItemIds；"
-            "没有验收条件时必须传空数组。handoff 还要填写 "
-            "targetParticipantId、nextTask 和 nextIntentKind。"
+            "deliver、handoff、wait 或 blocked，并填写 summary、evidence 与 "
+            f"residualRisks。公共形状是 {commit_shape}。"
+            f"当前验收别名只有 {allowed}；不要填写数据库 criterionId，"
+            "不要自报 pass 或 verdict。Kernel 会核对回执、计算覆盖与终态。"
+            "handoff 还要填写 targetParticipantRef、nextTask、expectedOutput "
+            "intent 与 acceptanceAliases；wait 要填写 waitingFor 和 resumeCondition；"
+            "blocked 要填写 blocker、attemptedAlternatives 和 unlockCondition。"
             "不要只在自然语言里声称完成。"
             "</managed-task-follow-up>"
         )
@@ -328,65 +330,63 @@ class RoomSettleLifecycleService:
         decision = _required_text(arguments, "decision")
         if decision not in {"deliver", "handoff", "wait", "blocked"}:
             raise RoomCommitProposalError("room_commit decision is invalid")
-        result = _required_text(arguments, "result")
-        evidence_refs = _string_list(arguments.get("evidenceRefs"), "evidenceRefs")
-        requirement_coverage = _string_list(
-            arguments.get("requirementCoverage"),
-            "requirementCoverage",
-        )
+        summary = _required_text(arguments, "summary")
         dispatch = self.kernel.dispatch(str(manifest["dispatchId"]))
         task = self.kernel.task(str(dispatch["taskId"]))
         root = self.kernel.root(str(manifest["rootId"]))
-        task_criteria = {
+        task_criteria = [
             str(item)
             for item in task.get("acceptanceCriterionIds", [])
             if str(item).strip()
-        }
-        unknown_coverage = sorted(set(requirement_coverage) - task_criteria)
-        if unknown_coverage:
-            raise RoomCommitProposalError(
-                "requirementCoverage contains criteria outside the current Task"
+        ]
+        alias_map = acceptance_alias_map(task_criteria)
+        accepted_evidence_by_criterion = (
+            self.kernel.accepted_evidence_by_criterion(
+                str(root["rootId"])
             )
-        if decision == "deliver":
-            missing_coverage = sorted(task_criteria - set(requirement_coverage))
-            if missing_coverage:
-                raise RoomCommitProposalError(
-                    "deliver must cover every acceptance criterion of the current Task"
-                )
-            if not evidence_refs:
-                raise RoomCommitProposalError("deliver requires at least one evidenceRef")
+        )
+        requirement_context = self.application.requirements.dispatch_context(
+            str(dispatch["dispatchId"])
+        )
         try:
-            quality_gate_receipt = canonicalize_quality_gate(
-                proposal=arguments.get("qualityGate"),
+            canonical_gate = canonicalize_quality_gate(
+                evidence_proposal=arguments.get("evidence"),
+                residual_risks=arguments.get("residualRisks"),
                 decision=decision,
-                task_criteria=[
-                    str(item)
-                    for item in task.get("acceptanceCriterionIds", [])
-                    if str(item).strip()
-                ],
+                task_criteria=task_criteria,
+                acceptance_aliases=alias_map,
+                requirement_context=requirement_context,
+                accepted_evidence_by_criterion=(
+                    accepted_evidence_by_criterion
+                ),
+                runtime_evidence_refs=sorted(
+                    self.capabilities.runtime_evidence_refs(
+                        session_id=str(dispatch["targetSessionId"]),
+                        dispatch_id=str(dispatch["dispatchId"]),
+                    )
+                ),
                 root_id=str(root["rootId"]),
                 task_id=str(dispatch["taskId"]),
                 dispatch_id=str(dispatch["dispatchId"]),
                 generation=int(dispatch["generation"]),
-                evidence_refs=evidence_refs,
-                requirement_coverage=requirement_coverage,
                 invocation_receipt_id=str(invocation["receiptId"]),
                 now_ms=now_ms,
             )
         except RoomQualityGateError as exc:
             raise RoomCommitProposalError(str(exc)) from exc
+        quality_gate_receipt = canonical_gate.receipt
+        evidence_refs = list(canonical_gate.evidence_refs)
+        requirement_coverage = list(
+            canonical_gate.requirement_coverage
+        )
         commit_id = _stable_id(
             "room-commit",
             str(invocation["receiptId"]),
         )
         next_task = str(arguments.get("nextTask") or "").strip()
-        staged_post = self.capabilities.latest_runtime_invocation(
-            session_id=str(dispatch["targetSessionId"]),
-            dispatch_id=str(dispatch["dispatchId"]),
-            tool_name="room_post",
-        )
-        staged_arguments = _invocation_arguments(staged_post)
-        public_content = str(staged_arguments.get("content") or result).strip()
+        public_content = str(
+            arguments.get("publicSummary") or summary
+        ).strip()
         if decision == "handoff" and next_task:
             public_content = f"{public_content}\n\n下一步：{next_task}"
         post_id = _stable_id("room-post", commit_id)
@@ -414,11 +414,7 @@ class RoomSettleLifecycleService:
             },
             "createdAtMs": now_ms,
         }
-        post_blocks = (
-            staged_arguments.get("blocks")
-            if staged_arguments.get("blocks") is not None
-            else arguments.get("blocks")
-        )
+        post_blocks = arguments.get("blocks")
         if post_blocks is not None:
             post_proposal["blocks"] = list(post_blocks)
 
@@ -431,49 +427,72 @@ class RoomSettleLifecycleService:
             }[decision]
         }
         if decision == "handoff":
-            next_intent_kind = _required_text(arguments, "nextIntentKind")
-            if next_intent_kind not in {
-                "execute",
-                "review",
-                "revise",
-                "resume",
-                "retry",
-                "callback",
-                "close",
-            }:
-                raise RoomCommitProposalError("handoff nextIntentKind is invalid")
             next_task = _required_text(arguments, "nextTask")
-            next_expected_output = str(
-                arguments.get("nextExpectedOutput") or ""
-            ).strip() or f"完成并提交：{next_task}"
-            remaining_criteria = [
-                criterion_id
-                for criterion_id in task.get("acceptanceCriterionIds") or []
-                if str(criterion_id) not in set(requirement_coverage)
-            ]
+            next_expected_output = _required_text(
+                arguments,
+                "expectedOutput",
+            )
+            room = self.rooms.get(str(root["roomId"]))
+            participant_refs = participant_ref_map(
+                room["participants"]
+            )
+            raw_aliases = arguments.get("acceptanceAliases")
+            if not isinstance(raw_aliases, list):
+                raise RoomCommitProposalError(
+                    "handoff acceptanceAliases must be an array"
+                )
             try:
+                target_participant_id = resolve_participant_ref(
+                    arguments.get("targetParticipantRef"),
+                    participant_refs,
+                )
+                handoff_criteria = resolve_acceptance_aliases(
+                    raw_aliases,
+                    alias_map,
+                    field_name="acceptanceAliases",
+                )
                 continuation.update(
                     self.continuations.build(
                         parent_dispatch=dispatch,
                         parent_task=task,
                         room_id=str(root["roomId"]),
-                        target_participant_id=_required_text(
-                            arguments,
-                            "targetParticipantId",
-                        ),
+                        target_participant_id=target_participant_id,
                         trigger_id=commit_id,
-                        intent_kind=next_intent_kind,
+                        intent_kind=_required_text(arguments, "intent"),
                         objective=next_task,
                         expected_output=next_expected_output,
-                        acceptance_criterion_ids=remaining_criteria,
+                        acceptance_criterion_ids=handoff_criteria,
+                        context_evidence_refs=[
+                            *(
+                                ref
+                                for refs in accepted_evidence_by_criterion.values()
+                                for ref in refs
+                            ),
+                            *evidence_refs,
+                        ],
                         kind="handoff",
                     )
                 )
-            except RoomContinuationProposalError as exc:
+            except (
+                AcceptanceAliasError,
+                ParticipantReferenceError,
+                RoomContinuationProposalError,
+            ) as exc:
                 raise RoomCommitProposalError(str(exc)) from exc
+        elif decision == "wait":
+            _required_text(arguments, "waitingFor")
+            _required_text(arguments, "resumeCondition")
+        elif decision == "blocked":
+            _required_text(arguments, "blocker")
+            attempted = arguments.get("attemptedAlternatives")
+            if not isinstance(attempted, list) or not attempted:
+                raise RoomCommitProposalError(
+                    "blocked requires attemptedAlternatives"
+                )
+            _required_text(arguments, "unlockCondition")
         material = {
             "decision": decision,
-            "result": result,
+            "summary": summary,
             "evidenceRefs": evidence_refs,
             "requirementCoverage": requirement_coverage,
             "qualityGateReceipt": quality_gate_receipt,
@@ -492,8 +511,6 @@ class RoomSettleLifecycleService:
             "requirementCoverage": requirement_coverage,
             "createdAtMs": now_ms,
         }
-        if staged_post is not None:
-            commit["postInvocationReceiptId"] = staged_post["receiptId"]
         return commit
 
 

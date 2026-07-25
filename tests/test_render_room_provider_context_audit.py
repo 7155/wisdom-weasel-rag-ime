@@ -29,12 +29,11 @@ class RenderRoomProviderContextAuditTest(unittest.TestCase):
     ) -> None:
         contradictory = "\n".join(
             (
-                '<rag-ime-context type="workflow_control">',
-                "## 当前工作流",
-                "### Plan · completed",
-                "### Act Gate",
-                "计划尚未获得用户批准，不得执行写操作。",
-                "</rag-ime-context>",
+                "<workflow-state>",
+                "当前任务：完成验收",
+                "计划：全部完成",
+                "行动状态：计划尚未获得用户批准，不得执行写操作。",
+                "</workflow-state>",
             )
         )
         consistent = contradictory.replace(
@@ -73,7 +72,7 @@ class RenderRoomProviderContextAuditTest(unittest.TestCase):
             prompt = "\n".join(
                 (
                     "base",
-                    '<rag-ime-context type="workflow_control">workflow</rag-ime-context>',
+                    "<workflow-state>workflow</workflow-state>",
                     '<rag-ime-context type="room_context">task</rag-ime-context>',
                     '<rag-ime-context type="session_memory">memory</rag-ime-context>',
                 )
@@ -179,7 +178,7 @@ class RenderRoomProviderContextAuditTest(unittest.TestCase):
             ordinary_prompt = "\n".join(
                 (
                     "base",
-                    '<rag-ime-context type="workflow_control">workflow</rag-ime-context>',
+                    "<workflow-state>workflow</workflow-state>",
                     '<rag-ime-context type="session_memory">memory</rag-ime-context>',
                 )
             )
@@ -495,6 +494,85 @@ class RenderRoomProviderContextAuditTest(unittest.TestCase):
         self.assertEqual(
             AUDIT._wire_tool_names(call),
             ["tool_search", "workspace_read"],
+        )
+
+    def test_skill_load_keeps_prompt_bytes_and_restores_exact_body_next_epoch(
+        self,
+    ) -> None:
+        prompt = "稳定前缀\n用户原始字节"
+        loaded = (
+            '<loaded_skill name="quality-gate" revision="sha256:abc">\n'
+            "exact body\n"
+            "</loaded_skill>"
+        )
+        calls = [
+            (
+                1,
+                1,
+                {
+                    "index": 1,
+                    "capturedAtMs": 1,
+                    "providerContext": {
+                        "systemPrompt": prompt,
+                        "messages": [{"role": "user", "content": "work"}],
+                    },
+                    "assistantMessage": {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "toolCall",
+                                "id": "load-1",
+                                "name": "skill_load",
+                                "arguments": {"name": "quality-gate"},
+                            }
+                        ],
+                    },
+                },
+            ),
+            (
+                1,
+                2,
+                {
+                    "index": 2,
+                    "capturedAtMs": 2,
+                    "providerContext": {
+                        "systemPrompt": prompt,
+                        "messages": [
+                            {"role": "user", "content": "work"},
+                            {
+                                "role": "toolResult",
+                                "toolName": "skill_load",
+                                "toolCallId": "load-1",
+                                "content": [{"type": "text", "text": loaded}],
+                            },
+                        ],
+                    },
+                    "assistantMessage": {
+                        "role": "assistant",
+                        "content": [],
+                    },
+                },
+            ),
+        ]
+
+        evidence, append_only, restored = (
+            AUDIT._skill_load_context_epoch_evidence(
+                calls,
+                [f"new epoch prefix\n\n{loaded}"],
+            )
+        )
+
+        self.assertTrue(append_only)
+        self.assertTrue(restored)
+        self.assertEqual(len(evidence), 1)
+        self.assertTrue(evidence[0]["promptBytesUnchanged"])
+        self.assertEqual(
+            evidence[0]["promptBeforeSha256"],
+            evidence[0]["promptAfterSha256"],
+        )
+        self.assertEqual(
+            evidence[0]["recoveryPromptExactOccurrenceCounts"],
+            [1],
         )
 
 

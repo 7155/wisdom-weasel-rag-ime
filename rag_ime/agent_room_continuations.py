@@ -43,6 +43,7 @@ class RoomContinuationFactory:
         objective: str,
         expected_output: str,
         acceptance_criterion_ids: Sequence[str],
+        context_evidence_refs: Sequence[str] = (),
         kind: str,
     ) -> dict[str, dict[str, object]]:
         if kind not in {"handoff", "collaboration"}:
@@ -74,6 +75,10 @@ class RoomContinuationFactory:
             if str(item).strip()
         ]
         criteria = _unique_text(acceptance_criterion_ids)
+        if not criteria:
+            raise RoomContinuationProposalError(
+                f"{kind} requires at least one acceptance criterion"
+            )
         unknown = sorted(set(criteria) - set(parent_criteria))
         if unknown:
             raise RoomContinuationProposalError(
@@ -121,6 +126,9 @@ class RoomContinuationFactory:
                 parent_task.get("requirementItemIds") or []
             ),
             "acceptanceCriterionIds": criteria,
+            "contextEvidenceRefs": _unique_text(
+                context_evidence_refs
+            )[:32],
             "revision": 0,
             "state": "active",
         }

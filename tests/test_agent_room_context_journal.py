@@ -39,7 +39,7 @@ class RoomContextJournalTests(unittest.TestCase):
         for forbidden in ("message_completed", "assistant_output", "turn_completed"):
             with self.subTest(forbidden=forbidden), self.assertRaisesRegex(
                 ValueError,
-                "explicit user or room_commit",
+                "explicit user, room_post or room_commit",
             ):
                 self.context.publish_post(
                     {
@@ -63,7 +63,7 @@ class RoomContextJournalTests(unittest.TestCase):
             )
 
     def test_room_commit_post_requires_commit_reference(self) -> None:
-        with self.assertRaisesRegex(ValueError, "commit ref"):
+        with self.assertRaisesRegex(ValueError, "source ref"):
             self.context.publish_post(
                 {
                     **self._post(),
@@ -107,6 +107,91 @@ class RoomContextJournalTests(unittest.TestCase):
             self.assertEqual(
                 conn.execute("SELECT COUNT(*) FROM room_v2_context_entries").fetchone()[0],
                 1,
+            )
+
+    def test_immediate_room_post_is_idempotent_but_rejects_a_stopped_dispatch(
+        self,
+    ) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO room_kernel_roots(
+                    root_id, room_id, generation, state, owner,
+                    requirement_anchor_ref, budget_remaining, budget_reserved,
+                    max_hops, max_depth, acceptance_criteria_json,
+                    covered_criteria_json, payload_json,
+                    created_at_ms, updated_at_ms
+                ) VALUES (
+                    'root:live', 'room:1', 3, 'running', 'participant:1',
+                    'anchor:1', 2, 0, 2, 2, '[]', '[]', '{}', 1, 1
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO room_kernel_tasks(
+                    task_id, root_id, parent_task_id, state,
+                    payload_json, updated_at_ms
+                ) VALUES ('task:live', 'root:live', NULL, 'active', '{}', 1)
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO room_kernel_dispatches(
+                    dispatch_id, root_id, task_id, parent_dispatch_id,
+                    generation, hop_count, depth, budget_cost,
+                    target_session_id, target_participant_id, trigger_id,
+                    intent_kind, idempotency_key, state, payload_json,
+                    created_at_ms, updated_at_ms
+                ) VALUES (
+                    'dispatch:live', 'root:live', 'task:live', NULL,
+                    3, 0, 0, 1, 'session:1', 'participant:1', 'trigger:1',
+                    'execute', 'dispatch:live', 'running', '{}', 1, 1
+                )
+                """
+            )
+
+        post = {
+            **self._post(),
+            "postId": "post:live",
+            "rootId": "root:live",
+            "taskId": "task:live",
+            "dispatchId": "dispatch:live",
+            "authorActorRef": "participant:1",
+            "idempotencyKey": "post:live",
+            "publicationSource": {
+                "kind": "room_post",
+                "ref": "invoke:room-post:live",
+            },
+        }
+        first, created = self.context.publish_post(post)
+        self.assertTrue(created)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE room_kernel_dispatches
+                SET state = 'committed', updated_at_ms = 2
+                WHERE dispatch_id = 'dispatch:live'
+                """
+            )
+
+        repeated, repeated_created = self.context.publish_post(post)
+        self.assertFalse(repeated_created)
+        self.assertEqual(repeated, first)
+        with self.assertRaisesRegex(
+            ProjectionGenerationMismatch,
+            "Dispatch generation stopped",
+        ):
+            self.context.publish_post(
+                {
+                    **post,
+                    "postId": "post:late",
+                    "idempotencyKey": "post:late",
+                    "publicationSource": {
+                        "kind": "room_post",
+                        "ref": "invoke:room-post:late",
+                    },
+                }
             )
 
     def test_projection_is_read_only_until_provider_receipt_seals_it(self) -> None:

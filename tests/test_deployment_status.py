@@ -136,7 +136,7 @@ class InstalledProductAuditTests(unittest.TestCase):
                 / "integrations"
                 / "pi"
                 / "skills"
-                / "rag-ime-memory-curator"
+                / "memory-curation"
                 / "SKILL.md"
             )
             installed = (
@@ -144,7 +144,7 @@ class InstalledProductAuditTests(unittest.TestCase):
                 / "Agent"
                 / "config"
                 / "skills"
-                / "rag-ime-memory-curator"
+                / "memory-curation"
                 / "SKILL.md"
             )
             source.parent.mkdir(parents=True)

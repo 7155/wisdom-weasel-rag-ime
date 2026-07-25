@@ -2496,8 +2496,7 @@ def _room_dispatch_act_gate(
         "allowed": True,
         "reason": "approved",
         "message": (
-            "当前受管 Room Dispatch 已授权执行；读写、Shell 与外部动作仍受"
-            "能力清单、原生审批、取消和迟到写入边界约束。"
+            "当前 Room 任务已经开始，可以在本轮权限范围内继续工作。"
         ),
     }
 

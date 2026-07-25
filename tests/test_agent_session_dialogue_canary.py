@@ -93,7 +93,7 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
             del timeout
             paths.append(path)
             prompt = (
-                "<agent-role-book>伙伴定义</agent-role-book>\n"
+                "<agent-profile>伙伴定义</agent-profile>\n"
                 '<rag-ime-context type="session_memory">'
                 "## Session 记忆\n代码任务使用真实测试和证据化交付"
                 "</rag-ime-context>"
@@ -153,6 +153,7 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
             governance = {
                 "catalogBlocksExactlyOnceEveryCall": True,
                 "routingCardFieldContractEveryCall": True,
+                "activeDeferredMutuallyExclusiveEveryCall": True,
                 "routingCardContentCompleteEveryCall": True,
                 "initialProductSchemaNames": [tool_name],
                 "loadedProductSchemasBeforeFirstCapture": [tool_name],

@@ -1,0 +1,4 @@
+interface:
+  display_name: "记忆整理"
+  short_description: "按 Evidence、Atom、Topic Book 与 Timeline 分层治理长期记忆"
+  default_prompt: "Curate durable personal memory only for an explicit request, a verified reusable task outcome, or a bounded idle review. Preserve provenance and Atom lineage, synthesize one claim at a time, keep manual review and background auto-apply as separate governed lanes, and never turn transcripts or private Room process into durable facts."

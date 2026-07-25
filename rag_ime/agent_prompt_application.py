@@ -178,7 +178,7 @@ class AgentPromptApplicationService:
             ):
                 return active, False
         daily_title = (
-            "输入助手 "
+            "记忆检索 "
             f"{datetime.now().astimezone().date().isoformat()}"
         )
         for session in self.sessions.list(

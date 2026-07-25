@@ -1,67 +1,61 @@
 {
   "schemaVersion": "wisdom-weasel.room-skill-policy.v1",
-  "policyId": "room-core-v1",
-  "version": 1,
+  "policyId": "room-core-v2",
+  "version": 2,
   "hashRule": "sha256-skill-body-utf8-v1",
   "skills": [
     {
-      "skillId": "room-requirement-clarification",
+      "skillId": "requirement-alignment",
       "stages": ["requirements"],
       "risk": "medium",
-      "nextCandidates": ["room-solution-convergence"]
+      "nextCandidates": ["solution-convergence"]
     },
     {
-      "skillId": "room-solution-convergence",
+      "skillId": "solution-convergence",
       "stages": ["solution"],
       "risk": "medium",
-      "nextCandidates": ["room-implementation-planning"]
+      "nextCandidates": ["implementation-planning"]
     },
     {
-      "skillId": "room-implementation-planning",
+      "skillId": "implementation-planning",
       "stages": ["planning"],
       "risk": "medium",
-      "nextCandidates": ["room-test-driven-implementation"]
+      "nextCandidates": ["test-driven-implementation"]
     },
     {
-      "skillId": "room-test-driven-implementation",
+      "skillId": "test-driven-implementation",
       "stages": ["implementation"],
       "risk": "medium",
-      "nextCandidates": ["room-delivery-self-check"]
+      "nextCandidates": ["quality-gate"]
     },
     {
-      "skillId": "room-systematic-debugging",
+      "skillId": "systematic-debugging",
       "stages": ["debugging"],
       "risk": "high",
-      "nextCandidates": ["room-test-driven-implementation", "room-delivery-self-check"]
+      "nextCandidates": ["test-driven-implementation", "quality-gate"]
     },
     {
-      "skillId": "room-delivery-self-check",
-      "stages": ["self-check", "review"],
+      "skillId": "quality-gate",
+      "stages": ["self-check", "closure"],
       "risk": "medium",
-      "nextCandidates": ["room-independent-vision-review", "room-structured-handoff", "room-delivery-closure"]
+      "nextCandidates": ["independent-review", "structured-handoff"]
     },
     {
-      "skillId": "room-independent-vision-review",
+      "skillId": "independent-review",
       "stages": ["vision-review", "review"],
       "risk": "high",
-      "nextCandidates": ["room-review-feedback-resolution", "room-delivery-closure"]
+      "nextCandidates": ["review-feedback-resolution", "structured-handoff"]
     },
     {
-      "skillId": "room-review-feedback-resolution",
+      "skillId": "review-feedback-resolution",
       "stages": ["feedback"],
       "risk": "high",
-      "nextCandidates": ["room-independent-vision-review"]
+      "nextCandidates": ["independent-review"]
     },
     {
-      "skillId": "room-structured-handoff",
+      "skillId": "structured-handoff",
       "stages": ["handoff"],
       "risk": "medium",
-      "nextCandidates": []
-    },
-    {
-      "skillId": "room-delivery-closure",
-      "stages": ["closure"],
-      "risk": "high",
       "nextCandidates": []
     }
   ]

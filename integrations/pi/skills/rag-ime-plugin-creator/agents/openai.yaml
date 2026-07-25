@@ -1,4 +1,0 @@
-interface:
-  display_name: "智鼬插件创建"
-  short_description: "创建、校验并提交受管插件草案，等待控制中心审批"
-  default_prompt: "Create the smallest managed Wisdom Weasel plugin draft, validate it, and submit an install proposal without bypassing Control Center approval."

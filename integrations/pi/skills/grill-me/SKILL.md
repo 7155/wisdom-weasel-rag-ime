@@ -13,6 +13,13 @@ notFor:
 
 # Grill Me
 
+## Question Standard
+
+Challenge one decision, not the user. A useful question cannot be answered by
+reading source, has materially different outcomes, and names the consequence
+of each choice. Present a recommendation before asking so the question is not
+outsourced analysis.
+
 ## Workflow
 
 1. Restate the single decision and the user-visible consequence of choosing it
@@ -31,12 +38,40 @@ notFor:
    consequence, and any still-open question. Hand this decision back to the
    calling conversation; do not start work yourself.
 
+## Decision Record
+
+```text
+Decision:
+Known facts:
+Options and consequences:
+Recommendation:
+User choice:
+Reason:
+Rejected alternatives:
+Acceptance effect:
+Open question:
+```
+
+Good: "Should untrusted plugins default to disabled or inherit workspace trust?
+I recommend disabled because trust is not transitive; enabling inheritance
+reduces clicks but broadens execution authority."
+
+Bad: "What do you want the plugin system to do?" It does not narrow a material
+tradeoff or provide evidence and a recommendation.
+
 ## Exit Contract
 
 Exit as `decision_ready`, `needs_one_more_decision`, or
 `blocked_by_external_fact`. A decision is ready only when the surrounding
 requirement or planning conversation can continue without guessing about this
 tradeoff.
+
+## Self-Check
+
+- Can source or runtime evidence answer this without the user?
+- Are the options materially different and no more than three?
+- Did I ask exactly one decision question?
+- Did I accept a concise answer without reopening the same choice?
 
 ## Boundaries
 

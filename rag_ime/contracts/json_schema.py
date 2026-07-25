@@ -44,6 +44,66 @@ def _validate(
         target = _resolve_reference(reference, root)
         _validate(value, target, root=root, path=path, errors=errors)
         return
+
+    all_of = schema.get("allOf")
+    if isinstance(all_of, list):
+        for candidate in all_of:
+            if isinstance(candidate, Mapping):
+                _validate(
+                    value,
+                    candidate,
+                    root=root,
+                    path=path,
+                    errors=errors,
+                )
+
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list):
+        matching = [
+            candidate
+            for candidate in any_of
+            if isinstance(candidate, Mapping)
+            and _schema_matches(value, candidate, root=root, path=path)
+        ]
+        if not matching:
+            errors.append(f"{path}: does not match any allowed schema")
+
+    one_of = schema.get("oneOf")
+    if isinstance(one_of, list):
+        match_count = sum(
+            1
+            for candidate in one_of
+            if isinstance(candidate, Mapping)
+            and _schema_matches(value, candidate, root=root, path=path)
+        )
+        if match_count != 1:
+            errors.append(
+                f"{path}: expected exactly one allowed schema, matched {match_count}"
+            )
+
+    excluded = schema.get("not")
+    if (
+        isinstance(excluded, Mapping)
+        and _schema_matches(value, excluded, root=root, path=path)
+    ):
+        errors.append(f"{path}: matches a forbidden schema")
+
+    condition = schema.get("if")
+    if isinstance(condition, Mapping):
+        branch = (
+            schema.get("then")
+            if _schema_matches(value, condition, root=root, path=path)
+            else schema.get("else")
+        )
+        if isinstance(branch, Mapping):
+            _validate(
+                value,
+                branch,
+                root=root,
+                path=path,
+                errors=errors,
+            )
+
     expected_type = schema.get("type")
     if isinstance(expected_type, list):
         if not any(_matches_type(value, item) for item in expected_type):
@@ -61,6 +121,9 @@ def _validate(
         minimum_length = schema.get("minLength")
         if isinstance(minimum_length, int) and len(value) < minimum_length:
             errors.append(f"{path}: string is shorter than {minimum_length}")
+        maximum_length = schema.get("maxLength")
+        if isinstance(maximum_length, int) and len(value) > maximum_length:
+            errors.append(f"{path}: string is longer than {maximum_length}")
         pattern = schema.get("pattern")
         if isinstance(pattern, str) and re.search(pattern, value) is None:
             errors.append(f"{path}: string does not match required pattern")
@@ -68,6 +131,9 @@ def _validate(
         minimum = schema.get("minimum")
         if isinstance(minimum, (int, float)) and value < minimum:
             errors.append(f"{path}: value is below {minimum}")
+        maximum = schema.get("maximum")
+        if isinstance(maximum, (int, float)) and value > maximum:
+            errors.append(f"{path}: value is above {maximum}")
     if isinstance(value, Mapping):
         required = schema.get("required")
         if isinstance(required, list):
@@ -76,18 +142,83 @@ def _validate(
                     errors.append(f"{path}: missing required field {key}")
         properties = schema.get("properties")
         if isinstance(properties, Mapping):
-            if schema.get("additionalProperties") is False:
-                for key in value:
-                    if key not in properties:
-                        errors.append(f"{path}: unsupported field {key}")
+            additional = schema.get("additionalProperties")
+            for key in value:
+                if key in properties:
+                    continue
+                if additional is False:
+                    errors.append(f"{path}: unsupported field {key}")
+                elif isinstance(additional, Mapping):
+                    _validate(
+                        value[key],
+                        additional,
+                        root=root,
+                        path=f"{path}.{key}",
+                        errors=errors,
+                    )
             for key, child_schema in properties.items():
                 if key in value and isinstance(child_schema, Mapping):
-                    _validate(value[key], child_schema, root=root, path=f"{path}.{key}", errors=errors)
+                    _validate(
+                        value[key],
+                        child_schema,
+                        root=root,
+                        path=f"{path}.{key}",
+                        errors=errors,
+                    )
+        elif schema.get("additionalProperties") is False and value:
+            for key in value:
+                errors.append(f"{path}: unsupported field {key}")
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        minimum_items = schema.get("minItems")
+        if isinstance(minimum_items, int) and len(value) < minimum_items:
+            errors.append(f"{path}: array has fewer than {minimum_items} items")
+        maximum_items = schema.get("maxItems")
+        if isinstance(maximum_items, int) and len(value) > maximum_items:
+            errors.append(f"{path}: array has more than {maximum_items} items")
+        if schema.get("uniqueItems") is True:
+            identities = [_json_identity(item) for item in value]
+            if len(identities) != len(set(identities)):
+                errors.append(f"{path}: array items must be unique")
         items = schema.get("items")
         if isinstance(items, Mapping):
             for index, item in enumerate(value):
-                _validate(item, items, root=root, path=f"{path}[{index}]", errors=errors)
+                _validate(
+                    item,
+                    items,
+                    root=root,
+                    path=f"{path}[{index}]",
+                    errors=errors,
+                )
+
+
+def _schema_matches(
+    value: object,
+    schema: Mapping[str, object],
+    *,
+    root: Mapping[str, object],
+    path: str,
+) -> bool:
+    candidate_errors: list[str] = []
+    _validate(
+        value,
+        schema,
+        root=root,
+        path=path,
+        errors=candidate_errors,
+    )
+    return not candidate_errors
+
+
+def _json_identity(value: object) -> str:
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError):
+        return repr(value)
 
 
 def _resolve_reference(reference: str, root: Mapping[str, object]) -> Mapping[str, object]:

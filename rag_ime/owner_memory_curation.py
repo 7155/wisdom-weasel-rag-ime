@@ -1485,7 +1485,7 @@ def _capture_hints_for_sources(
         rows = conn.execute(
             f"""
             SELECT source_id, hint_id, kind, normalized_claim, scope, reason,
-                   evidence_ids_json, updated_at_ms
+                   basis, future_use, supersedes, evidence_ids_json, updated_at_ms
             FROM memory_capture_hints
             WHERE source_id IN ({placeholders}) AND status = 'active'
             ORDER BY updated_at_ms ASC, hint_id ASC
@@ -1500,6 +1500,9 @@ def _capture_hints_for_sources(
                     "claim": str(row["normalized_claim"]),
                     "scope": str(row["scope"]),
                     "reason": str(row["reason"]),
+                    "basis": str(row["basis"]),
+                    "futureUse": str(row["future_use"]),
+                    "supersedes": str(row["supersedes"]),
                     "evidenceIds": _json_strings(row["evidence_ids_json"]),
                     "authoritative": False,
                 }

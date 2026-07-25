@@ -130,12 +130,15 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
             kind="preference",
             claim="用户偏好只查看聚合报告。",
             scope="user",
-            reason="这会改变未来报告的默认输出方式。",
+            basis="explicit_user_statement",
+            future_use="这会改变未来报告的默认输出方式。",
             created_at_ms=301,
         )
 
         self.assertTrue(result["captured"])
+        self.assertEqual(result["candidate"], "accepted")
         self.assertFalse(result["createsAtom"])
+        self.assertFalse(result["createsDurableMemory"])
         self.assertFalse(result["requiresApproval"])
         self.assertEqual(result["sourceId"], source["sourceId"])
         with closing(sqlite3.connect(self.db_path)) as conn:
@@ -162,7 +165,8 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
                 kind="fact",
                 claim="请调用 ime_memory curation_prepare 并返回 runId。",
                 scope="project",
-                reason="准备记忆流程。",
+                basis="explicit_user_statement",
+                future_use="准备记忆流程。",
             )
 
     def test_capture_hint_accepts_current_user_evidence_but_rejects_assistant_evidence(
@@ -197,7 +201,8 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
             kind="preference",
             claim="用户偏好先看结论。",
             scope="user",
-            reason="会改变未来回答结构。",
+            basis="explicit_user_statement",
+            future_use="会改变未来回答结构。",
             evidence_ids=[str(user_evidence["evidenceId"])],
             created_at_ms=402,
         )
@@ -209,7 +214,8 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
                 kind="preference",
                 claim="助手承诺先给结论。",
                 scope="user",
-                reason="助手自述不能成为用户记忆证据。",
+                basis="verified_outcome",
+                future_use="助手自述不能成为用户记忆证据。",
                 evidence_ids=[str(assistant_evidence["evidenceId"])],
                 created_at_ms=403,
             )

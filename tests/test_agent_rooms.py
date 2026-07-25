@@ -1066,6 +1066,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             room_id=str(room["id"]),
             objective="完成时序数据库性能诊断",
             expected_output="给出诊断报告",
+            acceptance_criteria=["诊断报告已生成"],
             current_owner_participant_id=str(vcp["id"]),
             created_by_participant_id=str(vcp["id"]),
             client_message_id="work-item-authority-1",
@@ -1205,8 +1206,8 @@ class AgentRoomServiceTests(unittest.TestCase):
         prompt_payload = prompt.call_args.args[1]
         self.assertEqual(prompt_payload["message"], "@智鼬·初识 请先诊断状态")
         room_context = prompt_payload["_transientContext"]
-        self.assertIn('visibility="provider-only"', room_context)
-        self.assertIn("当前岗位：implementer", room_context)
+        self.assertIn("<room-context>", room_context)
+        self.assertIn("你本轮以 implementer 视角参与", room_context)
         self.assertNotIn(str(self.root.resolve()), room_context)
         self.assertNotIn("@智鼬·初识 请先诊断状态", room_context)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
@@ -1784,8 +1785,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             runtime_message.removeprefix(RUNTIME_PROMPT_ENVELOPE_PREFIX)
         )
         self.assertEqual(envelope["message"], first_text)
-        self.assertIn("<room-turn-context", envelope["transientContext"])
-        self.assertIn('mode="incremental"', envelope["transientContext"])
+        self.assertIn("<room-context>", envelope["transientContext"])
         self.assertNotIn(first_text, envelope["transientContext"])
         self.assertNotIn("受管 Room 上下文", runtime_message)
 
@@ -1803,7 +1803,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             first_text,
         )
         self.assertNotIn(
-            "room-turn-context",
+            "room-context",
             json.dumps(user_messages[0], ensure_ascii=False),
         )
 
@@ -1886,7 +1886,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         prompt_payload = prompt.call_args.args[1]
         self.assertEqual(prompt_payload["message"], "请协调大家检查当前项目")
         moderator_context = prompt_payload["_transientContext"]
-        self.assertIn("当前岗位：coordinator", moderator_context)
+        self.assertIn("你本轮以 coordinator 视角参与", moderator_context)
         self.assertNotIn("ime_agents.room_ask", moderator_context)
         self.assertNotIn("role=researcher", moderator_context)
         self.assertNotIn("role=implementer", moderator_context)

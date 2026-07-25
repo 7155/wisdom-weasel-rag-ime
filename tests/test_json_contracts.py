@@ -142,6 +142,78 @@ class JsonContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractValidationError, "missing required field requestSeq"):
             validate_contract({"sessionId": "one"}, "rime-suggest-request.v1.json")
 
+    def test_validator_enforces_bounds_uniqueness_and_combinators(self) -> None:
+        schema = {
+            "type": "object",
+            "required": ["mode", "label", "items", "score"],
+            "properties": {
+                "mode": {"enum": ["a", "b"]},
+                "label": {"type": "string", "minLength": 1, "maxLength": 4},
+                "items": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 2,
+                    "uniqueItems": True,
+                    "items": {"type": "string"},
+                },
+                "score": {"type": "integer", "minimum": 0, "maximum": 2},
+                "onlyA": {"type": "string"},
+            },
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"mode": {"const": "a"}},
+                        "required": ["mode"],
+                    },
+                    "then": {"required": ["onlyA"]},
+                    "else": {"not": {"required": ["onlyA"]}},
+                }
+            ],
+            "additionalProperties": False,
+        }
+        validate_contract(
+            {
+                "mode": "a",
+                "label": "okay",
+                "items": ["x", "y"],
+                "score": 2,
+                "onlyA": "required",
+            },
+            schema,
+        )
+        invalid = (
+            {
+                "mode": "a",
+                "label": "too long",
+                "items": ["x"],
+                "score": 1,
+                "onlyA": "required",
+            },
+            {
+                "mode": "a",
+                "label": "okay",
+                "items": ["x", "x"],
+                "score": 1,
+                "onlyA": "required",
+            },
+            {
+                "mode": "a",
+                "label": "okay",
+                "items": [],
+                "score": 3,
+            },
+            {
+                "mode": "b",
+                "label": "okay",
+                "items": ["x"],
+                "score": 1,
+                "onlyA": "forbidden",
+            },
+        )
+        for payload in invalid:
+            with self.assertRaises(ContractValidationError):
+                validate_contract(payload, schema)
+
     def test_frontend_selection_requires_generation_bound_snapshot(self) -> None:
         selection = {
             "schemaVersion": "rag-ime.frontend-selection.v1",

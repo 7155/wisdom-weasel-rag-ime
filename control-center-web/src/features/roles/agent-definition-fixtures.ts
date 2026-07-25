@@ -8,7 +8,7 @@ export type CollaborationRoleFixture = {
   responsibilities: string[];
   entryConditions: string[];
   exitConditions: string[];
-  allowedCommitDecisions: Array<'dispatch' | 'wait' | 'blocked' | 'complete'>;
+  allowedCommitDecisions: Array<'deliver' | 'handoff' | 'wait' | 'blocked'>;
   capabilityRestrictions: string[];
 };
 
@@ -25,7 +25,7 @@ export const collaborationRoleFixtures: CollaborationRoleFixture[] = [
     responsibilities: ['确认任务边界与验收条件', '提出有理由的交接或完成决定'],
     entryConditions: ['存在可执行任务或需要协调的阻塞'],
     exitConditions: ['任务已交接、等待、阻塞升级或满足完成条件'],
-    allowedCommitDecisions: ['dispatch', 'wait', 'blocked', 'complete'],
+    allowedCommitDecisions: ['deliver', 'handoff', 'wait', 'blocked'],
     capabilityRestrictions: ['control', 'delegation', 'memory', 'planning', 'rag', 'review'],
   },
   {
@@ -34,7 +34,7 @@ export const collaborationRoleFixtures: CollaborationRoleFixture[] = [
     responsibilities: ['核对来源与时间', '提交发现、证据和未解决缺口'],
     entryConditions: ['任务需要外部或本地证据'],
     exitConditions: ['材料性发现已提交或证据缺口已报告'],
-    allowedCommitDecisions: ['dispatch', 'wait', 'blocked', 'complete'],
+    allowedCommitDecisions: ['deliver', 'handoff', 'wait', 'blocked'],
     capabilityRestrictions: ['delegation', 'memory', 'rag'],
   },
   {
@@ -43,7 +43,7 @@ export const collaborationRoleFixtures: CollaborationRoleFixture[] = [
     responsibilities: ['执行已授权改动', '提交产物、验证和剩余风险'],
     entryConditions: ['输入和验收条件已经足够明确'],
     exitConditions: ['产物已验证、交接、等待或报告阻塞'],
-    allowedCommitDecisions: ['dispatch', 'wait', 'blocked', 'complete'],
+    allowedCommitDecisions: ['deliver', 'handoff', 'wait', 'blocked'],
     capabilityRestrictions: ['control', 'delegation', 'memory', 'rag'],
   },
   {
@@ -52,7 +52,7 @@ export const collaborationRoleFixtures: CollaborationRoleFixture[] = [
     responsibilities: ['按严重度报告发现', '区分已证实问题与剩余风险'],
     entryConditions: ['存在可审查的产物和验收依据'],
     exitConditions: ['复核结论和证据已提交'],
-    allowedCommitDecisions: ['dispatch', 'wait', 'blocked', 'complete'],
+    allowedCommitDecisions: ['deliver', 'handoff', 'wait', 'blocked'],
     capabilityRestrictions: ['delegation', 'memory', 'rag', 'review'],
   },
   {
@@ -61,7 +61,7 @@ export const collaborationRoleFixtures: CollaborationRoleFixture[] = [
     responsibilities: ['回答有界专业问题', '暴露假设、证据和不确定性'],
     entryConditions: ['任务需要明确领域知识'],
     exitConditions: ['专业判断和适用边界已提交'],
-    allowedCommitDecisions: ['wait', 'blocked', 'complete'],
+    allowedCommitDecisions: ['deliver', 'handoff', 'wait', 'blocked'],
     capabilityRestrictions: ['memory', 'rag'],
   },
 ];

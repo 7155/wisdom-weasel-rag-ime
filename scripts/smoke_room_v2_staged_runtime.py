@@ -36,7 +36,7 @@ def main() -> int:
     manifest = json.loads((payload / "manifest.json").read_text(encoding="utf-8"))
     if not node.is_file() or not entrypoint.is_file():
         raise SystemExit("staged Runtime Host payload is incomplete")
-    skill_name = "room-test-driven-implementation"
+    skill_name = "test-driven-implementation"
     skill_source = payload / "runtime-host" / "skills" / skill_name / "SKILL.md"
     skill_body = _skill_body(skill_source.read_text(encoding="utf-8"))
     skill_hash = hashlib.sha256(skill_body.encode("utf-8")).hexdigest()
@@ -196,7 +196,7 @@ def main() -> int:
                 for item in active_schemas
             ):
                 raise RuntimeError("Room tool schema entered Provider tools before tool_load")
-            if system_prompt.count('<loaded_skill name="room-test-driven-implementation"') != 1:
+            if system_prompt.count('<loaded_skill name="test-driven-implementation"') != 1:
                 raise RuntimeError("required Room Skill was not injected exactly once")
             if skill_body not in system_prompt:
                 raise RuntimeError("required Room Skill body did not enter the real system prompt")

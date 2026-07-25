@@ -13,6 +13,12 @@ notFor:
 
 # Improve Codebase Architecture
 
+## Evidence Standard
+
+Architecture work earns its cost only when it removes repeated decisions,
+clarifies lifecycle ownership, or makes a meaningful boundary independently
+testable. File size, naming taste, and abstract "cleanliness" are not evidence.
+
 ## Workflow
 
 1. Read the repository guide, domain glossary, architecture decisions, current
@@ -20,26 +26,63 @@ notFor:
 2. Inspect real friction: mixed lifecycle ownership, repeated branching,
    duplicated contracts, unstable dependencies, hard-to-test state, and files
    that change for unrelated reasons. File size alone is not evidence.
-3. Trace each candidate through its caller, state owner, side effects, tests,
-   and downstream consumer.
+3. Trace each candidate through its interface, callers, state owner, side
+   effects, tests, and downstream consumer. Ask:
+   - **depth**: does the module hide meaningful complexity behind a small,
+     stable interface?
+   - **locality**: can a maintainer understand and change one behavior without
+     opening unrelated lifecycle owners?
+   - **seam**: is there a natural boundary for testing, substitution, or
+     migration, rather than an artificial wrapper?
+   - **adapter**: is compatibility translated once at the edge, or leaking
+     branches through the core?
+   - **leverage**: will one change delete repeated decisions across callers?
 4. Keep only one to three candidates with concrete evidence and a reversible
-   boundary. Prefer deletion, a thinner entry point, or composition over a new
-   abstraction.
+   boundary. Prefer deletion, a thinner entry point, a deeper owner module, or
+   composition over a new abstraction.
 5. For each candidate, state:
    - symptom and source locations;
    - current owner and desired owner;
    - smallest coherent change;
    - compatibility, migration, and rollback risk;
-   - the deletion test: what becomes unnecessary afterward;
+   - the **deletion test**: which branches, adapters, state copies, or files become
+     unnecessary afterward;
    - verification that would prove the change.
 6. Recommend an order, but do not implement until the user selects a candidate.
-   If the choice depends on product tradeoffs, load `grill-me` and resolve one
-   decision at a time.
+   If the choice depends on product tradeoffs, follow an already loaded
+   `grill-me`; otherwise load that exact Skill once and resolve one decision at
+   a time.
+
+## Candidate Card
+
+```text
+Symptom and locations:
+Current owner -> desired owner:
+Callers and downstream consumers:
+Smallest coherent change:
+What becomes deletable:
+Compatibility and migration:
+Rollback:
+Fresh verification:
+Expected maintenance gain:
+```
+
+Reject a candidate when it only moves lines, creates a wrapper without hiding
+complexity, duplicates a runtime path, or requires broad migration before any
+behavior can be verified.
 
 ## Exit Contract
 
 Return the shortlist and stop at `awaiting_selection`, `no_high-value_candidate`,
 or `blocked_by_missing_evidence`.
+
+## Self-Check
+
+- Does each candidate follow a real call path and state owner?
+- Will the change delete branches, state copies, or repeated translations?
+- Is the entry point thinner and the owning module deeper?
+- Can the change be verified and rolled back independently?
+- Did I keep implementation outside the architecture-selection phase?
 
 ## Boundaries
 

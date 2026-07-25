@@ -406,8 +406,9 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             separators=(",", ":"),
         )
         clean_prompt = (
-            "base\n### Act Gate\n"
-            "当前受管 Room Dispatch 已授权执行；写操作仍受原生审批。"
+            "base\n<workflow-state>\n"
+            "当前 Dispatch 是你这一轮唯一的受管责任。"
+            "\n</workflow-state>"
             "\n<skill_capability_families></skill_capability_families>"
             "\n<product_tool_capability_families>"
             "</product_tool_capability_families>"
@@ -476,7 +477,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             separators=(",", ":"),
         )
         prompt = (
-            "当前受管 Room Dispatch 已授权执行"
+            "当前 Room 任务已经开始"
             "\n<project_context>AGENTS.md</project_context>"
             "\n<skill_capability_families></skill_capability_families>"
             "\n<product_tool_capability_families>"
@@ -537,7 +538,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             separators=(",", ":"),
         )
         prompt = (
-            "当前受管 Room Dispatch 已授权执行"
+            "当前 Room 任务已经开始"
             "\n<skill_capability_families></skill_capability_families>"
             "\n<product_tool_capability_families>"
             "</product_tool_capability_families>"
@@ -601,7 +602,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             separators=(",", ":"),
         )
         prompt = (
-            "当前受管 Room Dispatch 已授权执行"
+            "当前 Room 任务已经开始"
             '\n<loaded_skill name="quality-gate">full body</loaded_skill>'
             "\n<skill_capability_families></skill_capability_families>"
             "\n<product_tool_capability_families>"
@@ -653,7 +654,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             separators=(",", ":"),
         )
         prompt = (
-            "当前受管 Room Dispatch 已授权执行"
+            "当前 Room 任务已经开始"
             f"\n<available_skills>{card}</available_skills>"
             f"\n<available_product_tools>{card}</available_product_tools>"
         )
@@ -702,7 +703,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             separators=(",", ":"),
         )
         prompt = (
-            "当前受管 Room Dispatch 已授权执行"
+            "当前 Room 任务已经开始"
             f'\n<loaded_skill name="workspace-read-guide">{loaded_card}'
             "</loaded_skill>"
             "\n<skill_capability_families></skill_capability_families>"
@@ -783,7 +784,7 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             for name in ("workspace_read", "workspace_shell")
         )
         prompt = (
-            "当前受管 Room Dispatch 已授权执行"
+            "当前 Room 任务已经开始"
             "\n<skill_capability_families></skill_capability_families>"
             "\n<product_tool_capability_families>"
             "</product_tool_capability_families>"
@@ -903,6 +904,28 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
         self.assertEqual(
             duplicated["duplicateOriginalCatalogStatementCount"],
             1,
+        )
+
+    def test_dispatch_projection_does_not_treat_acceptance_aliases_as_requirements(
+        self,
+    ) -> None:
+        projection = CANARY._human_dispatch_requirement_projection(
+            "\n".join(
+                (
+                    "## Room 任务",
+                    "原始需求（不可改写）：",
+                    "- 保留原始需求",
+                    "补充要求：",
+                    "- 不扩大当前责任",
+                    "验收条件（提交证据时使用 AC 编号）：",
+                    "- AC-1 | 待验收 | 测试通过",
+                )
+            )
+        )
+
+        self.assertEqual(
+            projection,
+            ({"保留原始需求"}, {"不扩大当前责任"}),
         )
 
     def test_progressive_discovery_allows_loaded_schemas_in_later_epochs(self) -> None:

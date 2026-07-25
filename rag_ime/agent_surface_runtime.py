@@ -324,7 +324,10 @@ class AgentSurfaceRuntime:
         provider, model_id = (part.strip() for part in model_reference.split("/", 1))
         if not provider or not model_id:
             raise ValueError(f"activeRag.{model_key} must be a Pi provider/model reference")
-        thinking_level = str(active_rag.get(thinking_key) or "off").strip().lower()
+        # Active RAG is an explicit quality-generation request rather than the
+        # per-keystroke predictor hot path.  A missing setting must therefore
+        # preserve reasoning; an explicit user-selected "off" is still honored.
+        thinking_level = str(active_rag.get(thinking_key) or "high").strip().lower()
         if thinking_level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
             raise ValueError(f"activeRag.{thinking_key} must use a supported thinking level")
         return provider, model_id, thinking_level

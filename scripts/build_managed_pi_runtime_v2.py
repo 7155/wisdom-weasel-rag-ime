@@ -271,19 +271,27 @@ def _hash_tree(path: Path) -> bytes:
     return digest.digest()
 
 
-def _copy_product_skills(source_root: Path, runtime_root: Path) -> tuple[str, ...]:
-    if not source_root.is_dir():
+def _product_skill_dirs(skills_root: Path) -> tuple[Path, ...]:
+    if not skills_root.is_dir():
         return ()
+    return tuple(
+        item
+        for item in sorted(skills_root.iterdir())
+        if item.is_dir() and (item / "SKILL.md").is_file()
+    )
+
+
+def _copy_product_skills(source_root: Path, runtime_root: Path) -> tuple[str, ...]:
     runtime_root.mkdir(parents=True, exist_ok=True)
     copied: list[str] = []
-    for skill in sorted(item for item in source_root.iterdir() if item.is_dir()):
+    for skill in _product_skill_dirs(source_root):
         shutil.copytree(skill, runtime_root / skill.name, dirs_exist_ok=True)
         copied.append(skill.name)
     return tuple(copied)
 
 
 def _runtime_host_banner(skills_root: Path) -> str:
-    skill_names = sorted(item.name for item in skills_root.iterdir() if item.is_dir()) if skills_root.is_dir() else []
+    skill_names = [item.name for item in _product_skill_dirs(skills_root)]
     return (
         'import { createRequire as __createRequire } from "node:module"; '
         'import { delimiter as __pathDelimiter, dirname as __dirname, join as __join } from "node:path"; '

@@ -30,8 +30,8 @@ describe('ContextXraySections', () => {
     const layers = await screen.findByRole('list', { name: '上下文分层指标' });
     for (const label of [
       'System',
-      'Role Book',
-      'Workflow Control',
+      '伙伴画像',
+      '工作状态',
       'Goal',
       'Lifecycle Hook',
       'Session Memory',
@@ -110,12 +110,12 @@ function debugResponse(): Record<string, unknown> {
   ].join('\n');
   const systemPrompt = [
     'BASE_SYSTEM_PROMPT',
-    '<agent-role-book>',
+    '<agent-profile>',
     'ROLE_BOOK_PRIVATE_TEXT',
-    '</agent-role-book>',
-    '<rag-ime-context priority="developer" type="workflow_control">',
+    '</agent-profile>',
+    '<workflow-state>',
     'WORKFLOW_CONTROL_PRIVATE_TEXT',
-    '</rag-ime-context>',
+    '</workflow-state>',
     '<rag-ime-context type="goal" lifecycle="session">',
     'GOAL_PRIVATE_TEXT',
     '</rag-ime-context>',

@@ -190,8 +190,10 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         system_prompt = self.service.runtime_factory.config.system_prompt_for_session(
             session
         )
-        self.assertIn("<agent-role-book>", system_prompt)
-        self.assertIn(ROLE_MARKER, system_prompt)
+        self.assertIn("<agent-profile>", system_prompt)
+        # Recent work remains in the governed Role Book inspector, but is not
+        # copied into every Provider request as durable persona memory.
+        self.assertNotIn(ROLE_MARKER, system_prompt)
         self.assertNotIn(NEW_ATOM_ID, system_prompt)
         self.assertNotIn(BOOK_ID, system_prompt)
 

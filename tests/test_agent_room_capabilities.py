@@ -11,13 +11,17 @@ from rag_ime.agent_room_capabilities import (
     validate_room_tool_command,
     room_runtime_registry,
 )
+from rag_ime.contracts.json_schema import (
+    ContractValidationError,
+    validate_contract,
+)
 
 
 ROOM_TOOLS = (
     "room_state",
-    "room_collaborate",
     "room_post",
     "room_commit",
+    "room_collaborate",
 )
 
 
@@ -77,6 +81,56 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self.assertEqual(set(loaded["items"][0]), catalog_keys | {"inputSchema"})
         self.assertIn("inputSchema", loaded["items"][0])
         self.assertNotIn("room_commit", str(loaded["items"][0]["inputSchema"]))
+
+    def test_runtime_projection_metadata_is_pinned_but_not_added_to_route_cards(self) -> None:
+        room, participant = self._bindings()
+        memory = self._product_tool(
+            "Govern long-term memory",
+            does="查询和治理长期记忆。",
+        )
+        memory["inputSchema"] = {
+            "type": "object",
+            "required": ["op"],
+            "properties": {"op": {"const": "capture"}},
+            "additionalProperties": False,
+        }
+        memory["runtimeProjections"] = [
+            {"name": "memory_capture", "operation": "capture"},
+        ]
+        registry = {**self._registry(), "ime_memory": memory}
+        names = (*ROOM_TOOLS, "ime_memory")
+
+        manifest, _ = self.store.compile_manifest(
+            manifest_id="manifest:memory-projection",
+            room_binding=room,
+            participant_binding=participant,
+            dispatch_id="dispatch:1",
+            runtime_registry=registry,
+            user_authorized=names,
+            template_allowed=names,
+            role_allowed=names,
+            profile_allowed=names,
+            state_allowed=names,
+            created_at_ms=1,
+        )
+        tool = next(
+            item for item in manifest["tools"] if item["name"] == "ime_memory"
+        )
+        self.assertEqual(
+            tool["runtimeProjections"],
+            [{"name": "memory_capture", "operation": "capture"}],
+        )
+        searched, _ = self.store.tool_search(
+            receipt_id="search:memory-projection",
+            manifest_id=manifest["manifestId"],
+            manifest_hash=manifest["manifestHash"],
+            query="memory",
+            created_at_ms=2,
+        )
+        route = next(
+            item for item in searched["items"] if item["name"] == "ime_memory"
+        )
+        self.assertNotIn("runtimeProjections", route)
 
     def test_governed_search_matches_exact_name_tokens_and_verbose_intent(self) -> None:
         room, participant = self._bindings()
@@ -198,33 +252,110 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         schema = room_runtime_registry()["room_post"]["inputSchema"]
         self.assertIn("file", str(schema))
 
-    def test_room_commit_schema_keeps_quality_fields_nested(self) -> None:
+    def test_room_collaboration_requires_at_least_one_parent_acceptance_alias(
+        self,
+    ) -> None:
+        schema = room_runtime_registry()["room_collaborate"]["inputSchema"]
+        self.assertIn("acceptance", schema["required"])
+        self.assertIn(
+            "不得填写当前参与者自己",
+            schema["properties"]["targetParticipantRef"]["description"],
+        )
+        self.assertIn(
+            "当前 Task AC",
+            schema["properties"]["acceptance"]["description"],
+        )
+        self.assertEqual(
+            schema["properties"]["acceptance"]["minItems"],
+            1,
+        )
+        base = {
+            "targetParticipantRef": "P-2",
+            "objective": "独立复核当前边界",
+            "expectedOutput": "带证据的复核结论",
+            "intent": "review",
+        }
+        validate_contract({**base, "acceptance": ["AC-1"]}, schema)
+        with self.assertRaises(ContractValidationError):
+            validate_contract({**base, "acceptance": []}, schema)
+
+    def test_room_commit_schema_leaves_quality_verdict_to_kernel(self) -> None:
         tool = room_runtime_registry()["room_commit"]
         schema = tool["inputSchema"]
-        self.assertIn(
-            "originalRequestChecked、verdict、items、residualRisks",
-            str(schema["description"]),
+        self.assertEqual(
+            set(schema["required"]),
+            {"decision", "summary", "evidence", "residualRisks"},
         )
         self.assertFalse(
-            {
-                "originalRequestChecked",
-                "verdict",
-                "items",
-                "residualRisks",
-            }
+            {"qualityGate", "verdict", "originalRequestChecked"}
             & set(schema["properties"])
         )
-        quality_gate = schema["properties"]["qualityGate"]
-        self.assertIn("嵌套对象", str(quality_gate["description"]))
+        evidence_item = schema["properties"]["evidence"]["items"]
         self.assertEqual(
-            set(quality_gate["required"]),
+            set(evidence_item["required"]),
+            {"acceptance", "refs"},
+        )
+        self.assertFalse(evidence_item["additionalProperties"])
+        self.assertEqual(len(schema["oneOf"]), 4)
+        self.assertEqual(
+            schema["properties"]["acceptanceAliases"]["minItems"],
+            1,
+        )
+        self.assertIn("Kernel", tool["description"])
+        self.assertIn("acceptanceAliases 只用于 handoff", tool["description"])
+        acceptance_aliases = schema["properties"]["acceptanceAliases"]["description"]
+        self.assertIn("仅 handoff", acceptance_aliases)
+        self.assertIn("deliver", acceptance_aliases)
+        self.assertIn("禁止填写", acceptance_aliases)
+
+    def test_room_commit_schema_keeps_decision_fields_mutually_exclusive(
+        self,
+    ) -> None:
+        schema = room_runtime_registry()["room_commit"]["inputSchema"]
+        base = {
+            "summary": "当前责任说明",
+            "evidence": [],
+            "residualRisks": [],
+        }
+        valid = (
+            {**base, "decision": "deliver"},
             {
-                "originalRequestChecked",
-                "verdict",
-                "items",
-                "residualRisks",
+                **base,
+                "decision": "handoff",
+                "targetParticipantRef": "P-2",
+                "intent": "review",
+                "nextTask": "独立复核实现",
+                "expectedOutput": "复核证据",
+                "acceptanceAliases": ["AC-1"],
+            },
+            {
+                **base,
+                "decision": "wait",
+                "waitingFor": "user",
+                "resumeCondition": "用户确认禁区",
+            },
+            {
+                **base,
+                "decision": "blocked",
+                "blocker": "缺少授权输入",
+                "attemptedAlternatives": ["检查当前配置"],
+                "unlockCondition": "获得授权输入",
             },
         )
+        for payload in valid:
+            validate_contract(payload, schema)
+
+        invalid = (
+            {**valid[0], "waitingFor": "user"},
+            {**valid[0], "acceptanceAliases": ["AC-1"]},
+            {**valid[1], "blocker": "不属于 handoff"},
+            {**valid[1], "acceptanceAliases": []},
+            {**valid[2], "targetParticipantRef": "P-2"},
+            {**valid[3], "question": "不属于 blocked"},
+        )
+        for payload in invalid:
+            with self.assertRaises(ContractValidationError):
+                validate_contract(payload, schema)
 
     def test_disclosure_does_not_grant_authorization(self) -> None:
         manifest = self._compile(user=("room_state", "room_post"))
@@ -267,9 +398,14 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             "room_commit",
             {
                 "decision": "deliver",
-                "result": "done",
-                "evidenceRefs": ["artifact:test"],
-                "requirementCoverage": ["ac:1"],
+                "summary": "done",
+                "evidence": [
+                    {
+                        "acceptance": "AC-1",
+                        "refs": ["artifact:test"],
+                    }
+                ],
+                "residualRisks": [],
             },
         )
         self.assertEqual(validated["canonicalTool"], "room_commit")
