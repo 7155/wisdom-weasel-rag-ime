@@ -172,16 +172,9 @@ export function RoomComposer({
         </button>)}
       </div> : null}
       <div className="room-composer">
-        {roomCanSend && participants.length ? <IconButton
-          label="点名 Room 角色"
-          icon={<AtSign size={16} />}
-          aria-pressed={Boolean(addressedParticipantId)}
-          onClick={openMentionMenu}
-          tooltip
-        /> : null}
         <textarea
           ref={textareaRef}
-          rows={2}
+          rows={1}
           maxLength={8_000}
           value={composerDraft}
           disabled={!roomCanSend}
@@ -244,13 +237,26 @@ export function RoomComposer({
             ? `room-mention-${mentionCandidates[activeIndex]?.id}`
             : undefined}
         />
-        <IconButton
-          label="发送 Room 消息"
-          icon={<Send size={17} />}
-          disabled={!canSend}
-          onClick={submit}
-          tooltip
-        />
+        <div className="room-composer__toolbar">
+          <div className="room-composer__controls">
+            {roomCanSend && participants.length ? <IconButton
+              className="room-composer__mention"
+              label="点名 Room 角色"
+              icon={<AtSign size={16} />}
+              aria-pressed={Boolean(addressedParticipantId)}
+              onClick={openMentionMenu}
+              tooltip
+            /> : null}
+          </div>
+          <IconButton
+            className="room-composer__send"
+            label="发送 Room 消息"
+            icon={<Send size={17} />}
+            disabled={!canSend}
+            onClick={submit}
+            tooltip
+          />
+        </div>
       </div>
     </div>
   </div>;

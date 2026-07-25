@@ -4,33 +4,53 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 
-  --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
-  --color-canvas: #f3f6f5;
-  --color-surface: #ffffff;
-  --color-surface-subtle: #edf1ef;
-  --color-surface-hover: #e5ebe8;
-  --color-surface-pressed: #dbe4e0;
+  --font-size-caption: 12px;
+  --font-size-ui: 13px;
+  --font-size-ui-strong: 14px;
+  --font-size-body: 16px;
+  --font-size-chat: 15px;
+  --line-height-compact: 1.25;
+  --line-height-ui: 1.45;
+  --line-height-body: 1.68;
+  --line-height-chat: 1.66;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --color-canvas: #e9ece7;
+  --color-chrome: #f0f2ee;
+  --color-surface: #fffefb;
+  --color-paper: #fffdf8;
+  --color-paper-subtle: #f6f1e7;
+  --color-composer-overlay: rgb(255 255 255 / 72%);
+  --color-workspace-header-overlay: rgb(244 245 241 / 62%);
+  --color-surface-subtle: #e9eeeb;
+  --color-surface-hover: #dfe7e2;
+  --color-surface-pressed: #d4dfda;
   --color-overlay: rgb(19 29 25 / 52%);
-  --color-text: #18211d;
-  --color-text-secondary: #4c5a55;
-  --color-text-tertiary: #5f6b66;
-  --color-border: #cdd7d2;
-  --color-border-strong: #a8b8b1;
-  --color-accent: #0b756c;
-  --color-accent-hover: #006b61;
+  --color-text: #14201b;
+  --color-text-secondary: #46554e;
+  --color-text-tertiary: #58665f;
+  --color-border: #bdcbc4;
+  --color-border-strong: #91a49b;
+  --color-accent: #066d63;
+  --color-accent-hover: #006b60;
   --color-accent-pressed: #00564e;
-  --color-accent-soft: #d9f1ed;
+  --color-accent-soft: #ccebe5;
   --color-accent-strong: #006b61;
-  --color-accent-subtle: #eef9f7;
+  --color-accent-subtle: #e8f6f3;
   --color-accent-text: #ffffff;
   --color-info: #286db5;
   --color-info-soft: #e2eefb;
   --color-success: #16815a;
   --color-success-soft: #def3e8;
-  --color-warning: #aa6300;
-  --color-warning-soft: #fff0d0;
+  --color-warning: #985800;
+  --color-warning-soft: #ffedc4;
   --color-danger: #c43e4e;
   --color-danger-soft: #fde3e7;
   --color-memory: #078ca0;
@@ -57,13 +77,14 @@
   --radius-3: 8px;
   --radius-round: 999px;
 
-  --shadow-menu: 0 12px 32px rgb(29 42 35 / 16%), 0 2px 8px rgb(29 42 35 / 10%);
-  --shadow-dialog: 0 24px 80px rgb(18 27 23 / 28%), 0 4px 18px rgb(18 27 23 / 14%);
+  --shadow-menu: 0 1px 0 rgb(255 255 255 / 82%) inset, 0 2px 0 rgb(29 42 35 / 7%), 0 10px 22px rgb(29 42 35 / 12%);
+  --shadow-dialog: 0 1px 0 rgb(255 255 255 / 82%) inset, 0 3px 0 rgb(18 27 23 / 8%), 0 22px 54px rgb(18 27 23 / 22%);
   --shadow-inset: inset 0 0 0 1px rgb(255 255 255 / 30%);
-  --shadow-control-hover: 0 3px 10px rgb(28 42 34 / 10%);
-  --shadow-control-press: 0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent), 0 1px 4px rgb(28 42 34 / 12%);
-  --shadow-composer: 0 8px 24px rgb(20 35 28 / 10%);
-  --shadow-composer-focus: 0 12px 32px rgb(20 35 28 / 13%), 0 0 0 3px color-mix(in srgb, var(--color-focus) 16%, transparent);
+  --shadow-control-hover: 0 2px 0 rgb(28 42 34 / 8%), 0 5px 10px rgb(28 42 34 / 7%);
+  --shadow-control-press: inset 0 1px 2px rgb(28 42 34 / 14%), 0 1px 0 rgb(255 255 255 / 42%);
+  --shadow-composer: 0 2px 0 rgb(20 35 28 / 7%), 0 10px 24px rgb(20 35 28 / 10%);
+  --shadow-composer-focus: 0 2px 0 color-mix(in srgb, var(--color-accent) 22%, transparent), 0 14px 30px rgb(20 35 28 / 13%), 0 0 0 3px color-mix(in srgb, var(--color-focus) 14%, transparent);
+  --shadow-paper: 0 1px 0 rgb(255 255 255 / 82%) inset, 0 2px 0 rgb(45 54 47 / 4%), 0 12px 30px rgb(45 54 47 / 5%);
 
   --duration-instant: 80ms;
   --duration-press: 90ms;
@@ -77,14 +98,15 @@
   --distance-enter: 4px;
   --distance-sm: 6px;
   --distance-md: 12px;
-  --scale-press: .985;
   --ease-standard: cubic-bezier(.22, 1, .36, 1);
-  --ease-press: cubic-bezier(.2, 1.25, .4, 1);
+  --ease-press: cubic-bezier(.2, .8, .3, 1);
   --ease-exit: cubic-bezier(.4, 0, 1, 1);
 
-  --sidebar-wide: 248px;
+  --sidebar-wide: 220px;
   --sidebar-compact: 72px;
   --topbar-height: 56px;
+  --workspace-header-height: 48px;
+  --workspace-global-actions-clearance: 150px;
   --mobile-nav-height: 64px;
   --content-max: 1440px;
   --control-height-sm: 32px;
@@ -92,10 +114,23 @@
   --control-height-lg: 42px;
 }
 
+@media (max-width: 760px) {
+  :root {
+    --control-height-sm: 40px;
+    --control-height: 40px;
+    --control-height-lg: 44px;
+  }
+}
+
 :root[data-theme='dark'] {
   color-scheme: dark;
   --color-canvas: #141916;
+  --color-chrome: #181f1b;
   --color-surface: #1d2420;
+  --color-paper: #202620;
+  --color-paper-subtle: #282d25;
+  --color-composer-overlay: rgb(29 36 32 / 70%);
+  --color-workspace-header-overlay: rgb(28 34 30 / 64%);
   --color-surface-subtle: #252e29;
   --color-surface-hover: #2d3933;
   --color-surface-pressed: #36443d;
@@ -128,13 +163,14 @@
   --color-collaboration-soft: #3c2b49;
   --color-focus: #7db4ef;
   --color-selection: #24564f;
-  --shadow-menu: 0 14px 38px rgb(0 0 0 / 42%), 0 2px 8px rgb(0 0 0 / 26%);
-  --shadow-dialog: 0 28px 90px rgb(0 0 0 / 54%), 0 4px 20px rgb(0 0 0 / 34%);
+  --shadow-menu: 0 1px 0 rgb(255 255 255 / 5%) inset, 0 2px 0 rgb(0 0 0 / 30%), 0 12px 26px rgb(0 0 0 / 38%);
+  --shadow-dialog: 0 1px 0 rgb(255 255 255 / 5%) inset, 0 3px 0 rgb(0 0 0 / 38%), 0 24px 58px rgb(0 0 0 / 50%);
   --shadow-inset: inset 0 0 0 1px rgb(255 255 255 / 5%);
-  --shadow-control-hover: 0 4px 14px rgb(0 0 0 / 28%);
-  --shadow-control-press: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent), 0 1px 5px rgb(0 0 0 / 32%);
-  --shadow-composer: 0 9px 28px rgb(0 0 0 / 24%);
-  --shadow-composer-focus: 0 14px 36px rgb(0 0 0 / 32%), 0 0 0 3px color-mix(in srgb, var(--color-focus) 20%, transparent);
+  --shadow-control-hover: 0 2px 0 rgb(0 0 0 / 30%), 0 6px 12px rgb(0 0 0 / 22%);
+  --shadow-control-press: inset 0 1px 3px rgb(0 0 0 / 42%), 0 1px 0 rgb(255 255 255 / 4%);
+  --shadow-composer: 0 2px 0 rgb(0 0 0 / 34%), 0 11px 26px rgb(0 0 0 / 24%);
+  --shadow-composer-focus: 0 2px 0 color-mix(in srgb, var(--color-accent) 28%, transparent), 0 15px 34px rgb(0 0 0 / 31%), 0 0 0 3px color-mix(in srgb, var(--color-focus) 18%, transparent);
+  --shadow-paper: 0 1px 0 rgb(255 255 255 / 4%) inset, 0 2px 0 rgb(0 0 0 / 28%), 0 14px 34px rgb(0 0 0 / 20%);
 }
 
 *,

@@ -382,6 +382,7 @@ describe('Agent experience', () => {
     expect(document.querySelectorAll('.agent-session-row')).toHaveLength(1);
     expect(screen.queryByText('研究员临时会话')).not.toBeInTheDocument();
 
+    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
     const statusPanel = await screen.findByLabelText('当前对话状态');
     await waitFor(() => expect(within(statusPanel).getByText('研究员')).toBeInTheDocument());
     const planPanel = await within(statusPanel).findByRole('region', { name: '会话执行计划' });
@@ -2305,7 +2306,7 @@ describe('Agent experience', () => {
 
   it('treats the mobile session rail as a focus-managed drawer', async () => {
     vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
-      matches: query.includes('max-width: 760px') || query.includes('max-width: 1100px'),
+      matches: query.includes('max-width: 760px') || query.includes('max-width: 1360px'),
     })));
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
@@ -2348,6 +2349,13 @@ describe('Agent experience', () => {
     await waitFor(() => expect(toggle).toHaveFocus());
 
     await user.click(toggle);
+    await user.click(within(rail).getByRole('button', { name: '新建任务' }));
+    expect(feature()).toHaveAttribute('data-rail-open', 'false');
+    expect(screen.getByRole('dialog', { name: '新建任务' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建任务' })).not.toBeInTheDocument());
+
+    await user.click(toggle);
     expect(document.querySelector('.agent-rail-backdrop')).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /记忆整理/ }));
     expect(feature()).toHaveAttribute('data-rail-open', 'false');
@@ -2355,7 +2363,7 @@ describe('Agent experience', () => {
 
   it('treats the responsive status panel as a focus-managed dialog', async () => {
     vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
-      matches: query.includes('max-width: 1100px'),
+      matches: query.includes('max-width: 1360px'),
     })));
     vi.stubGlobal('ResizeObserver', class {
       observe() {}

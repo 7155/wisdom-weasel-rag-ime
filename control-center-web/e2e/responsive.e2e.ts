@@ -107,7 +107,11 @@ test('Room mobile drawer leaves the workspace full width and preserves narrow co
     expect(actionsBox).not.toBeNull();
     expect(workspaceBox?.x).toBe(featureBox?.x);
     expect(workspaceBox?.width).toBeGreaterThanOrEqual((featureBox?.width ?? 0) - 1);
-    expect((tabsBox?.y ?? 0) + (tabsBox?.height ?? 0)).toBeLessThanOrEqual((actionsBox?.y ?? 0) + 1);
+    expect(Math.abs(
+      (tabsBox?.y ?? 0) + (tabsBox?.height ?? 0) / 2
+      - ((actionsBox?.y ?? 0) + (actionsBox?.height ?? 0) / 2),
+    )).toBeLessThanOrEqual(2);
+    expect((tabsBox?.x ?? 0) + (tabsBox?.width ?? 0)).toBeLessThanOrEqual((actionsBox?.x ?? 0) + 1);
     expect((tabsBox?.x ?? 0) + (tabsBox?.width ?? 0)).toBeLessThanOrEqual((headerBox?.x ?? 0) + (headerBox?.width ?? 0) + 1);
     expect((actionsBox?.x ?? 0) + (actionsBox?.width ?? 0)).toBeLessThanOrEqual((headerBox?.x ?? 0) + (headerBox?.width ?? 0) + 1);
 
@@ -168,18 +172,206 @@ test('Room mobile drawer leaves the workspace full width and preserves narrow co
   }
 });
 
-test('Room drawer adopts mobile overlay semantics after a live resize', async ({ page }) => {
+test('Room releases desktop side panels after a live resize', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/#/rooms');
+  const feature = page.locator('main[data-route-id="rooms"]');
   const rail = page.locator('.rooms-rail');
   await expect(rail).toBeVisible();
+  await page.getByRole('button', { name: '展开 Room 证据' }).click();
+  await expect(feature).toHaveAttribute('data-status-open', 'true');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(rail).toHaveAttribute('role', 'dialog');
-  await expect(rail).toHaveAttribute('aria-modal', 'true');
-  await page.getByRole('button', { name: '关闭 Rooms 列表' }).first().click();
   await expect(rail).toBeHidden();
-  await expect(page.getByRole('button', { name: '打开 Rooms 列表' })).toBeFocused();
+  await expect(feature).toHaveAttribute('data-status-open', 'false');
+  await expect(page.getByRole('button', { name: '打开 Rooms 列表' })).toBeVisible();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test('Session releases desktop side panels after a live resize', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/#/agent');
+  const feature = page.locator('main[data-route-id="agent"]');
+  const rail = page.locator('.agent-session-rail');
+  await expect(feature).toHaveAttribute('data-rail-open', 'true');
+  await expect(rail).toBeVisible();
+  await page.getByRole('button', { name: '展开状态面板' }).click();
+  await expect(feature).toHaveAttribute('data-status-open', 'true');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(feature).toHaveAttribute('data-rail-open', 'false');
+  await expect(feature).toHaveAttribute('data-status-open', 'false');
+  await expect(rail).toHaveAttribute('aria-hidden', 'true');
+  await expect(rail).toHaveAttribute('inert', '');
+  await expect(page.locator('.agent-conversation')).toBeVisible();
+  await expect(page.getByRole('button', { name: '展开任务列表' })).toBeVisible();
+  await expect.poll(async () => {
+    const [featureBox, railBox, conversationBox] = await Promise.all([
+      feature.boundingBox(),
+      rail.boundingBox(),
+      page.locator('.agent-conversation').boundingBox(),
+    ]);
+    return {
+      railReleased: (railBox?.x ?? 0) + (railBox?.width ?? 0) <= (featureBox?.x ?? 0) + 1,
+      conversationAligned: Math.abs((conversationBox?.x ?? 0) - (featureBox?.x ?? 0)) <= 1,
+      conversationFullWidth: (conversationBox?.width ?? 0) >= (featureBox?.width ?? 0) - 1,
+    };
+  }).toEqual({
+    railReleased: true,
+    conversationAligned: true,
+    conversationFullWidth: true,
+  });
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test('Session and Room share narrow-desktop status drawer behavior', async ({ page }) => {
+  await page.setViewportSize({ width: 1_280, height: 820 });
+  await page.goto('/#/agent');
+  const agentConversation = page.locator('.agent-conversation');
+  const agentStatusTrigger = page.getByRole('button', { name: '展开状态面板' });
+  await expect(page.getByRole('separator', { name: '调整任务列表宽度' })).toBeVisible();
+  await expect(page.getByRole('separator', { name: '调整状态面板宽度' })).toBeHidden();
+  await agentStatusTrigger.click();
+  const agentStatus = page.getByRole('dialog', { name: '当前对话状态' });
+  await expect(agentStatus).toHaveAttribute('aria-modal', 'true');
+  await expect(agentConversation).toHaveAttribute('inert', '');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.agent-status-panel')).toHaveAttribute('aria-hidden', 'true');
+  await expect(agentStatusTrigger).toBeFocused();
+
+  await page.goto('/#/rooms');
+  const roomWorkspace = page.locator('.room-workspace');
+  const roomStatusTrigger = page.getByRole('button', { name: '展开 Room 证据' });
+  await expect(page.getByRole('separator', { name: '调整 Rooms 列表宽度' })).toBeVisible();
+  await expect(page.getByRole('separator', { name: '调整 Room 状态面板宽度' })).toBeHidden();
+  await roomStatusTrigger.click();
+  const roomStatus = page.getByRole('dialog', { name: 'Room 状态' });
+  await expect(roomStatus).toHaveAttribute('aria-modal', 'true');
+  await expect(roomWorkspace).toHaveAttribute('inert', '');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.room-status-panel')).toHaveAttribute('aria-hidden', 'true');
+  await expect(roomStatusTrigger).toBeFocused();
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test('Room tablet header keeps tabs, Room actions, and global actions in separate lanes', async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 768 });
+  await page.goto('/#/rooms');
+
+  const workspace = page.locator('.room-workspace');
+  const header = page.locator('.room-workspace > header');
+  const title = header.locator(':scope > span');
+  const tabs = page.getByRole('radiogroup', { name: 'Room 工作区' });
+  const roomActions = page.locator('.room-header-actions');
+  const globalActions = page.locator('.shell-topbar__actions');
+
+  await expect(workspace).toBeVisible();
+  await expect(title).toBeHidden();
+  await expect(tabs).toBeVisible();
+  await expect(roomActions).toBeVisible();
+  await expect(globalActions).toBeVisible();
+
+  const [workspaceBounds, headerBounds, tabsBounds, roomActionBounds, globalActionBounds] = await Promise.all([
+    workspace.evaluate((element) => ({ clientWidth: element.clientWidth, scrollWidth: element.scrollWidth })),
+    header.boundingBox(),
+    tabs.boundingBox(),
+    roomActions.boundingBox(),
+    globalActions.boundingBox(),
+  ]);
+
+  expect(workspaceBounds.scrollWidth).toBeLessThanOrEqual(workspaceBounds.clientWidth + 1);
+  expect(headerBounds?.height).toBeCloseTo(48, 3);
+  expect((tabsBounds?.x ?? 0) + (tabsBounds?.width ?? 0)).toBeLessThanOrEqual((roomActionBounds?.x ?? 0) + 1);
+  expect((roomActionBounds?.x ?? 0) + (roomActionBounds?.width ?? 0)).toBeLessThanOrEqual((globalActionBounds?.x ?? 0) + 1);
+  await expectNoHorizontalPageOverflow(page);
+});
+
+test('Session and Room headers float over full-height timelines without hiding the first item', async ({ page }) => {
+  await page.setViewportSize({ width: 1_440, height: 900 });
+  await page.goto('/#/agent');
+
+  const conversation = page.locator('.agent-conversation');
+  const sessionHeader = page.locator('.agent-conversation__header');
+  const agentTimeline = page.locator('.agent-timeline');
+  const agentScroller = agentTimeline.locator('[data-virtuoso-scroller="true"]');
+  const agentSpacer = page.locator('.agent-timeline__header-space');
+  const firstAgentTurn = agentTimeline.locator('article').first();
+  const sessionComposer = page.locator('.agent-composer');
+  await expect(firstAgentTurn).toBeVisible();
+  await agentScroller.evaluate((element) => { element.scrollTop = 0; });
+
+  const [conversationBox, sessionHeaderBox, agentTimelineBox, agentSpacerBox, firstAgentTurnBox, sessionComposerBox, sessionHeaderStyle, sessionComposerStyle] = await Promise.all([
+    conversation.boundingBox(),
+    sessionHeader.boundingBox(),
+    agentTimeline.boundingBox(),
+    agentSpacer.boundingBox(),
+    firstAgentTurn.boundingBox(),
+    sessionComposer.boundingBox(),
+    sessionHeader.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        position: style.position,
+        backgroundColor: style.backgroundColor,
+        backdropFilter: style.backdropFilter,
+      };
+    }),
+    sessionComposer.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundColor: style.backgroundColor,
+        backdropFilter: style.backdropFilter,
+      };
+    }),
+  ]);
+  expect(sessionHeaderStyle.position).toBe('absolute');
+  expect(sessionHeaderStyle.backgroundColor).toContain('rgba');
+  expect(sessionHeaderStyle.backdropFilter).toContain('blur');
+  expect(Math.abs((agentTimelineBox?.y ?? 0) - (conversationBox?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(agentSpacerBox?.height).toBeGreaterThanOrEqual(sessionHeaderBox?.height ?? 0);
+  expect(firstAgentTurnBox?.y).toBeGreaterThanOrEqual((sessionHeaderBox?.y ?? 0) + (sessionHeaderBox?.height ?? 0) - 1);
+
+  await page.goto('/#/rooms');
+  const roomHeader = page.locator('.room-workspace > header');
+  const roomContext = page.locator('.room-context-bar');
+  const roomTimeline = page.locator('.room-timeline');
+  const roomScroller = roomTimeline.locator('[data-virtuoso-scroller="true"]');
+  const roomSpacer = page.locator('.room-timeline__header-space');
+  const firstRoomTurn = page.locator('.room-turn').first();
+  const roomComposer = page.locator('.room-composer');
+  await expect(firstRoomTurn).toBeVisible();
+  await roomScroller.evaluate((element) => { element.scrollTop = 0; });
+
+  const [roomHeaderBox, roomContextBox, roomTimelineBox, roomSpacerBox, firstRoomTurnBox, roomComposerBox, roomHeaderStyle, roomComposerStyle] = await Promise.all([
+    roomHeader.boundingBox(),
+    roomContext.boundingBox(),
+    roomTimeline.boundingBox(),
+    roomSpacer.boundingBox(),
+    firstRoomTurn.boundingBox(),
+    roomComposer.boundingBox(),
+    roomHeader.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        position: style.position,
+        backgroundColor: style.backgroundColor,
+        backdropFilter: style.backdropFilter,
+      };
+    }),
+    roomComposer.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundColor: style.backgroundColor,
+        backdropFilter: style.backdropFilter,
+      };
+    }),
+  ]);
+  expect(roomHeaderStyle.position).toBe('absolute');
+  expect(roomHeaderStyle.backgroundColor).toBe(sessionHeaderStyle.backgroundColor);
+  expect(roomHeaderStyle.backdropFilter).toBe(sessionHeaderStyle.backdropFilter);
+  expect(roomComposerStyle).toEqual(sessionComposerStyle);
+  expect(Math.abs((roomComposerBox?.height ?? 0) - (sessionComposerBox?.height ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((roomTimelineBox?.y ?? 0) - (roomHeaderBox?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(roomSpacerBox?.height).toBeGreaterThanOrEqual((roomContextBox?.y ?? 0) + (roomContextBox?.height ?? 0) - (roomHeaderBox?.y ?? 0));
+  expect(firstRoomTurnBox?.y).toBeGreaterThanOrEqual((roomContextBox?.y ?? 0) + (roomContextBox?.height ?? 0) - 1);
   await expectNoHorizontalPageOverflow(page);
 });
 

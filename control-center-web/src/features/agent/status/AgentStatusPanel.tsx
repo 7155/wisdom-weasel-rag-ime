@@ -20,7 +20,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { forwardRef, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { forwardRef, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -279,10 +279,21 @@ function StatusSection({
   count: number;
   children: ReactNode;
 }) {
+  const [open, setOpen] = useState(true);
+  const contentId = useId();
   return (
-    <section className="agent-status-section">
-      <header><Icon size={15} /><strong>{title}</strong>{count > 0 ? <span>{count}</span> : null}</header>
-      {children}
+    <section className="agent-status-section" data-open={open}>
+      <header>
+        <button aria-controls={contentId} aria-expanded={open} onClick={() => setOpen((value) => !value)} type="button">
+          <Icon size={15} />
+          <strong>{title}</strong>
+          {count > 0 ? <span>{count}</span> : null}
+          <ChevronRight className="agent-status-section__chevron" size={14} />
+        </button>
+      </header>
+      <div aria-hidden={!open} className="agent-status-section__content" id={contentId} inert={!open ? true : undefined}>
+        <div>{children}</div>
+      </div>
     </section>
   );
 }

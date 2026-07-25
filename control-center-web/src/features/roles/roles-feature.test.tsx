@@ -27,7 +27,7 @@ describe('Roles experience', () => {
     expect(await screen.findByText('此刻陪你输入，也陪你把事情想清楚')).toBeInTheDocument();
     expect(screen.getByText('适合交给她')).toBeInTheDocument();
     expect(screen.getByText('不建议交给她')).toBeInTheDocument();
-    expect(screen.getAllByText('GPT-5.6 Sol').length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('GPT-5.6 Sol')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('内置只读').length).toBeGreaterThan(0);
     expect(screen.getByText('默认')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '复制并自定义' })).toBeInTheDocument();

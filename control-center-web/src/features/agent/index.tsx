@@ -1,4 +1,4 @@
-import { AlertCircle, GitBranch, PanelLeftClose, PanelLeftOpen, PanelRightOpen } from 'lucide-react';
+import { AlertCircle, GitBranch, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
@@ -8,6 +8,7 @@ import type { AgentActivityProjection, AgentProjectionState } from '@/contracts/
 import type { UiAgentEvent } from '@/contracts/ui-events';
 import { AgentComposer, type AgentComposerEditState, type AgentMessageDelivery } from './composer/AgentComposer';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from '@/features/agent/preview-data';
+import { AgentPaneResizer } from './layout/AgentPaneResizer';
 import { SessionRail } from './sessions/SessionRail';
 import {
   ConversationForkDialog,
@@ -49,7 +50,7 @@ export function AgentFeature() {
 function AgentWorkspace() {
   const transport = useControlTransport();
   const mobileViewport = useMediaQuery('(max-width: 760px)');
-  const statusOverlayViewport = useMediaQuery('(max-width: 1100px)');
+  const statusOverlayViewport = useMediaQuery('(max-width: 1360px)');
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedSessionId = searchParams.get('session')?.trim() ?? '';
   const requestedDraft = searchParams.get('draft')?.trim().slice(0, 4_000) ?? '';
@@ -81,7 +82,7 @@ function AgentWorkspace() {
   const [forkDialogInitialEntryId, setForkDialogInitialEntryId] = useState('');
   const [timelineJumpRequest, setTimelineJumpRequest] = useState<{ messageId: string; requestId: number }>();
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
-  const [statusOpen, setStatusOpen] = useState(() => isWideStatusViewport());
+  const [statusOpen, setStatusOpen] = useState(false);
   const [error, setVisibleError] = useState('');
   const railToggleRef = useRef<HTMLButtonElement>(null);
   const railRef = useRef<HTMLElement>(null);
@@ -239,6 +240,15 @@ function AgentWorkspace() {
   const approvalForReview = pendingApproval ?? requestedApproval;
   const railModal = mobileViewport && railOpen;
   const statusModal = statusOverlayViewport && statusOpen;
+
+  useEffect(() => {
+    if (mobileViewport) setRailOpen(false);
+  }, [mobileViewport]);
+
+  useEffect(() => {
+    if (statusOverlayViewport) setStatusOpen(false);
+  }, [statusOverlayViewport]);
+
   useModalPanel({
     active: railModal,
     panelRef: railRef,
@@ -1107,7 +1117,8 @@ function AgentWorkspace() {
 
   return (
     <main className="agent-feature" data-route-id="agent" data-rail-open={railOpen} data-status-open={statusOpen}>
-      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => setNewSessionOpen(true)} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={deleteSession} onClose={closeMobileRail} />
+      <SessionRail ref={railRef} sessions={sessions} selectedId={selectedId} loading={loading} open={railOpen} modal={railModal} blocked={statusModal || newSessionOpen} showArchived={showArchived} onSelect={selectSession} onCreate={() => { if (mobileViewport) setRailOpen(false); setNewSessionOpen(true); }} onShowArchivedChange={setShowArchived} onArchive={(sessionId, archived) => void archiveSession(sessionId, archived)} onDelete={deleteSession} onClose={closeMobileRail} />
+      <AgentPaneResizer side="rail" />
       <button className="agent-rail-backdrop" aria-hidden="true" disabled={!railModal} tabIndex={-1} onClick={closeMobileRail} type="button" />
       <section
         className="agent-conversation"
@@ -1122,7 +1133,7 @@ function AgentWorkspace() {
           {error ? <p role="alert" title={error}><AlertCircle size={14} /><span>{error}</span></p> : null}
           <div className="agent-conversation__actions">
             <IconButton label="查看对话路径与分支" icon={<GitBranch size={17} />} onClick={() => openForkDialog()} disabled={!session} tooltip />
-            <IconButton ref={statusToggleRef} className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={<PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
+            <IconButton ref={statusToggleRef} className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
           </div>
         </header>
         {selectedId ? <AgentTimeline sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
@@ -1131,6 +1142,7 @@ function AgentWorkspace() {
         ) : <AgentComposerPending />}
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />
+      <AgentPaneResizer side="status" />
       <AgentStatusPanel ref={statusRef} sessionId={selectedId} open={statusOpen} modal={statusModal} onClose={closeStatusPanel} />
       <MemoryReviewDialog
         activity={pendingApproval ? undefined : pendingMemoryReview}
@@ -1219,7 +1231,6 @@ function errorText(value: unknown): string {
   return publicAgentErrorText(value, '操作未完成，请刷新状态后重试。');
 }
 function isMobileViewport(): boolean { return window.matchMedia?.('(max-width: 760px)').matches === true; }
-function isWideStatusViewport(): boolean { return window.matchMedia?.('(min-width: 1180px)').matches === true; }
 
 const PASTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const MAX_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;

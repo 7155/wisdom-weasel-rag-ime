@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useOptionalControlTransport } from '@/app/control-transport';
 import { filePreviewRequestFromBlock, fileSizeLabel } from './file-descriptor';
 import { useFilePreviewStore } from './file-preview-store';
+import './file-preview.css';
 
 export function AgentFileBlock({ data, sessionId = '' }: { data: Record<string, unknown>; sessionId?: string }) {
   const transport = useOptionalControlTransport();

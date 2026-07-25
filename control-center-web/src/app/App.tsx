@@ -1,9 +1,8 @@
-import { LoaderCircle } from 'lucide-react';
 import { lazy, Suspense } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from 'react-router-dom';
 import { queryClient } from '@/app/query-client';
-import { router } from '@/app/router';
+import { RouteLoading, router } from '@/app/router';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { ControlConnectionMonitor } from '@/app/control-connection-monitor';
 import { GlobalFeedbackProvider } from '@/components/feedback';
@@ -53,13 +52,4 @@ function FilePreviewLayer() {
   const open = useFilePreviewStore((state) => state.open);
   if (!open) return null;
   return <Suspense fallback={null}><FilePreviewHost /></Suspense>;
-}
-
-function RouteLoading() {
-  return (
-    <main className="shell-route-loading" aria-live="polite">
-      <LoaderCircle className="ui-spin" size={20} />
-      <span>正在打开工作台</span>
-    </main>
-  );
 }

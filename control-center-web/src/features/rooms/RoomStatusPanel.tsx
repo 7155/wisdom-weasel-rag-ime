@@ -14,7 +14,7 @@ import {
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { forwardRef, type ReactNode } from 'react';
 import { IconButton } from '@/components/primitives';
 import type { RoomProjectionState, RoomTurnProjection } from '@/contracts/room-reducer';
 import type { RoomSummary, RoomWorkItem } from '.';
@@ -22,19 +22,21 @@ import { useAgentLiveStore } from '../agent/state/live-store';
 import { roomProjection, useRoomLiveStore } from './state/live-store';
 import '../agent/agent.css';
 
-export function RoomStatusPanel({
-  room,
-  roomId = '',
-  projection: providedProjection,
-  open,
-  onClose,
-}: {
+export const RoomStatusPanel = forwardRef<HTMLElement, {
   room?: RoomSummary;
   roomId?: string;
   projection?: RoomProjectionState;
   open: boolean;
+  modal?: boolean;
   onClose: () => void;
-}) {
+}>(function RoomStatusPanel({
+  room,
+  roomId = '',
+  projection: providedProjection,
+  open,
+  modal = false,
+  onClose,
+}, ref) {
   useRoomLiveStore((state) => (
     open && !providedProjection
       ? state.roomRevisions[roomId || room?.id || ''] ?? 0
@@ -52,7 +54,17 @@ export function RoomStatusPanel({
   const workItems = room?.workItems ?? [];
 
   return (
-    <aside aria-hidden={!open} aria-label="Room 状态" className="agent-status-panel room-status-panel" data-open={open} inert={open ? undefined : true}>
+    <aside
+      ref={ref}
+      aria-hidden={!open}
+      aria-label="Room 状态"
+      aria-modal={modal || undefined}
+      className="agent-status-panel room-status-panel"
+      data-open={open}
+      inert={open ? undefined : true}
+      role={modal ? 'dialog' : undefined}
+      tabIndex={-1}
+    >
       <header>
         <span><strong>状态</strong><small>{turn ? roomTurnStatusLabel(turn.status) : '等待新回合'}</small></span>
         <IconButton icon={<PanelRightClose size={17} />} label="收起 Room 状态" onClick={onClose} tooltip />
@@ -119,7 +131,7 @@ export function RoomStatusPanel({
       </div>
     </aside>
   );
-}
+});
 
 function RoomParticipantTelemetry({ participant }: { participant: NonNullable<RoomSummary['participants']>[number] }) {
   const telemetry = useAgentLiveStore((state) => state.projections[participant.sessionId]?.telemetry);

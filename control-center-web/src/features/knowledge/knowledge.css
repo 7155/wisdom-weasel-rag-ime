@@ -185,9 +185,9 @@
   font-size: 13px;
 }
 
-.knowledge-base-rail > header span,
-.knowledge-panel__toolbar span,
-.knowledge-settings__heading span {
+.knowledge-base-rail > header > div:first-child span,
+.knowledge-panel__toolbar > div:first-child span,
+.knowledge-settings__heading > div:first-child span {
   color: var(--color-text-tertiary);
   font-size: 13px;
   line-height: 1.45;
@@ -274,7 +274,7 @@
   padding: 2px 5px;
   border: 1px solid color-mix(in srgb, var(--color-success) 35%, var(--color-border));
   border-radius: 4px;
-  color: var(--color-success);
+  color: color-mix(in srgb, var(--color-success) 82%, var(--color-text));
   font-size: 13px;
   font-weight: 700;
 }

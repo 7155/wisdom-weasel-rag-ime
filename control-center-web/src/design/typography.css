@@ -1,7 +1,12 @@
 body {
-  font-size: 16px;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-regular);
   line-height: 1.5;
-  letter-spacing: 0;
+  font-kerning: normal;
+  letter-spacing: -.006em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 h1,
@@ -17,8 +22,9 @@ h2,
 h3,
 h4 {
   color: var(--color-text);
-  font-weight: 650;
-  letter-spacing: 0;
+  font-family: var(--font-display);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -.018em;
 }
 
 h1 {
@@ -38,8 +44,9 @@ h3 {
 
 small {
   color: var(--color-text-secondary);
-  font-size: 13px;
-  line-height: 1.4;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-ui);
+  line-height: var(--line-height-ui);
 }
 
 code,
@@ -57,6 +64,6 @@ kbd {
   background: var(--color-surface-subtle);
   box-shadow: 0 1px 0 var(--color-border);
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-ui);
   text-align: center;
 }

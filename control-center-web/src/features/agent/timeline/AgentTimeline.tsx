@@ -89,6 +89,7 @@ export function AgentTimeline({
   })));
   const timelineComponents = useMemo(() => ({
     ScrollSeekPlaceholder: AgentTurnTombstone,
+    Header: AgentTimelineScrollHeader,
     Footer: AgentTimelineScrollFooter,
   }), []);
   useEffect(() => {
@@ -209,6 +210,10 @@ export const agentScrollSeekConfiguration = {
 
 function AgentTimelineScrollFooter() {
   return <div className="agent-timeline__footer-space" aria-hidden="true" />;
+}
+
+function AgentTimelineScrollHeader() {
+  return <div className="agent-timeline__header-space" aria-hidden="true" />;
 }
 
 function AgentTurnTombstone({

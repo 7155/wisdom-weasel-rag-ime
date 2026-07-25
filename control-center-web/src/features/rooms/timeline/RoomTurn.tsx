@@ -150,7 +150,7 @@ export function RoomTurn({
       return <section className="room-agent-lane" data-state={laneState} key={lane.key}>
         <header>
           {participant
-            ? <PersonaAvatar persona={persona} size="small" presence={laneActive ? 'thinking' : 'done'} />
+            ? <PersonaAvatar persona={persona} presence={laneActive ? 'thinking' : 'done'} />
             : <span className="room-agent-lane__route"><Route size={15} /></span>}
           <span className="room-agent-lane__identity">
             <strong>{participant?.displayName ?? 'Room 路由'}</strong>

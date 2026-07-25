@@ -353,7 +353,7 @@ export function AgentComposer({
         ) : null}
         <textarea
           ref={textareaRef}
-          rows={2}
+          rows={1}
           value={composerDraft}
           onChange={changeDraft}
           onCompositionStart={startComposition}

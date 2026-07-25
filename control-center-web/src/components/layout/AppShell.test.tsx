@@ -27,6 +27,7 @@ describe('control center shell', () => {
     await user.click(screen.getAllByRole('link', { name: 'Session 工作台' })[0]);
     await waitFor(() => expect(document.querySelector('main[data-route-id="agent"]')).toBeInTheDocument());
     expect(screen.getByRole('heading', { name: 'Session 工作台' })).toBeInTheDocument();
+    expect(document.activeElement).toHaveAttribute('id', 'workspace-main');
 
     act(() => publishConnectionState({ state: 'connected', label: 'Sidecar 已连接' }));
     expect(screen.getByRole('status')).toHaveTextContent('Sidecar 已连接');
@@ -73,5 +74,22 @@ describe('control center shell', () => {
     await user.click(screen.getByRole('button', { name: '收起侧边栏' }));
     expect(document.querySelector('.control-shell')).toHaveAttribute('data-sidebar-collapsed', 'true');
     expect(window.localStorage.getItem('rag-ime-control-sidebar-collapsed')).toBe('true');
+  });
+
+  it('offers a keyboard shortcut to the active workspace', () => {
+    render(
+      <ThemeProvider>
+        <MotionProvider>
+          <TooltipProvider>
+            <GlobalFeedbackProvider>
+              <AppShell><main aria-label="测试页面" /></AppShell>
+            </GlobalFeedbackProvider>
+          </TooltipProvider>
+        </MotionProvider>
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByRole('link', { name: '跳到主工作区' })).toHaveAttribute('href', '#workspace-main');
+    expect(document.querySelector('#workspace-main')).toHaveAttribute('tabindex', '-1');
   });
 });
