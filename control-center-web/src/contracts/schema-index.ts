@@ -14450,6 +14450,39 @@ export const contractSchemas = {
               },
               "childDispatch": {
                 "type": "object"
+              },
+              "waitForDispatchIds": {
+                "type": "array",
+                "maxItems": 32,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "waitingFor": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "participant",
+                  "external"
+                ]
+              },
+              "waitingForParticipantId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "waitingForDispatchId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resumeCondition": {
+                "type": "string",
+                "minLength": 1
+              },
+              "question": {
+                "type": "string",
+                "minLength": 1
               }
             },
             "allOf": [
@@ -14468,6 +14501,46 @@ export const contractSchemas = {
                   "required": [
                     "childTask",
                     "childDispatch"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "decision": {
+                      "const": "wait"
+                    }
+                  },
+                  "required": [
+                    "decision"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "waitingFor",
+                    "resumeCondition"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "decision": {
+                      "const": "wait"
+                    },
+                    "waitingFor": {
+                      "const": "participant"
+                    }
+                  },
+                  "required": [
+                    "decision",
+                    "waitingFor"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "waitingForParticipantId",
+                    "waitingForDispatchId"
                   ]
                 }
               }
