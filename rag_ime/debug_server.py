@@ -7471,33 +7471,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.service.agent.finalize_external_approval(approval_id, payload),
                 )
-            elif path in ("/api/suggest", "/suggest"):
-                self._write_json(HTTPStatus.OK, self.service.suggest(payload))
-            elif path in ("/api/frontend/v1/suggest", "/frontend/v1/suggest"):
-                validate_contract(payload, "frontend-suggest-request.v1.json")
-                response = self.service.frontend_suggest(payload)
-                validate_contract(response, "frontend-suggest-response.v1.json")
-                self._write_json(HTTPStatus.OK, response)
-            elif path in ("/api/frontend/v1/select", "/frontend/v1/select"):
-                validate_contract(payload, "frontend-selection.v1.json")
-                response = self.service.frontend_select(payload)
-                validate_contract(response, "frontend-selection-response.v1.json")
-                self._write_json(HTTPStatus.OK, response)
-            elif path == "/api/runtime/action":
-                self._write_json(HTTPStatus.ACCEPTED, self.service.management.start_runtime_action(payload))
-            elif path == "/api/runtime/action/preview":
-                self._write_json(HTTPStatus.OK, self.service.management.runtime_action_preview(payload))
-            elif path == "/api/runtime/action/start":
-                self._write_json(HTTPStatus.ACCEPTED, self.service.management.runtime_action_start(payload))
-            elif path == "/api/memory/action":
-                self._write_json(HTTPStatus.OK, self.service.management.memory_action(payload))
-            elif path == "/api/memory/edit":
-                self._write_json(HTTPStatus.OK, self.service.management.memory_edit(payload))
-            elif path == "/api/memory/source/disposition":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.memory_source_disposition(payload),
-                )
             elif path == "/api/memory/book/archive-status":
                 self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_status(payload))
             elif path == "/api/memory/book/archive/preview":
@@ -8081,18 +8054,24 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         handler = target
         if route.contract:
             validate_contract(payload or {}, route.contract)
-        if not route.takes_arguments:
+
+        # `takes_arguments` decides only how the handler is called. Response
+        # validation used to sit inside the argument-free branch, so a route
+        # that both took arguments and declared a response contract would have
+        # been served unvalidated -- the declaration would have looked
+        # enforced while doing nothing. It applies to every route now.
+        if route.takes_arguments:
+            arguments = build_arguments(
+                route,
+                payload=payload,
+                query_first=lambda name: _query_first(query or {}, name),
+            )
+            response = handler(arguments, **dict(route.payload_args))
+        else:
             response = handler(**dict(route.payload_args))
-            if route.response_contract:
-                validate_contract(response, route.response_contract)
-            self._write_json(HTTPStatus(route.status), response)
-            return
-        arguments = build_arguments(
-            route,
-            payload=payload,
-            query_first=lambda name: _query_first(query or {}, name),
-        )
-        self._write_json(HTTPStatus(route.status), handler(arguments, **dict(route.payload_args)))
+        if route.response_contract:
+            validate_contract(response, route.response_contract)
+        self._write_json(HTTPStatus(route.status), response)
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")

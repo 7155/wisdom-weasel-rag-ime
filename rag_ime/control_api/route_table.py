@@ -411,6 +411,50 @@ MANAGEMENT_READ_ROUTES: tuple[RouteDescriptor, ...] = (
     ),
 )
 
+# Suggestion and runtime-action writes. Three carry a status other than 200 and
+# two validate both request and response, so the descriptors state those rather
+# than letting the dispatcher assume: `202 Accepted` on the runtime actions is
+# what tells a caller the work was queued, not completed.
+SUGGESTION_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/suggest", "suggest", aliases=("/suggest",)),
+    RouteDescriptor(
+        method="POST", path="/api/frontend/v1/suggest", handler="frontend_suggest",
+        aliases=("/frontend/v1/suggest",),
+        contract="frontend-suggest-request.v1.json",
+        response_contract="frontend-suggest-response.v1.json",
+    ),
+    RouteDescriptor(
+        method="POST", path="/api/frontend/v1/select", handler="frontend_select",
+        aliases=("/frontend/v1/select",),
+        contract="frontend-selection.v1.json",
+        response_contract="frontend-selection-response.v1.json",
+    ),
+)
+
+RUNTIME_ACTION_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(
+        method="POST", path="/api/runtime/action",
+        handler="management.start_runtime_action", status=202,
+    ),
+    RouteDescriptor(
+        method="POST", path="/api/runtime/action/preview",
+        handler="management.runtime_action_preview",
+    ),
+    RouteDescriptor(
+        method="POST", path="/api/runtime/action/start",
+        handler="management.runtime_action_start", status=202,
+    ),
+)
+
+# Memory writes reached through the management sub-service. `edit` and
+# `source/disposition` are already declared in route_policy, so they
+# consolidate ownership without moving the ratchet.
+MEMORY_WRITE_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/memory/action", "management.memory_action"),
+    _post("/api/memory/edit", "management.memory_edit"),
+    _post("/api/memory/source/disposition", "management.memory_source_disposition"),
+)
+
 # Browser: only the argument-free lifecycle commands. The rest of this family
 # stays in the chains on purpose -- extension routes carry their own
 # authentication, snapshots return binary, several handlers take keyword
@@ -430,6 +474,9 @@ MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *BROWSER_ROUTES,
     *READ_ROUTES,
     *MANAGEMENT_READ_ROUTES,
+    *SUGGESTION_ROUTES,
+    *RUNTIME_ACTION_ROUTES,
+    *MEMORY_WRITE_ROUTES,
     *FOREGROUND_ROUTES,
     *MEMORY_TOOL_ROUTES,
     *PREDICTION_ROUTES,

@@ -1,4 +1,6 @@
-"""The migrated management reads must forward exactly the parameters they did.
+"""What the descriptor dispatcher promises, proven against the dispatcher.
+
+The migrated management reads must forward exactly the parameters they did.
 
 Five of the six routes moved into the descriptor table in this batch had no
 HTTP coverage at all, so a passing suite said nothing about them. What the
@@ -129,6 +131,49 @@ class ManagementReadDescriptorTests(unittest.TestCase):
                     self.service.calls,
                     [(handler, {name: "" for name in query})],
                 )
+
+
+class ResponseContractEnforcementTests(unittest.TestCase):
+    """A declared response contract must be enforced however the handler is called.
+
+    Response validation used to live inside the dispatcher's argument-free
+    branch. Every route that declared a response contract happened to be
+    argument-free, so the omission was invisible -- until a route that takes
+    arguments declares one, at which point the descriptor would claim
+    validation that never ran. This pins the fix to the behaviour, not to the
+    shape of the code.
+    """
+
+    def _dispatch(self, *, takes_arguments: bool, response: dict[str, object]):
+        from rag_ime.control_api.route_table import RouteDescriptor
+        from rag_ime.debug_server import DebugRequestHandler
+
+        route = RouteDescriptor(
+            method="POST", path="/api/test/contract", handler="handler",
+            takes_arguments=takes_arguments,
+            response_contract="frontend-selection-response.v1.json",
+        )
+
+        class _Service:
+            def handler(self, *args, **kwargs):
+                return response
+
+        handler = DebugRequestHandler.__new__(DebugRequestHandler)
+        handler.service = _Service()
+        written: list[tuple[int, dict[str, object]]] = []
+        handler._write_json = lambda status, body: written.append((int(status), body))
+        handler._dispatch_descriptor_route(route, payload={})
+        return written
+
+    def test_invalid_response_is_rejected_for_a_route_that_takes_arguments(self) -> None:
+        with self.assertRaises(Exception) as caught:
+            self._dispatch(takes_arguments=True, response={"not": "a valid response"})
+        self.assertNotIsInstance(caught.exception, AssertionError)
+
+    def test_invalid_response_is_rejected_for_an_argument_free_route(self) -> None:
+        with self.assertRaises(Exception) as caught:
+            self._dispatch(takes_arguments=False, response={"not": "a valid response"})
+        self.assertNotIsInstance(caught.exception, AssertionError)
 
 
 if __name__ == "__main__":  # pragma: no cover
