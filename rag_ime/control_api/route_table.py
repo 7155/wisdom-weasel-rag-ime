@@ -32,7 +32,12 @@ class RouteDescriptor:
     method: str
     path: str
     handler: str
-    """Attribute name on the application service that serves this route."""
+    """Attribute path on the application service that serves this route.
+
+    Dotted for handlers reached through a sub-service, e.g.
+    `management.configuration_import_preview`, so a descriptor can name any
+    real call site rather than only top-level methods.
+    """
     remote_safe: bool = False
     """Whether the Agent Gateway may reach it; local surfaces stay local."""
     status: int = 200
@@ -220,8 +225,34 @@ PROFILE_ROUTES: tuple[RouteDescriptor, ...] = (
     ),
 )
 
+# Settings: one argument-free schema read plus five payload writes.
+SETTINGS_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(
+        method="GET", path="/api/settings/schema",
+        handler="settings_schema", takes_arguments=False,
+    ),
+    RouteDescriptor(method="POST", path="/api/settings/preview", handler="configuration_settings_preview"),
+    RouteDescriptor(method="POST", path="/api/settings/apply", handler="configuration_settings_apply"),
+    RouteDescriptor(method="POST", path="/api/settings/rollback", handler="configuration_settings_rollback"),
+    RouteDescriptor(method="POST", path="/api/settings/update", handler="settings_update"),
+    RouteDescriptor(method="POST", path="/api/settings/reset-section", handler="settings_reset_section"),
+)
+
+# Configuration: reached through the management sub-service. These are already
+# declared in route_policy, so migrating them consolidates ownership without
+# moving the ratchet.
+CONFIGURATION_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(method="POST", path="/api/configuration/import-preview", handler="management.configuration_import_preview"),
+    RouteDescriptor(method="POST", path="/api/configuration/import-apply", handler="management.configuration_import_apply"),
+    RouteDescriptor(method="POST", path="/api/configuration/backup-export", handler="management.portable_backup_export"),
+    RouteDescriptor(method="POST", path="/api/configuration/restore-preview", handler="management.portable_restore_preview"),
+    RouteDescriptor(method="POST", path="/api/configuration/restore-apply", handler="management.portable_restore_apply"),
+)
+
 MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *VOCABULARY_ROUTES,
+    *SETTINGS_ROUTES,
+    *CONFIGURATION_ROUTES,
     *MODEL_ROUTES,
     *PROFILE_ROUTES,
     *RAG_CORE_V3_ROUTES,

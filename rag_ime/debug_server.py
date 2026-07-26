@@ -6885,9 +6885,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path in ("/api/settings",):
             self._write_json(HTTPStatus.OK, self.service.settings())
             return
-        if parsed.path in ("/api/settings/schema",):
-            self._write_json(HTTPStatus.OK, self.service.settings_schema())
-            return
         if parsed.path in ("/api/profiles",):
             self._write_json(HTTPStatus.OK, self.service.profiles({"kind": _query_first(query, "kind")}))
             return
@@ -7768,35 +7765,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.management.planning_resolve_completion(payload))
             elif path == "/api/planning/assistant":
                 self._write_json(HTTPStatus.OK, self.service.management.planning_assistant(payload))
-            elif path == "/api/settings/preview":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.configuration_settings_preview(payload),
-                )
-            elif path == "/api/settings/apply":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.configuration_settings_apply(payload),
-                )
-            elif path == "/api/settings/rollback":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.configuration_settings_rollback(payload),
-                )
-            elif path in ("/api/settings/update",):
-                self._write_json(HTTPStatus.OK, self.service.settings_update(payload))
-            elif path in ("/api/settings/reset-section",):
-                self._write_json(HTTPStatus.OK, self.service.settings_reset_section(payload))
-            elif path == "/api/configuration/import-preview":
-                self._write_json(HTTPStatus.OK, self.service.management.configuration_import_preview(payload))
-            elif path == "/api/configuration/import-apply":
-                self._write_json(HTTPStatus.OK, self.service.management.configuration_import_apply(payload))
-            elif path == "/api/configuration/backup-export":
-                self._write_json(HTTPStatus.OK, self.service.management.portable_backup_export(payload))
-            elif path == "/api/configuration/restore-preview":
-                self._write_json(HTTPStatus.OK, self.service.management.portable_restore_preview(payload))
-            elif path == "/api/configuration/restore-apply":
-                self._write_json(HTTPStatus.OK, self.service.management.portable_restore_apply(payload))
             elif path in ("/api/active-rag/settings/update",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_settings_update(payload))
             elif path in ("/api/active-rag/preview",):
@@ -8364,7 +8332,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         chain remains the single owner for that path.
         """
 
-        handler = getattr(self.service, route.handler)
+        target = self.service
+        for part in route.handler.split("."):
+            target = getattr(target, part)
+        handler = target
         if not route.takes_arguments:
             self._write_json(HTTPStatus(route.status), handler(**dict(route.payload_args)))
             return

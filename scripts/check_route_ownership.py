@@ -32,6 +32,7 @@ import argparse
 import ast
 import json
 import re
+import sys
 from pathlib import Path
 
 
@@ -43,7 +44,7 @@ TABLE_SOURCE = Path("rag_ime/control_api/route_table.py")
 # exposure is stated nowhere. This is a ratchet, not an approval. Migrating a
 # family to the descriptor table lowers it, because a descriptor states
 # exposure explicitly; a rise means a route appeared with no policy decision.
-UNDECLARED_DISPATCH_BUDGET = 105
+UNDECLARED_DISPATCH_BUDGET = 103
 
 
 def dispatched_routes(root: Path) -> dict[str, list[tuple[str, int]]]:
@@ -128,27 +129,63 @@ def shadowed_branches(root: Path) -> list[str]:
     return problems
 
 
-def unknown_handlers(root: Path) -> list[str]:
-    """Every descriptor must name a real service method.
+def _service_attribute_names(root: Path) -> set[str]:
+    """Attributes DebugImeService assigns to itself in __init__.
 
-    A descriptor is only trustworthy if its handler exists; a typo would
-    otherwise surface as a 500 on the first real request rather than at import.
+    Sub-services such as `management` only exist on an instance, so a dotted
+    handler cannot be resolved against the class. Reading the assignments lets
+    the gate verify the first segment is real instead of skipping the check.
     """
 
-    table = root / TABLE_SOURCE
-    if not table.exists():
+    tree = ast.parse((root / DISPATCH_SOURCE).read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "DebugImeService":
+            for assign in ast.walk(node):
+                if isinstance(assign, ast.Attribute) and isinstance(assign.value, ast.Name):
+                    if assign.value.id == "self" and isinstance(assign.ctx, ast.Store):
+                        names.add(assign.attr)
+    return names
+
+
+def unknown_handlers(root: Path) -> list[str]:
+    """Every descriptor must name a handler that exists.
+
+    A typo would otherwise surface as a 500 on the first real request. The
+    import is made to work when this runs as a script -- an earlier version
+    swallowed the ImportError and returned no problems, which silently turned
+    this check off in exactly the context CI uses.
+    """
+
+    if not (root / TABLE_SOURCE).exists():
         return []
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
     try:
         from rag_ime.control_api.route_table import MIGRATED_ROUTES
         from rag_ime.debug_server import DebugImeService
-    except Exception:  # pragma: no cover - import environment differences
-        return []
-    return [
-        f"route {route.method} {route.path} names handler "
-        f"{route.handler!r}, which DebugImeService does not define"
-        for route in MIGRATED_ROUTES
-        if not hasattr(DebugImeService, route.handler)
-    ]
+    except ImportError as error:
+        return [f"cannot verify route handlers: {error}"]
+
+    instance_attributes = _service_attribute_names(root)
+    problems: list[str] = []
+    for route in MIGRATED_ROUTES:
+        head, _, rest = route.handler.partition(".")
+        if not rest:
+            if not hasattr(DebugImeService, head):
+                problems.append(
+                    f"route {route.method} {route.path} names handler "
+                    f"{route.handler!r}, which DebugImeService does not define"
+                )
+            continue
+        # Dotted: the sub-service is created at runtime, so the gate verifies
+        # the attribute is assigned rather than resolving the whole path.
+        if head not in instance_attributes and not hasattr(DebugImeService, head):
+            problems.append(
+                f"route {route.method} {route.path} names handler "
+                f"{route.handler!r}, but DebugImeService never sets {head!r}"
+            )
+    return problems
 
 
 def check(root: Path) -> list[str]:
