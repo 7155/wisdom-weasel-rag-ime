@@ -6834,31 +6834,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path in ("/api/active-rag/status", "/api/active-rag/session"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.active_rag_status({"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}),
-            )
-            return
-        if parsed.path in ("/api/active-rag/diagnostics",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.active_rag_diagnostics(
-                    {"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}
-                ),
-            )
-            return
-        if parsed.path in ("/api/active-rag/traces", "/api/active-rag/chain-trace"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.active_rag_traces(
-                    {
-                        "sessionId": _query_first(query, "sessionId") or _query_first(query, "id"),
-                        "limit": _query_first(query, "limit"),
-                    }
-                ),
-            )
-            return
         if parsed.path.startswith("/api/active-rag/session/"):
             session_id = unquote(parsed.path.rsplit("/", 1)[-1])
             self._write_json(HTTPStatus.OK, self.service.active_rag_status({"sessionId": session_id}))
@@ -6875,29 +6850,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     {
                         "candidateId": candidate_id,
                         "contextHash": _query_first(query, "contextHash"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/memory/suppressions", "/api/memory/governance"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.memory_governance(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "includeInactive": _query_first(query, "includeInactive"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/memory/cleanup-runs",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.memory_cleanup_runs(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "runId": _query_first(query, "runId"),
-                        "status": _query_first(query, "status"),
                     }
                 ),
             )

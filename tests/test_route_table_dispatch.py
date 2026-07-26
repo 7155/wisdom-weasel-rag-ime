@@ -133,6 +133,68 @@ class ManagementReadDescriptorTests(unittest.TestCase):
                 )
 
 
+class SessionIdFallbackTests(unittest.TestCase):
+    """`sessionId` or `id`, collapsed to `sessionId` -- and `id` never sent on.
+
+    The active-RAG reads accepted either spelling. Declaring both as query
+    arguments is what makes them readable, but the service only ever received
+    `sessionId`, so forwarding `id` as well would hand it a key it has never
+    seen. These cases pin both halves: the fallback works, and the alternate
+    spelling does not leak into the payload.
+    """
+
+    def setUp(self) -> None:
+        self.service = _RecordingService()
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.thread.join, 2)
+        self.addCleanup(self.server.shutdown)
+
+    def _get(self, path: str, query: dict[str, str]):
+        url = f"http://127.0.0.1:{self.server.server_port}{path}?{urlencode(query)}"
+        with urlopen(url, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+            response.read()
+        return self.service.calls
+
+    def test_session_id_is_preferred_and_id_is_the_fallback(self) -> None:
+        for path, handler in (
+            ("/api/active-rag/status", "active_rag_status"),
+            ("/api/active-rag/session", "active_rag_status"),
+            ("/api/active-rag/diagnostics", "active_rag_diagnostics"),
+        ):
+            with self.subTest(path=path):
+                self.service.calls.clear()
+                self.assertEqual(
+                    self._get(path, {"sessionId": "primary", "id": "ignored"}),
+                    [(handler, {"sessionId": "primary"})],
+                )
+                self.service.calls.clear()
+                self.assertEqual(
+                    self._get(path, {"id": "fallback"}),
+                    [(handler, {"sessionId": "fallback"})],
+                )
+                self.service.calls.clear()
+                self.assertEqual(self._get(path, {}), [(handler, {"sessionId": ""})])
+
+    def test_the_trace_reads_carry_the_limit_alongside_the_session(self) -> None:
+        for path in ("/api/active-rag/traces", "/api/active-rag/chain-trace"):
+            with self.subTest(path=path):
+                self.service.calls.clear()
+                self.assertEqual(
+                    self._get(path, {"id": "fallback", "limit": "25"}),
+                    [("active_rag_traces", {"sessionId": "fallback", "limit": "25"})],
+                )
+
+
 class _Recorder:
     """Stands in for the application service and any of its sub-services.
 

@@ -336,13 +336,14 @@ MEMORY_TOOL_ROUTES: tuple[RouteDescriptor, ...] = (
     _post("/api/deepseek/completion-preview", "deepseek_completion_preview"),
 )
 
-def _get(path, handler, *, aliases=(), query_args=(), takes_arguments=False, response_contract=""):
+def _get(path, handler, *, aliases=(), query_args=(), takes_arguments=False,
+         response_contract="", transform=None):
     """Most migrated reads take no request data, so that is the default here."""
 
     return RouteDescriptor(
         method="GET", path=path, handler=handler, aliases=aliases,
         query_args=query_args, takes_arguments=takes_arguments,
-        response_contract=response_contract,
+        response_contract=response_contract, transform=transform,
     )
 
 
@@ -380,6 +381,25 @@ READ_ROUTES: tuple[RouteDescriptor, ...] = (
         response_contract="frontend-capabilities.v1.json",
     ),
 )
+
+def _session_id_from_either_key(payload: dict[str, Any]) -> dict[str, Any]:
+    """`sessionId` wins, `id` is the fallback, and only `sessionId` is sent on.
+
+    The active-RAG reads accepted either spelling: the chain wrote
+    `_query_first(query, "sessionId") or _query_first(query, "id")`. Both names
+    have to be declared as query arguments to be read at all, so the transform
+    collapses them again -- passing `id` through as well would hand the service
+    a key it never received before.
+    """
+
+    return {"sessionId": payload.get("sessionId") or payload.get("id") or ""}
+
+
+def _session_traces_arguments(payload: dict[str, Any]) -> dict[str, Any]:
+    """The trace reads take the same session-id fallback plus a limit."""
+
+    return {**_session_id_from_either_key(payload), "limit": payload.get("limit") or ""}
+
 
 # Filtered management reads. Each chain branch built one dict of named query
 # parameters and passed it as the handler's single positional payload, so the
@@ -533,6 +553,33 @@ RIME_SELECT_ROUTES: tuple[RouteDescriptor, ...] = (
           contract="rime-select.v1.json"),
 )
 
+# Active-RAG reads. `/route-status` and the templated `/session/{id}` stay in
+# the chain: the first passes a keyword argument that is None unless the query
+# supplied it, and the second reads its id from the path.
+ACTIVE_RAG_READ_ROUTES: tuple[RouteDescriptor, ...] = (
+    _get("/api/active-rag/status", "active_rag_status", takes_arguments=True,
+         query_args=("sessionId", "id"), transform=_session_id_from_either_key),
+    _get("/api/active-rag/session", "active_rag_status", takes_arguments=True,
+         query_args=("sessionId", "id"), transform=_session_id_from_either_key),
+    _get("/api/active-rag/diagnostics", "active_rag_diagnostics", takes_arguments=True,
+         query_args=("sessionId", "id"), transform=_session_id_from_either_key),
+    _get("/api/active-rag/traces", "active_rag_traces", takes_arguments=True,
+         query_args=("sessionId", "id", "limit"), transform=_session_traces_arguments),
+    _get("/api/active-rag/chain-trace", "active_rag_traces", takes_arguments=True,
+         query_args=("sessionId", "id", "limit"), transform=_session_traces_arguments),
+)
+
+# Two more filtered management reads, same shape as MANAGEMENT_READ_ROUTES.
+# `/suppressions` and `/governance` are two paths for one handler.
+MEMORY_READ_ROUTES: tuple[RouteDescriptor, ...] = (
+    _get("/api/memory/suppressions", "memory_governance", takes_arguments=True,
+         query_args=("limit", "includeInactive")),
+    _get("/api/memory/governance", "memory_governance", takes_arguments=True,
+         query_args=("limit", "includeInactive")),
+    _get("/api/memory/cleanup-runs", "memory_cleanup_runs", takes_arguments=True,
+         query_args=("limit", "runId", "status")),
+)
+
 # Browser: only the argument-free lifecycle commands. The rest of this family
 # stays in the chains on purpose -- extension routes carry their own
 # authentication, snapshots return binary, several handlers take keyword
@@ -562,6 +609,8 @@ MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *ACTIVE_RAG_ROUTES,
     *KNOWLEDGE_ROUTES,
     *RIME_SELECT_ROUTES,
+    *ACTIVE_RAG_READ_ROUTES,
+    *MEMORY_READ_ROUTES,
     *FOREGROUND_ROUTES,
     *MEMORY_TOOL_ROUTES,
     *PREDICTION_ROUTES,
