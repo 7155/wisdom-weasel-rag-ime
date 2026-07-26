@@ -52,6 +52,19 @@ PACKAGE_RULES = {
     ),
 }
 
+# The Agent/Room lane is flat modules rather than packages, so PACKAGE_RULES
+# cannot express it. These rules are checked against *module-level* imports
+# only: a deferred import inside a function is not a dependency edge, and
+# treating it as one would flag the intentional lazy imports that break
+# start-up ordering.
+#
+# Layer order, one direction only:
+#   entry (debug_server, cli) -> application (*_service, *_application)
+#                             -> domain (agent_room_*, agent_definitions)
+ENTRY_MODULES = ("rag_ime.debug_server", "rag_ime.cli")
+APPLICATION_SUFFIXES = ("_service", "_application")
+DOMAIN_PREFIXES = ("rag_ime.agent_room_", "rag_ime.agent_definitions")
+
 V1_CORE_FILES = (
     Path("rag_ime/contracts/key_policy.py"),
     Path("rag_ime/contracts/source.py"),
@@ -128,6 +141,8 @@ def check_import_boundaries(root: Path) -> list[ImportViolation]:
                             reason=f"{package} must not import {matched}",
                         )
                     )
+    violations.extend(check_flat_layers(root))
+    violations.extend(check_module_level_cycles(root))
     for relative_path in V1_CORE_FILES:
         path = root / relative_path
         if not path.exists():
@@ -144,6 +159,129 @@ def check_import_boundaries(root: Path) -> list[ImportViolation]:
                         reason=f"v1 realtime core must not import frozen lane {matched}",
                     )
                 )
+    return violations
+
+
+def _matches_any(module: str, prefixes: Iterable[str]) -> bool:
+    return any(
+        module == prefix
+        or module.startswith(f"{prefix}.")
+        or module.startswith(prefix)
+        for prefix in prefixes
+    )
+
+
+def module_level_imports(root: Path, path: Path) -> list[str]:
+    """Imports executed at module import time, excluding deferred ones."""
+
+    module = module_name_for(root, path)
+    current_package = module.rpartition(".")[0]
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    imports: list[str] = []
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.Import):
+            imports.extend(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            resolved = resolve_import_from(node, current_package=current_package)
+            if resolved:
+                imports.append(resolved)
+    return imports
+
+
+def _rag_ime_modules(root: Path) -> list[tuple[str, Path]]:
+    package_path = root / "rag_ime"
+    if not package_path.exists():
+        return []
+    return [
+        (module_name_for(root, path), path)
+        for path in iter_python_files(package_path)
+    ]
+
+
+def flat_layer_of(module: str) -> str:
+    """Layer of one flat Agent/Room module.
+
+    Application is tested before domain on purpose: `agent_room_application`
+    and `agent_room_kernel_application` start with the domain prefix but are
+    application modules, and mis-ordering these would let a real upward edge
+    pass unnoticed.
+    """
+
+    if module in ENTRY_MODULES:
+        return "entry"
+    if module.endswith(APPLICATION_SUFFIXES):
+        return "application"
+    if module.startswith(DOMAIN_PREFIXES):
+        return "domain"
+    return ""
+
+
+def check_flat_layers(root: Path) -> list[ImportViolation]:
+    violations: list[ImportViolation] = []
+    for module, path in _rag_ime_modules(root):
+        layer = flat_layer_of(module)
+        if layer not in {"entry", "domain"}:
+            continue
+        for imported in module_level_imports(root, path):
+            if imported == module:
+                continue
+            target = flat_layer_of(imported)
+            if layer == "domain" and target in {"entry", "application"}:
+                reason = f"Room domain must not import the {target} layer"
+            elif layer == "entry" and target == "entry":
+                reason = "entry points must not depend on each other"
+            else:
+                continue
+            violations.append(
+                ImportViolation(
+                    path=str(path.relative_to(root)),
+                    module=module,
+                    imported=imported,
+                    reason=f"{reason} ({module} -> {imported})",
+                )
+            )
+    return violations
+
+
+def check_module_level_cycles(root: Path) -> list[ImportViolation]:
+    """A module-level import cycle fails at import time; a lazy one does not."""
+
+    edges: dict[str, set[str]] = {}
+    paths: dict[str, Path] = {}
+    for module, path in _rag_ime_modules(root):
+        paths[module] = path
+        edges[module] = set(module_level_imports(root, path))
+    colour: dict[str, int] = {}
+    violations: list[ImportViolation] = []
+    seen: set[tuple[str, ...]] = set()
+
+    def visit(node: str, stack: list[str]) -> None:
+        colour[node] = 1
+        stack.append(node)
+        for target in sorted(edges.get(node, ())):
+            if target not in edges:
+                continue
+            if colour.get(target) == 1:
+                cycle = stack[stack.index(target):] + [target]
+                key = tuple(sorted(set(cycle)))
+                if key not in seen:
+                    seen.add(key)
+                    violations.append(
+                        ImportViolation(
+                            path=str(paths[node].relative_to(root)),
+                            module=node,
+                            imported=target,
+                            reason="module-level import cycle: " + " -> ".join(cycle),
+                        )
+                    )
+            elif colour.get(target, 0) == 0:
+                visit(target, stack)
+        stack.pop()
+        colour[node] = 2
+
+    for module in sorted(edges):
+        if colour.get(module, 0) == 0:
+            visit(module, [])
     return violations
 
 
@@ -190,6 +328,13 @@ def module_name_for(root: Path, path: Path) -> str:
 def first_matching_prefix(module: str, prefixes: Iterable[str]) -> str:
     for prefix in prefixes:
         if module == prefix or module.startswith(f"{prefix}."):
+            return prefix
+        # A lane that was never turned into a package still owns a flat module
+        # family: `rag_ime.active_rag_service` belongs to the `rag_ime.active_rag`
+        # lane even though no `rag_ime/active_rag/` directory exists. Without
+        # this the rule matches nothing and the boundary is silently unenforced
+        # rather than merely stale.
+        if module.startswith(f"{prefix}_"):
             return prefix
     return ""
 

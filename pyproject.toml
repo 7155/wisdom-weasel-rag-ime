@@ -3,7 +3,11 @@ name = "wisdom-weasel-rag-ime"
 version = "0.1.0"
 description = "Local-first RAG input method MVP inspired by Wisdom-Weasel."
 license = "GPL-3.0-only"
-requires-python = ">=3.10"
+# 3.12 is the real floor, not a preference: the source uses PEP 701 f-strings
+# (a backslash inside an f-string expression, e.g. rag_ime/memory_cleanup.py),
+# which is a SyntaxError on 3.10 and 3.11. Declaring >=3.10 advertised an
+# install that cannot import. CI already runs 3.12.
+requires-python = ">=3.12"
 dependencies = [
   "pypdf>=5.0,<7",
   "PyYAML>=6.0,<7",
@@ -25,3 +29,23 @@ knowledge-ann = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.ruff]
+# Must match the real floor above; at py310/py311 ruff reports 6 spurious
+# syntax errors for valid PEP 701 f-strings.
+target-version = "py312"
+
+[tool.ruff.lint]
+# Deliberately narrow: every rule here passes today, so a failure means a new
+# defect rather than pre-existing debt. These are correctness rules only --
+# duplicate dict keys and redefined symbols are how dead code silently
+# overrides live code, which this repository had two real instances of.
+# No formatting or style rules: reformatting the repository is out of scope.
+#
+# Known non-zero and deliberately NOT enabled yet, with counts measured at
+# this commit, so the gate is never mistaken for full coverage:
+#   F401 unused-import      32   (removal touches many files; needs its own pass)
+#   F841 unused-variable     5
+#   F541 f-string-no-placeholder  2
+#   F821 undefined-name      2   (one is a real NameError; see the E1 report)
+select = ["E9", "F601", "F632", "F702", "F704", "F706", "F811"]

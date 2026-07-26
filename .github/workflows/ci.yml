@@ -26,6 +26,13 @@ jobs:
         run: python -m compileall -q rag_ime scripts tests
       - name: Check package boundaries
         run: python scripts/check_import_boundaries.py
+      - name: Lint correctness rules
+        # Narrow correctness-only rule set pinned in pyproject; see the comment
+        # there for the rules deliberately not enabled yet.
+        uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.14.2"
+          args: "check rag_ime scripts tests"
       - name: Validate product status
         run: python scripts/check_product_status.py --json
       - name: Audit public MiniMind completion contract

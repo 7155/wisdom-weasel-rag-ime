@@ -1701,22 +1701,6 @@ def post_commit_number_key_violations(events: list[dict[str, Any]]) -> list[dict
     return violations
 
 
-def panel_snapshot_id(event: dict[str, Any]) -> str:
-    session = event.get("predictionSession")
-    if isinstance(session, dict):
-        snapshot_id = str(session.get("snapshotId") or session.get("stableSnapshotId") or "")
-        if snapshot_id:
-            return snapshot_id
-    candidates = event.get("candidates")
-    if isinstance(candidates, list):
-        for candidate in candidates:
-            if isinstance(candidate, dict):
-                snapshot_id = str(candidate.get("snapshotId") or candidate.get("stableSnapshotId") or "")
-                if snapshot_id:
-                    return snapshot_id
-    return str(event.get("snapshotId") or "")
-
-
 def prediction_session_phase(event: dict[str, Any]) -> str:
     direct_phase = str(event.get("phase") or "")
     if direct_phase:
