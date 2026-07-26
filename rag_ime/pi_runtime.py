@@ -26,6 +26,7 @@ from .agent_tool_ids import (
     COORDINATOR_TOOL_IDS,
 )
 from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
+from .pi_runtime_protocols import resolve_protocol_manager
 from .agent_runtime_driver import (
     AgentRuntimeError,
     AgentRuntimePolicy,
@@ -550,19 +551,10 @@ class PiRuntimeDriverFactory:
                 0 if purpose == "delegated" else self._config.idle_timeout_seconds
             ),
         )
-        if config.protocol_version == "2":
-            from .pi_runtime_v2 import PiRuntimeHostManager
-
-            return PiRuntimeHostManager(
-                config=config,
-                sessions=context.sessions,
-                events=context.events,
-                media_resolver=context.media_resolver,
-                session_context_provider=session_context_provider,
-                tool_manifest_provider=context.tool_manifest_provider,
-                compaction_observer=context.compaction_observer,
-            )
-        return PiRuntimeManager(
+        # Which implementation serves this protocol version is owned by the
+        # registry, so this factory no longer has to know that v2 exists.
+        manager = resolve_protocol_manager(config.protocol_version)
+        return manager(
             config=config,
             sessions=context.sessions,
             events=context.events,
