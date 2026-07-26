@@ -6902,12 +6902,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path in ("/api/models/status",):
-            self._write_json(HTTPStatus.OK, self.service.models_status())
-            return
-        if parsed.path in ("/api/models/profiles",):
-            self._write_json(HTTPStatus.OK, self.service.model_profiles())
-            return
         if parsed.path in ("/api/active-rag/settings",):
             self._write_json(HTTPStatus.OK, self.service.active_rag_settings())
             return
@@ -7803,20 +7797,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.management.portable_restore_preview(payload))
             elif path == "/api/configuration/restore-apply":
                 self._write_json(HTTPStatus.OK, self.service.management.portable_restore_apply(payload))
-            elif path in ("/api/profiles/save",):
-                self._write_json(HTTPStatus.OK, self.service.profile_save(payload))
-            elif path in ("/api/profiles/activate-dry-run",):
-                self._write_json(HTTPStatus.OK, self.service.profile_activate_dry_run(payload))
-            elif path in ("/api/models/probe",):
-                self._write_json(HTTPStatus.OK, self.service.model_probe(payload))
-            elif path in ("/api/models/benchmark",):
-                self._write_json(HTTPStatus.OK, self.service.model_benchmark_job(payload))
-            elif path in ("/api/models/matrix-eval",):
-                self._write_json(HTTPStatus.OK, self.service.model_benchmark_job(payload))
-            elif path in ("/api/models/profile/save",):
-                self._write_json(HTTPStatus.OK, self.service.profile_save({**payload, "kind": "model_profile"}))
-            elif path in ("/api/models/profile/activate-dry-run",):
-                self._write_json(HTTPStatus.OK, self.service.model_activate_dry_run(payload))
             elif path in ("/api/active-rag/settings/update",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_settings_update(payload))
             elif path in ("/api/active-rag/preview",):
@@ -8384,12 +8364,15 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         chain remains the single owner for that path.
         """
 
+        handler = getattr(self.service, route.handler)
+        if not route.takes_arguments:
+            self._write_json(HTTPStatus(route.status), handler(**dict(route.payload_args)))
+            return
         arguments = build_arguments(
             route,
             payload=payload,
             query_first=lambda name: _query_first(query or {}, name),
         )
-        handler = getattr(self.service, route.handler)
         self._write_json(HTTPStatus(route.status), handler(arguments, **dict(route.payload_args)))
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:

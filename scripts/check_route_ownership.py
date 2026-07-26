@@ -43,7 +43,7 @@ TABLE_SOURCE = Path("rag_ime/control_api/route_table.py")
 # exposure is stated nowhere. This is a ratchet, not an approval. Migrating a
 # family to the descriptor table lowers it, because a descriptor states
 # exposure explicitly; a rise means a route appeared with no policy decision.
-UNDECLARED_DISPATCH_BUDGET = 113
+UNDECLARED_DISPATCH_BUDGET = 105
 
 
 def dispatched_routes(root: Path) -> dict[str, list[tuple[str, int]]]:

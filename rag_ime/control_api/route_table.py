@@ -42,6 +42,18 @@ class RouteDescriptor:
     """Fixed keyword arguments, e.g. an action discriminator."""
     transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     """Optional payload adjustment applied before the handler runs."""
+    takes_arguments: bool = True
+    """False for handlers that take no request data at all, e.g. status reads.
+
+    Passing an empty dict to those would be a TypeError, so the descriptor has
+    to say which shape the handler expects rather than the dispatcher guessing.
+    """
+
+
+def _as_model_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    """`/api/models/profile/save` is the profile saver pinned to one kind."""
+
+    return {**payload, "kind": "model_profile"}
 
 
 def _tag_phonetic_correction(payload: dict[str, Any]) -> dict[str, Any]:
@@ -175,8 +187,43 @@ CLEANUP_DIFF_ROUTES: tuple[RouteDescriptor, ...] = (
     ),
 )
 
+# Models and profiles: two argument-free status reads, plus writes that are
+# straight payload calls except the model profile save, which is the shared
+# profile saver pinned to one kind.
+MODEL_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(
+        method="GET", path="/api/models/status",
+        handler="models_status", takes_arguments=False,
+    ),
+    RouteDescriptor(
+        method="GET", path="/api/models/profiles",
+        handler="model_profiles", takes_arguments=False,
+    ),
+    RouteDescriptor(method="POST", path="/api/models/probe", handler="model_probe"),
+    RouteDescriptor(method="POST", path="/api/models/benchmark", handler="model_benchmark_job"),
+    RouteDescriptor(method="POST", path="/api/models/matrix-eval", handler="model_benchmark_job"),
+    RouteDescriptor(
+        method="POST", path="/api/models/profile/save",
+        handler="profile_save", transform=_as_model_profile,
+    ),
+    RouteDescriptor(
+        method="POST", path="/api/models/profile/activate-dry-run",
+        handler="model_activate_dry_run",
+    ),
+)
+
+PROFILE_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(method="POST", path="/api/profiles/save", handler="profile_save"),
+    RouteDescriptor(
+        method="POST", path="/api/profiles/activate-dry-run",
+        handler="profile_activate_dry_run",
+    ),
+)
+
 MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *VOCABULARY_ROUTES,
+    *MODEL_ROUTES,
+    *PROFILE_ROUTES,
     *RAG_CORE_V3_ROUTES,
     *LEXICON_ROUTES,
     *CLEANUP_DIFF_ROUTES,
