@@ -60,6 +60,13 @@ class RouteDescriptor:
     naming the schema keeps that a property of the route rather than a step a
     future migration could silently drop.
     """
+    response_contract: str = ""
+    """JSON-schema contract validated against the response before it is sent.
+
+    Distinct from `contract`, which validates the request: the frontend
+    capabilities route checked its own output, and collapsing the two would
+    silently move where validation happens.
+    """
     takes_arguments: bool = True
     """False for handlers that take no request data at all, e.g. status reads.
 
@@ -329,8 +336,54 @@ MEMORY_TOOL_ROUTES: tuple[RouteDescriptor, ...] = (
     _post("/api/deepseek/completion-preview", "deepseek_completion_preview"),
 )
 
+def _get(path, handler, *, aliases=(), query_args=(), takes_arguments=False, response_contract=""):
+    """Most migrated reads take no request data, so that is the default here."""
+
+    return RouteDescriptor(
+        method="GET", path=path, handler=handler, aliases=aliases,
+        query_args=query_args, takes_arguments=takes_arguments,
+        response_contract=response_contract,
+    )
+
+
+# Status and catalog reads. Handlers are dotted where the chain reached through
+# a sub-service; none of them take request data except `/api/profiles`.
+READ_ROUTES: tuple[RouteDescriptor, ...] = (
+    _get("/api/health", "health", aliases=("/health",)),
+    _get("/api/input-source", "input_source_status", aliases=("/input-source",)),
+    _get("/api/overview", "management.overview"),
+    _get("/api/settings", "settings"),
+    _get("/api/predictor/status", "predictor_status"),
+    _get("/api/predictor/cache/stats", "predictor_cache_stats"),
+    _get("/api/active-rag/settings", "active_rag_settings"),
+    _get("/api/knowledge/route-status", "knowledge_workbench_route_status"),
+    _get("/api/memory/summary", "management.memory_summary"),
+    _get("/api/runtime/status", "management.runtime_status"),
+    _get("/api/runtime/config", "runtime_config"),
+    _get("/api/runtime/components", "management.runtime_components"),
+    _get("/api/browser/status", "browser_control.status"),
+    _get("/api/browser/pairing", "browser_control.pairing"),
+    _get("/api/browser/tabs", "browser_control.tabs"),
+    _get("/api/agent/runtime", "agent.runtime_status"),
+    _get("/api/agent/providers", "pi_provider_auth.catalog"),
+    _get("/api/agent/extensions", "agent_extensions.list"),
+    _get("/api/agent/extensions/catalog", "agent_extensions.catalog"),
+    _get("/api/agent/extensions/proposals", "agent_extensions.proposals"),
+    _get("/api/agent/roles", "agent.list_roles"),
+    _get("/api/agent/roles/models", "agent.role_model_catalog"),
+    _get("/api/agent/subagents/templates", "agent.list_agent_templates"),
+    _get("/api/agent/configuration", "agent.configuration"),
+    _get("/api/profiles", "profiles", query_args=("kind",), takes_arguments=True),
+    _get(
+        "/api/frontend/v1/capabilities", "frontend_capabilities",
+        aliases=("/frontend/v1/capabilities",),
+        response_contract="frontend-capabilities.v1.json",
+    ),
+)
+
 MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *VOCABULARY_ROUTES,
+    *READ_ROUTES,
     *FOREGROUND_ROUTES,
     *MEMORY_TOOL_ROUTES,
     *PREDICTION_ROUTES,

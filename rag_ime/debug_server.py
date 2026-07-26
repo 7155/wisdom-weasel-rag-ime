@@ -6047,14 +6047,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path in ("/api/health", "/health"):
-            self._write_json(HTTPStatus.OK, self.service.health())
-            return
-        if parsed.path in ("/api/frontend/v1/capabilities", "/frontend/v1/capabilities"):
-            response = self.service.frontend_capabilities()
-            validate_contract(response, "frontend-capabilities.v1.json")
-            self._write_json(HTTPStatus.OK, response)
-            return
         if parsed.path in ("/api/control/v1/bootstrap", "/api/agent/control/bootstrap"):
             self._write_json(
                 HTTPStatus.OK,
@@ -6066,9 +6058,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.OK,
                 self.service.control_capabilities(self._request_access_context()),
             )
-            return
-        if parsed.path in ("/api/input-source", "/input-source"):
-            self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
         if parsed.path == "/api/browser/extension/next":
@@ -6083,9 +6072,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path == "/api/browser/status":
-            self._write_json(HTTPStatus.OK, self.service.browser_control.status())
-            return
         if parsed.path == "/api/browser/managed/bootstrap":
             self._write_json(
                 HTTPStatus.OK,
@@ -6095,12 +6081,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     "summary": "托管浏览器正在完成隔离连接",
                 },
             )
-            return
-        if parsed.path == "/api/browser/pairing":
-            self._write_json(HTTPStatus.OK, self.service.browser_control.pairing())
-            return
-        if parsed.path == "/api/browser/tabs":
-            self._write_json(HTTPStatus.OK, self.service.browser_control.tabs())
             return
         if parsed.path == "/api/browser/snapshots/latest":
             tab_value = _query_first(query, "tabId")
@@ -6265,12 +6245,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, response)
             except Exception as exc:
                 self._write_json(HTTPStatus.BAD_REQUEST, self._knowledge_error(exc))
-            return
-        if parsed.path == "/api/agent/runtime":
-            self._write_json(HTTPStatus.OK, self.service.agent.runtime_status())
-            return
-        if parsed.path == "/api/agent/providers":
-            self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.catalog())
             return
         if parsed.path == "/api/agent/providers/oauth/status":
             try:
@@ -6510,15 +6484,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path == "/api/agent/extensions":
-            self._write_json(HTTPStatus.OK, self.service.agent_extensions.list())
-            return
-        if parsed.path == "/api/agent/extensions/catalog":
-            self._write_json(HTTPStatus.OK, self.service.agent_extensions.catalog())
-            return
-        if parsed.path == "/api/agent/extensions/proposals":
-            self._write_json(HTTPStatus.OK, self.service.agent_extensions.proposals())
-            return
         if parsed.path == "/api/agent/lifecycle-hooks":
             self._write_json(
                 HTTPStatus.OK,
@@ -6531,12 +6496,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     )
                 ),
             )
-            return
-        if parsed.path == "/api/agent/roles":
-            self._write_json(HTTPStatus.OK, self.service.agent.list_roles())
-            return
-        if parsed.path == "/api/agent/roles/models":
-            self._write_json(HTTPStatus.OK, self.service.agent.role_model_catalog())
             return
         if parsed.path == "/api/agent/role-book":
             self._write_json(
@@ -6567,9 +6526,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     ),
                 ),
             )
-            return
-        if parsed.path == "/api/agent/subagents/templates":
-            self._write_json(HTTPStatus.OK, self.service.agent.list_agent_templates())
             return
         if parsed.path == "/api/agent/subagents/runs":
             self._write_json(
@@ -6738,21 +6694,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 return
             self._write_json(HTTPStatus.OK, response)
             return
-        if parsed.path == "/api/agent/configuration":
-            self._write_json(HTTPStatus.OK, self.service.agent.configuration())
-            return
-        if parsed.path == "/api/overview":
-            self._write_json(HTTPStatus.OK, self.service.management.overview())
-            return
-        if parsed.path == "/api/runtime/status":
-            self._write_json(HTTPStatus.OK, self.service.management.runtime_status())
-            return
-        if parsed.path == "/api/runtime/config":
-            self._write_json(HTTPStatus.OK, self.service.runtime_config())
-            return
-        if parsed.path == "/api/runtime/components":
-            self._write_json(HTTPStatus.OK, self.service.management.runtime_components())
-            return
         if parsed.path.startswith("/api/runtime/job/"):
             job_id = unquote(parsed.path.rsplit("/", 1)[-1])
             self._write_json(HTTPStatus.OK, self.service.management.runtime_job(job_id))
@@ -6792,9 +6733,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.BAD_REQUEST, _memory_read_error(str(exc)))
                 return
             self._write_json(HTTPStatus.OK, response)
-            return
-        if parsed.path == "/api/memory/summary":
-            self._write_json(HTTPStatus.OK, self.service.management.memory_summary())
             return
         if parsed.path == "/api/memory/activity-timeline":
             try:
@@ -6879,15 +6817,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 response,
             )
             return
-        if parsed.path in ("/api/predictor/status",):
-            self._write_json(HTTPStatus.OK, self.service.predictor_status())
-            return
-        if parsed.path in ("/api/settings",):
-            self._write_json(HTTPStatus.OK, self.service.settings())
-            return
-        if parsed.path in ("/api/profiles",):
-            self._write_json(HTTPStatus.OK, self.service.profiles({"kind": _query_first(query, "kind")}))
-            return
         if parsed.path in ("/api/audit",):
             self._write_json(
                 HTTPStatus.OK,
@@ -6899,9 +6828,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path in ("/api/active-rag/settings",):
-            self._write_json(HTTPStatus.OK, self.service.active_rag_settings())
-            return
         if parsed.path in ("/api/active-rag/route-status",):
             local_only_raw = _query_first(query, "localOnly")
             self._write_json(
@@ -6910,9 +6836,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     local_only=_bool(local_only_raw, default=True) if local_only_raw else None
                 ),
             )
-            return
-        if parsed.path in ("/api/knowledge/route-status",):
-            self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_route_status())
             return
         if parsed.path in ("/api/knowledge/status", "/api/knowledge/session"):
             self._write_json(
@@ -6932,9 +6855,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     }
                 ),
             )
-            return
-        if parsed.path in ("/api/predictor/cache/stats",):
-            self._write_json(HTTPStatus.OK, self.service.predictor_cache_stats())
             return
         if parsed.path in ("/api/active-rag/status", "/api/active-rag/session"):
             self._write_json(
@@ -8253,7 +8173,10 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if route.contract:
             validate_contract(payload or {}, route.contract)
         if not route.takes_arguments:
-            self._write_json(HTTPStatus(route.status), handler(**dict(route.payload_args)))
+            response = handler(**dict(route.payload_args))
+            if route.response_contract:
+                validate_contract(response, route.response_contract)
+            self._write_json(HTTPStatus(route.status), response)
             return
         arguments = build_arguments(
             route,

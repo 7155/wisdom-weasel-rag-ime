@@ -44,7 +44,7 @@ TABLE_SOURCE = Path("rag_ime/control_api/route_table.py")
 # exposure is stated nowhere. This is a ratchet, not an approval. Migrating a
 # family to the descriptor table lowers it, because a descriptor states
 # exposure explicitly; a rise means a route appeared with no policy decision.
-UNDECLARED_DISPATCH_BUDGET = 80
+UNDECLARED_DISPATCH_BUDGET = 74
 
 
 def dispatched_routes(root: Path) -> dict[str, list[tuple[str, int]]]:
@@ -78,6 +78,21 @@ def table_routes(root: Path) -> set[str]:
             if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                 paths.add(node.value.value)
     return paths
+
+
+def table_route_pairs(root: Path) -> set[tuple[str, str]]:
+    """(method, path) pairs owned by the descriptor table, aliases included."""
+
+    table = root / TABLE_SOURCE
+    if not table.exists():
+        return set()
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from rag_ime.control_api.route_table import ROUTE_TABLE
+    except ImportError:
+        return set()
+    return set(ROUTE_TABLE)
 
 
 def declared_routes(root: Path) -> set[str]:
@@ -191,15 +206,23 @@ def unknown_handlers(root: Path) -> list[str]:
 def check(root: Path) -> list[str]:
     problems = shadowed_branches(root)
     problems.extend(unknown_handlers(root))
-    chain = set(dispatched_routes(root))
+    dispatched = dispatched_routes(root)
+    chain = set(dispatched)
     table = table_routes(root)
 
-    # A migrated route must leave its chain. Serving one path from both owners
-    # is the exact failure this migration is meant to avoid.
-    for path in sorted(chain & table):
+    # Dual ownership is per (method, path), not per path: a family may migrate
+    # its GET while POST stays in a chain, and treating that as a conflict
+    # would block partial migration for no reason. Only the same verb serving
+    # one path from both owners is a real conflict.
+    chain_pairs = {
+        (handler.removeprefix("do_"), path)
+        for path, sites in dispatched.items()
+        for handler, _line in sites
+    }
+    for method, path in sorted(table_route_pairs(root) & chain_pairs):
         problems.append(
-            f"{path} is owned by both the route table and a dispatch chain; "
-            f"remove the chain branch so the route has one owner"
+            f"{method} {path} is owned by both the route table and a dispatch "
+            f"chain; remove the chain branch so the route has one owner"
         )
 
     # A route in the descriptor table is declared by its descriptor, which
