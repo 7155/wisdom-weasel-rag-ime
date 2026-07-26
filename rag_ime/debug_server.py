@@ -54,7 +54,8 @@ from .agent_tools import ControlToolGateway
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
 from .browser_control import BrowserControlError, BrowserControlService
-from .cli import seed_demo_memories
+from .agent_room_kernel import kernel_owns_room_execution
+from .demo_seed import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
 from .contracts.context_observability import build_context_injection_trace
 from .contracts.json_schema import validate_contract
@@ -856,7 +857,7 @@ class DebugImeService:
             "features": {
                 "roomKernel": {
                     "mode": room_kernel_mode,
-                    "v2Active": room_kernel_mode in {"cohort", "kernel_only"},
+                    "v2Active": kernel_owns_room_execution(room_kernel_mode),
                 }
             },
             "platform": bootstrap["platform"],

@@ -35,6 +35,7 @@ from .agent_roles import PersonaManifest
 from .agent_templates import agent_template
 from .agent_definitions import (
     CollaborationProfileManifest,
+    canonical_collaboration_role_id,
     collaboration_role,
 )
 
@@ -159,9 +160,9 @@ class RoomKernelRuntimeCoordinator:
         )
         role_book_prompt = self.role_book_prompt_resolver(session_id)
         session = self.session_resolver(session_id)
-        role_id = str(participant.get("collaborationRole") or "implementer")
-        if role_id == "executor":
-            role_id = "implementer"
+        role_id = canonical_collaboration_role_id(
+            participant.get("collaborationRole")
+        )
         role = collaboration_role(role_id)
         template_id = {
             "coordinator": "planner",

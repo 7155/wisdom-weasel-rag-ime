@@ -8,6 +8,7 @@ import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import NamedTuple
 
 from .db import apply_database_migrations
 from .knowledge_scope import KNOWLEDGE_DOMAINS, SCOPE_KINDS, KnowledgeCallerContext
@@ -15,6 +16,13 @@ from .knowledge_scope import KNOWLEDGE_DOMAINS, SCOPE_KINDS, KnowledgeCallerCont
 
 class KnowledgePromotionError(RuntimeError):
     pass
+
+
+class ConsumedCacheTombstones(NamedTuple):
+    """Sessions whose in-process recall state must follow a durable retirement."""
+
+    session_ids: tuple[str, ...]
+    consumed: int
 
 
 _SECRET_PATTERNS = (
@@ -449,6 +457,38 @@ class KnowledgePromotionStore:
                    VALUES (?,?,?,?,?,?,?)""",
                 (tombstone_id, scope_key, epoch, journal_id, session_id, reason, at_ms),
             )
+
+    def consume_cache_tombstones(
+        self,
+        *,
+        consumed_at_ms: int,
+    ) -> ConsumedCacheTombstones:
+        """Claim every unconsumed cache tombstone and report what to clear.
+
+        This store writes the tombstones, so it also owns retiring them. The
+        caller previously ran this SELECT and UPDATE itself with its own
+        connection and transaction, which made `AgentService` a second writer
+        of a Room table it does not own. It now receives the sessions whose
+        process-local recall state must follow, plus how many rows were
+        retired, without touching the table.
+        """
+
+        with self._connect(immediate=True) as conn:
+            rows = conn.execute(
+                """SELECT tombstone_id,session_id FROM room_v2_knowledge_cache_tombstones
+                   WHERE consumed_at_ms=0 ORDER BY created_at_ms,tombstone_id"""
+            ).fetchall()
+            if rows:
+                conn.executemany(
+                    "UPDATE room_v2_knowledge_cache_tombstones SET consumed_at_ms=? WHERE tombstone_id=?",
+                    [(int(consumed_at_ms), str(row["tombstone_id"])) for row in rows],
+                )
+        return ConsumedCacheTombstones(
+            session_ids=tuple(
+                {str(row["session_id"]) for row in rows if row["session_id"]}
+            ),
+            consumed=len(rows),
+        )
 
     @contextmanager
     def _connect(self, *, immediate: bool = False):

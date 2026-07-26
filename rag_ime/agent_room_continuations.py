@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 
-from .agent_room_application import DEFAULT_RUNTIME_PROFILE_REVISION
 from .agent_room_capabilities import RoomCapabilityManifestStore
 from .agent_room_kernel import RoomKernelStore
 from .agent_room_kernel_contracts import (
+    DEFAULT_RUNTIME_PROFILE_REVISION,
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     ROOM_TASK_SCHEMA_VERSION,
 )

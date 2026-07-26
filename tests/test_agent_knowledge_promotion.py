@@ -261,6 +261,33 @@ class KnowledgePromotionTests(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             return conn.execute("SELECT claim_identity FROM room_v2_knowledge_claim_versions WHERE claim_version_id=?", (claim_version_id,)).fetchone()[0]
 
+    def test_cache_tombstones_are_retired_once_and_report_their_sessions(self) -> None:
+        # This store writes the tombstones, so it also retires them. AgentService
+        # used to run this SELECT/UPDATE itself against a table it does not own.
+        with sqlite3.connect(self.db) as conn:
+            for ordinal, session_id in enumerate(("session:a", "session:a", "", "session:b")):
+                conn.execute(
+                    """INSERT INTO room_v2_knowledge_cache_tombstones(
+                       tombstone_id,scope_key,knowledge_epoch,journal_id,session_id,reason,created_at_ms)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (f"cache:{ordinal}", "session:a", 1, None, session_id, "revoke", 10 + ordinal),
+                )
+
+        retired = self.store.consume_cache_tombstones(consumed_at_ms=99)
+
+        # `consumed` counts rows, not sessions: a caller reports how much durable
+        # state it retired, while only distinct real sessions need recall cleared.
+        self.assertEqual(retired.consumed, 4)
+        self.assertEqual(sorted(retired.session_ids), ["session:a", "session:b"])
+        with sqlite3.connect(self.db) as conn:
+            unconsumed = conn.execute(
+                "SELECT COUNT(*) FROM room_v2_knowledge_cache_tombstones WHERE consumed_at_ms=0"
+            ).fetchone()[0]
+        self.assertEqual(unconsumed, 0)
+
+        replay = self.store.consume_cache_tombstones(consumed_at_ms=100)
+        self.assertEqual((replay.consumed, replay.session_ids), (0, ()))
+
     @staticmethod
     def _caller(session, participant, binding, auth, room_id="room:1"):
         return KnowledgeCallerContext(session_id=session, participant_id=participant, room_id=room_id, binding_id=binding, authorization_revision=auth, allowed_domains=("participant_private", "room_public", "document_library"), allowed_scopes=(("session", session), ("participant", participant), ("room", room_id)))

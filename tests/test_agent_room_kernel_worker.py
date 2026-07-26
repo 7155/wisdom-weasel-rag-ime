@@ -74,7 +74,7 @@ class RoomKernelWorkerTests(unittest.TestCase):
             budget=10,
             max_hops=3,
             max_depth=2,
-            acceptance_criteria=(),
+            acceptance_criteria=("ac:1",),
             now_ms=1,
         )
         self.store.create_task(task("task:1"), now_ms=2)

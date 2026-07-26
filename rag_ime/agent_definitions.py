@@ -7,6 +7,28 @@ from .contracts.json_schema import validate_contract
 
 CapabilityId = str
 
+# `executor` was renamed to `implementer` long ago, but historical Room rows
+# still carry the old id. Reads normalize through this one alias table; writes
+# only ever store canonical ids, and historical data is never rewritten.
+_LEGACY_COLLABORATION_ROLE_ALIASES = {"executor": "implementer"}
+
+
+def canonical_collaboration_role_id(
+    value: object,
+    *,
+    default: str = "implementer",
+) -> str:
+    """Resolve a stored collaboration-role id to its canonical spelling.
+
+    Four call sites used to repeat the `executor -> implementer` rewrite
+    inline; this is the single owner of that legacy-alias policy. It does not
+    validate — callers that need validation apply their own catalog or
+    assignability checks on the canonical id.
+    """
+
+    role_id = str(value or default).strip()
+    return _LEGACY_COLLABORATION_ROLE_ALIASES.get(role_id, role_id)
+
 _MANAGED_ROOM_LIFECYCLE_PROMPT = """<room-work>
 ## 责任边界
 根任务原始需求是不可变的上位边界，开始与收工都要核对；它不会自动扩大
@@ -197,19 +219,28 @@ _COLLABORATION_ROLES = (
 不替作者修正被审对象。
 </work-lens>""",
     ),
+    # Kept only so historical Room participants keep a valid role. Selecting a
+    # job title cannot give a model industry knowledge, credentials, or new
+    # tools, so this role no longer claims any: it is an explicitly undefined
+    # scope. New members cannot be assigned it (see agent_rooms.py), and the
+    # control center shows it disabled as "专项职责（尚未设置）".
     CollaborationRoleManifest(
         role_id="specialist",
         version="1",
-        display_name="领域专家",
-        summary="在一个明确专业边界内提供判断，并标明依据和不确定性。",
-        responsibilities=("回答有界专业问题", "暴露假设、证据和不确定性"),
-        entry_conditions=("任务需要明确领域知识",),
-        exit_conditions=("专业判断和适用边界已提交",),
+        display_name="专项职责",
+        summary="为兼容历史 Room 保留的未定义职责；没有领域合同，不代表任何行业资质。",
+        responsibilities=("只在当前任务和已授权证据内作答", "写明适用边界与不确定性"),
+        entry_conditions=("仅用于历史 Room 中已经存在的成员",),
+        exit_conditions=("判断依据、适用边界和不确定性已提交",),
         allowed_commit_decisions=("deliver", "handoff", "wait", "blocked"),
         capability_restrictions=("memory", "rag"),
         operating_prompt="""<work-lens kind="specialist">
-本轮以领域专家视角工作：在明确专业边界内给出判断、依据与不确定性，
-不越界替用户作高风险决定。
+本轮没有为你声明任何领域合同：没有指定行业、专业问题、允许来源或风险等级。
+因此不要自称专家，也不要用"作为某某领域专家"的口吻给出行业结论。
+只回答当前任务范围内、能由已授权记忆与检索证据支撑的部分，
+并写明依据、假设和适用边界。
+需要行业资质、受监管判断或超出已授权证据的知识时，直接说明这一点，
+并交接或报告阻塞，不要用自信语气填补缺口。
 </work-lens>""",
     ),
 )

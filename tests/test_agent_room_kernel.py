@@ -5,7 +5,11 @@ import unittest
 import sqlite3
 from pathlib import Path
 
-from rag_ime.agent_room_kernel import RoomKernelFenceError, RoomKernelStore
+from rag_ime.agent_room_kernel import (
+    RoomKernelFenceError,
+    RoomKernelStore,
+    kernel_owns_room_execution,
+)
 from rag_ime.agent_room_context import RoomContextLedgerStore
 from rag_ime.agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
@@ -71,7 +75,7 @@ class RoomKernelCoreTests(unittest.TestCase):
             budget=10,
             max_hops=3,
             max_depth=2,
-            acceptance_criteria=(),
+            acceptance_criteria=("ac:1",),
             now_ms=1,
         )
         self.assertEqual(created["task"]["rootId"], created["root"]["rootId"])
@@ -81,7 +85,7 @@ class RoomKernelCoreTests(unittest.TestCase):
             budget=10,
             max_hops=3,
             max_depth=2,
-            acceptance_criteria=(),
+            acceptance_criteria=("ac:1",),
             now_ms=2,
         )
         self.assertEqual(replayed, created)
@@ -93,7 +97,7 @@ class RoomKernelCoreTests(unittest.TestCase):
                 budget=10,
                 max_hops=3,
                 max_depth=2,
-                acceptance_criteria=(),
+                acceptance_criteria=("ac:1",),
                 now_ms=2,
             )
         with self.assertRaises(KeyError):
@@ -963,6 +967,64 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(root_after["state"], "completed")
         self.assertEqual(root_after["terminalReceiptId"], terminal["receiptId"])
 
+    def test_root_without_acceptance_criteria_cannot_be_delivered(self) -> None:
+        self.seed(criteria=())
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE room_kernel_tasks SET state = 'completed' WHERE root_id = 'root:1'")
+
+        rejected = self.store.finalize_root("root:1", now_ms=13)
+
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(rejected["details"]["reason"], "acceptance_evidence_missing")
+        self.assertEqual(rejected["details"]["acceptanceCriteria"], [])
+        self.assertEqual(self.store.root("root:1")["state"], "running")
+
+    def test_forged_coverage_without_commit_evidence_cannot_finalize_root(self) -> None:
+        self.seed()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE room_kernel_roots SET covered_criteria_json = ? WHERE root_id = 'root:1'",
+                ('["ac:1"]',),
+            )
+            conn.execute("UPDATE room_kernel_tasks SET state = 'completed' WHERE root_id = 'root:1'")
+
+        rejected = self.store.finalize_root("root:1", now_ms=13)
+
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(rejected["details"]["reason"], "acceptance_evidence_missing")
+        self.assertEqual(rejected["details"]["unprovenAcceptanceCriteria"], ["ac:1"])
+
+    def test_terminal_receipt_reports_evidence_ref_count_per_criterion(self) -> None:
+        self.seed()
+        self.store.enqueue_dispatch(dispatch("dispatch:done", key="done"), now_ms=10)
+        self.store.set_dispatch_wait_state("dispatch:done", "running", now_ms=11)
+        self.store.apply_commit(
+            commit("commit:done", "dispatch:done", coverage=("ac:1",)),
+            generation=0,
+            now_ms=12,
+        )
+
+        terminal = self.store.finalize_root("root:1", now_ms=13)
+
+        self.assertEqual(terminal["receiptKind"], "terminal")
+        self.assertEqual(terminal["details"]["acceptanceEvidenceRefCounts"], {"ac:1": 1})
+
+    def test_task_cannot_claim_acceptance_criteria_outside_root_or_parent(self) -> None:
+        self.seed()
+
+        with self.assertRaisesRegex(RoomKernelFenceError, "outside its Root"):
+            self.store.create_task(task("task:forged", criteria=("ac:other",)), now_ms=3)
+
+        self.store.create_task(
+            {**task("task:narrow", criteria=()), "parentTaskId": "task:1"},
+            now_ms=3,
+        )
+        with self.assertRaisesRegex(RoomKernelFenceError, "outside its parent Task"):
+            self.store.create_task(
+                {**task("task:widen", criteria=("ac:1",)), "parentTaskId": "task:narrow"},
+                now_ms=4,
+            )
+
     def test_ordinary_session_without_room_binding_has_zero_side_effects(self) -> None:
         self.seed()
         before = self.store.counts("root:1")
@@ -988,6 +1050,16 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertIsNotNone(command)
         self.assertFalse(created)
         self.assertEqual(self.store.counts("root:1"), before)
+
+
+class KernelModeAuthorityTests(unittest.TestCase):
+    def test_only_cohort_and_kernel_only_claim_room_execution_authority(self) -> None:
+        # `test` runs the same machinery inside unit tests but must never be
+        # collapsed into production authority; `shadow` observes; `off` disables.
+        for mode in ("cohort", "kernel_only"):
+            self.assertTrue(kernel_owns_room_execution(mode), mode)
+        for mode in ("off", "shadow", "test", "", None, "production_cohort"):
+            self.assertFalse(kernel_owns_room_execution(mode), repr(mode))
 
 
 def root(root_id: str) -> dict[str, object]:

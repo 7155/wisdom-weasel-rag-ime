@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+from .agent_definitions import canonical_collaboration_role_id
 from .agent_role_identity import canonical_agent_role_id
 from .agent_room_routing import (
     normalize_room_kind,
@@ -54,6 +55,11 @@ ROOM_COLLABORATION_ROLES = frozenset(
         "specialist",
     }
 )
+# `specialist` stays readable so historical participants keep a valid role, but
+# it is no longer offered: it carries no domain contract, so assigning it would
+# promise expertise the runtime cannot supply. The control center already shows
+# it disabled; this keeps a direct API call from doing what the UI refuses.
+ASSIGNABLE_COLLABORATION_ROLES = ROOM_COLLABORATION_ROLES - {"specialist"}
 
 
 class AgentRoomNotFound(KeyError):
@@ -445,7 +451,8 @@ class AgentRoomStore:
         """Change future dispatch responsibility without rewriting history."""
 
         normalized_role = normalize_collaboration_role(
-            collaboration_role
+            collaboration_role,
+            assignable_only=True,
         )
         timestamp = _timestamp(updated_at_ms)
         with self._connect() as conn:
@@ -2089,12 +2096,14 @@ def _required_text_value(value: object, field: str, maximum: int) -> str:
     return normalized
 
 
-def normalize_collaboration_role(value: object) -> str:
-    normalized = str(value or "implementer").strip()
-    if normalized == "executor":
-        normalized = "implementer"
+def normalize_collaboration_role(value: object, *, assignable_only: bool = False) -> str:
+    normalized = canonical_collaboration_role_id(value)
     if normalized not in ROOM_COLLABORATION_ROLES:
         raise ValueError("unsupported room collaboration role")
+    if assignable_only and normalized not in ASSIGNABLE_COLLABORATION_ROLES:
+        raise ValueError(
+            "room collaboration role is retained for history only and cannot be assigned"
+        )
     return normalized
 
 

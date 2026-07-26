@@ -21,6 +21,23 @@ from .db import apply_database_migrations
 
 
 KernelMode = Literal["off", "shadow", "cohort", "test", "kernel_only"]
+# Modes in which the Kernel is the single authoritative Room execution path.
+# `test` runs the same machinery inside unit tests but never claims production
+# authority; `shadow` observes legacy traffic; `off` disables the Kernel.
+_AUTHORITATIVE_KERNEL_MODES = frozenset({"cohort", "kernel_only"})
+
+
+def kernel_owns_room_execution(mode: object) -> bool:
+    """True when the Kernel owns the authoritative Room execution path.
+
+    Every caller used to spell this as `mode in {"cohort", "kernel_only"}`,
+    which left eight copies of the same policy across five modules and no
+    single place to answer "what does managed mean" when a mode is added.
+    This predicate is that place; it is deliberately a pure function on the
+    mode value, not state on the persistence store.
+    """
+
+    return str(mode) in _AUTHORITATIVE_KERNEL_MODES
 _ACTIVE_DISPATCH_STATES = ("pending", "leased", "running", "retry_wait", "timer_wait")
 _TERMINAL_TASK_STATES = ("completed", "failed", "cancelled")
 SYSTEM_MAX_HOPS = 12
@@ -155,14 +172,26 @@ class RoomKernelStore:
     ) -> tuple[dict[str, object], bool]:
         validate_kernel_contract("roomTask", payload)
         root = self._root_row(conn, str(payload["rootId"]))
+        task_criteria = _criteria(payload.get("acceptanceCriterionIds"))
+        _assert_criteria_within(
+            task_criteria,
+            _criteria(json.loads(str(root["acceptance_criteria_json"]))),
+            scope="Root",
+        )
         parent_task_id = payload.get("parentTaskId")
         if parent_task_id is not None:
             parent = conn.execute(
-                "SELECT root_id FROM room_kernel_tasks WHERE task_id=?",
+                "SELECT root_id, payload_json FROM room_kernel_tasks WHERE task_id=?",
                 (str(parent_task_id),),
             ).fetchone()
             if parent is None or str(parent["root_id"]) != str(root["root_id"]):
                 raise RoomKernelFenceError("child Task parent belongs to another Root")
+            parent_payload = json.loads(str(parent["payload_json"]))
+            _assert_criteria_within(
+                task_criteria,
+                _criteria(parent_payload.get("acceptanceCriterionIds")),
+                scope="parent Task",
+            )
         encoded = _json(payload)
         existing = conn.execute(
             "SELECT payload_json FROM room_kernel_tasks WHERE task_id=?",
@@ -206,6 +235,11 @@ class RoomKernelStore:
         validate_kernel_contract("roomTask", task_payload)
         if task_payload.get("rootId") != root_payload.get("rootId"):
             raise RoomKernelFenceError("initial Task belongs to another Root")
+        _assert_criteria_within(
+            _criteria(task_payload.get("acceptanceCriterionIds")),
+            _criteria(acceptance_criteria),
+            scope="Root",
+        )
         budget = _non_negative(budget, "budget")
         max_hops = _non_negative(max_hops, "max_hops")
         max_depth = _non_negative(max_depth, "max_depth")
@@ -2104,6 +2138,24 @@ class RoomKernelStore:
             missing = sorted(expected - covered)
             if active or unknown or open_outbox or active_leases or open_tasks or missing:
                 return self._receipt(conn, root_id=root_id, command_id=None, receipt_kind="rejected", status="rejected", generation=int(root["generation"]), details={"reason": "root_not_quiescent", "activeDispatches": active, "unknownDispatches": unknown, "openOutbox": open_outbox, "activeLeases": active_leases, "openTasks": open_tasks, "missingAcceptanceCriteria": missing}, now_ms=now_ms)
+            # A Root without acceptance criteria cannot be delivered by vacuous
+            # truth, and a covered criterion is only real when a durable Commit
+            # carries a passing quality gate item with at least one evidence
+            # ref. `covered_criteria_json` is bookkeeping; the Commits are the
+            # authority, so terminal transition re-derives them here.
+            proven = self._acceptance_evidence(conn, root_id, expected)
+            unproven = sorted(expected - set(proven))
+            if not expected or unproven:
+                return self._receipt(
+                    conn, root_id=root_id, command_id=None, receipt_kind="rejected",
+                    status="rejected", generation=int(root["generation"]),
+                    details={
+                        "reason": "acceptance_evidence_missing",
+                        "acceptanceCriteria": sorted(expected),
+                        "unprovenAcceptanceCriteria": unproven,
+                    },
+                    now_ms=now_ms,
+                )
             if self.enforce_test_delivery_gate:
                 gate_preview = delivery_gate_preview or {}
                 if (
@@ -2140,6 +2192,10 @@ class RoomKernelStore:
                 details={
                     "quiescent": True,
                     "acceptanceSatisfied": True,
+                    "acceptanceEvidenceRefCounts": {
+                        criterion_id: len(refs)
+                        for criterion_id, refs in sorted(proven.items())
+                    },
                     "deliveryGateObservation": delivery_observation,
                 },
                 now_ms=now_ms,
@@ -2341,6 +2397,45 @@ class RoomKernelStore:
             if row is None:
                 raise KeyError(commit_id)
             return json.loads(str(row["payload_json"]))
+
+    @staticmethod
+    def _acceptance_evidence(
+        conn: sqlite3.Connection,
+        root_id: str,
+        criteria: set[str],
+    ) -> dict[str, set[str]]:
+        """Unbounded criterion -> evidence refs derived from durable Commits.
+
+        `accepted_evidence_by_criterion` is a bounded model-facing projection
+        and must never be used as a gate. This one keeps every ref so terminal
+        decisions cannot be changed by a truncation limit.
+        """
+
+        proven: dict[str, set[str]] = {}
+        if not criteria:
+            return proven
+        rows = conn.execute(
+            "SELECT payload_json FROM room_kernel_commits WHERE root_id = ?",
+            (root_id,),
+        ).fetchall()
+        for row in rows:
+            gate = json.loads(str(row["payload_json"])).get("qualityGateReceipt")
+            if not isinstance(gate, Mapping):
+                continue
+            for item in gate.get("items") or []:
+                if not isinstance(item, Mapping) or item.get("status") != "pass":
+                    continue
+                criterion_id = str(item.get("criterionId") or "").strip()
+                if criterion_id not in criteria:
+                    continue
+                refs = {
+                    str(value).strip()
+                    for value in item.get("evidenceRefs") or []
+                    if str(value or "").strip()
+                }
+                if refs:
+                    proven.setdefault(criterion_id, set()).update(refs)
+        return proven
 
     def accepted_evidence_by_criterion(
         self,
@@ -2960,6 +3055,33 @@ def _dispatch_payload(row: sqlite3.Row) -> dict[str, object]:
     payload = json.loads(str(row["payload_json"]))
     payload["state"] = str(row["state"])
     return payload
+
+
+def _criteria(value: object) -> set[str]:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return set()
+    return {str(item).strip() for item in value if str(item or "").strip()}
+
+
+def _assert_criteria_within(
+    criteria: set[str],
+    allowed: set[str],
+    *,
+    scope: str,
+) -> None:
+    """A Task may only carry acceptance criteria it inherited.
+
+    Without this fence the application layer is the only thing stopping a
+    model-proposed continuation from inventing a criterion ID, or from
+    claiming a sibling's criterion and closing the Root early.
+    """
+
+    outside = sorted(criteria - allowed)
+    if outside:
+        shown = ", ".join(outside[:8])
+        raise RoomKernelFenceError(
+            f"Task acceptance criteria are outside its {scope}: {shown}"
+        )
 
 
 def _stable_id(prefix: str, *parts: str) -> str:

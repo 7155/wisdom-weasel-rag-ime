@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from .agent_governed_memory_tools import MemoryGovernanceProposalStore
+from .db import sqlite_connection
 from .agent_memory_sources import AgentMemorySourceStore
 from .agent_sessions import AgentSessionStore
 from .agent_tools import _approval_payload_digest
@@ -212,7 +213,7 @@ def backup_sqlite_database(db_path: str | Path, backup_path: str | Path) -> dict
     target_path.parent.mkdir(parents=True, exist_ok=True)
     if target_path.exists():
         raise FileExistsError(f"backup already exists: {target_path}")
-    with sqlite3.connect(source_path) as source, sqlite3.connect(target_path) as target:
+    with sqlite_connection(source_path) as source, sqlite_connection(target_path) as target:
         source.backup(target)
         integrity = str(target.execute("PRAGMA integrity_check").fetchone()[0])
         foreign_keys = int(target.execute("PRAGMA foreign_key_check").fetchone() is not None)

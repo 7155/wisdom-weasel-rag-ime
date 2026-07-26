@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from threading import RLock
 
+from .db import sqlite_connection
 from .agent_configuration import (
     AgentConfigurationStore,
     AgentControlEventHub,
@@ -82,7 +83,12 @@ from .agent_room_peer_review import RoomPeerReviewStore
 from .agent_room_route_owners import room_message_owner, room_route_owner
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_work_application import RoomWorkApplicationService
-from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
+from .agent_room_kernel import (
+    KernelMode,
+    RoomKernelFenceError,
+    RoomKernelStore,
+    kernel_owns_room_execution,
+)
 from .agent_room_kernel_application import RoomKernelApplicationService
 from .agent_room_settlement import RoomSettleLifecycleService
 from .agent_room_kernel_projection import RoomKernelProjection
@@ -1401,7 +1407,7 @@ class AgentService:
         return self.room_kernel_application.snapshot(room_id)
 
     def collaboration_profile_projection(self, profile_id: str) -> dict[str, object]:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             return self._collaboration_profile_control(conn).projection(profile_id)
 
     def apply_collaboration_profile_command(
@@ -1412,7 +1418,7 @@ class AgentService:
     ) -> dict[str, object]:
         if not caller_authorized:
             raise PermissionError("CollaborationProfile control requires an authorized control caller")
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             result = self._collaboration_profile_control(conn).execute(payload)
         self._run_room_learning_maintenance()
         return result
@@ -1488,8 +1494,7 @@ class AgentService:
         query = str(payload.get("query") or "").strip()
         if not query:
             raise ValueError("knowledge search query is required")
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
             caller = bound_session_knowledge_caller(conn, authenticated_session_id)
         receipt_id = str(payload.get("retrievalReceiptId") or f"knowledge-retrieval:{uuid.uuid4().hex}")
         result = self.knowledge_promotion.search(
@@ -1516,8 +1521,7 @@ class AgentService:
         forbidden = {"owner", "ownerId", "ownerKind", "scope", "scopeId", "scopeKind", "allowedScopes", "allowedDomains", "sessionId", "query"}
         if forbidden.intersection(payload):
             raise PermissionError("knowledge read uses only its prior retrieval receipt")
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
             caller = bound_session_knowledge_caller(conn, authenticated_session_id)
         if caller is None:
             raise PermissionError("knowledge read requires an active Room ParticipantBinding")
@@ -2046,7 +2050,7 @@ class AgentService:
         room_turn_id: str,
     ) -> dict[str, object]:
         if (
-            self.room_kernel.mode in {"cohort", "kernel_only"}
+            kernel_owns_room_execution(self.room_kernel.mode)
             and room_turn_id in self.room_kernel.root_ids(room_id)
         ):
             return self.room_kernel_application.cancel_root(
@@ -2067,7 +2071,7 @@ class AgentService:
         requested_participant_ids: Sequence[str],
         work_item_id: str,
     ) -> dict[str, object]:
-        if self.room_kernel.mode in {"cohort", "kernel_only"}:
+        if kernel_owns_room_execution(self.room_kernel.mode):
             owner = room_message_owner(work_item_id=work_item_id)
             if owner == "session":
                 return self.room_legacy_dispatch.post_conversation(
@@ -2870,7 +2874,7 @@ class AgentService:
         prior = getattr(self, "room_kernel_worker_loop", None)
         if prior is not None:
             prior.close()
-        if self.room_kernel.mode in {"cohort", "kernel_only"} and (
+        if kernel_owns_room_execution(self.room_kernel.mode) and (
             not callable(getattr(self.runtime, "dispatch_room", None))
             or not callable(getattr(self.runtime, "cancel_room", None))
         ):
@@ -2975,26 +2979,16 @@ class AgentService:
         self._consume_room_knowledge_cache_tombstones()
 
     def _consume_room_knowledge_cache_tombstones(self) -> int:
-        """Clear process-local recall state after durable knowledge invalidation."""
-        consumed_at_ms = int(time.time() * 1000)
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            conn.execute("BEGIN IMMEDIATE")
-            rows = conn.execute(
-                """SELECT tombstone_id,session_id FROM room_v2_knowledge_cache_tombstones
-                   WHERE consumed_at_ms=0 ORDER BY created_at_ms,tombstone_id"""
-            ).fetchall()
-            session_ids = {str(row["session_id"]) for row in rows if row["session_id"]}
-            if rows:
-                conn.executemany(
-                    "UPDATE room_v2_knowledge_cache_tombstones SET consumed_at_ms=? WHERE tombstone_id=?",
-                    [(consumed_at_ms, str(row["tombstone_id"])) for row in rows],
-                )
-            conn.commit()
-        self.memory_context_application.clear_recall_state(
-            tuple(session_ids)
+        """Clear process-local recall state after durable knowledge invalidation.
+
+        Retiring the durable tombstones belongs to the store that writes them;
+        this service only owns the in-process recall state that has to follow.
+        """
+        retired = self.knowledge_promotion.consume_cache_tombstones(
+            consumed_at_ms=int(time.time() * 1000)
         )
-        return len(rows)
+        self.memory_context_application.clear_recall_state(retired.session_ids)
+        return retired.consumed
 
     def _record_room_learning_signal(
         self,

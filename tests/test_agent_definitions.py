@@ -6,6 +6,7 @@ import unittest
 from rag_ime.agent_definition_compiler import AgentDefinitionCompiler
 from rag_ime.agent_room_kernel_contracts import validate_kernel_contract
 from rag_ime.agent_definitions import (
+    canonical_collaboration_role_id,
     collaboration_profile,
     collaboration_profile_catalog,
     collaboration_role,
@@ -178,6 +179,48 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         self.assertNotIn("voiceprofile", serialized)
         self.assertNotIn("tts", serialized)
         self.assertNotIn("audio", serialized)
+
+    def test_retained_specialist_role_never_claims_domain_expertise(self) -> None:
+        specialist = collaboration_role("specialist")
+        catalog_entry = next(
+            item
+            for item in collaboration_role_catalog()
+            if item["roleId"] == "specialist"
+        )
+
+        # Clicking a job title cannot grant industry knowledge. The role is kept
+        # only so historical participants stay valid, so neither the catalog the
+        # control center renders nor the prompt the model receives may present
+        # it as expertise.
+        self.assertNotIn("专家", str(catalog_entry["displayName"]))
+        self.assertNotIn("专家", str(catalog_entry["summary"]))
+        self.assertNotIn("领域知识", json.dumps(catalog_entry, ensure_ascii=False))
+        self.assertIn("不要自称专家", specialist.system_prompt)
+        self.assertEqual(
+            specialist.capability_restrictions,
+            ("memory", "rag"),
+        )
+
+    def test_legacy_executor_reads_resolve_to_implementer_without_rewrites(self) -> None:
+        # Historical rows keep the old id on disk; every read resolves it to
+        # the canonical role, and unknown or blank input is passed through for
+        # the caller's own validation rather than silently repaired.
+        self.assertEqual(canonical_collaboration_role_id("executor"), "implementer")
+        self.assertEqual(canonical_collaboration_role_id(" executor "), "implementer")
+        self.assertEqual(canonical_collaboration_role_id("reviewer"), "reviewer")
+        self.assertEqual(canonical_collaboration_role_id(None), "implementer")
+        self.assertEqual(canonical_collaboration_role_id(""), "implementer")
+        self.assertEqual(canonical_collaboration_role_id("   "), "")
+        self.assertEqual(canonical_collaboration_role_id("observer"), "observer")
+
+    def test_every_role_declares_only_lifecycle_exits_the_kernel_enforces(self) -> None:
+        for role in collaboration_role_catalog():
+            with self.subTest(role=role["roleId"]):
+                self.assertTrue(role["allowedCommitDecisions"])
+                self.assertLessEqual(
+                    set(role["allowedCommitDecisions"]),
+                    {"deliver", "handoff", "wait", "blocked"},
+                )
 
 
 if __name__ == "__main__":

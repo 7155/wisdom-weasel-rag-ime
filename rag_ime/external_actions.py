@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .config_portability import restore_portable_backup
+from .db import sqlite_connection
 from .settings_store import ManagementSettingsStore
 
 
@@ -253,8 +254,7 @@ def _preserve_control_records(
     if not session_id or session_id != str(approval.get("sessionId") or ""):
         raise ValueError("external restore control record identity is invalid")
     roots = session.get("workspaceRoots") if isinstance(session.get("workspaceRoots"), list) else []
-    with sqlite3.connect(database) as conn:
-        conn.execute("PRAGMA foreign_keys = ON")
+    with sqlite_connection(database, foreign_keys=True) as conn:
         conn.execute(
             """
             INSERT INTO agent_sessions(

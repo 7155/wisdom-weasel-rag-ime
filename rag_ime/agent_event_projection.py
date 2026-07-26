@@ -6,6 +6,7 @@ from typing import Any
 from .agent_blocks import bind_block_scope
 from .agent_prompt_support import bounded_text
 from .agent_protocol import AgentEventEnvelope
+from .agent_room_kernel import kernel_owns_room_execution
 from .agent_room_public_timeline import RoomPublicTimelineProjector
 
 
@@ -118,10 +119,7 @@ class AgentEventProjectionService:
             if callable(registered_turn_for_event)
             else ""
         )
-        if self.room_kernel.mode in {
-            "cohort",
-            "kernel_only",
-        } and binding is not None:
+        if kernel_owns_room_execution(self.room_kernel.mode) and binding is not None:
             mapped_type, public_data = room_event_projection(event)
             if event.event_type == "message_completed":
                 mapped_type = "participant_activity"
@@ -176,7 +174,7 @@ class AgentEventProjectionService:
                 )
             return
         if (
-            self.room_kernel.mode in {"cohort", "kernel_only"}
+            kernel_owns_room_execution(self.room_kernel.mode)
             and not conversation_turn_id
         ):
             # A committed/revoked managed Dispatch may still emit trailing

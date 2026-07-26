@@ -4,11 +4,16 @@ import hashlib
 import json
 import time
 from collections.abc import Callable, Mapping
+from typing import Protocol
 
 from .agent_room_acceptance import (
     AcceptanceAliasError,
     acceptance_alias_map,
     resolve_acceptance_aliases,
+)
+from .agent_definitions import (
+    canonical_collaboration_role_id,
+    collaboration_role,
 )
 from .agent_room_capabilities import RoomCapabilityManifestStore
 from .agent_room_continuations import (
@@ -16,7 +21,6 @@ from .agent_room_continuations import (
     RoomContinuationProposalError,
 )
 from .agent_room_kernel import RoomKernelFenceError, RoomKernelStore
-from .agent_room_kernel_application import RoomKernelApplicationService
 from .agent_room_kernel_contracts import (
     ROOM_COMMIT_SCHEMA_VERSION,
 )
@@ -36,6 +40,35 @@ class RoomCommitProposalError(ValueError):
     """The model's proposal is repairable without weakening Kernel fences."""
 
 
+class RequirementContextSource(Protocol):
+    """The frozen requirement snapshot for one Dispatch."""
+
+    def dispatch_context(self, dispatch_id: str) -> dict[str, object] | None:
+        ...
+
+
+class SettlementApplication(Protocol):
+    """What settlement needs from the layer above it — and nothing more.
+
+    Settlement previously imported `RoomKernelApplicationService` outright,
+    which pointed a domain module at the application layer for two calls and
+    dragged the whole application import graph into every settlement test. The
+    surface is narrow enough to state directly, so it is stated here: the
+    concrete service still satisfies it structurally, and a test or a second
+    application implementation can now substitute a stub without constructing
+    the real service.
+    """
+
+    requirements: RequirementContextSource
+
+    def settle(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        ...
+
+
 class RoomSettleLifecycleService:
     """Turn one Pi settle candidate into a governed Room continuation.
 
@@ -50,7 +83,7 @@ class RoomSettleLifecycleService:
         rooms: AgentRoomStore,
         kernel: RoomKernelStore,
         capabilities: RoomCapabilityManifestStore,
-        application: RoomKernelApplicationService,
+        application: SettlementApplication,
         clock_ms: Callable[[], int] | None = None,
     ) -> None:
         self.rooms = rooms
@@ -314,6 +347,40 @@ class RoomSettleLifecycleService:
             "</managed-task-follow-up>"
         )
 
+    def _assert_decision_allowed(
+        self,
+        decision: str,
+        dispatch: Mapping[str, object],
+    ) -> None:
+        """Make `allowedCommitDecisions` a fence instead of catalog prose.
+
+        The manifest has always declared which lifecycle exits a work lens may
+        take, but nothing read it, so the field described a rule the runtime
+        did not apply. Every builtin role currently allows all four exits, so
+        this changes no behaviour today; it means a narrower role is enforced
+        the moment one is declared, rather than silently ignored.
+        """
+
+        participant_id = str(dispatch.get("targetParticipantId") or "")
+        if not participant_id:
+            return
+        try:
+            participant = self.rooms.participant(participant_id)
+        except KeyError:
+            return
+        role_id = canonical_collaboration_role_id(
+            participant.get("collaborationRole")
+        )
+        try:
+            role = collaboration_role(role_id)
+        except ValueError:
+            return
+        if decision not in role.allowed_commit_decisions:
+            allowed = "、".join(role.allowed_commit_decisions)
+            raise RoomCommitProposalError(
+                f"{role.display_name} 不能以 {decision} 收工；本岗位可用的出口是 {allowed}"
+            )
+
     def _canonical_commit(
         self,
         *,
@@ -334,6 +401,7 @@ class RoomSettleLifecycleService:
             raise RoomCommitProposalError("room_commit decision is invalid")
         summary = _required_text(arguments, "summary")
         dispatch = self.kernel.dispatch(str(manifest["dispatchId"]))
+        self._assert_decision_allowed(decision, dispatch)
         task = self.kernel.task(str(dispatch["taskId"]))
         root = self.kernel.root(str(manifest["rootId"]))
         task_criteria = [
