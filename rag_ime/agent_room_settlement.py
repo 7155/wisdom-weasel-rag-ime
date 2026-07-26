@@ -4,6 +4,7 @@ import hashlib
 import json
 import time
 from collections.abc import Callable, Mapping
+from typing import Protocol
 
 from .agent_room_acceptance import (
     AcceptanceAliasError,
@@ -17,7 +18,6 @@ from .agent_room_continuations import (
     RoomContinuationProposalError,
 )
 from .agent_room_kernel import RoomKernelFenceError, RoomKernelStore
-from .agent_room_kernel_application import RoomKernelApplicationService
 from .agent_room_kernel_contracts import (
     ROOM_COMMIT_SCHEMA_VERSION,
 )
@@ -37,6 +37,35 @@ class RoomCommitProposalError(ValueError):
     """The model's proposal is repairable without weakening Kernel fences."""
 
 
+class RequirementContextSource(Protocol):
+    """The frozen requirement snapshot for one Dispatch."""
+
+    def dispatch_context(self, dispatch_id: str) -> dict[str, object] | None:
+        ...
+
+
+class SettlementApplication(Protocol):
+    """What settlement needs from the layer above it — and nothing more.
+
+    Settlement previously imported `RoomKernelApplicationService` outright,
+    which pointed a domain module at the application layer for two calls and
+    dragged the whole application import graph into every settlement test. The
+    surface is narrow enough to state directly, so it is stated here: the
+    concrete service still satisfies it structurally, and a test or a second
+    application implementation can now substitute a stub without constructing
+    the real service.
+    """
+
+    requirements: RequirementContextSource
+
+    def settle(
+        self,
+        room_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        ...
+
+
 class RoomSettleLifecycleService:
     """Turn one Pi settle candidate into a governed Room continuation.
 
@@ -51,7 +80,7 @@ class RoomSettleLifecycleService:
         rooms: AgentRoomStore,
         kernel: RoomKernelStore,
         capabilities: RoomCapabilityManifestStore,
-        application: RoomKernelApplicationService,
+        application: SettlementApplication,
         clock_ms: Callable[[], int] | None = None,
     ) -> None:
         self.rooms = rooms

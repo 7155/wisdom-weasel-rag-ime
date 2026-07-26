@@ -12,6 +12,7 @@ from .agent_room_capabilities import RoomCapabilityManifestStore
 from .agent_room_context import RoomContextLedgerStore
 from .agent_room_kernel import RoomKernelFenceError, RoomKernelStore
 from .agent_room_kernel_contracts import (
+    DEFAULT_RUNTIME_PROFILE_REVISION,
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     ROOM_POST_SCHEMA_VERSION,
     ROOM_TASK_SCHEMA_VERSION,
@@ -30,7 +31,6 @@ from .agent_session_mode_gate import AgentSessionModeGate
 DEFAULT_ROOT_BUDGET = 32
 DEFAULT_MAX_HOPS = 6
 DEFAULT_MAX_DEPTH = 3
-DEFAULT_RUNTIME_PROFILE_REVISION = "room-runtime-profile:interactive-v1"
 
 
 class RoomApplicationService:

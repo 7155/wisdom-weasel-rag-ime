@@ -2974,25 +2974,16 @@ class AgentService:
         self._consume_room_knowledge_cache_tombstones()
 
     def _consume_room_knowledge_cache_tombstones(self) -> int:
-        """Clear process-local recall state after durable knowledge invalidation."""
-        consumed_at_ms = int(time.time() * 1000)
-        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            rows = conn.execute(
-                """SELECT tombstone_id,session_id FROM room_v2_knowledge_cache_tombstones
-                   WHERE consumed_at_ms=0 ORDER BY created_at_ms,tombstone_id"""
-            ).fetchall()
-            session_ids = {str(row["session_id"]) for row in rows if row["session_id"]}
-            if rows:
-                conn.executemany(
-                    "UPDATE room_v2_knowledge_cache_tombstones SET consumed_at_ms=? WHERE tombstone_id=?",
-                    [(consumed_at_ms, str(row["tombstone_id"])) for row in rows],
-                )
-            conn.commit()
-        self.memory_context_application.clear_recall_state(
-            tuple(session_ids)
+        """Clear process-local recall state after durable knowledge invalidation.
+
+        Retiring the durable tombstones belongs to the store that writes them;
+        this service only owns the in-process recall state that has to follow.
+        """
+        retired = self.knowledge_promotion.consume_cache_tombstones(
+            consumed_at_ms=int(time.time() * 1000)
         )
-        return len(rows)
+        self.memory_context_application.clear_recall_state(retired.session_ids)
+        return retired.consumed
 
     def _record_room_learning_signal(
         self,

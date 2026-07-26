@@ -21,6 +21,12 @@ KERNEL_RECEIPT_SCHEMA_VERSION = "wisdom-weasel.room-kernel-receipt.v1"
 ROOM_POST_SCHEMA_VERSION = "wisdom-weasel.room-post.v2"
 ROOM_SETTLE_RECEIPT_SCHEMA_VERSION = "wisdom-weasel.room-settle-receipt.v1"
 ROOM_SETTLE_RESULT_SCHEMA_VERSION = "wisdom-weasel.room-settle-result.v1"
+# Default value of the `runtimeProfileRevision` field carried by a dispatch
+# envelope. It lives with the other versioned contract identifiers because both
+# the application that opens a Root and the domain that builds a continuation
+# stamp it; keeping it in the application layer forced the domain to import
+# upward for a constant.
+DEFAULT_RUNTIME_PROFILE_REVISION = "room-runtime-profile:interactive-v1"
 
 CONTRACT_FILES = {
     "rootExecution": "room-root-execution.v2.json",

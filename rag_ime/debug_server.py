@@ -54,7 +54,7 @@ from .agent_tools import ControlToolGateway
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
 from .browser_control import BrowserControlError, BrowserControlService
-from .cli import seed_demo_memories
+from .demo_seed import seed_demo_memories
 from .core_client import CoreClient, default_fixture_memories
 from .contracts.context_observability import build_context_injection_trace
 from .contracts.json_schema import validate_contract
