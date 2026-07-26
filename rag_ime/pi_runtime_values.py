@@ -18,6 +18,18 @@ import re
 from collections.abc import Mapping
 from pathlib import Path
 
+from .agent_runtime_driver import AgentRuntimeError
+
+
+class PiRuntimeError(AgentRuntimeError):
+    """Raised by either Pi protocol implementation.
+
+    It lives here rather than in `pi_runtime` because `pi_runtime_public`
+    raises it, and importing it back from `pi_runtime` would make the two
+    modules cyclic. `pi_runtime` re-exports it, so existing importers are
+    unaffected.
+    """
+
 
 def _mapping(value: object) -> Mapping[str, object]:
     return value if isinstance(value, Mapping) else {}

@@ -20,20 +20,22 @@ from .agent_tool_block_bridge import AgentToolBlockBuffer
 from .agent_runtime_driver import AgentRuntimeError, CompactionObserver
 from .agent_sessions import AgentSessionStore
 from .pi_runtime import (
-    _APPROVAL_TITLE_PREFIX,
-    _REVIEW_TITLE_PREFIX,
     PiRuntimeConfig,
     PiRuntimeError,
+    _pi_message_payload,
+)
+from .pi_runtime_public import (
+    _APPROVAL_TITLE_PREFIX,
+    _REVIEW_TITLE_PREFIX,
     _last_assistant_error,
     _last_assistant_preview,
     _pi_message_id,
     _pi_message_is_public,
-    _pi_message_payload,
-    _public_fork_candidate_text,
+    _provider_retry_status,
     _public_code_tool_activity,
+    _public_fork_candidate_text,
     _public_pi_model,
     _public_usage,
-    _provider_retry_status,
     _redact_mapping,
     _ui_confirmation_value,
 )
