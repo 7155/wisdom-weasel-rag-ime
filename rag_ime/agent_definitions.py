@@ -7,6 +7,28 @@ from .contracts.json_schema import validate_contract
 
 CapabilityId = str
 
+# `executor` was renamed to `implementer` long ago, but historical Room rows
+# still carry the old id. Reads normalize through this one alias table; writes
+# only ever store canonical ids, and historical data is never rewritten.
+_LEGACY_COLLABORATION_ROLE_ALIASES = {"executor": "implementer"}
+
+
+def canonical_collaboration_role_id(
+    value: object,
+    *,
+    default: str = "implementer",
+) -> str:
+    """Resolve a stored collaboration-role id to its canonical spelling.
+
+    Four call sites used to repeat the `executor -> implementer` rewrite
+    inline; this is the single owner of that legacy-alias policy. It does not
+    validate — callers that need validation apply their own catalog or
+    assignability checks on the canonical id.
+    """
+
+    role_id = str(value or default).strip()
+    return _LEGACY_COLLABORATION_ROLE_ALIASES.get(role_id, role_id)
+
 _MANAGED_ROOM_LIFECYCLE_PROMPT = """<room-work>
 ## 责任边界
 根任务原始需求是不可变的上位边界，开始与收工都要核对；它不会自动扩大

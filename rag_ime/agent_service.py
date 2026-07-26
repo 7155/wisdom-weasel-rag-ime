@@ -83,7 +83,12 @@ from .agent_room_peer_review import RoomPeerReviewStore
 from .agent_room_route_owners import room_message_owner, room_route_owner
 from .agent_room_work import AgentRoomWorkStore
 from .agent_room_work_application import RoomWorkApplicationService
-from .agent_room_kernel import KernelMode, RoomKernelFenceError, RoomKernelStore
+from .agent_room_kernel import (
+    KernelMode,
+    RoomKernelFenceError,
+    RoomKernelStore,
+    kernel_owns_room_execution,
+)
 from .agent_room_kernel_application import RoomKernelApplicationService
 from .agent_room_settlement import RoomSettleLifecycleService
 from .agent_room_kernel_projection import RoomKernelProjection
@@ -2045,7 +2050,7 @@ class AgentService:
         room_turn_id: str,
     ) -> dict[str, object]:
         if (
-            self.room_kernel.mode in {"cohort", "kernel_only"}
+            kernel_owns_room_execution(self.room_kernel.mode)
             and room_turn_id in self.room_kernel.root_ids(room_id)
         ):
             return self.room_kernel_application.cancel_root(
@@ -2066,7 +2071,7 @@ class AgentService:
         requested_participant_ids: Sequence[str],
         work_item_id: str,
     ) -> dict[str, object]:
-        if self.room_kernel.mode in {"cohort", "kernel_only"}:
+        if kernel_owns_room_execution(self.room_kernel.mode):
             owner = room_message_owner(work_item_id=work_item_id)
             if owner == "session":
                 return self.room_legacy_dispatch.post_conversation(
@@ -2869,7 +2874,7 @@ class AgentService:
         prior = getattr(self, "room_kernel_worker_loop", None)
         if prior is not None:
             prior.close()
-        if self.room_kernel.mode in {"cohort", "kernel_only"} and (
+        if kernel_owns_room_execution(self.room_kernel.mode) and (
             not callable(getattr(self.runtime, "dispatch_room", None))
             or not callable(getattr(self.runtime, "cancel_room", None))
         ):

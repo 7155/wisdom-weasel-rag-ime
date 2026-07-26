@@ -5,7 +5,11 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Protocol
 
-from .agent_room_kernel import RoomKernelFenceError, RoomKernelStore
+from .agent_room_kernel import (
+    RoomKernelFenceError,
+    RoomKernelStore,
+    kernel_owns_room_execution,
+)
 
 
 class RoomRuntime(Protocol):
@@ -345,7 +349,7 @@ class RoomKernelWorkerLoop:
         return self._thread is not None and self._thread.is_alive()
 
     def start(self) -> bool:
-        if self.worker.store.mode not in {"cohort", "kernel_only"} or self.running:
+        if not kernel_owns_room_execution(self.worker.store.mode) or self.running:
             return False
         self._stop.clear()
         self._wake.clear()

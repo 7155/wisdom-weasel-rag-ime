@@ -4,6 +4,8 @@ import hashlib
 import re
 from collections.abc import Mapping, Sequence
 
+from .agent_definitions import canonical_collaboration_role_id
+
 
 ROOM_KINDS = frozenset({"collaboration", "roleplay"})
 ROOM_ROUTING_POLICIES = frozenset(
@@ -323,9 +325,7 @@ def _natural_candidate(
     descriptor_terms = _terms(" ".join(descriptors))
     overlap = query_terms & descriptor_terms
     tag_hits = [tag for tag in routing_tags if tag.casefold() in str(text).casefold()]
-    role = str(participant.get("collaborationRole") or "implementer")
-    if role == "executor":
-        role = "implementer"
+    role = canonical_collaboration_role_id(participant.get("collaborationRole"))
     role_signal = 0.0
     signals: list[str] = []
     if overlap:

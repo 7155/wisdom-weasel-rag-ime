@@ -11,7 +11,10 @@ from .agent_room_acceptance import (
     acceptance_alias_map,
     resolve_acceptance_aliases,
 )
-from .agent_definitions import collaboration_role
+from .agent_definitions import (
+    canonical_collaboration_role_id,
+    collaboration_role,
+)
 from .agent_room_capabilities import RoomCapabilityManifestStore
 from .agent_room_continuations import (
     RoomContinuationFactory,
@@ -365,9 +368,9 @@ class RoomSettleLifecycleService:
             participant = self.rooms.participant(participant_id)
         except KeyError:
             return
-        role_id = str(participant.get("collaborationRole") or "implementer")
-        if role_id == "executor":
-            role_id = "implementer"
+        role_id = canonical_collaboration_role_id(
+            participant.get("collaborationRole")
+        )
         try:
             role = collaboration_role(role_id)
         except ValueError:

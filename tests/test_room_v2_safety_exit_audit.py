@@ -157,7 +157,9 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         # Legacy projection still exists for ordinary rooms, but managed Room bindings suppress it.
         self.assertIn('return "participant_message", {', event_projection)
         self.assertIn('"message": message', event_projection)
-        self.assertIn('self.room_kernel.mode in {"cohort", "kernel_only"}', service)
+        # The managed-mode guard now has one policy owner instead of an inline
+        # set literal; the audit keeps proving the guard exists in the service.
+        self.assertIn("kernel_owns_room_execution(self.room_kernel.mode)", service)
 
         recognized = {
             action

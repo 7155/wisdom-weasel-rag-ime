@@ -21,6 +21,23 @@ from .db import apply_database_migrations
 
 
 KernelMode = Literal["off", "shadow", "cohort", "test", "kernel_only"]
+# Modes in which the Kernel is the single authoritative Room execution path.
+# `test` runs the same machinery inside unit tests but never claims production
+# authority; `shadow` observes legacy traffic; `off` disables the Kernel.
+_AUTHORITATIVE_KERNEL_MODES = frozenset({"cohort", "kernel_only"})
+
+
+def kernel_owns_room_execution(mode: object) -> bool:
+    """True when the Kernel owns the authoritative Room execution path.
+
+    Every caller used to spell this as `mode in {"cohort", "kernel_only"}`,
+    which left eight copies of the same policy across five modules and no
+    single place to answer "what does managed mean" when a mode is added.
+    This predicate is that place; it is deliberately a pure function on the
+    mode value, not state on the persistence store.
+    """
+
+    return str(mode) in _AUTHORITATIVE_KERNEL_MODES
 _ACTIVE_DISPATCH_STATES = ("pending", "leased", "running", "retry_wait", "timer_wait")
 _TERMINAL_TASK_STATES = ("completed", "failed", "cancelled")
 SYSTEM_MAX_HOPS = 12

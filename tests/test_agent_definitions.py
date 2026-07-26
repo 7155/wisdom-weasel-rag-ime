@@ -6,6 +6,7 @@ import unittest
 from rag_ime.agent_definition_compiler import AgentDefinitionCompiler
 from rag_ime.agent_room_kernel_contracts import validate_kernel_contract
 from rag_ime.agent_definitions import (
+    canonical_collaboration_role_id,
     collaboration_profile,
     collaboration_profile_catalog,
     collaboration_role,
@@ -199,6 +200,18 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
             specialist.capability_restrictions,
             ("memory", "rag"),
         )
+
+    def test_legacy_executor_reads_resolve_to_implementer_without_rewrites(self) -> None:
+        # Historical rows keep the old id on disk; every read resolves it to
+        # the canonical role, and unknown or blank input is passed through for
+        # the caller's own validation rather than silently repaired.
+        self.assertEqual(canonical_collaboration_role_id("executor"), "implementer")
+        self.assertEqual(canonical_collaboration_role_id(" executor "), "implementer")
+        self.assertEqual(canonical_collaboration_role_id("reviewer"), "reviewer")
+        self.assertEqual(canonical_collaboration_role_id(None), "implementer")
+        self.assertEqual(canonical_collaboration_role_id(""), "implementer")
+        self.assertEqual(canonical_collaboration_role_id("   "), "")
+        self.assertEqual(canonical_collaboration_role_id("observer"), "observer")
 
     def test_every_role_declares_only_lifecycle_exits_the_kernel_enforces(self) -> None:
         for role in collaboration_role_catalog():

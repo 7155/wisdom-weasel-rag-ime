@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
+from .agent_definitions import canonical_collaboration_role_id
 from .agent_role_identity import canonical_agent_role_id
 from .agent_room_routing import (
     normalize_room_kind,
@@ -2096,9 +2097,7 @@ def _required_text_value(value: object, field: str, maximum: int) -> str:
 
 
 def normalize_collaboration_role(value: object, *, assignable_only: bool = False) -> str:
-    normalized = str(value or "implementer").strip()
-    if normalized == "executor":
-        normalized = "implementer"
+    normalized = canonical_collaboration_role_id(value)
     if normalized not in ROOM_COLLABORATION_ROLES:
         raise ValueError("unsupported room collaboration role")
     if assignable_only and normalized not in ASSIGNABLE_COLLABORATION_ROLES:

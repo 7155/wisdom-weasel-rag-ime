@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+
+from .agent_room_kernel import kernel_owns_room_execution
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Protocol
@@ -87,7 +89,7 @@ class RoomLegacyDispatchService:
             if str(work_item_id or "").strip()
             else "room.message.conversation"
         )
-        if self.host.room_kernel.mode in {"cohort", "kernel_only"}:
+        if kernel_owns_room_execution(self.host.room_kernel.mode):
             return self.host.room_application.post_message(
                 room_id,
                 message=message,

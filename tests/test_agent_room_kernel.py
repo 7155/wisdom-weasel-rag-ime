@@ -5,7 +5,11 @@ import unittest
 import sqlite3
 from pathlib import Path
 
-from rag_ime.agent_room_kernel import RoomKernelFenceError, RoomKernelStore
+from rag_ime.agent_room_kernel import (
+    RoomKernelFenceError,
+    RoomKernelStore,
+    kernel_owns_room_execution,
+)
 from rag_ime.agent_room_context import RoomContextLedgerStore
 from rag_ime.agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
@@ -1046,6 +1050,16 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertIsNotNone(command)
         self.assertFalse(created)
         self.assertEqual(self.store.counts("root:1"), before)
+
+
+class KernelModeAuthorityTests(unittest.TestCase):
+    def test_only_cohort_and_kernel_only_claim_room_execution_authority(self) -> None:
+        # `test` runs the same machinery inside unit tests but must never be
+        # collapsed into production authority; `shadow` observes; `off` disables.
+        for mode in ("cohort", "kernel_only"):
+            self.assertTrue(kernel_owns_room_execution(mode), mode)
+        for mode in ("off", "shadow", "test", "", None, "production_cohort"):
+            self.assertFalse(kernel_owns_room_execution(mode), repr(mode))
 
 
 def root(root_id: str) -> dict[str, object]:
