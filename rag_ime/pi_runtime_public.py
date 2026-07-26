@@ -11,9 +11,8 @@ projections for usage, models, retry status, fork candidates, tool activity
 and confirmation values. Names and bodies are unchanged, so Provider payloads,
 event ordering and abort behaviour are untouched.
 
-`_pi_message_payload` stays in `pi_runtime` for now: at 164 lines it also
-depends on `_managed_media_content_url`, which reaches into v1's media
-handling, so it needs its own change.
+`_pi_message_payload` and the media URL builder it uses now live here too, so
+`pi_runtime_v2` imports no private name from `pi_runtime` at all.
 """
 
 from __future__ import annotations
@@ -21,8 +20,16 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from typing import Any
+from urllib.parse import quote
+
+from .agent_blocks import (
+    extract_completed_agent_blocks,
+    normalize_trusted_agent_blocks,
+)
+from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
 
 from .pi_runtime_values import (
     PiRuntimeError,
@@ -335,3 +342,177 @@ def _redact_mapping(value: Mapping[str, object], *, depth: int = 0) -> dict[str,
         else:
             result[key] = _safe_scalar(raw_value)
     return result
+
+
+def _managed_media_content_url(session_id: str, media_id: str) -> str:
+    return (
+        f"/api/agent/media/{quote(str(media_id), safe='')}/content"
+        f"?sessionId={quote(str(session_id), safe='')}"
+    )
+
+
+def _pi_message_payload(
+    raw: Mapping[str, object],
+    *,
+    session_id: str,
+    turn_id: str,
+    media_resolver: Callable[[str, str, str], str] | None = None,
+    message_id: str | None = None,
+    trusted_blocks: object = None,
+) -> AgentMessage:
+    role = str(raw.get("role") or "assistant")
+    if role not in {"user", "assistant", "tool", "system"}:
+        role = "tool" if role.lower().startswith("tool") else "assistant"
+    content = raw.get("content")
+    resolved_message_id = message_id or _pi_message_id(raw, turn_id)
+    fallback_blocks_enabled = trusted_blocks is None
+    blocks: list[AgentBlock] = []
+    blocks.extend(
+        AgentBlock.from_payload(item)
+        for item in normalize_trusted_agent_blocks(
+            trusted_blocks,
+            source_kind="pi_runtime_event",
+            source_ref=f"{session_id}:{resolved_message_id}",
+        )
+    )
+    attachments: list[str] = []
+    if isinstance(content, str):
+        visible_content = _visible_message_text(role, content)
+        extracted = (
+            extract_completed_agent_blocks(
+                visible_content,
+                source_kind="pi_session_message",
+                source_ref=f"{session_id}:{resolved_message_id}",
+            )
+            if role == "assistant"
+            else None
+        )
+        if extracted is not None:
+            visible_content = extracted.text
+            if fallback_blocks_enabled:
+                blocks.extend(AgentBlock.from_payload(item) for item in extracted.blocks)
+        if visible_content:
+            blocks.append(
+                normalize_agent_block(
+                    {
+                        "id": f"{turn_id}:text:0",
+                        "type": "text",
+                        "status": "completed",
+                        "presentationKind": "markdown",
+                        "data": {"text": visible_content},
+                    }
+                )
+            )
+    elif isinstance(content, list):
+        for index, item in enumerate(content):
+            value = _mapping(item)
+            content_type = str(value.get("type") or "unknown")
+            if content_type == "text":
+                visible_content = _visible_message_text(role, str(value.get("text") or ""))
+                extracted = (
+                    extract_completed_agent_blocks(
+                        visible_content,
+                        source_kind="pi_session_message",
+                        source_ref=f"{session_id}:{resolved_message_id}",
+                    )
+                    if role == "assistant"
+                    else None
+                )
+                if extracted is not None:
+                    visible_content = extracted.text
+                    if fallback_blocks_enabled:
+                        blocks.extend(AgentBlock.from_payload(item) for item in extracted.blocks)
+                if visible_content:
+                    blocks.append(
+                        normalize_agent_block(
+                            {
+                                "id": f"{turn_id}:text:{index}",
+                                "type": "text",
+                                "status": "completed",
+                                "presentationKind": "markdown",
+                                "data": {"text": visible_content},
+                            }
+                        )
+                    )
+            elif content_type == "image" and media_resolver is not None:
+                media_id = media_resolver(
+                    session_id,
+                    str(value.get("mimeType") or ""),
+                    str(value.get("data") or ""),
+                )
+                if media_id:
+                    attachments.append(media_id)
+                    receipt_url = _managed_media_content_url(session_id, media_id)
+                    blocks.append(
+                        normalize_agent_block(
+                            {
+                                "id": f"{turn_id}:image:{index}",
+                                "type": "image",
+                                "status": "completed",
+                                "presentationKind": "image",
+                                "data": {
+                                    "mediaId": media_id,
+                                    "receiptUrl": receipt_url,
+                                },
+                            }
+                        )
+                    )
+            elif content_type in {"thinking", "redacted_thinking"}:
+                continue
+            elif content_type in {"toolCall", "tool_call"}:
+                blocks.append(
+                    normalize_agent_block(
+                        {
+                            "id": str(value.get("id") or f"{turn_id}:tool:{index}"),
+                            "type": "tool_call",
+                            "status": "completed",
+                            "presentationKind": "tool_call",
+                            "data": {
+                                "toolCallId": str(value.get("id") or ""),
+                                "toolName": str(value.get("name") or value.get("toolName") or ""),
+                                "arguments": _redact_mapping(_mapping(value.get("arguments"))),
+                            },
+                        }
+                    )
+                )
+    error_message = _redact_runtime_text(str(raw.get("errorMessage") or "").strip())
+    failed = str(raw.get("stopReason") or "").lower() == "error" or bool(error_message)
+    if failed:
+        blocks.append(
+            normalize_agent_block(
+                {
+                    "id": f"{turn_id}:error:0",
+                    "type": "error",
+                    "status": "failed",
+                    "presentationKind": "error",
+                    "data": {"message": error_message or "模型请求失败，请重试"},
+                }
+            )
+        )
+    if not blocks:
+        blocks.append(
+            normalize_agent_block(
+                {
+                    "id": f"{turn_id}:progress:0",
+                    "type": "progress",
+                    "status": "completed",
+                    "presentationKind": "progress",
+                    "data": {"label": "本轮没有可展示正文"},
+                }
+            )
+        )
+    created_at = _integer(raw.get("timestamp")) or int(time.time() * 1000)
+    return AgentMessage(
+        message_id=resolved_message_id,
+        session_id=session_id,
+        turn_id=turn_id,
+        role=role,
+        status="failed" if failed else "completed",
+        blocks=tuple(blocks),
+        attachments=tuple(dict.fromkeys(attachments)),
+        created_at_ms=created_at,
+        completed_at_ms=created_at,
+        provider=str(raw.get("provider") or "").strip()[:80],
+        model=str(raw.get("responseModel") or raw.get("model") or "").strip()[:160],
+        usage=_public_usage(raw) if role == "assistant" else None,
+    )

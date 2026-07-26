@@ -22,9 +22,9 @@ from .agent_sessions import AgentSessionStore
 from .pi_runtime import (
     PiRuntimeConfig,
     PiRuntimeError,
-    _pi_message_payload,
 )
 from .pi_runtime_public import (
+    _pi_message_payload,
     _APPROVAL_TITLE_PREFIX,
     _REVIEW_TITLE_PREFIX,
     _last_assistant_error,
