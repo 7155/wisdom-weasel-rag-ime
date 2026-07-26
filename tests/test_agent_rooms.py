@@ -524,6 +524,19 @@ class AgentRoomTests(unittest.TestCase):
                 str(participant["id"]),
                 "observer",
             )
+        # `specialist` stays readable for historical members but is no longer
+        # assignable: it carries no domain contract, so offering it would
+        # promise expertise the runtime cannot supply.
+        with self.assertRaisesRegex(ValueError, "history only"):
+            self.store.update_participant_role(
+                str(room["id"]),
+                str(participant["id"]),
+                "specialist",
+            )
+        self.assertEqual(
+            self.store.participant(str(participant["id"]))["collaborationRole"],
+            "reviewer",
+        )
 
     def _participant(self, role_id: str, display_name: str) -> dict[str, str]:
         session = self.sessions.create(

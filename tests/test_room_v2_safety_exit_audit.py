@@ -306,6 +306,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
             budget=10,
             max_hops=4,
             max_depth=4,
+            acceptance_criteria=("ac:1",),
             now_ms=1,
         )
         self.store.create_task(

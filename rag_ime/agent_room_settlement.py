@@ -10,6 +10,7 @@ from .agent_room_acceptance import (
     acceptance_alias_map,
     resolve_acceptance_aliases,
 )
+from .agent_definitions import collaboration_role
 from .agent_room_capabilities import RoomCapabilityManifestStore
 from .agent_room_continuations import (
     RoomContinuationFactory,
@@ -314,6 +315,40 @@ class RoomSettleLifecycleService:
             "</managed-task-follow-up>"
         )
 
+    def _assert_decision_allowed(
+        self,
+        decision: str,
+        dispatch: Mapping[str, object],
+    ) -> None:
+        """Make `allowedCommitDecisions` a fence instead of catalog prose.
+
+        The manifest has always declared which lifecycle exits a work lens may
+        take, but nothing read it, so the field described a rule the runtime
+        did not apply. Every builtin role currently allows all four exits, so
+        this changes no behaviour today; it means a narrower role is enforced
+        the moment one is declared, rather than silently ignored.
+        """
+
+        participant_id = str(dispatch.get("targetParticipantId") or "")
+        if not participant_id:
+            return
+        try:
+            participant = self.rooms.participant(participant_id)
+        except KeyError:
+            return
+        role_id = str(participant.get("collaborationRole") or "implementer")
+        if role_id == "executor":
+            role_id = "implementer"
+        try:
+            role = collaboration_role(role_id)
+        except ValueError:
+            return
+        if decision not in role.allowed_commit_decisions:
+            allowed = "、".join(role.allowed_commit_decisions)
+            raise RoomCommitProposalError(
+                f"{role.display_name} 不能以 {decision} 收工；本岗位可用的出口是 {allowed}"
+            )
+
     def _canonical_commit(
         self,
         *,
@@ -334,6 +369,7 @@ class RoomSettleLifecycleService:
             raise RoomCommitProposalError("room_commit decision is invalid")
         summary = _required_text(arguments, "summary")
         dispatch = self.kernel.dispatch(str(manifest["dispatchId"]))
+        self._assert_decision_allowed(decision, dispatch)
         task = self.kernel.task(str(dispatch["taskId"]))
         root = self.kernel.root(str(manifest["rootId"]))
         task_criteria = [

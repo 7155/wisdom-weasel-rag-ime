@@ -170,7 +170,7 @@ class RequirementGovernanceTests(unittest.TestCase):
             acceptance_criteria=("criterion:req",),
             now_ms=1,
         )
-        kernel.create_task(task("task:1"), now_ms=1)
+        kernel.create_task(task("task:1", criteria=("criterion:req",)), now_ms=1)
         kernel.enqueue_dispatch(
             dispatch("dispatch:1", key="requirements:1"),
             now_ms=1,
@@ -275,7 +275,7 @@ class RequirementGovernanceTests(unittest.TestCase):
             budget=4,
             max_hops=2,
             max_depth=1,
-            acceptance_criteria=(),
+            acceptance_criteria=("ac:1",),
             now_ms=1,
         )
         kernel.create_task(task("task:1"), now_ms=1)

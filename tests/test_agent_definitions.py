@@ -179,6 +179,36 @@ class AgentDefinitionCompilerTests(unittest.TestCase):
         self.assertNotIn("tts", serialized)
         self.assertNotIn("audio", serialized)
 
+    def test_retained_specialist_role_never_claims_domain_expertise(self) -> None:
+        specialist = collaboration_role("specialist")
+        catalog_entry = next(
+            item
+            for item in collaboration_role_catalog()
+            if item["roleId"] == "specialist"
+        )
+
+        # Clicking a job title cannot grant industry knowledge. The role is kept
+        # only so historical participants stay valid, so neither the catalog the
+        # control center renders nor the prompt the model receives may present
+        # it as expertise.
+        self.assertNotIn("专家", str(catalog_entry["displayName"]))
+        self.assertNotIn("专家", str(catalog_entry["summary"]))
+        self.assertNotIn("领域知识", json.dumps(catalog_entry, ensure_ascii=False))
+        self.assertIn("不要自称专家", specialist.system_prompt)
+        self.assertEqual(
+            specialist.capability_restrictions,
+            ("memory", "rag"),
+        )
+
+    def test_every_role_declares_only_lifecycle_exits_the_kernel_enforces(self) -> None:
+        for role in collaboration_role_catalog():
+            with self.subTest(role=role["roleId"]):
+                self.assertTrue(role["allowedCommitDecisions"])
+                self.assertLessEqual(
+                    set(role["allowedCommitDecisions"]),
+                    {"deliver", "handoff", "wait", "blocked"},
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

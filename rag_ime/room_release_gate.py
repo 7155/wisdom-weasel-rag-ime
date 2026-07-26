@@ -7,7 +7,7 @@ import sqlite3
 import subprocess
 from pathlib import Path
 
-from .db import apply_database_migrations
+from .db import apply_database_migrations, sqlite_connection
 
 
 ROOM_V2_RELEASE_MIGRATION_VERSION = 108
@@ -23,7 +23,7 @@ def stage_room_v2_canary(*, product_root: str | Path, pi_root: str | Path, sourc
         raise FileExistsError("canary staging output already exists")
     output.mkdir(parents=True)
     staged_db = output / "room-v2-dry-run.sqlite"
-    with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as incoming, sqlite3.connect(staged_db) as staged:
+    with sqlite_connection(f"file:{source}?mode=ro", uri=True) as incoming, sqlite_connection(staged_db) as staged:
         incoming.backup(staged)
         migration = apply_database_migrations(staged, applied_at_ms=0)
         quick_check = str(staged.execute("PRAGMA quick_check").fetchone()[0])

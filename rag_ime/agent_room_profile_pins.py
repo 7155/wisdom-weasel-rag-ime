@@ -12,6 +12,7 @@ from .agent_definitions import (
     collaboration_profile,
 )
 from .agent_room_kernel import RoomKernelFenceError
+from .db import sqlite_connection
 from .collaboration_profile_store import CollaborationProfileStore
 
 
@@ -52,8 +53,7 @@ class RoomCollaborationProfilePins:
                 "Root CollaborationProfile id is empty"
             )
 
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute(
                 "SELECT * FROM room_v2_root_profile_pins WHERE root_id=?",

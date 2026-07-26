@@ -136,7 +136,8 @@ class RoomParticipantLifecycleService:
             )
         collaboration_role = normalize_collaboration_role(
             payload.get("collaborationRole")
-            or "implementer"
+            or "implementer",
+            assignable_only=True,
         )
         session = self.create_session(
             _session_payload(

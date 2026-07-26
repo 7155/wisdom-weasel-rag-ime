@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 
+from ..db import sqlite_connection
 from .client import LocalKnowledgeClient
 from .identity import knowledge_worker_fingerprint, normalized_knowledge_root
 from .models import AssetBlob, KNOWLEDGE_SCHEMA_VERSION, KnowledgeConflictError, KnowledgeLibraryConfig, KnowledgeLibraryError, KnowledgeNotFoundError
@@ -493,7 +494,7 @@ def _database_intake_validator(db_path: Path) -> Callable[[str, str], bool]:
 
     def validate(import_id: str, content_hash: str) -> bool:
         try:
-            with sqlite3.connect(path) as conn:
+            with sqlite_connection(path) as conn:
                 row = conn.execute(
                     """SELECT 1 FROM room_v2_external_import_intakes
                        WHERE import_id=? AND content_hash=? AND scan_status='allowed'

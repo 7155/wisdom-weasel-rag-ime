@@ -22,7 +22,12 @@ _RESEARCH_TERMS = frozenset({"查", "搜索", "检索", "调研", "核对", "证
 _EXECUTION_TERMS = frozenset({"改", "写", "实现", "执行", "修复", "创建", "删除", "运行", "部署"})
 _COORDINATION_TERMS = frozenset({"计划", "规划", "协调", "拆分", "分工", "安排", "汇总"})
 _REVIEW_TERMS = frozenset({"审查", "复核", "验收", "检查", "评审", "review"})
-_SPECIALIST_TERMS = frozenset({"专业", "领域", "专家", "咨询", "判断"})
+# There is deliberately no specialist term set. The other four roles describe a
+# working method, so a verb like "审查" is real evidence that the role fits.
+# "专业 / 领域 / 专家" describe a subject area instead, and matching them cannot
+# tell PostgreSQL tuning from a medical question. Routing on those words would
+# manufacture domain fit that nothing in the system can back up. A specialist
+# member is still reachable by an explicit @ mention and by descriptor overlap.
 
 
 def normalize_room_kind(value: object) -> str:
@@ -339,9 +344,6 @@ def _natural_candidate(
     elif role == "reviewer" and _contains_any(text, _REVIEW_TERMS):
         role_signal = 0.24
         signals.append("role:review")
-    elif role == "specialist" and _contains_any(text, _SPECIALIST_TERMS):
-        role_signal = 0.24
-        signals.append("role:specialist")
     lexical = min(0.5, 0.1 * len(overlap))
     tag_score = min(0.35, 0.18 * len(tag_hits))
     jitter_limit = float(config.get("naturalJitter") or 0.0)

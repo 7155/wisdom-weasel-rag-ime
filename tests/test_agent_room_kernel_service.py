@@ -3398,28 +3398,9 @@ class RoomKernelServiceTests(unittest.TestCase):
             linked_by="managed-test-runner",
             created_at_ms=2,
         )
-        with sqlite3.connect(self.service.db_path) as conn:
-            row = conn.execute(
-                "SELECT payload_json FROM room_kernel_tasks WHERE task_id = ?",
-                ("task:service",),
-            ).fetchone()
-            assert row is not None
-            task_payload = json.loads(str(row[0]))
-            task_payload["acceptanceCriterionIds"] = ["criterion:service"]
-            conn.execute(
-                """UPDATE room_kernel_tasks
-                   SET payload_json = ?
-                   WHERE task_id = ?""",
-                (
-                    json.dumps(
-                        task_payload,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    ),
-                    "task:service",
-                ),
-            )
+        # The Root must declare the criterion too: the Kernel refuses a terminal
+        # transition for a Root that has no acceptance criteria of its own.
+        self._set_parent_acceptance("criterion:service")
 
         first_dispatch = self._dispatch()
         self.service.room_kernel.enqueue_dispatch(first_dispatch, now_ms=3)

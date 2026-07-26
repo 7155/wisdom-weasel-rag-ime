@@ -3,8 +3,16 @@ from __future__ import annotations
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
+from rag_ime import agent_room_settlement as settlement
+from rag_ime.agent_definitions import collaboration_role
+from rag_ime.agent_room_settlement import (
+    RoomCommitProposalError,
+    RoomSettleLifecycleService,
+)
 from rag_ime.agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     ROOM_TASK_SCHEMA_VERSION,
@@ -861,6 +869,66 @@ class RoomQualityGateDiagnosticTests(unittest.TestCase):
         self.assertIn("AC-2, AC-3", message)
         self.assertIn("latest room_state", message)
         self.assertNotIn("evidence:mistyped", message)
+
+
+class RoleCommitDecisionFenceTests(unittest.TestCase):
+    """`allowedCommitDecisions` must be a fence, not catalog prose.
+
+    Every builtin role currently permits all four lifecycle exits, so this
+    exercises the fence with a deliberately narrowed role: the point is that a
+    narrower declaration is enforced rather than silently ignored.
+    """
+
+    def _service(self, role: object) -> RoomSettleLifecycleService:
+        service = RoomSettleLifecycleService.__new__(RoomSettleLifecycleService)
+        service.rooms = _StubRooms(role_id="reviewer")
+        return service
+
+    def test_declared_exit_is_allowed_and_undeclared_exit_is_refused(self) -> None:
+        narrowed = replace(
+            collaboration_role("reviewer"),
+            allowed_commit_decisions=("handoff", "blocked"),
+        )
+        service = self._service(narrowed)
+        dispatch = {"targetParticipantId": "participant:reviewer"}
+
+        with patch.object(settlement, "collaboration_role", return_value=narrowed):
+            service._assert_decision_allowed("handoff", dispatch)
+            with self.assertRaises(RoomCommitProposalError) as raised:
+                service._assert_decision_allowed("deliver", dispatch)
+
+        self.assertIn("deliver", str(raised.exception))
+        self.assertIn("handoff", str(raised.exception))
+
+    def test_unknown_participant_or_role_does_not_block_settlement(self) -> None:
+        # The fence narrows behaviour; it must never become a new way for a
+        # Dispatch to get stuck with no lifecycle exit at all.
+        service = RoomSettleLifecycleService.__new__(RoomSettleLifecycleService)
+        service.rooms = _StubRooms(role_id=None, missing=True)
+
+        service._assert_decision_allowed("deliver", {"targetParticipantId": "gone"})
+        service._assert_decision_allowed("deliver", {})
+
+    def test_every_builtin_role_still_permits_all_four_exits(self) -> None:
+        service = RoomSettleLifecycleService.__new__(RoomSettleLifecycleService)
+        for role_id in ("coordinator", "researcher", "implementer", "reviewer", "specialist"):
+            service.rooms = _StubRooms(role_id=role_id)
+            for decision in ("deliver", "handoff", "wait", "blocked"):
+                with self.subTest(role=role_id, decision=decision):
+                    service._assert_decision_allowed(
+                        decision, {"targetParticipantId": f"participant:{role_id}"}
+                    )
+
+
+class _StubRooms:
+    def __init__(self, *, role_id: str | None, missing: bool = False) -> None:
+        self.role_id = role_id
+        self.missing = missing
+
+    def participant(self, participant_id: str) -> dict[str, object]:
+        if self.missing:
+            raise KeyError(participant_id)
+        return {"id": participant_id, "collaborationRole": self.role_id}
 
 
 if __name__ == "__main__":

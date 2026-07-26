@@ -9,7 +9,12 @@ from pathlib import Path
 from rag_ime.agent_room_peer_review import PeerReviewFenceError, RoomPeerReviewStore, RunnerReceiptError
 from rag_ime.agent_room_requirements import RequirementGovernanceStore
 from rag_ime.agent_room_kernel import RoomKernelStore
-from rag_ime.agent_room_kernel_contracts import ROOT_EXECUTION_SCHEMA_VERSION
+from rag_ime.agent_room_kernel_contracts import (
+    DISPATCH_ENVELOPE_SCHEMA_VERSION,
+    ROOM_COMMIT_SCHEMA_VERSION,
+    ROOM_TASK_SCHEMA_VERSION,
+    ROOT_EXECUTION_SCHEMA_VERSION,
+)
 
 
 class RoomPeerReviewTests(unittest.TestCase):
@@ -188,12 +193,57 @@ class RoomPeerReviewTests(unittest.TestCase):
         self.requirements.link_proof(proof_id="proof:" + round_id, root_id="root:1", catalog_revision_id="catalog:1", criterion_id="criterion:journey", receipt_id=receipt["receiptId"], linked_by="runner:test", created_at_ms=7)
 
     def _seed_quiescent_kernel(self, *, root_id="root:1", enforce: bool) -> RoomKernelStore:
+        """Seed a Root that is quiescent *and* backed by real acceptance evidence.
+
+        The delivery gate is the subject of these tests, so the Root must already
+        clear the Kernel's own acceptance fence; otherwise every case would be
+        rejected for a missing criterion before the gate is ever consulted.
+        """
+
         kernel = RoomKernelStore(self.db, mode="cohort", enforce_test_delivery_gate=enforce)
+        task_id, dispatch_id = f"task:{root_id}", f"dispatch:{root_id}"
         kernel.create_root(
             {"schemaVersion": ROOT_EXECUTION_SCHEMA_VERSION, "rootId": root_id, "roomId": "room:1", "generation": 0,
              "state": "running", "owner": "author", "requirementAnchorRef": "anchor:1", "createdByActorRef": "user:test",
              "terminalReceiptId": None, "activeProfileRef": None, "budgetPolicyRef": "budget:test", "createdAtMs": 1},
-            budget=1, max_hops=1, max_depth=1, acceptance_criteria=(), now_ms=1,
+            budget=1, max_hops=1, max_depth=1, acceptance_criteria=("criterion:journey",), now_ms=1,
+        )
+        kernel.create_task(
+            {"schemaVersion": ROOM_TASK_SCHEMA_VERSION, "taskId": task_id, "rootId": root_id, "parentTaskId": None,
+             "ownerParticipantId": "author", "assigneeParticipantId": "author", "objective": "Verify the user journey.",
+             "expectedOutput": "A signed browser receipt.", "requirementItemIds": ["req:1"],
+             "acceptanceCriterionIds": ["criterion:journey"], "revision": 0, "state": "active"},
+            now_ms=1,
+        )
+        kernel.enqueue_dispatch(
+            {"schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION, "dispatchId": dispatch_id, "rootId": root_id,
+             "taskId": task_id, "parentDispatchId": None, "generation": 0, "hopCount": 0, "depth": 0, "budgetCost": 1,
+             "targetSessionId": "session:author", "targetParticipantId": "author", "triggerId": f"trigger:{root_id}",
+             "intentKind": "execute", "idempotencyKey": f"key:{root_id}", "attempt": 0, "capabilityEpoch": 1,
+             "runtimeProfileRevision": "runtime-profile:test-v1", "state": "pending"},
+            now_ms=2,
+        )
+        lease = kernel.lease_next(now_ms=3, ttl_ms=30_000)
+        assert lease is not None
+        kernel.record_runtime_dispatch_intent(dispatch_id, now_ms=3)
+        kernel.accept_runtime_receipt(
+            lease_token=str(lease["leaseToken"]),
+            runtime_receipt={"schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+                             "receiptKind": "dispatch_accepted", "status": "accepted", "rootId": root_id,
+                             "dispatchId": dispatch_id, "generation": 0},
+            now_ms=3,
+        )
+        gate_item = {"criterionId": "criterion:journey", "status": "pass", "evidenceRefs": ["receipt:" + root_id]}
+        kernel.apply_commit(
+            {"schemaVersion": ROOM_COMMIT_SCHEMA_VERSION, "commitId": f"commit:{root_id}", "dispatchId": dispatch_id,
+             "action": "complete", "contentHash": "sha256:test", "postProposal": None,
+             "qualityGateReceipt": {"schemaVersion": "wisdom-weasel.room-quality-gate-receipt.v1",
+                                    "receiptId": f"quality:{root_id}", "rootId": root_id, "taskId": task_id,
+                                    "dispatchId": dispatch_id, "generation": 0, "originalRequestChecked": True,
+                                    "verdict": "ready_to_deliver", "items": [gate_item], "residualRisks": [],
+                                    "createdAtMs": 4},
+             "evidenceRefs": ["receipt:" + root_id], "requirementCoverage": ["criterion:journey"], "createdAtMs": 4},
+            generation=0, now_ms=4,
         )
         return kernel
 

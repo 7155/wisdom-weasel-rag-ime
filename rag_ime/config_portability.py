@@ -15,7 +15,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 
-from .db import apply_database_migrations
+from .db import apply_database_migrations, sqlite_connection
 from .keychain_secrets import (
     MODEL_INSTANT_ACCOUNT,
     MODEL_KEYCHAIN_SERVICE,
@@ -364,7 +364,7 @@ def restore_portable_backup(
         restored_provider_slots: list[str] = []
         try:
             _restore_sqlite(restored_db, target_db)
-            with sqlite3.connect(target_db) as conn:
+            with sqlite_connection(target_db) as conn:
                 apply_database_migrations(conn)
             for source_file in rime_sources:
                 relative = source_file.relative_to(staging / "rime")
@@ -841,7 +841,7 @@ def _restore_sqlite(source: Path, destination: Path) -> None:
 
 def _database_counts(path: Path) -> dict[str, int]:
     tables = ("input_events", "memory_items", "memory_books", "memory_atoms", "planning_tasks", "planning_goals")
-    with sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True) as conn:
+    with sqlite_connection(f"file:{path}?mode=ro&immutable=1", uri=True) as conn:
         available = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         return {
             table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]) if table in available else 0
@@ -850,7 +850,7 @@ def _database_counts(path: Path) -> dict[str, int]:
 
 
 def _database_migration_version(path: Path) -> int:
-    with sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True) as conn:
+    with sqlite_connection(f"file:{path}?mode=ro&immutable=1", uri=True) as conn:
         exists = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
         ).fetchone()

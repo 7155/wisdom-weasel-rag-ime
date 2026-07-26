@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from threading import RLock
 
+from .db import sqlite_connection
 from .agent_configuration import (
     AgentConfigurationStore,
     AgentControlEventHub,
@@ -1401,7 +1402,7 @@ class AgentService:
         return self.room_kernel_application.snapshot(room_id)
 
     def collaboration_profile_projection(self, profile_id: str) -> dict[str, object]:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             return self._collaboration_profile_control(conn).projection(profile_id)
 
     def apply_collaboration_profile_command(
@@ -1412,7 +1413,7 @@ class AgentService:
     ) -> dict[str, object]:
         if not caller_authorized:
             raise PermissionError("CollaborationProfile control requires an authorized control caller")
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             result = self._collaboration_profile_control(conn).execute(payload)
         self._run_room_learning_maintenance()
         return result
@@ -1488,8 +1489,7 @@ class AgentService:
         query = str(payload.get("query") or "").strip()
         if not query:
             raise ValueError("knowledge search query is required")
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
             caller = bound_session_knowledge_caller(conn, authenticated_session_id)
         receipt_id = str(payload.get("retrievalReceiptId") or f"knowledge-retrieval:{uuid.uuid4().hex}")
         result = self.knowledge_promotion.search(
@@ -1516,8 +1516,7 @@ class AgentService:
         forbidden = {"owner", "ownerId", "ownerKind", "scope", "scopeId", "scopeKind", "allowedScopes", "allowedDomains", "sessionId", "query"}
         if forbidden.intersection(payload):
             raise PermissionError("knowledge read uses only its prior retrieval receipt")
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
             caller = bound_session_knowledge_caller(conn, authenticated_session_id)
         if caller is None:
             raise PermissionError("knowledge read requires an active Room ParticipantBinding")
@@ -2977,8 +2976,7 @@ class AgentService:
     def _consume_room_knowledge_cache_tombstones(self) -> int:
         """Clear process-local recall state after durable knowledge invalidation."""
         consumed_at_ms = int(time.time() * 1000)
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
             conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
                 """SELECT tombstone_id,session_id FROM room_v2_knowledge_cache_tombstones

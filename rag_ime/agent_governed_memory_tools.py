@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .contracts.json_schema import validate_contract
-from .db import apply_database_migrations
+from .db import apply_database_migrations, sqlite_connection
 from .memory_projection import RETRIEVAL_DOCS_PROJECTION, enqueue_memory_projection
 from .memory_projection_consistency import (
     invalidate_superseded_atom_dependencies,
@@ -1947,8 +1947,7 @@ class AgentRoleBookToolAdapter:
         role_id: str,
         role_version: str,
     ) -> dict[str, object]:
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
+        with sqlite_connection(self.db_path, row_factory=sqlite3.Row) as conn:
             conn.execute("PRAGMA query_only=ON")
             rows = conn.execute(
                 """
@@ -2000,7 +1999,7 @@ class AgentRoleBookToolAdapter:
         *,
         limit: int,
     ) -> list[dict[str, object]]:
-        with sqlite3.connect(self.db_path) as conn:
+        with sqlite_connection(self.db_path) as conn:
             conn.execute("PRAGMA query_only=ON")
             rows = conn.execute(
                 """
