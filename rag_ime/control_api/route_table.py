@@ -455,6 +455,45 @@ MEMORY_WRITE_ROUTES: tuple[RouteDescriptor, ...] = (
     _post("/api/memory/source/disposition", "management.memory_source_disposition"),
 )
 
+# Planning, history tombstones and memory-book archiving. Twenty writes that
+# were each one line in the chain: take the payload, call one management
+# method, answer 200. Nothing distinguishes them but the handler name, which is
+# precisely what a descriptor holds.
+PLANNING_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/planning/mutation/preview", "management.planning_mutation_preview"),
+    _post("/api/planning/mutation/rollback", "management.planning_mutation_rollback"),
+    _post("/api/planning/plan/save", "management.planning_save_plan"),
+    _post("/api/planning/goal/save", "management.planning_apply_goal_save"),
+    _post("/api/planning/task/save", "management.planning_apply_task_save"),
+    _post("/api/planning/task/action", "management.planning_apply_task_action"),
+    _post("/api/planning/task-event/undo", "management.planning_undo_task_event_contract"),
+    _post("/api/planning/completion/resolve", "management.planning_resolve_completion"),
+    _post("/api/planning/assistant", "management.planning_assistant"),
+)
+
+# `/api/history/tombstone` is served by a top-level handler while its
+# preview/apply/rollback siblings go through the management sub-service. The
+# descriptors keep that difference rather than assuming the family is uniform.
+HISTORY_TOMBSTONE_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/history/tombstone", "management_history_tombstone"),
+    _post("/api/history/tombstone/preview", "management.history_tombstone_preview"),
+    _post("/api/history/tombstone/apply", "management.history_tombstone_apply"),
+    _post("/api/history/tombstone/rollback", "management.history_tombstone_rollback"),
+)
+
+MEMORY_BOOK_ARCHIVE_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/memory/book/archive-status", "management.memory_book_archive_status"),
+    _post("/api/memory/book/archive-maintenance", "management.memory_book_archive_maintenance"),
+    _post("/api/memory/book/archive/preview", "management.memory_book_archive_preview"),
+    _post("/api/memory/book/archive/apply", "management.memory_book_archive_apply"),
+    _post("/api/memory/book/archive/rollback", "management.memory_book_archive_rollback"),
+)
+
+PREDICTOR_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/predictor/benchmark", "predictor_benchmark"),
+    _post("/api/predictor/cache/clear", "predictor_cache_clear"),
+)
+
 # Browser: only the argument-free lifecycle commands. The rest of this family
 # stays in the chains on purpose -- extension routes carry their own
 # authentication, snapshots return binary, several handlers take keyword
@@ -477,6 +516,10 @@ MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *SUGGESTION_ROUTES,
     *RUNTIME_ACTION_ROUTES,
     *MEMORY_WRITE_ROUTES,
+    *PLANNING_ROUTES,
+    *HISTORY_TOMBSTONE_ROUTES,
+    *MEMORY_BOOK_ARCHIVE_ROUTES,
+    *PREDICTOR_ROUTES,
     *FOREGROUND_ROUTES,
     *MEMORY_TOOL_ROUTES,
     *PREDICTION_ROUTES,

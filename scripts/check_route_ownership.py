@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import inspect
 import json
 import re
 import sys
@@ -44,7 +45,7 @@ TABLE_SOURCE = Path("rag_ime/control_api/route_table.py")
 # exposure is stated nowhere. This is a ratchet, not an approval. Migrating a
 # family to the descriptor table lowers it, because a descriptor states
 # exposure explicitly; a rise means a route appeared with no policy decision.
-UNDECLARED_DISPATCH_BUDGET = 63
+UNDECLARED_DISPATCH_BUDGET = 55
 
 
 def dispatched_routes(root: Path) -> dict[str, list[tuple[str, int]]]:
@@ -203,9 +204,69 @@ def unknown_handlers(root: Path) -> list[str]:
     return problems
 
 
+def handler_arity(root: Path) -> list[str]:
+    """Every descriptor must call its handler the way the handler is written.
+
+    `unknown_handlers` proves the attribute exists; it does not prove the
+    dispatcher can call it. The dispatcher passes exactly one positional
+    argument when `takes_arguments` is true and none when it is false, so a
+    handler taking a different shape -- `memory_page(kind, request)` is a real
+    example still in the chains -- would raise TypeError on the first request
+    rather than at import. Only unbound functions on the class can be checked,
+    which is why a handler reached through a runtime sub-service is skipped
+    rather than guessed at.
+    """
+
+    if not (root / TABLE_SOURCE).exists():
+        return []
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from rag_ime.control_api.route_table import MIGRATED_ROUTES
+        from rag_ime.debug_server import DebugImeService
+    except ImportError as error:
+        return [f"cannot verify route handler arity: {error}"]
+
+    problems: list[str] = []
+    for route in MIGRATED_ROUTES:
+        if "." in route.handler:
+            continue  # sub-service instance attribute; not resolvable statically
+        function = getattr(DebugImeService, route.handler, None)
+        if not callable(function):
+            continue  # unknown_handlers already reports this
+        try:
+            parameters = list(inspect.signature(function).parameters.values())[1:]
+        except (TypeError, ValueError):  # pragma: no cover - builtins
+            continue
+        if any(p.kind is inspect.Parameter.VAR_POSITIONAL for p in parameters):
+            continue
+        required = [
+            p for p in parameters
+            if p.default is inspect.Parameter.empty
+            and p.kind in {p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD}
+        ]
+        supplied = 1 if route.takes_arguments else 0
+        supplied_names = set(route.payload_args)
+        outstanding = [p.name for p in required[supplied:] if p.name not in supplied_names]
+        if outstanding:
+            problems.append(
+                f"route {route.method} {route.path} passes {supplied} positional "
+                f"argument(s) to {route.handler!r}, which still needs "
+                f"{', '.join(outstanding)}"
+            )
+        elif len(required) < supplied:
+            problems.append(
+                f"route {route.method} {route.path} passes a payload to "
+                f"{route.handler!r}, which takes no positional argument; set "
+                f"takes_arguments=False"
+            )
+    return problems
+
+
 def check(root: Path) -> list[str]:
     problems = shadowed_branches(root)
     problems.extend(unknown_handlers(root))
+    problems.extend(handler_arity(root))
     dispatched = dispatched_routes(root)
     chain = set(dispatched)
     table = table_routes(root)

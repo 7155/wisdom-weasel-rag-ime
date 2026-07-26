@@ -7471,61 +7471,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.service.agent.finalize_external_approval(approval_id, payload),
                 )
-            elif path == "/api/memory/book/archive-status":
-                self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_status(payload))
-            elif path == "/api/memory/book/archive/preview":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.memory_book_archive_preview(payload),
-                )
-            elif path == "/api/memory/book/archive/apply":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.memory_book_archive_apply(payload),
-                )
-            elif path == "/api/memory/book/archive/rollback":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.memory_book_archive_rollback(payload),
-                )
-            elif path == "/api/memory/book/archive-maintenance":
-                self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_maintenance(payload))
-            elif path == "/api/planning/mutation/preview":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_mutation_preview(payload))
-            elif path == "/api/planning/mutation/rollback":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_mutation_rollback(payload))
-            elif path == "/api/planning/plan/save":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_save_plan(payload))
-            elif path == "/api/planning/goal/save":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_goal_save(payload))
-            elif path == "/api/planning/task/save":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_task_save(payload))
-            elif path == "/api/planning/task/action":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_task_action(payload))
-            elif path == "/api/planning/task-event/undo":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.planning_undo_task_event_contract(payload),
-                )
-            elif path == "/api/history/tombstone/preview":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.history_tombstone_preview(payload),
-                )
-            elif path == "/api/history/tombstone/apply":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.history_tombstone_apply(payload),
-                )
-            elif path == "/api/history/tombstone/rollback":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.history_tombstone_rollback(payload),
-                )
-            elif path == "/api/planning/completion/resolve":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_resolve_completion(payload))
-            elif path == "/api/planning/assistant":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_assistant(payload))
             elif path in ("/api/active-rag/settings/update",):
                 self._write_json(HTTPStatus.OK, self.service.active_rag_settings_update(payload))
             elif path in ("/api/active-rag/preview",):
@@ -7541,10 +7486,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path in ("/api/rime-select", "/rime-select"):
                 validate_contract(payload, "rime-select.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.rime_select(payload))
-            elif path in ("/api/predictor/benchmark",):
-                self._write_json(HTTPStatus.OK, self.service.predictor_benchmark(payload))
-            elif path in ("/api/predictor/cache/clear",):
-                self._write_json(HTTPStatus.OK, self.service.predictor_cache_clear(payload))
             elif path in ("/api/active-rag/start",):
                 validate_contract(payload, "active-rag-start.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.active_rag_start(payload))
@@ -7579,8 +7520,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.service.knowledge_workbench_database_rollback_contract(payload),
                 )
-            elif path in ("/api/history/tombstone",):
-                self._write_json(HTTPStatus.OK, self.service.management_history_tombstone(payload))
             elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/apply"):
                 diff_id = _cleanup_diff_path_id(path, suffix="/apply")
                 self._write_json(HTTPStatus.OK, self.service.memory_cleanup_diff_apply(diff_id))
