@@ -106,7 +106,81 @@ VOCABULARY_ROUTES: tuple[RouteDescriptor, ...] = (
     ),
 )
 
-MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = VOCABULARY_ROUTES
+# RAG core v3: two reads that forward named query parameters, three writes that
+# hand the payload straight to the service. Same shape as vocabulary, so it
+# migrates without extending the descriptor.
+RAG_CORE_V3_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(
+        method="GET",
+        path="/api/rag-core-v3/doc",
+        handler="rag_core_v3_doc",
+        query_args=("id",),
+    ),
+    RouteDescriptor(
+        method="GET",
+        path="/api/rag-core-v3/tag-graph",
+        handler="rag_core_v3_tag_graph",
+        query_args=("tag", "limit"),
+    ),
+    RouteDescriptor(
+        method="POST",
+        path="/api/rag-core-v3/query-preview",
+        handler="rag_core_v3_query_preview",
+    ),
+    RouteDescriptor(
+        method="POST",
+        path="/api/rag-core-v3/rebuild-retrieval-docs",
+        handler="rag_core_v3_rebuild_retrieval_docs",
+    ),
+    RouteDescriptor(
+        method="POST",
+        path="/api/rag-core-v3/memory-book-preview",
+        handler="rag_core_v3_memory_book_preview",
+    ),
+)
+
+# Lexicon and cleanup-diff: small write families with one paired read.
+LEXICON_ROUTES: tuple[RouteDescriptor, ...] = (
+    # GET and POST on this path share one service method; the descriptors are
+    # distinct because the request becomes handler arguments differently
+    # (named query parameters versus the JSON payload).
+    RouteDescriptor(
+        method="GET",
+        path="/api/lexicon/export-rime",
+        handler="management_lexicon_export_rime",
+        query_args=("limit", "project", "status", "kind", "dryRun"),
+    ),
+    RouteDescriptor(
+        method="POST",
+        path="/api/lexicon/action",
+        handler="management_lexicon_action",
+    ),
+    RouteDescriptor(
+        method="POST",
+        path="/api/lexicon/export-rime",
+        handler="management_lexicon_export_rime",
+    ),
+)
+
+CLEANUP_DIFF_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(
+        method="POST",
+        path="/api/cleanup-diff/apply",
+        handler="management_cleanup_diff_apply",
+    ),
+    RouteDescriptor(
+        method="POST",
+        path="/api/cleanup-diff/rollback",
+        handler="management_cleanup_diff_rollback",
+    ),
+)
+
+MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
+    *VOCABULARY_ROUTES,
+    *RAG_CORE_V3_ROUTES,
+    *LEXICON_ROUTES,
+    *CLEANUP_DIFF_ROUTES,
+)
 
 ROUTE_TABLE: dict[tuple[str, str], RouteDescriptor] = {
     (route.method, route.path): route for route in MIGRATED_ROUTES

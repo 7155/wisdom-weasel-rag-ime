@@ -43,7 +43,7 @@ TABLE_SOURCE = Path("rag_ime/control_api/route_table.py")
 # exposure is stated nowhere. This is a ratchet, not an approval. Migrating a
 # family to the descriptor table lowers it, because a descriptor states
 # exposure explicitly; a rise means a route appeared with no policy decision.
-UNDECLARED_DISPATCH_BUDGET = 122
+UNDECLARED_DISPATCH_BUDGET = 113
 
 
 def dispatched_routes(root: Path) -> dict[str, list[tuple[str, int]]]:
@@ -128,8 +128,32 @@ def shadowed_branches(root: Path) -> list[str]:
     return problems
 
 
+def unknown_handlers(root: Path) -> list[str]:
+    """Every descriptor must name a real service method.
+
+    A descriptor is only trustworthy if its handler exists; a typo would
+    otherwise surface as a 500 on the first real request rather than at import.
+    """
+
+    table = root / TABLE_SOURCE
+    if not table.exists():
+        return []
+    try:
+        from rag_ime.control_api.route_table import MIGRATED_ROUTES
+        from rag_ime.debug_server import DebugImeService
+    except Exception:  # pragma: no cover - import environment differences
+        return []
+    return [
+        f"route {route.method} {route.path} names handler "
+        f"{route.handler!r}, which DebugImeService does not define"
+        for route in MIGRATED_ROUTES
+        if not hasattr(DebugImeService, route.handler)
+    ]
+
+
 def check(root: Path) -> list[str]:
     problems = shadowed_branches(root)
+    problems.extend(unknown_handlers(root))
     chain = set(dispatched_routes(root))
     table = table_routes(root)
 

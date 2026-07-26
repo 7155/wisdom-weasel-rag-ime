@@ -7047,20 +7047,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path in ("/api/lexicon/export-rime",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_lexicon_export_rime(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "project": _query_first(query, "project"),
-                        "status": _query_first(query, "status"),
-                        "kind": _query_first(query, "kind"),
-                        "dryRun": _query_first(query, "dryRun"),
-                    }
-                ),
-            )
-            return
         if parsed.path == "/api/rime-lexicon/review":
             self._write_json(
                 HTTPStatus.OK,
@@ -7121,20 +7107,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "limit": _query_first(query, "limit"),
                         "runId": _query_first(query, "runId"),
                         "status": _query_first(query, "status"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/rag-core-v3/doc",):
-            self._write_json(HTTPStatus.OK, self.service.rag_core_v3_doc({"id": _query_first(query, "id")}))
-            return
-        if parsed.path in ("/api/rag-core-v3/tag-graph",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.rag_core_v3_tag_graph(
-                    {
-                        "tag": _query_first(query, "tag"),
-                        "limit": _query_first(query, "limit"),
                     }
                 ),
             )
@@ -7929,14 +7901,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.management_history_tombstone(payload))
             elif path in ("/api/memories/action",):
                 self._write_json(HTTPStatus.OK, self.service.management_memory_action(payload))
-            elif path in ("/api/lexicon/action",):
-                self._write_json(HTTPStatus.OK, self.service.management_lexicon_action(payload))
-            elif path in ("/api/lexicon/export-rime",):
-                self._write_json(HTTPStatus.OK, self.service.management_lexicon_export_rime(payload))
-            elif path in ("/api/cleanup-diff/apply",):
-                self._write_json(HTTPStatus.OK, self.service.management_cleanup_diff_apply(payload))
-            elif path in ("/api/cleanup-diff/rollback",):
-                self._write_json(HTTPStatus.OK, self.service.management_cleanup_diff_rollback(payload))
             elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/apply"):
                 diff_id = _cleanup_diff_path_id(path, suffix="/apply")
                 self._write_json(HTTPStatus.OK, self.service.memory_cleanup_diff_apply(diff_id))
@@ -7947,12 +7911,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.generate_memory(payload))
             elif path in ("/api/organize-rag-db", "/organize-rag-db"):
                 self._write_json(HTTPStatus.OK, self.service.organize_rag_database(payload))
-            elif path in ("/api/rag-core-v3/query-preview",):
-                self._write_json(HTTPStatus.OK, self.service.rag_core_v3_query_preview(payload))
-            elif path in ("/api/rag-core-v3/rebuild-retrieval-docs",):
-                self._write_json(HTTPStatus.OK, self.service.rag_core_v3_rebuild_retrieval_docs(payload))
-            elif path in ("/api/rag-core-v3/memory-book-preview",):
-                self._write_json(HTTPStatus.OK, self.service.rag_core_v3_memory_book_preview(payload))
             elif path in ("/api/deepseek/completion-preview",):
                 self._write_json(HTTPStatus.OK, self.service.deepseek_completion_preview(payload))
             elif path in ("/api/commit", "/commit"):
