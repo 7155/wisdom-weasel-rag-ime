@@ -381,6 +381,36 @@ READ_ROUTES: tuple[RouteDescriptor, ...] = (
     ),
 )
 
+# Filtered management reads. Each chain branch built one dict of named query
+# parameters and passed it as the handler's single positional payload, so the
+# descriptor states the same thing with the parameter list as data. The names
+# are copied from the branch they replace: a read that forwards a parameter the
+# service no longer receives, or stops forwarding one, changes the result, so
+# these tuples are exact rather than tidied.
+MANAGEMENT_READ_ROUTES: tuple[RouteDescriptor, ...] = (
+    _get("/api/audit", "management_audit", query_args=("limit", "action"), takes_arguments=True),
+    _get(
+        "/api/history", "management_history", takes_arguments=True,
+        query_args=("limit", "project", "query", "source", "includeDeleted", "generatedOnly"),
+    ),
+    _get(
+        "/api/lexicon", "management_lexicon", takes_arguments=True,
+        query_args=("limit", "project", "status", "kind"),
+    ),
+    _get(
+        "/api/cleanup-diff", "management_cleanup_diff", takes_arguments=True,
+        query_args=("id", "diffId", "runId", "status", "limit"),
+    ),
+    _get(
+        "/api/candidates/explain", "candidate_explain", takes_arguments=True,
+        query_args=("query", "currentInput", "recentContext", "project", "app", "topK"),
+    ),
+    _get(
+        "/api/predictor/latency", "predictor_latency", takes_arguments=True,
+        query_args=("log", "last"),
+    ),
+)
+
 # Browser: only the argument-free lifecycle commands. The rest of this family
 # stays in the chains on purpose -- extension routes carry their own
 # authentication, snapshots return binary, several handlers take keyword
@@ -399,6 +429,7 @@ MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *VOCABULARY_ROUTES,
     *BROWSER_ROUTES,
     *READ_ROUTES,
+    *MANAGEMENT_READ_ROUTES,
     *FOREGROUND_ROUTES,
     *MEMORY_TOOL_ROUTES,
     *PREDICTION_ROUTES,

@@ -6817,17 +6817,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 response,
             )
             return
-        if parsed.path in ("/api/audit",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_audit(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "action": _query_first(query, "action"),
-                    }
-                ),
-            )
-            return
         if parsed.path in ("/api/active-rag/route-status",):
             local_only_raw = _query_first(query, "localOnly")
             self._write_json(
@@ -6842,17 +6831,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.OK,
                 self.service.knowledge_workbench_status(
                     {"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}
-                ),
-            )
-            return
-        if parsed.path in ("/api/predictor/latency",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.predictor_latency(
-                    {
-                        "log": _query_first(query, "log"),
-                        "last": _query_first(query, "last"),
-                    }
                 ),
             )
             return
@@ -6884,63 +6862,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if parsed.path.startswith("/api/active-rag/session/"):
             session_id = unquote(parsed.path.rsplit("/", 1)[-1])
             self._write_json(HTTPStatus.OK, self.service.active_rag_status({"sessionId": session_id}))
-            return
-        if parsed.path in ("/api/candidates/explain",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.candidate_explain(
-                    {
-                        "query": _query_first(query, "query"),
-                        "currentInput": _query_first(query, "currentInput"),
-                        "recentContext": _query_first(query, "recentContext"),
-                        "project": _query_first(query, "project"),
-                        "app": _query_first(query, "app"),
-                        "topK": _query_first(query, "topK"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/history",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_history(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "project": _query_first(query, "project"),
-                        "query": _query_first(query, "query"),
-                        "source": _query_first(query, "source"),
-                        "includeDeleted": _query_first(query, "includeDeleted"),
-                        "generatedOnly": _query_first(query, "generatedOnly"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/lexicon",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_lexicon(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "project": _query_first(query, "project"),
-                        "status": _query_first(query, "status"),
-                        "kind": _query_first(query, "kind"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/cleanup-diff",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_cleanup_diff(
-                    {
-                        "id": _query_first(query, "id"),
-                        "diffId": _query_first(query, "diffId"),
-                        "runId": _query_first(query, "runId"),
-                        "status": _query_first(query, "status"),
-                        "limit": _query_first(query, "limit"),
-                    }
-                ),
-            )
             return
         if parsed.path.startswith("/api/memory/optimizer/trace/"):
             trace_id = unquote(parsed.path.rsplit("/", 1)[-1])
