@@ -27,6 +27,16 @@ from .agent_tool_ids import (
 )
 from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
 from .pi_runtime_protocols import resolve_protocol_manager
+from .pi_runtime_values import (
+    _effective_thinking_level,
+    _integer,
+    _is_within,
+    _mapping,
+    _message_delivery,
+    _model_reference_part,
+    _public_message_queue,
+    _redact_runtime_text,
+)
 from .agent_runtime_driver import (
     AgentRuntimeError,
     AgentRuntimePolicy,
@@ -2564,28 +2574,12 @@ def _public_usage(value: object) -> dict[str, int]:
     }
 
 
-def _mapping(value: object) -> Mapping[str, object]:
-    return value if isinstance(value, Mapping) else {}
 
 
-def _message_delivery(value: object) -> str:
-    delivery = str(value or "prompt").strip()
-    if delivery not in {"prompt", "steer", "followUp"}:
-        raise ValueError("agent message delivery must be prompt, steer, or followUp")
-    return delivery
 
 
-def _public_message_queue(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item)[:4_000] for item in value[:100] if isinstance(item, str) and item]
 
 
-def _integer(value: object) -> int:
-    try:
-        return max(0, int(value or 0))
-    except (TypeError, ValueError):
-        return 0
 
 
 def _redact_mapping(value: Mapping[str, object], *, depth: int = 0) -> dict[str, object]:
@@ -2652,11 +2646,6 @@ def _safe_scalar(value: object) -> object:
     return _redact_runtime_text(str(value))[:2000]
 
 
-def _redact_runtime_text(value: str) -> str:
-    text = " ".join(str(value).split())[:500]
-    text = re.sub(r"\bsk-[A-Za-z0-9_-]{6,}\b", "[REDACTED_SECRET]", text)
-    text = re.sub(r"(?:/Users/|/Volumes/|/private/var/|/var/folders/)[^\s，。；;]+", "[REDACTED_PATH]", text)
-    return text
 
 
 def _split_model_reference(value: object) -> tuple[str, str]:
@@ -2669,13 +2658,6 @@ def _split_model_reference(value: object) -> tuple[str, str]:
     return provider, model
 
 
-def _model_reference_part(value: object, *, field: str, maximum: int) -> str:
-    normalized = str(value or "").strip()
-    if not normalized or len(normalized) > maximum:
-        raise ValueError(f"{field} must be a non-empty Pi model identifier")
-    if any(character.isspace() for character in normalized) or (field == "provider" and "/" in normalized):
-        raise ValueError(f"{field} contains unsupported characters")
-    return normalized
 
 
 def _public_pi_model(raw: Mapping[str, object]) -> dict[str, object]:
@@ -2717,20 +2699,8 @@ def _supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
     return levels or ["off"]
 
 
-def _effective_thinking_level(value: object, selected: Mapping[str, object]) -> str:
-    normalized = str(value or "off").strip().lower() or "off"
-    supported = selected.get("thinkingLevels")
-    if not isinstance(supported, list) or normalized not in supported:
-        return "off"
-    return normalized
 
 
-def _is_within(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
 
 
 def _pi_model_configuration_from_environment() -> tuple[
