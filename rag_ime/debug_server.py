@@ -7264,18 +7264,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/browser/mode":
                 self._write_json(HTTPStatus.OK, self.service.browser_control.set_mode(payload.get("mode")))
                 return
-            if path == "/api/browser/pairing/rotate":
-                self._write_json(HTTPStatus.OK, self.service.browser_control.rotate_pairing())
-                return
-            if path == "/api/browser/stop":
-                self._write_json(HTTPStatus.OK, self.service.browser_control.stop())
-                return
-            if path == "/api/browser/managed/start":
-                self._write_json(HTTPStatus.OK, self.service.browser_control.start_managed())
-                return
-            if path == "/api/browser/managed/stop":
-                self._write_json(HTTPStatus.OK, self.service.browser_control.stop_managed())
-                return
             if path == "/api/browser/command":
                 action = str(payload.pop("action", ""))
                 self._write_json(

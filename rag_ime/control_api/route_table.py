@@ -381,8 +381,23 @@ READ_ROUTES: tuple[RouteDescriptor, ...] = (
     ),
 )
 
+# Browser: only the argument-free lifecycle commands. The rest of this family
+# stays in the chains on purpose -- extension routes carry their own
+# authentication, snapshots return binary, several handlers take keyword
+# arguments or path parameters, and permission routes map BrowserControlError
+# to specific statuses. Migrating those needs descriptor support that does not
+# exist yet, and inventing it for one family would make the table describe
+# less than the chain does.
+BROWSER_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/browser/pairing/rotate", "browser_control.rotate_pairing", takes_arguments=False),
+    _post("/api/browser/stop", "browser_control.stop", takes_arguments=False),
+    _post("/api/browser/managed/start", "browser_control.start_managed", takes_arguments=False),
+    _post("/api/browser/managed/stop", "browser_control.stop_managed", takes_arguments=False),
+)
+
 MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *VOCABULARY_ROUTES,
+    *BROWSER_ROUTES,
     *READ_ROUTES,
     *FOREGROUND_ROUTES,
     *MEMORY_TOOL_ROUTES,
