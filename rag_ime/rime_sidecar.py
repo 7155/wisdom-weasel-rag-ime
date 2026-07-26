@@ -193,6 +193,9 @@ _AUTO_PREDICTION_TRIGGER_CONFIG = (
     _AUTO_PREDICTION_TRIGGER.config.ignore_cooldown_ms,
 )
 _GROUP_SHORT_BUFFER = GroupShortBuffer()
+_DISPLAY_FEEDBACK_SEEN_LOCK = RLock()
+_DISPLAY_FEEDBACK_SEEN: dict[tuple[str, str, str], None] = {}
+_DISPLAY_FEEDBACK_SEEN_MAX = 512
 _POST_COMMIT_COMPLETION_CACHE: "PostCommitCompletionCache"
 _POST_COMMIT_PRESENTATION_STREAM_LOCK = RLock()
 _POST_COMMIT_PRESENTATION_STREAM_STAGES: dict[str, tuple[int, float]] = {}
@@ -4966,6 +4969,11 @@ def clear_model_prediction_holdover_cache() -> None:
         _MODEL_LANE_ACTIVE_STARTED_AT = 0.0
 
 
+def clear_display_memory_feedback_cache() -> None:
+    with _DISPLAY_FEEDBACK_SEEN_LOCK:
+        _DISPLAY_FEEDBACK_SEEN.clear()
+
+
 def clear_prediction_manager_cache() -> None:
     with _PREDICTION_MANAGER_LOCK:
         _PREDICTION_MANAGERS.clear()
@@ -5074,7 +5082,6 @@ def _get_model_holdover_predictions(
     current_input: str,
     explicit_recent_context: str,
     max_candidates: int,
-    allow_nearby: bool = False,
 ) -> list[ModelPrediction]:
     fingerprint = _holdover_input_state_fingerprint(
         explicit_recent_context=explicit_recent_context,
@@ -5092,31 +5099,7 @@ def _get_model_holdover_predictions(
             return []
         if cached is not None:
             return list(cached.predictions[:limit])
-        if not allow_nearby:
-            return []
-        context = _holdover_context_text(explicit_recent_context)
-        query = _holdover_query_text(current_input)
-        stale_keys: list[tuple[str, str]] = []
-        nearby: _ModelPredictionHoldover | None = None
-        for key, candidate in _MODEL_HOLDOVERS.items():
-            if key[0] != project:
-                continue
-            if now - candidate.created_at > _MODEL_HOLDOVER_TTL_MS / 1000:
-                stale_keys.append(key)
-                continue
-            if not _nearby_holdover_input_state_matches(
-                candidate,
-                explicit_recent_context=context,
-                current_input=query,
-            ):
-                continue
-            if nearby is None or candidate.created_at > nearby.created_at:
-                nearby = candidate
-        for key in stale_keys:
-            _MODEL_HOLDOVERS.pop(key, None)
-        if nearby is None:
-            return []
-        return list(nearby.predictions[:limit])
+        return []
 
 
 def _prune_model_holdovers_locked(now: float) -> None:
@@ -5150,38 +5133,6 @@ def _holdover_context_text(explicit_recent_context: str) -> str:
 
 def _holdover_query_text(current_input: str) -> str:
     return compact_whitespace(current_input)[:240]
-
-
-def _nearby_holdover_input_state_matches(
-    cached: _ModelPredictionHoldover,
-    *,
-    explicit_recent_context: str,
-    current_input: str,
-) -> bool:
-    if not cached.explicit_recent_context or not explicit_recent_context:
-        return False
-    if not _nearby_holdover_text_match(cached.explicit_recent_context, explicit_recent_context):
-        return False
-    if cached.current_input and current_input:
-        return _nearby_holdover_text_match(cached.current_input, current_input)
-    return True
-
-
-def _nearby_holdover_text_match(previous: str, current: str) -> bool:
-    previous_norm = compact_whitespace(previous)
-    current_norm = compact_whitespace(current)
-    if not previous_norm or not current_norm:
-        return False
-    if previous_norm == current_norm:
-        return True
-    min_len = min(len(previous_norm), len(current_norm))
-    if min_len < 8:
-        return False
-    if current_norm.startswith(previous_norm):
-        return len(current_norm) - len(previous_norm) <= 24
-    if previous_norm.startswith(current_norm):
-        return len(previous_norm) - len(current_norm) <= 16
-    return False
 
 
 def _predictor_last_error(predictor: PredictionProvider) -> str:
@@ -6723,9 +6674,25 @@ def _record_display_memory_feedback(
         for item in display_candidates
         if item.source_type in {"rag", "memory"} and (item.memory_id or item.suggestion_id)
     ]
+    transaction = snapshot.frontend_transaction
     for item in display_candidates:
         if item.source_type not in {"rag", "memory"}:
             continue
+        # Progressive follow-ups rebuild the response for the same panel, so
+        # the same visible candidate must not produce a second `shown` row.
+        # Without a panel identity there is no follow-up to dedup against.
+        if transaction.panel_session_id:
+            seen_key = (
+                transaction.panel_session_id,
+                item.memory_id or item.suggestion_id,
+                transaction.committed_context_hash,
+            )
+            with _DISPLAY_FEEDBACK_SEEN_LOCK:
+                if seen_key in _DISPLAY_FEEDBACK_SEEN:
+                    continue
+                _DISPLAY_FEEDBACK_SEEN[seen_key] = None
+                while len(_DISPLAY_FEEDBACK_SEEN) > _DISPLAY_FEEDBACK_SEEN_MAX:
+                    _DISPLAY_FEEDBACK_SEEN.pop(next(iter(_DISPLAY_FEEDBACK_SEEN)))
         _record_memory_feedback_event(
             core=core,
             event={
