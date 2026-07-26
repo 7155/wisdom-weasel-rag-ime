@@ -68,6 +68,7 @@ from .control_api import (
 )
 from .control_api.gateway_access import GatewayAccessDecision, resolve_gateway_access
 from .control_api.route_table import build_arguments, find_route
+from .models import InputSuggestion
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer

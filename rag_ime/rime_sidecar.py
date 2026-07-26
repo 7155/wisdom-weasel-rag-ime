@@ -2193,13 +2193,19 @@ def run_side_lanes_with_latency_budget(
         and deepseek_scene_enabled("post_commit")
         else model_candidate_limit
     )
-    rime_candidate_count = len(
-        [
-            item
-            for item in snapshot.candidates[:10]
-            if compact_whitespace(item.text)
-        ]
+    # The progressive DeepSeek lane below needs the candidate texts, not just
+    # how many there are. It previously referenced `rime_candidate_texts`,
+    # which is only bound in `_predict_deepseek_post_commit_candidates`'s
+    # caller further down this module, so that lane raised NameError whenever
+    # it ran. Binding the texts here uses the identical expression that
+    # sibling already uses, and the count stays exactly what it was: the same
+    # slice and the same filter, now measured off the tuple.
+    rime_candidate_texts = tuple(
+        compact_whitespace(item.text)
+        for item in snapshot.candidates[:10]
+        if compact_whitespace(item.text)
     )
+    rime_candidate_count = len(rime_candidate_texts)
     rag_current_input = current_input
     model_current_input = current_input
     if request_type == PREDICTION_REQUEST_PINYIN_CONSTRAINED:

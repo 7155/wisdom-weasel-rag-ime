@@ -47,5 +47,5 @@ target-version = "py312"
 #   F401 unused-import      32   (removal touches many files; needs its own pass)
 #   F841 unused-variable     5
 #   F541 f-string-no-placeholder  2
-#   F821 undefined-name      2   (one is a real NameError; see the E1 report)
-select = ["E9", "F601", "F632", "F702", "F704", "F706", "F811"]
+# F821 is now enabled: both findings were real and are fixed.
+select = ["E9", "F601", "F632", "F702", "F704", "F706", "F811", "F821"]
