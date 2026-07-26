@@ -45,7 +45,24 @@ target-version = "py312"
 # Known non-zero and deliberately NOT enabled yet, with counts measured at
 # this commit, so the gate is never mistaken for full coverage:
 #   F401 unused-import      32   (removal touches many files; needs its own pass)
+#   B904 raise-without-from-inside-except  3  (changes exception chaining)
 #   F841 unused-variable     5
 #   F541 f-string-no-placeholder  2
 # F821 is now enabled: both findings were real and are fixed.
-select = ["E9", "F601", "F632", "F702", "F704", "F706", "F811", "F821"]
+# B023 is now enabled: its one finding was in a test lambda closing over a loop
+# variable, which is now bound explicitly.
+#
+# Every rule below is at zero, so a failure means a new defect rather than
+# pre-existing debt. Each is a way code can be wrong while still importing:
+# comparison and membership written backwards (E711-E714), a bare except
+# swallowing everything (E722), a mutable default shared between calls (B006),
+# a return inside finally discarding an exception (B012), a closure capturing a
+# loop variable (B023), and the always-false/always-true forms Pylint detects.
+select = [
+    "E9", "E711", "E712", "E713", "E714", "E722",
+    "F402", "F502", "F506", "F522", "F601", "F621", "F622",
+    "F632", "F701", "F702", "F704", "F706", "F707", "F811", "F821",
+    "B002", "B006", "B012", "B023",
+    "PLE0101", "PLE0704", "PLE1142",
+    "PLW0127", "PLW0129", "PLW0602", "PLW0711",
+]

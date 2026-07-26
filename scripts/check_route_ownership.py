@@ -81,19 +81,26 @@ def table_routes(root: Path) -> set[str]:
     return paths
 
 
-def table_route_pairs(root: Path) -> set[tuple[str, str]]:
-    """(method, path) pairs owned by the descriptor table, aliases included."""
+def table_route_pairs(root: Path) -> tuple[set[tuple[str, str]], list[str]]:
+    """(method, path) pairs owned by the descriptor table, aliases included.
+
+    Returns the pairs and any problem that stopped them being read. Swallowing
+    the ImportError and returning an empty set would have made the
+    dual-ownership check below find nothing and report success -- a gate
+    passing because it could not run is the failure mode this file exists to
+    prevent, so the caller is told instead.
+    """
 
     table = root / TABLE_SOURCE
     if not table.exists():
-        return set()
+        return set(), []
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     try:
         from rag_ime.control_api.route_table import ROUTE_TABLE
-    except ImportError:
-        return set()
-    return set(ROUTE_TABLE)
+    except ImportError as error:
+        return set(), [f"cannot read the route table to check dual ownership: {error}"]
+    return set(ROUTE_TABLE), []
 
 
 def declared_routes(root: Path) -> set[str]:
@@ -298,7 +305,9 @@ def check(root: Path) -> list[str]:
         for path, sites in dispatched.items()
         for handler, _line in sites
     }
-    for method, path in sorted(table_route_pairs(root) & chain_pairs):
+    table_pairs, table_problems = table_route_pairs(root)
+    problems.extend(table_problems)
+    for method, path in sorted(table_pairs & chain_pairs):
         problems.append(
             f"{method} {path} is owned by both the route table and a dispatch "
             f"chain; remove the chain branch so the route has one owner"

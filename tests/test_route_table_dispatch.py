@@ -258,7 +258,11 @@ class PostDescriptorPassThroughTests(unittest.TestCase):
                 handler = DebugRequestHandler.__new__(DebugRequestHandler)
                 handler.service = _Recorder(calls)
                 written: list = []
-                handler._write_json = lambda status, body: written.append((int(status), body))
+                # `sink=written` binds this iteration's list rather than
+                # closing over the loop variable.
+                handler._write_json = (
+                    lambda status, body, sink=written: sink.append((int(status), body))
+                )
 
                 payload = {"probe": route.path}
                 handler._dispatch_descriptor_route(route, payload=payload)
