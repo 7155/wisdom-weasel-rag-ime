@@ -34,10 +34,10 @@ test('Room publishes once immediately and preserves the in-flight turn across ro
   await expect(feature).toBeVisible();
 
   const probe = `Room optimistic ${Date.now()}`;
-  const composer = page.getByRole('textbox', { name: 'Room 消息' });
+  const composer = feature.getByRole('textbox', { name: '协作消息' });
   await composer.fill(probe);
   const publishStartedAt = Date.now();
-  await page.getByRole('button', { name: '发送 Room 消息' }).click();
+  await feature.getByRole('button', { name: '发送消息' }).click();
 
   const optimisticTurn = feature.locator('article', { hasText: probe });
   await expect(optimisticTurn).toHaveCount(1);

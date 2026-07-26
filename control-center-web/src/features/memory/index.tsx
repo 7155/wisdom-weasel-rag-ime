@@ -32,6 +32,7 @@ import {
   TextArea,
 } from '@/components/primitives';
 import { useControlTransport } from '@/app/control-transport';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import {
   memoryBookArchivePathIds,
   memoryQueryKeys,
@@ -74,9 +75,9 @@ type MemoryRouteLayer = MemoryLayer | 'timelines' | 'role-books';
 type MemoryView = 'catalog' | 'roleBooks' | 'timeline' | 'relations' | 'organize';
 
 const layers = [
-  { value: 'evidence', label: '证据' },
-  { value: 'atoms', label: '当前事实' },
-  { value: 'books', label: '主题书' },
+  { value: 'evidence', label: '记忆来源' },
+  { value: 'atoms', label: '关于我的事实' },
+  { value: 'books', label: '长期主题' },
 ] as const;
 
 function defaultMemoryStatus(kind: MemoryKind): string {
@@ -87,6 +88,7 @@ function defaultMemoryStatus(kind: MemoryKind): string {
 
 export function MemoryFeature() {
   const queryClient = useQueryClient();
+  const identity = useProductIdentity();
   const location = useLocation();
   const navigate = useNavigate();
   const routeSelection = useMemo(() => memoryRouteSelection(location.search), [location.search]);
@@ -161,10 +163,10 @@ export function MemoryFeature() {
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={summary.isRefetching || pages.isRefetching} onClick={refresh} size="small">刷新</Button>}
-      description="查看个人上下文的证据、当前事实、主题关系、每日活动和治理状态。"
-      eyebrow="Personal Context"
+      description={`看看${identity.assistantName}记住了什么、为什么这样记，以及哪些内容需要你确认。`}
+      eyebrow="关于我"
       routeId="memory"
-      title="记忆"
+      title="我的记忆"
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <MemorySystemOverview
@@ -185,15 +187,15 @@ export function MemoryFeature() {
         >
           <TabsList aria-label="记忆视图">
             <TabsTrigger value="catalog">记忆</TabsTrigger>
-            <TabsTrigger value="roleBooks">角色书</TabsTrigger>
+            <TabsTrigger value="roleBooks">伙伴记忆</TabsTrigger>
             <TabsTrigger value="timeline">时间线</TabsTrigger>
             <TabsTrigger value="relations">关系图</TabsTrigger>
-            <TabsTrigger value="organize">AI 整理</TabsTrigger>
+            <TabsTrigger value="organize">让{identity.assistantName}整理</TabsTrigger>
           </TabsList>
           <TabsContent value="catalog">
             <ManagementSection
-              title="个人事实链"
-              description="证据是可追溯来源，Atom 表示当前有效事实，主题书负责组织事实与关系。应用、标签和分组只作为索引，不再冒充记忆层。"
+              title="记忆如何形成"
+              description="先保留来源，再整理成当前有效的事实，最后归入长期主题。应用、标签和分组只帮助查找，不会被当成记忆本身。"
             >
               <div className="mgmt-stack">
                 <SegmentedControl
@@ -247,7 +249,7 @@ export function MemoryFeature() {
                           title: stringValue(row.title, '未命名记忆'),
                           detail: stringValue(row.detail, '暂无摘要'),
                           meta: [
-                            catalogSourceLabel(kind, row),
+                            catalogSourceLabel(kind, row, identity.assistantName),
                             ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId)),
                           ].filter(Boolean).join(' · '),
                           status: <StatusBadge label={catalogStatusLabel(kind, rowStatus)} tone={catalogStatusTone(kind, rowStatus)} />,
@@ -268,6 +270,7 @@ export function MemoryFeature() {
                   {selected ? (
                     <>
                       <MemoryCatalogDetail
+                        assistantName={identity.assistantName}
                         kind={kind}
                         onOpenReference={(next) => setReference(next)}
                         row={selected}
@@ -288,17 +291,17 @@ export function MemoryFeature() {
                         {kind === 'books' ? (
                           archiveAvailability.state === 'unsupported' ? (
                             <UnavailableMemoryAction
-                              description="归档或恢复主题书，并保留事实与来源关系。"
+                              description="归档或恢复长期主题，并保留事实与来源关系。"
                               reason={archiveAvailability.reason || '安全归档暂未开放。'}
                               risk="R2"
-                              title="管理主题书"
+                              title="管理长期主题"
                             />
                           ) : (
                             <ManagementMutationWorkflow
                               availability={archiveAvailability}
                               description={archiveDraft.archived
-                                ? '归档主题书，退出日常自动召回；事实和来源关系仍会保留。'
-                                : '恢复主题书，重新参与日常记忆召回。'}
+                                ? '归档长期主题，退出日常自动召回；事实和来源关系仍会保留。'
+                                : '恢复长期主题，重新参与日常记忆召回。'}
                               draftKey={JSON.stringify(archiveDraft)}
                               mutationKey={['memory', 'mutation', 'archive']}
                               onApply={async (preview) => parseManagementWorkReceipt(
@@ -339,7 +342,7 @@ export function MemoryFeature() {
                               )}
                               onRolledBack={() => refresh()}
                               risk="R2"
-                              title={archiveDraft.archived ? '归档主题书' : '恢复主题书'}
+                              title={archiveDraft.archived ? '归档长期主题' : '恢复长期主题'}
                             />
                           )
                         ) : null}
@@ -424,8 +427,8 @@ export function MemoryFeature() {
 
   function archiveBlockedReason(): string {
     if (!selected) return '先从上方目录中选择一项。';
-    if (kind !== 'books') return '当前只有主题书支持可回滚归档。';
-    if (selectedType !== 'topic') return '只有主题书可以手动归档。';
+    if (kind !== 'books') return '当前只有长期主题支持可回滚归档。';
+    if (selectedType !== 'topic') return '只有长期主题可以手动归档。';
     if (!['active', 'approved', 'archived'].includes(selectedStatus)) {
       return '当前记忆状态不支持归档或恢复。';
     }
@@ -456,7 +459,7 @@ export function MemoryFeature() {
       return '敏感输入不能直接恢复；请改为创建一条不含凭据的明确记忆。';
     }
     if (selectedStatus === 'consolidated') {
-      return '这条证据已经写入长期记忆，请改为编辑或归档对应的主题书。';
+      return '这条来源已经写入长期记忆，请改为编辑或归档对应的长期主题。';
     }
     if (!['pending', 'remember', 'needs_review', 'not_for_memory', 'expired'].includes(selectedStatus)) {
       return '当前证据状态不支持遗忘或恢复。';
@@ -574,10 +577,12 @@ function safeCatalogStringList(value: unknown): string[] {
 }
 
 function MemoryCatalogDetail({
+  assistantName,
   kind,
   onOpenReference,
   row,
 }: {
+  assistantName: string;
   kind: MemoryKind;
   onOpenReference: (reference: MemoryReferenceSelection) => void;
   row: Record<string, unknown>;
@@ -604,7 +609,7 @@ function MemoryCatalogDetail({
       </div>
       <dl>
         <div><dt>状态</dt><dd>{catalogStatusLabel(kind, status)}</dd></div>
-        <div><dt>来源</dt><dd>{catalogSourceLabel(kind, row)}</dd></div>
+        <div><dt>来源</dt><dd>{catalogSourceLabel(kind, row, assistantName)}</dd></div>
         {stringValue(row.ownerKind) ? (
           <div><dt>归属</dt><dd>{ownerLabel(stringValue(row.ownerKind), stringValue(row.ownerId))}</dd></div>
         ) : null}
@@ -619,7 +624,7 @@ function MemoryCatalogDetail({
         </InlineNotice>
       ) : auditOnly ? (
         <InlineNotice title="原始对话仅用于审计" tone="info">
-          这条记录不会直接进入角色书或长期事实；只有 Agent 显式工具草案，或空闲期生成的有界摘要，才可参与后续整理。
+          这条记录不会直接成为伙伴记忆或关于你的长期事实；只有明确提出的记忆草案，或空闲时生成的有界摘要，才会进入后续整理。
         </InlineNotice>
       ) : forgotten ? (
         <InlineNotice title="这条证据已退出记忆召回" tone="info">
@@ -756,11 +761,11 @@ function normalizeCatalogReferenceKind(
 function referenceKindLabel(kind: MemoryReferenceSelection['kind']): string {
   return ({
     event: '原始事件',
-    evidence: 'Agent 证据/审计',
-    atom: '当前事实',
-    book: '主题书',
+    evidence: '对话证据与审计',
+    atom: '关于我的事实',
+    book: '长期主题',
     timeline: '活动时间线',
-    role_book_revision: '角色书修订',
+    role_book_revision: '伙伴记忆版本',
   } as const)[kind];
 }
 
@@ -1082,11 +1087,11 @@ function UnavailableMemoryAction({
 function kindLabel(kind: MemoryKind): string {
   return {
     apps: '应用',
-    books: '主题书',
-    atoms: '记忆原子',
+    books: '长期主题',
+    atoms: '关于我的事实',
     tags: '标签',
     phrases: '短语',
-    evidence: '证据与审计',
+    evidence: '记忆来源与审计',
     groups: '分组',
     negative: '负反馈',
   }[kind];
@@ -1100,7 +1105,7 @@ function memoryStatusOptions(kind: MemoryKind) {
       { value: 'remember', label: '值得保留' },
       { value: 'needs_review', label: '待判断' },
       { value: 'not_for_memory', label: '已遗忘' },
-      { value: 'consolidated', label: '已归档入书' },
+      { value: 'consolidated', label: '已整理为记忆' },
       { value: 'expired', label: '已过期' },
     ];
   }
@@ -1133,7 +1138,7 @@ function statusLabel(status: string): string {
     remember: '值得保留',
     not_for_memory: '已遗忘',
     needs_review: '待判断',
-    consolidated: '已归档入书',
+    consolidated: '已整理为记忆',
     expired: '已过期',
   }[status] ?? '状态未知';
 }
@@ -1156,7 +1161,7 @@ function statusTone(status: string): 'success' | 'warning' | 'danger' | 'info' |
   return 'neutral';
 }
 
-function sourceLabel(source: string): string {
+function sourceLabel(source: string, assistantName: string): string {
   const normalized = source.toLocaleLowerCase('en-US');
   if (!normalized) return '本地记忆';
   if (normalized.includes('input_app')) return '应用上下文';
@@ -1165,14 +1170,14 @@ function sourceLabel(source: string): string {
   if (normalized.includes('import')) return '导入';
   if (normalized.includes('notion')) return 'Notion';
   if (normalized.includes('rime') || normalized.includes('input')) return '输入记录';
-  if (normalized.includes('agent') || normalized.includes('pi')) return 'Agent 整理';
+  if (normalized.includes('agent') || normalized.includes('pi')) return `${assistantName}整理`;
   if (normalized.includes('manual')) return '手动整理';
   if (normalized.includes('sqlite') || normalized.includes('memory_')) return '本地记忆';
   return '其他来源';
 }
 
-function catalogSourceLabel(kind: MemoryKind, row: Record<string, unknown>): string {
-  if (kind !== 'evidence') return sourceLabel(stringValue(row.source));
+function catalogSourceLabel(kind: MemoryKind, row: Record<string, unknown>, assistantName: string): string {
+  if (kind !== 'evidence') return sourceLabel(stringValue(row.source), assistantName);
   // Older/local page payloads sometimes expose source_kind as the detail
   // field. Keep the UI honest even while those rows are being migrated.
   const type = stringValue(row.type, stringValue(row.detail));
@@ -1180,7 +1185,7 @@ function catalogSourceLabel(kind: MemoryKind, row: Record<string, unknown>): str
   if (type === 'session_digest') return '空闲摘要';
   if (type === 'tool_receipt') return '已应用工具回执';
   if (type === 'work_receipt') return '已验收工作回执';
-  return sourceLabel(stringValue(row.source));
+  return sourceLabel(stringValue(row.source), assistantName);
 }
 
 function isRawConversationEvidence(type: string): boolean {
@@ -1219,7 +1224,7 @@ function ownerLabel(ownerKind: string, ownerId: string): string {
   if (ownerKind === 'shared') return `项目共享 · ${ownerId}`;
   if (ownerKind === 'agent') return `角色 · ${ownerId}`;
   if (ownerKind === 'session') return `会话 · ${ownerId}`;
-  if (ownerKind === 'room') return `房间 · ${ownerId}`;
+  if (ownerKind === 'room') return `协作空间 · ${ownerId}`;
   return `${ownerKind} · ${ownerId}`;
 }
 

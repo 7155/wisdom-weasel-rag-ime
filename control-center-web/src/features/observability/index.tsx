@@ -131,13 +131,13 @@ export function ObservabilityFeature() {
           onClick={() => void feed.refresh()}
           size="small"
         >
-          刷新快照
+          刷新
         </Button>
       )}
-      description="查看 Agent、Room、检索、记忆与工具调用的结构化运行轨迹。"
-      eyebrow="Agent Gateway"
+      description="回看伙伴对话、多人协作、记忆检索和工具操作发生了什么。"
+      eyebrow="本机记录"
       routeId="observability"
-      title="运行观察"
+      title="运行记录"
     >
       <QueryState
         error={feed.error}
@@ -145,7 +145,7 @@ export function ObservabilityFeature() {
         onRetry={() => void feed.refresh()}
       >
         <InlineNotice title="隐私边界" tone="info">
-          观察数据库只保存状态、耗时、数量、ID 和指纹化元数据。下方本机 Debug 检查器仅在你展开时向 Pi Runtime 读取临时内存，不持久化原始提示词或消息正文。
+          运行记录只保存状态、耗时、数量和脱敏后的标识。只有你主动展开“上下文检查”时，页面才会临时读取本轮内容；原始提示词和消息正文不会写进运行记录。
         </InlineNotice>
 
         {feed.streamError ? (
@@ -163,7 +163,7 @@ export function ObservabilityFeature() {
         >
           <MetricStrip items={[
             {
-              label: '当前轨迹',
+              label: '本次流程',
               value: traceCount,
               detail: `${visibleItems.length} 条事件`,
               icon: GitBranch,
@@ -191,7 +191,7 @@ export function ObservabilityFeature() {
           ]} />
         </ManagementSection>
 
-        <section className="observation-controls" aria-label="观察筛选">
+        <section className="observation-controls" aria-label="运行记录筛选">
           <div className="observation-category-tabs" role="tablist" aria-label="事件类型">
             {CATEGORY_FILTERS.map((item) => (
               <button
@@ -210,7 +210,7 @@ export function ObservabilityFeature() {
             <Search aria-hidden="true" size={15} />
             <input
               onChange={(event) => setNeedle(event.target.value)}
-              placeholder="筛选 Trace、会话、Room 或步骤"
+              placeholder="搜索流程、对话、协作或步骤"
               type="search"
               value={needle}
             />
@@ -234,7 +234,7 @@ export function ObservabilityFeature() {
             trailing={<StatusBadge label={`${visibleItems.length} 条`} tone="neutral" />}
           >
             {visibleItems.length ? (
-              <ol className="observation-timeline" aria-label="运行观察事件">
+              <ol className="observation-timeline" aria-label="运行记录事件">
                 {visibleItems.map((item) => (
                   <ObservationRow
                     active={item.eventId === selectedEvent?.eventId}
@@ -257,7 +257,7 @@ export function ObservabilityFeature() {
           </ManagementSection>
 
           <ManagementSection
-            title="因果轨迹"
+            title="这次是怎样完成的"
             trailing={selectedTrace.length ? (
               <StatusBadge label={`${selectedTrace.length} 步`} tone="neutral" />
             ) : undefined}
@@ -265,7 +265,7 @@ export function ObservabilityFeature() {
             {selectedTrace.length ? (
               <>
                 <header className="observation-trace-heading">
-                  <span><GitBranch size={15} />{shortId(selectedTraceId)}</span>
+                  <span title={selectedTraceId}><GitBranch size={15} />一次完整流程</span>
                   <small>{traceScope(selectedTrace)}</small>
                 </header>
                 <ol className="observation-trace">
@@ -274,7 +274,7 @@ export function ObservabilityFeature() {
                       <button onClick={() => setSelectedEventId(item.eventId)} type="button">
                         <span className="observation-trace__index">{index + 1}</span>
                         <div>
-                          <strong>{item.summary}</strong>
+                          <strong>{publicObservationSummary(item)}</strong>
                           <small>{categoryLabel(item.category)} · {statusLabel(item.status)}</small>
                           <ObservationFacts item={item} />
                         </div>
@@ -286,13 +286,13 @@ export function ObservabilityFeature() {
                   <div className="observation-debug-actions">
                     <a href={`#/context-debug?sessionId=${encodeURIComponent(selectedEvent.sessionId)}${selectedEvent.turnId ? `&turnId=${encodeURIComponent(selectedEvent.turnId)}` : ''}`}>
                       <Braces size={15} />
-                      <span><strong>打开独立上下文 Debug</strong><small>逐次查看增量、Provider 请求和工具串并行</small></span>
+                      <span><strong>查看这轮的完整上下文</strong><small>逐次核对新增内容、模型请求和工具执行</small></span>
                     </a>
                     <details
                       className="observation-debug-context"
                       onToggle={(event) => setDebugOpen(event.currentTarget.open)}
                     >
-                      <summary><Database size={15} /><span><strong>在这里快速查看</strong><small>{selectedEvent.turnId ? `回合 ${shortId(selectedEvent.turnId)}` : '读取当前会话最新临时快照'}</small></span></summary>
+                      <summary title={selectedEvent.turnId || selectedEvent.sessionId}><Database size={15} /><span><strong>在这里快速查看</strong><small>{selectedEvent.turnId ? '读取本轮临时快照' : '读取当前对话的最新临时快照'}</small></span></summary>
                       {debugOpen ? <DebugContextInspector sessionId={selectedEvent.sessionId} turnId={selectedEvent.turnId || undefined} embedded /> : null}
                     </details>
                   </div>
@@ -300,9 +300,9 @@ export function ObservabilityFeature() {
               </>
             ) : (
               <EmptyState
-                description="从左侧时间线选择一条事件后，这里会显示同一 Trace 的上下游步骤。"
+                description="从左侧时间线选择一条记录后，这里会按顺序还原同一次工作的前后步骤。"
                 icon={GitBranch}
-                title="选择一条轨迹"
+                title="选择一条运行记录"
               />
             )}
           </ManagementSection>
@@ -327,7 +327,7 @@ function ObservationRow({
       <button onClick={onSelect} type="button">
         <span className="observation-row__icon"><Icon size={16} /></span>
         <span className="observation-row__copy">
-          <strong>{item.summary}</strong>
+          <strong>{publicObservationSummary(item)}</strong>
           <small>{categoryLabel(item.category)} · {phaseLabel(item.phase)}</small>
         </span>
         <span className="observation-row__scope">
@@ -363,7 +363,7 @@ function observationFacts(item: ObservationEventV1): [string, string][] {
   const model = primitiveAttribute(item.attributes.modelName) || primitiveAttribute(item.attributes.model);
   const provider = primitiveAttribute(item.attributes.provider);
   if (model) facts.push(['模型', model]);
-  if (provider) facts.push(['Provider', provider]);
+  if (provider) facts.push(['模型服务', provider]);
   for (const [key, value] of Object.entries(item.metrics)) {
     if (value === null || typeof value === 'object') continue;
     facts.push([metricLabel(key), displayMetric(key, value)]);
@@ -405,10 +405,10 @@ function observationMatches(item: ObservationEventV1, rawNeedle: string): boolea
 }
 
 function primaryScope(item: ObservationEventV1): string {
-  if (item.roomId) return `Room ${shortId(item.roomId)}`;
-  if (item.sessionId) return `会话 ${shortId(item.sessionId)}`;
-  if (item.runId) return `运行 ${shortId(item.runId)}`;
-  return shortId(item.traceId);
+  if (item.roomId) return '多人协作';
+  if (item.sessionId) return '伙伴对话';
+  if (item.runId) return '后台任务';
+  return '一次流程';
 }
 
 function traceScope(items: ObservationEventV1[]): string {
@@ -417,9 +417,9 @@ function traceScope(items: ObservationEventV1[]): string {
 }
 
 function scopeLabel(filters: ObservationFilters): string {
-  if (filters.sessionId) return `会话 · ${shortId(filters.sessionId)}`;
-  if (filters.roomId) return `Room · ${shortId(filters.roomId)}`;
-  if (filters.traceId) return `Trace · ${shortId(filters.traceId)}`;
+  if (filters.sessionId) return '只看这段对话';
+  if (filters.roomId) return '只看这个协作空间';
+  if (filters.traceId) return '只看这次流程';
   return '限定范围';
 }
 
@@ -430,11 +430,11 @@ function categoryLabel(value: CategoryFilter | ObservationEventV1['category']): 
     retrieval: '检索',
     memory: '记忆',
     tool: '工具',
-    agent: 'Agent',
-    room: 'Room',
-    intercom: '私信',
-    approval: '审批',
-    runtime: '运行时',
+    agent: '伙伴',
+    room: '协作',
+    intercom: '伙伴消息',
+    approval: '确认',
+    runtime: '系统',
     system: '系统',
   }[value];
 }
@@ -507,17 +507,17 @@ function metricLabel(key: string): string {
     characterCount: '字符',
     pendingEventCount: '待整理',
     pendingDraftCount: '待审草案',
-    contextTokens: '上下文',
+    contextTokens: '上下文用量',
     contextWindowTokens: '窗口',
     contextPercent: '上下文占用',
     remainingTokens: '剩余',
     compactAtTokens: '压缩阈值',
     tokensUntilCompact: '距压缩',
-    inputTokens: '输入 Token',
-    outputTokens: '输出 Token',
+    inputTokens: '输入用量',
+    outputTokens: '输出用量',
     cacheReadTokens: '缓存读取',
     cacheWriteTokens: '缓存写入',
-    totalTokens: '总 Token',
+    totalTokens: '总用量',
     cacheHitPercent: '缓存命中',
     compactionCount: '压缩次数',
     tokensBefore: '压缩前',
@@ -535,6 +535,15 @@ function displayValue(value: unknown): string {
   if (typeof value === 'boolean') return value ? '是' : '否';
   if (typeof value === 'number') return String(numberValue(value));
   return String(value);
+}
+
+function publicObservationSummary(item: ObservationEventV1): string {
+  const value = item.summary.trim()
+    .replace(/\bime\.memory\b/giu, '记忆工具')
+    .replace(/\bAgent 私信\b/giu, '伙伴消息')
+    .replace(/\bAgent 回合\b/giu, '伙伴本轮')
+    .replace(/\bAgent\b/giu, '伙伴');
+  return value || `${categoryLabel(item.category)}进度已更新`;
 }
 
 function primitiveAttribute(value: unknown): string {
@@ -557,11 +566,6 @@ function privacyLabel(value: ObservationEventV1['privacyClass']): string {
 
 function observationCategory(value: string | null): CategoryFilter | null {
   return CATEGORY_FILTERS.includes(value as CategoryFilter) ? value as CategoryFilter : null;
-}
-
-function shortId(value: string): string {
-  if (value.length <= 24) return value;
-  return `${value.slice(0, 11)}…${value.slice(-8)}`;
 }
 
 function formatTime(timestampMs: number): string {

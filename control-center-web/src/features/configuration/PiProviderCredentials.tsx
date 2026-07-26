@@ -205,10 +205,10 @@ export function PiProviderCredentials() {
     return <ManagementSection title="模型账号"><InlineNotice title="无法检查" tone="danger">无法读取本机登录能力，请刷新页面后重试。</InlineNotice></ManagementSection>;
   }
   if (!supported) {
-    return <ManagementSection title="模型账号"><InlineNotice title="当前版本暂不支持" tone="warning">更新本机控制服务后，才能在这里管理模型账号。</InlineNotice></ManagementSection>;
+    return <ManagementSection title="模型账号"><InlineNotice title="这里暂时不可用" tone="warning">更新应用后，就能在这里连接和管理模型账号。</InlineNotice></ManagementSection>;
   }
   if (catalog.isPending) {
-    return <ManagementSection title="模型账号"><InlineNotice title="正在读取">正在从 Pi 读取模型服务与可用模型。</InlineNotice></ManagementSection>;
+    return <ManagementSection title="模型账号"><InlineNotice title="正在读取">正在读取模型服务和可用模型。</InlineNotice></ManagementSection>;
   }
   if (catalog.error || envelope.ok === false) {
     return <ManagementSection title="模型账号"><InlineNotice title="读取失败" tone="danger">{errorText(catalog.error ?? envelope.error)}</InlineNotice></ManagementSection>;
@@ -217,11 +217,11 @@ export function PiProviderCredentials() {
     return <ManagementSection title="模型账号"><InlineNotice title="当前不可用" tone="warning">{catalogUnavailableText(envelope.unavailableReason)}</InlineNotice></ManagementSection>;
   }
   if (!providers.length) {
-    return <ManagementSection title="模型账号"><InlineNotice title="尚无模型服务" tone="warning">请先在 Pi 中添加模型服务，再回到这里刷新。</InlineNotice></ManagementSection>;
+    return <ManagementSection title="模型账号"><InlineNotice title="还没有模型服务" tone="warning">先添加一个模型服务，再回到这里刷新。</InlineNotice></ManagementSection>;
   }
 
   return (
-    <ManagementSection title="模型账号" description="登录状态与模型目录直接来自 Pi；密钥和令牌不会显示在网页中。">
+    <ManagementSection title="模型账号" description="管理本机使用的模型服务。密钥和登录令牌不会显示在页面中。">
       <div className="mgmt-grid-2">
         <div className="mgmt-stack">
           <Field htmlFor="pi-provider" label="模型服务">
@@ -237,7 +237,7 @@ export function PiProviderCredentials() {
             <StatusBadge label={auth.configured === true ? '已连接' : '未连接'} tone={auth.configured === true ? 'success' : 'neutral'} />
             {stringValue(auth.type) ? <StatusBadge label={stringValue(auth.type) === 'oauth' ? 'ChatGPT 登录' : 'API Key'} tone="info" /> : null}
           </div>
-          <Field description="输入内容仅在确认时发往本机 Pi，页面不会读回现有密钥。" htmlFor="pi-api-key" label="API Key">
+          <Field description="输入内容只会在确认时交给本机安全保存；页面不会读回现有密钥。" htmlFor="pi-api-key" label="API Key">
             <Input autoComplete="new-password" disabled={!authChangesSupported || loginWaiting} id="pi-api-key" onChange={(event) => setApiKey(event.target.value)} placeholder={authChangesSupported ? '输入新的 API Key' : '当前版本仅支持查看状态'} type="password" value={apiKey} />
           </Field>
           <div className="mgmt-toolbar">
@@ -263,8 +263,8 @@ export function PiProviderCredentials() {
                 </div>
               ))}
             </div>
-          ) : <InlineNotice title="尚无可用模型">连接这个模型服务后刷新，即可看到 Pi 实际可用的模型。</InlineNotice>}
-          {selected.modelsTruncated === true || models.length > 8 ? <span className="mgmt-muted">这里只展示前 8 个；Agent 对话中的模型菜单会读取完整可用目录。</span> : null}
+          ) : <InlineNotice title="还没有可用模型">连接这个模型服务后刷新，即可看到实际可用的模型。</InlineNotice>}
+          {selected.modelsTruncated === true || models.length > 8 ? <span className="mgmt-muted">这里只展示前 8 个；对话中的模型菜单会读取完整可用目录。</span> : null}
         </div>
       </div>
       {error ? <InlineNotice title="操作没有完成" tone="danger">{error}</InlineNotice> : null}
@@ -355,20 +355,20 @@ function providerReceiptNotice(
     if (!isPendingLoginState(loginState)) return null;
     return {
       title: '登录流程已启动',
-      body: '在浏览器完成登录后，再重新打开 Agent。当前回复不会被打断。',
+      body: '在浏览器完成登录后，再重新打开对话。当前回复不会被打断。',
       tone: 'info',
     };
   }
   if (action === 'logout') {
     return {
       title: '账号已断开',
-      body: '本机 Pi 已移除这个账号的授权。已有对话和角色不会被删除。',
+      body: '本机已移除这个账号的授权。已有对话和伙伴不会被删除。',
       tone: 'success',
     };
   }
   return {
     title: 'API Key 已保存',
-    body: '密钥没有回显。结束当前回复后重新打开 Agent，新凭据会统一生效。',
+    body: '密钥没有回显。结束当前回复后重新打开对话，新凭据会统一生效。',
     tone: 'success',
   };
 }
@@ -389,9 +389,9 @@ function previewTitle(action: ProviderAction): string {
 }
 
 function previewDescription(action: ProviderAction): string {
-  if (action === 'logout') return '确认后会移除本机 Pi 保存的账号授权，不会删除对话。';
+  if (action === 'logout') return '确认后会移除本机保存的账号授权，不会删除对话。';
   if (action === 'oauth_device_code') return '确认后会打开安全登录流程，网页不会读取你的密码。';
-  return '新密钥仅发往本机 Pi 安全保存，不会在确认页中回显。';
+  return '新密钥只会交给本机安全保存，不会在确认页中回显。';
 }
 
 function previewLines(action: ProviderAction): string[] {

@@ -35,6 +35,7 @@ import {
   asRecord,
   stringValue,
 } from '@/features/overview/management-ui';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import { useBrowserControl } from './api';
 import './browser.css';
 
@@ -54,6 +55,7 @@ const modeCopy: Record<BrowserMode, string> = {
 };
 
 export function BrowserFeature() {
+  const identity = useProductIdentity();
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [selectedTabId, setSelectedTabId] = useState(0);
   const [view, setView] = useState<BrowserView>('copilot');
@@ -135,10 +137,10 @@ export function BrowserFeature() {
           </Button>
         </>
       )}
-      description="让 Agent 看懂页面、按需截图并执行可审计操作；用户浏览器与托管浏览器始终分开。"
-      eyebrow="BROWSER TOOL"
+      description="让伙伴在你允许的范围内查看网页、截图和操作。你的日常浏览器与托管浏览器始终分开。"
+      eyebrow="一起看网页"
       routeId="browser"
-      title="浏览器共驾"
+      title="浏览器"
     >
       <QueryState
         error={control.status.error as Error | null}
@@ -154,7 +156,7 @@ export function BrowserFeature() {
             <span>{modeCopy[mode]}</span>
           </div>
           <SegmentedControl
-            aria-label="浏览器共驾模式"
+            aria-label="浏览器操作方式"
             items={modeItems}
             onValueChange={(next) => void control.setMode.mutateAsync(next as BrowserMode)}
             value={mode}
@@ -163,7 +165,7 @@ export function BrowserFeature() {
 
         <Tabs className="browser-tabs" onValueChange={(next) => setView(next as BrowserView)} value={view}>
           <TabsList>
-            <TabsTrigger value="copilot"><MousePointer2 size={14} />共驾</TabsTrigger>
+            <TabsTrigger value="copilot"><MousePointer2 size={14} />协作</TabsTrigger>
             <TabsTrigger value="permissions"><ShieldCheck size={14} />权限{pendingPermissions.length ? ` ${pendingPermissions.length}` : ''}</TabsTrigger>
             <TabsTrigger value="traces"><Activity size={14} />轨迹</TabsTrigger>
             <TabsTrigger value="setup"><MonitorCog size={14} />连接</TabsTrigger>
@@ -173,6 +175,7 @@ export function BrowserFeature() {
             <div className="browser-workbench">
               <BrowserRail
                 clients={clients}
+                productName={identity.productName}
                 onSelect={(deviceId, tabId) => {
                   setSelectedDeviceId(deviceId);
                   setSelectedTabId(tabId);
@@ -218,12 +221,14 @@ export function BrowserFeature() {
 function BrowserRail({
   clients,
   onSelect,
+  productName,
   selectedDeviceId,
   selectedTabId,
   tabs,
 }: {
   clients: Record<string, unknown>[];
   onSelect: (deviceId: string, tabId: number) => void;
+  productName: string;
   selectedDeviceId: string;
   selectedTabId: number;
   tabs: Record<string, unknown>[];
@@ -261,7 +266,7 @@ function BrowserRail({
             </div>
           </section>
         );
-      }) : <EmptyState description="在 Chrome 中加载并打开智鼬 Browser Co-pilot。" icon={AppWindow} title="尚未连接" />}
+      }) : <EmptyState description={`在 Chrome 中加载并打开 ${productName} 浏览器助手。`} icon={AppWindow} title="尚未连接" />}
     </aside>
   );
 }
@@ -310,7 +315,7 @@ function PageWorkspace({
           )}
         </figure>
         <section className="browser-structure">
-          <header><SquareArrowOutUpRight size={14} /><strong>结构化页面</strong><span>按需提供给 Agent</span></header>
+          <header><SquareArrowOutUpRight size={14} /><strong>结构化页面</strong><span>需要时提供给伙伴</span></header>
           {lines.length ? (
             <div className="browser-markdown" aria-label="结构化页面快照">
               {lines.map((line, index) => (

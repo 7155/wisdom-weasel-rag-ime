@@ -24,30 +24,31 @@ describe('Configuration settings WorkContract UI', () => {
   it('binds field changes to preview, apply, refresh, and rollback receipts', async () => {
     const user = userEvent.setup();
     const transport = renderConfiguration(true);
-    await screen.findByRole('heading', { name: '配置与迁移', level: 1 });
+    await screen.findByRole('heading', { name: '设置', level: 1 });
+    await user.click(await screen.findByRole('button', { name: /^上下文/ }));
     const input = await screen.findByRole('spinbutton', { name: '上下文容量' });
     expect(document.querySelector('.configuration-editor')).not.toBeNull();
     expect(document.querySelector('.configuration-portability')).not.toBeNull();
     await user.clear(input);
     await user.type(input, '4096');
-    const workflow = screen.getByText('应用设置差异', { selector: 'strong' }).closest('.mgmt-workflow');
+    const workflow = screen.getByText('保存这些设置', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
 
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
     await waitFor(() => expect(findRequest(transport, 'configuration.settings.preview')).toMatchObject({
       body: {
         changes: { 'context.tokenBudget': 4096 },
         expectedRuntimeRevision: 12,
       },
     }));
-    expect(await within(workflow as HTMLElement).findByText('应用这些设置？')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('保存这些设置？')).toBeInTheDocument();
     expect(within(workflow as HTMLElement).getByText('上下文容量：2048 → 4096（重启后台服务）')).toBeInTheDocument();
     expect(within(workflow as HTMLElement).queryByText(/context\.tokenBudget|sidecar|R2/)).not.toBeInTheDocument();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认这些更改' }));
     await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
 
-    expect(await within(workflow as HTMLElement).findByText('本机操作已记录')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('这次更改已安全记录')).toBeInTheDocument();
     expect(findRequest(transport, 'configuration.settings.apply')).toMatchObject({
       body: {
         changes: { 'context.tokenBudget': 4096 },
@@ -58,10 +59,10 @@ describe('Configuration settings WorkContract UI', () => {
       },
     });
     await waitFor(() => expect(transport.settingsReads).toBeGreaterThanOrEqual(2));
-    expect(await screen.findByText('没有待应用变更')).toBeInTheDocument();
+    expect(await screen.findByText('更改设置后，会在这里列出将要保存的内容。')).toBeInTheDocument();
 
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次操作' }));
-    expect(await within(workflow as HTMLElement).findByText('已恢复到操作前')).toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次更改' }));
+    expect(await within(workflow as HTMLElement).findByText('已恢复到更改前')).toBeInTheDocument();
     expect(findRequest(transport, 'configuration.settings.rollback')).toMatchObject({
       body: {
         receiptId: 'receipt-configuration-apply',
@@ -76,11 +77,12 @@ describe('Configuration settings WorkContract UI', () => {
   it('fails closed when the settings WorkContract capability is absent', async () => {
     const user = userEvent.setup();
     const transport = renderConfiguration(false);
-    await screen.findByRole('heading', { name: '配置与迁移', level: 1 });
+    await screen.findByRole('heading', { name: '设置', level: 1 });
+    await user.click(await screen.findByRole('button', { name: /^上下文/ }));
     const input = await screen.findByRole('spinbutton', { name: '上下文容量' });
     await user.clear(input);
     await user.type(input, '4096');
-    const workflow = screen.getByText('应用设置差异', { selector: 'strong' }).closest('.mgmt-workflow');
+    const workflow = screen.getByText('保存这些设置', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
 
     expect(await within(workflow as HTMLElement).findByText(/当前版本还不能安全应用设置/)).toBeInTheDocument();
@@ -89,17 +91,75 @@ describe('Configuration settings WorkContract UI', () => {
   });
 
   it('keeps secret fields read-only when no dedicated secure flow exists', async () => {
+    const user = userEvent.setup();
     const transport = renderConfiguration(true);
-    await screen.findByRole('heading', { name: '配置与迁移', level: 1 });
+    await screen.findByRole('heading', { name: '设置', level: 1 });
+    await user.click(await screen.findByRole('button', { name: /^上下文/ }));
     const secretInput = await screen.findByLabelText('管理令牌');
     expect(secretInput).toBeDisabled();
     expect(screen.getByText('请使用上方模型账号或对应安全功能修改。')).toBeInTheDocument();
-    const workflow = screen.getByText('应用设置差异', { selector: 'strong' }).closest('.mgmt-workflow');
+    const workflow = screen.getByText('保存这些设置', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
 
-    expect(await within(workflow as HTMLElement).findByText(/修改至少一个非敏感设置/)).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText(/调整任一设置后/)).toBeInTheDocument();
     expect(within(workflow as HTMLElement).queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
     expect(findRequest(transport, 'configuration.settings.preview')).toBeUndefined();
+  });
+
+  it('offers editable application and companion copy through the same safe settings workflow', async () => {
+    const user = userEvent.setup();
+    const transport = renderConfiguration(true);
+    await screen.findByRole('heading', { name: '设置', level: 1 });
+
+    const productName = await screen.findByRole('textbox', { name: '应用名称' });
+    expect(productName).toHaveAttribute('maxlength', '24');
+    await user.clear(productName);
+    await user.type(productName, '记川');
+    const assistantName = await screen.findByRole('textbox', { name: '通用伙伴称呼' });
+    await user.clear(assistantName);
+    await user.type(assistantName, '阿川');
+    const tagline = await screen.findByRole('textbox', { name: '侧栏短句' });
+    await user.clear(tagline);
+    await user.type(tagline, '记得你，也陪你完成');
+
+    const workflow = screen.getByText('保存这些设置', { selector: 'strong' }).closest('.mgmt-workflow');
+    expect(workflow).not.toBeNull();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
+
+    await waitFor(() => expect(findRequest(transport, 'configuration.settings.preview')).toMatchObject({
+      body: {
+        changes: {
+          'identity.productName': '记川',
+          'identity.assistantName': '阿川',
+          'identity.tagline': '记得你，也陪你完成',
+        },
+        expectedRuntimeRevision: 12,
+      },
+    }));
+    expect(await within(workflow as HTMLElement).findByText('应用名称：智鼬 → 记川（立即生效）')).toBeInTheDocument();
+    expect(within(workflow as HTMLElement).getByText('通用伙伴称呼：智鼬 → 阿川（立即生效）')).toBeInTheDocument();
+    expect(within(workflow as HTMLElement).getByText('侧栏短句：记得你，也陪你做事 → 记得你，也陪你完成（立即生效）')).toBeInTheDocument();
+  });
+
+  it('finds settings by human wording and recovers cleanly from an empty result', async () => {
+    const user = userEvent.setup();
+    renderConfiguration(true);
+    await screen.findByRole('heading', { name: '设置', level: 1 });
+
+    const search = await screen.findByLabelText('查找设置');
+    await user.type(search, '上下文容量');
+    expect(await screen.findByRole('spinbutton', { name: '上下文容量' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^上下文/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^称呼与外观/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('管理令牌')).not.toBeInTheDocument();
+
+    await user.clear(search);
+    expect(await screen.findByRole('button', { name: /^称呼与外观/ })).toBeInTheDocument();
+
+    await user.type(search, '完全不存在的设置');
+    expect(await screen.findByText('没有找到相关设置')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '清除搜索' }));
+    expect(await screen.findByRole('button', { name: /^称呼与外观/ })).toBeInTheDocument();
   });
 
   it('rejects secret-shaped settings before the general transport boundary', async () => {
@@ -128,7 +188,7 @@ describe('Configuration settings WorkContract UI', () => {
   it('reads the stateless lightning model and bounded thinking choices from the live Pi catalog', async () => {
     const user = userEvent.setup();
     const transport = renderConfiguration(true, true);
-    await screen.findByRole('heading', { name: '配置与迁移', level: 1 });
+    await screen.findByRole('heading', { name: '设置', level: 1 });
     await waitFor(() => expect(findRequest(transport, 'agent.role.models')).toBeDefined());
 
     await user.click(screen.getByRole('button', { name: /^深度生成/ }));
@@ -266,6 +326,11 @@ function settingsPayload() {
     ok: true,
     settingsHash: 'sha256:settings',
     settings: {
+      identity: {
+        productName: '智鼬',
+        assistantName: '智鼬',
+        tagline: '记得你，也陪你做事',
+      },
       context: { tokenBudget: 2048 },
       activeRag: {
         quickModel: 'deepseek/deepseek-v4-flash',
@@ -281,6 +346,34 @@ function schemaPayload() {
     ok: true,
     schemaVersion: 'rag-ime.management-settings-schema.v3',
     sections: [{
+      id: 'identity',
+      label: '称呼与外观',
+      fields: [{
+        key: 'identity.productName',
+        type: 'string',
+        label: '应用名称',
+        description: '显示在侧栏和窗口标题中；不会改变安装包文件名',
+        minLength: 1,
+        maxLength: 24,
+        applyMode: 'live',
+      }, {
+        key: 'identity.assistantName',
+        type: 'string',
+        label: '通用伙伴称呼',
+        description: '没有指向某位具体伙伴时使用；自建伙伴可以单独命名，内置伙伴复制后也能调整',
+        minLength: 1,
+        maxLength: 24,
+        applyMode: 'live',
+      }, {
+        key: 'identity.tagline',
+        type: 'string',
+        label: '侧栏短句',
+        description: '应用名称下方的一句短介绍',
+        minLength: 1,
+        maxLength: 48,
+        applyMode: 'live',
+      }],
+    }, {
       id: 'context',
       label: '上下文',
       fields: [{

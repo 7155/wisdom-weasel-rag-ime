@@ -109,6 +109,8 @@ class RoomWorkApplicationService:
         room = self.host.rooms.get(room_id)
         if str(room.get("status") or "") != "active":
             raise ValueError("agent room is archived")
+        if str(room.get("roomKind") or "collaboration") != "collaboration":
+            raise ValueError("roleplay Rooms cannot create managed work")
         owner_id = _required_text(payload, "currentOwnerParticipantId")
         creator_id = (
             _bounded_text(

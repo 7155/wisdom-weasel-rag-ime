@@ -19,10 +19,10 @@ describe('VoiceFeature', () => {
 
     expect(await screen.findByText('本次已纠错')).toBeInTheDocument();
     expect(screen.getByText('已执行独立第三遍校对')).toBeInTheDocument();
-    expect(screen.getByText('火山响应证据')).toBeInTheDocument();
+    expect(screen.getByText('本次识别详情')).toBeInTheDocument();
     expect(screen.getByText(/stream_snapshot → nonstream/)).toBeInTheDocument();
-    expect(screen.getByText(/utterances 1 条/)).toBeInTheDocument();
-    expect(screen.getByText(/additions 字段：duration、result_type/)).toBeInTheDocument();
+    expect(screen.getByText(/语句片段 1 条/)).toBeInTheDocument();
+    expect(screen.getByText(/附加字段：duration、result_type/)).toBeInTheDocument();
   });
 
   it('applies provider and hotkey through the settings WorkContract instead of Agent handoff', async () => {
@@ -30,14 +30,14 @@ describe('VoiceFeature', () => {
     const transport = renderVoiceWithHotwordWrites();
 
     await screen.findByRole('heading', { name: '语音输入', level: 1 });
-    expect(await screen.findByText('当前：原生流式')).toBeInTheDocument();
+    expect(await screen.findByText('当前：内置流式识别')).toBeInTheDocument();
     expect(screen.queryByText(/让智鼬确认切换|provider_apply/i)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('radio', { name: '实时连接' }));
+    await user.click(screen.getByRole('radio', { name: '实时识别' }));
     await user.click(screen.getByRole('radio', { name: 'Option + 空格' }));
-    const workflow = screen.getByText('保存语音服务与快捷键', { selector: 'strong' }).closest('.mgmt-workflow');
+    const workflow = screen.getByText('保存识别方式与按键', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
     await waitFor(() => expect(configurationRequest(transport, 'configuration.settings.preview')).toMatchObject({
       body: {
         changes: {
@@ -47,9 +47,9 @@ describe('VoiceFeature', () => {
         expectedRuntimeRevision: 12,
       },
     }));
-    await user.click(await within(workflow as HTMLElement).findByRole('button', { name: '进入确认' }));
+    await user.click(await within(workflow as HTMLElement).findByRole('button', { name: '确认这些更改' }));
     await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
     expect(configurationRequest(transport, 'configuration.settings.apply')).toBeDefined();
   });
 
@@ -57,12 +57,12 @@ describe('VoiceFeature', () => {
     renderVoice(false);
 
     await screen.findByRole('heading', { name: '语音输入', level: 1 });
-    expect(await screen.findByText('浏览器预览不能启动代理或触发系统授权；请在已安装的智鼬控制中心中操作。')).toBeInTheDocument();
-    expect(screen.getByRole('group', { name: '语音代理' })).toBeInTheDocument();
+    expect(await screen.findByText('浏览器预览不能启动听写或打开系统授权；请回到已安装的智鼬。')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: '听写服务' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: '麦克风' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: '辅助功能' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '停止语音代理' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '保存到 Keychain' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '停止听写服务' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '安全保存账号' })).toBeDisabled();
   });
 
   it('keeps suggestions local until preview and saves technical hotwords through WorkContract', async () => {
@@ -85,7 +85,7 @@ describe('VoiceFeature', () => {
     expect(configurationRequest(transport, 'configuration.settings.preview')).toBeUndefined();
 
     await user.click(hotwordSwitch);
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
     await waitFor(() => expect(configurationRequest(transport, 'configuration.settings.preview')).toMatchObject({
       body: {
         changes: {
@@ -95,11 +95,11 @@ describe('VoiceFeature', () => {
         expectedRuntimeRevision: 12,
       },
     }));
-    await user.click(await within(workflow as HTMLElement).findByRole('button', { name: '进入确认' }));
+    await user.click(await within(workflow as HTMLElement).findByRole('button', { name: '确认这些更改' }));
     await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
 
-    expect(await within(workflow as HTMLElement).findByText('本机操作已记录')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('这次更改已安全记录')).toBeInTheDocument();
     expect(configurationRequest(transport, 'configuration.settings.apply')).toMatchObject({
       body: {
         changes: {

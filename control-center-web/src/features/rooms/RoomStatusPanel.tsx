@@ -19,6 +19,7 @@ import { IconButton } from '@/components/primitives';
 import type { RoomProjectionState, RoomTurnProjection } from '@/contracts/room-reducer';
 import type { RoomSummary, RoomWorkItem } from '.';
 import { useAgentLiveStore } from '../agent/state/live-store';
+import { roomCollaborationRoleLabel } from './room-copy';
 import { roomProjection, useRoomLiveStore } from './state/live-store';
 import '../agent/agent.css';
 
@@ -57,7 +58,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
     <aside
       ref={ref}
       aria-hidden={!open}
-      aria-label="Room 状态"
+      aria-label="协作进展"
       aria-modal={modal || undefined}
       className="agent-status-panel room-status-panel"
       data-open={open}
@@ -66,8 +67,8 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
       tabIndex={-1}
     >
       <header>
-        <span><strong>状态</strong><small>{turn ? roomTurnStatusLabel(turn.status) : '等待新回合'}</small></span>
-        <IconButton icon={<PanelRightClose size={17} />} label="收起 Room 状态" onClick={onClose} tooltip />
+        <span><strong>协作进展</strong><small>{turn ? roomTurnStatusLabel(turn.status) : '等你开始新一轮'}</small></span>
+        <IconButton icon={<PanelRightClose size={17} />} label="收起进展面板" onClick={onClose} tooltip />
       </header>
       <div className="agent-status-panel__body">
         <RoomStatusSection count={turn ? 1 : 0} icon={ListChecks} title="当前回合">
@@ -76,18 +77,18 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
               <RoomTurnIcon status={turn.status} />
               <span><strong>{roomTurnStatusLabel(turn.status)}</strong><small>{messages.length} 条消息 · {activities.length} 条协作进展</small></span>
             </div>
-          ) : <RoomStatusEmpty>还没有可展示的回合状态</RoomStatusEmpty>}
+          ) : <RoomStatusEmpty>发出消息后，这里会显示本轮进展</RoomStatusEmpty>}
         </RoomStatusSection>
 
-        <RoomStatusSection count={workItems.filter((work) => !['done', 'failed', 'cancelled'].includes(work.state)).length} icon={ListChecks} title="责任账本">
-          {workItems.length ? <div className="room-status-work">{workItems.slice(0, 8).map((work) => <RoomWorkRow key={work.id} room={room} work={work} />)}</div> : <RoomStatusEmpty>当前 Room 还没有责任交接</RoomStatusEmpty>}
+        <RoomStatusSection count={workItems.filter((work) => !['done', 'failed', 'cancelled'].includes(work.state)).length} icon={ListChecks} title="任务分工">
+          {workItems.length ? <div className="room-status-work">{workItems.slice(0, 8).map((work) => <RoomWorkRow key={work.id} room={room} work={work} />)}</div> : <RoomStatusEmpty>任务开始后，这里会显示谁在做、谁来验收</RoomStatusEmpty>}
         </RoomStatusSection>
 
-        <RoomStatusSection count={3} icon={ShieldCheck} title="责任边界">
+        <RoomStatusSection count={3} icon={ShieldCheck} title="协作规则">
           <div className="agent-status-files">
-            <RoomStatusRow detail="普通消息、@ 和询问都不会转移最终责任" icon={ShieldCheck} title="A · 最终验收" />
-            <RoomStatusRow detail="只有目标接受正式分派后才切换当前执行者" icon={GitBranch} title="R · 当前执行" />
-            <RoomStatusRow detail="责任深度 3 · 根任务分派 6 · 最多返修 2 次" icon={ListChecks} title="防循环上限" />
+            <RoomStatusRow detail="普通消息、点名和询问都不会悄悄转移最终责任" icon={ShieldCheck} title="最终验收人保持明确" />
+            <RoomStatusRow detail="只有伙伴正式接手任务后，当前执行者才会改变" icon={GitBranch} title="交接必须被接受" />
+            <RoomStatusRow detail="最多分派 6 次、深入 3 层、返修 2 次，超出后会停下来求助" icon={ListChecks} title="不会无限循环" />
           </div>
         </RoomStatusSection>
 
@@ -99,23 +100,23 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
         </RoomStatusSection>
 
         <RoomStatusSection count={attachments.size + files.length} icon={Paperclip} title="附件与文件">
-          {attachments.size || files.length ? <div className="agent-status-files">{attachments.size ? <RoomStatusRow detail="随 Room 消息保存" icon={Paperclip} title={`${attachments.size} 个受管附件`} /> : null}{files.map((block) => <RoomStatusRow detail={text(block.data.mimeType) || '文件'} icon={FileText} key={block.id} title={fileName(block.data)} />)}</div> : <RoomStatusEmpty>当前 Room 没有附件或文件</RoomStatusEmpty>}
+          {attachments.size || files.length ? <div className="agent-status-files">{attachments.size ? <RoomStatusRow detail="随协作消息保存在本机" icon={Paperclip} title={`${attachments.size} 个消息附件`} /> : null}{files.map((block) => <RoomStatusRow detail={text(block.data.mimeType) || '文件'} icon={FileText} key={block.id} title={fileName(block.data)} />)}</div> : <RoomStatusEmpty>还没有分享附件或文件</RoomStatusEmpty>}
         </RoomStatusSection>
 
         <RoomStatusSection count={sharedArtifacts.length + deliveredArtifacts.length} icon={FolderKanban} title="共享资料与产物">
-          {sharedArtifacts.length || deliveredArtifacts.length ? <div className="agent-status-files">{sharedArtifacts.map((artifact) => <RoomStatusRow detail={`${artifact.mediaType || '共享文件'} · ${pathName(artifact.path)}`} icon={FileText} key={artifact.id} title={artifact.displayName} />)}{deliveredArtifacts.map((block) => <RoomStatusRow detail={block.type === 'diff' ? '变更产物' : '文件产物'} icon={FolderKanban} key={block.id} title={fileName(block.data)} />)}</div> : <RoomStatusEmpty>当前 Room 还没有共享资料或产物</RoomStatusEmpty>}
+          {sharedArtifacts.length || deliveredArtifacts.length ? <div className="agent-status-files">{sharedArtifacts.map((artifact) => <RoomStatusRow detail={`${artifact.mediaType || '共享文件'} · ${pathName(artifact.path)}`} icon={FileText} key={artifact.id} title={artifact.displayName} />)}{deliveredArtifacts.map((block) => <RoomStatusRow detail={block.type === 'diff' ? '变更产物' : '文件产物'} icon={FolderKanban} key={block.id} title={fileName(block.data)} />)}</div> : <RoomStatusEmpty>还没有共享资料或交付物</RoomStatusEmpty>}
         </RoomStatusSection>
 
         <RoomStatusSection count={activeTopics.length} icon={GitBranch} title="话题">
-          {activeTopics.length ? <div className="agent-status-files">{activeTopics.map((topic) => <RoomStatusRow detail={topic.id === room?.activeTopicId ? '当前话题' : topic.summary || '可切换话题'} icon={GitBranch} key={topic.id} title={topic.title} />)}</div> : <RoomStatusEmpty>当前 Room 还没有话题</RoomStatusEmpty>}
+          {activeTopics.length ? <div className="agent-status-files">{activeTopics.map((topic) => <RoomStatusRow detail={topic.id === room?.activeTopicId ? '当前话题' : topic.summary || '可切换话题'} icon={GitBranch} key={topic.id} title={topic.title} />)}</div> : <RoomStatusEmpty>还没有单独整理话题</RoomStatusEmpty>}
         </RoomStatusSection>
 
-        <RoomStatusSection count={room?.workspaceRoots?.length ?? 0} icon={FolderKanban} title="项目路径">
-          {room?.workspaceRoots?.length ? <div className="agent-status-files">{room.workspaceRoots.map((path) => <RoomStatusRow detail={path} icon={FolderKanban} key={path} title={pathName(path)} />)}</div> : <RoomStatusEmpty>{room?.roomKind === 'roleplay' ? '角色群聊不绑定项目路径' : '这个旧 Room 尚未绑定项目路径'}</RoomStatusEmpty>}
+        <RoomStatusSection count={room?.workspaceRoots?.length ?? 0} icon={FolderKanban} title="工作目录">
+          {room?.workspaceRoots?.length ? <div className="agent-status-files">{room.workspaceRoots.map((path) => <RoomStatusRow detail={path} icon={FolderKanban} key={path} title={pathName(path)} />)}</div> : <RoomStatusEmpty>{room?.roomKind === 'roleplay' ? '一起聊聊不会访问项目目录' : '这个协作空间还没有工作目录'}</RoomStatusEmpty>}
         </RoomStatusSection>
 
-        <RoomStatusSection count={room?.participants.filter((participant) => participant.status === 'active').length ?? 0} icon={Bot} title="协作成员上下文">
-          {room?.participants.some((participant) => participant.status === 'active') ? <div className="room-status-participants">{room.participants.filter((participant) => participant.status === 'active').map((participant) => <RoomParticipantTelemetry key={participant.id} participant={participant} />)}</div> : <RoomStatusEmpty>当前 Room 还没有协作成员</RoomStatusEmpty>}
+        <RoomStatusSection count={room?.participants.filter((participant) => participant.status === 'active').length ?? 0} icon={Bot} title="伙伴状态">
+          {room?.participants.some((participant) => participant.status === 'active') ? <div className="room-status-participants">{room.participants.filter((participant) => participant.status === 'active').map((participant) => <RoomParticipantTelemetry key={participant.id} participant={participant} />)}</div> : <RoomStatusEmpty>还没有伙伴加入</RoomStatusEmpty>}
         </RoomStatusSection>
 
         {room ? (
@@ -124,7 +125,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
             href={`#/observability?roomId=${encodeURIComponent(room.id)}`}
           >
             <Radar size={16} />
-            <span><strong>运行观察</strong><small>查看本 Room 的路由、私信与协作轨迹</small></span>
+            <span><strong>查看详细运行记录</strong><small>检查消息路由、伙伴通信和任务轨迹</small></span>
             <GitBranch size={15} />
           </a>
         ) : null}
@@ -136,7 +137,7 @@ export const RoomStatusPanel = forwardRef<HTMLElement, {
 function RoomParticipantTelemetry({ participant }: { participant: NonNullable<RoomSummary['participants']>[number] }) {
   const telemetry = useAgentLiveStore((state) => state.projections[participant.sessionId]?.telemetry);
   if (!telemetry) {
-    return <RoomStatusRow detail={`${collaborationRoleLabel(participant.collaborationRole)} · ${participant.status === 'active' ? '已加入' : '暂未参与'}`} icon={Bot} title={participant.displayName} />;
+    return <RoomStatusRow detail={`${roomCollaborationRoleLabel(participant.collaborationRole)} · ${participant.status === 'active' ? '已加入' : '暂未参与'}`} icon={Bot} title={participant.displayName} />;
   }
   const context = telemetry.context;
   const cumulative = telemetry.cumulativeUsage;
@@ -146,8 +147,8 @@ function RoomParticipantTelemetry({ participant }: { participant: NonNullable<Ro
   return (
     <article className="room-participant-telemetry" data-compacting={telemetry.isCompacting || undefined}>
       <header>
-        <span><strong>{participant.displayName}</strong><small>{telemetry.model.name || telemetry.model.id} · {collaborationRoleLabel(participant.collaborationRole)}</small></span>
-        <i data-state={participant.status}>{telemetry.isCompacting ? '压缩中' : participant.status === 'active' ? 'ACTIVE' : 'IDLE'}</i>
+        <span><strong>{participant.displayName}</strong><small>{telemetry.model.name || telemetry.model.id} · {roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
+        <i data-state={participant.status}>{telemetry.isCompacting ? '整理上下文' : participant.status === 'active' ? '已加入' : '暂未参与'}</i>
       </header>
       <div className="room-participant-telemetry__numbers">
         <span title="累计提示 Token">{roomTokenCount(promptTokens)} 输入</span>
@@ -182,7 +183,7 @@ function RoomWorkRow({ room, work }: { room?: RoomSummary; work: RoomWorkItem })
   const owner = room?.participants.find((participant) => participant.id === ownerId)?.displayName ?? '待接收';
   const accountable = room?.participants.find((participant) => participant.id === work.accountableParticipantId)?.displayName ?? '未指定';
   const blocker = text(work.blocker.reason);
-  return <div className="room-status-work__item" data-state={work.state}><RoomWorkIcon work={work} /><span><strong>{work.objective}</strong><small>{roomWorkStateLabel(work.state)} · A 最终负责：{accountable} · R 当前执行：{owner}{work.revision ? ` · 第 ${work.revision} 次修订` : ''}{blocker ? ` · ${blocker}` : ''}</small></span></div>;
+  return <div className="room-status-work__item" data-state={work.state}><RoomWorkIcon work={work} /><span><strong>{work.objective}</strong><small>{roomWorkStateLabel(work.state)} · {owner} 正在处理 · {accountable} 负责最终验收{work.revision ? ` · 第 ${work.revision} 次修订` : ''}{blocker ? ` · ${blocker}` : ''}</small></span></div>;
 }
 
 function RoomStatusEmpty({ children }: { children: ReactNode }) {
@@ -231,14 +232,6 @@ function fileName(data: Record<string, unknown>): string {
 
 function text(value: unknown): string { return typeof value === 'string' ? value : ''; }
 function pathName(path: string): string { return path.split('/').filter(Boolean).at(-1) ?? path; }
-function collaborationRoleLabel(role: string | undefined): string {
-  if (role === 'coordinator') return '协作主持';
-  if (role === 'researcher') return '调研与核对';
-  if (role === 'reviewer') return '独立验收';
-  if (role === 'specialist') return '领域专家';
-  return '实施与交付';
-}
-
 function roomWorkStateLabel(state: RoomWorkItem['state']): string {
   return {
     queued: '待接收',

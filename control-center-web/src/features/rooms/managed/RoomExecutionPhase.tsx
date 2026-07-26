@@ -20,7 +20,7 @@ export function RoomExecutionPhase({
     return <div className="room-execution-phase" data-phase="managed">
       <GitBranch size={15} />
       <span>
-        <strong>受管执行</strong>
+        <strong>正在完成任务</strong>
         <small>{ownerName} · {activeWork.objective}</small>
       </span>
       <i>{workStateLabel(activeWork.state)}</i>
@@ -29,8 +29,8 @@ export function RoomExecutionPhase({
   return <div className="room-execution-phase" data-phase="alignment">
     <MessagesSquare size={15} />
     <span>
-      <strong>对话与对齐</strong>
-      <small>先确认目标、交付物、验收和禁区；普通消息不会自动开工。</small>
+      <strong>先聊清楚再开工</strong>
+      <small>确认目标、交付物、验收和禁区后，再请伙伴持续推进。</small>
     </span>
     <Button
       size="small"
@@ -39,7 +39,7 @@ export function RoomExecutionPhase({
       disabled={!canStart}
       onClick={onStart}
     >
-      确认并开始
+      确认任务
     </Button>
   </div>;
 }

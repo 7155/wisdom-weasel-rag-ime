@@ -42,7 +42,7 @@ describe('RoomComposer macOS input methods', () => {
     }
 
     render(<Harness />);
-    const composer = screen.getByRole('textbox', { name: 'Room 消息' });
+    const composer = screen.getByRole('textbox', { name: '协作消息' });
     expect(composer).toHaveAttribute('autocapitalize', 'none');
     expect(composer).toHaveAttribute('autocomplete', 'off');
     expect(composer).toHaveAttribute('autocorrect', 'off');

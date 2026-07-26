@@ -141,7 +141,7 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
     ? (catalog.data?.sessions ?? []).map((item) => ({ value: item.id, label: item.title }))
     : (catalog.data?.roles ?? []).map((item) => ({ value: item.roleId, label: item.displayName }));
   const taskOptions = useMemo(() => [
-    { value: '', label: '不关联规划任务' },
+    { value: '', label: '不关联任务' },
     ...tasks
       .filter((task) => !['done', 'completed', 'cancelled'].includes(stringValue(task.status)))
       .map((task) => ({ value: stringValue(task.id), label: stringValue(task.title, '未命名任务') })),
@@ -184,7 +184,7 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
     const taskTitle = stringValue(task.title);
     const taskDetail = stringValue(task.detail);
     if (!title.trim()) setTitle(taskTitle);
-    if (!instruction.trim()) setInstruction(taskDetail || `完成规划任务《${taskTitle}》，并说明结果。`);
+    if (!instruction.trim()) setInstruction(taskDetail || `完成任务《${taskTitle}》，并说明结果。`);
   }
 
   function requestAction(action: ScheduleAction, scheduleId: string, scheduleTitle: string) {
@@ -197,8 +197,8 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
 
   return (
     <ManagementSection
-      title="Agent 预约"
-      description="让现有对话线程或指定角色在未来自动醒来执行任务；每次醒来都会创建一个可追踪的 Agent 回合。"
+      title="定时安排"
+      description="让一段对话或一位伙伴在指定时间继续做事；每次执行都会留下结果。"
       trailing={(
         <Button
           disabled={catalog.isPending || Boolean(catalog.error)}
@@ -207,12 +207,12 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
           size="small"
           variant="primary"
         >
-          新建预约
+          添加安排
         </Button>
       )}
     >
-      <InlineNotice title="执行边界" tone="info">
-        到点后只会启动 Agent 回合。写文件、安装插件、修改任务或调用外部服务，仍按目标 Session 的权限要求单独审批。
+      <InlineNotice title="到点后会发生什么" tone="info">
+        伙伴会在选中的对话里继续，或开始一段新的对话。写文件、安装能力、修改任务或使用外部服务时，仍遵守对应对话的权限设置。
       </InlineNotice>
       <QueryState
         error={schedules.error as Error | null}
@@ -224,7 +224,7 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
             {items.map((schedule) => {
               const id = stringValue(schedule.id);
               const status = stringValue(schedule.status);
-              const scheduleTitle = stringValue(schedule.title, '未命名预约');
+              const scheduleTitle = stringValue(schedule.title, '未命名安排');
               const latestRun = asRecord(schedule.latestRun);
               return (
                 <article className="planning-wake-row" key={id}>
@@ -243,49 +243,49 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
                     {stringValue(latestRun.sessionId) ? <span>最近执行：{runStateLabel(stringValue(latestRun.state))}</span> : null}
                   </div>
                   <div className="planning-wake-row__actions">
-                    <IconButton icon={<History size={16} />} label="查看运行记录" onClick={() => setHistoryId(id)} size="small" tooltip />
-                    {status === 'scheduled' ? <IconButton disabled={changeSchedule.isPending} icon={<Pause size={16} />} label="暂停预约" onClick={() => requestAction('pause', id, scheduleTitle)} size="small" tooltip /> : null}
-                    {status === 'paused' ? <IconButton disabled={changeSchedule.isPending} icon={<CirclePlay size={16} />} label="恢复预约" onClick={() => requestAction('resume', id, scheduleTitle)} size="small" tooltip /> : null}
-                    {['failed', 'completed'].includes(status) ? <IconButton disabled={changeSchedule.isPending} icon={<RotateCcw size={16} />} label="重新执行" onClick={() => requestAction('retry', id, scheduleTitle)} size="small" tooltip /> : null}
-                    {['scheduled', 'paused', 'failed'].includes(status) ? <IconButton disabled={changeSchedule.isPending} icon={<X size={16} />} label="取消预约" onClick={() => requestAction('cancel', id, scheduleTitle)} size="small" tooltip /> : null}
+                    <IconButton icon={<History size={16} />} label="查看执行记录" onClick={() => setHistoryId(id)} size="small" tooltip />
+                    {status === 'scheduled' ? <IconButton disabled={changeSchedule.isPending} icon={<Pause size={16} />} label="暂停自动执行" onClick={() => requestAction('pause', id, scheduleTitle)} size="small" tooltip /> : null}
+                    {status === 'paused' ? <IconButton disabled={changeSchedule.isPending} icon={<CirclePlay size={16} />} label="恢复自动执行" onClick={() => requestAction('resume', id, scheduleTitle)} size="small" tooltip /> : null}
+                    {['failed', 'completed'].includes(status) ? <IconButton disabled={changeSchedule.isPending} icon={<RotateCcw size={16} />} label="再做一次" onClick={() => requestAction('retry', id, scheduleTitle)} size="small" tooltip /> : null}
+                    {['scheduled', 'paused', 'failed'].includes(status) ? <IconButton disabled={changeSchedule.isPending} icon={<X size={16} />} label="取消这项安排" onClick={() => requestAction('cancel', id, scheduleTitle)} size="small" tooltip /> : null}
                   </div>
                 </article>
               );
             })}
           </div>
-        ) : <EmptyState description="创建后，Agent Gateway 会在到期时唤醒目标线程或角色。" icon={CalendarClock} title="还没有 Agent 预约" />}
-        {changeSchedule.error ? <InlineNotice title="预约未更新" tone="danger">{publicErrorText(changeSchedule.error)}</InlineNotice> : null}
+        ) : <EmptyState description="有些事不用一直记在心里。设好时间后，伙伴会自动继续，并把结果留在这里。" icon={CalendarClock} title="还没有定时安排" />}
+        {changeSchedule.error ? <InlineNotice title="安排未更新" tone="danger">{publicErrorText(changeSchedule.error)}</InlineNotice> : null}
       </QueryState>
 
       <Dialog open={createOpen} onOpenChange={(open) => { if (!createSchedule.isPending) setCreateOpen(open); }}>
         <DialogContent className="planning-dialog planning-wake-dialog">
           <DialogHeader>
-            <DialogTitle>新建 Agent 预约</DialogTitle>
-            <DialogDescription>指定谁在什么时候醒来，以及醒来后要完成什么。保存后可以暂停、取消或查看每次运行结果。</DialogDescription>
+            <DialogTitle>添加定时安排</DialogTitle>
+            <DialogDescription>写下要做的事、在哪里继续以及开始时间。保存后可以暂停、取消或查看每次结果。</DialogDescription>
           </DialogHeader>
           <div className="planning-wake-form">
-            <Field htmlFor="planning-wake-title" label="预约名称" required>
+            <Field htmlFor="planning-wake-title" label="安排名称" required>
               <Input autoFocus id="planning-wake-title" maxLength={120} onChange={(event) => setTitle(event.target.value)} placeholder="例如：明早整理本周任务" value={title} />
             </Field>
-            <Field htmlFor="planning-wake-task" label="关联规划任务">
+            <Field htmlFor="planning-wake-task" label="关联已有任务">
               <Select id="planning-wake-task" onValueChange={selectTask} options={taskOptions} value={planningTaskId} />
             </Field>
-            <Field className="planning-wake-form__wide" htmlFor="planning-wake-instruction" label="醒来后做什么" required>
+            <Field className="planning-wake-form__wide" htmlFor="planning-wake-instruction" label="到点后做什么" required>
               <TextArea id="planning-wake-instruction" maxLength={8_000} onChange={(event) => setInstruction(event.target.value)} placeholder="写清任务、完成标准，以及失败时要报告什么。" rows={5} value={instruction} />
             </Field>
-            <Field htmlFor="planning-wake-target-type" label="唤醒对象">
+            <Field htmlFor="planning-wake-target-type" label="在哪里继续">
               <Select id="planning-wake-target-type" onValueChange={selectTargetType} options={[
-                { value: 'session', label: '现有对话线程' },
-                { value: 'role', label: '指定 Agent 角色' },
+                { value: 'session', label: '在现有对话里继续' },
+                { value: 'role', label: '请一位伙伴开始' },
               ]} value={targetType} />
             </Field>
-            <Field htmlFor="planning-wake-target" label={targetType === 'session' ? '对话线程' : 'Agent 角色'} required>
-              <Select id="planning-wake-target" onValueChange={setTargetId} options={targetOptions} placeholder="选择唤醒对象" value={targetId} />
+            <Field htmlFor="planning-wake-target" label={targetType === 'session' ? '继续哪段对话' : '请哪位伙伴'} required>
+              <Select id="planning-wake-target" onValueChange={setTargetId} options={targetOptions} placeholder={targetType === 'session' ? '选择一段对话' : '选择一位伙伴'} value={targetId} />
             </Field>
-            <Field description={`使用 ${timezone} 本地时间。`} htmlFor="planning-wake-at" label="唤醒时间" required>
+            <Field description={`使用 ${timezone} 本地时间。`} htmlFor="planning-wake-at" label="开始时间" required>
               <Input id="planning-wake-at" min={futureLocalDateTime(1)} onChange={(event) => setWakeAt(event.target.value)} type="datetime-local" value={wakeAt} />
             </Field>
-            <Field htmlFor="planning-wake-recurrence" label="重复方式">
+            <Field htmlFor="planning-wake-recurrence" label="多久做一次">
               <Select id="planning-wake-recurrence" onValueChange={(value) => setRecurrence(value as RecurrenceKind)} options={[
                 { value: 'once', label: '只执行一次' },
                 { value: 'daily', label: '每天同一时间' },
@@ -299,12 +299,12 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
             ) : null}
           </div>
           <InlineNotice title="保存后会发生什么" tone="warning">
-            Agent Gateway 到点会自动发起一轮真实模型对话。若目标线程当时正忙，本次预约会顺延一分钟，不会打断正在进行的工作。
+            到点后会自动发起一轮真实对话。若选中的对话正在忙，本次安排会顺延一分钟，不会打断正在进行的工作。
           </InlineNotice>
-          {createSchedule.error ? <InlineNotice title="预约未创建" tone="danger">{publicErrorText(createSchedule.error)}</InlineNotice> : null}
+          {createSchedule.error ? <InlineNotice title="安排未保存" tone="danger">{publicErrorText(createSchedule.error)}</InlineNotice> : null}
           <DialogFooter>
-            <Button disabled={createSchedule.isPending} onClick={() => setCreateOpen(false)} variant="quiet">取消</Button>
-            <Button disabled={createBlocked} leadingIcon={<CalendarClock size={16} />} loading={createSchedule.isPending} onClick={() => createSchedule.mutate()} variant="primary">确认预约</Button>
+            <Button disabled={createSchedule.isPending} onClick={() => setCreateOpen(false)} variant="quiet">先不安排</Button>
+            <Button disabled={createBlocked} leadingIcon={<CalendarClock size={16} />} loading={createSchedule.isPending} onClick={() => createSchedule.mutate()} variant="primary">保存安排</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -312,8 +312,8 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
       <Dialog open={Boolean(historyId)} onOpenChange={(open) => { if (!open) setHistoryId(''); }}>
         <DialogContent className="planning-dialog planning-wake-history-dialog">
           <DialogHeader>
-            <DialogTitle>运行记录 · {stringValue(selectedHistory?.title, 'Agent 预约')}</DialogTitle>
-            <DialogDescription>每次到期、接收、完成、失败或顺延都会保留一条记录。</DialogDescription>
+            <DialogTitle>执行记录 · {stringValue(selectedHistory?.title, '定时安排')}</DialogTitle>
+            <DialogDescription>每次开始、接手、完成、失败或顺延都会保留在这里。</DialogDescription>
           </DialogHeader>
           <QueryState error={history.error as Error | null} isPending={history.isPending} onRetry={() => void history.refetch()}>
             {arrayRecords(asRecord(history.data).items).length ? (
@@ -330,7 +330,7 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
                   </div>
                 ))}
               </div>
-            ) : <EmptyState description="预约到期并被 Agent Gateway 接收后，这里会出现运行记录。" icon={History} title="尚未运行" />}
+            ) : <EmptyState description="这项安排开始执行后，过程和结果会留在这里。" icon={History} title="还没有执行记录" />}
           </QueryState>
           <DialogFooter>
             <Button leadingIcon={<RefreshCw size={15} />} onClick={() => void history.refetch()}>刷新</Button>
@@ -342,11 +342,11 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
       <Dialog open={Boolean(confirmedAction)} onOpenChange={(open) => { if (!open && !changeSchedule.isPending) setConfirmedAction(null); }}>
         <DialogContent className="planning-dialog planning-detail-dialog">
           <DialogHeader>
-            <DialogTitle>{confirmedAction?.action === 'cancel' ? '取消这条预约？' : '重新执行这条预约？'}</DialogTitle>
+            <DialogTitle>{confirmedAction?.action === 'cancel' ? '取消这项安排？' : '再做一次？'}</DialogTitle>
             <DialogDescription>
               {confirmedAction?.action === 'cancel'
-                ? `“${confirmedAction.title}”取消后不会再自动唤醒 Agent。`
-                : `“${confirmedAction?.title ?? ''}”会在确认后尽快再次唤醒 Agent，并新增一条运行记录。`}
+                ? `取消后，“${confirmedAction.title}”不会再自动执行。`
+                : `“${confirmedAction?.title ?? ''}”会在确认后尽快再做一次，并新增一条执行记录。`}
             </DialogDescription>
           </DialogHeader>
           {changeSchedule.error ? <InlineNotice title="操作未完成" tone="danger">{publicErrorText(changeSchedule.error)}</InlineNotice> : null}
@@ -359,7 +359,7 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
               }}
               variant={confirmedAction?.action === 'cancel' ? 'danger' : 'primary'}
             >
-              {confirmedAction?.action === 'cancel' ? '确认取消' : '确认重新执行'}
+              {confirmedAction?.action === 'cancel' ? '取消安排' : '再做一次'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -392,7 +392,7 @@ function scheduleStatusTone(status: string): 'success' | 'warning' | 'danger' | 
 }
 
 function runStateLabel(status: string): string {
-  return ({ claimed: '正在启动', accepted: 'Agent 已接收', completed: '已完成', failed: '失败', deferred: '已顺延' } as Record<string, string>)[status] ?? '尚未运行';
+  return ({ claimed: '正在启动', accepted: '伙伴已接手', completed: '已完成', failed: '失败', deferred: '已顺延' } as Record<string, string>)[status] ?? '尚未运行';
 }
 
 function runStateTone(status: string): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
@@ -414,7 +414,7 @@ function recurrenceLabel(schedule: JsonRecord): string {
 
 function nextWakeLabel(schedule: JsonRecord): string {
   const next = numberValue(schedule.nextWakeAtMs);
-  return next ? `下次 ${formatTimestamp(next)}` : '没有后续唤醒';
+  return next ? `下次 ${formatTimestamp(next)}` : '没有下次安排';
 }
 
 function targetLabel(
@@ -424,8 +424,8 @@ function targetLabel(
 ): string {
   if (stringValue(schedule.targetType) === 'role') {
     const roleId = stringValue(schedule.targetRoleId);
-    return `角色：${roles.find((item) => item.roleId === roleId)?.displayName ?? '未命名角色'}`;
+    return `伙伴：${roles.find((item) => item.roleId === roleId)?.displayName ?? '未命名伙伴'}`;
   }
   const sessionId = stringValue(schedule.targetSessionId);
-  return `线程：${sessions.find((item) => item.id === sessionId)?.title ?? sessionId}`;
+  return `对话：${sessions.find((item) => item.id === sessionId)?.title ?? sessionId}`;
 }

@@ -45,6 +45,7 @@ import {
 } from '@/features/overview/management-ui';
 import { PiProviderCredentials } from './PiProviderCredentials';
 import { PortabilityWorkflows } from './PortabilityWorkflows';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import './configuration.css';
 
 type DraftValue = string | number | boolean;
@@ -59,6 +60,7 @@ type PiModelOption = {
 
 export function ConfigurationFeature() {
   const navigate = useNavigate();
+  const identity = useProductIdentity();
   const queries = useConfigurationQueries();
   const mutationBoundary = useConfigurationMutationBoundary();
   const settingsEnvelope = asRecord(queries.settings.data);
@@ -70,25 +72,31 @@ export function ConfigurationFeature() {
     && rawRuntimeRevision >= 0
     ? rawRuntimeRevision
     : null;
-  const schemaEnvelope = asRecord(queries.schema.data);
-  const schemaSections = arrayRecords(schemaEnvelope.sections);
-  const sections = runtimeSettingSections(schemaSections);
+  const sections = useMemo(
+    () => runtimeSettingSections(arrayRecords(asRecord(queries.schema.data).sections)),
+    [queries.schema.data],
+  );
   const piModels = useMemo(
     () => parsePiModelOptions(queries.modelCatalog.data),
     [queries.modelCatalog.data],
   );
   const [activeSection, setActiveSection] = useState('');
   const [expertMode, setExpertMode] = useState(false);
+  const [settingsQuery, setSettingsQuery] = useState('');
   const [changes, setChanges] = useState<Record<string, DraftValue>>({});
+  const visibleSections = useMemo(
+    () => sections.filter((item) => visibleSettingFields(item, settingsQuery, expertMode).length > 0),
+    [expertMode, sections, settingsQuery],
+  );
 
   useEffect(() => {
-    if (!sections.some((item) => stringValue(item.id) === activeSection)) {
-      setActiveSection(stringValue(sections[0]?.id));
+    if (!visibleSections.some((item) => stringValue(item.id) === activeSection)) {
+      setActiveSection(stringValue(visibleSections[0]?.id));
     }
-  }, [activeSection, sections]);
+  }, [activeSection, visibleSections]);
 
-  const section = sections.find((item) => stringValue(item.id) === activeSection) ?? sections[0];
-  const fields = arrayRecords(section?.fields).filter((field) => expertMode || field.expert !== true);
+  const section = visibleSections.find((item) => stringValue(item.id) === activeSection) ?? visibleSections[0];
+  const fields = visibleSettingFields(section, settingsQuery, expertMode);
   const pendingChanges = useMemo(() => Object.fromEntries(
     Object.entries(changes).filter(([key, next]) => (
       !isSecretConfigurationField(findField(sections, key), key)
@@ -154,14 +162,14 @@ export function ConfigurationFeature() {
     <ManagementPage
       actions={
         <>
-          <Switch checked={expertMode} label="高级设置" onCheckedChange={setExpertMode} />
+          <Switch checked={expertMode} label="显示高级设置" onCheckedChange={setExpertMode} />
           <Button leadingIcon={<RefreshCw size={15} />} loading={queries.settings.isFetching} onClick={refresh} size="small">刷新</Button>
         </>
       }
-      description="管理本机设置与模型账号；变更会先预览，再由你确认。"
-      eyebrow="设置"
+      description="调整称呼、本机模型、上下文和各项功能。每次变更都会先让你看清影响。"
+      eyebrow={`你的${identity.productName}`}
       routeId="configuration"
-      title="配置与迁移"
+      title="设置"
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <PiProviderCredentials />
@@ -173,11 +181,28 @@ export function ConfigurationFeature() {
             })}
           </nav>
         </ManagementSection>
-        <ManagementSection title="运行与上下文" description="只显示真正由当前运行时消费的设置；输入法、语音和知识库的专属设置留在对应功能页。">
+        <ManagementSection title="称呼、对话与上下文" description="这里调整全局称呼和伙伴的工作方式；输入法、语音与知识库的专属选项留在对应页面。">
           {sections.length ? (
-            <div className="configuration-editor">
+            <>
+              <div className="configuration-search">
+                <Field
+                  description="按你想调整的内容搜索，不需要记内部配置名。"
+                  htmlFor="configuration-search"
+                  label="查找设置"
+                >
+                  <Input
+                    id="configuration-search"
+                    onChange={(event) => setSettingsQuery(event.target.value)}
+                    placeholder="例如：模型、记忆、上下文或隐私"
+                    type="search"
+                    value={settingsQuery}
+                  />
+                </Field>
+              </div>
+              {visibleSections.length ? (
+                <div className="configuration-editor">
               <nav aria-label="运行设置分组" className="configuration-section-nav">
-                {sections.map((item) => {
+                {visibleSections.map((item) => {
                   const id = stringValue(item.id);
                   const meta = runtimeSectionMeta[id] ?? runtimeSectionMeta.other;
                   const Icon = meta.icon;
@@ -205,7 +230,7 @@ export function ConfigurationFeature() {
                     <small>{(runtimeSectionMeta[stringValue(section?.id)] ?? runtimeSectionMeta.other).description}</small>
                   </span>
                   <StatusBadge
-                    label={runtimeRevision === null ? '状态待刷新' : '已与运行时同步'}
+                    label={runtimeRevision === null ? '等待刷新' : '已是最新状态'}
                     tone={runtimeRevision === null ? 'warning' : 'success'}
                   />
                 </header>
@@ -224,27 +249,27 @@ export function ConfigurationFeature() {
                   ))}
                 </div>
               </div>
-              <div className="configuration-editor__review mgmt-stack">
-                <h3 className="configuration-editor__title">待应用差异</h3>
+              <div className="configuration-editor__review mgmt-stack" data-has-changes={diffRows.length > 0 || hasSensitiveChanges}>
+                <h3 className="configuration-editor__title">准备保存</h3>
                 {diffRows.length ? (
-                  <DataTable caption="配置差异" columns={[
+                  <DataTable caption="准备保存的设置" columns={[
                     { key: 'key', label: '设置项', width: '32%' },
                     { key: 'before', label: '当前' },
-                    { key: 'after', label: '目标' },
-                    { key: 'applyMode', label: '应用', width: '18%' },
+                    { key: 'after', label: '更改后' },
+                    { key: 'applyMode', label: '生效方式', width: '18%' },
                   ]} rows={diffRows} />
-                ) : <EmptyState description="修改字段后会在这里显示差异。" icon={Settings2} title="没有待应用变更" />}
+                ) : <p className="mgmt-muted configuration-editor__empty-review">更改设置后，会在这里列出将要保存的内容。</p>}
                 <ManagementMutationWorkflow
                   availability={mutationBoundary.availability(
                     runtimeRevision === null
-                      ? '当前设置状态尚未同步，刷新后才能预览。'
+                      ? '当前设置还没有刷新完成，请刷新后再保存。'
                       : hasSensitiveChanges
-                        ? '秘密设置必须通过专用安全流程修改；当前差异不会发送。'
+                        ? '账号密钥请使用上方的安全入口修改；这里不会发送密钥。'
                       : diffRows.length === 0
-                        ? '修改至少一个非敏感设置后才能生成服务端预览。'
+                        ? '调整任一设置后，就可以在这里核对并保存。'
                         : '',
                   )}
-                  description="仅保存本次字段差异，并按应用方式刷新相关组件。"
+                  description="先核对这次更改，再一次保存；未列出的设置不会改变。"
                   draftKey={JSON.stringify({ changes: pendingChanges, runtimeRevision })}
                   mutationKey={['configuration', 'mutation', 'settings']}
                   onApply={async (preview) => parseManagementWorkReceipt(
@@ -267,7 +292,7 @@ export function ConfigurationFeature() {
                   }}
                   onPreview={async () => {
                     if (runtimeRevision === null || diffRows.length === 0) {
-                      throw new Error('设置差异或当前状态已失效，请刷新后重试。');
+                      throw new Error('准备保存的内容已经变化，请刷新后重试。');
                     }
                     const context = { changes: { ...pendingChanges } };
                     const parsed = parseManagementWorkPreview(
@@ -285,7 +310,7 @@ export function ConfigurationFeature() {
                       ...parsed,
                       summary: {
                         ...parsed.summary,
-                        title: '应用这些设置？',
+                        title: '保存这些设置？',
                         items: previewDiffItems(diffRows),
                       },
                     };
@@ -305,17 +330,26 @@ export function ConfigurationFeature() {
                   )}
                   onRolledBack={() => void queries.settings.refetch()}
                   risk={diffRows.some((row) => row.requiresReload) ? 'R2' : 'R1'}
-                  title="应用设置差异"
+                  title="保存这些设置"
                 />
               </div>
-            </div>
+                </div>
+              ) : (
+                <EmptyState
+                  action={<Button onClick={() => setSettingsQuery('')} size="small">清除搜索</Button>}
+                  description="换一个更简单的关键词，或清除搜索查看全部设置。"
+                  icon={Search}
+                  title="没有找到相关设置"
+                />
+              )}
+            </>
           ) : <EmptyState description="当前没有可显示的设置分组。" icon={Settings2} title="设置为空" />}
         </ManagementSection>
 
         <ManagementSection title="迁移与恢复">
           <details className="configuration-transfer">
             <summary>
-              <span><strong>导入、备份与恢复</strong><small>低频操作默认收起；写入前始终校验并预览差异</small></span>
+              <span><strong>导入、备份与恢复</strong><small>平时无需打开；执行前会先列出具体影响</small></span>
               <ChevronRight size={16} />
             </summary>
             <PortabilityWorkflows
@@ -360,10 +394,10 @@ function SettingField({
   if (type === 'pi-model' && !secret) {
     const available = models;
     if (!modelCatalogSupported) {
-      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="Pi 实时模型目录不可用" tone="warning" /></div>;
+      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="暂时无法读取模型列表" tone="warning" /></div>;
     }
     if (!available.length) {
-      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="Pi 当前没有可用模型" tone="warning" /></div>;
+      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="当前没有可用模型" tone="warning" /></div>;
     }
     return (
       <div className="mgmt-list__row">
@@ -388,7 +422,7 @@ function SettingField({
     const selected = models.find((model) => model.reference === modelReference);
     const levels = oneShotThinkingLevels(selected);
     if (!modelCatalogSupported || !selected || !levels.length) {
-      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="请先选择 Pi 可用模型" tone="warning" /></div>;
+      return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="请先选择支持思考的模型" tone="warning" /></div>;
     }
     return (
       <div className="mgmt-list__row">
@@ -435,6 +469,7 @@ function SettingField({
           <Input
             autoComplete={undefined}
             id={id}
+            maxLength={typeof field.maxLength === 'number' ? field.maxLength : undefined}
             max={typeof field.max === 'number' ? field.max : undefined}
             min={typeof field.min === 'number' ? field.min : undefined}
             onChange={(event) => {
@@ -469,17 +504,17 @@ function displayDraftValue(value: unknown, field: Record<string, unknown> = {}, 
 }
 
 function applyModeLabel(value: string): string {
-  return ({ live: '立即生效', reload: '需重新载入', restart: '需重启', restart_input_method: '重新载入输入法', redeploy_rime: '重新载入输入法', restart_sidecar: '重启后台服务', restart_agent_gateway: '重启 Agent Runtime', restart_predictor: '重启本机模型', next_voice_session: '下次语音使用' } as Record<string, string>)[value] ?? '应用后生效';
+  return ({ live: '立即生效', reload: '重新载入后生效', restart: '重新启动后生效', restart_input_method: '重新载入输入法', redeploy_rime: '重新载入输入法', restart_sidecar: '重启后台服务', restart_agent_gateway: '重启对话服务', restart_predictor: '重启本机模型', next_voice_session: '下次语音输入时生效' } as Record<string, string>)[value] ?? '保存后生效';
 }
 
 function previewDiffItems(rows: readonly { key: string; before: string; after: string; applyMode: string }[]): string[] {
   const visible = rows.slice(0, 6).map((row) => `${row.key}：${row.before} → ${row.after}（${row.applyMode}）`);
   return rows.length > visible.length
-    ? [...visible, `另有 ${rows.length - visible.length} 项差异，请在上方差异表中核对。`]
+    ? [...visible, `另有 ${rows.length - visible.length} 项更改，请在上方列表中核对。`]
     : visible;
 }
 
-const sectionLabels: Record<string, string> = { interaction: '输入体验', display: '候选窗口', rag: '知识检索', models: '模型分工', activeRag: '深度生成', memory: '记忆', context: '上下文', planning: '任务与规划', agent: 'Agent 对话', voice: '语音', pinyin: '拼音', privacy: '隐私与安全' };
+const sectionLabels: Record<string, string> = { identity: '称呼与外观', interaction: '输入体验', display: '候选窗口', rag: '知识检索', models: '模型分工', activeRag: '深度生成', memory: '记忆', context: '上下文', planning: '任务与规划', agent: '伙伴对话', voice: '语音', pinyin: '拼音', privacy: '隐私与安全' };
 const fieldLabels: Record<string, string> = { 'interaction.postCommit.numberKeys': '预测结果出现时的数字键', 'interaction.postCommit.tabAction': 'Tab 键行为', 'display.maxPostCommitCandidates': '续写候选数量', 'models.hot': '输入时即时预测模型', 'models.activeRag': '深度生成模型', 'models.offlineCleanup': '离线整理模型', 'activeRag.quickModel': '闪电生成模型', 'activeRag.quickThinkingLevel': '闪电生成思考', 'managementSecurity.requireToken': '限制本机管理请求' };
 
 function publicSectionLabel(id: string, label: string): string { return sectionLabels[id] ?? (/[\u3400-\u9fff]/.test(label) ? label : '其他设置'); }
@@ -495,10 +530,11 @@ const dedicatedSettingSections = new Set([
   'knowledgeLibrary',
 ]);
 
-const runtimeSectionOrder = ['agent', 'context', 'rag', 'memory', 'models', 'activeRag', 'planning', 'privacy'] as const;
+const runtimeSectionOrder = ['identity', 'agent', 'context', 'rag', 'memory', 'models', 'activeRag', 'planning', 'privacy'] as const;
 
 const runtimeSectionMeta: Record<string, { description: string; icon: typeof Bot }> = {
-  agent: { description: 'Pi 启停、空闲回收与 Session 延续', icon: Bot },
+  identity: { description: '应用名称、通用伙伴称呼和侧栏短句', icon: Sparkles },
+  agent: { description: '伙伴何时启动、多久后休息，以及是否继续上次对话', icon: Bot },
   context: { description: '近期输入、上下文容量与时间表达', icon: Gauge },
   rag: { description: '检索通道与响应时间预算', icon: Search },
   memory: { description: '记忆保留、整理与按需召回', icon: Database },
@@ -506,8 +542,33 @@ const runtimeSectionMeta: Record<string, { description: string; icon: typeof Bot
   activeRag: { description: '闪电生成与显式深度生成', icon: Sparkles },
   planning: { description: '任务状态、计划注入与完成识别', icon: FileCheck2 },
   privacy: { description: '远程使用、调试文本与本机治理边界', icon: ShieldCheck },
-  other: { description: '当前运行时提供的高级设置', icon: Settings2 },
+  other: { description: '不常用的运行设置', icon: Settings2 },
 };
+
+function visibleSettingFields(
+  section: Record<string, unknown> | undefined,
+  query: string,
+  expertMode: boolean,
+): Record<string, unknown>[] {
+  const fields = arrayRecords(section?.fields).filter((field) => expertMode || field.expert !== true);
+  const needle = query.trim().toLocaleLowerCase('zh-CN');
+  if (!needle) return fields;
+  const sectionId = stringValue(section?.id);
+  const sectionText = [
+    publicSectionLabel(sectionId, stringValue(section?.label)),
+    (runtimeSectionMeta[sectionId] ?? runtimeSectionMeta.other).description,
+  ].join(' ').toLocaleLowerCase('zh-CN');
+  const matchingFields = fields.filter((field) => {
+    const key = stringValue(field.key);
+    const text = [
+      publicFieldLabel(key, stringValue(field.label)),
+      publicDescription(stringValue(field.description)),
+    ].join(' ').toLocaleLowerCase('zh-CN');
+    return text.includes(needle);
+  });
+  if (matchingFields.length) return matchingFields;
+  return sectionText.includes(needle) ? fields : [];
+}
 
 function runtimeSettingSections(sections: Record<string, unknown>[]): Record<string, unknown>[] {
   const order = new Map<string, number>(runtimeSectionOrder.map((id, index) => [id, index]));
@@ -521,13 +582,13 @@ function runtimeSettingSections(sections: Record<string, unknown>[]): Record<str
 }
 
 const settingDestinations = [
-  { path: '/input', label: '输入与候选', detail: '运行方式、候选窗口与拼音', icon: Keyboard },
+  { path: '/input', label: '输入法与词库', detail: '输入体验、候选窗口和个人词库', icon: Keyboard },
   { path: '/voice', label: '语音输入', detail: '识别方式、快捷键与热词', icon: Mic2 },
-  { path: '/memory', label: '记忆', detail: '事实、关系与整理', icon: Database },
+  { path: '/memory', label: '我的记忆', detail: '事实、关系和待确认内容', icon: Database },
   { path: '/knowledge', label: '知识库', detail: '材料、检索与图谱', icon: Library },
-  { path: '/plugins', label: 'Skills 与 Tools', detail: '能力披露、授权与加载', icon: PlugZap },
-  { path: '/roles', label: 'Agent 伙伴', detail: '身份、边界与默认模型', icon: Bot },
-  { path: '/rooms', label: 'Room', detail: '成员、任务与交接', icon: UsersRound },
+  { path: '/plugins', label: '技能与工具', detail: '伙伴会什么、何时使用和权限边界', icon: PlugZap },
+  { path: '/roles', label: '伙伴', detail: '身份、表达方式和默认模型', icon: Bot },
+  { path: '/rooms', label: '多人协作', detail: '伙伴、任务和交接', icon: UsersRound },
 ] as const;
 
 function parsePiModelOptions(value: unknown): PiModelOption[] {

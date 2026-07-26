@@ -12,6 +12,7 @@ import type { ReactNode } from 'react';
 import { Button } from '@/components/primitives';
 import type { UiAgentBlock } from '@/contracts/ui-events';
 import { publicAgentErrorText } from '../public-error';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import { MarkdownBody } from './MarkdownRenderer';
 import { publicToolLabel } from './public-tool-result';
 import type { AgentBlockRenderProps } from './renderer-contract';
@@ -223,10 +224,11 @@ export function ErrorBlockRenderer({ block }: AgentBlockRenderProps) {
 }
 
 export function ReasoningSummaryBlockRenderer() {
+  const identity = useProductIdentity();
   return (
     <details className="agent-structured-block">
       <summary>处理进度</summary>
-      <p>智鼬正在整理信息与下一步。</p>
+      <p>{identity.assistantName}正在整理信息与下一步。</p>
     </details>
   );
 }

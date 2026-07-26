@@ -28,8 +28,8 @@ describe('Planning WorkContract UI', () => {
     renderPlanning();
     expect(await screen.findByText('完成 Web 迁移', { selector: '.planning-companion__focus strong' })).toBeInTheDocument();
     expect(screen.queryByText('继续：完成管理页')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '交给智鼬整理' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: '请智鼬拆解' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '安排今天' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '拆解当前重点' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '一起复盘' })).toBeEnabled();
     expect(screen.getAllByText('进行中').length).toBeGreaterThan(0);
     expect(screen.getByText('手动添加')).toBeInTheDocument();
@@ -38,34 +38,34 @@ describe('Planning WorkContract UI', () => {
     expect(screen.queryByText('wisdom-weasel-rag-ime')).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /^查看今日建议/ }));
+    await user.click(screen.getByRole('button', { name: /^看看下一步/ }));
     expect(screen.getByRole('heading', { name: '今日建议', level: 2 })).toBeInTheDocument();
     expect(screen.getByText('继续：完成管理页')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /^继续：完成管理页/ }));
     expect(screen.getByRole('heading', { name: '编辑任务', level: 2 })).toBeInTheDocument();
     expect(screen.getByRole('dialog')).toHaveClass('planning-dialog');
     await user.click(screen.getByRole('button', { name: '关闭' }));
-    await user.click(screen.getByRole('button', { name: '查看日计划' }));
-    expect(screen.getByRole('heading', { name: '日计划详情', level: 2 })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '完成查看' }));
-    await user.click(await screen.findByRole('button', { name: '新建任务' }));
-    expect(screen.getByRole('heading', { name: '新建任务', level: 2 })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '查看今天的安排' }));
+    expect(screen.getByRole('heading', { name: '今天的安排', level: 2 })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '返回' }));
+    await user.click(await screen.findByRole('button', { name: '添加任务' }));
+    expect(screen.getByRole('heading', { name: '添加任务', level: 2 })).toBeInTheDocument();
     expect(screen.getByPlaceholderText('例如：整理今天的工作清单')).toHaveValue('');
   });
 
   it('binds task save preview to apply receipt and rollback', async () => {
     const user = userEvent.setup();
     const transport = renderPlanning();
-    await screen.findByRole('heading', { name: '规划', level: 1 });
+    await screen.findByRole('heading', { name: '任务', level: 1 });
 
-    await user.click(await screen.findByRole('button', { name: '新建任务' }));
+    await user.click(await screen.findByRole('button', { name: '添加任务' }));
     await user.type(await screen.findByPlaceholderText('例如：整理今天的工作清单'), '验证真实 Planning 写入');
     const detail = document.getElementById('planning-task-detail');
     expect(detail).not.toBeNull();
     await user.type(detail as HTMLElement, '先预览，再应用并回滚');
     const workflow = screen.getByText('创建任务', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
 
     await waitFor(() => expect(findRequest(transport, 'planning.mutation.preview')).toMatchObject({
       body: {
@@ -75,11 +75,11 @@ describe('Planning WorkContract UI', () => {
       },
     }));
     expect(await within(workflow as HTMLElement).findByText('保存任务影响')).toBeInTheDocument();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '进入确认' }));
-    await user.click(within(workflow as HTMLElement).getByRole('checkbox', { name: '只执行上方已绑定的变更' }));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认这些更改' }));
+    await user.click(within(workflow as HTMLElement).getByRole('checkbox', { name: '我确认只执行上方列出的更改' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
 
-    expect(await within(workflow as HTMLElement).findByText('本机操作已记录')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('这次更改已安全记录')).toBeInTheDocument();
     expect(findRequest(transport, 'planning.task.save')).toMatchObject({
       body: {
         title: '验证真实 Planning 写入',
@@ -89,8 +89,8 @@ describe('Planning WorkContract UI', () => {
         expectedRuntimeRevision: 7,
       },
     });
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次操作' }));
-    expect(await within(workflow as HTMLElement).findByText('已恢复到操作前')).toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次更改' }));
+    expect(await within(workflow as HTMLElement).findByText('已恢复到更改前')).toBeInTheDocument();
     expect(findRequest(transport, 'planning.mutation.rollback')).toMatchObject({
       body: {
         receiptId: 'receipt-task-save',
@@ -104,19 +104,19 @@ describe('Planning WorkContract UI', () => {
   it('uses the task action event receipt as the only undo authority', async () => {
     const user = userEvent.setup();
     const transport = renderPlanning();
-    await screen.findByRole('heading', { name: '规划', level: 1 });
+    await screen.findByRole('heading', { name: '任务', level: 1 });
     const taskSection = (await screen.findByRole('heading', { name: '任务', level: 2 })).closest('section');
     expect(taskSection).not.toBeNull();
     await user.click(within(taskSection as HTMLElement).getByRole('button', { name: /完成管理页/ }));
 
     const workflow = screen.getByText('完成所选任务', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
     await within(workflow as HTMLElement).findByText('任务状态影响');
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认这些更改' }));
     await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
-    expect(await within(workflow as HTMLElement).findByText('本机操作已记录')).toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
+    expect(await within(workflow as HTMLElement).findByText('这次更改已安全记录')).toBeInTheDocument();
 
     expect(findRequest(transport, 'planning.task.action')).toMatchObject({
       body: {
@@ -126,8 +126,8 @@ describe('Planning WorkContract UI', () => {
         payloadSha256: actionHash,
       },
     });
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次操作' }));
-    expect(await within(workflow as HTMLElement).findByText('已恢复到操作前')).toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次更改' }));
+    expect(await within(workflow as HTMLElement).findByText('已恢复到更改前')).toBeInTheDocument();
     expect(findRequest(transport, 'planning.taskEvent.undo')).toMatchObject({
       body: {
         eventId: 'task-event:1',
@@ -142,7 +142,7 @@ describe('Planning WorkContract UI', () => {
   it('edits a live goal through preview, apply, and receipt-bound rollback', async () => {
     const user = userEvent.setup();
     const transport = renderPlanning();
-    await screen.findByRole('heading', { name: '规划', level: 1 });
+    await screen.findByRole('heading', { name: '任务', level: 1 });
 
     await user.click(await screen.findByRole('button', { name: /^完成 Web 控制中心迁移/ }));
     expect(screen.getByRole('heading', { name: '编辑目标', level: 2 })).toBeInTheDocument();
@@ -157,7 +157,7 @@ describe('Planning WorkContract UI', () => {
 
     const workflow = screen.getByText('保存目标修改', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
 
     await waitFor(() => expect(findRequest(transport, 'planning.mutation.preview')).toMatchObject({
       body: {
@@ -178,11 +178,11 @@ describe('Planning WorkContract UI', () => {
     const previewRequest = findRequest(transport, 'planning.mutation.preview');
     expect((previewRequest?.body as Record<string, unknown>).payload).not.toHaveProperty('metadata');
     expect(await within(workflow as HTMLElement).findByText('保存目标影响')).toBeInTheDocument();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '进入确认' }));
-    await user.click(within(workflow as HTMLElement).getByRole('checkbox', { name: '只执行上方已绑定的变更' }));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认这些更改' }));
+    await user.click(within(workflow as HTMLElement).getByRole('checkbox', { name: '我确认只执行上方列出的更改' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
 
-    expect(await within(workflow as HTMLElement).findByText('本机操作已记录')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('这次更改已安全记录')).toBeInTheDocument();
     expect(findRequest(transport, 'planning.goal.save')).toMatchObject({
       body: {
         goalId: 'goal-1',
@@ -194,8 +194,8 @@ describe('Planning WorkContract UI', () => {
       },
     });
     expect(within(workflow as HTMLElement).queryByText(/receipt-goal-save/)).not.toBeInTheDocument();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次操作' }));
-    expect(await within(workflow as HTMLElement).findByText('已恢复到操作前')).toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次更改' }));
+    expect(await within(workflow as HTMLElement).findByText('已恢复到更改前')).toBeInTheDocument();
     expect(findRequest(transport, 'planning.mutation.rollback')).toMatchObject({
       body: {
         receiptId: 'receipt-goal-save',
@@ -209,15 +209,15 @@ describe('Planning WorkContract UI', () => {
   it('keeps a rejected apply visible and does not invent a receipt', async () => {
     const user = userEvent.setup();
     renderPlanning(true);
-    await user.click(await screen.findByRole('button', { name: '新建任务' }));
+    await user.click(await screen.findByRole('button', { name: '添加任务' }));
     await user.type(await screen.findByPlaceholderText('例如：整理今天的工作清单'), '触发版本冲突');
     const workflow = screen.getByText('创建任务', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
     await within(workflow as HTMLElement).findByText('保存任务影响');
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认这些更改' }));
     await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
     expect(await within(workflow as HTMLElement).findByText('页面内容已经变化，请重新预览。')).toBeInTheDocument();
     expect(within(workflow as HTMLElement).queryByText(/receipt-task-save/)).not.toBeInTheDocument();
   });
@@ -225,11 +225,11 @@ describe('Planning WorkContract UI', () => {
   it('creates and pauses a durable Agent wake schedule from the planning page', async () => {
     const user = userEvent.setup();
     const transport = renderPlanning();
-    await user.click(await screen.findByRole('button', { name: '新建预约' }));
+    await user.click(await screen.findByRole('button', { name: '添加安排' }));
 
-    await user.type(screen.getByLabelText('预约名称 *'), '稍后继续迁移');
-    await user.type(screen.getByLabelText('醒来后做什么 *'), '检查构建结果并汇报剩余问题');
-    await user.click(screen.getByRole('button', { name: '确认预约' }));
+    await user.type(screen.getByLabelText('安排名称 *'), '稍后继续迁移');
+    await user.type(screen.getByLabelText('到点后做什么 *'), '检查构建结果并汇报剩余问题');
+    await user.click(screen.getByRole('button', { name: '保存安排' }));
 
     await waitFor(() => expect(findRequest(transport, 'agent.wakeSchedules.create')).toMatchObject({
       body: {
@@ -244,7 +244,7 @@ describe('Planning WorkContract UI', () => {
     }));
     expect(await screen.findByText('稍后继续迁移')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '暂停预约' }));
+    await user.click(screen.getByRole('button', { name: '暂停自动执行' }));
     await waitFor(() => expect(findRequest(transport, 'agent.wakeSchedule.action')).toMatchObject({
       params: { scheduleId: 'wake:test' },
       body: { action: 'pause', confirmText: 'apply' },

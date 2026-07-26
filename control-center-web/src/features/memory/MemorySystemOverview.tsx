@@ -12,6 +12,7 @@ import {
   UserRoundCog,
 } from 'lucide-react';
 import { Button } from '@/components/primitives';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import { asRecord, numberValue, stringValue } from '@/features/overview/management-ui';
 
 interface MemorySystemOverviewProps {
@@ -29,6 +30,7 @@ export function MemorySystemOverview({
   onOpenTimeline,
   summary,
 }: MemorySystemOverviewProps) {
+  const identity = useProductIdentity();
   const projection = asRecord(summary.projection);
   const timelineCounts = asRecord(summary.activityTimelineCounts);
   const roleBookCounts = asRecord(summary.roleBookRevisionCounts);
@@ -53,33 +55,33 @@ export function MemorySystemOverview({
         <div className="memory-system-overview__primary-actions" aria-label="记忆主要操作">
           <Button leadingIcon={<Eye size={16} />} onClick={() => onOpenLayer('atoms')} size="small">查看记忆</Button>
           <Button leadingIcon={<Network size={16} />} onClick={onOpenRelations} size="small" variant="quiet">打开关系图</Button>
-          <Button leadingIcon={<Sparkles size={16} />} onClick={onOpenOrganize} size="small" variant="quiet">AI 整理</Button>
+          <Button leadingIcon={<Sparkles size={16} />} onClick={onOpenOrganize} size="small" variant="quiet">让{identity.assistantName}整理</Button>
         </div>
       </div>
 
       <div className="memory-system-overview__signals" aria-label="记忆系统状态">
           <StatusSignal
             detail={projectionSignal.detail}
-            label="召回投影"
+            label="可用于对话"
             tone={projectionSignal.tone}
           />
           <StatusSignal
             detail={pendingGovernance ? `${pendingGovernance} 项等待处理` : '没有待处理草案'}
-            label="治理队列"
+            label="等你确认"
             tone={pendingGovernance ? 'warning' : 'success'}
           />
           <StatusSignal
             detail={latestTimelineStatus(latestTimeline)}
-            label="最近时间线"
+            label="最近整理"
             tone={stringValue(latestTimeline.status) === 'draft' ? 'warning' : 'info'}
           />
       </div>
 
-      <div className="memory-system-overview__pipeline" aria-label="个人上下文数据层">
+      <div className="memory-system-overview__pipeline" aria-label="记忆形成过程">
         <PipelineStage
-          detail={`输入 ${inputEvidenceCount} · Agent ${agentEvidenceCount}`}
+          detail={`输入 ${inputEvidenceCount} · 对话 ${agentEvidenceCount}`}
           icon={Archive}
-          label="可追溯证据"
+          label="记忆来源"
           onClick={() => onOpenLayer('evidence')}
           value={inputEvidenceCount + agentEvidenceCount}
         />
@@ -87,7 +89,7 @@ export function MemorySystemOverview({
         <PipelineStage
           detail={`共 ${numberValue(summary.memoryAtomTotalCount, numberValue(summary.currentAtomCount, numberValue(summary.memoryAtomCount)) + numberValue(summary.historicalAtomCount, numberValue(summary.memoryAtomArchivedCount)) + numberValue(summary.memoryAtomSourceArchiveCount))} 条 · 历史 ${numberValue(summary.historicalAtomCount, numberValue(summary.memoryAtomArchivedCount))} · 碎片证据 ${numberValue(summary.memoryAtomSourceArchiveCount)}`}
           icon={Tags}
-          label="当前事实"
+          label="关于我的事实"
           onClick={() => onOpenLayer('atoms')}
           value={numberValue(summary.currentAtomCount, numberValue(summary.memoryAtomCount))}
         />
@@ -95,15 +97,15 @@ export function MemorySystemOverview({
         <PipelineStage
           detail="主题与关系"
           icon={BookOpen}
-          label="主题书"
+          label="长期主题"
           onClick={() => onOpenLayer('books')}
           value={numberValue(summary.memoryBookCount)}
         />
         <ArrowRight aria-hidden="true" className="memory-system-overview__arrow" size={16} />
         <PipelineStage
-          detail="会话身份"
+          detail="经历与边界"
           icon={UserRoundCog}
-          label="角色书"
+          label="伙伴记忆"
           onClick={() => onOpenLayer('roleBooks')}
           value={numberValue(roleBookCounts.active)}
         />

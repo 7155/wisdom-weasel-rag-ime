@@ -19,7 +19,7 @@ describe('Agent tool activity details', () => {
     expect(group).not.toHaveAttribute('open');
     const summary = group!.querySelector('summary')!;
     expect(within(summary).getByText('已完成 1 项操作')).toBeInTheDocument();
-    expect(within(summary).getByText('控制中心概览')).toBeInTheDocument();
+    expect(within(summary).getByText('当前状态')).toBeInTheDocument();
     expect(within(summary).getByText('完成')).toBeInTheDocument();
     expect(summary.querySelector('.agent-activity__inline-icon')).toBeInTheDocument();
     expect(summary.querySelector('.agent-activity__status')).not.toBeInTheDocument();
@@ -45,7 +45,7 @@ describe('Agent tool activity details', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /查看活动详情：活动已完成/ }));
     expect(screen.getByRole('dialog', { name: '活动已完成' })).toBeInTheDocument();
-    expect(screen.getByRole('dialog')).toHaveTextContent('控制中心概览');
+    expect(screen.getByRole('dialog')).toHaveTextContent('当前状态');
   });
 
   it('labels provider turn failures as model service failures instead of tool operations', () => {
@@ -107,11 +107,11 @@ describe('Agent tool activity details', () => {
     const { container } = render(<ActivitySummary activities={[activity]} />);
     openActivity(container);
 
-    expect(screen.getByText('控制中心概览')).toBeInTheDocument();
+    expect(screen.getByText('当前状态')).toBeInTheDocument();
     expect(screen.getAllByText('已连接 9 个控制中心领域')).toHaveLength(2);
     expect(screen.getByText('查看可用能力')).toBeInTheDocument();
     expect(screen.getByText('13 项')).toBeInTheDocument();
-    expect(screen.getByText('控制中心概览、输入法、语音输入')).toBeInTheDocument();
+    expect(screen.getByText('当前状态、输入法与词库、语音输入')).toBeInTheDocument();
     expect(screen.getByText('2 项操作')).toBeInTheDocument();
     expect(screen.getByText('写入操作必须经过本机确认并保存回执')).toBeInTheDocument();
     expect(container).not.toHaveTextContent('ime_overview');
@@ -161,8 +161,8 @@ describe('Agent tool activity details', () => {
 
     const dialog = screen.getByRole('dialog');
     expect([...dialog.querySelectorAll('.agent-activity-row > summary strong')].map((node) => node.textContent)).toEqual([
-      '控制中心概览',
-      '控制中心概览',
+      '当前状态',
+      '当前状态',
     ]);
     expect(dialog).toHaveTextContent('2 / 3 可用');
     expect(dialog).toHaveTextContent('预测服务');
@@ -472,7 +472,7 @@ describe('Agent tool activity details', () => {
     const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
 
-    expect(row).toHaveTextContent('Agent 角色书');
+    expect(row).toHaveTextContent('伙伴记忆');
     expect(within(row).getByRole('link', { name: /补充最近完成的记忆迁移工作/ })).toHaveAttribute(
       'href',
       '#/memory?layer=role-books&id=role-book-revision%3A3',

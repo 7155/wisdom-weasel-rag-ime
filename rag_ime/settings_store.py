@@ -688,6 +688,15 @@ def _validated_setting_value(
             raise ValueError(f"setting {key} must be >= {minimum}")
         if isinstance(maximum, (int, float)) and normalized > maximum:
             raise ValueError(f"setting {key} must be <= {maximum}")
+    if isinstance(normalized, str):
+        if key.startswith("identity."):
+            normalized = normalized.strip()
+        minimum_length = field.get("minLength")
+        maximum_length = field.get("maxLength")
+        if isinstance(minimum_length, int) and len(normalized) < minimum_length:
+            raise ValueError(f"setting {key} must contain at least {minimum_length} character(s)")
+        if isinstance(maximum_length, int) and len(normalized) > maximum_length:
+            raise ValueError(f"setting {key} must contain at most {maximum_length} character(s)")
     return normalized
 
 

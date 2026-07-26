@@ -33,7 +33,7 @@ describe('ContextDebugFeature', () => {
     });
     renderFeature(transport, '/context-debug?sessionId=session-a');
 
-    expect(await screen.findByText('上下文透视')).toBeInTheDocument();
+    expect(await screen.findByText('上下文检查')).toBeInTheDocument();
     expect(screen.getByText('Stable prefix')).toBeInTheDocument();
     expect(screen.getByText('来源正文默认隐藏。', { exact: false })).toBeInTheDocument();
     await user.click(screen.getByText('展开原始审计区'));

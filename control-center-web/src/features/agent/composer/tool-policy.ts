@@ -30,11 +30,11 @@ export function toolAvailableForCurrentSession(
 
 export function riskLabel(value: string): string {
   return ({
-    R0: '只读',
-    R1: '需确认',
-    R2: '高风险确认',
-    R3: '禁止',
-  } as Record<string, string>)[value] ?? '受控';
+    R0: '只查看',
+    R1: '会改数据',
+    R2: '文件或命令',
+    R3: '不可使用',
+  } as Record<string, string>)[value] ?? '受权限保护';
 }
 
 function record(value: unknown): Record<string, unknown> {

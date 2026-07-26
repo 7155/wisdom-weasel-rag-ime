@@ -13,6 +13,7 @@ class SettingsSchemaTests(unittest.TestCase):
         schema = settings_schema()
         section_ids = {str(item["id"]) for item in schema["sections"]}
 
+        self.assertIn("identity", section_ids)
         self.assertIn("interaction", section_ids)
         self.assertIn("display", section_ids)
         self.assertIn("rag", section_ids)
@@ -26,6 +27,9 @@ class SettingsSchemaTests(unittest.TestCase):
     def test_defaults_include_user_customization_controls(self) -> None:
         defaults = default_settings()
 
+        self.assertEqual(defaults["identity"]["productName"], "智鼬")
+        self.assertEqual(defaults["identity"]["assistantName"], "智鼬")
+        self.assertEqual(defaults["identity"]["tagline"], "记得你，也陪你做事")
         self.assertFalse(defaults["interaction"]["composition"]["showPrediction"])
         self.assertTrue(defaults["interaction"]["composition"]["showOnlyRime"])
         self.assertEqual(defaults["models"]["hot"], "minimind_ime_v2")
@@ -80,6 +84,9 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["memory"]["recall"]["detailLevel"], "compact")
 
         fields = {field["key"]: field for section in settings_schema()["sections"] for field in section["fields"]}
+        self.assertEqual(fields["identity.productName"]["maxLength"], 24)
+        self.assertEqual(fields["identity.assistantName"]["maxLength"], 24)
+        self.assertEqual(fields["identity.tagline"]["maxLength"], 48)
         self.assertFalse(fields["interaction.composition.showPrediction"]["default"])
         self.assertTrue(fields["interaction.composition.showOnlyRime"]["default"])
         self.assertEqual(fields["interaction.postCommit.maxCallsPer10s"]["default"], 6)

@@ -81,7 +81,7 @@ export function AgentWorkflowPanel({
     return (
       <div className="agent-workflow-panel" aria-label="任务工作流">
         <section className="agent-workflow-section">
-          <p role="status">正在读取实时 Plan 与 Goal</p>
+          <p role="status">正在读取计划与长期目标</p>
         </section>
       </div>
     );
@@ -92,7 +92,7 @@ export function AgentWorkflowPanel({
       <div className="agent-workflow-panel" aria-label="任务工作流">
         <section className="agent-workflow-section">
           <p className="agent-workflow-error" role="alert">
-            暂时无法读取实时 Plan 与 Goal。为避免把本地快照误当成当前状态，工作流操作已暂停。
+            暂时无法读取最新计划与长期目标。为避免误用旧状态，相关操作已暂停。
           </p>
           <Button size="small" onClick={() => void workflowQuery.refetch()}>重新读取</Button>
         </section>
@@ -163,12 +163,12 @@ function PlanReview({
   }).then(() => setEditing(false));
 
   return (
-    <section className="agent-workflow-section agent-workflow-plan" aria-label="Plan 审阅与执行门禁">
+    <section className="agent-workflow-section agent-workflow-plan" aria-label="计划审阅与执行">
       <header>
         <span className="agent-workflow-section__icon"><ListChecks size={16} /></span>
-        <span><strong>Plan</strong><small>{planStatusLabel(plan.status)}</small></span>
+        <span><strong>执行计划</strong><small>{planStatusLabel(plan.status)}</small></span>
         {plan.status === 'draft' && !editing ? (
-          <IconButton size="small" icon={<Pencil size={15} />} label="编辑 Plan" onClick={() => setEditing(true)} tooltip />
+          <IconButton size="small" icon={<Pencil size={15} />} label="编辑计划" onClick={() => setEditing(true)} tooltip />
         ) : null}
       </header>
 
@@ -218,13 +218,13 @@ function PlanReview({
           <AgentPlanCard plan={plan} />
           <div className="agent-act-gate" data-open={gate.allowed || undefined}>
             {gate.allowed ? <ShieldCheck size={15} /> : <CirclePause size={15} />}
-            <span><strong>{gate.allowed ? 'Act 已解锁' : 'Act 已锁定'}</strong><small>{gate.message}</small></span>
+            <span><strong>{gate.allowed ? '已经可以执行' : '等待批准后执行'}</strong><small>{gate.message}</small></span>
           </div>
           <div className="agent-workflow-actions">
             {plan.status === 'review' ? (
               <>
                 <Button size="small" variant="quiet" leadingIcon={<RotateCcw size={15} />} loading={pending} onClick={() => mutate({ action: 'return_to_draft', expectedRevision: plan.revision })}>退回修改</Button>
-                <Button size="small" variant="primary" leadingIcon={<ShieldCheck size={15} />} loading={pending} onClick={() => mutate({ action: 'approve', expectedRevision: plan.revision })}>批准进入 Act</Button>
+                <Button size="small" variant="primary" leadingIcon={<ShieldCheck size={15} />} loading={pending} onClick={() => mutate({ action: 'approve', expectedRevision: plan.revision })}>批准执行</Button>
               </>
             ) : null}
             {plan.status === 'approved' ? (
@@ -237,7 +237,7 @@ function PlanReview({
                 leadingIcon={<X size={15} />}
                 loading={pending}
                 onClick={() => {
-                  if (!confirmDestructive('确定取消当前 Plan 的执行吗？')) return;
+                  if (!confirmDestructive('确定取消当前计划的执行吗？')) return;
                   void mutate({ action: 'cancel', expectedRevision: plan.revision });
                 }}
               >
@@ -245,7 +245,7 @@ function PlanReview({
               </Button>
             ) : null}
             {['completed', 'cancelled'].includes(plan.status) ? (
-              <Button size="small" leadingIcon={<RotateCcw size={15} />} loading={pending} onClick={() => mutate({ action: 'reset', expectedRevision: plan.revision, title: '执行计划', items: [] })}>新建 Plan</Button>
+              <Button size="small" leadingIcon={<RotateCcw size={15} />} loading={pending} onClick={() => mutate({ action: 'reset', expectedRevision: plan.revision, title: '执行计划', items: [] })}>新建计划</Button>
             ) : null}
           </div>
         </>
@@ -303,32 +303,32 @@ function GoalMode({
   }).then(() => setAuditing(false));
 
   return (
-    <section className="agent-workflow-section agent-goal-mode" aria-label="Goal Mode">
+    <section className="agent-workflow-section agent-goal-mode" aria-label="长期目标">
       <header>
         <span className="agent-workflow-section__icon"><Flag size={16} /></span>
-        <span><strong>Goal</strong><small>{configured ? goalStatusLabel(goal.status) : '未设置'}</small></span>
+        <span><strong>长期目标</strong><small>{configured ? goalStatusLabel(goal.status) : '未设置'}</small></span>
         {configured && ['active', 'paused'].includes(goal.status) && !editing && !auditing ? (
-          <IconButton size="small" icon={<Pencil size={15} />} label="编辑 Goal" onClick={() => setEditing(true)} tooltip />
+          <IconButton size="small" icon={<Pencil size={15} />} label="编辑目标" onClick={() => setEditing(true)} tooltip />
         ) : null}
       </header>
 
       {!configured && !editing ? (
         <div className="agent-goal-empty">
           <p>为这条对话设置长期目标和执行预算。</p>
-          <Button size="small" leadingIcon={<Plus size={15} />} onClick={() => setEditing(true)}>设置 Goal</Button>
+          <Button size="small" leadingIcon={<Plus size={15} />} onClick={() => setEditing(true)}>设置目标</Button>
         </div>
       ) : null}
 
       {editing ? (
         <div className="agent-goal-editor">
-          <label><span>目标</span><TextArea aria-label="Goal 目标" rows={3} maxLength={4_000} value={objective} onChange={(event) => setObjective(event.target.value)} /></label>
+          <label><span>目标</span><TextArea aria-label="长期目标" rows={3} maxLength={4_000} value={objective} onChange={(event) => setObjective(event.target.value)} /></label>
           <div>
-            <label><span>Token 预算</span><Input aria-label="Goal Token 预算" inputMode="numeric" placeholder="不限" value={tokenBudget} onChange={(event) => setTokenBudget(event.target.value.replace(/\D/g, ''))} /></label>
-            <label><span>时间预算（分钟）</span><Input aria-label="Goal 时间预算" inputMode="numeric" placeholder="不限" value={timeMinutes} onChange={(event) => setTimeMinutes(event.target.value.replace(/\D/g, ''))} /></label>
+            <label><span>模型用量上限（Token）</span><Input aria-label="目标模型用量上限" inputMode="numeric" placeholder="不限" value={tokenBudget} onChange={(event) => setTokenBudget(event.target.value.replace(/\D/g, ''))} /></label>
+            <label><span>最长时间（分钟）</span><Input aria-label="目标时间上限" inputMode="numeric" placeholder="不限" value={timeMinutes} onChange={(event) => setTimeMinutes(event.target.value.replace(/\D/g, ''))} /></label>
           </div>
           <div className="agent-workflow-actions">
             <Button size="small" variant="quiet" onClick={() => setEditing(false)}>取消</Button>
-            <Button size="small" variant="primary" leadingIcon={<Check size={15} />} loading={pending} disabled={!objective.trim()} onClick={saveGoal}>保存 Goal</Button>
+            <Button size="small" variant="primary" leadingIcon={<Check size={15} />} loading={pending} disabled={!objective.trim()} onClick={saveGoal}>保存目标</Button>
           </div>
         </div>
       ) : null}
@@ -344,7 +344,7 @@ function GoalMode({
           ))}</div> : <small className="agent-goal-unbounded">未设置预算上限</small>}
           {goal.completionAudit ? (
             <div className="agent-goal-audit">
-              <strong><ShieldCheck size={14} />完成审计</strong>
+              <strong><ShieldCheck size={14} />完成依据</strong>
               <p>{goal.completionAudit.summary}</p>
               {goal.completionAudit.evidence.map((item) => <small key={`${item.kind}:${item.reference}`}>{item.summary} · {item.reference}</small>)}
             </div>
@@ -352,17 +352,17 @@ function GoalMode({
           {!auditing ? <div className="agent-workflow-actions">
             {goal.status === 'active' ? <Button size="small" variant="quiet" leadingIcon={<CirclePause size={15} />} loading={pending} onClick={() => mutate({ action: 'pause', expectedRevision: goal.revision })}>暂停</Button> : null}
             {goal.status === 'paused' ? <Button size="small" leadingIcon={<CirclePlay size={15} />} loading={pending} onClick={() => mutate({ action: 'resume', expectedRevision: goal.revision })}>恢复</Button> : null}
-            {['active', 'paused'].includes(goal.status) ? <Button size="small" variant="primary" leadingIcon={<ShieldCheck size={15} />} onClick={() => setAuditing(true)}>完成审计</Button> : null}
+            {['active', 'paused'].includes(goal.status) ? <Button size="small" variant="primary" leadingIcon={<ShieldCheck size={15} />} onClick={() => setAuditing(true)}>确认完成</Button> : null}
             <Button
               size="small"
               variant="quiet"
               loading={pending}
               onClick={() => {
-                if (!confirmDestructive('确定清除当前 Goal、预算和进度吗？')) return;
+                if (!confirmDestructive('确定删除当前目标、预算和进度吗？')) return;
                 void mutate({ action: 'clear', expectedRevision: goal.revision });
               }}
             >
-              清除
+              删除目标
             </Button>
           </div> : null}
         </div>
@@ -370,13 +370,13 @@ function GoalMode({
 
       {auditing ? (
         <div className="agent-goal-audit-editor">
-          <label><span>完成结论</span><TextArea aria-label="Goal 完成结论" rows={2} value={auditSummary} onChange={(event) => setAuditSummary(event.target.value)} /></label>
-          <label><span>证据类型</span><select aria-label="Goal 证据类型" className="ui-input" value={evidenceKind} onChange={(event) => setEvidenceKind(event.target.value)}><option value="test">测试</option><option value="artifact">产物</option><option value="commit">提交</option><option value="receipt">回执</option><option value="note">说明</option></select></label>
-          <label><span>证据摘要</span><Input aria-label="Goal 证据摘要" value={evidenceSummary} onChange={(event) => setEvidenceSummary(event.target.value)} /></label>
-          <label><span>证据引用</span><Input aria-label="Goal 证据引用" placeholder="测试命令、commit 或 receipt ID" value={evidenceReference} onChange={(event) => setEvidenceReference(event.target.value)} /></label>
+          <label><span>完成结论</span><TextArea aria-label="目标完成结论" rows={2} value={auditSummary} onChange={(event) => setAuditSummary(event.target.value)} /></label>
+          <label><span>依据类型</span><select aria-label="目标依据类型" className="ui-input" value={evidenceKind} onChange={(event) => setEvidenceKind(event.target.value)}><option value="test">测试</option><option value="artifact">产物</option><option value="commit">提交</option><option value="receipt">回执</option><option value="note">说明</option></select></label>
+          <label><span>依据摘要</span><Input aria-label="目标依据摘要" value={evidenceSummary} onChange={(event) => setEvidenceSummary(event.target.value)} /></label>
+          <label><span>依据位置</span><Input aria-label="目标依据位置" placeholder="测试命令、提交记录或回执编号" value={evidenceReference} onChange={(event) => setEvidenceReference(event.target.value)} /></label>
           <div className="agent-workflow-actions">
             <Button size="small" variant="quiet" onClick={() => setAuditing(false)}>取消</Button>
-            <Button size="small" variant="primary" loading={pending} disabled={!auditSummary.trim() || !evidenceSummary.trim() || !evidenceReference.trim()} onClick={completeGoal}>提交审计</Button>
+            <Button size="small" variant="primary" loading={pending} disabled={!auditSummary.trim() || !evidenceSummary.trim() || !evidenceReference.trim()} onClick={completeGoal}>确认完成</Button>
           </div>
         </div>
       ) : null}

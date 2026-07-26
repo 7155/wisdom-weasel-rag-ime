@@ -25,22 +25,28 @@ export type RouteDefinition = {
   group: 'work' | 'capability' | 'operations';
 };
 
+export const routeGroupLabels: Record<RouteDefinition['group'], string> = {
+  work: '一起做事',
+  capability: '记忆与能力',
+  operations: '运行与安全',
+};
+
 export const routeRegistry: readonly RouteDefinition[] = [
-  { id: 'planning', path: '/planning', label: '任务与验收', shortLabel: '任务', group: 'work' },
-  { id: 'overview', path: '/overview', label: '运行总览', shortLabel: '总览', group: 'work' },
-  { id: 'input', path: '/input', label: '输入法', shortLabel: '输入', group: 'work' },
-  { id: 'agent', path: '/agent', label: 'Session 工作台', shortLabel: 'Session', group: 'work' },
-  { id: 'rooms', path: '/rooms', label: 'Room 工作台', shortLabel: 'Room', group: 'work' },
-  { id: 'roles', path: '/roles', label: 'Agent 伙伴', shortLabel: '伙伴', group: 'work' },
-  { id: 'plugins', path: '/plugins', label: '能力中心', shortLabel: '能力', group: 'capability' },
+  { id: 'overview', path: '/overview', label: '概览', shortLabel: '概览', group: 'work' },
+  { id: 'agent', path: '/agent', label: '对话', shortLabel: '对话', group: 'work' },
+  { id: 'rooms', path: '/rooms', label: '多人协作', shortLabel: '协作', group: 'work' },
+  { id: 'planning', path: '/planning', label: '任务', shortLabel: '任务', group: 'work' },
+  { id: 'roles', path: '/roles', label: '伙伴', shortLabel: '伙伴', group: 'work' },
+  { id: 'memory', path: '/memory', label: '我的记忆', shortLabel: '记忆', group: 'capability' },
   { id: 'knowledge', path: '/knowledge', label: '知识库', shortLabel: '知识', group: 'capability' },
-  { id: 'memory', path: '/memory', label: '记忆', shortLabel: '记忆', group: 'capability' },
+  { id: 'plugins', path: '/plugins', label: '技能与工具', shortLabel: '能力', group: 'capability' },
   { id: 'browser', path: '/browser', label: '浏览器', shortLabel: '浏览器', group: 'capability' },
   { id: 'voice', path: '/voice', label: '语音输入', shortLabel: '语音', group: 'capability' },
-  { id: 'governance', path: '/governance', label: '交付与治理', shortLabel: '治理', group: 'operations' },
-  { id: 'context-debug', path: '/context-debug', label: '上下文透视', shortLabel: '上下文', group: 'operations' },
-  { id: 'observability', path: '/observability', label: '运行观察', shortLabel: '观察', group: 'operations' },
-  { id: 'history', path: '/history', label: '历史', shortLabel: '历史', group: 'operations' },
-  { id: 'diagnostics', path: '/diagnostics', label: '诊断', shortLabel: '诊断', group: 'operations' },
-  { id: 'configuration', path: '/configuration', label: '配置', shortLabel: '配置', group: 'operations' },
+  { id: 'input', path: '/input', label: '输入法与词库', shortLabel: '输入', group: 'capability' },
+  { id: 'history', path: '/history', label: '输入记录', shortLabel: '记录', group: 'capability' },
+  { id: 'governance', path: '/governance', label: '安全与治理', shortLabel: '安全', group: 'operations' },
+  { id: 'context-debug', path: '/context-debug', label: '上下文检查', shortLabel: '上下文', group: 'operations' },
+  { id: 'observability', path: '/observability', label: '运行记录', shortLabel: '运行', group: 'operations' },
+  { id: 'diagnostics', path: '/diagnostics', label: '问题排查', shortLabel: '排查', group: 'operations' },
+  { id: 'configuration', path: '/configuration', label: '设置', shortLabel: '设置', group: 'operations' },
 ] as const;

@@ -311,11 +311,11 @@ function referenceTime(item: Record<string, unknown>): string {
 function referenceKindLabel(kind: MemoryReferenceKind): string {
   return ({
     event: '原始事件',
-    evidence: 'Agent 证据/审计',
-    atom: '记忆 Atom',
-    book: '主题书',
+    evidence: '对话证据与审计',
+    atom: '关于我的事实',
+    book: '长期主题',
     timeline: '活动时间线',
-    role_book_revision: '角色书修订',
+    role_book_revision: '伙伴记忆版本',
   } as const)[kind];
 }
 

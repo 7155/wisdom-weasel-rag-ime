@@ -16,7 +16,7 @@ describe('Room Kernel production control gate', () => {
     raw.routes.find((item) => item.pathId === 'agent.room.kernel.command')!.method = 'PATCH';
     const gate = await evaluateRoomKernelControlGate(value);
     expect(gate.commandEnabled).toBe(false);
-    expect(gate.reason).toMatch(/hash mismatch/);
+    expect(gate.reason).toBe('停止任务的控制通道已发生变化，请刷新或更新应用');
   });
 
   it('denies an unpaired remote caller even if a command route is present', async () => {
@@ -26,7 +26,7 @@ describe('Room Kernel production control gate', () => {
     };
     const gate = await evaluateRoomKernelControlGate(value);
     expect(gate.commandEnabled).toBe(false);
-    expect(gate.reason).toMatch(/not authorized/);
+    expect(gate.reason).toBe('当前连接可以查看任务，但没有停止任务的权限');
   });
 
   it('never enables panic without both explicit feature and admin scope', async () => {

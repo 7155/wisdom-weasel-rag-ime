@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/primitives';
+import { publicToolName } from '@/features/agent/tool-presentation';
 import { publicErrorText } from '@/features/overview/management-ui';
 
 interface RoomMemberIdentity {
@@ -18,10 +19,7 @@ interface RoomMemberIdentity {
   sessionId: string;
 }
 
-interface RoomMemberSessionBoundary {
-  id: string;
-  workspaceRoots: string[];
-}
+type RoomExecutionMode = 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
 
 interface RoomToolCatalogItem {
   id: string;
@@ -31,21 +29,23 @@ interface RoomToolCatalogItem {
 }
 
 export function RoomMemberBoundaryDialog({
+  executionMode,
   participant,
+  workspaceRoots,
   onClose,
 }: {
+  executionMode?: RoomExecutionMode;
   participant?: RoomMemberIdentity;
+  workspaceRoots: string[];
   onClose: () => void;
 }) {
   const transport = useControlTransport();
-  const [session, setSession] = useState<RoomMemberSessionBoundary>();
   const [tools, setTools] = useState<RoomToolCatalogItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!participant) {
-      setSession(undefined);
       setTools([]);
       setLoading(false);
       setError('');
@@ -53,35 +53,21 @@ export function RoomMemberBoundaryDialog({
     }
     const controller = new AbortController();
     let active = true;
-    setSession(undefined);
     setTools([]);
     setError('');
     setLoading(true);
-    void Promise.all([
-      transport.request({
-        pathId: 'agent.sessions.list',
-        query: { includeArchived: true, includeInternal: true, limit: 500 },
-        signal: controller.signal,
-      }),
-      transport.request({
-        pathId: 'agent.tools.list',
-        query: { sessionId: participant.sessionId },
-        signal: controller.signal,
-      }),
-    ]).then(([sessionResponse, toolResponse]) => {
+    void transport.request({
+      pathId: 'agent.tools.list',
+      query: { sessionId: participant.sessionId },
+      signal: controller.signal,
+    }).then((toolResponse) => {
       if (!active) return;
-      const nextSession = roomMemberSessionItems(sessionResponse)
-        .find((item) => item.id === participant.sessionId);
-      if (!nextSession) {
-        throw new Error('没有找到这个参与者的 Agent Session。');
-      }
-      setSession(nextSession);
       setTools(roomToolCatalogItems(toolResponse));
     }).catch((requestError: unknown) => {
       if (!active || controller.signal.aborted) return;
       setError(publicErrorText(
         requestError,
-        '参与者运行边界暂时无法读取，请稍后重试。',
+        '暂时无法确认这位伙伴可用的工具，请稍后重试。',
       ));
     }).finally(() => {
       if (active) setLoading(false);
@@ -97,68 +83,50 @@ export function RoomMemberBoundaryDialog({
     <Dialog open={Boolean(participant)} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="room-policy-dialog">
         <DialogHeader>
-          <DialogTitle>{participant?.displayName ?? '参与者'} · 运行边界</DialogTitle>
+          <DialogTitle>{participant?.displayName ?? '这位伙伴'}能做什么</DialogTitle>
           <DialogDescription>
-            Room 身份只决定责任与交接，不裁掉工作能力。成员使用完整 Agent 工具面，写入、Shell 与外部动作仍按原生审批执行。
+            这里显示真正生效的工作权限、目录和工具。分工只是协作提示，不会让伙伴绕过你的授权。
           </DialogDescription>
         </DialogHeader>
         {error ? <p className="room-dialog-error" role="alert">{error}</p> : null}
-        {loading ? (
-          <p className="room-policy-loading" role="status">正在读取 Agent 权限…</p>
-        ) : session ? (
+        {participant ? (
           <div className="room-policy-form">
             <div className="room-policy-boundary">
               <ShieldCheck size={18} />
               <span>
-                <strong>完整工作权限</strong>
-                <small>身份不会把执行者降成只读；工具调用仍受工作区、审批、取消与迟到写入栅栏约束。</small>
+                <strong>{executionModeLabel(executionMode)}</strong>
+                <small>{loading ? '正在确认可用工具；' : `${enabledTools.length} 项工具可用；`}停止任务、目录边界和危险操作禁区始终有效。</small>
               </span>
             </div>
             <fieldset>
-              <legend>项目范围 <small>{session.workspaceRoots.length} 项</small></legend>
-              {session.workspaceRoots.length ? (
+              <legend>可以工作的目录 <small>{workspaceRoots.length} 项</small></legend>
+              {workspaceRoots.length ? (
                 <div className="room-policy-roots">
-                  {session.workspaceRoots.map((path) => (
+                  {workspaceRoots.map((path) => (
                     <span key={path}><FolderOpen size={14} /><small>{path}</small></span>
                   ))}
                 </div>
-              ) : <p className="room-policy-empty">这个 Room 不绑定项目目录。</p>}
+              ) : <p className="room-policy-empty">这个协作空间不会访问项目目录。</p>}
             </fieldset>
             <details className="room-policy-tools-disclosure">
-              <summary>查看当前工具目录 <small>{enabledTools.length} 项</small></summary>
-              <div className="room-policy-tools">
-                {enabledTools.map((tool) => (
-                  <div key={tool.id}>
-                    <Check size={14} />
-                    <span><strong>{tool.displayName}</strong><small>{tool.description}</small></span>
-                  </div>
-                ))}
-              </div>
+              <summary>看看可以使用哪些工具 <small>{loading ? '确认中' : `${enabledTools.length} 项`}</small></summary>
+              {loading ? <p className="room-policy-loading" role="status">正在确认可用工具…</p> : (
+                <div className="room-policy-tools">
+                  {enabledTools.map((tool) => (
+                    <div key={tool.id}>
+                      <Check size={14} />
+                      <span><strong>{publicToolName(tool.id, tool.displayName)}</strong><small>{tool.description}</small></span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </details>
           </div>
         ) : null}
-        <DialogFooter><Button variant="primary" onClick={onClose}>完成</Button></DialogFooter>
+        <DialogFooter><Button variant="primary" onClick={onClose}>知道了</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
-}
-
-function roomMemberSessionItems(value: unknown): RoomMemberSessionBoundary[] {
-  const source = record(value);
-  const items = Array.isArray(source.items)
-    ? source.items
-    : Array.isArray(source.sessions) ? source.sessions : [];
-  return items.flatMap((value) => {
-    const item = record(value);
-    return typeof item.id === 'string'
-      ? [{
-          id: item.id,
-          workspaceRoots: Array.isArray(item.workspaceRoots)
-            ? item.workspaceRoots.map(String)
-            : [],
-        }]
-      : [];
-  });
 }
 
 function roomToolCatalogItems(value: unknown): RoomToolCatalogItem[] {
@@ -174,6 +142,15 @@ function roomToolCatalogItems(value: unknown): RoomToolCatalogItem[] {
         }]
       : [];
   });
+}
+
+function executionModeLabel(executionMode: RoomExecutionMode | undefined): string {
+  return {
+    read_only: '只读',
+    per_action: '每次确认',
+    workspace_managed: '工作区托管',
+    full_trust: '完全信任',
+  }[executionMode ?? 'per_action'];
 }
 
 function record(value: unknown): Record<string, unknown> {

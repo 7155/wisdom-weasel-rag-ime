@@ -478,10 +478,25 @@ export function createPreviewTransport(): MockControlTransport {
     }
     return { ok: true, changed: true };
   };
+  routes['agent.room.kernel.snapshot'] = (request: ControlRequest) =>
+    previewRoomKernelSnapshot(stringValue(record(request.params).roomId) || 'room-preview');
+  routes['agent.room.kernel.command'] = (request: ControlRequest) =>
+    previewRoomKernelReceipt(record(request.body));
   routes['agent.media.preview'] = (request: ControlRequest) => previewManagedFile(request);
+  const routeIds = Array.from(new Set<ControlPathId>([
+    ...(Object.keys(routes) as ControlPathId[]),
+    'agent.room.kernel.events',
+  ]));
   return new MockControlTransport({
     routes,
-    capabilities: { routeIds: Object.keys(routes) as ControlPathId[] },
+    capabilities: {
+      routeIds,
+      raw: {
+        client: { remote: false, deviceAuthenticated: false, grantedScopes: [] },
+        features: {},
+        routes: previewRoomKernelRouteManifest(),
+      },
+    },
     pickedFiles: [
       {
         id: 'media_preview_attachment_01',
@@ -2048,7 +2063,7 @@ function previewActGate(
   return {
     allowed: false,
     reason: planStatus === 'draft' ? 'plan_required' : 'plan_not_approved',
-    message: planStatus === 'draft' ? '请先提交 Plan 审阅。' : 'Plan 正在等待审阅。',
+    message: planStatus === 'draft' ? '请先提交计划审阅。' : '计划正在等待审阅。',
   };
 }
 
@@ -2643,6 +2658,11 @@ function previewConfigurationSettings(): Record<string, unknown> {
     runtimeRevision: 12,
     runtimeConfig: { runtimeRevision: 12, settingsRevision: 'sha256:preview-settings' },
     settings: {
+      identity: {
+        productName: '智鼬',
+        assistantName: '智鼬',
+        tagline: '记得你，也陪你做事',
+      },
       models: {
         hot: 'minimind_ime_v2',
         activeRag: 'deepseek/deepseek-v4',
@@ -2674,6 +2694,39 @@ function previewConfigurationSchema(): Record<string, unknown> {
     ok: true,
     schemaVersion: 'rag-ime.settings-schema.v3',
     sections: [
+      {
+        id: 'identity',
+        label: '称呼与外观',
+        fields: [
+          {
+            key: 'identity.productName',
+            type: 'string',
+            label: '应用名称',
+            description: '显示在侧栏和窗口标题中；不会改变安装包文件名',
+            minLength: 1,
+            maxLength: 24,
+            applyMode: 'live',
+          },
+          {
+            key: 'identity.assistantName',
+            type: 'string',
+            label: '通用伙伴称呼',
+            description: '没有指向某位具体伙伴时使用；自建伙伴可以单独命名，内置伙伴复制后也能调整',
+            minLength: 1,
+            maxLength: 24,
+            applyMode: 'live',
+          },
+          {
+            key: 'identity.tagline',
+            type: 'string',
+            label: '侧栏短句',
+            description: '应用名称下方的一句短介绍',
+            minLength: 1,
+            maxLength: 48,
+            applyMode: 'live',
+          },
+        ],
+      },
       {
         id: 'models',
         label: 'Models',
@@ -2847,13 +2900,13 @@ function previewRoomSnapshot(roomId: string) {
     }),
     event(6, 'participant_delta', 'participant-present', {
       rootId, dispatchId: 'dispatch-present', messageId: 'room-assistant-1',
-      delta: 'Agent 时间线复用统一 reducer，工具过程留在执行轨道，完成后原位替换为 Room Post。',
+      delta: '我会把工具进展留在当前消息里；完成后，这里会直接变成清晰的公开结果。',
     }),
     event(7, 'room_post', 'participant-present', {
       rootId, dispatchId: 'dispatch-present',
       post: roomPost(
         'room-post-present', 'participant-present', 'dispatch-present',
-        'Agent 时间线已按 Root、伙伴和 Dispatch 稳定聚合；流式消息完成后原位发布为 Room Post。',
+        '我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。',
         now + 7,
       ),
     }),
@@ -2878,7 +2931,7 @@ function previewRoomSnapshot(roomId: string) {
       rootId, dispatchId: 'dispatch-firstlight',
       post: roomPost(
         'room-post-firstlight', 'participant-firstlight', 'dispatch-firstlight',
-        '路由与权限状态以服务端回执为准；客户端不会提前显示成功，也不会重复发布同一消息。',
+        '我核对了工作目录和授权边界：需要确认的操作会等你，公开消息也不会重复出现。',
         now + 12,
       ),
     }),
@@ -2953,6 +3006,154 @@ function previewRoomSnapshot(roomId: string) {
     lastSequence: events.length,
     resumeToken: `${roomId}:${events.length}`,
     truncated: false,
+  };
+}
+
+function previewRoomKernelSnapshot(roomId: string): Record<string, unknown> {
+  const now = Date.now() - 24_000;
+  const rootId = `${roomId}:root-preview`;
+  const originalText = '核对多端网关回放与责任闭环';
+  const anchorId = `${rootId}:anchor`;
+  const catalogRevisionId = `${rootId}:requirements-v1`;
+  return {
+    roomId,
+    lastSequence: 1,
+    snapshotHash: `sha256:${'b'.repeat(64)}`,
+    roots: [{
+      schemaVersion: 'wisdom-weasel.room-root-execution.v2',
+      rootId,
+      roomId,
+      generation: 1,
+      state: 'running',
+      owner: '智鼬·此刻',
+      requirementAnchorRef: anchorId,
+      createdByActorRef: 'user:preview',
+      terminalReceiptId: null,
+      activeProfileRef: null,
+      budgetPolicyRef: 'budget:preview',
+      createdAtMs: now,
+    }],
+    tasks: [],
+    dispatches: [],
+    posts: [{
+      schemaVersion: 'wisdom-weasel.room-post.v2',
+      postId: `${rootId}:post-progress`,
+      roomId,
+      rootId,
+      generation: 1,
+      authorActorRef: '智鼬·初识',
+      kind: 'finding',
+      visibility: 'room',
+      content: '已核对回放游标与权限边界，正在等待独立验收。',
+      idempotencyKey: `${rootId}:post-progress`,
+      publicationSource: { kind: 'room_commit', ref: 'commit:preview-progress' },
+      createdAtMs: now + 10_000,
+    }],
+    sessions: [{
+      sessionId: 'session-room-present',
+      rootId,
+      generation: 1,
+      state: 'running',
+      updatedAtMs: now + 20_000,
+    }],
+    receipts: [],
+    cancellationSurfaces: [],
+    requirementsByRootId: {
+      [rootId]: {
+        projectionSource: 'canonical_fixture',
+        rootId,
+        anchors: [{
+          anchor: {
+            schemaVersion: 'wisdom-weasel.requirement-anchor.v1',
+            anchorId,
+            rootId,
+            rootSequence: 1,
+            originalContentSha256: 'a'.repeat(64),
+            originalByteLength: new TextEncoder().encode(originalText).byteLength,
+            createdBy: 'user:preview',
+            authenticity: 'original_user_bytes',
+            provenance: { requestId: 'request:preview-room-task' },
+            createdAtMs: now,
+          },
+          originalText,
+          integrityStatus: 'verified',
+        }],
+        catalog: {
+          schemaVersion: 'wisdom-weasel.requirement-catalog-revision.v1',
+          catalogRevisionId,
+          rootId,
+          revision: 1,
+          supersedesRevisionId: null,
+          anchorRefs: [anchorId],
+          items: [{
+            itemId: `${rootId}:item-1`,
+            statement: '回放游标与权限边界均有可复查证据',
+            kind: 'explicit_user_requirement',
+            state: 'active',
+          }],
+          acceptanceCriteria: [{
+            criterionId: `${rootId}:criterion-1`,
+            itemId: `${rootId}:item-1`,
+            acceptanceCriterionFullNameZh: '多端回放与权限边界验收标准',
+            criterionKind: 'user_journey',
+            expectedReceiptTypes: ['test'],
+            statement: '公开结果不重复，越权操作不会被静默执行',
+          }],
+          changeReason: '把原始请求整理成可核对的任务目录',
+          provenance: { source: 'preview-room-task' },
+          payloadHash: 'c'.repeat(64),
+          createdBy: 'requirements-governor',
+          createdAtMs: now + 1,
+        },
+        receiptAssessments: [],
+        deliveryGate: null,
+        conflicts: [],
+        peerReviewRounds: [],
+      },
+    },
+  };
+}
+
+function previewRoomKernelReceipt(command: Record<string, unknown>): Record<string, unknown> {
+  const commandKind = stringValue(command.commandKind);
+  const generation = Number(command.generation) || 0;
+  const commandId = stringValue(command.commandId) || 'preview-room-command';
+  return {
+    schemaVersion: 'wisdom-weasel.room-kernel-receipt.v1',
+    receiptId: `preview:${commandId}`,
+    rootId: command.rootId === null ? null : stringValue(command.rootId),
+    commandId,
+    receiptKind: commandKind === 'panic' ? 'panic' : 'root_cancelled',
+    status: 'applied',
+    generation: commandKind === 'cancel_root' ? generation + 1 : generation,
+    details: { preview: true },
+    createdAtMs: Date.now(),
+  };
+}
+
+function previewRoomKernelRouteManifest(): Record<string, unknown>[] {
+  return [
+    previewRoomKernelRoute('agent.room.kernel.snapshot', 'GET', false, ['agent.read'], []),
+    previewRoomKernelRoute('agent.room.kernel.events', 'GET', true, ['agent.read'], ['lastEventId']),
+    previewRoomKernelRoute('agent.room.kernel.command', 'POST', false, ['agent.write'], []),
+  ];
+}
+
+function previewRoomKernelRoute(
+  pathId: string,
+  method: string,
+  subscription: boolean,
+  remoteScopes: string[],
+  query: string[],
+): Record<string, unknown> {
+  return {
+    pathId,
+    method,
+    remoteSafe: true,
+    subscription,
+    params: ['roomId'],
+    query,
+    remoteScopes,
   };
 }
 

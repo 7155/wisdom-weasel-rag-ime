@@ -6,6 +6,11 @@ from typing import Any, Mapping
 
 
 DEFAULT_SETTINGS: dict[str, object] = {
+    "identity": {
+        "productName": "智鼬",
+        "assistantName": "智鼬",
+        "tagline": "记得你，也陪你做事",
+    },
     "interaction": {
         "composition": {
             "showPrediction": False,
@@ -222,6 +227,36 @@ DEFAULT_SETTINGS: dict[str, object] = {
 SETTINGS_SCHEMA: dict[str, object] = {
     "schemaVersion": "rag-ime.settings-schema.v3",
     "sections": [
+        {
+            "id": "identity",
+            "label": "称呼与外观",
+            "fields": [
+                {
+                    "key": "identity.productName",
+                    "type": "string",
+                    "label": "应用名称",
+                    "default": "智鼬",
+                    "minLength": 1,
+                    "maxLength": 24,
+                },
+                {
+                    "key": "identity.assistantName",
+                    "type": "string",
+                    "label": "通用伙伴称呼",
+                    "default": "智鼬",
+                    "minLength": 1,
+                    "maxLength": 24,
+                },
+                {
+                    "key": "identity.tagline",
+                    "type": "string",
+                    "label": "侧栏短句",
+                    "default": "记得你，也陪你做事",
+                    "minLength": 1,
+                    "maxLength": 48,
+                },
+            ],
+        },
         {
             "id": "interaction",
             "label": "Interaction",
@@ -453,6 +488,15 @@ def settings_schema() -> dict[str, object]:
 
 
 _FIELD_METADATA: dict[str, dict[str, object]] = {
+    "identity.productName": {
+        "description": "显示在侧栏和窗口标题中；不会改变安装包文件名",
+    },
+    "identity.assistantName": {
+        "description": "没有指向某位具体伙伴时使用；自建伙伴可以单独命名，内置伙伴复制后也能调整",
+    },
+    "identity.tagline": {
+        "description": "应用名称下方的一句短介绍",
+    },
     "interaction.postCommit.idleTriggerMs": {"description": "连续输入合并后等待多久触发预测", "min": 40, "max": 3000, "step": 20, "unit": "ms"},
     "interaction.postCommit.minDeltaChars": {"description": "相较上次预测至少新增的字符数", "min": 1, "max": 32, "unit": "字符"},
     "interaction.postCommit.maxCallsPer10s": {"description": "限制连续输入期间的模型调用预算", "min": 0, "max": 10, "unit": "次"},

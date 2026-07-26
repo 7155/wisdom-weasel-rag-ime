@@ -11,6 +11,7 @@ import { ToastProvider, TooltipProvider } from '@/components/primitives';
 import { MotionProvider } from '@/design/motion';
 import { ThemeProvider } from '@/design/themes';
 import { useFilePreviewStore } from '@/features/agent/file-preview/file-preview-store';
+import { ProductIdentityProvider } from '@/features/identity/product-identity';
 import '@/design/tokens.css';
 import '@/design/typography.css';
 import '@/components/primitives/primitives.css';
@@ -33,11 +34,13 @@ export function App() {
                 <ControlConnectionMonitor />
                 <FilePreviewLayer />
                 <QueryClientProvider client={queryClient}>
-                  <AppShell>
-                    <Suspense fallback={<RouteLoading />}>
-                      <RouterProvider router={router} />
-                    </Suspense>
-                  </AppShell>
+                  <ProductIdentityProvider>
+                    <AppShell>
+                      <Suspense fallback={<RouteLoading />}>
+                        <RouterProvider router={router} />
+                      </Suspense>
+                    </AppShell>
+                  </ProductIdentityProvider>
                 </QueryClientProvider>
               </ControlTransportProvider>
             </GlobalFeedbackProvider>

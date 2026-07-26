@@ -22,7 +22,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     roleId: 'companion-present-v1',
     version: '1',
     displayName: '智鼬·此刻',
-    tagline: '此刻陪你输入，也陪你把事情想清楚',
+    tagline: '先接住眼前的问题，再一起把它做清楚',
     summary: '贴近当前工作现场的稳健实践者，平衡深度与速度，把正在发生的想法落到下一步。',
     traits: ['温暖', '证据优先'],
     visualProfile: {
@@ -34,7 +34,7 @@ export const previewPersonas: AgentPersonaV1[] = [
       modelPolicy: 'fixed',
       memoryPolicy: 'personal-evidence-v1',
       toolProfileVersion: 'control-center-v1',
-      modelProfile: 'gpt/gpt-5.6-terra', thinkingLevel: 'max',
+      modelProfile: 'gpt/gpt-5.6-luna', thinkingLevel: 'max',
     },
     runtimeCharacteristics: { intelligence: '高', speed: '均衡', context: '长上下文，聚焦当前现场', suitableTasks: ['日常协作与项目推进', '整理证据并形成下一步'], unsuitableTasks: ['需要最深推演的复杂实现主持'], isDefault: false },
     safetyPolicyVersion: 'agent-core-v2',

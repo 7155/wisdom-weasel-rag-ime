@@ -50,8 +50,8 @@ describe('AgentComposer context resources', () => {
       </TooltipProvider>,
     );
 
-    await user.click(screen.getByRole('button', { name: '上下文资源：项目' }));
-    await user.click(screen.getByRole('radio', { name: /扩展/ }));
+    await user.click(screen.getByRole('button', { name: '工作资料：当前项目' }));
+    await user.click(screen.getByRole('radio', { name: /本机扩展/ }));
 
     expect(onContextResourcesChange).toHaveBeenCalledWith({
       projectContextEnabled: true,

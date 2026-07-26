@@ -276,10 +276,10 @@ export function KnowledgeFeature() {
                 <Tabs className="knowledge-library__tabs" onValueChange={(value) => setTab(asDetailTab(value))} value={tab}>
                   <TabsList aria-label="知识库管理视图">
                     <TabsTrigger value="materials">资料</TabsTrigger>
-                    <TabsTrigger value="viewer">材料查看</TabsTrigger>
+                    <TabsTrigger value="viewer">查看材料</TabsTrigger>
                     <TabsTrigger value="search">检索测试</TabsTrigger>
                     <TabsTrigger value="graph">知识图谱</TabsTrigger>
-                    <TabsTrigger value="jobs">索引任务</TabsTrigger>
+                    <TabsTrigger value="jobs">处理记录</TabsTrigger>
                     <TabsTrigger value="settings">设置</TabsTrigger>
                   </TabsList>
                   <TabsContent value="materials">
@@ -465,7 +465,7 @@ function KnowledgeBaseRail({
       </header>
       <div className="knowledge-base-rail__worker" data-state={worker.tone}>
         <i aria-hidden="true" />
-        <span>Knowledge Worker</span>
+        <span>知识服务</span>
         <b>{worker.label}</b>
       </div>
       {bases.length ? (
@@ -550,7 +550,7 @@ function KnowledgeSearchPanel({ base, onOpenHit, transport }: { base: DocumentKn
         {base.retrievalConfig.mode === 'hybrid' ? <span>图谱辅助 自动</span> : null}
       </div>
       <p className="knowledge-search__score-note">排名分融合关键词、向量与已就绪图谱的候选名次，只用于排列召回片段，不代表答案正确率。</p>
-      {searchMutation.error ? <InlineNotice title="检索失败" tone="warning">{publicErrorText(searchMutation.error, 'Knowledge Worker 暂时无法完成检索。')}</InlineNotice> : null}
+      {searchMutation.error ? <InlineNotice title="检索失败" tone="warning">{publicErrorText(searchMutation.error, '知识服务暂时无法完成检索。')}</InlineNotice> : null}
       {hits.length ? (
         <div className="knowledge-search__results">
           <div className="knowledge-search__list" role="listbox" aria-label="检索结果">
@@ -741,7 +741,7 @@ function KnowledgeSettingsPanel({
         <div className="knowledge-settings__heading"><Database size={16} /><div><strong>Embedding 与索引</strong><span>运行时只读状态</span></div></div>
         <div className="knowledge-index-status">
           <StatusBadge label={indexRuntime.available ? indexRuntime.degraded ? '降级' : '可用' : '未就绪'} tone={indexRuntime.available ? indexRuntime.degraded ? 'warning' : 'success' : 'neutral'} />
-          <span>{indexRuntime.reason || '配置由 Knowledge Worker 启动环境管理。'}</span>
+          <span>{indexRuntime.reason || '这部分由知识服务自动管理。'}</span>
         </div>
         <div className="knowledge-settings-fields knowledge-settings-fields--index">
           <Field htmlFor="knowledge-dense-provider" label="Dense Provider"><Input disabled id="knowledge-dense-provider" readOnly value={indexRuntime.provider} /></Field>
@@ -751,7 +751,7 @@ function KnowledgeSettingsPanel({
           <Field htmlFor="knowledge-index-revision" label="索引 revision"><Input disabled id="knowledge-index-revision" readOnly value={indexRevisionLabel(documents)} /></Field>
           <Field htmlFor="knowledge-config-revision" label="配置 revision"><Input disabled id="knowledge-config-revision" readOnly value={String(base.revision)} /></Field>
         </div>
-        <InlineNotice title="运行时索引身份" tone="info">Provider、模型和维度由 Knowledge Worker 启动环境管理；页面只展示服务真实报告，不会伪保存。</InlineNotice>
+        <InlineNotice title="当前检索索引" tone="info">识别服务、模型和维度由知识服务统一管理；这里显示的是实际运行状态，不会把未生效的草稿当成已保存。</InlineNotice>
       </section>
       <section>
         <div className="knowledge-settings__heading"><RefreshCw size={16} /><div><strong>索引重建</strong><span>{base.documentCount} 个材料 · {base.chunkCount} 个现有片段</span></div></div>

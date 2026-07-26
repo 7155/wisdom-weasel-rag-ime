@@ -144,16 +144,16 @@ const routeFixtures: Partial<Record<ControlPathId, MockRouteHandler>> = {
 };
 
 const pages: readonly [string, ComponentType, string, ControlPathId][] = [
-  ['overview', OverviewFeature, '今日概览', 'overview.get'],
-  ['input', InputMethodFeature, '输入法', 'input.source.get'],
-  ['plugins', PluginsFeature, '能力中心', 'agent.tools.list'],
+  ['overview', OverviewFeature, '概览', 'overview.get'],
+  ['input', InputMethodFeature, '输入法与词库', 'input.source.get'],
+  ['plugins', PluginsFeature, '技能与工具', 'agent.tools.list'],
   ['voice', VoiceFeature, '语音输入', 'configuration.settings'],
-  ['planning', PlanningFeature, '规划', 'planning.dashboard'],
-  ['memory', MemoryFeature, '记忆', 'memory.pages'],
+  ['planning', PlanningFeature, '任务', 'planning.dashboard'],
+  ['memory', MemoryFeature, '我的记忆', 'memory.pages'],
   ['knowledge', KnowledgeFeature, '知识库', 'knowledgeBases.list'],
-  ['history', HistoryFeature, '输入历史', 'history.page'],
-  ['diagnostics', DiagnosticsFeature, '诊断与修复', 'diagnostics.runtime'],
-  ['configuration', ConfigurationFeature, '配置与迁移', 'configuration.schema'],
+  ['history', HistoryFeature, '输入记录', 'history.page'],
+  ['diagnostics', DiagnosticsFeature, '问题排查', 'diagnostics.runtime'],
+  ['configuration', ConfigurationFeature, '设置', 'configuration.schema'],
 ];
 
 afterEach(cleanup);
@@ -229,7 +229,7 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('已与运行时同步')).toBeInTheDocument();
+    expect(await screen.findByText('已是最新状态')).toBeInTheDocument();
     expect(screen.queryByText('sha256:live-settings-hash')).not.toBeInTheDocument();
     expect(screen.queryByText('sha256:effective-settings')).not.toBeInTheDocument();
     expect(screen.queryByText('554')).not.toBeInTheDocument();
@@ -266,8 +266,22 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('模型与知识路由')).toBeInTheDocument();
+    expect(await screen.findByText('模型与知识服务')).toBeInTheDocument();
     expect(screen.queryByText('local-mlx')).not.toBeInTheDocument();
+  });
+
+  it('does not call an empty component snapshot ready', async () => {
+    renderFeature(OverviewFeature, {
+      ...routeFixtures,
+      'overview.get': {
+        ...(routeFixtures['overview.get'] as Record<string, unknown>),
+        components: {},
+      },
+    });
+
+    expect(await screen.findByText('暂无组件快照')).toBeInTheDocument();
+    expect(screen.getByText('等待状态')).toBeInTheDocument();
+    expect(screen.queryByText('全部就绪')).not.toBeInTheDocument();
   });
 
   it('keeps Voice explicitly unavailable when the backend exposes no voice state', async () => {
@@ -288,8 +302,8 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('浏览器预览不能启动代理或触发系统授权；请在已安装的智鼬控制中心中操作。')).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '原生流式' })).toBeInTheDocument();
+    expect(await screen.findByText('浏览器预览不能启动听写或打开系统授权；请回到已安装的智鼬。')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '内置流式识别' })).toBeInTheDocument();
     expect(screen.queryByText(/middle-mouse/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
     expect(screen.queryByText('unavailable')).not.toBeInTheDocument();
@@ -297,7 +311,7 @@ describe('management features', () => {
 
   it('fails closed when the management WorkContract capability is absent', async () => {
     renderFeature(PlanningFeature);
-    await screen.findByRole('heading', { name: '规划', level: 1 });
+    await screen.findByRole('heading', { name: '任务', level: 1 });
     expect(screen.queryByRole('button', { name: '当前不可用' })).not.toBeInTheDocument();
     expect(screen.queryByText('演练 / 未执行')).not.toBeInTheDocument();
   });

@@ -16,7 +16,7 @@ describe('RoomPaneResizer', () => {
       </main>,
     );
     const workspace = container.querySelector<HTMLElement>('.rooms-feature')!;
-    const separator = screen.getByRole('separator', { name: '调整 Rooms 列表宽度' });
+    const separator = screen.getByRole('separator', { name: '调整协作空间列表宽度' });
 
     expect(workspace.style.getPropertyValue('--room-rail-width')).toBe('272px');
     expect(separator).toHaveAttribute('aria-valuetext', '272 像素');

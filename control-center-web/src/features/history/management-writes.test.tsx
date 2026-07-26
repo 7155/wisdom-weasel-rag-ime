@@ -23,7 +23,7 @@ describe('History WorkContract UI', () => {
   it('renders the history filters as one responsive search toolbar', async () => {
     renderHistory();
 
-    const toolbar = await screen.findByRole('search', { name: '筛选输入历史' });
+    const toolbar = await screen.findByRole('search', { name: '筛选输入记录' });
     expect(toolbar).toHaveClass('history-filter-toolbar');
     expect(within(toolbar).getByRole('textbox', { name: '搜索' })).toBeInTheDocument();
     expect(within(toolbar).getByRole('combobox', { name: '来源' })).toBeInTheDocument();
@@ -44,7 +44,7 @@ describe('History WorkContract UI', () => {
     expect(within(dialog).getAllByText('采用')).toHaveLength(2);
     expect(within(dialog).getByText('2 次')).toBeInTheDocument();
     expect(within(dialog).getByText('1 次')).toBeInTheDocument();
-    expect(within(dialog).getByText('智鼬输入法')).toBeInTheDocument();
+    expect(within(dialog).getByText('智鼬')).toBeInTheDocument();
     expect(within(dialog).getByRole('heading', { name: '辅助上下文' })).toBeInTheDocument();
     expect(within(dialog).getByText('前面正在核对来源筛选，随后完成了当前输入。')).toBeInTheDocument();
     expect(within(dialog).getByText('Accessibility 文本')).toBeInTheDocument();
@@ -57,13 +57,13 @@ describe('History WorkContract UI', () => {
   it('binds a selected event to tombstone apply and rollback receipts', async () => {
     const user = userEvent.setup();
     const transport = renderHistory();
-    await screen.findByRole('heading', { name: '输入历史', level: 1 });
-    await user.click(await screen.findByRole('combobox', { name: '记录' }));
+    await screen.findByRole('heading', { name: '输入记录', level: 1 });
+    await user.click(await screen.findByRole('combobox', { name: '选择记录' }));
     await user.click(await screen.findByRole('option', { name: /完成了/ }));
-    const workflow = screen.getByText('隐藏记录', { selector: 'strong' }).closest('.mgmt-workflow');
+    const workflow = screen.getByText('不再用于记忆', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
 
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '预览操作' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
     await waitFor(() => expect(findRequest(transport, 'history.tombstone.preview')).toMatchObject({
       body: {
         eventId: 81,
@@ -73,11 +73,11 @@ describe('History WorkContract UI', () => {
     }));
     expect(await within(workflow as HTMLElement).findByText('隐藏输入历史记录')).toBeInTheDocument();
     expect(within(workflow as HTMLElement).queryByText('记录 ID: 81')).not.toBeInTheDocument();
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认这些更改' }));
     await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认并应用' }));
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
 
-    expect(await within(workflow as HTMLElement).findByText('本机操作已记录')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('这次更改已安全记录')).toBeInTheDocument();
     expect(findRequest(transport, 'history.tombstone.apply')).toMatchObject({
       body: {
         eventId: 81,
@@ -86,8 +86,8 @@ describe('History WorkContract UI', () => {
         confirmText: 'apply',
       },
     });
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次操作' }));
-    expect(await within(workflow as HTMLElement).findByText('已恢复到操作前')).toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '撤销这次更改' }));
+    expect(await within(workflow as HTMLElement).findByText('已恢复到更改前')).toBeInTheDocument();
     expect(findRequest(transport, 'history.tombstone.rollback')).toMatchObject({
       body: {
         receiptId: 'receipt-history-hide',
@@ -100,7 +100,7 @@ describe('History WorkContract UI', () => {
 
   it('does not offer a fake negative-feedback mutation', async () => {
     renderHistory();
-    expect(await screen.findByText('当前记录没有关联到可验证的候选反馈信息，因此不会提供无法生效的反馈按钮。')).toBeInTheDocument();
+    expect(await screen.findByText('选择一条记录后，可以让它退出后续召回。原始记录仍会保留，操作也可以撤销。')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '演练流程' })).not.toBeInTheDocument();
   });
 });

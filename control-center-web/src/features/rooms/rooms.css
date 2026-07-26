@@ -253,6 +253,14 @@
 .room-policy-tools strong { font-size: 13px; }
 .room-policy-tools small { color: var(--color-text-tertiary); font-size: 13px; }
 .room-create-form { display: grid; gap: 16px; }
+.room-create-optional { border-top: 1px solid var(--color-border); }
+.room-create-optional > summary { display: flex; min-height: 44px; align-items: center; gap: 7px; cursor: pointer; color: var(--color-text-secondary); font-size: 13px; font-weight: 700; list-style: none; }
+.room-create-optional > summary::-webkit-details-marker { display: none; }
+.room-create-optional > summary::before { content: '›'; color: var(--color-text-tertiary); font-size: 18px; line-height: 1; transform: rotate(0deg); transition: transform 160ms ease; }
+.room-create-optional[open] > summary::before { transform: rotate(90deg); }
+.room-create-optional > summary small { color: var(--color-text-tertiary); font-size: 12px; font-weight: 500; }
+.room-create-optional > summary:focus-visible { border-radius: var(--radius-2); outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.room-create-optional > div { display: grid; gap: 16px; padding-top: 4px; }
 .room-dialog-error { margin: 0; padding: 8px 10px; border-radius: var(--radius-2); background: var(--color-danger-soft); color: var(--color-danger); font-size: 13px; }
 .room-create-projects { display: grid; gap: 7px; }
 .room-create-projects > header { display: flex; align-items: baseline; justify-content: space-between; color: var(--color-text-secondary); font-size: 13px; }

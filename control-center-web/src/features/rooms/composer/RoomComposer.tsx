@@ -10,6 +10,7 @@ import {
 import { IconButton } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
+import { roomCollaborationRoleLabel } from '../room-copy';
 
 interface ComposerParticipant {
   id: string;
@@ -146,9 +147,9 @@ export function RoomComposer({
         id="room-mention-menu"
         className="room-mention-menu"
         role="listbox"
-        aria-label="选择 Room 角色"
+        aria-label="选择要点名的伙伴"
       >
-        <header><AtSign size={14} /><span><strong>点名角色</strong><small>继续输入可筛选</small></span></header>
+        <header><AtSign size={14} /><span><strong>想请谁加入</strong><small>继续输入名字可以筛选</small></span></header>
         {mentionCandidates.map((participant, index) => <button
           type="button"
           id={`room-mention-${participant.id}`}
@@ -167,7 +168,7 @@ export function RoomComposer({
             ))}
             size="small"
           />
-          <span><strong>{participant.displayName}</strong><small>{participantRoleLabel(participant)}</small></span>
+          <span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)}</small></span>
           <kbd>{index === activeIndex ? 'Enter' : `@${participant.displayName}`}</kbd>
         </button>)}
       </div> : null}
@@ -230,7 +231,7 @@ export function RoomComposer({
             }
           }}
           placeholder={composerPlaceholder(room)}
-          aria-label="Room 消息"
+          aria-label="协作消息"
           aria-autocomplete="list"
           aria-controls={mention && mentionCandidates.length ? 'room-mention-menu' : undefined}
           aria-activedescendant={mention && mentionCandidates.length
@@ -241,7 +242,7 @@ export function RoomComposer({
           <div className="room-composer__controls">
             {roomCanSend && participants.length ? <IconButton
               className="room-composer__mention"
-              label="点名 Room 角色"
+              label="点名一位伙伴"
               icon={<AtSign size={16} />}
               aria-pressed={Boolean(addressedParticipantId)}
               onClick={openMentionMenu}
@@ -250,7 +251,7 @@ export function RoomComposer({
           </div>
           <IconButton
             className="room-composer__send"
-            label="发送 Room 消息"
+            label="发送消息"
             icon={<Send size={17} />}
             disabled={!canSend}
             onClick={submit}
@@ -316,19 +317,10 @@ function stripLeadingRoomMention(
   return body;
 }
 
-function participantRoleLabel(participant: ComposerParticipant): string {
-  if (participant.collaborationRole === 'coordinator') return '协作主持';
-  if (participant.collaborationRole === 'researcher') return '调研与核对';
-  if (participant.collaborationRole === 'implementer') return '实施与交付';
-  if (participant.collaborationRole === 'reviewer') return '独立验收';
-  if (participant.collaborationRole === 'specialist') return '领域专家';
-  return '协作角色';
-}
-
 function composerPlaceholder(room?: ComposerRoom): string {
-  if (!room) return '先选择或新建 Room';
-  if (room.status === 'archived') return '恢复 Room 后继续交流';
+  if (!room) return '选择一个协作空间，或新建一个';
+  if (room.status === 'archived') return '恢复这个协作空间后就能继续聊';
   return room.roomKind === 'roleplay'
-    ? '向群聊发送消息，输入 @ 可点名…'
-    : '向 Room 发消息，输入 @ 可点名…';
+    ? '说点什么；输入 @ 可以请一位伙伴回应'
+    : '继续聊，或输入 @ 请一位伙伴接手';
 }

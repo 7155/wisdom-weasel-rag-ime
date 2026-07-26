@@ -57,7 +57,7 @@ export const SessionRail = forwardRef<HTMLElement, {
     <aside
       ref={ref}
       className="agent-session-rail"
-      aria-label="任务与项目"
+      aria-label="对话与项目"
       aria-hidden={!open || blocked || undefined}
       aria-modal={modal || undefined}
       inert={!open || blocked ? true : undefined}
@@ -65,30 +65,30 @@ export const SessionRail = forwardRef<HTMLElement, {
       tabIndex={-1}
     >
       <header>
-        <div><strong>任务</strong><small>{sessions.length} 个任务 · {projectCount} 个项目</small></div>
+        <div><strong>对话</strong><small>{sessions.length} 段对话 · {projectCount} 个项目</small></div>
         <span className="agent-session-rail__actions">
-          <IconButton label="新建任务" icon={<MessageSquarePlus size={17} />} onClick={onCreate} tooltip />
+          <IconButton label="新建对话" icon={<MessageSquarePlus size={17} />} onClick={onCreate} tooltip />
           <Menu>
             <MenuTrigger asChild>
-              <IconButton label="任务列表选项" icon={<MoreHorizontal size={17} />} tooltip />
+              <IconButton label="对话列表选项" icon={<MoreHorizontal size={17} />} tooltip />
             </MenuTrigger>
             <MenuContent align="end">
               <MenuCheckboxItem checked={showArchived} onCheckedChange={(checked) => onShowArchivedChange?.(checked === true)}>
-                显示已归档任务
+                显示已归档对话
               </MenuCheckboxItem>
             </MenuContent>
           </Menu>
-          {onClose ? <IconButton className="agent-session-rail__close" label="关闭任务列表" icon={<X size={17} />} onClick={onClose} /> : null}
+          {onClose ? <IconButton className="agent-session-rail__close" label="关闭对话列表" icon={<X size={17} />} onClick={onClose} /> : null}
         </span>
       </header>
       <label className="agent-session-search">
         <Search size={14} aria-hidden="true" />
-        <input data-drawer-autofocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索任务或项目" />
+        <input data-drawer-autofocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话或项目" />
       </label>
       <div className="agent-session-list" aria-busy={loading || undefined}>
         {groups.map((group) => (
           <section className="agent-session-project" key={group.root || 'unassigned'} data-selected={group.sessions.some((session) => session.id === selectedId) || undefined}>
-            <header title={group.root || '旧任务尚未指定项目路径'}>
+            <header title={group.root || '这段对话没有关联工作目录'}>
               <Folder size={15} />
               <strong>{group.label}</strong>
               <small>{group.sessions.length}</small>
@@ -110,12 +110,12 @@ export const SessionRail = forwardRef<HTMLElement, {
                 </button>
                 <Menu>
                   <MenuTrigger asChild>
-                    <IconButton className="agent-session-row__menu" label="更多任务操作" icon={<MoreHorizontal size={16} />} size="small" title={session.title} />
+                    <IconButton className="agent-session-row__menu" label="更多对话操作" icon={<MoreHorizontal size={16} />} size="small" title={session.title} />
                   </MenuTrigger>
                   <MenuContent align="end">
                     <MenuItem onSelect={() => onArchive?.(session.id, session.status !== 'archived')}>
                       {session.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}
-                      {session.status === 'archived' ? '恢复任务' : '归档任务'}
+                      {session.status === 'archived' ? '恢复对话' : '归档对话'}
                     </MenuItem>
                     <MenuSeparator />
                     <MenuItem className="agent-session-row__delete" onSelect={() => {
@@ -123,7 +123,7 @@ export const SessionRail = forwardRef<HTMLElement, {
                       setDeleteTarget(session);
                     }}>
                       <Trash2 size={15} />
-                      删除任务
+                      删除对话
                     </MenuItem>
                   </MenuContent>
                 </Menu>
@@ -140,8 +140,8 @@ export const SessionRail = forwardRef<HTMLElement, {
       }}>
         <DialogContent className="agent-session-delete-dialog">
           <DialogHeader>
-            <DialogTitle>删除“{deleteTarget?.title ?? '任务'}”</DialogTitle>
-            <DialogDescription>将删除这条对话及其本地附件。需要暂时隐藏时，请改用归档。</DialogDescription>
+            <DialogTitle>删除“{deleteTarget?.title ?? '对话'}”</DialogTitle>
+            <DialogDescription>将删除这段对话及其本地附件。暂时不想看到它，可以先归档。</DialogDescription>
           </DialogHeader>
           {deleteError ? <p className="agent-session-delete-dialog__error" role="alert">{deleteError}</p> : null}
           <DialogFooter>
@@ -159,7 +159,7 @@ export const SessionRail = forwardRef<HTMLElement, {
               } catch (error) {
                 setDeleteError(error instanceof Error && error.message.trim()
                   ? error.message
-                  : '删除未完成，请检查连接后重试。任务仍保留在列表中。');
+                  : '删除未完成，请检查连接后重试。对话仍保留在列表中。');
               } finally {
                 setDeleting(false);
               }

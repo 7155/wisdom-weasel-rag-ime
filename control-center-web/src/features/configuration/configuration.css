@@ -1,8 +1,13 @@
+main[data-route-id='configuration'] .configuration-search {
+  max-width: 440px;
+  margin-bottom: var(--space-4);
+}
+
 main[data-route-id='configuration'] .configuration-editor {
   display: grid;
   min-width: 0;
   gap: var(--space-4);
-  grid-template-columns: minmax(176px, .46fr) minmax(280px, .82fr) minmax(380px, 1.2fr);
+  grid-template-columns: minmax(184px, .42fr) minmax(360px, 1.58fr);
 }
 
 main[data-route-id='configuration'] .configuration-section-nav {
@@ -147,6 +152,21 @@ main[data-route-id='configuration'] .configuration-editor__review > .mgmt-table-
   overflow: auto;
 }
 
+main[data-route-id='configuration'] .configuration-editor__review {
+  grid-column: 1 / -1;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+main[data-route-id='configuration'] .configuration-editor__empty-review {
+  margin: 0;
+  padding: 8px 0 2px;
+}
+
+main[data-route-id='configuration'] .configuration-editor__review[data-has-changes='false'] > .mgmt-workflow[data-stage='idle'] {
+  display: none;
+}
+
 main[data-route-id='configuration'] .configuration-editor__fields .mgmt-list__row {
   display: block;
   min-height: 0;
@@ -246,10 +266,6 @@ main[data-route-id='configuration'] .configuration-transfer[open] > summary svg 
 @media (max-width: 1180px) {
   main[data-route-id='configuration'] .configuration-editor {
     grid-template-columns: minmax(170px, .42fr) minmax(300px, 1fr);
-  }
-
-  main[data-route-id='configuration'] .configuration-editor__review {
-    grid-column: 1 / -1;
   }
 }
 

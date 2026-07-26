@@ -44,13 +44,14 @@ import {
 } from '@/features/overview/management-ui';
 import {
   ManagementMutationWorkflow,
-  UnsupportedWorkflow,
   parseManagementWorkPreview,
   parseManagementWorkReceipt,
 } from '@/features/overview/management-mutation';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import './history.css';
 
 export function HistoryFeature() {
+  const identity = useProductIdentity();
   const [draftQuery, setDraftQuery] = useState('');
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('');
@@ -88,24 +89,24 @@ export function HistoryFeature() {
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={pages.isRefetching} onClick={() => void pages.refetch()} size="small">刷新</Button>}
-      description="查看脱敏的输入记录、候选来源与反馈。"
-      eyebrow="记录"
+      description="查看来自输入法、语音和导入内容的脱敏记录；完整原文只在你主动打开时读取。"
+      eyebrow="记忆来源"
       routeId="history"
-      title="输入历史"
+      title="输入记录"
     >
       <QueryState error={pages.error as Error | null} isPending={pages.isPending} onRetry={() => void pages.refetch()}>
-        <ManagementSection title="已加载快照">
+        <ManagementSection title="当前记录">
           <MetricStrip items={[
-            { label: '记录', value: rows.length, detail: '当前分页窗口', icon: History },
-            { label: '来源', value: sources.size, detail: '候选来源', icon: MessageSquareText },
+            { label: '记录', value: rows.length, detail: '这一页', icon: History },
+            { label: '来源', value: sources.size, detail: '不同来源', icon: MessageSquareText },
             { label: '原文保护', value: '仅摘要', detail: '脱敏显示', icon: ShieldCheck, tone: 'success' },
-            { label: '更多记录', value: pages.hasNextPage ? '可继续加载' : '已到末尾', detail: '分页读取', icon: Clock3, tone: pages.hasNextPage ? 'info' : 'neutral' },
+            { label: '更多记录', value: pages.hasNextPage ? '可以继续加载' : '已全部显示', detail: '按需读取', icon: Clock3, tone: pages.hasNextPage ? 'info' : 'neutral' },
           ]} />
           <InlineNotice title="隐私" tone="info">列表只显示脱敏摘要；完整输入仅在你主动打开详情时读取。</InlineNotice>
         </ManagementSection>
 
         <ManagementSection title="筛选与分页">
-          <div aria-label="筛选输入历史" className="history-filter-toolbar" role="search">
+          <div aria-label="筛选输入记录" className="history-filter-toolbar" role="search">
             <Field className="history-filter-toolbar__search" htmlFor="history-search" label="搜索">
               <Input id="history-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="文本、应用或项目" value={draftQuery} />
             </Field>
@@ -122,26 +123,27 @@ export function HistoryFeature() {
           </div>
           {rows.length ? (
             <>
-              <HistoryTable onOpen={openDetail} rows={rows} />
+              <HistoryTable onOpen={openDetail} productName={identity.productName} rows={rows} />
               <PaginationBar count={rows.length} hasMore={pages.hasNextPage} isFetching={pages.isFetchingNextPage} onLoadMore={() => void pages.fetchNextPage()} />
             </>
-          ) : <EmptyState description="当前筛选没有历史记录。" icon={Search} title="历史为空" />}
+          ) : <EmptyState
+            description={query || filter
+              ? '试试更换关键词或来源。'
+              : '当你通过输入法、语音或导入提供内容后，记录会出现在这里。'}
+            icon={Search}
+            title={query || filter ? '没有找到符合条件的记录' : '还没有输入记录'}
+          />}
         </ManagementSection>
 
-        <ManagementSection title="反馈与移除" description="选择已加载记录后，所有写动作都先预览影响并保留可撤销记录。">
-          <Field htmlFor="history-record" label="记录" style={{ maxWidth: 420 }}>
-            <Select id="history-record" onValueChange={setSelectedId} options={[
-              { value: '', label: '请选择' },
-              ...rows.map((row) => ({ value: stringValue(row.id), label: `${stringValue(row.created)} · ${stringValue(row.text)}` })),
-            ]} value={selectedId} />
-          </Field>
-          <div className="mgmt-grid-2" style={{ marginTop: 12 }}>
-            <UnsupportedWorkflow
-              description="为所选候选提交负反馈，并保留来源信息。"
-              reason="当前记录没有关联到可验证的候选反馈信息，因此不会提供无法生效的反馈按钮。"
-              risk="R1"
-              title="记录负反馈"
-            />
+        {rows.length ? (
+          <ManagementSection title="不再用于记忆" description="选择一条记录后，可以让它退出后续召回。原始记录仍会保留，操作也可以撤销。">
+            <Field htmlFor="history-record" label="选择记录" style={{ maxWidth: 420 }}>
+              <Select id="history-record" onValueChange={setSelectedId} options={[
+                { value: '', label: '请选择一条记录' },
+                ...rows.map((row) => ({ value: stringValue(row.id), label: `${stringValue(row.created)} · ${stringValue(row.text)}` })),
+              ]} value={selectedId} />
+            </Field>
+            <div style={{ marginTop: 12, maxWidth: 540 }}>
             <ManagementMutationWorkflow
               availability={mutationBoundary.availability(
                 !Number.isInteger(selectedEventId) || selectedEventId <= 0
@@ -150,7 +152,7 @@ export function HistoryFeature() {
                     ? '当前历史状态尚未同步，请刷新后重试。'
                     : '',
               )}
-              description="从后续召回中隐藏所选记录，原始记录仍保留。"
+              description="让所选记录退出后续记忆召回，原始记录仍然保留。"
               draftKey={JSON.stringify(tombstoneDraft)}
               mutationKey={['history', 'mutation', 'tombstone']}
               onApply={async (preview) => parseManagementWorkReceipt(
@@ -200,12 +202,13 @@ export function HistoryFeature() {
               )}
               onRolledBack={() => void pages.refetch()}
               risk="R2"
-              title="隐藏记录"
+              title="不再用于记忆"
             />
-          </div>
-        </ManagementSection>
+            </div>
+          </ManagementSection>
+        ) : null}
       </QueryState>
-      <HistoryDetailDialog eventId={detailEventId} onOpenChange={(open) => { if (!open) setDetailEventId(null); }} />
+      <HistoryDetailDialog eventId={detailEventId} onOpenChange={(open) => { if (!open) setDetailEventId(null); }} productName={identity.productName} />
     </ManagementPage>
   );
 }
@@ -213,14 +216,16 @@ export function HistoryFeature() {
 function HistoryTable({
   rows,
   onOpen,
+  productName,
 }: {
   rows: readonly Record<string, unknown>[];
   onOpen: (row: Record<string, unknown>) => void;
+  productName: string;
 }) {
   return (
     <div className="history-table-wrap" tabIndex={0}>
       <table className="history-table">
-        <caption>输入历史分页；选择任意记录查看完整详情</caption>
+        <caption>输入记录分页；选择任意记录查看完整详情</caption>
         <thead><tr><th scope="col">时间</th><th scope="col">来源</th><th scope="col">文本预览</th><th scope="col">应用</th><th scope="col">项目</th><th scope="col"><span className="history-sr-only">操作</span></th></tr></thead>
         <tbody>
           {rows.map((row) => {
@@ -242,7 +247,7 @@ function HistoryTable({
                 <td>{stringValue(row.sourceLabel, '未知来源')}</td>
                 <td className="history-table__preview">{stringValue(row.text, '没有可显示的摘要')}</td>
                 <td>{stringValue(row.app, '未记录')}</td>
-                <td>{projectLabel(stringValue(row.project))}</td>
+                <td>{projectLabel(stringValue(row.project), productName)}</td>
                 <td><button aria-label={label} className="history-table__open" onClick={(event) => { event.stopPropagation(); onOpen(row); }} type="button"><Eye aria-hidden="true" size={15} /></button></td>
               </tr>
             );
@@ -256,9 +261,11 @@ function HistoryTable({
 function HistoryDetailDialog({
   eventId,
   onOpenChange,
+  productName,
 }: {
   eventId: number | null;
   onOpenChange: (open: boolean) => void;
+  productName: string;
 }) {
   const detail = useHistoryDetail(eventId);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -312,7 +319,7 @@ function HistoryDetailDialog({
               <DetailFact label="时间" value={formatTime(item.createdAtMs)} />
               <DetailFact label="来源" value={sourceLabel(stringValue(item.source), stringValue(item.sourceCategory))} />
               <DetailFact label="应用" value={applicationLabel(stringValue(item.app))} />
-              <DetailFact label="项目" value={projectLabel(stringValue(item.project))} />
+              <DetailFact label="项目" value={projectLabel(stringValue(item.project), productName)} />
               <DetailFact label="识别或候选服务" value={providerLabel(stringValue(item.provider))} />
               <DetailFact label="候选位置" value={candidateRank > 0 ? `第 ${candidateRank} 位` : '未记录'} />
               <DetailFact label="记录状态" value={stringValue(item.status) === 'hidden' ? '已隐藏' : '可参与后续召回'} />
@@ -408,9 +415,9 @@ function applicationLabel(app: string): string {
   return '其他应用';
 }
 
-function projectLabel(project: string): string {
+function projectLabel(project: string, productName: string): string {
   if (!project) return '未记录';
-  if (project === 'wisdom-weasel-rag-ime') return '智鼬输入法';
+  if (project === 'wisdom-weasel-rag-ime') return productName;
   if (/^[\p{L}\p{N} _+\u00b7-]{1,48}$/u.test(project) && /[\u3400-\u9fff]/u.test(project)) return project;
   return '本机项目';
 }

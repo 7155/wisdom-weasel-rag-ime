@@ -1,4 +1,5 @@
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
+import { publicToolName } from '../tool-presentation';
 
 export interface PublicToolResultField {
   id: string;
@@ -35,56 +36,22 @@ export interface PublicToolSemanticPreview {
   }>;
 }
 
-const toolLabels: Record<string, string> = {
-  ime_overview: '控制中心概览',
-  ime_input: '输入法',
-  ime_voice: '语音输入',
-  ime_planning: '规划与任务',
-  ime_memory: '个人上下文记忆',
-  agent_role_book: 'Agent 角色书',
-  ime_knowledge: '文档知识库',
-  ime_models: '模型',
-  ime_runtime: '诊断与运行时',
-  ime_configuration: '历史与配置',
-  ime_agents: '多 Agent 协作',
-  agent_plan: '任务执行清单',
-  read: '读取文件',
-  read_file: '读取文件',
-  write: '写入文件',
-  write_file: '写入文件',
-  workspace_write_file: '写入文件',
-  edit: '编辑文件',
-  edit_file: '编辑文件',
-  workspace_edit_file: '编辑文件',
-  bash: '运行命令',
-  shell: '运行命令',
-  grep: '搜索文本',
-  find: '查找文件',
-  ls: '浏览目录',
-  todo: '待办事项',
-  write_todos: '待办事项',
-  update_plan: '更新计划',
-  workspace_list: '工作区浏览',
-  workspace_read: '工作区读取',
-  workspace_shell: '受控命令',
-};
-
 export function publicToolLabel(toolId: string): string {
-  return toolLabels[toolId.trim().toLowerCase()] ?? '工具操作';
+  return publicToolName(toolId);
 }
 
 const toolDestinations: Record<string, { href: string; label: string }> = {
-  ime_overview: { href: '#/overview', label: '打开总览' },
-  ime_input: { href: '#/input', label: '打开输入法' },
+  ime_overview: { href: '#/overview', label: '打开当前状态' },
+  ime_input: { href: '#/input', label: '打开输入法与词库' },
   ime_voice: { href: '#/voice', label: '打开语音输入' },
-  ime_planning: { href: '#/planning', label: '打开规划' },
-  ime_memory: { href: '#/memory', label: '打开记忆' },
-  agent_role_book: { href: '#/memory?layer=role-books', label: '打开角色书' },
+  ime_planning: { href: '#/planning', label: '打开任务' },
+  ime_memory: { href: '#/memory', label: '打开我的记忆' },
+  agent_role_book: { href: '#/memory?layer=role-books', label: '打开伙伴记忆' },
   ime_knowledge: { href: '#/knowledge', label: '打开知识库' },
-  ime_models: { href: '#/configuration', label: '打开模型配置' },
-  ime_runtime: { href: '#/diagnostics', label: '打开诊断' },
-  ime_configuration: { href: '#/configuration', label: '打开配置' },
-  ime_agents: { href: '#/rooms', label: '打开 Rooms' },
+  ime_models: { href: '#/configuration', label: '打开模型与连接' },
+  ime_runtime: { href: '#/diagnostics', label: '打开运行检查' },
+  ime_configuration: { href: '#/configuration', label: '打开设置' },
+  ime_agents: { href: '#/rooms', label: '打开多人协作' },
 };
 
 const operationLabels: Record<string, string> = {
@@ -803,8 +770,7 @@ export function safeSourceLabels(value: unknown): string[] {
 function capabilityLabel(value: unknown): string {
   const item = record(value);
   const id = text(item.id);
-  if (toolLabels[id]) return toolLabels[id];
-  return publicText(item.displayName ?? item.label);
+  return publicToolName(id, publicText(item.displayName ?? item.label));
 }
 
 function safeActivitySourceCounts(items: unknown[]): string {

@@ -1,6 +1,7 @@
 import { ListChecks, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 import { Button, EmptyState } from '@/components/primitives';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import {
   ManagementMutationWorkflow,
   parseManagementWorkPreview,
@@ -24,6 +25,7 @@ import { useMemoryCurationQueries } from './api';
 import { knowledgeMutationPathIds, useKnowledgeMutationBoundary } from './knowledge-workbench-api';
 
 export function MemoryCurationWorkbench({ enabled }: { enabled: boolean }) {
+  const identity = useProductIdentity();
   const queries = useMemoryCurationQueries(enabled);
   const mutationBoundary = useKnowledgeMutationBoundary();
   const [editingDiffId, setEditingDiffId] = useState(0);
@@ -42,7 +44,7 @@ export function MemoryCurationWorkbench({ enabled }: { enabled: boolean }) {
   const pending = queries.status.isPending || (Boolean(queries.runId) && queries.run.isPending);
   const draftKey = `${runId}:${changes.map((change) => `${numberValue(change.diffId)}:${booleanValue(change.selected)}`).join(',')}`;
   const applyBlockedReason = !runId
-    ? '等待自动整理，或让 Agent 立即生成一份草案。'
+    ? `等待自动整理，或让${identity.assistantName}现在准备一份草案。`
     : stale
       ? '这份草案基于旧数据，请重新生成后再应用。'
       : runStatus !== 'draft'
@@ -60,10 +62,10 @@ export function MemoryCurationWorkbench({ enabled }: { enabled: boolean }) {
       <div className="memory-curation__header">
         <div>
           <h2>记忆整理审核</h2>
-          <span>系统自动生成 Atom-first 草案；这里只逐项选择和确认写入。</span>
+          <span>系统会先整理成一条条可审阅的事实草案；这里只逐项选择和确认写入。</span>
         </div>
         <div className="memory-curation__actions">
-          <Button leadingIcon={<Sparkles size={15} />} onClick={handoffToAgent} size="small">让 Agent 立即整理</Button>
+          <Button leadingIcon={<Sparkles size={15} />} onClick={handoffToAgent} size="small">让{identity.assistantName}整理</Button>
           <Button aria-label="刷新记忆整理草案" leadingIcon={<RefreshCw size={15} />} loading={queries.status.isFetching || queries.run.isFetching} onClick={refresh} size="small" variant="quiet">刷新</Button>
         </div>
       </div>
@@ -77,7 +79,7 @@ export function MemoryCurationWorkbench({ enabled }: { enabled: boolean }) {
             <>
               <MetricStrip items={[
                 { label: '批次状态', value: curationStatusLabel(runStatus, stale), detail: formatCreatedAt(numberValue(run.createdAtMs)), icon: ShieldCheck, tone: runStatus === 'draft' && !stale ? 'warning' : 'success' },
-                { label: '建议更新', value: changes.length, detail: 'Agent 整理结果', icon: ListChecks },
+                { label: '建议更新', value: changes.length, detail: `${identity.assistantName}整理结果`, icon: ListChecks },
                 { label: '待生成', value: numberValue(compileState.undraftedEventCount), detail: '尚未覆盖的新证据', icon: RefreshCw, tone: numberValue(compileState.undraftedEventCount) ? 'warning' : 'neutral' },
                 { label: '已选择', value: selectedCount, detail: '将进入最终预览', icon: ShieldCheck, tone: selectedCount ? 'success' : 'warning' },
                 { label: '已排除', value: rejectedCount, detail: '不会写入', icon: ListChecks, tone: 'neutral' },
@@ -89,7 +91,7 @@ export function MemoryCurationWorkbench({ enabled }: { enabled: boolean }) {
               </InlineNotice>
             </>
           ) : (
-            <EmptyState description="自动任务或 Agent Tool 生成的去重、合并、标签与归档建议会出现在这里。" icon={Sparkles} title="还没有整理草案" />
+            <EmptyState description={`自动整理或${identity.assistantName}生成的去重、合并、标签与归档建议会出现在这里。`} icon={Sparkles} title="还没有整理草案" />
           )}
         </ManagementSection>
 
@@ -233,8 +235,8 @@ function operationLabel(operation: string): string {
   return {
     upsert_semantic_group: '更新分组',
     upsert_semantic_tag: '更新标签',
-    upsert_memory_book: '更新主题书',
-    upsert_memory_atom: '更新记忆原子',
+    upsert_memory_book: '更新长期主题',
+    upsert_memory_atom: '更新一条事实',
     upsert_tag_edge: '更新标签关系',
     merge_semantic_tag: '合并标签',
     add_phrase_candidate: '添加短语候选',

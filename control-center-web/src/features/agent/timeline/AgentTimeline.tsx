@@ -17,6 +17,7 @@ import { useAgentLiveStore } from '../state/live-store';
 import { publicAgentErrorText } from '../public-error';
 
 export function AgentTimeline({
+  assistantName = '智鼬',
   sessionId,
   persona,
   modelSelectionAvailable,
@@ -33,6 +34,7 @@ export function AgentTimeline({
   onForkFromMessage,
   onEditMessage,
 }: {
+  assistantName?: string;
   sessionId: string;
   persona?: AgentPersonaV1;
   modelSelectionAvailable: boolean;
@@ -126,7 +128,9 @@ export function AgentTimeline({
       window.clearTimeout(clearTimer);
     };
   }, [jumpRequest?.messageId, jumpRequest?.requestId, sessionId]);
-  if (turnOrder.length === 0) return <AgentWelcome persona={persona} onSuggestion={onSuggestion} />;
+  if (turnOrder.length === 0) {
+    return <AgentWelcome assistantName={assistantName} persona={persona} onSuggestion={onSuggestion} />;
+  }
   return (
     <div className="agent-timeline" aria-label="对话时间线" role="log">
       <Virtuoso
@@ -143,6 +147,7 @@ export function AgentTimeline({
         itemContent={(_index, turnId) => (
           <AgentTurn
             key={turnId}
+            assistantName={assistantName}
             sessionId={sessionId}
             turnId={turnId}
             persona={persona}
@@ -190,7 +195,7 @@ export function AgentTimeline({
                   </span>
                   {userPreview ? <small><b>你</b><span>{userPreview}</span></small> : null}
                   <small>
-                    <b>{persona?.displayName ?? '智鼬'}</b>
+                    <b>{persona?.displayName ?? assistantName}</b>
                     <span>{assistantPreview || turnMarkerLabel(markerKind)}</span>
                   </small>
                 </span>
@@ -229,6 +234,7 @@ function AgentTurnTombstone({
 }
 
 export function AgentTurn({
+  assistantName = '智鼬',
   sessionId,
   turnId,
   persona,
@@ -245,6 +251,7 @@ export function AgentTurn({
   onForkFromMessage,
   onEditMessage,
 }: {
+  assistantName?: string;
   sessionId: string;
   turnId: string;
   persona?: AgentPersonaV1;
@@ -300,9 +307,9 @@ export function AgentTurn({
       {userIds.map((messageId) => <MessageView key={messageId} sessionId={sessionId} messageId={messageId} user forkAvailable={forkAvailable} rewriteAvailable={rewriteAvailable} historyTarget={activeTargetId === messageId} onForkFromMessage={onForkFromMessage} onEditMessage={onEditMessage} />)}
       {assistantMessages.length > 0 || activities.length > 0 || failure || showWorking ? (
         <div className="agent-assistant-turn">
-          <PersonaAvatar persona={persona} presence={showWorking ? 'thinking' : presence} />
+          <PersonaAvatar fallbackName={assistantName} persona={persona} presence={showWorking ? 'thinking' : presence} />
           <div className="agent-assistant-turn__body">
-            <header><strong>{persona?.displayName ?? '智鼬'}</strong><span>{showWorking ? '正在处理' : turnStatusLabel(turn.status)}</span></header>
+            <header><strong>{persona?.displayName ?? assistantName}</strong><span>{showWorking ? '正在处理' : turnStatusLabel(turn.status)}</span></header>
             {showWorking ? <AssistantWorkingState activities={activities} startedAtMs={turn.createdAtMs} /> : null}
             <div className="agent-turn-sequence" aria-label="本轮响应过程">
               {timelineEntries.map((entry) => entry.kind === 'message' ? (
@@ -627,7 +634,15 @@ function ContextCompactionNotice({ activity }: { activity: AgentActivityProjecti
   );
 }
 
-function AgentWelcome({ persona, onSuggestion }: { persona?: AgentPersonaV1; onSuggestion: (value: string) => void }) {
+function AgentWelcome({
+  assistantName,
+  persona,
+  onSuggestion,
+}: {
+  assistantName: string;
+  persona?: AgentPersonaV1;
+  onSuggestion: (value: string) => void;
+}) {
   const suggestions = [
     ['回顾今天', '结合近期对话，帮我回顾今天的进展。'],
     ['检查运行状态', '检查输入法、模型、RAG 与 Memory 的当前状态。'],
@@ -635,7 +650,7 @@ function AgentWelcome({ persona, onSuggestion }: { persona?: AgentPersonaV1; onS
   ];
   return (
     <div className="agent-welcome">
-      <PersonaAvatar persona={persona} size="hero" />
+      <PersonaAvatar fallbackName={assistantName} persona={persona} size="hero" />
       <div><h2>今天想先从哪里开始？</h2><p>{persona?.tagline ?? '连续对话、检索和整理都从这里开始。'}</p></div>
       <div className="agent-welcome__suggestions">
         {suggestions.map(([title, prompt]) => (

@@ -25,7 +25,7 @@ describe('ContextXraySections', () => {
       </ControlTransportProvider>,
     );
 
-    await user.click(screen.getByRole('button', { name: /查看上下文透视/ }));
+    await user.click(screen.getByRole('button', { name: /查看上下文检查/ }));
 
     const layers = await screen.findByRole('list', { name: '上下文分层指标' });
     for (const label of [
@@ -76,7 +76,7 @@ describe('ContextXraySections', () => {
       </ControlTransportProvider>,
     );
 
-    await user.click(screen.getByRole('button', { name: /查看上下文透视/ }));
+    await user.click(screen.getByRole('button', { name: /查看上下文检查/ }));
     expect(await screen.findByText('这轮尚未形成可核对的上下文快照')).toBeVisible();
     expect(screen.queryByRole('list', { name: '上下文分层指标' })).not.toBeInTheDocument();
   });

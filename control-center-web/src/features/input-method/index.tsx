@@ -30,6 +30,7 @@ import {
   stringValue,
   valueAt,
 } from '@/features/overview/management-ui';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import './input-method.css';
 
 type StatusTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
@@ -81,6 +82,7 @@ const commonInputSettingKeys = new Set([
 ]);
 
 export function InputMethodFeature() {
+  const identity = useProductIdentity();
   const queries = useInputMethodQueries();
   const source = asRecord(queries.source.data);
   const overview = asRecord(queries.overview.data);
@@ -186,14 +188,14 @@ export function InputMethodFeature() {
           刷新
         </Button>
       )}
-      description="查看真实输入源和运行链状态，管理输入设置与个人词库。"
-      eyebrow="输入"
+      description={`输入法只是${identity.assistantName}了解你的一个可选来源。你可以在这里管理输入体验和个人词库。`}
+      eyebrow="输入来源"
       routeId="input"
-      title="输入法"
+      title="输入法与词库"
     >
       <ManagementSection
-        description="输入源来自系统检查；后台服务、模型和上下文状态来自运行概览。"
-        title="前台与运行状态"
+        description="查看 macOS 输入源是否连接，以及听写、本机模型和上下文是否准备好。"
+        title="输入法状态"
         trailing={(
           <StatusBadge
             label={queries.overview.isPending ? '正在读取模式' : profileLabel(reportedProfile)}
@@ -246,7 +248,7 @@ export function InputMethodFeature() {
           {overviewError ? (
             <div className="input-inline-action">
               <InlineNotice title="部分运行状态读取失败" tone="danger">
-                {publicErrorText(overviewError, '输入源状态可用，但暂时无法读取后台运行状态。')}
+                {publicErrorText(overviewError, '输入源状态可用，但暂时无法读取其他运行状态。')}
               </InlineNotice>
               <Button onClick={() => void queries.overview.refetch()} size="small">重试运行状态</Button>
             </div>
@@ -262,7 +264,7 @@ export function InputMethodFeature() {
       </ManagementSection>
 
       <ManagementSection
-        description="选择运行模式后先核对服务端预览；选择本身不会直接修改设置。"
+        description="选择运行模式后先查看具体变化；仅选择模式不会直接修改设置。"
         title="运行模式"
         trailing={<StatusBadge label={displayedMode || '自定义设置'} tone={displayedMode ? 'info' : 'neutral'} />}
       >
@@ -417,12 +419,12 @@ export function InputMethodFeature() {
                     runtimeRevision === null
                       ? '当前设置状态尚未同步，刷新后才能预览。'
                       : hasInvalidChanges
-                        ? '至少一项设置超出服务端允许的范围，请先修正。'
+                        ? '至少一项设置超出可用范围，请先修正。'
                       : diffRows.length === 0
                         ? '修改至少一个常用输入设置后才能生成预览。'
                         : '',
                   )}
-                  description="只保存上方列出的差异，并按服务端返回的生效方式处理。"
+                  description="只保存上方列出的差异，并按每项设置的生效方式处理。"
                   draftKey={JSON.stringify({ changes: pendingChanges, runtimeRevision })}
                   mutationKey={['input-method', 'mutation', 'settings']}
                   onApply={async (preview) => parseManagementWorkReceipt(
@@ -486,7 +488,7 @@ export function InputMethodFeature() {
             </div>
           ) : (
             <EmptyState
-              description="配置服务没有返回可显示的输入设置。"
+              description="当前没有可显示的输入设置。刷新后仍为空时，可到问题排查页检查状态。"
               icon={TextCursorInput}
               title="暂无输入设置"
             />
@@ -495,7 +497,7 @@ export function InputMethodFeature() {
       </ManagementSection>
 
       <ManagementSection
-        description="只对服务端审阅快照中的词条执行预览、确认、写入与撤销。"
+        description="只处理当前审阅记录中的词条；每次写入前都会先预览，之后也可以撤销。"
         title="词库建议"
         trailing={<StatusBadge label={lexiconState.label} tone={lexiconState.tone} />}
       >
@@ -525,7 +527,7 @@ export function InputMethodFeature() {
             transport={queries.transport}
           />
         ) : (
-          <InlineNotice title="词库审阅不可用" tone="warning">服务端没有返回可验证的审阅快照。</InlineNotice>
+          <InlineNotice title="词库审阅不可用" tone="warning">当前没有可验证的词库审阅记录，请刷新后重试。</InlineNotice>
         )}
       </ManagementSection>
     </ManagementPage>
@@ -649,11 +651,11 @@ function componentStatus(
 } {
   if (pending) return { detail: '等待运行概览返回', icon, label, tone: 'neutral', value: '正在读取' };
   if (error) return { detail: '运行概览暂时不可用', icon, label, tone: 'danger', value: '读取失败' };
-  if (!Object.keys(status).length) return { detail: '后端未报告此组件', icon, label, tone: 'warning', value: '未报告' };
+  if (!Object.keys(status).length) return { detail: '暂未收到这项状态', icon, label, tone: 'warning', value: '未报告' };
   const state = stringValue(status.status);
   const ready = booleanValue(status.ok) && state !== 'degraded';
   return {
-    detail: publicInputText(stringValue(status.detail), '后端未提供状态说明'),
+    detail: publicInputText(stringValue(status.detail), '暂时没有更多状态说明'),
     icon,
     label,
     tone: ready ? 'success' : state === 'degraded' ? 'warning' : 'danger',

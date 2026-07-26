@@ -1,6 +1,12 @@
 import { Menu as MenuIcon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useState } from 'react';
-import { routeRegistry, type RouteDefinition, type RouteId } from '@/app/route-registry';
+import {
+  routeGroupLabels,
+  routeRegistry,
+  type RouteDefinition,
+  type RouteId,
+} from '@/app/route-registry';
+import { prefetchRoute } from '@/app/router';
 import {
   Dialog,
   DialogContent,
@@ -11,15 +17,10 @@ import {
   IconButton,
   Tooltip,
 } from '@/components/primitives';
+import type { ProductIdentity } from '@/features/identity/product-identity';
 import { routeIcons } from './route-icons';
 
-const groupLabels = {
-  work: '工作台',
-  capability: '能力与知识',
-  operations: '治理与系统',
-} as const;
-
-const mobilePrimaryRoutes: RouteId[] = ['planning', 'agent', 'rooms', 'roles'];
+const mobilePrimaryRoutes: RouteId[] = ['agent', 'rooms', 'planning', 'memory'];
 
 function RouteLink({
   compact = false,
@@ -40,6 +41,8 @@ function RouteLink({
       href={`#${route.path}`}
       aria-current={selected ? 'page' : undefined}
       onClick={onNavigate}
+      onFocus={() => prefetchRoute(route.id)}
+      onPointerEnter={() => prefetchRoute(route.id)}
       title={route.label}
     >
       <Icon size={17} strokeWidth={1.9} aria-hidden="true" />
@@ -57,10 +60,12 @@ function RouteLink({
 export function DesktopNavigation({
   activeRouteId,
   collapsed,
+  identity,
   onCollapsedChange,
 }: {
   activeRouteId: RouteId;
   collapsed: boolean;
+  identity: ProductIdentity;
   onCollapsedChange: (collapsed: boolean) => void;
 }) {
   return (
@@ -73,14 +78,14 @@ export function DesktopNavigation({
           aria-hidden="true"
         />
         <span className="shell-brand__copy">
-          <strong>智鼬</strong>
-          <small>RAG IME CONTROL</small>
+          <strong>{identity.productName}</strong>
+          <small>{identity.tagline}</small>
         </span>
       </div>
       <nav className="shell-nav">
-        {(Object.keys(groupLabels) as Array<keyof typeof groupLabels>).map((group) => (
-          <section className="shell-nav__group" key={group} aria-label={groupLabels[group]}>
-            <p className="shell-nav__group-label">{groupLabels[group]}</p>
+        {(Object.keys(routeGroupLabels) as Array<keyof typeof routeGroupLabels>).map((group) => (
+          <section className="shell-nav__group" key={group} aria-label={routeGroupLabels[group]}>
+            <p className="shell-nav__group-label">{routeGroupLabels[group]}</p>
             {routeRegistry.filter((route) => route.group === group).map((route) => (
               <RouteLink
                 compact={collapsed}
@@ -95,7 +100,7 @@ export function DesktopNavigation({
       <div className="shell-sidebar__footer">
         <span className="shell-sidebar__environment">
           <i aria-hidden="true" />
-          <span>LOCAL</span>
+          <span>只在本机</span>
         </span>
         <IconButton
           className="shell-sidebar__collapse"
@@ -119,8 +124,8 @@ export function MobileRouteMenu({ activeRouteId }: { activeRouteId: RouteId }) {
       </DialogTrigger>
       <DialogContent className="shell-mobile-menu">
         <DialogHeader>
-          <DialogTitle>控制中心</DialogTitle>
-          <DialogDescription>本机控制台 · {routeRegistry.length} 个工作区</DialogDescription>
+          <DialogTitle>去哪里？</DialogTitle>
+          <DialogDescription>对话、记忆、协作与设置都在这里。</DialogDescription>
         </DialogHeader>
         <nav className="shell-mobile-menu__routes" aria-label="全部导航">
           {routeRegistry.map((route) => (
@@ -149,6 +154,8 @@ export function MobileBottomNavigation({ activeRouteId }: { activeRouteId: Route
             className="shell-mobile-nav__link"
             href={`#${route.path}`}
             aria-current={routeId === activeRouteId ? 'page' : undefined}
+            onFocus={() => prefetchRoute(route.id)}
+            onPointerEnter={() => prefetchRoute(route.id)}
           >
             <Icon size={19} strokeWidth={1.9} aria-hidden="true" />
             <span>{route.shortLabel}</span>

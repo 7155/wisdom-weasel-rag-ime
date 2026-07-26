@@ -67,7 +67,7 @@ export function RoomKernelControlPlane({
   const [panicError, setPanicError] = useState('');
   const requestPanic = async () => {
     if (!panicEnabled || !commandTransport || panicPending) return;
-    if (!window.confirm('紧急停止会取消这个 Room 中所有正在执行的根任务。确认继续？')) return;
+    if (!window.confirm('“停止全部任务”会取消这个协作空间中正在运行的伙伴、工具和后续任务。确认继续？')) return;
     setPanicPending(true);
     setPanicReceipt(null);
     setPanicError('');
@@ -78,14 +78,14 @@ export function RoomKernelControlPlane({
         { commandId, sourceId: 'room-kernel-control-plane', createdAtMs: Date.now() },
       )));
     } catch (error) {
-      setPanicError(error instanceof Error ? error.message : '紧急停止未返回有效回执');
+      setPanicError(error instanceof Error ? error.message : '停止请求没有收到确认，请稍后重试');
     } finally {
       setPanicPending(false);
     }
   };
-  return <section className="room-kernel-control" aria-label="Room 协作控制面">
-    <header className="room-kernel-control__header"><span><strong>协作控制面</strong><small>{roots.length} 个根任务 · cursor {projection.lastSequence}</small></span><span className="room-kernel-control__actions">{projection.needsSnapshot ? <b data-state="warning">等待状态快照</b> : <b data-state="healthy">状态已同步</b>}{panicEnabled ? <Button variant="quiet" size="small" leadingIcon={<TriangleAlert size={13} />} disabled={!commandTransport || panicPending} onClick={() => void requestPanic()}>{panicPending ? '正在停止' : '紧急停止'}</Button> : null}</span></header>
-    {panicReceipt ? <p className="room-kernel-control__panic-receipt" role="status">{receiptStatusLabel(panicReceipt)} · {panicReceipt.receiptId}</p> : null}
+  return <section className="room-kernel-control" aria-label="协作任务进展">
+    <header className="room-kernel-control__header"><span><strong>任务进展</strong><small>{roots.length} 个任务</small></span><span className="room-kernel-control__actions">{projection.needsSnapshot ? <b data-state="warning">正在恢复状态</b> : <b data-state="healthy">状态已同步</b>}{panicEnabled ? <Button variant="quiet" size="small" leadingIcon={<TriangleAlert size={13} />} disabled={!commandTransport || panicPending} onClick={() => void requestPanic()}>{panicPending ? '正在停止' : '停止全部任务'}</Button> : null}</span></header>
+    {panicReceipt ? <p className="room-kernel-control__panic-receipt" role="status" title={panicReceipt.receiptId}>{receiptStatusLabel(panicReceipt)}</p> : null}
     {panicError ? <p className="room-kernel-control__command-error" role="alert">{panicError}</p> : null}
     <div className="room-kernel-control__roots">
       {roots.map((root) => <RootControlSection
@@ -99,7 +99,7 @@ export function RoomKernelControlPlane({
         commandDisabledReason={commandDisabledReason}
         requirements={requirementsByRootId[root.rootId]}
       />)}
-      {!roots.length ? <p className="room-kernel-control__empty">当前没有根任务。</p> : null}
+      {!roots.length ? <p className="room-kernel-control__empty">当前没有任务。</p> : null}
     </div>
   </section>;
 }
@@ -151,39 +151,44 @@ function RootControlSection({
       ));
       setCommandReceipt(nextReceipt);
     } catch (error) {
-      setCommandError(error instanceof Error ? error.message : '取消命令未返回有效回执');
+      setCommandError(error instanceof Error ? error.message : '停止请求没有收到确认，请稍后重试');
     } finally {
       setPending(false);
     }
   };
+  const taskTitle = rootTaskTitle(root, requirements);
   return <article className="room-kernel-root" data-root-state={root.state}>
     <header className="room-kernel-root__header">
-      <span><small>Root · generation {root.generation}</small><strong>{root.rootId}</strong><i data-state={root.state}>{rootStateLabel(root, receipt)}</i></span>
-      {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? commandAwaitingProjection ? '等待 canonical Root 投影更新' : '提交带 generation 的取消命令' : commandDisabledReason || '后端 command route 尚未接入'} onClick={() => void requestStop()}>{pending ? '正在提交' : commandAwaitingProjection ? '已提交' : '停止'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />终态已确认</span>}
+      <span title={`${root.rootId} · generation ${root.generation}`}><small>任务 · 第 {root.generation} 次尝试</small><strong>{taskTitle}</strong><i data-state={root.state}>{rootStateLabel(root, receipt)}</i></span>
+      {!root.isFinal ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? commandAwaitingProjection ? '正在等待停止结果' : '停止这个任务及其伙伴、工具和后续任务' : commandDisabledReason || '当前连接没有停止任务的权限'} onClick={() => void requestStop()}>{pending ? '正在停止' : commandAwaitingProjection ? '已请求停止' : '停止此任务'}</Button> : <span className="room-kernel-root__terminal"><CircleCheck size={15} />任务已结束</span>}
     </header>
     {unresolvedSurfaces.length ? <section className="room-kernel-root__unresolved" role="alert">
       <TriangleAlert size={16} />
-      <span><strong>仍有后台执行未确认终止</strong><small>输入保持锁定。请继续停止重试，或由管理员执行紧急停止并等待 Runtime Host reconcile。</small></span>
+      <span><strong>还有后台工作没有确认停止</strong><small>为了避免产生迟到结果，当前任务暂时保持锁定。可以再次停止，或请管理员停止全部任务并等待状态确认。</small></span>
       <ul>{unresolvedSurfaces.map((item) => <li key={`${item.cancelId}:${item.surface}`}><code>{item.surface}</code><b>{item.state}</b><small>{surfaceTargets(item.detail)}</small></li>)}</ul>
     </section> : null}
     <div className="room-kernel-root__summary">
       <span><ShieldCheck size={14} /><small>当前负责人</small><strong>{root.owner || '等待分派'}</strong></span>
-      <BudgetMetric icon={<Gauge size={14} />} label="Dispatch" used={budget?.usedDispatches} maximum={budget?.maxDispatches} />
-      <BudgetMetric icon={<FileText size={14} />} label="Token" used={budget?.usedTokens} maximum={budget?.maxTokens} />
-      <BudgetMetric icon={<Clock3 size={14} />} label="墙钟" used={budget?.elapsedMs} maximum={budget?.maxWallTimeMs} formatter={durationLabel} />
+      <BudgetMetric icon={<Gauge size={14} />} label="协作轮次" used={budget?.usedDispatches} maximum={budget?.maxDispatches} />
+      <BudgetMetric icon={<FileText size={14} />} label="上下文用量" used={budget?.usedTokens} maximum={budget?.maxTokens} />
+      <BudgetMetric icon={<Clock3 size={14} />} label="运行时间" used={budget?.elapsedMs} maximum={budget?.maxWallTimeMs} formatter={durationLabel} />
     </div>
     <section className="room-kernel-root__receipts" aria-label={`${root.rootId} 运行回执`}>
-      <ReceiptSummary icon={<LockKeyhole size={14} />} label="Context" receipt={contextReceipt} />
-      <ReceiptSummary icon={<Wrench size={14} />} label="Capability" receipt={capabilityReceipt} />
-      <span><CircleCheck size={14} /><small>Terminal</small><strong>{receipt ? `${receipt.receiptKind}/${receipt.status} · ${deliveryGateLabel(receipt)}` : '等待全链静止'}</strong></span>
-      <span data-receipt-state={commandReceipt?.status ?? cancelReceipt?.status}><Square size={14} /><small>Cancel</small><strong>{commandReceipt ? `${receiptStatusLabel(commandReceipt)} · ${commandReceipt.receiptId}` : cancelReceipt ? `${receiptStatusLabel(cancelReceipt)} · ${cancelReceipt.receiptId}` : commandTransport ? '尚未请求' : '只读，控制命令未授权'}</strong></span>
+      <ReceiptSummary icon={<LockKeyhole size={14} />} label="上下文" receipt={contextReceipt} />
+      <ReceiptSummary icon={<Wrench size={14} />} label="技能与工具" receipt={capabilityReceipt} />
+      <span><CircleCheck size={14} /><small>任务验收</small><strong>{receipt ? qualityGateLabel(receipt) : '等待伙伴和工具结束'}</strong></span>
+      <span><ShieldCheck size={14} /><small>额外交付检查</small><strong>{receipt ? deliveryGateLabel(receipt) : '等待任务结束'}</strong></span>
+      <span data-receipt-state={commandReceipt?.status ?? cancelReceipt?.status}><Square size={14} /><small>停止状态</small><strong title={commandReceipt?.receiptId ?? cancelReceipt?.receiptId}>{commandReceipt ? receiptStatusLabel(commandReceipt) : cancelReceipt ? receiptStatusLabel(cancelReceipt) : commandTransport ? '尚未请求' : '当前连接没有停止权限'}</strong></span>
     </section>
     {commandError ? <p className="room-kernel-control__command-error" role="alert">{commandError}</p> : null}
     <div className="room-kernel-root__planes">
-      <section className="room-kernel-posts" aria-label={`${root.rootId} 公开 Posts`}><header><strong>公开 Posts</strong><small>仅显式提交</small></header>{posts.length ? posts.map((post) => <article key={post!.postId}><span><b>{postKindLabel(post!.kind)}</b><small>{post!.authorActorRef}</small></span><p>{post!.content}</p></article>) : <p className="room-kernel-control__empty">还没有公开提交。</p>}</section>
-      <section className="room-kernel-sessions" aria-label={`${root.rootId} 私有 Sessions`}><header><strong>私有 Session Inspector</strong><small>过程不进入 Room</small></header>{sessions.length ? sessions.map((session) => <details key={session.sessionId}><summary><LockKeyhole size={13} /><span><strong>{session.sessionId}</strong><small>{sessionStateLabel(session.state)} · generation {session.generation}</small></span></summary><dl><div><dt>公开状态</dt><dd>仅状态元数据</dd></div><div><dt>Transcript</dt><dd>私有，不投影到 Room</dd></div>{session.capabilityManifest ? <><div><dt>Capability</dt><dd>{session.capabilityManifest.status} · epoch {session.capabilityManifest.capabilityEpoch}</dd></div><div><dt>Manifest</dt><dd title={session.capabilityManifest.manifestHash}>{session.capabilityManifest.manifestId} · {shortHash(session.capabilityManifest.manifestHash)}</dd></div><div><dt>Profile</dt><dd title={session.capabilityManifest.compiledRuntimeProfileRef.contentHash}>{session.capabilityManifest.compiledRuntimeProfileRef.profileId} · {session.capabilityManifest.compiledRuntimeProfileRef.revision}</dd></div></> : null}{session.requirementObservation ? <><div><dt>Requirement</dt><dd>{session.requirementObservation.catalogRevisionId || '目录缺失'} · {session.requirementObservation.state}</dd></div><div><dt>Proof</dt><dd>{session.requirementObservation.warnings.length ? `观察警告 ${session.requirementObservation.warnings.length} 项` : `${session.requirementObservation.proofReceiptRefs.length} 个回执`}</dd></div></> : null}</dl></details>) : <p className="room-kernel-control__empty">当前没有绑定 Session。</p>}</section>
+      <section className="room-kernel-posts" aria-label={`${root.rootId} 公开交付`}><header><strong>公开交付</strong><small>只有明确提交的结果会出现在这里</small></header>{posts.length ? posts.map((post) => <article key={post!.postId}><span><b>{postKindLabel(post!.kind)}</b><small>{post!.authorActorRef}</small></span><p>{post!.content}</p></article>) : <p className="room-kernel-control__empty">还没有公开交付。</p>}</section>
+      <section className="room-kernel-sessions" aria-label={`${root.rootId} 伙伴运行状态`}><header><strong>伙伴运行状态</strong><small>这里只显示进度，不公开伙伴的私有思考</small></header>{sessions.length ? sessions.map((session) => <details key={session.sessionId}><summary title={session.sessionId}><LockKeyhole size={13} /><span><strong>伙伴运行</strong><small>{sessionStateLabel(session.state)} · 第 {session.generation} 次尝试</small></span></summary><dl><div><dt>运行记录</dt><dd>{session.sessionId}</dd></div><div><dt>公开范围</dt><dd>只公开状态，不公开私有对话正文</dd></div>{session.capabilityManifest ? <><div><dt>能力版本</dt><dd>{session.capabilityManifest.status} · 第 {session.capabilityManifest.capabilityEpoch} 版</dd></div><div><dt>可用能力清单</dt><dd title={session.capabilityManifest.manifestHash}>{session.capabilityManifest.manifestId} · {shortHash(session.capabilityManifest.manifestHash)}</dd></div><div><dt>工作配置</dt><dd title={session.capabilityManifest.compiledRuntimeProfileRef.contentHash}>{session.capabilityManifest.compiledRuntimeProfileRef.profileId} · {session.capabilityManifest.compiledRuntimeProfileRef.revision}</dd></div></> : null}{session.requirementObservation ? <><div><dt>需求目录</dt><dd>{session.requirementObservation.catalogRevisionId || '目录缺失'} · {session.requirementObservation.state}</dd></div><div><dt>验证记录</dt><dd>{session.requirementObservation.warnings.length ? `观察提醒 ${session.requirementObservation.warnings.length} 项` : `${session.requirementObservation.proofReceiptRefs.length} 个回执`}</dd></div></> : null}</dl></details>) : <p className="room-kernel-control__empty">当前没有伙伴运行记录。</p>}</section>
     </div>
-    {requirements ? <RoomRequirementsControlPlane projection={requirements} /> : null}
+    {requirements ? <details className="room-kernel-root__evidence">
+      <summary><FileText size={15} /><span><strong>查看验收与证据详情</strong><small>原始需求、验收标准和系统核验记录</small></span></summary>
+      <RoomRequirementsControlPlane projection={requirements} />
+    </details> : null}
   </article>;
 }
 
@@ -209,14 +214,24 @@ function ReceiptSummary({ icon, label, receipt }: { icon: ReactNode; label: stri
   return <span>{icon}<small>{label}</small><strong>{receipt ? `${runtimeReceiptStatusLabel(receipt.status)} · ${receipt.revision}` : '未上报'}</strong></span>;
 }
 
+function rootTaskTitle(
+  root: RootProjection,
+  requirements?: RoomRequirementsReadProjection,
+): string {
+  const original = requirements?.anchors[0]?.originalText.trim();
+  if (!original) return `任务 ${shortHash(root.rootId)}`;
+  const firstLine = original.split(/\r?\n/u, 1)[0]?.trim() ?? '';
+  return firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
+}
+
 function rootStateLabel(root: RootProjection, receipt?: RoomKernelReceiptV1): string {
-  if (root.isFinal) return deliveryGatePassed(receipt) ? '已完成，交付观察通过' : '已结束，交付观察有警告';
-  return ({ pending: '排队中', running: '执行中', waiting: '等待中', blocked: '已阻塞', cancelling: '取消中', completed: '已完成，等待终态回执', failed: '失败，等待终态回执', cancelled: '已取消，等待终态回执', cancelled_with_unknowns: '已取消，仍有未知执行' } as Record<RootProjection['state'], string>)[root.state];
+  if (root.isFinal) return deliveryGatePassed(receipt) ? '已完成并通过检查' : '已结束，仍有检查提醒';
+  return ({ pending: '排队中', running: '执行中', waiting: '等待中', blocked: '已阻塞', cancelling: '正在停止', completed: '正在确认交付', failed: '正在确认未完成原因', cancelled: '正在确认已停止', cancelled_with_unknowns: '已请求停止，仍在核对后台任务' } as Record<RootProjection['state'], string>)[root.state];
 }
 
 function surfaceTargets(detail: Record<string, unknown>): string {
   const targetIds = Array.isArray(detail.targetIds) ? detail.targetIds.filter((item): item is string => typeof item === 'string') : [];
-  return targetIds.length ? targetIds.join(', ') : 'pendingTargets 未确认';
+  return targetIds.length ? targetIds.join(', ') : '尚未确认具体目标';
 }
 
 function deliveryGatePassed(receipt?: RoomKernelReceiptV1): boolean {
@@ -226,12 +241,19 @@ function deliveryGatePassed(receipt?: RoomKernelReceiptV1): boolean {
 }
 
 function deliveryGateLabel(receipt: RoomKernelReceiptV1): string {
-  if (deliveryGatePassed(receipt)) return '交付观察通过';
+  if (deliveryGatePassed(receipt)) return '同伴与证据观察通过';
   const observation = receipt.details?.deliveryGateObservation;
   if (typeof observation === 'object' && observation !== null && 'gateStatus' in observation) {
-    return observation.gateStatus === 'warn_blocked' ? '交付观察有阻塞或未知项' : '交付观察未完成';
+    return observation.gateStatus === 'warn_blocked' ? '发现阻塞或未知项' : '额外检查尚未完成';
   }
-  return '交付观察未上报';
+  return '额外检查尚未上报';
+}
+
+function qualityGateLabel(receipt: RoomKernelReceiptV1): string {
+  const verdict = receipt.details?.qualityGateVerdict;
+  if (verdict === 'ready_to_deliver') return '全部验收项已有有效证据';
+  if (verdict === 'not_ready') return '还有验收项未完成';
+  return '任务收工检查已由系统处理';
 }
 
 function sessionStateLabel(value: string): string {
@@ -247,8 +269,12 @@ function shortHash(value: string): string {
 }
 
 function receiptStatusLabel(receipt: RoomKernelReceiptV1): string {
-  const status = ({ applied: '已接受', noop: '无需重复执行', rejected: '已拒绝', unknown: '状态未知' } as const)[receipt.status];
-  return `${status} · ${receipt.receiptKind}`;
+  return ({
+    applied: '停止请求已接受',
+    noop: '已经停止，无需重复操作',
+    rejected: '停止请求被拒绝',
+    unknown: '仍在确认停止状态',
+  } as const)[receipt.status];
 }
 
 function postKindLabel(value: string): string {

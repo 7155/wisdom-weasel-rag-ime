@@ -54,7 +54,7 @@ describe('Rooms experience', () => {
     } });
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
-    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
     expect(screen.queryByAltText(/两位智鼬在私有工作区之间显式交接/)).not.toBeInTheDocument();
     const errorSlot = document.querySelector('.room-error-slot');
     expect(errorSlot).toBeInTheDocument();
@@ -62,7 +62,7 @@ describe('Rooms experience', () => {
     expect(errorSlot?.nextElementSibling).toHaveClass('room-timeline');
     expect(errorSlot?.nextElementSibling?.nextElementSibling).toHaveClass('room-composer-dock');
     await user.type(composer, '并行核对边界');
-    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     const request = transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request;
     expect(request?.params).toEqual({ roomId: 'room-a' });
@@ -86,12 +86,12 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
     await user.type(composer, '发送后不能空白等待');
-    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     expect(screen.getByText('发送后不能空白等待')).toBeInTheDocument();
-    expect(screen.getByText('Room 路由')).toBeInTheDocument();
+    expect(screen.getByText('正在选择伙伴')).toBeInTheDocument();
     expect(screen.getAllByText('正在发送').length).toBeGreaterThan(0);
     expect(composer).toHaveValue('');
     expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true);
@@ -111,18 +111,18 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await screen.findByText('还没有公开 Post');
-    expect(screen.getByText('对话与对齐')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '确认并开始' }));
-    await user.type(screen.getByRole('textbox', { name: '受管任务目标' }), '修复对话重复与延迟');
-    await user.type(screen.getByRole('textbox', { name: '受管任务交付物' }), '实现、测试和审计记录');
-    fireEvent.change(screen.getByRole('textbox', { name: '受管任务验收条件' }), {
+    await screen.findByText('还没有公开消息');
+    expect(screen.getByText('先聊清楚再开工')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '确认任务' }));
+    await user.type(screen.getByRole('textbox', { name: '任务目标' }), '修复对话重复与延迟');
+    await user.type(screen.getByRole('textbox', { name: '任务交付物' }), '实现、测试和审计记录');
+    fireEvent.change(screen.getByRole('textbox', { name: '任务验收条件' }), {
       target: { value: '消息只出现一次\n发送后立即可见' },
     });
-    fireEvent.change(screen.getByRole('textbox', { name: '受管任务禁区' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: '任务禁区' }), {
       target: { value: '不得修改参考项目\n不得绕过取消栅栏' },
     });
-    await user.click(screen.getByRole('button', { name: '开始受管执行' }));
+    await user.click(screen.getByRole('button', { name: '确认并开始' }));
 
     await waitFor(() => expect(
       transport.requests.filter(({ request }) => request.pathId === 'agent.room.message'),
@@ -151,7 +151,7 @@ describe('Rooms experience', () => {
     expect(String(
       (startRequest?.body as Record<string, unknown> | undefined)?.message,
     )).toContain('确认开始受管执行');
-    expect(await screen.findByText('受管执行')).toBeInTheDocument();
+    expect(await screen.findByText('正在完成任务')).toBeInTheDocument();
     expect(screen.getByText('修复对话重复与延迟')).toBeInTheDocument();
   });
 
@@ -172,18 +172,18 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await screen.findByText('还没有公开 Post');
+    await screen.findByText('还没有公开消息');
+    await user.click(screen.getByRole('button', { name: '确认任务' }));
+    await user.type(screen.getByRole('textbox', { name: '任务目标' }), '完成可重试任务');
+    await user.type(screen.getByRole('textbox', { name: '任务交付物' }), '一份结果');
+    await user.type(screen.getByRole('textbox', { name: '任务验收条件' }), '结果可复核');
     await user.click(screen.getByRole('button', { name: '确认并开始' }));
-    await user.type(screen.getByRole('textbox', { name: '受管任务目标' }), '完成可重试任务');
-    await user.type(screen.getByRole('textbox', { name: '受管任务交付物' }), '一份结果');
-    await user.type(screen.getByRole('textbox', { name: '受管任务验收条件' }), '结果可复核');
-    await user.click(screen.getByRole('button', { name: '开始受管执行' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      '任务定义已保存，但受管执行尚未启动。请重试本次确认。',
+      '任务已保存，但首次执行尚未启动。请重试。',
     );
-    expect(screen.getByRole('textbox', { name: '受管任务目标' })).toHaveValue('完成可重试任务');
-    await user.click(screen.getByRole('button', { name: '开始受管执行' }));
+    expect(screen.getByRole('textbox', { name: '任务目标' })).toHaveValue('完成可重试任务');
+    await user.click(screen.getByRole('button', { name: '确认并开始' }));
 
     await waitFor(() => expect(
       transport.requests.filter(({ request }) => request.pathId === 'agent.room.message'),
@@ -199,7 +199,7 @@ describe('Rooms experience', () => {
     ).toBe(
       (starts[1]?.request.body as Record<string, unknown> | undefined)?.clientMessageId,
     );
-    expect(screen.queryByRole('dialog', { name: '确认并开始' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '把任务说清楚' })).not.toBeInTheDocument();
   });
 
   it('retains an in-flight Room turn while navigating between Rooms', async () => {
@@ -222,17 +222,17 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
     await user.type(composer, '切换页面也要看得到我');
-    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
     expect(screen.getByText('切换页面也要看得到我')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '打开 Room：Room B' }));
-    await screen.findByText('还没有公开 Post');
-    await user.click(screen.getByRole('button', { name: '打开 Room：Room A' }));
+    await user.click(screen.getByRole('button', { name: '打开协作空间：Room B' }));
+    await screen.findByText('还没有公开消息');
+    await user.click(screen.getByRole('button', { name: '打开协作空间：Room A' }));
 
     expect(await screen.findByText('切换页面也要看得到我')).toBeInTheDocument();
-    expect(screen.getByText('Room 路由')).toBeInTheDocument();
+    expect(screen.getByText('正在选择伙伴')).toBeInTheDocument();
     pendingRefresh.resolve(roomSnapshot('room-a', []));
     await waitFor(() => expect(roomASnapshotCalls).toBe(2));
     expect(screen.getByText('切换页面也要看得到我')).toBeInTheDocument();
@@ -259,19 +259,19 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
     await user.type(composer, 'A 只应发送一次');
-    const send = screen.getByRole('button', { name: '发送 Room 消息' });
+    const send = screen.getByRole('button', { name: '发送消息' });
     fireEvent.click(send);
     fireEvent.click(send);
     expect(transport.requests.filter(({ request }) => (
       request.pathId === 'agent.room.message' && request.params?.roomId === 'room-a'
     ))).toHaveLength(1);
 
-    await user.click(screen.getByRole('button', { name: '打开 Room：Room B' }));
-    const roomBComposer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    await user.click(screen.getByRole('button', { name: '打开协作空间：Room B' }));
+    const roomBComposer = await screen.findByRole('textbox', { name: '协作消息' });
     await user.type(roomBComposer, 'B 可以独立发送');
-    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
     await user.type(roomBComposer, 'B 的未发送草稿');
     expect(transport.requests.filter(({ request }) => (
       request.pathId === 'agent.room.message' && request.params?.roomId === 'room-b'
@@ -282,14 +282,14 @@ describe('Rooms experience', () => {
     expect(screen.queryByText('A 只应发送一次')).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '打开 Room：Room A' }));
-    expect(await screen.findByRole('textbox', { name: 'Room 消息' })).toHaveValue('A 只应发送一次');
+    await user.click(screen.getByRole('button', { name: '打开协作空间：Room A' }));
+    expect(await screen.findByRole('textbox', { name: '协作消息' })).toHaveValue('A 只应发送一次');
     expect(await screen.findByRole('alert')).toHaveTextContent('消息暂时未发送，请稍后重试。');
   });
 
   it('removes an optimistic message and restores the draft when the real API rejects it', async () => {
     const transport = new MockControlTransport({ routes: {
-      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '失败恢复 Room')] },
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '失败恢复协作空间')] },
       'agent.room.snapshot': roomSnapshot('room-a', []),
       'agent.room.message': () => {
         throw new Error('POST /api/agent/rooms/room-a/messages failed: receipt=/tmp/private.json');
@@ -297,9 +297,9 @@ describe('Rooms experience', () => {
     } });
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
-    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
     await user.type(composer, '不要留下假的乐观消息');
-    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('消息暂时未发送，请稍后重试。');
@@ -341,11 +341,11 @@ describe('Rooms experience', () => {
     } });
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
-    const create = await screen.findByRole('button', { name: '新建 Room' });
+    const create = await screen.findByRole('button', { name: '开始新的协作' });
     await waitFor(() => expect(create).toBeEnabled());
     await user.click(create);
-    await user.type(screen.getByRole('textbox', { name: 'Room 名称' }), '发布前检查');
-    await user.click(screen.getByRole('button', { name: '创建 Room' }));
+    await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '发布前检查');
+    await user.click(screen.getByRole('button', { name: '开始协作' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.rooms.create')).toBe(true));
     const request = transport.requests.find((call) => call.request.pathId === 'agent.rooms.create')?.request;
@@ -371,8 +371,8 @@ describe('Rooms experience', () => {
       executionMode: 'workspace_managed',
       workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
     });
-    expect(await screen.findByRole('button', { name: '打开 Room：发布前检查' })).toHaveAttribute('aria-current', 'true');
-    expect(screen.queryByRole('dialog', { name: '新建 Room' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '打开协作空间：发布前检查' })).toHaveAttribute('aria-current', 'true');
+    expect(screen.queryByRole('dialog', { name: '开始一起做事' })).not.toBeInTheDocument();
   });
 
   it('requires a project path and preselects a useful collaboration ensemble', async () => {
@@ -387,15 +387,19 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: '新建 Room' }));
-    expect(screen.getByRole('button', { name: '创建 Room' })).toBeDisabled();
+    await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
+    expect(screen.getByRole('button', { name: '开始协作' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: /智鼬·未来/ })).toHaveAccessibleName(/智鼬·未来.*组织协作/);
     expect(screen.getByRole('checkbox', { name: /智鼬·未来/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /智鼬·此刻/ })).toHaveAccessibleName(/智鼬·此刻.*动手实现/);
     expect(screen.getByRole('checkbox', { name: /智鼬·此刻/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /智鼬·初识/ })).toHaveAccessibleName(/智鼬·初识.*独立验收/);
     expect(screen.getByRole('checkbox', { name: /智鼬·初识/ })).toBeChecked();
-    expect(screen.queryByRole('combobox', { name: 'Room 主持人' })).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /智鼬·闪念/ })).toHaveAccessibleName(/智鼬·闪念.*可邀请/);
+    expect(screen.queryByRole('combobox', { name: '主持伙伴' })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: '发言方式' })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '选择项目目录' }));
+    await user.click(screen.getByRole('button', { name: '选择工作目录' }));
     expect(transport.filePickCalls).toEqual([{
       purpose: 'workspace-root',
       selection: 'directory',
@@ -425,12 +429,14 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: '新建 Room' }));
-    await user.click(screen.getByRole('radio', { name: /角色群聊/ }));
-    expect(screen.queryByRole('button', { name: '选择项目目录' })).not.toBeInTheDocument();
-    await user.type(screen.getByRole('textbox', { name: 'Room 名称' }), '深夜茶话会');
-    await user.type(screen.getByRole('textbox', { name: 'Room 共同设定' }), '场景在安静的茶室。');
-    await user.click(screen.getByRole('button', { name: '创建 Room' }));
+    await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
+    await user.click(screen.getByRole('radio', { name: /一起聊聊/ }));
+    expect(screen.queryByRole('button', { name: '选择工作目录' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: '允许伙伴怎样工作' })).not.toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '深夜茶话会');
+    await user.click(screen.getByText('补充背景与外观'));
+    await user.type(screen.getByRole('textbox', { name: '共同背景' }), '场景在安静的茶室。');
+    await user.click(screen.getByRole('button', { name: '开始群聊' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.rooms.create')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.rooms.create')?.request.body).toMatchObject({
@@ -454,13 +460,13 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: '新建 Room' }));
-    await user.click(screen.getByRole('radio', { name: /角色群聊/ }));
-    expect(screen.getByRole('radio', { name: /每次确认/ })).toBeChecked();
-    await user.click(screen.getByRole('button', { name: '取消' }));
+    await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
+    await user.click(screen.getByRole('radio', { name: /一起聊聊/ }));
+    expect(screen.queryByRole('group', { name: '允许伙伴怎样工作' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '先不开始' }));
 
-    await user.click(screen.getByRole('button', { name: '新建 Room' }));
-    expect(screen.getByRole('radio', { name: /任务协作/ })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: '开始新的协作' }));
+    expect(screen.getByRole('radio', { name: /一起完成任务/ })).toBeChecked();
     expect(screen.getByRole('radio', { name: /工作区托管/ })).toBeChecked();
   });
 
@@ -484,13 +490,13 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
     await user.type(composer, '说说你的看法');
-    expect(screen.getByRole('button', { name: '发送 Room 消息' })).toBeEnabled();
-    await user.click(screen.getByRole('button', { name: '点名 Room 角色' }));
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: '点名一位伙伴' }));
     await user.click(screen.getByRole('option', { name: /智鼬·初识/ }));
     expect(composer).toHaveValue('说说你的看法 @智鼬·初识 ');
-    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
@@ -516,7 +522,7 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
     await user.type(composer, '@初');
     expect(await screen.findByRole('option', { name: /智鼬·初识/ })).toBeInTheDocument();
     await user.keyboard('{Enter}');
@@ -546,9 +552,9 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
     await user.type(composer, '@智鼬 @智鼬·初识 分别检查实现和证据');
-    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     await waitFor(() => expect(
       transport.requests.some((call) => call.request.pathId === 'agent.room.message'),
@@ -587,14 +593,16 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: 'Room 设置' }));
-    await user.clear(screen.getByRole('textbox', { name: 'Room 设置名称' }));
-    await user.type(screen.getByRole('textbox', { name: 'Room 设置名称' }), '新名称');
-    await user.clear(screen.getByRole('textbox', { name: 'Room 设置简介' }));
-    await user.type(screen.getByRole('textbox', { name: 'Room 设置简介' }), '新简介');
-    await user.clear(screen.getByRole('textbox', { name: 'Room 设置共同设定' }));
-    await user.type(screen.getByRole('textbox', { name: 'Room 设置共同设定' }), '新设定');
-    await user.click(screen.getByRole('button', { name: '保存设置' }));
+    await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
+    expect(screen.getByRole('button', { name: '保存更改' })).toBeDisabled();
+    await user.clear(screen.getByRole('textbox', { name: '协作空间名称' }));
+    await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '新名称');
+    await user.clear(screen.getByRole('textbox', { name: '协作空间简介' }));
+    await user.type(screen.getByRole('textbox', { name: '协作空间简介' }), '新简介');
+    expect(screen.queryByRole('combobox', { name: '工作权限' })).not.toBeInTheDocument();
+    await user.clear(screen.getByRole('textbox', { name: '共同背景' }));
+    await user.type(screen.getByRole('textbox', { name: '共同背景' }), '新设定');
+    await user.click(screen.getByRole('button', { name: '保存更改' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.archive')).toBe(true));
     const request = transport.requests.find((call) => call.request.pathId === 'agent.room.archive')?.request;
@@ -626,10 +634,10 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: 'Room 设置' }));
-    await user.click(screen.getByRole('combobox', { name: 'Room 执行权限' }));
+    await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
+    await user.click(screen.getByRole('combobox', { name: '工作权限' }));
     await user.click(await screen.findByRole('option', { name: '完全信任' }));
-    await user.click(screen.getByRole('button', { name: '保存设置' }));
+    await user.click(screen.getByRole('button', { name: '保存更改' }));
 
     await waitFor(() => expect(
       transport.requests.filter((call) => call.request.pathId === 'agent.room.archive'),
@@ -677,10 +685,10 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: 'Room 设置' }));
-    const invite = screen.getByRole('button', { name: `邀请 ${futurePersona.displayName} 加入 Room` });
+    await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
+    const invite = screen.getByRole('button', { name: `邀请 ${futurePersona.displayName}` });
     expect(invite).toBeEnabled();
-    expect(screen.getByText(/不会重放此前完整聊天/)).toBeInTheDocument();
+    expect(screen.getByText(/不会补读此前的完整对话/)).toBeInTheDocument();
     await user.click(invite);
 
     await waitFor(() => expect(addCompleted).toBe(true));
@@ -688,7 +696,7 @@ describe('Rooms experience', () => {
       params: { roomId: initial.id },
       body: { roleId: 'companion-future-v1', roleVersion: '1', collaborationRole: 'implementer' },
     });
-    const remove = await screen.findByRole('button', { name: '将 智鼬·未来 移出 Room' });
+    const remove = await screen.findByRole('button', { name: '移出 智鼬·未来' });
     expect(remove).toBeEnabled();
     await user.click(remove);
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.remove')).toBe(true));
@@ -715,8 +723,8 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: 'Room 设置' }));
-    await user.click(screen.getByRole('combobox', { name: `${target.displayName} 的默认岗位` }));
+    await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
+    await user.click(screen.getByRole('combobox', { name: `${target.displayName} 负责什么` }));
     await user.click(screen.getByRole('option', { name: '独立验收' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.update')).toBe(true));
@@ -724,7 +732,7 @@ describe('Rooms experience', () => {
       params: { roomId: room.id },
       body: { participantId: target.id, collaborationRole: 'reviewer' },
     });
-    expect(screen.getByRole('combobox', { name: `${target.displayName} 的默认岗位` })).toHaveTextContent('独立验收');
+    expect(screen.getByRole('combobox', { name: `${target.displayName} 负责什么` })).toHaveTextContent('独立验收');
   });
 
   it('permanently deletes only an archived Room after exact-title confirmation', async () => {
@@ -740,9 +748,9 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: 'Room 设置' }));
-    await user.click(screen.getByRole('button', { name: '删除 Room' }));
-    const confirm = screen.getByRole('textbox', { name: '输入 Room 名称确认永久删除' });
+    await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
+    await user.click(screen.getByRole('button', { name: '删除协作空间' }));
+    const confirm = screen.getByRole('textbox', { name: '输入协作空间名称确认永久删除' });
     const submit = screen.getByRole('button', { name: '永久删除' });
     expect(submit).toBeDisabled();
     await user.type(confirm, room.title);
@@ -754,7 +762,7 @@ describe('Rooms experience', () => {
       params: { roomId: room.id },
       body: { confirmTitle: room.title },
     });
-    expect(screen.queryByRole('button', { name: `打开 Room：${room.title}` })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: `打开协作空间：${room.title}` })).not.toBeInTheDocument();
   });
 
   it('creates an independent topic and adds a workspace-scoped shared artifact', async () => {
@@ -799,7 +807,7 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: '管理 Room 话题' }));
+    await user.click(await screen.findByRole('button', { name: '管理话题' }));
     await user.type(screen.getByRole('textbox', { name: '话题名称' }), '发布风险');
     await user.type(screen.getByRole('textbox', { name: '话题摘要' }), '核对上线边界');
     await user.click(screen.getByRole('button', { name: '创建话题' }));
@@ -808,9 +816,9 @@ describe('Rooms experience', () => {
       title: '发布风险',
       summary: '核对上线边界',
     });
-    const topicDialog = within(screen.getByRole('dialog', { name: '话题管理' }));
+    const topicDialog = within(screen.getByRole('dialog', { name: '整理话题' }));
     await user.click(topicDialog.getAllByRole('button', { name: '关闭' }).find((button) => !button.hasAttribute('aria-label'))!);
-    await user.click(screen.getByRole('button', { name: '添加共享文件' }));
+    await user.click(screen.getByRole('button', { name: '分享工作文件' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.artifact.add')).toBe(true));
     expect(transport.filePickCalls.at(-1)).toEqual({
@@ -843,8 +851,8 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: '添加共享文件' }));
-    await user.click(screen.getByRole('button', { name: '打开 Room：Room B' }));
+    await user.click(await screen.findByRole('button', { name: '分享工作文件' }));
+    await user.click(screen.getByRole('button', { name: '打开协作空间：Room B' }));
     pendingPick.resolve([{
       id: 'late-report',
       name: 'late-report.md',
@@ -858,39 +866,40 @@ describe('Rooms experience', () => {
 
     pendingAdd.reject(new Error('late Room A artifact failure'));
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: '打开 Room：Room A' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('共享文件暂时无法加入 Room');
+    await user.click(screen.getByRole('button', { name: '打开协作空间：Room A' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法分享这个文件');
     expect(transport.requests.find(({ request }) => request.pathId === 'agent.room.artifact.add')?.request.body).toMatchObject({
       path: '/Volumes/work/learnA/late-report.md',
     });
   });
 
   it('archives a Room only after the real API confirms the state change', async () => {
-    const archived = { ...roomSummary('room-a', '待归档 Room'), status: 'archived' };
+    const archived = { ...roomSummary('room-a', '待收起协作空间'), status: 'archived' };
     const transport = new MockControlTransport({ routes: {
-      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '待归档 Room')] },
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '待收起协作空间')] },
       'agent.room.snapshot': roomSnapshot('room-a', []),
       'agent.room.archive': { ok: true, room: archived },
     } });
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: '归档 Room' }));
-    await user.click(screen.getByRole('button', { name: '归档' }));
+    await user.click((await screen.findAllByRole('button', { name: '更多协作空间操作' }))[0]!);
+    await user.click(await screen.findByRole('menuitem', { name: '收起协作空间' }));
+    await user.click(screen.getByRole('button', { name: '收起协作空间' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.archive')).toBe(true));
     const request = transport.requests.find((call) => call.request.pathId === 'agent.room.archive')?.request;
     expect(request).toMatchObject({ params: { roomId: 'room-a' }, body: { archived: true } });
-    expect(await screen.findByText('选择一个 Room')).toBeInTheDocument();
-    expect(screen.getByText('选择一个 Room').closest('.ui-empty-state')?.querySelector('img')).toBeNull();
-    expect(screen.getByText('从 Rooms 列表选择，或新建协作 Room。')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '打开 Room：待归档 Room' })).not.toBeInTheDocument();
+    expect(await screen.findByText('选择一个协作空间')).toBeInTheDocument();
+    expect(screen.getByText('选择一个协作空间').closest('.ui-empty-state')?.querySelector('img')).toBeNull();
+    expect(screen.getByText('从左侧选择，或新建一个协作空间。')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '打开协作空间：待收起协作空间' })).not.toBeInTheDocument();
   });
 
   it('restores an archived Room through the same real state transition', async () => {
-    const archived = { ...roomSummary('room-a', '已归档 Room'), status: 'archived' };
+    const archived = { ...roomSummary('room-a', '已收起协作空间'), status: 'archived' };
     const restored = { ...archived, status: 'active' };
-    const snapshot = roomSnapshot('room-a', [], '已归档 Room');
+    const snapshot = roomSnapshot('room-a', [], '已收起协作空间');
     snapshot.room.status = 'archived';
     const transport = new MockControlTransport({ routes: {
       'agent.rooms.list': (request: ControlRequest) => ({
@@ -904,17 +913,19 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: '显示已归档 Room' }));
-    await user.click(await screen.findByRole('button', { name: '恢复 Room' }));
-    await user.click(screen.getByRole('button', { name: '恢复' }));
+    await user.click(await screen.findByRole('button', { name: '显示已收起的协作空间' }));
+    await user.click((await screen.findAllByRole('button', { name: '更多协作空间操作' }))[0]!);
+    await user.click(await screen.findByRole('menuitem', { name: '恢复协作空间' }));
+    await user.click(screen.getByRole('button', { name: '恢复协作空间' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.archive')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.archive')?.request).toMatchObject({
       params: { roomId: 'room-a' },
       body: { archived: false },
     });
-    expect(screen.getByRole('textbox', { name: 'Room 消息' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: '归档 Room' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
+    await user.click(screen.getAllByRole('button', { name: '更多协作空间操作' })[0]!);
+    expect(await screen.findByRole('menuitem', { name: '收起协作空间' })).toBeInTheDocument();
   });
 
   it('offers real participant addressing for manually routed Rooms', async () => {
@@ -930,13 +941,13 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    const composer = await screen.findByRole('textbox', { name: 'Room 消息' });
+    const composer = await screen.findByRole('textbox', { name: '协作消息' });
     await user.type(composer, '核对角色创建契约');
-    expect(screen.getByRole('button', { name: '发送 Room 消息' })).toBeEnabled();
-    await user.click(screen.getByRole('button', { name: '点名 Room 角色' }));
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
+    await user.click(screen.getByRole('button', { name: '点名一位伙伴' }));
     await user.click(screen.getByRole('option', { name: /智鼬·初识/ }));
     expect(composer).toHaveValue('核对角色创建契约 @智鼬·初识 ');
-    await user.click(screen.getByRole('button', { name: '发送 Room 消息' }));
+    await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
@@ -952,9 +963,9 @@ describe('Rooms experience', () => {
     } });
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    expect(await screen.findByText('选择一个 Room')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Room 消息' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '发送 Room 消息' })).toBeDisabled();
+    expect(await screen.findByText('选择一个协作空间')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '协作消息' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled();
   });
 
   it('shows a useful empty conversation state after a real empty snapshot', async () => {
@@ -965,10 +976,10 @@ describe('Rooms experience', () => {
     } });
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    expect(await screen.findByText('还没有公开 Post')).toBeInTheDocument();
-    expect(screen.getByText('先对话澄清目标、交付物、验收和禁区；确认后再开始受管执行。')).toBeInTheDocument();
-    expect(screen.getByText('还没有公开 Post').closest('.ui-empty-state')?.querySelector('img')).toBeNull();
-    expect(screen.getByRole('textbox', { name: 'Room 消息' })).toBeEnabled();
+    expect(await screen.findByText('还没有公开消息')).toBeInTheDocument();
+    expect(screen.getByText('先对话澄清目标、交付物、验收和禁区；确认后再开始任务。')).toBeInTheDocument();
+    expect(screen.getByText('还没有公开消息').closest('.ui-empty-state')?.querySelector('img')).toBeNull();
+    expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
   });
 
   it('opens the shared status experience for the selected Room', async () => {
@@ -980,11 +991,11 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await screen.findByText('还没有公开 Post');
-    await user.click(screen.getByRole('button', { name: '展开 Room 证据' }));
-    expect(screen.getByRole('complementary', { name: 'Room 状态' })).toHaveAttribute('data-open', 'true');
-    expect(screen.getByText('协作成员上下文')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '收起 Room 状态' })).toBeInTheDocument();
+    await screen.findByText('还没有公开消息');
+    await user.click(screen.getByRole('button', { name: '看看协作进展' }));
+    expect(screen.getByRole('complementary', { name: '协作进展' })).toHaveAttribute('data-open', 'true');
+    expect(screen.getByText('伙伴状态')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '收起进展面板' })).toBeInTheDocument();
   });
 
   it('keeps the real role catalog usable when the Room list request fails', async () => {
@@ -995,11 +1006,11 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Rooms 暂时无法读取，请稍后重试。');
-    const create = screen.getByRole('button', { name: '新建 Room' });
+    expect(await screen.findByRole('alert')).toHaveTextContent('协作空间暂时无法读取，请稍后重试。');
+    const create = screen.getByRole('button', { name: '开始新的协作' });
     expect(create).toBeEnabled();
     await user.click(create);
-    expect(screen.getByRole('dialog', { name: '新建 Room' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '开始一起做事' })).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /智鼬·此刻/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /智鼬·初识/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /智鼬·未来/ })).toBeChecked();
@@ -1010,21 +1021,21 @@ describe('Rooms experience', () => {
       'agent.rooms.list': { ok: true, items: [] },
       'agent.roles.list': { ok: true, items: previewPersonas },
       'agent.sessions.list': { ok: true, items: [{ id: 'existing', mode: 'coordinator', workspaceRoots: ['/Volumes/work/learnA'] }] },
-      'agent.rooms.create': () => { throw new Error('Room 名称已存在'); },
+      'agent.rooms.create': () => { throw new Error('协作空间名称已存在'); },
     } });
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    const create = await screen.findByRole('button', { name: '新建 Room' });
+    const create = await screen.findByRole('button', { name: '开始新的协作' });
     await waitFor(() => expect(create).toBeEnabled());
     await user.click(create);
-    await user.type(screen.getByRole('textbox', { name: 'Room 名称' }), '发布前检查');
-    await user.click(screen.getByRole('button', { name: '创建 Room' }));
+    await user.type(screen.getByRole('textbox', { name: '协作空间名称' }), '发布前检查');
+    await user.click(screen.getByRole('button', { name: '开始协作' }));
 
-    const dialog = screen.getByRole('dialog', { name: '新建 Room' });
-    expect(await screen.findByRole('alert')).toHaveTextContent('Room 名称已存在');
+    const dialog = screen.getByRole('dialog', { name: '开始一起做事' });
+    expect(await screen.findByRole('alert')).toHaveTextContent('协作空间名称已存在');
     expect(dialog).toContainElement(screen.getByRole('alert'));
-    expect(screen.getByRole('textbox', { name: 'Room 名称' })).toHaveValue('发布前检查');
+    expect(screen.getByRole('textbox', { name: '协作空间名称' })).toHaveValue('发布前检查');
   });
 
   it('reloads a real Room snapshot after snapshot_required and resumes at the new cursor', async () => {
@@ -1038,7 +1049,7 @@ describe('Rooms experience', () => {
       roomEvent('room-a', 3, 'user_message', { text: '恢复后的消息' }),
     ]);
     const transport = new MockControlTransport({ routes: {
-      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '恢复 Room')] },
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '恢复协作空间')] },
       'agent.room.snapshot': () => (++snapshotCalls === 1 ? initial : recovered),
       'agent.room.message': { ok: true },
       'agent.rooms.create': { ok: true },
@@ -1131,11 +1142,6 @@ describe('Rooms experience', () => {
 
   it('shows the complete Room working boundary without per-role permission switches', async () => {
     const room = roomSummary('room-a', '权限 Room');
-    const session = {
-      id: 'room-a:s1', mode: 'coordinator', status: 'idle',
-      toolProfileVersion: 'control-center-v1', toolAllowlistMode: 'profile', allowedTools: [],
-      workspaceRoots: ['/Volumes/work/learnA'],
-    };
     const tools = [
       { id: 'ime_overview', displayName: '控制中心概览', description: '查看整体状态', sessionModes: ['assistant', 'coordinator'], operations: ['status'], profileOperations: { 'control-center-v1': ['status'], 'subagent-readonly-v1': ['status'] }, enabled: true },
       { id: 'ime_memory', displayName: '记忆与工具书', description: '检索记忆', sessionModes: ['assistant', 'coordinator'], operations: ['catalog'], profileOperations: { 'control-center-v1': ['catalog'], 'subagent-readonly-v1': ['catalog'] }, enabled: true },
@@ -1145,25 +1151,29 @@ describe('Rooms experience', () => {
       'agent.rooms.list': { ok: true, items: [room] },
       'agent.room.snapshot': roomSnapshot('room-a', []),
       'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.sessions.list': { ok: true, items: [session] },
       'agent.tools.list': { ok: true, items: tools },
     } });
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('radio', { name: 'Sessions' }));
-    expect(screen.getByRole('region', { name: 'Room 成员运行' })).toHaveTextContent('成员运行边界');
-    await user.click((await screen.findAllByRole('button', { name: '查看运行边界' }))[0]!);
-    expect(await screen.findByRole('dialog', { name: /智鼬 · 运行边界/ })).toBeInTheDocument();
-    expect(transport.requests.filter((call) => call.request.pathId === 'agent.sessions.list').at(-1)?.request.query).toEqual({ includeArchived: true, includeInternal: true, limit: 500 });
+    await user.click(await screen.findByRole('radio', { name: '伙伴' }));
+    expect(screen.getByRole('region', { name: '伙伴与权限' })).toHaveTextContent('伙伴与工作权限');
+    const sessionListRequestsBeforeBoundary = transport.requests.filter(
+      (call) => call.request.pathId === 'agent.sessions.list',
+    ).length;
+    await user.click((await screen.findAllByRole('button', { name: '查看能做什么' }))[0]!);
+    expect(await screen.findByRole('dialog', { name: /智鼬能做什么/ })).toBeInTheDocument();
+    expect(transport.requests.filter(
+      (call) => call.request.pathId === 'agent.sessions.list',
+    )).toHaveLength(sessionListRequestsBeforeBoundary);
     expect(transport.requests.find((call) => call.request.pathId === 'agent.tools.list')?.request.query).toEqual({ sessionId: 'room-a:s1' });
-    expect(screen.getByText('完整工作权限')).toBeInTheDocument();
+    expect(screen.getByText('工作区托管')).toBeInTheDocument();
     expect(screen.getAllByText('/Volumes/work/learnA').length).toBeGreaterThan(0);
     expect(screen.queryByRole('radio', { name: '只读' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '保存权限' })).not.toBeInTheDocument();
     expect(screen.queryByText(/私有 Session：/)).not.toBeInTheDocument();
-    await user.click(screen.getByText(/查看当前工具目录/));
-    expect(screen.getByText('工作区读取')).toBeInTheDocument();
+    await user.click(screen.getByText(/看看可以使用哪些工具/));
+    expect(screen.getByText('读取项目文件')).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.mode.update')).toBe(false);
   });
 
@@ -1268,7 +1278,7 @@ describe('Rooms experience', () => {
     expect(screen.getByText('ime_memory 正在执行')).toBeInTheDocument();
     expect(screen.getByText('正在查找用户确认的历史输入')).toBeInTheDocument();
     expect(screen.getByText(/1s/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '停止' }));
+    await user.click(screen.getByRole('button', { name: '停止这位伙伴' }));
     expect(onAbortSession).toHaveBeenCalledWith('room-a:s1');
   });
 
@@ -1372,7 +1382,7 @@ describe('Rooms experience', () => {
     />);
 
     expect(container).toBeEmptyDOMElement();
-    expect(screen.queryByText('Room 路由')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在选择伙伴')).not.toBeInTheDocument();
   });
 
   it('stops the whole server root through one Room cancellation command', async () => {
@@ -1404,7 +1414,7 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: '停止全部' }));
+    await user.click(await screen.findByRole('button', { name: '停止本轮任务' }));
 
     await waitFor(() => {
       const request = transport.requests.find(
@@ -1415,7 +1425,7 @@ describe('Rooms experience', () => {
       expect(String((request?.body as Record<string, unknown>)?.clientRequestId))
         .toMatch(/^room-abort-/);
     });
-    expect(screen.queryByRole('button', { name: '停止全部' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '停止本轮任务' })).not.toBeInTheDocument();
   });
 
   it('keeps a root visibly active when any cancellation surface is unverified', async () => {
@@ -1450,12 +1460,12 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    await user.click(await screen.findByRole('button', { name: '停止全部' }));
+    await user.click(await screen.findByRole('button', { name: '停止本轮任务' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       '仍在确认：模型生成、命令行进程（2 项）',
     );
-    expect(screen.getByRole('button', { name: '停止全部' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '停止本轮任务' })).toBeEnabled();
   });
 
   it('shows only explicit Posts and hides internal Room execution events', () => {
@@ -1543,13 +1553,13 @@ describe('Rooms experience', () => {
 
     render(<TooltipProvider><RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} /></TooltipProvider>);
 
-    expect(screen.getByText('责任账本')).toBeInTheDocument();
+    expect(screen.getByText('任务分工')).toBeInTheDocument();
     expect(screen.getByText('核对多端网关回放边界')).toBeInTheDocument();
-    expect(screen.getByText(/待验收 · A 最终负责：智鼬 · R 当前执行：智鼬·初识 · 第 1 次修订/)).toBeInTheDocument();
-    expect(screen.getByText('责任边界')).toBeInTheDocument();
-    expect(screen.getByText('A · 最终验收')).toBeInTheDocument();
-    expect(screen.getByText('责任深度 3 · 根任务分派 6 · 最多返修 2 次')).toBeInTheDocument();
-    expect(screen.getByText('调研与核对 · 已加入')).toBeInTheDocument();
+    expect(screen.getByText(/待验收 · 智鼬·初识 正在处理 · 智鼬 负责最终验收 · 第 1 次修订/)).toBeInTheDocument();
+    expect(screen.getByText('协作规则')).toBeInTheDocument();
+    expect(screen.getByText('最终验收人保持明确')).toBeInTheDocument();
+    expect(screen.getByText('不会无限循环')).toBeInTheDocument();
+    expect(screen.getByText('查资料与核对 · 已加入')).toBeInTheDocument();
     expect(screen.queryByText(/只读调研/)).not.toBeInTheDocument();
   });
 });

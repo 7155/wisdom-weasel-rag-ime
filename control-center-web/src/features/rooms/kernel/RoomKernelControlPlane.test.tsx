@@ -10,17 +10,17 @@ describe('RoomKernelControlPlane', () => {
 
   it('renders generated projections and keeps Session transcript private', () => {
     renderPlane(projection());
-    expect(screen.getByRole('region', { name: 'root-a 公开 Posts' })).toHaveTextContent('经过明确提交的研究发现');
-    expect(screen.getByRole('region', { name: 'root-a 私有 Sessions' })).toHaveTextContent('session-private-a');
+    expect(screen.getByRole('region', { name: 'root-a 公开交付' })).toHaveTextContent('经过明确提交的研究发现');
+    expect(screen.getByRole('region', { name: 'root-a 伙伴运行状态' })).toHaveTextContent('session-private-a');
     expect(screen.queryByText('Session 私有正文')).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'root-a 运行回执' })).toHaveTextContent('只读，控制命令未授权');
+    expect(screen.getByRole('region', { name: 'root-a 运行回执' })).toHaveTextContent('当前连接没有停止权限');
   });
 
   it('does not expose a production Stop write without a command transport', () => {
     renderPlane(projection());
-    const buttons = screen.getAllByRole('button', { name: '停止' });
+    const buttons = screen.getAllByRole('button', { name: '停止此任务' });
     expect(buttons[0]).toBeDisabled();
-    expect(buttons[0]).toHaveAttribute('title', '后端 command route 尚未接入');
+    expect(buttons[0]).toHaveAttribute('title', '当前连接没有停止任务的权限');
   });
 
   it('sends canonical room root generation command through fixture transport and displays receipt', async () => {
@@ -31,13 +31,13 @@ describe('RoomKernelControlPlane', () => {
     const transport = createFixtureRoomKernelCommandTransport(handler);
     renderPlane(projection(), transport);
 
-    fireEvent.click(screen.getAllByRole('button', { name: '停止' })[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: '停止此任务' })[0]!);
     await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
     expect(handler.mock.calls[0]?.[0]).toMatchObject({
       schemaVersion: 'wisdom-weasel.room-kernel-command.v1', roomId: 'room-a', rootId: 'root-a',
       targetKind: 'root', targetId: 'root-a', generation: 3, commandKind: 'cancel_root',
     });
-    expect(await screen.findByText(/已接受 · root_cancelled · cancel-root-a/)).toBeInTheDocument();
+    expect(await screen.findByText('停止请求已接受')).toBeInTheDocument();
   });
 
   it('targets the keyboard-selected concurrent Root only', async () => {
@@ -46,7 +46,7 @@ describe('RoomKernelControlPlane', () => {
       generation: command.generation + 1, receiptKind: 'root_cancelled',
     }));
     renderPlane(projection(), createFixtureRoomKernelCommandTransport(handler));
-    const buttons = screen.getAllByRole('button', { name: '停止' });
+    const buttons = screen.getAllByRole('button', { name: '停止此任务' });
     buttons[1]!.focus();
     fireEvent.keyDown(buttons[1]!, { key: 'Enter' });
     fireEvent.click(buttons[1]!);
@@ -60,6 +60,7 @@ describe('RoomKernelControlPlane', () => {
     state.terminalReceiptByRootId['root-a'] = receipt({
       receiptId: 'terminal-a', commandId: null, receiptKind: 'terminal', rootId: 'root-a', generation: 3,
       details: {
+        qualityGateVerdict: 'ready_to_deliver',
         deliveryGateObservation: {
           gateObservationRef: 'gate-a', gateStatus: 'warn_blocked', mode: 'observe_warn',
           enforcementApplied: false, reasons: ['unresolved_unknown'],
@@ -67,11 +68,12 @@ describe('RoomKernelControlPlane', () => {
       },
     });
     renderPlane(state);
-    expect(screen.getByText('终态已确认')).toBeInTheDocument();
-    expect(screen.getByText('已结束，交付观察有警告')).toBeInTheDocument();
-    expect(screen.getByText('terminal/applied · 交付观察有阻塞或未知项')).toBeInTheDocument();
-    expect(screen.queryByText('已完成，交付观察通过')).not.toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: '停止' })).toHaveLength(1);
+    expect(screen.getByText('任务已结束')).toBeInTheDocument();
+    expect(screen.getByText('已结束，仍有检查提醒')).toBeInTheDocument();
+    expect(screen.getByText('全部验收项已有有效证据')).toBeInTheDocument();
+    expect(screen.getByText('发现阻塞或未知项')).toBeInTheDocument();
+    expect(screen.queryByText('已完成并通过检查')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: '停止此任务' })).toHaveLength(1);
   });
 
   it('exposes Room panic only for an admin gate and requires explicit confirmation', async () => {
@@ -81,7 +83,7 @@ describe('RoomKernelControlPlane', () => {
     }));
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
     renderPlane(projection(), createFixtureRoomKernelCommandTransport(handler), true);
-    const panic = screen.getByRole('button', { name: '紧急停止' });
+    const panic = screen.getByRole('button', { name: '停止全部任务' });
     fireEvent.click(panic);
     expect(handler).not.toHaveBeenCalled();
     fireEvent.click(panic);
@@ -89,7 +91,7 @@ describe('RoomKernelControlPlane', () => {
     expect(handler.mock.calls[0]?.[0]).toMatchObject({
       roomId: 'room-a', rootId: null, commandKind: 'panic', targetKind: null, generation: 0,
     });
-    expect(await screen.findByText(/已接受 · panic · panic-room-a/)).toBeInTheDocument();
+    expect(await screen.findByText('停止请求已接受')).toBeInTheDocument();
     confirm.mockRestore();
   });
 });

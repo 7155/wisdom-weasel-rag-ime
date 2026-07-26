@@ -34,7 +34,7 @@ type RelationView = 'tags' | 'groups' | 'books';
 const relationViews = [
   { value: 'tags', label: '标签关系' },
   { value: 'groups', label: '分组 / 标签' },
-  { value: 'books', label: '分组 / 主题书' },
+  { value: 'books', label: '分组 / 长期主题' },
 ] as const;
 
 const EMPTY_GROUPS: readonly MemoryGroupNode[] = [];
@@ -101,7 +101,7 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
 
   return (
     <ManagementSection
-      description="查看标签之间，以及分组与标签或主题书之间已经记录的关系。"
+      description="查看标签之间，以及分组与标签或长期主题之间已经记录的关系。"
       title="记忆关系"
     >
       <div className="memory-relations">
@@ -204,7 +204,7 @@ export function MemoryRelations({ enabled }: { enabled: boolean }) {
             />
           ) : (
             <EmptyState
-              description={view === 'books' ? '当前筛选没有匹配分组或主题书。' : '当前筛选没有匹配分组或标签。'}
+              description={view === 'books' ? '当前筛选没有匹配分组或长期主题。' : '当前筛选没有匹配分组或标签。'}
               icon={Search}
               title="没有匹配关系"
             />
@@ -570,7 +570,7 @@ function GroupBookScanList({
   onSelect: (key: string) => void;
 }) {
   return (
-    <aside className="memory-node-list memory-node-list--bipartite" aria-label="分组与主题书列表">
+    <aside className="memory-node-list memory-node-list--bipartite" aria-label="分组与长期主题列表">
       <header><strong>分组</strong><span>{groups.length}</span></header>
       <div>
         {groups.map((group) => {
@@ -578,17 +578,17 @@ function GroupBookScanList({
           return (
             <button aria-label={`分组 ${group.label}，${group.eventCount} 个成员，来源 ${formatSource(group.source)}`} aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
               <span><strong>{group.label}</strong><small>{group.note || '无说明'}</small></span>
-              <span><b>{group.eventCount}</b><small>{group.bookIds.length} 主题书 · {formatSource(group.source)}</small></span>
+              <span><b>{group.eventCount}</b><small>{group.bookIds.length} 个长期主题 · {formatSource(group.source)}</small></span>
             </button>
           );
         })}
       </div>
-      <header><strong>主题书</strong><span>{books.length}</span></header>
+      <header><strong>长期主题</strong><span>{books.length}</span></header>
       <div className="memory-node-list__scroll">
         {books.map((book) => {
           const key = bookKey(book.id);
           return (
-            <button aria-label={`主题书 ${book.label}，${book.memberCount} 条记忆，${book.edgeCount} 个分组，来源 ${formatSource(book.source)}`} aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
+            <button aria-label={`长期主题 ${book.label}，${book.memberCount} 条记忆，${book.edgeCount} 个分组，来源 ${formatSource(book.source)}`} aria-pressed={activeKey === key} data-selected={activeKey === key || undefined} key={key} onClick={() => onSelect(key)} type="button">
               <span><strong>{book.label}</strong><small>{book.description || '无说明'}</small></span>
               <span><b>{book.memberCount}</b><small>{book.edgeCount} 分组 · {formatSource(book.source)}</small></span>
             </button>
@@ -614,8 +614,8 @@ function GraphLegend({ view }: { view: RelationView }) {
     <div className="memory-graph__legend" role="group" aria-label="关系图图例">
       {view === 'tags' ? <span><i data-shape="tag" />标签 · 大小表示记忆量</span> : <span><i data-shape="group" />分组</span>}
       {view === 'groups' ? <span><i data-shape="tag" />标签</span> : null}
-      {view === 'books' ? <span><i data-shape="book" />主题书</span> : null}
-      <span><i data-shape="edge" />显式关系 · 同一 Atom 共现</span>
+      {view === 'books' ? <span><i data-shape="book" />长期主题</span> : null}
+      <span><i data-shape="edge" />明确关系 · 同一事实共现</span>
     </div>
   );
 }
@@ -670,7 +670,7 @@ function MemoryEntityInspector({
           {kind === 'group'
             ? <Boxes aria-hidden="true" size={13} />
             : kind === 'book' ? <BookOpen aria-hidden="true" size={13} /> : <Tags aria-hidden="true" size={13} />}
-          {' '}已选{kind === 'group' ? '分组' : kind === 'book' ? '主题书' : '标签'}
+          {' '}已选{kind === 'group' ? '分组' : kind === 'book' ? '长期主题' : '标签'}
         </span>
         <h3>{node.label}</h3>
         <p>{stringValue(entity.description, 'note' in node ? node.note : node.description) || '暂无说明。'}</p>
@@ -695,7 +695,7 @@ function MemoryEntityInspector({
       <EntityRows
         emptyText={kind === 'group'
           ? '这个分组没有独立关系；成员关系会在下方显示。'
-          : kind === 'book' ? '这个主题书尚未加入分组。' : '这个标签暂无已记录关系。'}
+          : kind === 'book' ? '这个长期主题尚未加入分组。' : '这个标签暂无已记录关系。'}
         hasMore={connectionPage.hasMore === true && Boolean(stringValue(connectionPage.nextCursor))}
         isLoadingMore={isFetchingNextConnections}
         items={connections}
@@ -870,7 +870,7 @@ function formatEntityKind(kind: string): string {
     tag: '标签',
     group: '分组',
     atom: '记忆原子',
-    book: '主题书',
+    book: '长期主题',
     phrase: '短语',
     memory: '记忆',
   }[kind] ?? '记忆';

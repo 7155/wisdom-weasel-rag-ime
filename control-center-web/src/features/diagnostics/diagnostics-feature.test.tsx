@@ -60,13 +60,13 @@ describe('DiagnosticsFeature runtime actions', () => {
     renderFeature(transport);
 
     const workflow = await workflowFor('打开辅助功能设置');
-    await user.click(within(workflow).getByRole('button', { name: '预览操作' }));
+    await user.click(within(workflow).getByRole('button', { name: '查看影响' }));
     expect(await within(workflow).findByText('不会自动授予或撤销任何权限。')).toBeInTheDocument();
-    await user.click(within(workflow).getByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow).getByRole('button', { name: '确认这些更改' }));
     await user.click(within(workflow).getByRole('checkbox'));
-    await user.click(within(workflow).getByRole('button', { name: '确认并应用' }));
+    await user.click(within(workflow).getByRole('button', { name: '确认执行' }));
 
-    expect(await within(workflow).findByText('本机操作已记录')).toBeInTheDocument();
+    expect(await within(workflow).findByText('这次更改已安全记录')).toBeInTheDocument();
     expect(externalAction).toHaveBeenCalledWith({
       action: 'open_accessibility_settings',
       receiptId: 'runtime-job-1',
@@ -93,12 +93,12 @@ describe('DiagnosticsFeature runtime actions', () => {
     renderFeature(transport);
 
     const workflow = await workflowFor('暂停智能候选');
-    await user.click(within(workflow).getByRole('button', { name: '预览操作' }));
-    await user.click(await within(workflow).findByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow).getByRole('button', { name: '查看影响' }));
+    await user.click(await within(workflow).findByRole('button', { name: '确认这些更改' }));
     await user.click(within(workflow).getByRole('checkbox'));
-    await user.click(within(workflow).getByRole('button', { name: '确认并应用' }));
+    await user.click(within(workflow).getByRole('button', { name: '确认执行' }));
 
-    expect(await within(workflow).findByText('本机操作已记录')).toBeInTheDocument();
+    expect(await within(workflow).findByText('这次更改已安全记录')).toBeInTheDocument();
     expect(externalAction).not.toHaveBeenCalled();
     expect(transport.requests.some((item) => item.request.pathId === 'diagnostics.action.job')).toBe(true);
   });
@@ -106,16 +106,16 @@ describe('DiagnosticsFeature runtime actions', () => {
   it('exposes every migrated repair and fails closed for external actions without the native bridge', async () => {
     renderFeature(runtimeTransport({ terminalStatus: 'succeeded', native: false }));
 
-    expect(await screen.findByText('需要桌面控制中心')).toBeInTheDocument();
+    expect(await screen.findByText('请在已安装的应用中操作')).toBeInTheDocument();
     const actionList = document.querySelector('.diagnostics-action-list');
     expect(actionList).not.toBeNull();
     expect(actionList?.querySelectorAll('.mgmt-workflow')).toHaveLength(6);
 
     for (const title of [
-      '重新注册输入法',
+      '重新连接输入法',
       '重启后台服务',
       '重启本机模型',
-      '重新部署 Rime 配置',
+      '重新部署输入法配置',
       '打开辅助功能设置',
       '暂停智能候选',
     ]) {
@@ -124,7 +124,7 @@ describe('DiagnosticsFeature runtime actions', () => {
     const accessibility = await workflowFor('打开辅助功能设置');
     expect(within(accessibility).queryByRole('button', { name: '当前不可用' })).not.toBeInTheDocument();
     const pause = await workflowFor('暂停智能候选');
-    expect(within(pause).getByRole('button', { name: '预览操作' })).toBeEnabled();
+    expect(within(pause).getByRole('button', { name: '查看影响' })).toBeEnabled();
   });
 
   it('offers a fresh preview after a terminal job failure', async () => {
@@ -132,13 +132,13 @@ describe('DiagnosticsFeature runtime actions', () => {
     renderFeature(runtimeTransport({ terminalStatus: 'failed' }));
     const workflow = await workflowFor('暂停智能候选');
 
-    await user.click(within(workflow).getByRole('button', { name: '预览操作' }));
-    await user.click(await within(workflow).findByRole('button', { name: '进入确认' }));
+    await user.click(within(workflow).getByRole('button', { name: '查看影响' }));
+    await user.click(await within(workflow).findByRole('button', { name: '确认这些更改' }));
     await user.click(within(workflow).getByRole('checkbox'));
-    await user.click(within(workflow).getByRole('button', { name: '确认并应用' }));
+    await user.click(within(workflow).getByRole('button', { name: '确认执行' }));
 
     expect(await within(workflow).findByText('修复任务失败')).toBeInTheDocument();
-    expect(within(workflow).getByRole('button', { name: '重新预览' })).toBeEnabled();
+    expect(within(workflow).getByRole('button', { name: '重新查看影响' })).toBeEnabled();
   });
 
   it('copies a support snapshot without internal contract metadata or local paths', async () => {
@@ -160,7 +160,7 @@ describe('DiagnosticsFeature runtime actions', () => {
       },
     }));
 
-    await user.click(await screen.findByRole('button', { name: '复制诊断' }));
+    await user.click(await screen.findByRole('button', { name: '复制排查报告' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
     const report = String(writeText.mock.calls[0]?.[0] ?? '');
     expect(report).not.toMatch(/schemaVersion|pathId|runtimeRevision|payloadSha|sha256:|\/Models\/private/);

@@ -1,5 +1,16 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { LoaderCircle } from 'lucide-react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
+import { routeGroupLabels } from '@/app/route-registry';
+import { router } from '@/app/router';
 import { ConnectionIndicator, GlobalNoticeRegion } from '@/components/feedback';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import { DesktopNavigation, MobileBottomNavigation, MobileRouteMenu } from './Navigation';
 import { ShellSidebarResizer } from './ShellSidebarResizer';
 import { ThemeMenu } from './ThemeMenu';
@@ -14,6 +25,13 @@ function getInitialCollapsed(): boolean {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const activeRoute = useHashRoute();
+  const identity = useProductIdentity();
+  const navigationState = useSyncExternalStore(
+    router.subscribe,
+    () => router.state.navigation.state,
+    () => 'idle',
+  );
+  const routePending = navigationState !== 'idle';
   const [collapsed, setCollapsedState] = useState(getInitialCollapsed);
   const previousRouteId = useRef(activeRoute.id);
   const routeStageRef = useRef<HTMLDivElement>(null);
@@ -26,6 +44,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     }
   }, [activeRoute.id]);
 
+  useEffect(() => {
+    document.title = `${identity.productName} · Agent 记忆与协作`;
+  }, [identity.productName]);
+
   const setCollapsed = (next: boolean) => {
     setCollapsedState(next);
     window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(next));
@@ -37,6 +59,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <DesktopNavigation
         activeRouteId={activeRoute.id}
         collapsed={collapsed}
+        identity={identity}
         onCollapsedChange={setCollapsed}
       />
       <ShellSidebarResizer />
@@ -53,7 +76,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
           <div className="shell-topbar__title" key={activeRoute.id}>
             <h1>{activeRoute.label}</h1>
-            <span>{activeRoute.group === 'operations' ? '治理与系统' : activeRoute.group === 'capability' ? '能力与知识' : '工作台'}</span>
+            <span>{routeGroupLabels[activeRoute.group]}</span>
           </div>
           <div className="shell-topbar__actions">
             <ConnectionIndicator />
@@ -65,10 +88,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           ref={routeStageRef}
           className="shell-route-stage"
           data-active-route={activeRoute.id}
+          data-route-pending={routePending || undefined}
           id="workspace-main"
           tabIndex={-1}
+          aria-busy={routePending}
         >
           {children}
+          {routePending ? (
+            <div className="shell-route-pending" role="status" aria-live="polite">
+              <LoaderCircle className="ui-spin" size={18} aria-hidden="true" />
+              <span>正在打开{activeRoute.label}</span>
+            </div>
+          ) : null}
         </div>
         <MobileBottomNavigation activeRouteId={activeRoute.id} />
       </div>

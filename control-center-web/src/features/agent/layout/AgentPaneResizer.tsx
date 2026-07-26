@@ -9,7 +9,7 @@ const PANE_CONFIG = {
     max: 320,
     storageKey: 'wisdom-weasel.agent.rail-width',
     variable: '--agent-rail-width',
-    label: '调整任务列表宽度',
+    label: '调整对话列表宽度',
   },
   status: {
     defaultSize: 312,

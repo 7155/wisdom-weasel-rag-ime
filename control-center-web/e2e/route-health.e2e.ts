@@ -95,7 +95,7 @@ test.describe('full route layout health', () => {
 
     await page.locator('.shell-sidebar [data-route="memory"]').click();
     await expect(page.locator('main[data-route-id="memory"]')).toBeVisible();
-    await expect(page.locator('.shell-topbar__title h1')).toHaveText('记忆');
+    await expect(page.locator('.shell-topbar__title h1')).toHaveText('我的记忆');
     await expectNoHorizontalPageOverflow(page);
 
     await page.getByRole('button', { name: '展开侧边栏' }).click();
@@ -117,6 +117,11 @@ test.describe('full route layout health', () => {
 async function collectRouteEvidence(page: Page, routeId: string, title: string): Promise<RouteEvidence> {
   return page.locator(`main[data-route-id="${routeId}"]`).evaluate((main, values) => {
     const isVisible = (element: HTMLElement) => {
+      const closedDetails = element.closest<HTMLDetailsElement>('details:not([open])');
+      if (closedDetails) {
+        const summary = closedDetails.querySelector<HTMLElement>(':scope > summary');
+        if (!summary?.contains(element)) return false;
+      }
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
       return style.display !== 'none'
@@ -153,7 +158,7 @@ async function collectRouteEvidence(page: Page, routeId: string, title: string):
       return true;
     };
     const interactives = [...main.querySelectorAll<HTMLElement>(
-      'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled)',
+      'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary',
     )].filter(isVisible);
     const mobileNavigation = document.querySelector<HTMLElement>('.shell-mobile-nav');
     const visibleBottom = mobileNavigation && isVisible(mobileNavigation)
@@ -169,7 +174,10 @@ async function collectRouteEvidence(page: Page, routeId: string, title: string):
         && centerY < visibleBottom
         && centerInsideClippingAncestors(element);
     });
-    const blockedControls = inViewport.flatMap((element) => {
+    // Native <summary> hit-testing varies by browser because the marker and nested
+    // content may own the center point. Its actionability is verified separately
+    // with Playwright's trial click below.
+    const blockedControls = inViewport.filter((element) => element.tagName !== 'SUMMARY').flatMap((element) => {
       const rect = element.getBoundingClientRect();
       const x = rect.left + rect.width / 2;
       // Composer toolbars intentionally occupy the padded footer of a textarea.
@@ -253,7 +261,8 @@ async function expectControlsActionable(page: Page, routeId: string): Promise<vo
       + `main[data-route-id="${routeId}"] a[href], `
       + `main[data-route-id="${routeId}"] input:not(:disabled), `
       + `main[data-route-id="${routeId}"] textarea:not(:disabled), `
-      + `main[data-route-id="${routeId}"] select:not(:disabled)`,
+      + `main[data-route-id="${routeId}"] select:not(:disabled), `
+      + `main[data-route-id="${routeId}"] summary`,
   );
   const count = await controls.count();
   for (let index = 0; index < count; index += 1) {

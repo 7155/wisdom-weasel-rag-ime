@@ -42,7 +42,7 @@ describe('Agent experience', () => {
     expect(onSelect).toHaveBeenCalledWith('session-memory');
   });
 
-  it('offers archive, delete confirmation, and archived visibility controls per task', async () => {
+  it('offers archive, delete confirmation, and archived visibility controls per conversation', async () => {
     const onArchive = vi.fn();
     const onDelete = vi.fn();
     const onShowArchivedChange = vi.fn();
@@ -65,19 +65,19 @@ describe('Agent experience', () => {
       .find((row) => row.textContent?.includes('记忆整理'));
     expect(targetRow).toBeDefined();
 
-    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多任务操作' }));
-    await user.click(await screen.findByRole('menuitem', { name: '归档任务' }));
+    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多对话操作' }));
+    await user.click(await screen.findByRole('menuitem', { name: '归档对话' }));
     expect(onArchive).toHaveBeenCalledWith('session-memory', true);
 
-    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多任务操作' }));
-    await user.click(await screen.findByRole('menuitem', { name: '删除任务' }));
+    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多对话操作' }));
+    await user.click(await screen.findByRole('menuitem', { name: '删除对话' }));
     const dialog = await screen.findByRole('dialog', { name: /删除“记忆整理”/ });
     await user.click(within(dialog).getByRole('button', { name: '删除' }));
     expect(onDelete).toHaveBeenCalledWith('session-memory');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /删除“记忆整理”/ })).not.toBeInTheDocument());
 
-    await user.click(screen.getByRole('button', { name: '任务列表选项' }));
-    await user.click(await screen.findByRole('menuitemcheckbox', { name: '显示已归档任务' }));
+    await user.click(screen.getByRole('button', { name: '对话列表选项' }));
+    await user.click(await screen.findByRole('menuitemcheckbox', { name: '显示已归档对话' }));
     expect(onShowArchivedChange).toHaveBeenCalledWith(true);
   });
 
@@ -99,8 +99,8 @@ describe('Agent experience', () => {
     const targetRow = [...container.querySelectorAll('.agent-session-row-shell')]
       .find((row) => row.textContent?.includes('记忆整理'));
 
-    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多任务操作' }));
-    await user.click(await screen.findByRole('menuitem', { name: '删除任务' }));
+    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多对话操作' }));
+    await user.click(await screen.findByRole('menuitem', { name: '删除对话' }));
     const dialog = await screen.findByRole('dialog', { name: /删除“记忆整理”/ });
     await user.click(within(dialog).getByRole('button', { name: '删除' }));
 
@@ -378,7 +378,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    expect(await screen.findByText('1 个任务 · 1 个项目')).toBeInTheDocument();
+    expect(await screen.findByText('1 段对话 · 1 个项目')).toBeInTheDocument();
     expect(document.querySelectorAll('.agent-session-row')).toHaveLength(1);
     expect(screen.queryByText('研究员临时会话')).not.toBeInTheDocument();
 
@@ -1523,7 +1523,7 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('option', { name: /\/tools/ }));
     const toolPicker = document.querySelector('.agent-tool-picker');
     expect(toolPicker).not.toBeNull();
-    expect(within(toolPicker as HTMLElement).getByText('受控工具')).toBeInTheDocument();
+    expect(within(toolPicker as HTMLElement).getByText('可用工具')).toBeInTheDocument();
     await user.keyboard('{Escape}');
 
     await openCommandPalette();
@@ -1558,11 +1558,11 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    const contextButton = await screen.findByRole('button', { name: '上下文资源：核心' });
+    const contextButton = await screen.findByRole('button', { name: '工作资料：内置' });
     await user.click(contextButton);
-    await user.click(screen.getByRole('radio', { name: /扩展/ }));
+    await user.click(screen.getByRole('radio', { name: /本机扩展/ }));
 
-    expect(screen.getByRole('button', { name: '上下文资源：扩展' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '工作资料：本机扩展' })).toBeInTheDocument();
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
         pathId: 'agent.session.mode.update',
@@ -1657,7 +1657,7 @@ describe('Agent experience', () => {
     const dialog = await screen.findByRole('dialog', { name: '启用完全信任？' });
     const confirm = within(dialog).getByRole('button', { name: '启用完全信任' });
     expect(confirm).toBeDisabled();
-    await user.click(within(dialog).getByRole('checkbox', { name: '我确认让此对话自动批准全部受控写操作' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: '我确认让此对话自动批准工作区内的受控写入和命令' }));
     expect(confirm).toBeEnabled();
     await user.click(confirm);
 
@@ -1918,16 +1918,16 @@ describe('Agent experience', () => {
     renderAgent(transport);
     const trigger = await screen.findByRole(
       'button',
-      { name: '当前权限可用工具：13 个' },
+      { name: '这段对话可用工具：13 个' },
       { timeout: 5_000 },
     );
 
     await user.click(trigger);
-    expect(screen.getByRole('button', { name: /控制中心概览/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /受控命令/ })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /控制中心概览/ }));
+    expect(screen.getByRole('button', { name: /当前状态/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /运行项目命令/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /当前状态/ }));
 
-    expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('请使用“控制中心概览”：');
+    expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('帮我看看当前状态：');
     expect(screen.queryByText('ime_overview')).not.toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(false);
   });
@@ -1940,7 +1940,7 @@ describe('Agent experience', () => {
 
     expect(await screen.findByRole('button', { name: /控制中心迁移/ })).toBeInTheDocument();
     expect(await screen.findByRole('textbox', { name: '消息' })).toBeInTheDocument();
-    const unavailableTools = await screen.findByRole('button', { name: '受控工具目录加载失败' });
+    const unavailableTools = await screen.findByRole('button', { name: '工具列表暂不可用' });
     expect(unavailableTools).toBeDisabled();
     expect(unavailableTools).toHaveTextContent('工具 · 未加载');
   });
@@ -2002,7 +2002,7 @@ describe('Agent experience', () => {
     )).toBeEnabled();
     expect(await screen.findByRole(
       'button',
-      { name: /当前权限可用工具：13 个/ },
+      { name: /这段对话可用工具：13 个/ },
       { timeout: 5_000 },
     )).toBeEnabled();
     expect(useAgentLiveStore.getState().projections['session-preview']?.messageOrder ?? []).toEqual([]);
@@ -2052,17 +2052,17 @@ describe('Agent experience', () => {
       { name: /模型：GPT-5.6 Luna/ },
       { timeout: 5_000 },
     )).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '新建任务' }));
-    const dialog = await screen.findByRole('dialog', { name: '新建任务' });
-    expect(within(dialog).getByRole('radio', { name: /learnA/ })).toBeChecked();
-    await user.click(within(dialog).getByRole('button', { name: '创建任务' }));
+    await user.click(screen.getByRole('button', { name: '新建对话' }));
+    const dialog = await screen.findByRole('dialog', { name: '新建对话' });
+    expect(within(dialog).getByRole('radio', { name: /直接聊天/ })).toBeChecked();
+    await user.click(within(dialog).getByRole('button', { name: '开始对话' }));
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.sessions.create')).toBe(true));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
     expect(create?.request.body).toMatchObject({
       roleId: 'companion-future-v1',
       roleVersion: '1',
       mode: 'coordinator',
-      workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+      workspaceRoots: [],
     });
     expect(create?.request.body).not.toHaveProperty('modelProfile');
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.model.select')).toBe(false);
@@ -2318,15 +2318,15 @@ describe('Agent experience', () => {
     const feature = () => document.querySelector('.agent-feature');
     expect(feature()).toHaveAttribute('data-rail-open', 'false');
 
-    const toggle = await screen.findByRole('button', { name: '展开任务列表' });
+    const toggle = await screen.findByRole('button', { name: '展开对话列表' });
     await user.click(toggle);
     expect(feature()).toHaveAttribute('data-rail-open', 'true');
-    const rail = screen.getByRole('dialog', { name: '任务与项目' });
+    const rail = screen.getByRole('dialog', { name: '对话与项目' });
     const conversation = document.querySelector('.agent-conversation');
     expect(rail).toHaveAttribute('aria-modal', 'true');
     expect(conversation).toHaveAttribute('inert');
     expect(conversation).toHaveAttribute('aria-hidden', 'true');
-    await waitFor(() => expect(screen.getByPlaceholderText('搜索任务或项目')).toHaveFocus());
+    await waitFor(() => expect(screen.getByPlaceholderText('搜索对话或项目')).toHaveFocus());
 
     const sessionRows = rail.querySelectorAll<HTMLButtonElement>('.agent-session-row');
     const lastSession = sessionRows.item(sessionRows.length - 1);
@@ -2336,7 +2336,7 @@ describe('Agent experience', () => {
     await user.tab();
     expect(lastSessionMenu).toHaveFocus();
     await user.tab();
-    expect(within(rail).getByRole('button', { name: '新建任务' })).toHaveFocus();
+    expect(within(rail).getByRole('button', { name: '新建对话' })).toHaveFocus();
     await user.tab({ shift: true });
     expect(lastSessionMenu).toHaveFocus();
     await user.tab({ shift: true });
@@ -2349,11 +2349,11 @@ describe('Agent experience', () => {
     await waitFor(() => expect(toggle).toHaveFocus());
 
     await user.click(toggle);
-    await user.click(within(rail).getByRole('button', { name: '新建任务' }));
+    await user.click(within(rail).getByRole('button', { name: '新建对话' }));
     expect(feature()).toHaveAttribute('data-rail-open', 'false');
-    expect(screen.getByRole('dialog', { name: '新建任务' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '新建对话' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建任务' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '新建对话' })).not.toBeInTheDocument());
 
     await user.click(toggle);
     expect(document.querySelector('.agent-rail-backdrop')).toBeInTheDocument();
@@ -2413,7 +2413,7 @@ describe('Agent experience', () => {
     const composer = await screen.findByRole('textbox', { name: '消息' });
     expect(composer).toBeVisible();
 
-    await user.click(screen.getByRole('button', { name: '收起任务列表' }));
+    await user.click(screen.getByRole('button', { name: '收起对话列表' }));
 
     expect(feature()).toHaveAttribute('data-rail-open', 'false');
     expect(getComputedStyle(feature()!).gridTemplateColumns).toBe('0 minmax(0, 1fr) 0');
@@ -2454,7 +2454,7 @@ describe('Agent experience', () => {
     await waitFor(() => expect(transport.requests.map((request) => request.pathId)).toEqual(
       expect.arrayContaining(['agent.sessions.list', 'agent.roles.list']),
     ));
-    expect(screen.getByText('0 个任务 · 0 个项目')).toBeInTheDocument();
+    expect(screen.getByText('0 段对话 · 0 个项目')).toBeInTheDocument();
     expect(screen.queryByText('控制中心迁移')).not.toBeInTheDocument();
     expect(screen.queryByText('记忆整理')).not.toBeInTheDocument();
   });

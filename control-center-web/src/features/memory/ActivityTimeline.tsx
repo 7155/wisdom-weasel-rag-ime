@@ -338,7 +338,7 @@ export function ActivityTimeline() {
           </DialogHeader>
           <div className="activity-timeline__review-line">
             <Check aria-hidden="true" size={17} />
-            <span>{tasks.length} 个语义任务将进入独立时间线索引，不会创建主题书。</span>
+            <span>{tasks.length} 个语义任务会进入独立时间线，不会自动归入长期主题。</span>
           </div>
           <DialogFooter>
             <Button onClick={() => setApproveOpen(false)} variant="quiet">取消</Button>

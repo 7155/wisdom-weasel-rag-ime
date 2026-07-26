@@ -9,7 +9,7 @@ const PANE_CONFIG = {
     max: 320,
     storageKey: 'wisdom-weasel.rooms.rail-width',
     variable: '--room-rail-width',
-    label: '调整 Rooms 列表宽度',
+    label: '调整协作空间列表宽度',
   },
   status: {
     defaultSize: 312,
@@ -17,7 +17,7 @@ const PANE_CONFIG = {
     max: 420,
     storageKey: 'wisdom-weasel.rooms.status-width',
     variable: '--room-status-width',
-    label: '调整 Room 状态面板宽度',
+    label: '调整协作进展面板宽度',
   },
 } as const;
 

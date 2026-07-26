@@ -92,7 +92,7 @@ export function KnowledgeMaterialsPanel({
         <div><dt>可检索</dt><dd>{summary.ready}</dd></div>
         <div><dt>处理中</dt><dd>{summary.processing}</dd></div>
         <div><dt>需处理</dt><dd>{summary.attention}</dd></div>
-        <div><dt>当前产物</dt><dd>{detail ? detail.assets.length + detail.tables.length : 0}</dd></div>
+        <div><dt>提取内容</dt><dd>{detail ? detail.assets.length + detail.tables.length : 0}</dd></div>
       </dl>
       <UploadQueue items={uploadItems} onClear={onClearUploads} onRetry={onRetryUpload} />
       {error ? <InlineNotice title="文件列表暂不可用" tone="warning">{publicErrorText(error, '刷新后重试。')}</InlineNotice> : null}
@@ -108,7 +108,7 @@ export function KnowledgeMaterialsPanel({
                 <div className="knowledge-material-row" data-selected={selected?.id === document.id || undefined}>
                   <button className="knowledge-material-row__select" onClick={() => onSelect(document.id)} type="button">
                     <FileText aria-hidden="true" size={15} />
-                    <span><strong>{document.name}</strong><small>{document.parser || '等待解析器'} · {formatBytes(document.byteSize)}</small></span>
+                    <span><strong>{document.name}</strong><small>{parserLabel(document.parser)} · {formatBytes(document.byteSize)}</small></span>
                   </button>
                   <StatusBadge label={documentStatusLabel(document.status)} tone={documentTone(document.status)} />
                   <span className="knowledge-material-row__chunks">{document.chunkCount || '—'}</span>
@@ -161,7 +161,7 @@ function DocumentSummary({ detail, document, error, loading }: { detail: Knowled
       {error ? <InlineNotice title="详情暂不可用" tone="warning">{publicErrorText(error, '稍后重试。')}</InlineNotice> : null}
       <dl>
         <div><dt>解析状态</dt><dd>{documentStatusLabel(document.status)}</dd></div>
-        <div><dt>解析器</dt><dd>{document.parser || '未记录'}{document.parserVersion ? ` · ${document.parserVersion}` : ''}</dd></div>
+        <div><dt>解析方式</dt><dd>{parserLabel(document.parser)}{document.parserVersion ? ` · ${document.parserVersion}` : ''}</dd></div>
         <div><dt>页数</dt><dd>{document.pageCount || detail?.pages.length || '未提供'}</dd></div>
         <div><dt>片段</dt><dd>{detail?.chunkTotal || document.chunkCount || 0}</dd></div>
         <div><dt>Token</dt><dd>{document.tokenCount || '未提供'}</dd></div>
@@ -221,7 +221,7 @@ export function KnowledgeDocumentViewer({
         {detail ? <span>{detail.chunkTotal} 个片段 · {pageCount ? `${pageCount} 页` : '页码未提供'} · {detail.assets.length} 个产物</span> : null}
       </div>
       {loading ? <p className="knowledge-detail-loading">正在读取解析结果…</p> : null}
-      {error ? <InlineNotice title="材料查看不可用" tone="warning">{publicErrorText(error, '稍后重试。')}</InlineNotice> : null}
+      {error ? <InlineNotice title="暂时无法查看材料" tone="warning">{publicErrorText(error, '稍后重试。')}</InlineNotice> : null}
       {detail ? (
         <Tabs className="knowledge-document-tabs" onValueChange={(value) => setView(value === 'source' || value === 'chunks' || value === 'artifacts' ? value : 'markdown')} value={view}>
           <TabsList aria-label="材料查看方式">
@@ -441,13 +441,13 @@ export function KnowledgeJobsPanel({ cancellingJobId, cancelError, error, jobs, 
   const active = jobs.filter((job) => ['queued', 'running', 'parsing', 'embedding', 'indexing'].includes(job.status.toLowerCase()));
   return (
     <div className="knowledge-panel knowledge-jobs">
-      <div className="knowledge-panel__toolbar"><div><strong>索引任务</strong><span>{active.length} 个进行中 · {jobs.length} 条记录</span></div><IconButton disabled={loading} icon={<RotateCcw className={loading ? 'ui-spin' : undefined} size={14} />} label="刷新索引任务" onClick={onRefresh} size="small" tooltip /></div>
+      <div className="knowledge-panel__toolbar"><div><strong>处理记录</strong><span>{active.length} 个进行中 · {jobs.length} 条记录</span></div><IconButton disabled={loading} icon={<RotateCcw className={loading ? 'ui-spin' : undefined} size={14} />} label="刷新处理记录" onClick={onRefresh} size="small" tooltip /></div>
       {error ? <InlineNotice title="任务记录暂不可用" tone="warning">{publicErrorText(error, '刷新后重试。')}</InlineNotice> : null}
       {cancelError ? <InlineNotice title="任务未取消" tone="warning">{publicErrorText(cancelError, '请刷新任务状态后重试。')}</InlineNotice> : null}
       {jobs.length ? <div className="knowledge-job-list">{jobs.map((job) => {
         const expanded = expandedId === job.id;
         return <article data-expanded={expanded || undefined} key={job.id}><span className="knowledge-job-list__icon"><RotateCcw size={14} /></span><button aria-expanded={expanded} className="knowledge-job-list__summary" onClick={() => setExpandedId(expanded ? '' : job.id)} type="button"><span><strong>{job.documentName || job.kind}</strong><small>{jobStageLabel(job.stage)} · {formatTime(job.updatedAtMs || job.createdAtMs)}</small>{job.error ? <em>{job.error}</em> : null}<i style={{ '--job-progress': terminalJobStatus(job.status) ? 1 : job.progress } as React.CSSProperties} /></span><ChevronDown aria-hidden="true" size={14} /></button><StatusBadge label={jobStatusLabel(job.status)} tone={jobTone(job.status)} />{job.cancellable ? <IconButton disabled={cancellingJobId === job.id} icon={<CircleStop size={14} />} label="取消任务" onClick={() => onCancel(job.id)} size="small" tooltip /> : null}{expanded ? <JobDetails job={job} /> : null}</article>;
-      })}</div> : loading ? <p className="knowledge-detail-loading">正在读取索引任务…</p> : <EmptyState description="" icon={RotateCcw} title="暂无索引任务" />}
+      })}</div> : loading ? <p className="knowledge-detail-loading">正在读取处理记录…</p> : <EmptyState description="导入或重新处理材料后，进度和结果会显示在这里。" icon={RotateCcw} title="还没有处理记录" />}
     </div>
   );
 }
@@ -490,7 +490,7 @@ function jobStatusLabel(value: string): string { return ({ queued: '等待中', 
 function jobTone(value: string): 'success' | 'warning' | 'danger' | 'info' { const status = value.toLowerCase(); return ['ready', 'succeeded', 'success', 'completed'].includes(status) ? 'success' : status === 'failed' ? 'danger' : ['cancelled', 'canceled'].includes(status) ? 'warning' : 'info'; }
 function terminalJobStatus(value: string): boolean { return ['ready', 'succeeded', 'success', 'completed', 'failed', 'cancelled', 'canceled'].includes(value.toLowerCase()); }
 function formatDuration(value: number): string { if (value < 1_000) return `${Math.max(0, value)} ms`; const seconds = Math.round(value / 1_000); return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`; }
-function parserLabel(value: KnowledgeParserMode): string { return value === 'mineru' ? 'MinerU OCR' : value === 'builtin' ? '内置解析' : '自动选择'; }
+function parserLabel(value: string): string { return value === 'mineru' ? 'MinerU OCR' : value === 'builtin' ? '内置解析' : '自动选择'; }
 function uploadStatusLabel(value: KnowledgeUploadItem['status']): string { return ({ queued: '等待上传', uploading: '上传中', accepted: '已进入解析', failed: '上传失败' } as const)[value]; }
 function uploadTone(value: KnowledgeUploadItem['status']): 'success' | 'danger' | 'info' { return value === 'accepted' ? 'success' : value === 'failed' ? 'danger' : 'info'; }
 function safeMarkdownLink(value: string | undefined): string | null { return value && /^(?:https?:|#)/iu.test(value) ? value : null; }

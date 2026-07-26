@@ -120,7 +120,7 @@ export function ManagementMutationWorkflow<Context>({
   }, [draftKey]);
 
   const steps = useMemo(() => [
-    { id: 'preview', label: '预览' },
+    { id: 'preview', label: '查看影响' },
     { id: 'approval', label: '确认' },
     { id: 'receipt', label: '完成' },
     { id: 'rolled-back', label: '撤销' },
@@ -145,19 +145,19 @@ export function ManagementMutationWorkflow<Context>({
             onClick={() => previewMutation.mutate()}
             size="small"
           >
-            预览操作
+            查看影响
           </Button>
         ) : null}
       </div>
 
       {availability.state !== 'available' && availability.state !== 'checking' && availability.reason ? (
-        <InlineNotice title={availability.state === 'unsupported' ? '暂不可用' : '等待必要信息'} tone="warning">
+        <InlineNotice title={availability.state === 'unsupported' ? '这项功能暂不可用' : '还需要一些信息'} tone="warning">
           {availability.reason}
         </InlineNotice>
       ) : null}
 
       {previewMutation.error ? (
-        <InlineNotice title="预览失败" tone="danger">{publicErrorText(previewMutation.error)}</InlineNotice>
+        <InlineNotice title="暂时无法查看影响" tone="danger">{publicErrorText(previewMutation.error)}</InlineNotice>
       ) : null}
 
       {stage !== 'idle' ? (
@@ -176,26 +176,26 @@ export function ManagementMutationWorkflow<Context>({
           <strong>{preview.summary.title}</strong>
           <ul>{preview.summary.items.map((line) => <li key={line}>{line}</li>)}</ul>
           <div className="mgmt-workflow__binding">
-            <span>预览已校验</span>
-            <span>{previewExpired ? '预览已过期' : `有效至 ${formatTimestamp(preview.expiresAtMs)}`}</span>
+            <span>已核对当前状态</span>
+            <span>{previewExpired ? '影响说明已过期' : `有效至 ${formatTimestamp(preview.expiresAtMs)}`}</span>
           </div>
-          {previewExpired ? <InlineNotice title="需要重新预览" tone="warning">这份预览已过期，不会进入确认。</InlineNotice> : null}
+          {previewExpired ? <InlineNotice title="请重新查看影响" tone="warning">页面状态已经变化，旧的影响说明不会继续执行。</InlineNotice> : null}
           <div className="mgmt-workflow__buttons">
-            <Button onClick={() => reset()} size="small" variant="quiet">取消</Button>
-            <Button disabled={previewExpired} onClick={() => setStage('approval')} size="small" variant="primary">进入确认</Button>
+            <Button onClick={() => reset()} size="small" variant="quiet">先不更改</Button>
+            <Button disabled={previewExpired} onClick={() => setStage('approval')} size="small" variant="primary">确认这些更改</Button>
           </div>
         </div>
       ) : null}
 
       {stage === 'approval' && preview ? (
         <div className="mgmt-workflow__panel">
-          <strong>确认已核对操作预览</strong>
+          <strong>请确认你已看过上方影响</strong>
           <label className="mgmt-workflow__confirm">
             <input checked={approved} onChange={(event) => setApproved(event.target.checked)} type="checkbox" />
-            <span>只执行上方已绑定的变更</span>
+            <span>我确认只执行上方列出的更改</span>
           </label>
           <div className="mgmt-workflow__buttons">
-            <Button onClick={() => setStage('preview')} size="small" variant="quiet">返回预览</Button>
+            <Button onClick={() => setStage('preview')} size="small" variant="quiet">返回查看</Button>
             <Button
               disabled={!approved}
               loading={applyMutation.isPending}
@@ -203,7 +203,7 @@ export function ManagementMutationWorkflow<Context>({
               size="small"
               variant={preview.summary.risk === 'R3' ? 'danger' : 'primary'}
             >
-              确认并应用
+              确认执行
             </Button>
           </div>
         </div>
@@ -211,9 +211,9 @@ export function ManagementMutationWorkflow<Context>({
 
       {applyMutation.error ? (
         <div className="mgmt-workflow__panel">
-          <InlineNotice title="应用失败" tone="danger">{publicErrorText(applyMutation.error)}</InlineNotice>
+          <InlineNotice title="更改未完成" tone="danger">{publicErrorText(applyMutation.error)}</InlineNotice>
           <div className="mgmt-workflow__buttons">
-            <Button onClick={() => reset()} size="small" variant="quiet">重新预览</Button>
+            <Button onClick={() => reset()} size="small" variant="quiet">重新查看影响</Button>
           </div>
         </div>
       ) : null}
@@ -227,7 +227,7 @@ export function ManagementMutationWorkflow<Context>({
               onClick={() => rollbackMutation.mutate({ applied: receipt, boundPreview: preview })}
               size="small"
             >
-              撤销这次操作
+              撤销这次更改
             </Button>
           ) : (
             <Button onClick={() => reset()} size="small" variant="quiet">完成</Button>
@@ -383,9 +383,9 @@ function WorkReceipt({
   return (
     <div className="mgmt-workflow__receipt">
       <div>
-        <StatusBadge label={rolledBack ? '已撤销' : '已应用'} tone={rolledBack ? 'info' : 'success'} />
-        <strong>{rolledBack ? '已恢复到操作前' : '本机操作已记录'}</strong>
-        <span>{rolledBack ? '原操作不再生效' : receipt.rollbackAvailable ? '可以撤销' : '此操作不可撤销'}</span>
+        <StatusBadge label={rolledBack ? '已撤销' : '已完成'} tone={rolledBack ? 'info' : 'success'} />
+        <strong>{rolledBack ? '已恢复到更改前' : '这次更改已安全记录'}</strong>
+        <span>{rolledBack ? '原来的更改不再生效' : receipt.rollbackAvailable ? '仍可以撤销' : '这次更改不可撤销'}</span>
         <time>{formatTimestamp(receipt.appliedAtMs)}</time>
       </div>
       {children}

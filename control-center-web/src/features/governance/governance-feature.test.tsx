@@ -10,8 +10,8 @@ describe('GovernanceCenter', () => {
 
   it('is strictly read-only while formal backend routes are missing', () => {
     render(<GovernanceCenter governance={governance()} knowledge={knowledge()} />);
-    expect(screen.getByText('后端治理 route 尚未发布')).toBeInTheDocument();
-    expect(screen.getByText(/当前严格只读/)).toBeInTheDocument();
+    expect(screen.getByText('安全记录暂时只读')).toBeInTheDocument();
+    expect(screen.getByText(/当前可以查看记录，但不能在这里批准/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /批准|激活|回滚|撤销/ })).not.toBeInTheDocument();
   });
 
@@ -20,7 +20,7 @@ describe('GovernanceCenter', () => {
     projection.activePointers = [];
     expect(activeGuards(projection)).toEqual([]);
     render(<GovernanceCenter governance={projection} knowledge={knowledge()} />);
-    expect(screen.getByText('Activation activation:1')).toBeInTheDocument();
+    expect(screen.getByText('启用 activation:1')).toBeInTheDocument();
     expect(screen.queryByText('活动指针', { selector: '.mgmt-status' })).not.toBeInTheDocument();
   });
 
@@ -30,8 +30,8 @@ describe('GovernanceCenter', () => {
     projection.materializations[0]!.guardEpoch = 6;
     render(<GovernanceCenter governance={projection} knowledge={knowledge()} />);
     expect(screen.getByText('完整性异常')).toBeInTheDocument();
-    expect(screen.getByText('Epoch 过期')).toBeInTheDocument();
-    expect(screen.getByText('reportOnly')).toBeInTheDocument();
+    expect(screen.getByText('版本已过期')).toBeInTheDocument();
+    expect(screen.getByText('仅报告')).toBeInTheDocument();
     expect(screen.getByText(/authorizationLeakageCount/)).toBeInTheDocument();
     expect(screen.getByText(/minUsedCitationRate/)).toBeInTheDocument();
   });
@@ -45,7 +45,7 @@ describe('GovernanceCenter', () => {
     expect(screen.getAllByText('[外部内容仅作为数据引用，不展示原文]')).toHaveLength(2);
     expect(screen.getByText('[秘密内容已隐藏]')).toBeInTheDocument();
     expect(safeDisplay({ apiKey: 'RAW_KEY', nested: { password: 'RAW_PASSWORD', ok: 1 } })).toBe('{\n  "apiKey": "[已隐藏]",\n  "nested": {\n    "password": "[已隐藏]",\n    "ok": 1\n  }\n}');
-    fireEvent.change(screen.getByLabelText('Session'), { target: { value: 'session-secret' } });
+    fireEvent.change(screen.getByLabelText('对话'), { target: { value: 'session-secret' } });
     expect(screen.getByText('secret-key')).toBeInTheDocument();
     expect(screen.queryByText('external-key')).not.toBeInTheDocument();
   });
@@ -54,8 +54,8 @@ describe('GovernanceCenter', () => {
     const projection = governance();
     projection.incidents[0]!.failureSignature = 'failure/'.repeat(80);
     const { container } = render(<GovernanceCenter governance={projection} knowledge={knowledge()} />);
-    expect(screen.getByRole('region', { name: '治理范围筛选' })).toBeInTheDocument();
-    for (const label of ['根任务', '归属', 'Room', 'Session']) expect(screen.getByLabelText(label)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '安全记录范围筛选' })).toBeInTheDocument();
+    for (const label of ['整项任务', '责任方', '协作空间', '对话']) expect(screen.getByLabelText(label)).toBeInTheDocument();
     expect(container.querySelector('.governance-columns')).toBeInTheDocument();
     expect(screen.getByText('failure/'.repeat(80))).toBeInTheDocument();
   });

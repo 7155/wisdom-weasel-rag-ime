@@ -342,7 +342,7 @@ class PiRuntimeConfig:
                 raise PiRuntimeError("Pi session file is outside the managed session directory")
             if resolved_session.is_file():
                 command.extend(["--session", str(resolved_session)])
-        title = " ".join(str(session.get("title") or "智鼬").split())[:120]
+        title = " ".join(str(session.get("title") or "新对话").split())[:120]
         if title:
             command.extend(["--name", title])
         command.extend(["--system-prompt", self.system_prompt_for_session(session)])

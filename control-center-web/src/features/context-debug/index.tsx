@@ -149,8 +149,8 @@ export function ContextDebugFeature() {
         <div className="context-debug-heading">
           <span className="context-debug-heading__icon"><Braces size={18} /></span>
           <span>
-            <h1>上下文透视</h1>
-            <small><ShieldCheck size={12} />默认只显示结构和用量，正文仅在审计区按需展开</small>
+            <h1>上下文检查</h1>
+            <small><ShieldCheck size={12} />看看每次模型真正收到了什么；正文只在你主动展开时显示</small>
           </span>
         </div>
         <div className="context-debug-controls">

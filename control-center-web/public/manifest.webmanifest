@@ -1,7 +1,8 @@
 {
-  "name": "RAG IME Control Center",
-  "short_name": "RAG IME",
-  "start_url": "./#/overview",
+  "name": "智鼬 · Agent 记忆与协作",
+  "short_name": "智鼬",
+  "description": "记得你，也陪你做事的本机 Agent 伙伴。",
+  "start_url": "./#/agent",
   "display": "standalone",
   "background_color": "#f4f5f1",
   "theme_color": "#f4f5f1",

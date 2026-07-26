@@ -2,6 +2,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { App } from '@/app/App';
+import { router } from '@/app/router';
 import { GlobalFeedbackProvider, publishConnectionState, publishGlobalNotice } from '@/components/feedback';
 import { TooltipProvider } from '@/components/primitives';
 import { MotionProvider } from '@/design/motion';
@@ -19,32 +20,39 @@ describe('control center shell', () => {
 
   it('switches routes immediately and exposes one global status surface', async () => {
     const user = userEvent.setup();
+    await router.navigate('/agent');
     render(<App />);
 
-    expect(screen.getAllByRole('heading', { name: '任务与验收' })).not.toHaveLength(0);
-    expect(document.querySelector('main[data-route-id="planning"]')).toBeInTheDocument();
+    await waitFor(
+      () => expect(document.querySelector('main[data-route-id="agent"]')).toBeInTheDocument(),
+      { timeout: 10_000 },
+    );
+    expect(screen.getAllByRole('heading', { name: '对话' })).not.toHaveLength(0);
 
-    await user.click(screen.getAllByRole('link', { name: 'Session 工作台' })[0]);
-    await waitFor(() => expect(document.querySelector('main[data-route-id="agent"]')).toBeInTheDocument());
-    expect(screen.getByRole('heading', { name: 'Session 工作台' })).toBeInTheDocument();
+    await user.click(screen.getAllByRole('link', { name: '任务' })[0]);
+    await waitFor(() => expect(document.querySelector('main[data-route-id="planning"]')).toBeInTheDocument());
+    expect(screen.getAllByRole('heading', { name: '任务' })).not.toHaveLength(0);
     expect(document.activeElement).toHaveAttribute('id', 'workspace-main');
 
     act(() => publishConnectionState({ state: 'connected', label: 'Sidecar 已连接' }));
-    expect(screen.getByRole('status')).toHaveTextContent('Sidecar 已连接');
+    expect(screen.getByText('Sidecar 已连接').closest('[role="status"]')).toHaveClass('global-connection');
 
     act(() => publishGlobalNotice({ id: 'update', title: '可用更新', message: '重启后生效。', tone: 'info' }));
     expect(screen.getByRole('region', { name: '全局通知' })).toHaveTextContent('可用更新');
   });
 
   it('keeps the shell title in sync with programmatic route navigation', async () => {
-    const user = userEvent.setup();
+    await router.navigate('/planning');
     render(<App />);
 
     await waitFor(() => expect(document.querySelector('main[data-route-id="planning"]')).toBeInTheDocument());
-    await user.click(screen.getByRole('button', { name: '交给智鼬整理' }));
+    await router.navigate('/agent');
 
-    await waitFor(() => expect(document.querySelector('main[data-route-id="agent"]')).toBeInTheDocument());
-    expect(document.querySelector('.shell-topbar__title h1')).toHaveTextContent('Session 工作台');
+    await waitFor(
+      () => expect(document.querySelector('main[data-route-id="agent"]')).toBeInTheDocument(),
+      { timeout: 10_000 },
+    );
+    expect(document.querySelector('.shell-topbar__title h1')).toHaveTextContent('对话');
     expect(document.querySelector('.shell-sidebar [data-route="agent"]')).toHaveAttribute('aria-current', 'page');
   });
 

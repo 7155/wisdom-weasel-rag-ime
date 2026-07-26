@@ -51,6 +51,7 @@ export interface AgentComposerEditState {
 }
 
 export function AgentComposer({
+  assistantName = '智鼬',
   draft,
   attachments,
   session,
@@ -86,6 +87,7 @@ export function AgentComposer({
   imageSupport = 'unknown',
   contextResourcesChanging = false,
 }: {
+  assistantName?: string;
   draft: string;
   attachments: ComposerAttachment[];
   session?: SessionSummary;
@@ -364,7 +366,7 @@ export function AgentComposer({
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
-          placeholder={composerPlaceholder(persona?.displayName ?? '智鼬', imageSupport)}
+          placeholder={composerPlaceholder(persona?.displayName ?? assistantName, imageSupport)}
           aria-label="消息"
         />
         <div className="agent-composer__toolbar">

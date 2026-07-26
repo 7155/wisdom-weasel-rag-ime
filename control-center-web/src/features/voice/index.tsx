@@ -31,12 +31,13 @@ import type {
   VoiceNativeActionReceipt,
   VoiceProviderId,
 } from '@/platform/transport';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import './voice.css';
 
 const providers = [
-  { value: 'native_streaming', label: '原生流式' },
-  { value: 'realtime_websocket', label: '实时连接' },
-  { value: 'http_transcription', label: 'HTTP 转写' },
+  { value: 'native_streaming', label: '内置流式识别' },
+  { value: 'realtime_websocket', label: '实时识别' },
+  { value: 'http_transcription', label: '录完再转写' },
 ] as const;
 
 const hotkeys = [
@@ -45,12 +46,14 @@ const hotkeys = [
   { value: 'option_space', label: 'Option + 空格' },
 ] as const;
 
-const suggestedHotwords = [
+const defaultSuggestedHotwords = [
   'Pi', 'Codex', 'Agent', 'Runtime', 'Session', 'Tool', 'Skill', 'API Key', 'SK',
-  'MiniMind', '补全模型', 'GPT-5.6', 'Luna', 'Terra', '智鼬',
+  'MiniMind', '补全模型', 'GPT-5.6', 'Luna', 'Terra',
 ] as const;
 
 export function VoiceFeature() {
+  const identity = useProductIdentity();
+  const suggestedHotwords = [...defaultSuggestedHotwords, identity.assistantName];
   const queries = useVoiceQueries();
   const mutationBoundary = useConfigurationMutationBoundary();
   const settingsEnvelope = asRecord(queries.settings.data);
@@ -175,29 +178,29 @@ export function VoiceFeature() {
   return (
     <ManagementPage
       actions={<Button leadingIcon={<RefreshCw size={15} />} loading={refreshing} onClick={refresh} size="small">刷新</Button>}
-      description="管理语音代理、系统授权、识别服务、Keychain 凭据和请求级热词。"
-      eyebrow="VOICE"
+      description="把说话变成输入文字。这里只负责听写，不会让伙伴朗读，也不会额外保存语音。"
+      eyebrow={`说给${identity.assistantName}听`}
       routeId="voice"
       title="语音输入"
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         <ManagementSection title="准备情况">
           <MetricStrip items={[
-            { label: '语音代理', value: queries.runtime.isPending ? '正在检查' : agentRunning ? '运行中' : '未运行', detail: stringValue(valueAt(voiceControl, 'agent.statusText')) || '负责全局按住说话', icon: Waves, tone: agentRunning ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
+            { label: '听写服务', value: queries.runtime.isPending ? '正在检查' : agentRunning ? '运行中' : '未运行', detail: stringValue(valueAt(voiceControl, 'agent.statusText')) || '随时按住快捷键开始听写', icon: Waves, tone: agentRunning ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '麦克风', value: queries.runtime.isPending ? '正在检查' : permissionLabel(microphone), detail: '需要系统授权', icon: Mic, tone: booleanValue(microphone.ok) ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '辅助功能', value: queries.runtime.isPending ? '正在检查' : permissionLabel(accessibility), detail: '用于将文字写回当前应用', icon: Shield, tone: booleanValue(accessibility.ok) ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
-            { label: '访问凭据', value: credentialState.label, detail: '保存内容不会在页面显示', icon: KeyRound, tone: credentialState.tone },
+            { label: '服务账号', value: credentialState.label, detail: '保存后不会在页面显示', icon: KeyRound, tone: credentialState.tone },
           ]} />
           <InlineNotice title="隐私保护" tone="info">页面不会显示已保存的密钥或请求头。没有取得明确状态时，相关操作保持关闭。</InlineNotice>
           {queries.runtime.error ? <InlineNotice title="权限状态读取失败" tone="warning">暂时无法确认麦克风和辅助功能权限，请刷新后重试。</InlineNotice> : null}
         </ManagementSection>
 
-        <ManagementSection title="运行与系统授权" description="这些操作只调用桌面宿主内固定白名单，不接受命令、路径或任意 URL。">
+        <ManagementSection title="启用听写" description="启动听写服务，并允许它使用麦克风、把文字送回你正在输入的应用。">
           <div className="voice-native-actions">
             <div aria-labelledby="voice-agent-actions-label" className="voice-native-action-group" role="group">
-              <span id="voice-agent-actions-label">语音代理</span>
+              <span id="voice-agent-actions-label">听写服务</span>
               <Button
-                aria-label={agentRunning ? '停止语音代理' : '启动语音代理'}
+                aria-label={agentRunning ? '停止听写服务' : '启动听写服务'}
                 disabled={!nativeActionsAvailable}
                 leadingIcon={agentRunning ? <Square size={14} /> : <Play size={14} />}
                 loading={voiceAction.isPending && ['start_agent', 'stop_agent'].includes(voiceAction.variables ?? '')}
@@ -205,7 +208,7 @@ export function VoiceFeature() {
                 size="small"
                 variant="primary"
               >
-                {agentRunning ? '停止' : '启动'}
+                {agentRunning ? '停止听写' : '启动听写'}
               </Button>
             </div>
             <div aria-labelledby="voice-microphone-actions-label" className="voice-native-action-group" role="group">
@@ -219,15 +222,15 @@ export function VoiceFeature() {
               <Button disabled={!nativeActionsAvailable} loading={voiceAction.isPending && voiceAction.variables === 'open_accessibility_settings'} onClick={() => voiceAction.mutate('open_accessibility_settings')} size="small" variant="quiet">打开设置</Button>
             </div>
           </div>
-          {!nativeActionsAvailable ? <InlineNotice title="需要桌面控制中心" tone="warning">浏览器预览不能启动代理或触发系统授权；请在已安装的智鼬控制中心中操作。</InlineNotice> : null}
+          {!nativeActionsAvailable ? <InlineNotice title="请在已安装的应用中操作" tone="warning">浏览器预览不能启动听写或打开系统授权；请回到已安装的{identity.productName}。</InlineNotice> : null}
           {voiceAction.error ? <InlineNotice title="语音操作失败" tone="danger">{voiceAction.error instanceof Error ? voiceAction.error.message : '本机语音操作没有完成。'}</InlineNotice> : null}
-          {nativeReceipt && !nativeReceipt.accepted ? <InlineNotice title="语音操作未执行" tone="danger">{nativeReceipt.error || '桌面宿主拒绝了这次操作。'}</InlineNotice> : null}
-          {nativeReceipt?.accepted ? <InlineNotice title="语音状态已更新" tone="success">{nativeReceipt.status.statusText}</InlineNotice> : null}
+          {nativeReceipt && !nativeReceipt.accepted ? <InlineNotice title="这次操作没有完成" tone="danger">{nativeReceipt.error || '系统没有接受这次操作。'}</InlineNotice> : null}
+          {nativeReceipt?.accepted ? <InlineNotice title="听写状态已更新" tone="success">{nativeReceipt.status.statusText}</InlineNotice> : null}
         </ManagementSection>
 
         <ManagementSection
-          title="语音服务与快捷键"
-          description="服务和快捷键通过同一套预览、确认、应用和撤销契约写入。"
+          title="识别方式与按键"
+          description="选择声音如何识别，以及按住哪个键开始说话。保存前会先让你确认变化。"
           trailing={<StatusBadge label={currentProviderStatus(queries.settings.isPending, Boolean(queries.settings.error), configuredProvider)} tone={configuredProvider ? 'info' : 'warning'} />}
         >
           <div className="voice-service-layout">
@@ -245,7 +248,7 @@ export function VoiceFeature() {
                     ? '选择不同的服务或快捷键后才能生成预览。'
                     : '',
               )}
-              description="写入 voice-provider.json 与 voice-hotkey.json，并通知语音代理重新载入。"
+              description="只更新识别方式和快捷键；保存后，听写服务会自动重新载入。"
               draftKey={JSON.stringify({ provider, hotkey, runtimeRevision })}
               mutationKey={['voice', 'mutation', 'service']}
               onApply={async (preview) => parseManagementWorkReceipt(
@@ -282,13 +285,13 @@ export function VoiceFeature() {
               )}
               onRolledBack={reloadVoice}
               risk="R1"
-              title="保存语音服务与快捷键"
+              title="保存识别方式与按键"
             />
           </div>
           {queries.settings.error ? <InlineNotice title="当前设置读取失败" tone="warning">暂时无法核对正在使用的语音服务，请刷新后重试。</InlineNotice> : null}
         </ManagementSection>
 
-        <ManagementSection title="安全凭据" description="密钥只从此表单写入 macOS Keychain；状态接口只返回是否已配置，绝不回显原值。">
+        <ManagementSection title="服务账号" description="连接识别服务所需的信息只保存在 macOS 钥匙串中；保存后不会再次显示原值。">
           <div className="voice-credential-grid">
             <Field description={credentialState.label === '已配置' ? '已配置；留空可保留现有 Token。' : '首次保存必须填写。'} htmlFor="voice-access-token" label="Access Token">
               <Input autoComplete="new-password" id="voice-access-token" onChange={(event) => setCredentialDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder={credentialState.label === '已配置' ? '已配置，留空保持不变' : '输入 Access Token'} type="password" value={credentialDraft.accessToken} />
@@ -307,16 +310,16 @@ export function VoiceFeature() {
             )}
           </div>
           {serviceDirty ? <InlineNotice title="先保存服务选择" tone="warning">凭据按服务隔离保存。请先完成上方服务切换，再保存该服务的凭据。</InlineNotice> : null}
-          {!credentials.supported ? <InlineNotice title="Keychain 桥接不可用" tone="warning">当前页面运行环境不能访问 macOS Keychain，凭据不会发送或落盘。</InlineNotice> : null}
-          {credentials.status.error ? <InlineNotice title="凭据状态读取失败" tone="danger">无法确认 Keychain 中是否已有凭据，请刷新后重试。</InlineNotice> : null}
-          {credentialSave.error ? <InlineNotice title="凭据保存失败" tone="danger">{credentialSave.error instanceof Error ? credentialSave.error.message : 'Keychain 写入没有完成。'}</InlineNotice> : null}
-          {credentialSave.isSuccess ? <InlineNotice title="凭据已保存" tone="success">Token 已写入 Keychain，页面未读取或显示保存值。</InlineNotice> : null}
+          {!credentials.supported ? <InlineNotice title="安全存储暂不可用" tone="warning">当前页面不能访问 macOS 钥匙串，因此不会发送或保存这些信息。</InlineNotice> : null}
+          {credentials.status.error ? <InlineNotice title="账号状态读取失败" tone="danger">暂时无法确认钥匙串中是否已经保存账号信息，请刷新后重试。</InlineNotice> : null}
+          {credentialSave.error ? <InlineNotice title="账号保存失败" tone="danger">{credentialSave.error instanceof Error ? credentialSave.error.message : '账号信息没有保存完成。'}</InlineNotice> : null}
+          {credentialSave.isSuccess ? <InlineNotice title="账号已安全保存" tone="success">访问令牌已经写入 macOS 钥匙串，页面没有读取或显示保存值。</InlineNotice> : null}
           <div className="voice-credential-actions">
-            <Button disabled={!credentials.supported || serviceDirty} leadingIcon={<Save size={15} />} loading={credentialSave.isPending} onClick={() => credentialSave.mutate()} variant="primary">保存到 Keychain</Button>
+            <Button disabled={!credentials.supported || serviceDirty} leadingIcon={<Save size={15} />} loading={credentialSave.isPending} onClick={() => credentialSave.mutate()} variant="primary">安全保存账号</Button>
           </div>
         </ManagementSection>
 
-        <ManagementSection title="按住说话与热词" description="热词只在你预览并确认保存后发送给当前语音识别服务。">
+        <ManagementSection title="按住说话与专有词" description="把人名、项目名和常用术语加进词表，听写时会更容易认对。">
           <div className="mgmt-grid-2">
             <OperationalList items={[
               { id: 'push-to-talk', title: '按住说话', detail: '按下开始、松开后形成最终文字', meta: hotkeyLabel(stringValue(valueAt(voiceControl, 'agent.hotkeyMode'), stringValue(voiceSettings.hotkey))), status: <StatusBadge label={booleanValue(voiceAgent.ok) ? '已就绪' : '待检查'} tone={booleanValue(voiceAgent.ok) ? 'success' : 'warning'} /> },
@@ -334,7 +337,7 @@ export function VoiceFeature() {
                 <TextArea
                   aria-label="语音热词"
                   onChange={(event) => setHotwordsText(event.target.value)}
-                  placeholder="例如：智鼬"
+                  placeholder={`例如：${identity.assistantName}`}
                   rows={7}
                   value={hotwordsText}
                 />
@@ -417,11 +420,11 @@ export function VoiceFeature() {
           </div>
         </ManagementSection>
 
-        <ManagementSection title="定稿质量" description="检查语音输入能否把临时识别结果顺滑地整理成最终文本。">
+        <ManagementSection title="文字定稿" description="检查临时听写是否会被完整替换成最终文字，避免重复或半句话残留。">
           <MetricStrip items={[
-            { label: '最终二次识别', value: finalRevisionLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '服务端二遍识别是尽力而为，不等于通用文字校对', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
-            { label: '第三遍文字校对', value: thirdPassLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: thirdPassDetail(deployedRecognition, lastRecognition), icon: Sparkles, tone: thirdPassTone(deployedRecognition, lastRecognition) },
-            { label: '完整结果替换', value: replacementLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '最终稿替换临时稿，不继续追加', icon: Waves, tone: deployedTone(deployedRecognition.fullResultReplacement) },
+            { label: '服务最终稿', value: finalRevisionLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '识别服务会在结束时给出最终文字', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
+            { label: '保守校对', value: thirdPassLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: thirdPassDetail(deployedRecognition, lastRecognition), icon: Sparkles, tone: thirdPassTone(deployedRecognition, lastRecognition) },
+            { label: '替换临时文字', value: replacementLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '最终文字会替换临时稿，而不是继续追加', icon: Waves, tone: deployedTone(deployedRecognition.fullResultReplacement) },
             { label: '最近一次定稿', value: booleanValue(lastRecognition.finalReceived) ? '已收到' : '暂无验证', detail: providerResponseSummary(lastRecognition), icon: Mic, tone: booleanValue(lastRecognition.finalReceived) ? 'success' : 'warning' },
           ]} />
           {deployedRecognitionState !== 'ready' ? (
@@ -430,25 +433,25 @@ export function VoiceFeature() {
             </InlineNotice>
           ) : !booleanValue(lastRecognition.finalReceived) ? (
             <InlineNotice title="能力已部署，等待真实验证" tone="info">
-              三项定稿能力已经由运行中的语音代理报告；完成一次实际听写并收到 Final 后，这里会显示真实定稿耗时。
+              三项定稿能力已经准备好；完成一次实际听写后，这里会显示真实定稿耗时。
             </InlineNotice>
           ) : booleanValue(lastRecognition.thirdPassApplied) ? (
             <InlineNotice title="已执行独立第三遍校对" tone="success">
               {thirdPassResultSummary(lastRecognition)}
             </InlineNotice>
           ) : booleanValue(lastRecognition.thirdPassRequested) ? (
-            <InlineNotice title="第三遍校对失败，已保留火山 Final" tone="warning">
+            <InlineNotice title="保守校对没有完成，已保留服务最终稿" tone="warning">
               {stringValue(lastRecognition.thirdPassError, '校对服务没有返回可安全采用的独立文本。')}
             </InlineNotice>
           ) : lastRecognition.finalRevisedPartial !== true && lastRecognition.localSmoothingApplied !== true ? (
-            <InlineNotice title="火山 Final 与临时稿相同" tone="info">
+            <InlineNotice title="服务最终稿与临时稿相同" tone="info">
               {deployedRecognition.thirdPassRefinementEnabled === true
-                ? '已记录响应阶段及 utterances/additions 元数据；下次相同情况会自动进入独立第三遍文字校对。'
-                : '已记录响应阶段及 utterances/additions 元数据；第三遍文字校对当前关闭，将直接采用火山 Final。'}
+                ? '这次无需替换；下次遇到相同情况仍会进行一次独立的保守校对。'
+                : '这次无需替换；保守校对当前关闭，将直接采用识别服务的最终稿。'}
             </InlineNotice>
           ) : null}
           {booleanValue(lastRecognition.finalReceived) && stringValue(lastRecognition.providerResponseStage) ? (
-            <InlineNotice title="火山响应证据" tone="info">
+            <InlineNotice title="本次识别详情" tone="info">
               {providerMetadataDetail(lastRecognition)}
             </InlineNotice>
           ) : null}
@@ -635,7 +638,7 @@ function finalRevisionLabel(
   state: string,
 ): string {
   if (!booleanValue(last.finalReceived)) return requestedCapabilityLabel(deployed.secondPass, state);
-  return booleanValue(last.providerFinalRevisedPartial) ? '火山返回独立修订' : '火山稿无变化';
+  return booleanValue(last.providerFinalRevisedPartial) ? '服务返回了修订稿' : '最终稿无变化';
 }
 
 function thirdPassLabel(
@@ -659,15 +662,15 @@ function thirdPassDetail(
   last: Record<string, unknown>,
 ): string {
   if (deployed.thirdPassRefinementEnabled === false) {
-    return '关闭后直接采用火山 Final，不再等待独立 Pi 校对';
+    return '关闭后直接采用识别服务的最终稿';
   }
   if (booleanValue(last.thirdPassApplied)) {
     const latency = durationLabel(last.thirdPassLatencyMs);
     const model = stringValue(last.thirdPassModel);
     return model ? `${latency} · ${model}` : latency;
   }
-  if (booleanValue(last.thirdPassRequested)) return '失败时保留火山 Final，不污染已输入文字';
-  return '火山 Final 与临时稿相同时，交给无工具 Pi Session 做保守校对';
+  if (booleanValue(last.thirdPassRequested)) return '失败时保留服务最终稿，不影响已输入文字';
+  return '最终稿与临时稿相同时，再做一次独立的保守校对';
 }
 
 function thirdPassTone(
@@ -700,21 +703,21 @@ function enabledCapabilityLabel(value: unknown, state: string): string {
 }
 
 function recognitionNoticeTitle(state: string): string {
-  if (state === 'missing') return '尚未安装语音代理';
-  if (state === 'restart_required') return '安装已更新，代理需要重启';
-  if (state === 'outdated') return '语音代理版本过旧';
-  if (state === 'unreadable') return '无法读取语音代理';
-  if (state === 'unsupported') return '运行中的语音代理能力不完整';
+  if (state === 'missing') return '尚未安装听写服务';
+  if (state === 'restart_required') return '安装已更新，听写服务需要重启';
+  if (state === 'outdated') return '听写服务版本过旧';
+  if (state === 'unreadable') return '无法读取听写服务';
+  if (state === 'unsupported') return '运行中的听写服务能力不完整';
   return '定稿能力尚未完成检查';
 }
 
 function recognitionNoticeText(state: string): string {
-  if (state === 'restart_required') return '当前安装包已经包含完整定稿能力，但运行中的旧进程尚未报告新契约；重启语音代理后刷新。';
-  if (state === 'outdated') return '当前安装包缺少完整结果替换契约；请重新安装语音代理，而不是反复修改服务配置。';
-  if (state === 'missing') return '控制中心没有找到 RagImeVoice.app；安装语音代理后再检查麦克风与辅助功能权限。';
-  if (state === 'unreadable') return 'RagImeVoice.app 存在，但控制中心无法读取其能力标记；请重新安装并检查应用签名。';
-  if (state === 'unsupported') return '运行中的语音代理没有报告完整结果替换契约；请通过完整产品安装入口更新并重启。';
-  return '刷新后仍未取得安装版本与运行进程的能力状态。';
+  if (state === 'restart_required') return '新版本已经包含完整的文字定稿能力；重启听写服务后再刷新此页。';
+  if (state === 'outdated') return '当前版本缺少完整的临时文字替换能力，请更新听写服务。';
+  if (state === 'missing') return '没有找到听写组件。完成应用安装后，再检查麦克风与辅助功能权限。';
+  if (state === 'unreadable') return '听写组件存在，但暂时无法确认它的版本；请重新安装后再试。';
+  if (state === 'unsupported') return '正在运行的听写服务缺少完整定稿能力，请更新并重启应用。';
+  return '刷新后仍无法确认听写服务的文字定稿能力。';
 }
 
 function finalLatencyLabel(value: unknown): string {
@@ -750,12 +753,12 @@ function providerMetadataDetail(last: Record<string, unknown>): string {
     : '';
   const stageText = stages.length > 0 ? stages.join(' → ') : stringValue(last.providerResponseStage, '未知');
   const additionText = additions.length > 0 ? additions.join('、') : '无';
-  return `阶段 ${stageText}${sequence}；utterances ${utterances} 条；additions 字段：${additionText}。转写正文不会写入诊断元数据。`;
+  return `响应阶段：${stageText}${sequence}；语句片段 ${utterances} 条；附加字段：${additionText}。听写正文不会写入诊断记录。`;
 }
 
 function thirdPassResultSummary(last: Record<string, unknown>): string {
   const changed = booleanValue(last.thirdPassChanged)
-    ? '独立校对稿已替换火山 Final'
+    ? '独立校对稿已替换服务最终稿'
     : '独立校对确认无需修改';
   const latency = durationLabel(last.thirdPassLatencyMs);
   const model = stringValue(last.thirdPassModel);

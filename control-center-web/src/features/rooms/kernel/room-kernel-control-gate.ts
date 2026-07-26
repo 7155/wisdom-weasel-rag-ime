@@ -89,14 +89,14 @@ export async function evaluateRoomKernelControlGate(
     expectedCommandRouteHash,
     commandRouteHash,
     reason: commandEnabled
-      ? 'canonical route and authorization verified'
+      ? '任务控制已连接'
       : !readEnabled
-        ? 'Room Kernel read routes are unavailable or changed'
+        ? '任务进度暂时不可用，请刷新后重试。已有对话和工作文件不会受影响。'
         : !authorized
-          ? 'caller is not authorized for agent.write'
+          ? '当前连接可以查看任务，但没有停止任务的权限'
           : commandRouteHash !== expectedCommandRouteHash
-            ? 'Room Kernel command route hash mismatch'
-            : 'Room Kernel command capability is not advertised',
+            ? '停止任务的控制通道已发生变化，请刷新或更新应用'
+            : '当前连接暂不支持停止任务',
   };
 }
 

@@ -83,10 +83,10 @@ export function LexiconWorkflow({
   }
 
   const steps = [
-    { id: 'preview', label: '预览' },
+    { id: 'preview', label: '核对词条' },
     { id: 'confirm', label: '确认' },
     { id: 'receipt', label: '完成' },
-    { id: 'rolled-back', label: '已撤销' },
+    { id: 'rolled-back', label: '撤销' },
   ] as const;
   const stageIndex = stage === 'select' ? -1 : steps.findIndex((step) => step.id === stage);
 
@@ -130,7 +130,7 @@ export function LexiconWorkflow({
             <p>把所选词条加入用户词库；重载输入法后生效。</p>
           </div>
           {stage === 'select' ? (
-            <Button disabled={selectedEntries.length === 0} onClick={() => setStage('preview')} size="small">预览已选</Button>
+            <Button disabled={selectedEntries.length === 0} onClick={() => setStage('preview')} size="small">查看已选词条</Button>
           ) : null}
         </div>
 
@@ -151,12 +151,12 @@ export function LexiconWorkflow({
             <ul>{selectedEntries.map((entry) => <li key={entry.reviewKey}>{entry.text} · {entry.pinyin || '无拼音'}</li>)}</ul>
             <div className="mgmt-workflow__binding">
               <span>已选 {selectedEntries.length} 条</span>
-              <span>确认后只更新本次预览的词条</span>
+              <span>确认后只更新上方这些词条</span>
             </div>
             <InlineNotice title="生效状态" tone="warning">更新后还需重载输入法，并通过实际选词确认效果。</InlineNotice>
             <div className="mgmt-workflow__buttons">
               <Button onClick={() => setStage('select')} size="small" variant="quiet">返回选择</Button>
-              <Button onClick={() => { setApproved(false); setStage('confirm'); }} size="small" variant="primary">进入确认</Button>
+              <Button onClick={() => { setApproved(false); setStage('confirm'); }} size="small" variant="primary">确认这些词条</Button>
             </div>
           </div>
         ) : null}
@@ -169,7 +169,7 @@ export function LexiconWorkflow({
               <span>只加入上方 {selectedEntries.length} 条词条</span>
             </label>
             <div className="mgmt-workflow__buttons">
-              <Button onClick={() => setStage('preview')} size="small" variant="quiet">返回预览</Button>
+              <Button onClick={() => setStage('preview')} size="small" variant="quiet">返回查看</Button>
               <Button disabled={!approved} loading={applyMutation.isPending} onClick={() => applyMutation.mutate()} size="small" variant="primary">确认加入词库</Button>
             </div>
           </div>

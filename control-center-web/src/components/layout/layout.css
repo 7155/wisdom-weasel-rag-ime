@@ -447,8 +447,31 @@
 }
 
 .shell-route-stage {
+  position: relative;
   min-width: 0;
   min-height: calc(100dvh - var(--topbar-height));
+}
+
+.shell-route-stage[data-route-pending='true'] > :not(.shell-route-pending) {
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.shell-route-pending {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: flex;
+  min-height: min(420px, calc(100dvh - var(--topbar-height)));
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 72px;
+  background: color-mix(in srgb, var(--color-paper) 74%, transparent);
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  -webkit-backdrop-filter: blur(1px);
+  backdrop-filter: blur(1px);
 }
 
 .shell-route-loading {

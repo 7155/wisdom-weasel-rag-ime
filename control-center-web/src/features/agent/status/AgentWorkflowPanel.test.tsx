@@ -27,11 +27,11 @@ describe('AgentWorkflowPanel', () => {
     });
     renderWorkflow(transport);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法读取实时 Plan 与 Goal');
-    expect(screen.queryByRole('region', { name: 'Plan 审阅与执行门禁' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法读取最新计划与长期目标');
+    expect(screen.queryByRole('region', { name: '计划审阅与执行' })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('button', { name: '重新读取' }));
-    expect(await screen.findByRole('region', { name: 'Plan 审阅与执行门禁' })).toBeVisible();
+    expect(await screen.findByRole('region', { name: '计划审阅与执行' })).toBeVisible();
     expect(attempts).toBe(2);
   });
 
@@ -55,9 +55,9 @@ describe('AgentWorkflowPanel', () => {
     await user.click(screen.getByRole('button', { name: '取消执行' }));
     await waitFor(() => expect(transport.requests.filter((request) => request.pathId === 'agent.session.plan.mutate')).toHaveLength(1));
 
-    await user.click(screen.getByRole('button', { name: '清除' }));
+    await user.click(screen.getByRole('button', { name: '删除目标' }));
     expect(transport.requests.filter((request) => request.pathId === 'agent.session.goal.mutate')).toHaveLength(0);
-    await user.click(screen.getByRole('button', { name: '清除' }));
+    await user.click(screen.getByRole('button', { name: '删除目标' }));
     await waitFor(() => expect(transport.requests.filter((request) => request.pathId === 'agent.session.goal.mutate')).toHaveLength(1));
     expect(confirm).toHaveBeenCalledTimes(4);
   });

@@ -244,7 +244,7 @@ describe('InputMethodFeature', () => {
 
     await user.click(await screen.findByRole('radio', { name: '安全' }));
     expect(screen.getByText('3 项设置将发生变化')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '预览操作' }));
+    await user.click(screen.getByRole('button', { name: '查看影响' }));
 
     expect(await screen.findByText('切换到安全模式？')).toBeInTheDocument();
     const previewRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.preview')?.request;
@@ -257,11 +257,11 @@ describe('InputMethodFeature', () => {
       expectedRuntimeRevision: 9,
     });
 
-    await user.click(screen.getByRole('button', { name: '进入确认' }));
-    await user.click(screen.getByRole('checkbox', { name: '只执行上方已绑定的变更' }));
-    await user.click(screen.getByRole('button', { name: '确认并应用' }));
+    await user.click(screen.getByRole('button', { name: '确认这些更改' }));
+    await user.click(screen.getByRole('checkbox', { name: '我确认只执行上方列出的更改' }));
+    await user.click(screen.getByRole('button', { name: '确认执行' }));
 
-    expect(await screen.findByText('本机操作已记录')).toBeInTheDocument();
+    expect(await screen.findByText('这次更改已安全记录')).toBeInTheDocument();
     const applyRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.apply')?.request;
     expect(applyRequest?.body).toEqual({
       changes: {
@@ -275,8 +275,8 @@ describe('InputMethodFeature', () => {
       confirmText: 'apply',
     });
 
-    await user.click(screen.getByRole('button', { name: '撤销这次操作' }));
-    expect(await screen.findByText('已恢复到操作前')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '撤销这次更改' }));
+    expect(await screen.findByText('已恢复到更改前')).toBeInTheDocument();
     const rollbackRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.rollback')?.request;
     expect(rollbackRequest?.body).toEqual({
       receiptId: 'receipt-safe-mode',
@@ -372,7 +372,7 @@ describe('InputMethodFeature', () => {
     const candidateCount = screen.getByLabelText('续写候选数量');
     await user.clear(candidateCount);
     await user.type(candidateCount, '6');
-    await user.click(screen.getByRole('button', { name: '预览操作' }));
+    await user.click(screen.getByRole('button', { name: '查看影响' }));
 
     await screen.findByText('应用这些输入设置？');
     const previewRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.preview')?.request;
@@ -384,13 +384,13 @@ describe('InputMethodFeature', () => {
       expectedRuntimeRevision: 7,
     });
 
-    await user.click(screen.getByRole('button', { name: '进入确认' }));
-    const approve = screen.getByRole('checkbox', { name: '只执行上方已绑定的变更' });
-    expect(screen.getByRole('button', { name: '确认并应用' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '确认这些更改' }));
+    const approve = screen.getByRole('checkbox', { name: '我确认只执行上方列出的更改' });
+    expect(screen.getByRole('button', { name: '确认执行' })).toBeDisabled();
     await user.click(approve);
-    await user.click(screen.getByRole('button', { name: '确认并应用' }));
+    await user.click(screen.getByRole('button', { name: '确认执行' }));
 
-    expect(await screen.findByText('本机操作已记录')).toBeInTheDocument();
+    expect(await screen.findByText('这次更改已安全记录')).toBeInTheDocument();
     const applyRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.apply')?.request;
     expect(applyRequest?.body).toEqual({
       changes: {
@@ -403,8 +403,8 @@ describe('InputMethodFeature', () => {
       confirmText: 'apply',
     });
 
-    await user.click(screen.getByRole('button', { name: '撤销这次操作' }));
-    expect(await screen.findByText('已恢复到操作前')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '撤销这次更改' }));
+    expect(await screen.findByText('已恢复到更改前')).toBeInTheDocument();
     const rollbackRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.rollback')?.request;
     expect(rollbackRequest?.body).toEqual({
       receiptId: 'receipt-input-settings',
@@ -515,7 +515,7 @@ describe('InputMethodFeature', () => {
     }));
 
     expect(await screen.findByText(/当前版本没有提供完整的审阅、写入与撤销能力/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '预览已选' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看已选词条' })).not.toBeInTheDocument();
     expect(screen.queryByText('演练 / 未执行')).not.toBeInTheDocument();
   });
 
@@ -533,7 +533,7 @@ describe('InputMethodFeature', () => {
 
     expect(await screen.findByText('无法确认词库能力')).toBeInTheDocument();
     expect(screen.getByText('能力接口不可用')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '预览已选' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '查看已选词条' })).not.toBeInTheDocument();
   });
 
   it('uses the live review token, renders an unapplied redeploy state, and rolls back by receipt', async () => {
@@ -567,10 +567,10 @@ describe('InputMethodFeature', () => {
     renderFeature(transport);
 
     expect(await screen.findByRole('checkbox', { name: '选择 表情包' })).toBeChecked();
-    await user.click(screen.getByRole('button', { name: '预览已选' }));
+    await user.click(screen.getByRole('button', { name: '查看已选词条' }));
     expect(screen.getByText('已选 1 条')).toBeInTheDocument();
     expect(screen.getByText(/更新后还需重载输入法/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '进入确认' }));
+    await user.click(screen.getByRole('button', { name: '确认这些词条' }));
     await user.click(screen.getByRole('checkbox', { name: /只加入上方 1 条/ }));
     await user.click(screen.getByRole('button', { name: '确认加入词库' }));
 
@@ -612,8 +612,8 @@ describe('InputMethodFeature', () => {
     }));
 
     await screen.findByRole('checkbox', { name: '选择 表情包' });
-    await user.click(screen.getByRole('button', { name: '预览已选' }));
-    await user.click(screen.getByRole('button', { name: '进入确认' }));
+    await user.click(screen.getByRole('button', { name: '查看已选词条' }));
+    await user.click(screen.getByRole('button', { name: '确认这些词条' }));
     await user.click(screen.getByRole('checkbox', { name: /只加入上方 1 条/ }));
     await user.click(screen.getByRole('button', { name: '确认加入词库' }));
 

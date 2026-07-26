@@ -98,7 +98,7 @@ describe('AgentComposer macOS input methods', () => {
     const send = view.getByRole('button', { name: '发送' });
     expect(controls).toContainElement(view.getByRole('button', { name: '添加图片' }));
     expect(controls).toContainElement(view.getByRole('button', { name: /对话权限/ }));
-    expect(controls).toContainElement(view.getByRole('button', { name: /当前权限可用工具/ }));
+    expect(controls).toContainElement(view.getByRole('button', { name: /这段对话可用工具/ }));
     expect(controls).not.toContainElement(send);
     expect(send.closest('.agent-composer__toolbar')).not.toBeNull();
     expect(view.queryByRole('button', { name: '打开命令面板' })).not.toBeInTheDocument();

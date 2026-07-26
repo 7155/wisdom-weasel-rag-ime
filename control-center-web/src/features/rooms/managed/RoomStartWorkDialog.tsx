@@ -116,9 +116,9 @@ export function RoomStartWorkDialog({
   >
     <DialogContent className="room-start-work-dialog">
       <DialogHeader>
-        <DialogTitle>确认并开始</DialogTitle>
+        <DialogTitle>把任务说清楚</DialogTitle>
         <DialogDescription>
-          把刚才对齐的内容固定成受管任务。开始后，Agent 会持续工作，直到交付、交接、等待、阻塞或通过验收。
+          把刚才聊好的目标和边界固定下来。开始后，伙伴会持续推进；做完会交付，做不了会说明原因并请求交接或帮助。
         </DialogDescription>
       </DialogHeader>
       <form
@@ -131,20 +131,20 @@ export function RoomStartWorkDialog({
       >
         {error ? <p className="room-dialog-error" role="alert">{error}</p> : null}
         <label className="room-create-field">
-          <span>目标</span>
+          <span>这次要解决什么</span>
           <textarea
-            aria-label="受管任务目标"
+            aria-label="任务目标"
             maxLength={4_000}
             rows={3}
             value={objective}
             onChange={(event) => setObjective(event.target.value)}
-            placeholder="这次必须解决什么问题"
+            placeholder="用一句清楚的话写下最终目标"
           />
         </label>
         <label className="room-create-field">
-          <span>交付物</span>
+          <span>完成后你会得到什么</span>
           <input
-            aria-label="受管任务交付物"
+            aria-label="任务交付物"
             maxLength={1_000}
             value={expectedOutput}
             onChange={(event) => setExpectedOutput(event.target.value)}
@@ -152,9 +152,9 @@ export function RoomStartWorkDialog({
           />
         </label>
         <label className="room-create-field">
-          <span>验收条件 <small>每行一项，最多 8 项</small></span>
+          <span>怎样算真正完成 <small>每行一项，最多 8 项</small></span>
           <textarea
-            aria-label="受管任务验收条件"
+            aria-label="任务验收条件"
             maxLength={4_000}
             rows={4}
             value={acceptanceText}
@@ -163,9 +163,9 @@ export function RoomStartWorkDialog({
           />
         </label>
         <label className="room-create-field">
-          <span>禁区与不可做 <small>可选，每行一项</small></span>
+          <span>哪些地方不要碰 <small>可选，每行一项</small></span>
           <textarea
-            aria-label="受管任务禁区"
+            aria-label="任务禁区"
             maxLength={3_000}
             rows={3}
             value={forbiddenText}
@@ -174,7 +174,7 @@ export function RoomStartWorkDialog({
           />
         </label>
         <label className="room-create-field">
-          <span>首位负责伙伴</span>
+          <span>谁先来做</span>
           <Select
             aria-label="首位负责伙伴"
             value={ownerParticipantId}
@@ -185,17 +185,17 @@ export function RoomStartWorkDialog({
             }))}
           />
           <small className="room-start-work-owner-note">
-            只决定谁先接手；伙伴仍是平级协作，可在执行中点名或正式交接。
+            这里只决定第一位接手者。之后仍可点名其他伙伴协助，也可以正式交接。
           </small>
         </label>
-        <div className="room-start-work-guards" aria-label="受管执行边界">
-          <span><CheckCircle2 size={15} /><small>每次回答结束都会重新核对验收</small></span>
-          <span><ShieldAlert size={15} /><small>取消、工作区和危险动作边界始终有效</small></span>
+        <div className="room-start-work-guards" aria-label="任务执行边界">
+          <span><CheckCircle2 size={15} /><small>每次收工前都会重新核对验收条件</small></span>
+          <span><ShieldAlert size={15} /><small>无法完成时会说明阻塞，不会无限尝试</small></span>
         </div>
       </form>
       <DialogFooter>
         <Button variant="quiet" disabled={submitting} onClick={() => onOpenChange(false)}>
-          继续对齐
+          再聊一会
         </Button>
         <Button
           type="submit"
@@ -205,7 +205,7 @@ export function RoomStartWorkDialog({
           disabled={!canSubmit}
           leadingIcon={<Play size={15} />}
         >
-          开始受管执行
+          确认并开始
         </Button>
       </DialogFooter>
     </DialogContent>

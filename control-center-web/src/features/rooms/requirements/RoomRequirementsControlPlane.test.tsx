@@ -9,7 +9,7 @@ import {
 describe('RoomRequirementsControlPlane', () => {
   afterEach(cleanup);
 
-  it('keeps long original requirements read-only and exposes the Chinese Acceptance Criterion full name', async () => {
+  it('keeps long original requirements read-only and names acceptance criteria in user language', async () => {
     const longText = `原始需求不可修改。\n${'保留完整上下文和换行。'.repeat(180)}`;
     const projection = fixture({ originalText: longText, originalHash: '0'.repeat(64), originalBytes: new TextEncoder().encode(longText).byteLength });
     render(<RoomRequirementsControlPlane projection={projection} />);
@@ -19,7 +19,7 @@ describe('RoomRequirementsControlPlane', () => {
     expect(original).toHaveAttribute('tabindex', '0');
     original.focus();
     expect(original).toHaveFocus();
-    expect(screen.getByText('验收标准（Acceptance Criterion）')).toBeInTheDocument();
+    expect(screen.getByText('验收标准')).toBeInTheDocument();
     expect(screen.getByText(/永久保留，不可修改/)).toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /编辑|保存|修改/ })).not.toBeInTheDocument();
@@ -32,14 +32,16 @@ describe('RoomRequirementsControlPlane', () => {
     expect(screen.getByText('原文哈希已核验')).toBeInTheDocument();
   });
 
-  it('only paints observed_pass green and labels observe_warn separately from enforce preview', () => {
+  it('distinguishes the enforced Kernel settlement gate from observe-only delivery checks', () => {
     const pass = fixture();
     const { container, rerender } = render(<RoomRequirementsControlPlane projection={pass} />);
+    expect(container.querySelector('[data-gate-status="enforced"]')).toHaveTextContent('任务收工检查');
+    expect(screen.getByText('始终启用')).toBeInTheDocument();
+    expect(screen.getByText(/系统会拒绝收工/)).toBeInTheDocument();
     expect(container.querySelector('[data-gate-status="observed_pass"]')).toBeInTheDocument();
-    expect(container.querySelector('[data-status="observed_pass"]')).toHaveTextContent('已观察通过');
-    expect(screen.getByText('observe_warn 只记录风险，不阻止交付；enforcementApplied 固定为 false。')).toBeInTheDocument();
-    expect(screen.getByText('预览：enforce')).toBeInTheDocument();
-    expect(screen.getByText('未启用')).toHaveAttribute('data-status', 'preview');
+    expect(container.querySelector('[data-gate-status="observed_pass"] [data-status="observed_pass"]')).toHaveTextContent('已观察通过');
+    expect(screen.getByText(/不会在生产环境额外增加一道终态拦截/)).toBeInTheDocument();
+    expect(screen.queryByText('预览：强制拦截')).not.toBeInTheDocument();
 
     const warning = fixture({ gateStatus: 'warn_blocked', reasons: ['unresolved_unknown', 'unresolved_blocker', 'user_journey_missing', 'blind_review_not_passed'] });
     rerender(<RoomRequirementsControlPlane projection={warning} />);
@@ -51,7 +53,7 @@ describe('RoomRequirementsControlPlane', () => {
   it('fails closed for a tampered issuer, old revision, and wrong commit', () => {
     const tampered = fixture({ proofStatus: 'tampered', proofReasons: ['untrusted_verifier'] });
     render(<RoomRequirementsControlPlane projection={tampered} />);
-    const proof = screen.getByRole('region', { name: '证明矩阵' });
+    const proof = screen.getByRole('region', { name: '验证记录' });
     expect(within(proof).getByText('回执不可信')).toHaveAttribute('data-status', 'tampered');
     expect(within(proof).getByText('签发者不可信')).toBeInTheDocument();
 

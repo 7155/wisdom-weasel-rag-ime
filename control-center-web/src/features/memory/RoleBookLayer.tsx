@@ -72,36 +72,36 @@ export function RoleBookLayer({
     <div className="memory-role-book-layer">
       <div className="memory-layer-heading">
         <div>
-          <span>Role continuity</span>
-          <h3>角色书</h3>
-          <p>每个角色独立维护经证据支持的工作经历、能力边界和当前承诺。</p>
+          <span>长期工作经历</span>
+          <h3>伙伴记忆</h3>
+          <p>每位伙伴分别保留有来源的工作经历、能力边界和当前承诺。</p>
         </div>
         <Button leadingIcon={<FileClock size={14} />} onClick={onOpenGovernance} size="small" variant="quiet">
-          查看治理草案
+          查看待确认内容
         </Button>
       </div>
 
       {rolesQuery.isPending ? (
-        <p className="memory-layer-loading"><LoaderCircle size={15} />正在读取角色目录</p>
+        <p className="memory-layer-loading"><LoaderCircle size={15} />正在读取伙伴目录</p>
       ) : null}
       {rolesQuery.error ? (
-        <InlineNotice title="角色目录暂时无法读取" tone="danger">
+        <InlineNotice title="伙伴目录暂时无法读取" tone="danger">
           {publicErrorText(rolesQuery.error, '请刷新后重试。')}
         </InlineNotice>
       ) : null}
       {!rolesQuery.isPending && !rolesQuery.error && !roles.length ? (
-        <InlineNotice title="还没有角色书" tone="info">先创建一个角色，系统才会建立独立的角色记忆边界。</InlineNotice>
+        <InlineNotice title="还没有伙伴记忆" tone="info">先创建一位伙伴，系统才会为她建立独立的长期工作经历。</InlineNotice>
       ) : null}
 
       {roles.length ? (
         <div className="memory-layer-workspace memory-role-book-workspace">
-          <div className="memory-layer-list" aria-label="角色书目录">
+          <div className="memory-layer-list" aria-label="伙伴记忆目录">
             <OperationalList items={roles.map((role) => ({
               id: encodeRoleKey(role.roleId, role.version),
               title: role.displayName,
               detail: role.summary,
-              meta: `角色版本 ${role.version}`,
-              status: <StatusBadge label="独立角色书" tone="info" />,
+              meta: `设定版本 ${role.version}`,
+              status: <StatusBadge label="独立记忆" tone="info" />,
               onClick: () => setRoleKey(encodeRoleKey(role.roleId, role.version)),
               selected: role.roleId === selectedScope.roleId && role.version === selectedScope.roleVersion,
             }))} />
@@ -165,26 +165,26 @@ function RoleBookDetail({
     setReference(null);
   }, [revisionId]);
 
-  if (isPending) return <p className="memory-layer-loading"><LoaderCircle size={15} />正在读取 {roleName} 的角色书</p>;
+  if (isPending) return <p className="memory-layer-loading"><LoaderCircle size={15} />正在读取 {roleName} 的伙伴记忆</p>;
   if (error) {
     return (
-      <InlineNotice title="角色书暂时无法读取" tone="danger">
-        {publicErrorText(error, '当前角色可能还没有建立角色书。')}
+      <InlineNotice title="伙伴记忆暂时无法读取" tone="danger">
+        {publicErrorText(error, '这位伙伴可能还没有形成长期工作经历。')}
       </InlineNotice>
     );
   }
   if (!Object.keys(active).length) {
-    return <InlineNotice title="没有启用版本" tone="info">当前角色还没有可展示的角色书修订。</InlineNotice>;
+    return <InlineNotice title="还没有可用版本" tone="info">这位伙伴还没有可展示的长期工作经历。</InlineNotice>;
   }
 
   return (
-    <section className="memory-role-book-detail" aria-label={`${roleName} 角色书详情`}>
+    <section className="memory-role-book-detail" aria-label={`${roleName} 伙伴记忆详情`}>
       <header>
         <span><BookUser size={17} /></span>
         <div>
-          <small>当前角色书</small>
+          <small>当前伙伴记忆</small>
           <h3>{stringValue(revision.displayName, roleName)}</h3>
-          <p>{stringValue(revision.mission, '用于保持角色在不同会话中的连续性。')}</p>
+          <p>{stringValue(revision.mission, '用于让伙伴在不同对话中保持连贯。')}</p>
         </div>
         <StatusBadge
           label={stringValue(revision.status) === 'active' ? '已启用' : '历史版本'}
@@ -204,12 +204,12 @@ function RoleBookDetail({
         </Button>
       </header>
 
-      <div className="memory-role-book-revisions" aria-label="角色书版本记录">
+      <div className="memory-role-book-revisions" aria-label="伙伴记忆版本">
         {revisions.map((item) => {
           const id = stringValue(item.revisionId);
           return (
             <button aria-current={id === stringValue(revision.revisionId)} key={id} onClick={() => setRevisionId(id)} type="button">
-              <strong>Revision {numberValue(item.revisionNumber)}</strong>
+              <strong>第 {numberValue(item.revisionNumber)} 版</strong>
               <small>{stringValue(item.status) === 'active' ? '当前' : formatDate(numberValue(item.createdAtMs))}</small>
             </button>
           );
@@ -251,12 +251,12 @@ function RoleBookDetail({
           })}
         />
       ) : (
-        <p className="memory-lineage-empty">选择一条角色记忆，查看它的来源和证据引用。</p>
+        <p className="memory-lineage-empty">选择一条伙伴记忆，查看它的来源和证据引用。</p>
       )}
 
       <footer>
-        <span><ShieldCheck size={14} />角色书只能描述角色，不能改变工具权限或安全策略。</span>
-        <small>{draftCount ? `${draftCount} 份每日草案等待治理` : '没有待处理的每日草案'}</small>
+        <span><ShieldCheck size={14} />伙伴记忆只描述经历与边界，不能扩大工具权限或安全范围。</span>
+        <small>{draftCount ? `${draftCount} 份每日整理等待确认` : '没有待确认的每日整理'}</small>
       </footer>
       {reference ? (
         <MemoryReferenceDialog
@@ -291,7 +291,7 @@ function RoleBookItemDetail({
         </dl>
       </div>
       {evidenceIds.length ? (
-        <div className="memory-reference-list" aria-label="角色书证据引用">
+        <div className="memory-reference-list" aria-label="伙伴记忆证据引用">
           {evidenceIds.map((evidenceId) => (
             <button key={evidenceId} onClick={() => onOpenReference(evidenceId)} type="button">
               <Fingerprint size={14} /><span>{evidenceId}</span><ChevronRight size={14} />

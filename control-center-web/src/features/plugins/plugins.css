@@ -4,6 +4,29 @@ main[data-route-id='plugins'] .plugins-count {
   font-variant-numeric: tabular-nums;
 }
 
+.plugins-maintenance-entry {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-block: 1px solid var(--color-border);
+}
+
+.plugins-maintenance-entry > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.plugins-maintenance-entry strong { font-size: 14px; }
+.plugins-maintenance-entry small {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .plugins-filters {
   display: grid;
   align-items: end;
@@ -444,6 +467,11 @@ main[data-route-id='plugins'] .plugins-count {
 }
 
 @media (max-width: 760px) {
+  .plugins-maintenance-entry {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .capability-stage-legend { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .plugins-filters { grid-template-columns: 1fr; }
   .plugins-mode-filter { grid-column: auto; }

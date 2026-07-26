@@ -44,6 +44,7 @@ export function resolveConversationEntryId(
 }
 
 export function ConversationForkDialog({
+  assistantName = '智鼬',
   open,
   sessionId,
   sessionTitle,
@@ -55,6 +56,7 @@ export function ConversationForkDialog({
   onJump,
   onCreated,
 }: {
+  assistantName?: string;
   open: boolean;
   sessionId: string;
   sessionTitle: string;
@@ -161,7 +163,7 @@ export function ConversationForkDialog({
               >
                 <span className="agent-fork-dialog__index">{index + 1}</span>
                 <span className="agent-fork-dialog__node-copy">
-                  <small>{item.role === 'user' ? '你' : '智鼬'} · {formatNodeTime(item.createdAtMs)}</small>
+                  <small>{item.role === 'user' ? '你' : assistantName} · {formatNodeTime(item.createdAtMs)}</small>
                   <strong>{item.text}</strong>
                 </span>
                 <em data-branchable={branchable || undefined}>

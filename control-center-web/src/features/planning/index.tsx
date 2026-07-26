@@ -38,10 +38,12 @@ import {
   stringValue,
 } from '@/features/overview/management-ui';
 import { AgentWakeSchedules } from './AgentWakeSchedules';
+import { useProductIdentity } from '@/features/identity/product-identity';
 import './planning.css';
 
 export function PlanningFeature() {
   const navigate = useNavigate();
+  const identity = useProductIdentity();
   const now = new Date();
   const [date, setDate] = useState(today());
   const { dashboard } = usePlanningDashboard(date);
@@ -112,6 +114,7 @@ export function PlanningFeature() {
   });
   const focus = stringValue(plan.intention, stringValue(openTasks[0]?.title, '今天没有未完成任务'));
   const companionHints = planningHints({
+    assistantName: identity.assistantName,
     assistantMessage: stringValue(asRecord(payload.assistant).message),
     completedCount: numberValue(summary.completedTaskCount),
     focus,
@@ -190,14 +193,14 @@ export function PlanningFeature() {
           <IconButton icon={<RefreshCw size={16} />} label="刷新" onClick={() => void dashboard.refetch()} tooltip />
         </>
       }
-      description="按日期查看日计划、任务、目标与完成建议。"
-      eyebrow="今日"
+      description="把想做的事整理成可以一步步完成、也能真正验收的任务。"
+      eyebrow="要做的事"
       routeId="planning"
-      title="规划"
+      title="任务"
     >
       <QueryState error={dashboard.error as Error | null} isPending={dashboard.isPending} onRetry={() => void dashboard.refetch()}>
         <ManagementSection
-          title="今日工作台"
+          title="今天"
           description={`${timeGreeting(now)}。${stringValue(asRecord(payload.assistant).message, focus)}`}
           trailing={<StatusBadge label={stringValue(payload.date, date)} tone="info" />}
         >
@@ -207,8 +210,8 @@ export function PlanningFeature() {
               <strong>{focus}</strong>
             </div>
             <div className="planning-companion__actions">
-              <Button leadingIcon={<Sparkles size={15} />} onClick={() => handoffToAgent('organize')} size="small" variant="primary">交给智鼬整理</Button>
-              <Button leadingIcon={<ListTodo size={15} />} onClick={() => handoffToAgent('breakdown')} size="small">请智鼬拆解</Button>
+              <Button leadingIcon={<Sparkles size={15} />} onClick={() => handoffToAgent('organize')} size="small" variant="primary">安排今天</Button>
+              <Button leadingIcon={<ListTodo size={15} />} onClick={() => handoffToAgent('breakdown')} size="small">拆解当前重点</Button>
               <Button leadingIcon={<CheckCircle2 size={15} />} onClick={() => handoffToAgent('review')} size="small" variant="quiet">一起复盘</Button>
             </div>
           </div>
@@ -222,11 +225,11 @@ export function PlanningFeature() {
               value={overdueTasks.length}
             />
             <PlanningSummaryItem detail={`${Math.round(numberValue(summary.progress) * 100)}%`} icon={CheckCircle2} label="已完成" tone="success" value={numberValue(summary.completedTaskCount)} />
-            <PlanningSummaryItem detail={suggestions.length ? `${suggestions.length} 条待确认完成` : '来自今日计划'} icon={Sparkles} label="建议" value={companionHints.length} />
+            <PlanningSummaryItem detail={suggestions.length ? `${suggestions.length} 条待确认完成` : '根据今天的安排'} icon={Sparkles} label="建议" value={companionHints.length} />
           </div>
           <div className="planning-secondary-actions">
-            <Button onClick={() => setHintsDialogOpen(true)} size="small">查看今日建议 · {companionHints.length}</Button>
-            <Button onClick={() => setPlanDialogOpen(true)} size="small" variant="quiet">查看日计划</Button>
+            <Button onClick={() => setHintsDialogOpen(true)} size="small">看看下一步 · {companionHints.length}</Button>
+            <Button onClick={() => setPlanDialogOpen(true)} size="small" variant="quiet">查看今天的安排</Button>
           </div>
         </ManagementSection>
 
@@ -245,7 +248,7 @@ export function PlanningFeature() {
         ) : null}
 
         <div className="planning-overview-grid">
-          <ManagementSection title="日计划" description="意图、备注和复盘保持同一快照。">
+          <ManagementSection title="今天的安排" description="今天想做什么、过程备注和复盘都放在这里。">
             <div className="planning-plan-summary">
               <span>今日意图</span>
               <strong>{stringValue(plan.intention, '尚未设置')}</strong>
@@ -253,8 +256,8 @@ export function PlanningFeature() {
             </div>
           </ManagementSection>
           <ManagementSection
-            title="活动目标"
-            trailing={(
+            title="正在推进的目标"
+            trailing={goalEntryAvailability.state !== 'unsupported' ? (
               <Button
                 disabled={goalEntryAvailability.state !== 'available'}
                 leadingIcon={<Plus size={14} />}
@@ -262,9 +265,9 @@ export function PlanningFeature() {
                 size="small"
                 variant="quiet"
               >
-                {entryActionLabel(goalEntryAvailability.state, '新建目标')}
+                {entryActionLabel(goalEntryAvailability.state, '添加目标')}
               </Button>
-            )}
+            ) : undefined}
           >
             {goals.length ? (
               <div className="planning-list planning-list--goals">
@@ -278,14 +281,20 @@ export function PlanningFeature() {
                   selected: selectedGoal === stringValue(goal.id),
                 }))} />
               </div>
-            ) : <EmptyState description="当前没有活动目标。" icon={Flag} title="暂无目标" />}
+            ) : <EmptyState
+              description={goalEntryAvailability.state === 'unsupported'
+                ? `先和${identity.assistantName}聊聊长期想完成的事，她会帮你梳理方向。`
+                : '现在还没有正在推进的目标。'}
+              icon={Flag}
+              title="暂无目标"
+            />}
           </ManagementSection>
         </div>
 
         <ManagementSection
           title="任务"
           description="选择一项任务以查看、完成或继续编辑。"
-          trailing={(
+          trailing={taskEntryAvailability.state !== 'unsupported' ? (
             <Button
               disabled={taskEntryAvailability.state !== 'available'}
               leadingIcon={<Plus size={14} />}
@@ -293,9 +302,9 @@ export function PlanningFeature() {
                 size="small"
                 variant="primary"
             >
-              {entryActionLabel(taskEntryAvailability.state, '新建任务')}
+              {entryActionLabel(taskEntryAvailability.state, '添加任务')}
             </Button>
-          )}
+          ) : undefined}
         >
           {tasks.length ? (
             <div className="planning-list planning-list--tasks">
@@ -303,13 +312,19 @@ export function PlanningFeature() {
                 id: stringValue(task.id),
                 title: stringValue(task.title, '未命名任务'),
                 detail: stringValue(task.detail, '无说明'),
-                meta: taskMeta(task),
+                meta: taskMeta(task, identity.assistantName),
                 status: <StatusBadge label={taskStatusLabel(stringValue(task.status))} tone={stringValue(task.status) === 'done' ? 'success' : stringValue(task.status) === 'in_progress' ? 'info' : 'neutral'} />,
                 onClick: () => selectTask(task),
                 selected: selectedTask === stringValue(task.id),
               }))} />
             </div>
-          ) : <EmptyState description="建立一个可验证的下一步，完成后会保留证据与验收状态。" icon={ListTodo} title="任务列表为空" />}
+          ) : <EmptyState
+            description={taskEntryAvailability.state === 'unsupported'
+              ? `先把想做的事告诉${identity.assistantName}，她会帮你拆成可以执行和验收的下一步。`
+              : '添加一个清楚、做完后能确认结果的下一步。'}
+            icon={ListTodo}
+            title="还没有任务"
+          />}
         </ManagementSection>
 
         <AgentWakeSchedules tasks={tasks} />
@@ -340,7 +355,7 @@ export function PlanningFeature() {
               }))} />
             </div>
             <DialogFooter>
-              <Button onClick={() => setHintsDialogOpen(false)} size="small">完成查看</Button>
+              <Button onClick={() => setHintsDialogOpen(false)} size="small">返回</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -348,8 +363,8 @@ export function PlanningFeature() {
         <Dialog onOpenChange={setPlanDialogOpen} open={planDialogOpen}>
           <DialogContent className="planning-dialog planning-detail-dialog">
             <DialogHeader>
-              <DialogTitle>日计划详情</DialogTitle>
-              <DialogDescription>{date} 的意图、备注和复盘快照。</DialogDescription>
+              <DialogTitle>今天的安排</DialogTitle>
+              <DialogDescription>{date} 想做的事、过程备注和复盘。</DialogDescription>
             </DialogHeader>
             <dl className="mgmt-kv planning-plan">
               <dt>今日意图</dt><dd>{stringValue(plan.intention, '尚未设置')}</dd>
@@ -357,7 +372,7 @@ export function PlanningFeature() {
               <dt>复盘</dt><dd>{stringValue(plan.reflection, '暂无')}</dd>
             </dl>
             <DialogFooter>
-              <Button onClick={() => setPlanDialogOpen(false)} size="small">完成查看</Button>
+              <Button onClick={() => setPlanDialogOpen(false)} size="small">返回</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -365,7 +380,7 @@ export function PlanningFeature() {
         <Dialog onOpenChange={setTaskDialogOpen} open={taskDialogOpen}>
           <DialogContent className="planning-dialog">
             <DialogHeader>
-              <DialogTitle>{selectedTask ? '编辑任务' : '新建任务'}</DialogTitle>
+              <DialogTitle>{selectedTask ? '编辑任务' : '添加任务'}</DialogTitle>
               <DialogDescription>
                 {selectedTask ? '查看任务细节，修改内容或更新完成状态。' : '填写一个清晰、可以完成的下一步。'}
               </DialogDescription>
@@ -508,13 +523,13 @@ export function PlanningFeature() {
         <Dialog onOpenChange={setGoalDialogOpen} open={goalDialogOpen}>
           <DialogContent className="planning-dialog planning-dialog--goal">
             <DialogHeader>
-              <DialogTitle>{selectedGoal ? '编辑目标' : '新建目标'}</DialogTitle>
-              <DialogDescription>目标可以独立保存；服务端预览确认前不会改写规划。</DialogDescription>
+              <DialogTitle>{selectedGoal ? '编辑目标' : '添加目标'}</DialogTitle>
+              <DialogDescription>保存前会先让你确认具体改动，不会悄悄改写计划。</DialogDescription>
             </DialogHeader>
             <div className="planning-dialog__context">
               <span><Flag aria-hidden="true" size={15} />{goalHorizonLabel(goalHorizon)}</span>
               {selectedGoal ? <StatusBadge label={goalStatusLabel(goalStatus)} tone={goalStatus === 'active' ? 'info' : 'success'} /> : null}
-              {selectedGoal ? <Button onClick={beginNewGoal} size="small" variant="quiet">改为新建目标</Button> : null}
+              {selectedGoal ? <Button onClick={beginNewGoal} size="small" variant="quiet">另建一个目标</Button> : null}
             </div>
             <div className="planning-dialog__grid">
               <div className="mgmt-stack">
@@ -644,8 +659,8 @@ function today(): string {
 
 function entryActionLabel(state: 'checking' | 'available' | 'blocked' | 'unsupported', label: string): string {
   if (state === 'available') return label;
-  if (state === 'checking') return '正在确认';
-  return '当前不可用';
+  if (state === 'checking') return `${label}（正在确认）`;
+  return `${label}（暂不可用）`;
 }
 
 function localDate(date: Date): string {
@@ -673,6 +688,7 @@ type PlanningHint = {
 };
 
 function planningHints({
+  assistantName,
   assistantMessage,
   completedCount,
   focus,
@@ -682,6 +698,7 @@ function planningHints({
   reflection,
   suggestions,
 }: {
+  assistantName: string;
   assistantMessage: string;
   completedCount: number;
   focus: string;
@@ -724,7 +741,7 @@ function planningHints({
   if (hints.length < 3 && completedCount > 0 && !reflection) {
     hints.push({
       title: `复盘今天完成的 ${completedCount} 项`,
-      detail: '把有效做法和下一步交给智鼬收束。',
+      detail: `把有效做法和下一步交给${assistantName}收束。`,
       meta: '复盘',
     });
   }
@@ -750,9 +767,9 @@ function planningHints({
   if (hints.length < 2) {
     hints.push({
       action: 'agent',
-      title: openTasks.length ? '让智鼬重新整理今天的顺序' : '让智鼬把今日意图拆成第一步',
+      title: openTasks.length ? `让${assistantName}重新整理今天的顺序` : `让${assistantName}把今日意图拆成第一步`,
       detail: assistantMessage || focus,
-      meta: '智鼬',
+      meta: assistantName,
     });
   }
   return hints.slice(0, 3);
@@ -784,12 +801,12 @@ function goalHorizonLabel(value: string): string {
   } as Record<string, string>)[value] ?? '长期目标';
 }
 
-function taskMeta(task: Record<string, unknown>): string {
+function taskMeta(task: Record<string, unknown>, assistantName: string): string {
   const dueAtMs = numberValue(task.dueAtMs);
   if (dueAtMs > 0) return `截止 ${formatTime(dueAtMs)}`;
   return ({
     manual: '手动添加',
-    assistant: '智鼬建议',
+    assistant: `${assistantName}建议`,
     completion_suggestion: '完成建议',
     imported: '导入任务',
   } as Record<string, string>)[stringValue(task.source)] ?? '计划任务';

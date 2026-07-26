@@ -142,7 +142,7 @@ export function ContextXraySections({
         type="button"
       >
         <span>
-          <strong>{expanded ? '收起上下文透视' : '查看上下文透视'}</strong>
+          <strong>{expanded ? '收起上下文检查' : '查看上下文检查'}</strong>
           <small>
             {snapshot.available
               ? `${deliveredCount}/${presentCount} 层确认到达 Provider`

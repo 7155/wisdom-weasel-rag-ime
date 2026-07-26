@@ -76,22 +76,22 @@ export function DiagnosticsFeature() {
     <ManagementPage
       actions={
         <>
-          <Button leadingIcon={<Clipboard size={15} />} onClick={() => void copyReport()} size="small">复制诊断</Button>
+          <Button leadingIcon={<Clipboard size={15} />} onClick={() => void copyReport()} size="small">复制排查报告</Button>
           <Button leadingIcon={<RefreshCw size={15} />} loading={queries.runtime.isFetching} onClick={refresh} size="small">刷新</Button>
         </>
       }
-      description="检查输入法、后台服务、模型与本机数据是否可以正常工作。"
-      eyebrow="系统"
+      description="哪里没准备好、为什么没准备好，以及下一步怎么处理，都从这里查。"
+      eyebrow="帮你找问题"
       routeId="diagnostics"
-      title="诊断与修复"
+      title="问题排查"
     >
       <QueryState error={error} isPending={pending} onRetry={refresh}>
         {copyStatus ? <InlineNotice title="诊断导出" tone="info">{copyStatus}</InlineNotice> : null}
-        <ManagementSection title="关键探针">
+        <ManagementSection title="关键检查">
           <MetricStrip items={[
             { label: '输入法', value: booleanValue(inputSource.typingReady) ? '可以输入' : '需要检查', detail: inputReadinessLabel(stringValue(inputSource.readinessState)), icon: Keyboard, tone: booleanValue(inputSource.typingReady) ? 'success' : 'warning' },
             { label: '本机预测', value: booleanValue(predictorEnvelope.ok) ? '运行正常' : '需要检查', detail: predictorServiceLabel(predictorProvider), icon: Cpu, tone: booleanValue(predictorEnvelope.ok) ? 'success' : 'warning' },
-            { label: '模型维度', value: predictorDimensions, detail: '当前能力', icon: Activity },
+            { label: '本机模型能力', value: predictorDimensions, detail: '模型报告的特征维度', icon: Activity },
             { label: '系统设置', value: canOpenAccessibilitySettings ? '可以打开' : '当前不可用', detail: 'macOS 辅助功能', icon: ServerCog, tone: canOpenAccessibilitySettings ? 'success' : 'warning' },
           ]} />
         </ManagementSection>
@@ -125,7 +125,7 @@ export function DiagnosticsFeature() {
         </div>
 
         <ManagementSection
-          title="本机辅助修复"
+          title="可以尝试的修复"
           description="先预览影响，再确认并追踪执行结果。"
           trailing={(
             <StatusBadge
@@ -135,8 +135,8 @@ export function DiagnosticsFeature() {
           )}
         >
           {!canOpenAccessibilitySettings ? (
-            <InlineNotice title="需要桌面控制中心" tone="warning">
-              重启服务、重新部署和打开系统设置由桌面宿主的固定白名单执行；浏览器预览保持只读。
+            <InlineNotice title="请在已安装的应用中操作" tone="warning">
+              重启服务、重新部署和打开系统设置只在已安装的应用中执行；浏览器预览保持只读。
             </InlineNotice>
           ) : runtimeRevision < 0 ? (
             <InlineNotice title="正在等待运行状态" tone="warning">
@@ -160,7 +160,7 @@ export function DiagnosticsFeature() {
           </div>
         </ManagementSection>
 
-        <ManagementSection title="高风险操作边界">
+        <ManagementSection title="这些操作为什么需要确认">
           <details className="diagnostics-boundary">
             <summary>查看受保护操作</summary>
             <p>清空历史、清空记忆、恢复默认与卸载不属于快捷修复。执行前必须单独审阅影响范围并再次确认。</p>
@@ -178,14 +178,14 @@ function runtimeActions(aiEnabled: boolean): readonly {
   title: string;
 }[] {
   return [
-    { action: 'register_input_source', title: '重新注册输入法', description: '刷新当前用户的 Squirrel 输入源注册，不清空用户数据。', risk: 'R2' },
-    { action: 'restart_sidecar', title: '重启后台服务', description: '由控制中心宿主重启 Sidecar，避免服务自行终止后丢失执行边界。', risk: 'R2' },
-    { action: 'restart_predictor', title: '重启本机模型', description: '重新启动 MLX 预测服务并等待系统返回执行回执。', risk: 'R2' },
-    { action: 'redeploy_rime', title: '重新部署 Rime 配置', description: '运行固定的受信任部署脚本，不接受页面提供的路径或命令。', risk: 'R3' },
+    { action: 'register_input_source', title: '重新连接输入法', description: '刷新当前用户的输入源注册，不会清空个人词库或输入记录。', risk: 'R2' },
+    { action: 'restart_sidecar', title: '重启后台服务', description: '由已安装的应用安全重启后台连接服务，任务边界和审计不会丢失。', risk: 'R2' },
+    { action: 'restart_predictor', title: '重启本机模型', description: '重新启动本机预测服务，并等待它确认已经恢复。', risk: 'R2' },
+    { action: 'redeploy_rime', title: '重新部署输入法配置', description: '使用应用内置的受信任流程重新部署，不接受页面传入的路径或命令。', risk: 'R3' },
     { action: 'open_accessibility_settings', title: '打开辅助功能设置', description: '打开 macOS 辅助功能权限页，不自动修改权限。', risk: 'R1' },
     aiEnabled
-      ? { action: 'stop_ai', title: '暂停智能候选', description: '暂停提交后的智能候选，基础 Rime 输入保持可用。', risk: 'R1' }
-      : { action: 'resume_ai', title: '恢复智能候选', description: '恢复提交后的智能候选，基础 Rime 输入保持可用。', risk: 'R1' },
+      ? { action: 'stop_ai', title: '暂停智能候选', description: '暂停输入后的智能候选，基础输入仍然可以使用。', risk: 'R1' }
+      : { action: 'resume_ai', title: '恢复智能候选', description: '重新开启输入后的智能候选，基础输入不受影响。', risk: 'R1' },
   ];
 }
 

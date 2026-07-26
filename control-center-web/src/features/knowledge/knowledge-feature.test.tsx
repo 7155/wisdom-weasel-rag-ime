@@ -57,7 +57,7 @@ describe('document knowledge library', () => {
       params: { kbId: 'kb-runtime', fileId: 'file-runtime' },
       query: { chunkId: 'chunk-tool', page: 12, lines: 80 },
     }));
-    expect(screen.getByRole('tab', { name: '材料查看' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByRole('tab', { name: '查看材料' })).toHaveAttribute('data-state', 'active');
     expect(await screen.findByText(/已定位检索命中/)).toBeInTheDocument();
     expect(screen.getByText('Agent 启动时注册 ime_knowledge。').closest('article')).toHaveAttribute('data-focused', 'true');
   });
@@ -121,7 +121,7 @@ describe('document knowledge library', () => {
     await waitFor(() => expect(request(transport, 'knowledgeBases.rebuild')?.body).toEqual({
       previewToken: 'preview-reindex', payloadSha256: 'sha256:reindex', expectedRevision: 8, confirmText: 'REBUILD',
     }));
-    expect(screen.getByRole('tab', { name: '索引任务' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByRole('tab', { name: '处理记录' })).toHaveAttribute('data-state', 'active');
   });
 
   it('retries a failed document and confirms deletion without leaking storage paths', async () => {
@@ -185,7 +185,7 @@ describe('document knowledge library', () => {
     renderKnowledge(transport);
 
     expect((await screen.findAllByText('runtime.pdf')).length).toBeGreaterThan(0);
-    for (const name of ['材料查看', '检索测试', '索引任务', '设置']) {
+    for (const name of ['查看材料', '检索测试', '处理记录', '设置']) {
       await user.click(screen.getByRole('tab', { name }));
       expect(screen.getByRole('tab', { name })).toHaveAttribute('data-state', 'active');
     }
@@ -214,7 +214,7 @@ describe('document knowledge library', () => {
     const user = userEvent.setup();
     renderKnowledge(transport);
 
-    await user.click(await screen.findByRole('tab', { name: '索引任务' }));
+    await user.click(await screen.findByRole('tab', { name: '处理记录' }));
     expect(screen.getAllByText('已完成').length).toBeGreaterThan(0);
     expect(screen.queryByText('处理中')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /runtime.pdf/ }));
@@ -247,7 +247,7 @@ describe('document knowledge library', () => {
     const user = userEvent.setup();
     renderKnowledge(transport);
 
-    await user.click(await screen.findByRole('tab', { name: '索引任务' }));
+    await user.click(await screen.findByRole('tab', { name: '处理记录' }));
     await user.click(screen.getByRole('button', { name: '取消任务' }));
 
     await waitFor(() => expect(request(transport, 'knowledgeBases.job.cancel')).toMatchObject({
@@ -306,7 +306,7 @@ describe('document knowledge library', () => {
     expect(screen.getByLabelText('节点详情')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '按需检索与上下文注入' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '打开材料来源' }));
-    expect(screen.getByRole('tab', { name: '材料查看' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByRole('tab', { name: '查看材料' })).toHaveAttribute('data-state', 'active');
 
     await user.click(screen.getByRole('tab', { name: '知识图谱' }));
     await user.click(screen.getByRole('radio', { name: '关系' }));

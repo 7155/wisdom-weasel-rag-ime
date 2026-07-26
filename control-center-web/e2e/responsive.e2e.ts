@@ -83,16 +83,16 @@ test('Room mobile drawer leaves the workspace full width and preserves narrow co
     const feature = page.locator('main[data-route-id="rooms"]');
     const workspace = page.locator('.room-workspace');
     const rail = page.locator('.rooms-rail');
-    const railTrigger = page.getByRole('button', { name: '打开 Rooms 列表' });
+    const railTrigger = page.getByRole('button', { name: '打开协作空间列表' });
     const header = page.locator('.room-workspace > header');
-    const tabs = page.getByRole('radiogroup', { name: 'Room 工作区' });
+    const tabs = page.getByRole('radiogroup', { name: '协作空间视图' });
     const actions = page.locator('.room-header-actions');
     await expect(rail).toBeHidden();
     await expect(railTrigger).toBeVisible();
     await expect(header).toBeVisible();
     await expect(tabs).toBeVisible();
     await expect(actions).toBeVisible();
-    await expect(page.getByRole('radio', { name: 'Sessions' })).toBeVisible();
+    await expect(page.getByRole('radio', { name: '伙伴' })).toBeVisible();
     const [featureBox, workspaceBox, headerBox, tabsBox, actionsBox] = await Promise.all([
       feature.boundingBox(),
       workspace.boundingBox(),
@@ -119,7 +119,7 @@ test('Room mobile drawer leaves the workspace full width and preserves narrow co
     await expect(rail).toBeVisible();
     await expect(rail).toHaveAttribute('role', 'dialog');
     await expect(rail).toHaveAttribute('aria-modal', 'true');
-    await expect(page.getByRole('button', { name: '关闭 Rooms 列表' }).first()).toBeFocused();
+    await expect(page.getByRole('button', { name: '关闭协作空间列表' }).first()).toBeFocused();
     await expect(page.locator('.rooms-rail-backdrop')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(rail).toBeHidden();
@@ -129,12 +129,12 @@ test('Room mobile drawer leaves the workspace full width and preserves narrow co
     await page.locator('.rooms-rail-backdrop').click({ position: { x: width - 10, y: 120 } });
     await expect(rail).toBeHidden();
     await railTrigger.click();
-    const roomChoice = rail.getByRole('button', { name: /^打开 Room：/ }).first();
+    const roomChoice = rail.getByRole('button', { name: /^打开协作空间：/ }).first();
     if (await roomChoice.count()) {
       await roomChoice.click();
       await expect(rail).toBeHidden();
     } else {
-      await page.getByRole('button', { name: '关闭 Rooms 列表' }).first().click();
+      await page.getByRole('button', { name: '关闭协作空间列表' }).first().click();
     }
 
     const activeTopic = page.locator('.room-topic-tabs > button[aria-current="true"]');
@@ -178,13 +178,13 @@ test('Room releases desktop side panels after a live resize', async ({ page }) =
   const feature = page.locator('main[data-route-id="rooms"]');
   const rail = page.locator('.rooms-rail');
   await expect(rail).toBeVisible();
-  await page.getByRole('button', { name: '展开 Room 证据' }).click();
+  await page.getByRole('button', { name: '看看协作进展' }).click();
   await expect(feature).toHaveAttribute('data-status-open', 'true');
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(rail).toBeHidden();
   await expect(feature).toHaveAttribute('data-status-open', 'false');
-  await expect(page.getByRole('button', { name: '打开 Rooms 列表' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开协作空间列表' })).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
 });
 
@@ -204,7 +204,7 @@ test('Session releases desktop side panels after a live resize', async ({ page }
   await expect(rail).toHaveAttribute('aria-hidden', 'true');
   await expect(rail).toHaveAttribute('inert', '');
   await expect(page.locator('.agent-conversation')).toBeVisible();
-  await expect(page.getByRole('button', { name: '展开任务列表' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '展开对话列表' })).toBeVisible();
   await expect.poll(async () => {
     const [featureBox, railBox, conversationBox] = await Promise.all([
       feature.boundingBox(),
@@ -229,7 +229,7 @@ test('Session and Room share narrow-desktop status drawer behavior', async ({ pa
   await page.goto('/#/agent');
   const agentConversation = page.locator('.agent-conversation');
   const agentStatusTrigger = page.getByRole('button', { name: '展开状态面板' });
-  await expect(page.getByRole('separator', { name: '调整任务列表宽度' })).toBeVisible();
+  await expect(page.getByRole('separator', { name: '调整对话列表宽度' })).toBeVisible();
   await expect(page.getByRole('separator', { name: '调整状态面板宽度' })).toBeHidden();
   await agentStatusTrigger.click();
   const agentStatus = page.getByRole('dialog', { name: '当前对话状态' });
@@ -241,11 +241,11 @@ test('Session and Room share narrow-desktop status drawer behavior', async ({ pa
 
   await page.goto('/#/rooms');
   const roomWorkspace = page.locator('.room-workspace');
-  const roomStatusTrigger = page.getByRole('button', { name: '展开 Room 证据' });
-  await expect(page.getByRole('separator', { name: '调整 Rooms 列表宽度' })).toBeVisible();
-  await expect(page.getByRole('separator', { name: '调整 Room 状态面板宽度' })).toBeHidden();
+  const roomStatusTrigger = page.getByRole('button', { name: '看看协作进展' });
+  await expect(page.getByRole('separator', { name: '调整协作空间列表宽度' })).toBeVisible();
+  await expect(page.getByRole('separator', { name: '调整协作进展面板宽度' })).toBeHidden();
   await roomStatusTrigger.click();
-  const roomStatus = page.getByRole('dialog', { name: 'Room 状态' });
+  const roomStatus = page.getByRole('dialog', { name: '协作进展' });
   await expect(roomStatus).toHaveAttribute('aria-modal', 'true');
   await expect(roomWorkspace).toHaveAttribute('inert', '');
   await page.keyboard.press('Escape');
@@ -261,7 +261,7 @@ test('Room tablet header keeps tabs, Room actions, and global actions in separat
   const workspace = page.locator('.room-workspace');
   const header = page.locator('.room-workspace > header');
   const title = header.locator(':scope > span');
-  const tabs = page.getByRole('radiogroup', { name: 'Room 工作区' });
+  const tabs = page.getByRole('radiogroup', { name: '协作空间视图' });
   const roomActions = page.locator('.room-header-actions');
   const globalActions = page.locator('.shell-topbar__actions');
 
@@ -424,7 +424,7 @@ test('closing the Agent session rail releases its grid column', async ({ page })
   expect((composerSurfaceBefore?.y ?? 0) + (composerSurfaceBefore?.height ?? 0))
     .toBeLessThanOrEqual(viewport.height + 1);
 
-  await page.getByRole('button', { name: '收起任务列表' }).click();
+  await page.getByRole('button', { name: '收起对话列表' }).click();
   await expect(feature).toHaveAttribute('data-rail-open', 'false');
   await page.waitForTimeout(260);
   const [featureBox, after, composerAfter, composerSurfaceAfter] = await Promise.all([

@@ -117,9 +117,9 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    expect(await screen.findByRole('heading', { name: '记忆', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '我的记忆', level: 1 })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '记忆整理审核' })).not.toBeInTheDocument();
-    await user.click(await screen.findByRole('tab', { name: 'AI 整理' }));
+    await user.click(await screen.findByRole('tab', { name: '让智鼬整理' }));
     expect(await screen.findByRole('heading', { name: '记忆整理审核', level: 2 })).toBeInTheDocument();
     expect(await screen.findByRole('list', { name: '记忆整理建议' })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('输入一个明确的知识任务')).not.toBeInTheDocument();
@@ -151,7 +151,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('tab', { name: 'AI 整理' }));
+    await user.click(await screen.findByRole('tab', { name: '让智鼬整理' }));
     const checkbox = await screen.findByRole('checkbox', { name: '选择 合并输入法同义标签' });
     expect(checkbox).not.toBeChecked();
     await user.click(checkbox);
@@ -179,9 +179,9 @@ describe('MemoryFeature relations', () => {
 
     const layerSelector = await screen.findByRole('radiogroup', { name: '事实链层级' });
     expect(within(layerSelector).getAllByRole('radio').map((item) => item.textContent)).toEqual([
-      '证据',
-      '当前事实',
-      '主题书',
+      '记忆来源',
+      '关于我的事实',
+      '长期主题',
     ]);
     expect(within(layerSelector).queryByRole('radio', { name: '应用' })).not.toBeInTheDocument();
     expect(within(layerSelector).queryByRole('radio', { name: '标签' })).not.toBeInTheDocument();
@@ -319,17 +319,17 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    const pipeline = await screen.findByLabelText('个人上下文数据层');
-    await user.click(within(pipeline).getByRole('button', { name: /可追溯证据/ }));
+    const pipeline = await screen.findByLabelText('记忆形成过程');
+    await user.click(within(pipeline).getByRole('button', { name: /记忆来源/ }));
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'memory.pages' && call.request.params?.kind === 'evidence'
     ))).toBe(true));
-    await user.click(within(screen.getByLabelText('个人上下文数据层')).getByRole('button', { name: /主题书/ }));
+    await user.click(within(screen.getByLabelText('记忆形成过程')).getByRole('button', { name: /长期主题/ }));
     await waitFor(() => expect(transport.requests.some((call) => (
       call.request.pathId === 'memory.pages' && call.request.params?.kind === 'books'
     ))).toBe(true));
-    await user.click(within(screen.getByLabelText('个人上下文数据层')).getByRole('button', { name: /角色书/ }));
-    expect(await screen.findByRole('heading', { name: '角色书', level: 3 })).toBeInTheDocument();
+    await user.click(within(screen.getByLabelText('记忆形成过程')).getByRole('button', { name: /伙伴记忆/ }));
+    expect(await screen.findByRole('heading', { name: '伙伴记忆', level: 3 })).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.roles.list')).toBe(true);
   });
 
@@ -375,7 +375,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('tab', { name: '角色书' }));
+    await user.click(await screen.findByRole('tab', { name: '伙伴记忆' }));
     expect(await screen.findByRole('heading', { name: persona.displayName, level: 3 })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /完成记忆事实链重构/ }));
     const detail = screen.getByLabelText('近期工作条目详情');
@@ -394,7 +394,7 @@ describe('MemoryFeature relations', () => {
     { layer: 'books', id: 'book:deep-link', kind: 'book', tab: '记忆' },
     { layer: 'evidence', id: 'evidence:deep-link', kind: 'evidence', tab: '记忆' },
     { layer: 'timelines', id: 'timeline:2026-07-18', kind: 'timeline', tab: '时间线' },
-    { layer: 'role-books', id: 'revision:deep-link', kind: 'role_book_revision', tab: '角色书' },
+    { layer: 'role-books', id: 'revision:deep-link', kind: 'role_book_revision', tab: '伙伴记忆' },
   ])('opens the $layer deep link and selects its stable reference', async ({ id, kind, layer, tab }) => {
     const transport = new MockControlTransport({
       routes: {
@@ -477,12 +477,12 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '主题书' }));
+    await user.click(await screen.findByRole('radio', { name: '长期主题' }));
     await user.click(await screen.findByRole('button', { name: /控制中心迁移/ }));
     const editWorkflow = screen.getByText('编辑内容').closest('.mgmt-workflow');
     expect(editWorkflow).not.toBeNull();
     await user.click(within(editWorkflow as HTMLElement).getByRole('button', { name: '编辑' }));
-    const dialog = await screen.findByRole('dialog', { name: '编辑主题书' });
+    const dialog = await screen.findByRole('dialog', { name: '编辑长期主题' });
     const title = within(dialog).getByRole('textbox', { name: '标题' });
     const summary = within(dialog).getByRole('textbox', { name: '摘要' });
     const tags = within(dialog).getByRole('textbox', { name: '标签' });
@@ -495,7 +495,7 @@ describe('MemoryFeature relations', () => {
     await user.clear(tags);
     await user.type(tags, '控制中心，真实环境');
     await user.click(within(dialog).getByRole('button', { name: '保存' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑主题书' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑长期主题' })).not.toBeInTheDocument());
     expect(transport.requests.filter((call) => call.request.pathId === 'memory.edit')).toHaveLength(1);
     expect(document.body).not.toHaveTextContent('book-1');
   });
@@ -512,10 +512,10 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '主题书' }));
+    await user.click(await screen.findByRole('radio', { name: '长期主题' }));
     await user.click(await screen.findByRole('button', { name: /控制中心迁移/ }));
     await user.click(within(screen.getByText('编辑内容').closest('.mgmt-workflow') as HTMLElement).getByRole('button', { name: '编辑' }));
-    const dialog = await screen.findByRole('dialog', { name: '编辑主题书' });
+    const dialog = await screen.findByRole('dialog', { name: '编辑长期主题' });
     const summary = within(dialog).getByRole('textbox', { name: '摘要' });
     await user.clear(summary);
     await user.type(summary, '失败后仍应保留的草稿');
@@ -579,7 +579,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '证据' }));
+    await user.click(await screen.findByRole('radio', { name: '记忆来源' }));
     await user.click(await screen.findByRole('button', { name: /嗯嗯那个这个/ }));
     expect(screen.queryByText('编辑内容')).not.toBeInTheDocument();
     const workflow = screen.getByText('恢复证据').closest('.mgmt-workflow');
@@ -620,7 +620,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    expect(await screen.findByRole('heading', { name: '记忆', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '我的记忆', level: 1 })).toBeInTheDocument();
     await user.click(await screen.findByRole('tab', { name: '关系图' }));
     expect(await screen.findByText(/共 2 项 · 1 条关系/)).toBeInTheDocument();
     expect(screen.getByText('还有更多关系未显示')).toBeInTheDocument();
@@ -675,16 +675,16 @@ describe('MemoryFeature relations', () => {
     expect(await within(groupDetails).findByText(/成员 · 当前 2 \/ 12/)).toBeInTheDocument();
     expect(within(groupDetails).getAllByRole('button', { name: 'Agent Runtime' }).length).toBeGreaterThan(0);
 
-    await user.click(screen.getByRole('radio', { name: '分组 / 主题书' }));
-    const bookList = screen.getByRole('complementary', { name: '分组与主题书列表' });
+    await user.click(screen.getByRole('radio', { name: '分组 / 长期主题' }));
+    const bookList = screen.getByRole('complementary', { name: '分组与长期主题列表' });
     expect(within(bookList).getByText('输入法知识册')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /主题书 输入法知识册，6 条记忆/ }));
+    await user.click(screen.getByRole('button', { name: /长期主题 输入法知识册，6 条记忆/ }));
     const bookDetails = screen.getByRole('region', { name: '输入法知识册 详情' });
     expect(await within(bookDetails).findByText('候选与上下文')).toBeInTheDocument();
     expect(within(bookDetails).getByText('为保护原始记忆内容，此处只显示成员计数。')).toBeInTheDocument();
     const relationFilter = screen.getByRole('textbox', { name: '筛选分组或标签' });
     await user.type(relationFilter, '不存在的主题');
-    expect(await screen.findByText('当前筛选没有匹配分组或主题书。')).toBeInTheDocument();
+    expect(await screen.findByText('当前筛选没有匹配分组或长期主题。')).toBeInTheDocument();
     await user.clear(relationFilter);
 
     await waitFor(() => {
@@ -954,20 +954,20 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '主题书' }));
+    await user.click(await screen.findByRole('radio', { name: '长期主题' }));
     const book = await screen.findByRole('button', { name: /控制中心迁移/ });
     await user.click(book);
     const details = screen.getByRole('region', { name: '控制中心迁移 详情' });
     expect(within(details).getByText('React 页面与受控接口')).toBeInTheDocument();
     expect(screen.queryByText('book-1')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '预览操作' }));
+    await user.click(screen.getByRole('button', { name: '查看影响' }));
     expect(await screen.findByText('主题：控制中心迁移')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '进入确认' }));
-    await user.click(screen.getByRole('checkbox', { name: '只执行上方已绑定的变更' }));
-    await user.click(screen.getByRole('button', { name: '确认并应用' }));
-    expect(await screen.findByText('已应用')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: '撤销这次操作' }));
+    await user.click(screen.getByRole('button', { name: '确认这些更改' }));
+    await user.click(screen.getByRole('checkbox', { name: '我确认只执行上方列出的更改' }));
+    await user.click(screen.getByRole('button', { name: '确认执行' }));
+    expect(await screen.findByText('这次更改已安全记录')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '撤销这次更改' }));
     expect(await screen.findByText('已撤销')).toBeInTheDocument();
 
     expect(transport.requests.filter((call) => call.request.pathId === 'memory.book.archive.preview')).toHaveLength(1);
@@ -996,7 +996,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('radio', { name: '主题书' }));
+    await user.click(await screen.findByRole('radio', { name: '长期主题' }));
     await user.click(await screen.findByRole('button', { name: /控制中心迁移/ }));
     expect(await screen.findAllByRole('button', { name: '暂未开放' })).not.toHaveLength(0);
     expect(screen.queryByText('后端暂不支持')).not.toBeInTheDocument();

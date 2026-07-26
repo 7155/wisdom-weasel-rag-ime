@@ -5,15 +5,17 @@ import './persona-avatar.css';
 export type { PersonaPresence } from './persona-assets';
 
 export function PersonaAvatar({
+  fallbackName = '智鼬',
   persona,
   presence = 'idle',
   size = 'medium',
 }: {
+  fallbackName?: string;
   persona?: AgentPersonaV1;
   presence?: PersonaPresence;
   size?: 'small' | 'medium' | 'large' | 'hero';
 }) {
-  const name = persona?.displayName ?? '智鼬';
+  const name = persona?.displayName ?? fallbackName;
   const accent = persona?.visualProfile.accentToken ?? 'teal';
   const source = resolvePersonaAsset(persona?.visualProfile.avatarAssetId, presence);
   return (

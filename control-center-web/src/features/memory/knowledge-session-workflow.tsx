@@ -75,10 +75,10 @@ export function KnowledgeSessionWorkflow({
   }, [draftKey]);
 
   const steps = useMemo(() => [
-    { id: 'preview', label: '预览' },
+    { id: 'preview', label: '核对内容' },
     { id: 'approval', label: '确认' },
-    { id: 'receipt', label: '执行' },
-    { id: 'cancelled', label: '取消' },
+    { id: 'receipt', label: '整理中' },
+    { id: 'cancelled', label: '停止' },
   ] as const, []);
   const stageIndex = stage === 'idle' ? -1 : steps.findIndex((step) => step.id === stage);
   const actionable = availability.state === 'available';
@@ -102,7 +102,7 @@ export function KnowledgeSessionWorkflow({
             }}
             size="small"
           >
-            预览任务
+            查看任务内容
           </Button>
         ) : null}
       </div>
@@ -126,26 +126,26 @@ export function KnowledgeSessionWorkflow({
 
       {stage === 'preview' ? (
         <div className="mgmt-workflow__panel">
-          <strong>任务请求预览</strong>
+          <strong>这次会整理什么</strong>
           <ul>{previewLines.map((line) => <li key={line}>{line}</li>)}</ul>
           <div className="mgmt-workflow__buttons">
-            <Button onClick={() => reset()} size="small" variant="quiet">取消</Button>
-            <Button onClick={() => setStage('approval')} size="small" variant="primary">进入确认</Button>
+            <Button onClick={() => reset()} size="small" variant="quiet">返回修改</Button>
+            <Button onClick={() => setStage('approval')} size="small" variant="primary">确认任务内容</Button>
           </div>
         </div>
       ) : null}
 
       {stage === 'approval' && boundDraft ? (
         <div className="mgmt-workflow__panel">
-          <strong>确认启动这一个知识任务</strong>
+          <strong>准备开始这项整理</strong>
           <label className="mgmt-workflow__confirm">
             <input checked={approved} onChange={(event) => setApproved(event.target.checked)} type="checkbox" />
-            <span>只提交预览中的问题、模式和上下文</span>
+            <span>我确认按上方内容开始整理</span>
           </label>
           <div className="mgmt-workflow__buttons">
-            <Button onClick={() => setStage('preview')} size="small" variant="quiet">返回预览</Button>
+            <Button onClick={() => setStage('preview')} size="small" variant="quiet">返回查看</Button>
             <Button disabled={!approved} loading={startMutation.isPending} onClick={() => startMutation.mutate(boundDraft)} size="small" variant="primary">
-              确认启动
+              开始整理
             </Button>
           </div>
         </div>
@@ -163,7 +163,7 @@ export function KnowledgeSessionWorkflow({
             <span>{knowledgeStatusLabel(receipt.status)}</span>
           </div>
           <Button leadingIcon={<Square size={13} />} loading={cancelMutation.isPending} onClick={() => cancelMutation.mutate(receipt.sessionId)} size="small">
-            取消任务
+            停止整理
           </Button>
         </div>
       ) : null}

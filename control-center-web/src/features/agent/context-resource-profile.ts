@@ -16,8 +16,8 @@ export const CONTEXT_RESOURCE_PROFILES: ReadonlyArray<{
 }> = [
   {
     id: 'core',
-    label: '核心',
-    description: '产品内置指令、Skills 与 Tools',
+    label: '内置',
+    description: '仅使用产品自带的工作指令、技能与工具',
     selection: {
       projectContextEnabled: false,
       piSkillsEnabled: false,
@@ -26,8 +26,8 @@ export const CONTEXT_RESOURCE_PROFILES: ReadonlyArray<{
   },
   {
     id: 'project',
-    label: '项目',
-    description: '核心资源 + 工作区 AGENTS.md / CLAUDE.md',
+    label: '当前项目',
+    description: '再读取工作区里的 AGENTS.md / CLAUDE.md',
     selection: {
       projectContextEnabled: true,
       piSkillsEnabled: false,
@@ -36,8 +36,8 @@ export const CONTEXT_RESOURCE_PROFILES: ReadonlyArray<{
   },
   {
     id: 'extended',
-    label: '扩展',
-    description: '项目资源 + 已检测到的 Pi、Codex 与 Agents Skills',
+    label: '本机扩展',
+    description: '再发现本机已安装的 Pi、Codex 与 Agents Skills',
     selection: {
       projectContextEnabled: true,
       piSkillsEnabled: true,
@@ -70,7 +70,7 @@ export function contextResourceProfileLabel(
   const profileId = contextResourceProfileId(selection);
   return profileId === 'custom'
     ? '自定义'
-    : CONTEXT_RESOURCE_PROFILES.find((profile) => profile.id === profileId)?.label ?? '核心';
+    : CONTEXT_RESOURCE_PROFILES.find((profile) => profile.id === profileId)?.label ?? '内置';
 }
 
 export function sameContextResourceSelection(

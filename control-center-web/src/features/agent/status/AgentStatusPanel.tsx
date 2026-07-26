@@ -157,7 +157,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           href={`#/observability?sessionId=${encodeURIComponent(sessionId)}`}
         >
           <Radar size={16} />
-          <span><strong>运行观察</strong><small>查看本会话的工具、检索与记忆轨迹</small></span>
+          <span><strong>运行记录</strong><small>回看这次对话用过的工具、检索和记忆</small></span>
           <ChevronRight size={15} />
         </a>
       </div> : <div aria-hidden="true" className="agent-status-panel__body agent-status-panel__body--pending" />}

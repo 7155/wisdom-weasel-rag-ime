@@ -7,6 +7,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/primitives';
+import { publicToolName } from '../tool-presentation';
 import type { SessionSummary, ToolManifest } from '../types';
 import { riskLabel, toolAvailableForCurrentSession } from './tool-policy';
 
@@ -34,10 +35,10 @@ export function ToolPicker({
     (tool) => toolAvailableForCurrentSession(tool, session),
   ).length;
   const label = status === 'loading'
-    ? '受控工具：加载中'
+    ? '工具列表正在读取'
     : status === 'failed'
-      ? '受控工具目录加载失败'
-      : `当前权限可用工具：${availableCount} 个`;
+      ? '工具列表暂不可用'
+      : `这段对话可用工具：${availableCount} 个`;
   const text = status === 'loading'
     ? '工具 · 加载中'
     : status === 'failed'
@@ -62,8 +63,8 @@ export function ToolPicker({
       </PopoverTrigger>
       <PopoverContent align="start" className="agent-tool-picker">
         <header>
-          <strong>受控工具</strong>
-          <small>当前模式可用 {availableCount} / 目录共 {tools.length}</small>
+          <strong>可用工具</strong>
+          <small>这段对话可用 {availableCount} 个，共发现 {tools.length} 个</small>
         </header>
         <div>
           {tools.map((tool) => {
@@ -75,15 +76,31 @@ export function ToolPicker({
                 disabled={!available}
                 onClick={() => onSelect(tool)}
               >
-                <span><strong>{tool.displayName}</strong><small>{tool.description}</small></span>
+                <span><strong>{publicToolName(tool.id, tool.displayName)}</strong><small>{publicToolDescription(tool)}</small></span>
                 <i data-risk={tool.riskLevel}>
-                  {available ? riskLabel(tool.riskLevel) : '当前权限不可用'}
+                  {available ? riskLabel(tool.riskLevel) : '当前对话不可用'}
                 </i>
               </button>
             );
           })}
         </div>
+        <p className="agent-picker-popover__note">
+          标签说明操作会带来的影响；是否需要确认，由当前对话权限决定。
+        </p>
       </PopoverContent>
     </Popover>
   );
+}
+
+function publicToolDescription(tool: ToolManifest): string {
+  return ({
+    ime_overview: '查看伙伴、模型、记忆、输入和近期活动',
+    ime_voice: '查看语音输入状态，并按当前权限切换已配置的识别服务',
+    ime_memory: '查找过去的输入、偏好、决定和有来源的长期记忆；变更会先进入审阅',
+    agent_role_book: '查看伙伴形成的工作习惯和边界；新的成长内容会先成为待确认草案',
+    ime_browser: '查看已连接的浏览器页面，并按当前权限执行可追踪操作',
+    ime_runtime: '检查后台服务、连接和运行状态',
+    ime_configuration: '查看设置和变更记录',
+    ime_agents: '邀请其他伙伴协作，并查看交接与交付',
+  } as Record<string, string>)[tool.id] ?? tool.description;
 }

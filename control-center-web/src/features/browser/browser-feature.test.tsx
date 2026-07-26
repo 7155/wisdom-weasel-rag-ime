@@ -13,7 +13,7 @@ describe('BrowserFeature', () => {
   it('shows the paired page as visual and structured context', async () => {
     const transport = renderBrowser();
 
-    expect(await screen.findByRole('heading', { name: '浏览器共驾', level: 1 })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '浏览器', level: 1 })).toBeInTheDocument();
     expect(await screen.findByText('1 个浏览器在线')).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Agent Runtime 文档', level: 2 })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: '浏览器页面截图：Agent Runtime 文档' })).toHaveAttribute(

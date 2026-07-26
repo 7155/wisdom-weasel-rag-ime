@@ -164,7 +164,7 @@ export function PermissionPicker({
                 disabled={disabled}
                 onClick={onWorkspaceRootsChange}
               >
-                {workspaceRoots.length > 0 ? '更改' : '选择'}
+                {workspaceRoots.length > 0 ? '更改目录' : '选择目录'}
               </Button>
             </section>
           ) : null}
@@ -209,7 +209,7 @@ export function PermissionPicker({
             >
               <Checkbox.Indicator><Check size={14} /></Checkbox.Indicator>
             </Checkbox.Root>
-            <span>我确认让此对话自动批准全部受控写操作</span>
+            <span>我确认让此对话自动批准工作区内的受控写入和命令</span>
           </label>
           <DialogFooter>
             <Button variant="quiet" onClick={() => setDangerousOpen(false)}>

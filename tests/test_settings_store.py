@@ -35,6 +35,23 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertEqual(reset.settings["interaction"]["postCommit"]["numberKeys"], "pass_through")
         self.assertEqual(self._audit_count("settings_reset_section"), 1)
 
+    def test_identity_names_are_editable_bounded_and_trimmed(self) -> None:
+        result = self.store.update_settings(
+            {
+                "identity.productName": "  记川  ",
+                "identity.assistantName": "阿川",
+                "identity.tagline": "陪你记住，也陪你完成",
+            }
+        )
+
+        self.assertEqual(result.settings["identity"]["productName"], "记川")
+        self.assertEqual(result.settings["identity"]["assistantName"], "阿川")
+        self.assertEqual(result.settings["identity"]["tagline"], "陪你记住，也陪你完成")
+        with self.assertRaisesRegex(ValueError, "at least 1 character"):
+            self.store.update_settings({"identity.productName": "   "})
+        with self.assertRaisesRegex(ValueError, "at most 24 character"):
+            self.store.update_settings({"identity.assistantName": "长" * 25})
+
     def test_remote_model_enable_requires_confirm_text(self) -> None:
         with self.assertRaises(ValueError):
             self.store.update_settings({"activeRag.allowRemoteModel": True})

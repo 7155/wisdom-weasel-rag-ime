@@ -2049,6 +2049,20 @@ class AgentRoomServiceTests(unittest.TestCase):
             == "per_action"
             for item in room["participants"]
         ))
+        with self.assertRaisesRegex(
+            ValueError,
+            "roleplay Rooms cannot create managed work",
+        ):
+            self.service.create_room_work_item(
+                str(room["id"]),
+                {
+                    "objective": "不应进入受管执行",
+                    "expectedOutput": "无",
+                    "currentOwnerParticipantId": str(room["participants"][0]["id"]),
+                    "clientMessageId": "roleplay-work-item-rejected",
+                    "acceptanceCriteria": ["角色群聊不得创建受管任务"],
+                },
+            )
         with self.assertRaisesRegex(ValueError, "roleplay Rooms cannot use"):
             self.service.create_room(
                 {

@@ -93,14 +93,14 @@ export function RoomTurn({
       </div>;
     })}
     {rootActive && onAbortTurn ? <div className="room-turn__root-control" role="status">
-      <span><CircleStop size={14} /><small>{rootStopping ? '正在停止所有 Agent 与后续任务' : '停止会覆盖本轮所有 Agent、工具与后续任务'}</small></span>
+      <span><CircleStop size={14} /><small>{rootStopping ? '正在停止本轮的伙伴、工具和后续任务' : '会一起停止本轮的所有伙伴、工具和后续任务'}</small></span>
       <Button
         variant="danger"
         size="small"
         leadingIcon={rootStopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
         disabled={rootStopping}
         onClick={() => onAbortTurn(rootId)}
-      >{rootStopping ? '停止中' : '停止全部'}</Button>
+      >{rootStopping ? '正在停止' : '停止本轮任务'}</Button>
     </div> : null}
     {lanes.map((lane) => {
       const participant = room?.participants.find((item) => item.id === lane.participantId);
@@ -153,7 +153,7 @@ export function RoomTurn({
             ? <PersonaAvatar persona={persona} presence={laneActive ? 'thinking' : 'done'} />
             : <span className="room-agent-lane__route"><Route size={15} /></span>}
           <span className="room-agent-lane__identity">
-            <strong>{participant?.displayName ?? 'Room 路由'}</strong>
+            <strong>{participant?.displayName ?? '正在选择伙伴'}</strong>
             <small>{statusLabel}</small>
           </span>
           <RoomElapsed
@@ -166,14 +166,14 @@ export function RoomTurn({
             leadingIcon={stopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
             disabled={stopping}
             onClick={() => onAbortSession(sessionId)}
-          >{stopping ? '停止中' : '停止'}</Button> : null}
+          >{stopping ? '正在停止' : '停止这位伙伴'}</Button> : null}
         </header>
         {lane.activities.length ? <ActivityLog
           activities={lane.activities}
           active={laneActive}
           participantName={participant?.displayName}
         /> : null}
-        {!lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting"><LoaderCircle className="ui-spin" size={14} /><span>{participant ? `${participant.displayName} 已接手，正在准备` : '消息已进入 Room，正在选择负责角色'}</span></div> : null}
+        {!lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting"><LoaderCircle className="ui-spin" size={14} /><span>{participant ? `${participant.displayName} 已接手，正在准备` : '消息已经送达，正在请合适的伙伴回应'}</span></div> : null}
         {messages.map((message) => {
           const visibleBlocks = message.message?.blocks.filter((block) => (
             block.type !== 'reasoning_summary'
@@ -191,7 +191,7 @@ export function RoomTurn({
             data-status={message.status}
             key={message.id}
           >
-            {message.projectionKind === 'execution' ? <small className="room-agent-lane__projection-label">实时输出 · 完成后发布为 Post</small> : null}
+            {message.projectionKind === 'execution' ? <small className="room-agent-lane__projection-label">实时进展 · 完成后会在这里留下公开结果</small> : null}
             {visibleBlocks?.length
               ? <AgentBlocks blocks={visibleBlocks} sessionId={message.message?.sessionId ?? message.sourceSessionId} />
               : message.text
@@ -214,8 +214,8 @@ function ReviewLink({ sessionId, wholeTurn = false }: { sessionId: string; whole
     href={agentSessionHref(sessionId)}
   >
     <span>
-      <strong>{wholeTurn ? '这轮协作正在等待审阅' : '需要在 Agent 对话中审阅'}</strong>
-      <small>{wholeTurn ? 'Agent 已暂停；打开对应会话处理后会自动继续。' : '打开对应参与者，批准或拒绝这项操作。'}</small>
+      <strong>{wholeTurn ? '这轮协作正在等待审阅' : '需要在伙伴对话中审阅'}</strong>
+      <small>{wholeTurn ? '伙伴已暂停；打开对应对话处理后会自动继续。' : '打开对应伙伴，批准或拒绝这项操作。'}</small>
     </span>
     <span>{wholeTurn ? '立即审阅' : '前往审阅'} <ExternalLink size={13} /></span>
   </a>;
@@ -236,7 +236,7 @@ function ActivityLog({
     open={open}
     onToggle={(event) => setOpen(event.currentTarget.open)}
   >
-    <summary><Wrench size={14} /><span>{active ? '实时执行' : '执行记录'}</span><small>{activities.length} 项</small></summary>
+    <summary><Wrench size={14} /><span>{active ? '正在处理' : '过程记录'}</span><small>{activities.length} 项</small></summary>
     <div>{activities.map((activity) => {
       const displayStatus = roomActivityDisplayStatus(activity);
       const description = describeRoomActivity(activity, participantName);
@@ -313,7 +313,7 @@ function describeRoomActivity(
     return {
       title: activity.status === 'failed' ? `${toolName} 执行失败` : `${toolName} 已返回`,
       detail: publicActivitySummary(activity.summary, activity.kind)
-        || (activity.status === 'failed' ? '工具没有完成' : '工具结果已交给 Agent'),
+        || (activity.status === 'failed' ? '工具没有完成' : '工具结果已交给伙伴'),
     };
   }
   if (activity.kind === 'route_decision') {
@@ -335,7 +335,7 @@ function describeRoomActivity(
   }
   if (activity.kind === 'participant_status') {
     if (status === 'room_created') return { title: '协作空间已就绪', detail: '参与角色已经加入，可以开始对话' };
-    if (status === 'room_archived') return { title: '协作空间已归档', detail: '历史对话已保留' };
+    if (status === 'room_archived') return { title: '协作空间已收起', detail: '历史对话已保留' };
     if (status === 'room_restored') return { title: '协作空间已恢复', detail: '参与角色可以继续协作' };
     return {
       title: `${participantName} 状态已更新`,
@@ -353,7 +353,7 @@ function describeRoomActivity(
       failed: '协作消息未能送达',
     };
     return {
-      title: `${participantName} 正在与其他角色协作`,
+      title: `${participantName} 正在与其他伙伴协作`,
       detail: phaseCopy[textValue(payload.phase)] ?? '协作消息状态已更新',
     };
   }

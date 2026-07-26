@@ -16,7 +16,7 @@ describe('AgentPaneResizer', () => {
       </main>,
     );
     const workspace = container.querySelector<HTMLElement>('.agent-feature')!;
-    const separator = screen.getByRole('separator', { name: '调整任务列表宽度' });
+    const separator = screen.getByRole('separator', { name: '调整对话列表宽度' });
 
     expect(workspace.style.getPropertyValue('--agent-rail-width')).toBe('304px');
     expect(separator).toHaveAttribute('aria-valuenow', '304');
