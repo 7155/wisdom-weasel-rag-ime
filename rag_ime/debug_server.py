@@ -6965,23 +6965,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             session_id = unquote(parsed.path.rsplit("/", 1)[-1])
             self._write_json(HTTPStatus.OK, self.service.active_rag_status({"sessionId": session_id}))
             return
-        if parsed.path in ("/api/prediction/live-trace", "/prediction/live-trace"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.prediction_live_trace(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "sessionId": _query_first(query, "sessionId"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/prediction/drop-stats", "/prediction/drop-stats"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.prediction_drop_stats({"limit": _query_first(query, "limit")}),
-            )
-            return
         if parsed.path in ("/api/candidates/explain",):
             self._write_json(
                 HTTPStatus.OK,
@@ -7012,19 +6995,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path in ("/api/memories",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_memories(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "project": _query_first(query, "project"),
-                        "status": _query_first(query, "status"),
-                        "kind": _query_first(query, "kind"),
-                    }
-                ),
-            )
-            return
         if parsed.path in ("/api/lexicon",):
             self._write_json(
                 HTTPStatus.OK,
@@ -7034,17 +7004,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "project": _query_first(query, "project"),
                         "status": _query_first(query, "status"),
                         "kind": _query_first(query, "kind"),
-                    }
-                ),
-            )
-            return
-        if parsed.path == "/api/rime-lexicon/review":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.rime_lexicon_review(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "project": _query_first(query, "project"),
                     }
                 ),
             )
@@ -7785,10 +7744,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.rime_rank_feedback(payload))
             elif path in ("/api/candidate-edit-feedback", "/candidate-edit-feedback"):
                 self._write_json(HTTPStatus.OK, self.service.candidate_edit_feedback(payload))
-            elif path == "/api/rime-lexicon/apply":
-                self._write_json(HTTPStatus.OK, self.service.rime_lexicon_apply(payload))
-            elif path == "/api/rime-lexicon/rollback":
-                self._write_json(HTTPStatus.OK, self.service.rime_lexicon_rollback(payload))
             elif path in ("/api/predictor-ttfc", "/predictor-ttfc"):
                 self._write_json(HTTPStatus.OK, self.service.predictor_ttfc(payload))
             elif path in ("/api/predictor/benchmark",):
@@ -7847,8 +7802,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.memory_tombstone(payload))
             elif path in ("/api/history/tombstone",):
                 self._write_json(HTTPStatus.OK, self.service.management_history_tombstone(payload))
-            elif path in ("/api/memories/action",):
-                self._write_json(HTTPStatus.OK, self.service.management_memory_action(payload))
             elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/apply"):
                 diff_id = _cleanup_diff_path_id(path, suffix="/apply")
                 self._write_json(HTTPStatus.OK, self.service.memory_cleanup_diff_apply(diff_id))

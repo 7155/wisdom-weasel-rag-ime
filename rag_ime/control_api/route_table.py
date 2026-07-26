@@ -47,6 +47,12 @@ class RouteDescriptor:
     """Fixed keyword arguments, e.g. an action discriminator."""
     transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     """Optional payload adjustment applied before the handler runs."""
+    aliases: tuple[str, ...] = ()
+    """Legacy paths serving the same route, e.g. the un-prefixed `/prediction/*`.
+
+    They are registered as ordinary table entries so an alias can never drift
+    from the route it mirrors.
+    """
     takes_arguments: bool = True
     """False for handlers that take no request data at all, e.g. status reads.
 
@@ -249,8 +255,45 @@ CONFIGURATION_ROUTES: tuple[RouteDescriptor, ...] = (
     RouteDescriptor(method="POST", path="/api/configuration/restore-apply", handler="management.portable_restore_apply"),
 )
 
+# Prediction, memories and rime-lexicon. Prediction keeps its un-prefixed
+# aliases, which the chain served from the same branch.
+PREDICTION_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(
+        method="GET", path="/api/prediction/live-trace",
+        aliases=("/prediction/live-trace",),
+        handler="prediction_live_trace", query_args=("limit", "sessionId"),
+    ),
+    RouteDescriptor(
+        method="GET", path="/api/prediction/drop-stats",
+        aliases=("/prediction/drop-stats",),
+        handler="prediction_drop_stats", query_args=("limit",),
+    ),
+)
+
+MEMORIES_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(
+        method="GET", path="/api/memories", handler="management_memories",
+        query_args=("limit", "project", "status", "kind"),
+    ),
+    RouteDescriptor(
+        method="POST", path="/api/memories/action", handler="management_memory_action",
+    ),
+)
+
+RIME_LEXICON_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(
+        method="GET", path="/api/rime-lexicon/review",
+        handler="rime_lexicon_review", query_args=("limit", "project"),
+    ),
+    RouteDescriptor(method="POST", path="/api/rime-lexicon/apply", handler="rime_lexicon_apply"),
+    RouteDescriptor(method="POST", path="/api/rime-lexicon/rollback", handler="rime_lexicon_rollback"),
+)
+
 MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *VOCABULARY_ROUTES,
+    *PREDICTION_ROUTES,
+    *MEMORIES_ROUTES,
+    *RIME_LEXICON_ROUTES,
     *SETTINGS_ROUTES,
     *CONFIGURATION_ROUTES,
     *MODEL_ROUTES,
@@ -260,12 +303,15 @@ MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *CLEANUP_DIFF_ROUTES,
 )
 
-ROUTE_TABLE: dict[tuple[str, str], RouteDescriptor] = {
-    (route.method, route.path): route for route in MIGRATED_ROUTES
-}
+ROUTE_TABLE: dict[tuple[str, str], RouteDescriptor] = {}
+for _route in MIGRATED_ROUTES:
+    for _path in (_route.path, *_route.aliases):
+        _key = (_route.method, _path)
+        if _key in ROUTE_TABLE:  # pragma: no cover - import-time guard
+            raise RuntimeError(f"duplicate route {_key}")
+        ROUTE_TABLE[_key] = _route
 
-if len(ROUTE_TABLE) != len(MIGRATED_ROUTES):  # pragma: no cover - import-time guard
-    raise RuntimeError("duplicate (method, path) in the route table")
+
 
 
 def find_route(method: str, path: str) -> RouteDescriptor | None:
