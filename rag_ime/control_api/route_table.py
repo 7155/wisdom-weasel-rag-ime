@@ -53,6 +53,13 @@ class RouteDescriptor:
     They are registered as ordinary table entries so an alias can never drift
     from the route it mirrors.
     """
+    contract: str = ""
+    """JSON-schema contract validated against the payload before dispatch.
+
+    Several chain branches called `validate_contract` before their handler;
+    naming the schema keeps that a property of the route rather than a step a
+    future migration could silently drop.
+    """
     takes_arguments: bool = True
     """False for handlers that take no request data at all, e.g. status reads.
 
@@ -289,8 +296,43 @@ RIME_LEXICON_ROUTES: tuple[RouteDescriptor, ...] = (
     RouteDescriptor(method="POST", path="/api/rime-lexicon/rollback", handler="rime_lexicon_rollback"),
 )
 
+def _post(path, handler, *, aliases=(), contract="", takes_arguments=True):
+    return RouteDescriptor(
+        method="POST", path=path, handler=handler, aliases=aliases,
+        contract=contract, takes_arguments=takes_arguments,
+    )
+
+
+# Foreground and memory single-path writes. Each kept its un-prefixed alias,
+# and the three contract-validated routes keep validation as a declared field.
+FOREGROUND_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/action", "action", aliases=("/action",)),
+    _post("/api/cache-probe", "cache_probe", aliases=("/cache-probe",)),
+    _post("/api/candidate-edit-feedback", "candidate_edit_feedback", aliases=("/candidate-edit-feedback",)),
+    _post("/api/commit", "commit", aliases=("/commit",), contract="foreground-commit.v1.json"),
+    _post("/api/predictor-ttfc", "predictor_ttfc", aliases=("/predictor-ttfc",)),
+    _post("/api/rime-rank-feedback", "rime_rank_feedback", aliases=("/rime-rank-feedback",), contract="rime-rank-selection.v1.json"),
+    _post("/api/assistant-candidate-action", "assistant_candidate_action", aliases=("/assistant-candidate-action",), contract="assistant-candidate-action.v1.json"),
+    _post("/api/seed", "seed", aliases=("/seed",), takes_arguments=False),
+)
+
+MEMORY_TOOL_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/generate-memory", "generate_memory", aliases=("/generate-memory",)),
+    _post("/api/memory-candidate-explain", "memory_candidate_explain", aliases=("/memory-candidate-explain",)),
+    _post("/api/memory-cleanup-runs", "memory_cleanup_runs", aliases=("/memory-cleanup-runs",)),
+    _post("/api/memory-governance", "memory_governance", aliases=("/memory-governance",)),
+    _post("/api/memory-history", "memory_history", aliases=("/memory-history",)),
+    _post("/api/memory-optimizer-trace", "memory_optimizer_trace", aliases=("/memory-optimizer-trace",)),
+    _post("/api/memory-tombstone", "memory_tombstone", aliases=("/memory-tombstone", "/api/memory/tombstone")),
+    _post("/api/organize-rag-db", "organize_rag_database", aliases=("/organize-rag-db",)),
+    _post("/api/rebuild-vector-index", "rebuild_vector_index", aliases=("/rebuild-vector-index",)),
+    _post("/api/deepseek/completion-preview", "deepseek_completion_preview"),
+)
+
 MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *VOCABULARY_ROUTES,
+    *FOREGROUND_ROUTES,
+    *MEMORY_TOOL_ROUTES,
     *PREDICTION_ROUTES,
     *MEMORIES_ROUTES,
     *RIME_LEXICON_ROUTES,

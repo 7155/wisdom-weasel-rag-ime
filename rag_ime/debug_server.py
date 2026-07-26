@@ -7739,13 +7739,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path in ("/api/rime-select", "/rime-select"):
                 validate_contract(payload, "rime-select.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.rime_select(payload))
-            elif path in ("/api/rime-rank-feedback", "/rime-rank-feedback"):
-                validate_contract(payload, "rime-rank-selection.v1.json")
-                self._write_json(HTTPStatus.OK, self.service.rime_rank_feedback(payload))
-            elif path in ("/api/candidate-edit-feedback", "/candidate-edit-feedback"):
-                self._write_json(HTTPStatus.OK, self.service.candidate_edit_feedback(payload))
-            elif path in ("/api/predictor-ttfc", "/predictor-ttfc"):
-                self._write_json(HTTPStatus.OK, self.service.predictor_ttfc(payload))
             elif path in ("/api/predictor/benchmark",):
                 self._write_json(HTTPStatus.OK, self.service.predictor_benchmark(payload))
             elif path in ("/api/predictor/cache/clear",):
@@ -7784,22 +7777,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.service.knowledge_workbench_database_rollback_contract(payload),
                 )
-            elif path in ("/api/cache-probe", "/cache-probe"):
-                self._write_json(HTTPStatus.OK, self.service.cache_probe(payload))
-            elif path in ("/api/rebuild-vector-index", "/rebuild-vector-index"):
-                self._write_json(HTTPStatus.OK, self.service.rebuild_vector_index(payload))
-            elif path in ("/api/memory-history", "/memory-history"):
-                self._write_json(HTTPStatus.OK, self.service.memory_history(payload))
-            elif path in ("/api/memory-optimizer-trace", "/memory-optimizer-trace"):
-                self._write_json(HTTPStatus.OK, self.service.memory_optimizer_trace(payload))
-            elif path in ("/api/memory-candidate-explain", "/memory-candidate-explain"):
-                self._write_json(HTTPStatus.OK, self.service.memory_candidate_explain(payload))
-            elif path in ("/api/memory-governance", "/memory-governance"):
-                self._write_json(HTTPStatus.OK, self.service.memory_governance(payload))
-            elif path in ("/api/memory-cleanup-runs", "/memory-cleanup-runs"):
-                self._write_json(HTTPStatus.OK, self.service.memory_cleanup_runs(payload))
-            elif path in ("/api/memory-tombstone", "/memory-tombstone", "/api/memory/tombstone"):
-                self._write_json(HTTPStatus.OK, self.service.memory_tombstone(payload))
             elif path in ("/api/history/tombstone",):
                 self._write_json(HTTPStatus.OK, self.service.management_history_tombstone(payload))
             elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/apply"):
@@ -7808,22 +7785,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/rollback"):
                 diff_id = _cleanup_diff_path_id(path, suffix="/rollback")
                 self._write_json(HTTPStatus.OK, self.service.memory_cleanup_diff_rollback(diff_id))
-            elif path in ("/api/generate-memory", "/generate-memory"):
-                self._write_json(HTTPStatus.OK, self.service.generate_memory(payload))
-            elif path in ("/api/organize-rag-db", "/organize-rag-db"):
-                self._write_json(HTTPStatus.OK, self.service.organize_rag_database(payload))
-            elif path in ("/api/deepseek/completion-preview",):
-                self._write_json(HTTPStatus.OK, self.service.deepseek_completion_preview(payload))
-            elif path in ("/api/commit", "/commit"):
-                validate_contract(payload, "foreground-commit.v1.json")
-                self._write_json(HTTPStatus.OK, self.service.commit(payload))
-            elif path in ("/api/action", "/action"):
-                self._write_json(HTTPStatus.OK, self.service.action(payload))
-            elif path in ("/api/assistant-candidate-action", "/assistant-candidate-action"):
-                validate_contract(payload, "assistant-candidate-action.v1.json")
-                self._write_json(HTTPStatus.OK, self.service.assistant_candidate_action(payload))
-            elif path in ("/api/seed", "/seed"):
-                self._write_json(HTTPStatus.OK, self.service.seed())
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
         except Exception as exc:  # pragma: no cover - exercised through browser/manual debugging
@@ -8289,6 +8250,8 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         for part in route.handler.split("."):
             target = getattr(target, part)
         handler = target
+        if route.contract:
+            validate_contract(payload or {}, route.contract)
         if not route.takes_arguments:
             self._write_json(HTTPStatus(route.status), handler(**dict(route.payload_args)))
             return
