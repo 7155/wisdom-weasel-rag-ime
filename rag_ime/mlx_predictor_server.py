@@ -944,16 +944,22 @@ class MlxLmEngine:
         branch_timings: list[dict[str, Any]] = []
         list_started = time.perf_counter()
         list_max_tokens = max(16, min(64, max(int(max_tokens), max_items * 8)))
-        list_raw_text = "".join(
-            self._stream_text_with_generate_step(
-                prompt=_build_no_input_space_list_prompt(
-                    recent_context=recent_context,
-                    max_candidates=max_items,
-                ),
-                max_tokens=list_max_tokens,
-                temperature=max(0.05, min(float(temperature), 0.18)),
-                top_p=top_p,
-                cancel_request_id=cancel_request_id,
+        # The space-list prompt is ChatML; a base completion model skips it
+        # and relies on the base-mode-aware stream_text branches below.
+        list_raw_text = (
+            ""
+            if self._base_completion_mode
+            else "".join(
+                self._stream_text_with_generate_step(
+                    prompt=_build_no_input_space_list_prompt(
+                        recent_context=recent_context,
+                        max_candidates=max_items,
+                    ),
+                    max_tokens=list_max_tokens,
+                    temperature=max(0.05, min(float(temperature), 0.18)),
+                    top_p=top_p,
+                    cancel_request_id=cancel_request_id,
+                )
             )
         )
         raw_texts.append(list_raw_text)
@@ -1431,6 +1437,10 @@ class MlxLmEngine:
         logits_candidates: dict[str, Any],
         request_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        # Seeded replay and sequence-fork prompts are ChatML; a base
+        # completion model must stay on the raw-continuation contract.
+        if self._base_completion_mode:
+            return None
         display_limit = max(1, int(max_candidates))
         seeds = _seed_replay_specs_from_logits(
             logits_candidates.get("candidateScores"),

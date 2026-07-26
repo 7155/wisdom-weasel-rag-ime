@@ -1795,5 +1795,82 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
         self.assertEqual(post_commit_policy["optionNumber"], "select_prediction_by_ordinal")
 
 
+class DisplayMemoryFeedbackDedupTests(unittest.TestCase):
+    def setUp(self) -> None:
+        rime_sidecar_module.clear_display_memory_feedback_cache()
+        self.addCleanup(rime_sidecar_module.clear_display_memory_feedback_cache)
+
+    class _RecordingFeedbackCore:
+        def __init__(self) -> None:
+            self.events: list[dict[str, object]] = []
+
+        def record_memory_feedback(self, event: dict[str, object]) -> None:
+            self.events.append(dict(event))
+
+    def _snapshot(self, *, panel_session_id: str = "panel-a") -> object:
+        return rime_sidecar_module.parse_rime_context_payload(
+            {
+                "sessionId": "session-1",
+                "requestSeq": 7,
+                "committedContext": "今天继续完善输入法上下文",
+                "panelSessionId": panel_session_id,
+                "committedContextHash": "sha256:feedbackcontext1",
+            },
+            default_project="test-project",
+        )
+
+    def _display_candidates(self) -> list[object]:
+        from rag_ime.models import SideCandidateDisplayItem
+
+        return [
+            SideCandidateDisplayItem(
+                label="1",
+                text="记忆候选",
+                insert_text="记忆候选",
+                source_type="memory",
+                selection_action="commit_side_candidate",
+                source_index=0,
+                suggestion_id="sugg-1",
+                memory_id="mem-1",
+            )
+        ]
+
+    def test_same_panel_records_shown_only_once(self) -> None:
+        core = self._RecordingFeedbackCore()
+        snapshot = self._snapshot()
+        for _ in range(3):
+            rime_sidecar_module._record_display_memory_feedback(
+                core=core,
+                snapshot=snapshot,
+                display_candidates=self._display_candidates(),
+                trace_id="trace-1",
+                project="test-project",
+            )
+
+        shown_events = [event for event in core.events if event.get("event") == "shown"]
+        self.assertEqual(len(shown_events), 1)
+        self.assertEqual(shown_events[0]["candidateId"], "mem-1")
+
+    def test_new_panel_session_records_shown_again(self) -> None:
+        core = self._RecordingFeedbackCore()
+        rime_sidecar_module._record_display_memory_feedback(
+            core=core,
+            snapshot=self._snapshot(panel_session_id="panel-a"),
+            display_candidates=self._display_candidates(),
+            trace_id="trace-1",
+            project="test-project",
+        )
+        rime_sidecar_module._record_display_memory_feedback(
+            core=core,
+            snapshot=self._snapshot(panel_session_id="panel-b"),
+            display_candidates=self._display_candidates(),
+            trace_id="trace-2",
+            project="test-project",
+        )
+
+        shown_events = [event for event in core.events if event.get("event") == "shown"]
+        self.assertEqual(len(shown_events), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
