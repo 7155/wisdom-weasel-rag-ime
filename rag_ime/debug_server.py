@@ -67,6 +67,7 @@ from .control_api import (
     default_route_policy,
 )
 from .control_api.gateway_access import GatewayAccessDecision, resolve_gateway_access
+from .control_api.route_table import build_arguments, find_route
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
@@ -5958,6 +5959,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         if self._serve_gateway_static(parsed.path):
             return
+        descriptor_route = find_route("GET", parsed.path)
+        if descriptor_route is not None:
+            self._dispatch_descriptor_route(
+                descriptor_route, query=parse_qs(parsed.query or "")
+            )
+            return
         if parsed.path == "/api/events/stream":
             self._stream_management_events()
             return
@@ -6894,17 +6901,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path in ("/api/vocabulary/items",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.vocabulary_items(
-                    {
-                        "status": _query_first(query, "status"),
-                        "query": _query_first(query, "query"),
-                    }
-                ),
-            )
-            return
         if parsed.path in ("/api/models/status",):
             self._write_json(HTTPStatus.OK, self.service.models_status())
             return
@@ -7378,6 +7374,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
             payload = self._read_json()
+            # Migrated families are served from the route table. This sits
+            # after the security gate and payload read so those semantics are
+            # identical to the chain it replaces.
+            descriptor_route = find_route("POST", path)
+            if descriptor_route is not None:
+                self._dispatch_descriptor_route(descriptor_route, payload=payload)
+                return
             if knowledge_parts is not None:
                 control = self._knowledge_control()
                 if knowledge_parts == ():
@@ -7831,19 +7834,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.profile_save(payload))
             elif path in ("/api/profiles/activate-dry-run",):
                 self._write_json(HTTPStatus.OK, self.service.profile_activate_dry_run(payload))
-            elif path in ("/api/vocabulary/item/add",):
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_item_save(payload, action="add"))
-            elif path in ("/api/vocabulary/item/edit",):
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_item_save(payload, action="edit"))
-            elif path in ("/api/vocabulary/item/delete",):
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_item_delete(payload))
-            elif path in ("/api/vocabulary/phonetic-correction/add",):
-                payload = {**payload, "tags": [*_string_list(payload.get("tags")), "phonetic_correction"]}
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_item_save(payload, action="phonetic_correction_add"))
-            elif path in ("/api/vocabulary/rime-export-preview",):
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_rime_export_preview(payload))
-            elif path in ("/api/vocabulary/rime-export-apply",):
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_rime_export_apply(payload))
             elif path in ("/api/models/probe",):
                 self._write_json(HTTPStatus.OK, self.service.model_probe(payload))
             elif path in ("/api/models/benchmark",):
@@ -8419,6 +8409,29 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             raise ValueError("JSON payload must be an object")
         return data
+
+    def _dispatch_descriptor_route(
+        self,
+        route,
+        *,
+        payload: dict[str, object] | None = None,
+        query: dict[str, list[str]] | None = None,
+    ) -> None:
+        """Serve one migrated route from its descriptor.
+
+        The descriptor owns method, path, parsing and the application handler,
+        so this is the only place those are combined. Routes still living in
+        the if/elif chains are untouched; `find_route` returning None means the
+        chain remains the single owner for that path.
+        """
+
+        arguments = build_arguments(
+            route,
+            payload=payload,
+            query_first=lambda name: _query_first(query or {}, name),
+        )
+        handler = getattr(self.service, route.handler)
+        self._write_json(HTTPStatus(route.status), handler(arguments, **dict(route.payload_args)))
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")

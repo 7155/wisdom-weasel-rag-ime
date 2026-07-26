@@ -37,12 +37,13 @@ from pathlib import Path
 
 DISPATCH_SOURCE = Path("rag_ime/debug_server.py")
 POLICY_SOURCE = Path("rag_ime/control_api/route_policy.py")
+TABLE_SOURCE = Path("rag_ime/control_api/route_table.py")
 
-# Local-only surfaces dispatched by the server but deliberately not exposed to
-# the remote Agent Gateway. This is a ratchet, not an approval: it may fall as
-# families migrate to one owner, and a rise means a route appeared without a
-# policy decision. Measured at the commit that introduced this gate.
-UNDECLARED_DISPATCH_BUDGET = 129
+# Chain-dispatched routes with no policy entry: local-only surfaces whose
+# exposure is stated nowhere. This is a ratchet, not an approval. Migrating a
+# family to the descriptor table lowers it, because a descriptor states
+# exposure explicitly; a rise means a route appeared with no policy decision.
+UNDECLARED_DISPATCH_BUDGET = 122
 
 
 def dispatched_routes(root: Path) -> dict[str, list[tuple[str, int]]]:
@@ -61,6 +62,21 @@ def dispatched_routes(root: Path) -> dict[str, list[tuple[str, int]]]:
             ):
                 found.setdefault(literal.value, []).append((node.name, literal.lineno))
     return found
+
+
+def table_routes(root: Path) -> set[str]:
+    """Paths owned by the descriptor table rather than by a dispatch chain."""
+
+    table = root / TABLE_SOURCE
+    if not table.exists():
+        return set()
+    tree = ast.parse(table.read_text(encoding="utf-8"))
+    paths: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg == "path":
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                paths.add(node.value.value)
+    return paths
 
 
 def declared_routes(root: Path) -> set[str]:
@@ -114,7 +130,21 @@ def shadowed_branches(root: Path) -> list[str]:
 
 def check(root: Path) -> list[str]:
     problems = shadowed_branches(root)
-    undeclared = sorted(set(dispatched_routes(root)) - declared_routes(root))
+    chain = set(dispatched_routes(root))
+    table = table_routes(root)
+
+    # A migrated route must leave its chain. Serving one path from both owners
+    # is the exact failure this migration is meant to avoid.
+    for path in sorted(chain & table):
+        problems.append(
+            f"{path} is owned by both the route table and a dispatch chain; "
+            f"remove the chain branch so the route has one owner"
+        )
+
+    # A route in the descriptor table is declared by its descriptor, which
+    # states its exposure explicitly. Only chain routes with no policy entry
+    # are undeclared, so migrating a family lowers this count.
+    undeclared = sorted(chain - declared_routes(root) - table)
     if len(undeclared) > UNDECLARED_DISPATCH_BUDGET:
         problems.append(
             f"dispatched-but-undeclared routes rose to {len(undeclared)} "
