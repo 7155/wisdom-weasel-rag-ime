@@ -14,6 +14,7 @@ import { useFilePreviewStore } from '@/features/agent/file-preview/file-preview-
 import { ProductIdentityProvider } from '@/features/identity/product-identity';
 import '@/design/tokens.css';
 import '@/design/typography.css';
+import '@/design/workspace.css';
 import '@/components/primitives/primitives.css';
 import '@/components/primitives/showcase.css';
 import '@/components/feedback/feedback.css';

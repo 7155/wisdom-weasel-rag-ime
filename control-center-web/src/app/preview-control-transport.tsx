@@ -1,7 +1,7 @@
 import { CONTROL_ROUTES, controlRoute, type ControlPathId } from '@/platform/routes';
 import type { ControlRequest, ControlTransport } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
-import { previewModelCatalog, previewPersonas } from '@/features/agent/preview-data';
+import { previewModelCatalog, previewPersonas, PREVIEW_REPORT_BYTES, PREVIEW_REPORT_HTML } from '@/features/agent/preview-data';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { AgentWorkflowStateV1 } from '@/contracts/generated/agent-workflow-state.v1';
 
@@ -18,8 +18,17 @@ export function createPreviewTransport(): MockControlTransport {
   const previewTimelineStatuses = new Map<string, string>();
   const previewMemorySelections = new Map<number, boolean>([[1, true], [2, false], [3, true]]);
   const sessions: Record<string, unknown>[] = [
-    previewSession('session-preview', '控制中心迁移', 'companion-present-v1', Date.now()),
-    previewSession('session-memory', '记忆整理', 'companion-present-v1', Date.now() - 360_000),
+    previewSession('session-preview', '控制中心迁移', 'companion-present-v1', Date.now(), '1', { messageCount: 4, lastMessagePreview: '三条 Lane 已经收束到同一个 ControlTransport。' }),
+    // Genuinely empty so the preview can exercise the welcome state.
+    previewSession('session-fresh', '新对话', 'companion-present-v1', Date.now() - 120_000),
+    // Long transcript: gives the timeline a real scroll extent so follow and
+    // read-up preservation can be measured, not assumed.
+    previewSession('session-long', '长对话回归', 'companion-present-v1', Date.now() - 300_000, '1', { messageCount: 120, lastMessagePreview: '第 60 轮结论：继续向后一段推进。' }),
+    previewSession('session-gallery', '渲染族样例', 'companion-present-v1', Date.now() - 240_000, '1', { messageCount: 6, lastMessagePreview: '完整渲染族样例，用于视觉评审。' }),
+    previewSession('session-states', '状态与恢复', 'companion-present-v1', Date.now() - 120_000, '1', { messageCount: 3, lastMessagePreview: '运行中、失败与已停止三种状态。' }),
+    previewSession('session-report', '报告交付', 'companion-present-v1', Date.now() - 240_000, '1', { messageCount: 2, lastMessagePreview: '生成的 HTML 报告与原始数据一并交付。' }),
+    previewSession('session-models', '模型切换', 'companion-present-v1', Date.now() - 180_000, '1', { messageCount: 4, lastMessagePreview: '同一串对话里从快模型换到强模型。' }),
+    previewSession('session-memory', '记忆整理', 'companion-present-v1', Date.now() - 360_000, '1', { messageCount: 12, lastMessagePreview: '已把最近输入整理为 3 个主题。' }),
   ];
   const roomSessions: Record<string, unknown>[] = [
     previewRoomSession('session-room-present', '迁移作战室 · 智鼬·此刻', 'companion-present-v1'),
@@ -510,38 +519,68 @@ export function createPreviewTransport(): MockControlTransport {
   });
 }
 
+
+interface PreviewManagedFile {
+  fileName: string;
+  mimeType: string;
+  previewKind: 'markdown' | 'code' | 'diff' | 'image' | 'html' | 'unsupported';
+  content: string;
+  language?: string;
+}
+
+const PREVIEW_MANAGED_FILES: Record<string, PreviewManagedFile> = {
+  media_previewdoc01: {
+    fileName: 'room-runtime-handoff.md',
+    mimeType: 'text/markdown',
+    previewKind: 'markdown',
+    content: [
+      '# Room Runtime 交接',
+      '',
+      '这份文件来自受控 `file` Rich Block，不会把整份产物塞进对话上下文。',
+      '',
+      '- Session 私有过程保持私有',
+      '- Room 只接收显式提交的 Post',
+      '- 文件内容按回执和摘要按需读取',
+    ].join('\n'),
+  },
+  media_previewreport01: {
+    fileName: 'lexicon-health-report.html',
+    mimeType: 'text/html',
+    previewKind: 'html',
+    content: PREVIEW_REPORT_HTML,
+  },
+};
+
 function previewManagedFile(request: ControlRequest): Record<string, unknown> {
   const mediaId = stringValue(record(request.params).mediaId);
   const sessionId = stringValue(record(request.query).sessionId);
   const sha256 = 'c'.repeat(64);
-  if (mediaId !== 'media_previewdoc01' || !sessionId) {
+  // Exercises the dialog's error + retry path against a receipt that genuinely
+  // cannot be read, rather than against a mocked-out success.
+  if (mediaId === 'media_previewbroken01') {
+    throw new Error('Preview file receipt is unavailable.');
+  }
+  const file = PREVIEW_MANAGED_FILES[mediaId];
+  if (!file || !sessionId) {
     throw new Error('Preview file receipt is unavailable.');
   }
   const expectedSha256 = stringValue(record(request.query).sha256);
   if (expectedSha256 && expectedSha256 !== sha256) {
     throw new Error('Preview file digest changed.');
   }
-  const content = [
-    '# Room Runtime 交接',
-    '',
-    '这份文件来自受控 `file` Rich Block，不会把整份产物塞进对话上下文。',
-    '',
-    '- Session 私有过程保持私有',
-    '- Room 只接收显式提交的 Post',
-    '- 文件内容按回执和摘要按需读取',
-  ].join('\n');
+  const content = file.content;
   return {
     schemaVersion: 'rag-ime.agent-file-preview.v1',
     descriptor: {
       schemaVersion: 'rag-ime.agent-file-descriptor.v1',
       mediaId,
       sessionId,
-      fileName: 'room-runtime-handoff.md',
-      mimeType: 'text/markdown',
+      fileName: file.fileName,
+      mimeType: file.mimeType,
       byteSize: new TextEncoder().encode(content).byteLength,
       sha256,
-      previewKind: 'markdown',
-      language: '',
+      previewKind: file.previewKind,
+      language: file.language ?? '',
       contentUrl: `/api/agent/media/${mediaId}/content?sessionId=${encodeURIComponent(sessionId)}`,
     },
     content,
@@ -2533,6 +2572,10 @@ function previewSession(
   roleId: string,
   updatedAtMs: number,
   roleVersion = '1',
+  /* Rail summaries were hardcoded to zero, so every preview session claimed
+     "0 条消息" while rendering a full transcript. Optional so existing call
+     sites keep their exact shape. */
+  summary: { messageCount?: number; lastMessagePreview?: string } = {},
 ): Record<string, unknown> {
   return {
     id,
@@ -2551,8 +2594,8 @@ function previewSession(
     updatedAtMs,
     workspaceRoots: [],
     modelProfile: 'session-selected',
-    messageCount: 0,
-    lastMessagePreview: '',
+    messageCount: summary.messageCount ?? 0,
+    lastMessagePreview: summary.lastMessagePreview ?? '',
   };
 }
 
@@ -2823,6 +2866,29 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function roomPostBlock(
+  id: string,
+  type: string,
+  presentationKind: string,
+  summary: string,
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    schemaVersion: 'rag-ime.agent-block.v1',
+    id,
+    type,
+    status: 'completed',
+    presentationKind,
+    data,
+    summary,
+    source: {},
+    visibility: 'room_post',
+    digest: 'd'.repeat(64),
+    ref: `ref:${id}`,
+    generation: 0,
+  };
+}
+
 function previewRoomSnapshot(roomId: string) {
   const now = Date.now() - 60_000;
   const rootId = `${roomId}:turn-1`;
@@ -2858,6 +2924,7 @@ function previewRoomSnapshot(roomId: string) {
     dispatchId: string,
     content: string,
     createdAtMs: number,
+    blocks?: Record<string, unknown>[],
   ) => ({
     schemaVersion: 'wisdom-weasel.room-post.v2',
     postId,
@@ -2872,6 +2939,7 @@ function previewRoomSnapshot(roomId: string) {
     idempotencyKey: postId,
     publicationSource: { kind: 'room_commit', ref: `commit:${postId}` },
     createdAtMs,
+    ...(blocks ? { blocks } : {}),
   });
   const events = [
     event(1, 'user_message', null, {
@@ -2908,6 +2976,24 @@ function previewRoomSnapshot(roomId: string) {
         'room-post-present', 'participant-present', 'dispatch-present',
         '我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。',
         now + 7,
+        /* The same managed report a Session turn delivers. Room routes results
+           through the identical AgentBlocks renderer, so this is what proves
+           the two workspaces share one result language rather than merely
+           looking alike. Room post blocks carry the full agent-block.v1 shape
+           — summary/source/visibility/digest/ref/generation are all required,
+           and a post whose blocks fail validation is dropped whole. */
+        [
+          roomPostBlock('room-post-text', 'text', 'markdown', '结果说明', {
+            text: '我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。',
+          }),
+          roomPostBlock('room-post-report', 'file', 'file', '词库健康报告', {
+            mediaId: 'media_previewreport01',
+            name: 'lexicon-health-report.html',
+            mimeType: 'text/html',
+            byteSize: PREVIEW_REPORT_BYTES,
+            sha256: 'c'.repeat(64),
+          }),
+        ],
       ),
     }),
     event(8, 'turn_completed', 'participant-present', {

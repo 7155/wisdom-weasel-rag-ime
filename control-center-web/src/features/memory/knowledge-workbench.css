@@ -148,7 +148,7 @@
   outline-offset: 2px;
 }
 
-.knowledge-evidence__toolbar > button b { font-family: var(--font-mono); }
+.knowledge-evidence__toolbar > button b { font-family: var(--font-ui); font-variant-numeric: tabular-nums; }
 .knowledge-source-bars {
   display: grid;
   min-width: 0;

@@ -3,8 +3,8 @@
 .room-requirements__header, .room-requirements__section-title, .room-requirements__original > header, .room-requirements__gate > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
 .room-requirements__header > span { display: grid; min-width: 0; gap: 2px; }
 .room-requirements__header strong { font-size: 14px; }
-.room-requirements__header small, .room-requirements__section-title small, .room-requirements small { color: var(--color-text-tertiary); font-size: 11px; }
-.room-requirements__header > b, .room-requirements [data-status] { border-radius: var(--radius-round); padding: 2px 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 11px; white-space: nowrap; }
+.room-requirements__header small, .room-requirements__section-title small, .room-requirements small { color: var(--color-text-tertiary); font-size: 12px; }
+.room-requirements__header > b, .room-requirements [data-status] { border-radius: var(--radius-round); padding: 2px 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; white-space: nowrap; }
 .room-requirements [data-status='observed_pass'] { background: var(--color-success-soft); color: var(--color-success); }
 .room-requirements [data-status='warning'], .room-requirements [data-status='warn_blocked'], .room-requirements [data-status='failed'], .room-requirements [data-status='stale'] { background: var(--color-warning-soft); color: var(--color-warning); }
 .room-requirements [data-status='tampered'] { background: var(--color-danger-soft); color: var(--color-danger); }
@@ -19,7 +19,7 @@
 .room-requirements__original pre { max-height: 240px; margin: 0; overflow: auto; border: 1px solid var(--color-border); padding: 9px; background: var(--color-surface); color: var(--color-text-primary); font: 12px/1.55 var(--font-mono); letter-spacing: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .room-requirements__original pre:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
 .room-requirements__original dl, .room-requirements__gate dl, .room-requirements__metadata { display: grid; min-width: 0; gap: 4px; margin: 0; }
-.room-requirements__original dl > div, .room-requirements__gate dl > div, .room-requirements__metadata > div { display: grid; min-width: 0; grid-template-columns: 112px minmax(0, 1fr); gap: 8px; font-size: 11px; }
+.room-requirements__original dl > div, .room-requirements__gate dl > div, .room-requirements__metadata > div { display: grid; min-width: 0; grid-template-columns: 112px minmax(0, 1fr); gap: 8px; font-size: 12px; }
 .room-requirements dt { color: var(--color-text-tertiary); }
 .room-requirements dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .room-requirements__metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -27,24 +27,24 @@
 .room-requirements__metadata > div:last-child { grid-column: 1 / -1; }
 .room-requirements__hash { font-family: var(--font-mono); }
 .room-requirements__catalog-grid, .room-requirements__gate-grid, .room-requirements__review-grid { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.room-requirements h4 { margin: 0; font-size: 11px; }
+.room-requirements h4 { margin: 0; font-size: 12px; }
 .room-requirements__catalog-list, .room-requirements__read-list { display: grid; min-width: 0; align-content: start; gap: 6px; }
 .room-requirements__catalog-list ol, .room-requirements__read-list ul { display: grid; min-width: 0; gap: 0; margin: 0; padding: 0; list-style: none; }
 .room-requirements__catalog-list li, .room-requirements__read-list li { display: grid; min-width: 0; gap: 2px; border-bottom: 1px solid var(--color-border); padding: 7px 0; }
 .room-requirements__catalog-list li strong, .room-requirements__read-list li strong { font-size: 12px; overflow-wrap: anywhere; }
 .room-requirements__table-wrap { min-width: 0; overflow-x: auto; }
-.room-requirements table { width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }
+.room-requirements table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
 .room-requirements th { padding: 6px; color: var(--color-text-tertiary); font-weight: 600; text-align: left; }
 .room-requirements td { min-width: 0; border-top: 1px solid var(--color-border); padding: 7px 6px; vertical-align: top; overflow-wrap: anywhere; }
 .room-requirements td > strong, .room-requirements td > span, .room-requirements td > small, .room-requirements td > code, .room-requirements td > b { display: block; width: fit-content; max-width: 100%; }
-.room-requirements td code { font-size: 10px; overflow-wrap: anywhere; }
+.room-requirements td code { font-size: 12px; overflow-wrap: anywhere; }
 .room-requirements__gate { display: grid; min-width: 0; align-content: start; gap: 8px; border: 1px solid var(--color-border); padding: 9px; }
 .room-requirements__gate[data-gate-status='observed_pass'] { border-left: 3px solid var(--color-success); }
 .room-requirements__gate[data-gate-status='warn_blocked'] { border-left: 3px solid var(--color-warning); }
 .room-requirements__gate[data-gate-status='preview'] { border-style: dashed; }
-.room-requirements__gate p, .room-requirements__gate ul { margin: 0; color: var(--color-text-secondary); font-size: 11px; line-height: 1.5; }
+.room-requirements__gate p, .room-requirements__gate ul { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 .room-requirements__gate ul { padding-left: 18px; }
-.room-requirements__empty { margin: 0; padding: 8px 0; color: var(--color-text-tertiary); font-size: 11px; }
+.room-requirements__empty { margin: 0; padding: 8px 0; color: var(--color-text-tertiary); font-size: 12px; }
 @media (max-width: 760px) {
   .room-requirements__metadata, .room-requirements__catalog-grid, .room-requirements__gate-grid, .room-requirements__review-grid { grid-template-columns: 1fr; }
   .room-requirements__metadata > div:last-child { grid-column: auto; }

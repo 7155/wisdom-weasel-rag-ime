@@ -2,6 +2,7 @@ import { AlertCircle, GitBranch, PanelLeftClose, PanelLeftOpen, PanelRightClose,
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
+import { useComposerClearance } from '@/components/layout/use-composer-clearance';
 import { IconButton } from '@/components/primitives';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
 import type { AgentActivityProjection, AgentProjectionState } from '@/contracts/agent-reducer';
@@ -91,11 +92,10 @@ function AgentWorkspace() {
   const railRef = useRef<HTMLElement>(null);
   const statusToggleRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLElement>(null);
+  const conversationRef = useRef<HTMLElement>(null);
+  useComposerClearance(conversationRef);
   const selectedIdRef = useRef(selectedId);
-  const composerInputsRef = useRef(new Map<string, {
-    draft: string;
-    attachments: ComposerAttachment[];
-  }>());
+  const composerInputsRef = useRef(sessionComposerStore);
   const sessionErrorsRef = useRef(new Map<string, string>());
   const sessionSendLocksRef = useRef(new Set<string>());
   selectedIdRef.current = selectedId;
@@ -1124,10 +1124,9 @@ function AgentWorkspace() {
       <AgentPaneResizer side="rail" />
       <button className="agent-rail-backdrop" aria-hidden="true" disabled={!railModal} tabIndex={-1} onClick={closeMobileRail} type="button" />
       <section
+        ref={conversationRef}
         className="agent-conversation"
         aria-hidden={railModal || statusModal || undefined}
-        data-composer-attachments={attachments.length > 0 || undefined}
-        data-composer-edit={Boolean(editTarget) || undefined}
         inert={railModal || statusModal ? true : undefined}
       >
         <header className="agent-conversation__header">
@@ -1177,6 +1176,13 @@ function AgentWorkspace() {
     </main>
   );
 }
+
+/* Session composer inputs survive route unmount: module scope, not a ref. */
+const sessionComposerStore = new Map<string, {
+  draft: string;
+  attachments: ComposerAttachment[];
+}>();
+((globalThis as { __RAG_DRAFT_STORES__?: Array<{ clear(): void }> }).__RAG_DRAFT_STORES__ ??= []).push(sessionComposerStore);
 
 function AgentComposerPending() {
   return (

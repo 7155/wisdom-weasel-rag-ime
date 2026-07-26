@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BookOpen,
   CalendarClock,
+  ChevronRight,
   DatabaseZap,
   Eye,
   Network,
@@ -153,8 +154,10 @@ function PipelineStage({
   return (
     <button className="memory-system-overview__stage" onClick={onClick} type="button">
       <span><Icon aria-hidden="true" size={16} /></span>
-      <div><small>{label}</small><strong>{value}</strong><em>{detail}</em></div>
-      <ArrowRight aria-hidden="true" className="memory-system-overview__stage-open" size={15} />
+      <div><small>{label}</small><strong>{value}</strong><em title={detail}>{detail}</em></div>
+      {/* A chevron, not a second arrow: the arrows between stages carry the
+          pipeline, this one only says "opens a layer". */}
+      <ChevronRight aria-hidden="true" className="memory-system-overview__stage-open" size={15} />
     </button>
   );
 }

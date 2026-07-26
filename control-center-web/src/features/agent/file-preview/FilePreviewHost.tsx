@@ -1,4 +1,4 @@
-import { Download, FileText, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
+import { ExternalLink, FileText, Globe2, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useOptionalControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -33,13 +33,18 @@ export function FilePreviewHost() {
     <Dialog open={open} onOpenChange={(next) => { if (!next) close(); }}>
       <DialogContent className="agent-file-preview-dialog">
         <DialogHeader>
-          <span className="agent-file-preview-dialog__icon"><FileText size={20} /></span>
+          {/* The icon names what is being previewed rather than defaulting to a
+              generic page: an HTML report and a markdown handoff are not the
+              same kind of thing to open. */}
+          <span className="agent-file-preview-dialog__icon">
+            {descriptor?.previewKind === 'html' ? <Globe2 size={20} /> : <FileText size={20} />}
+          </span>
           <DialogTitle>{fileName}</DialogTitle>
           <DialogDescription>{meta || '正在读取受控文件回执'}</DialogDescription>
           {descriptor ? (
             <IconButton
               className="agent-file-preview-dialog__download"
-              icon={<Download size={16} />}
+              icon={<ExternalLink size={16} />}
               label="打开原文件"
               onClick={() => window.open(descriptor.contentUrl, '_blank', 'noopener,noreferrer')}
               tooltip
@@ -47,7 +52,7 @@ export function FilePreviewHost() {
           ) : null}
         </DialogHeader>
         {preview?.truncated ? <div className="agent-file-preview-dialog__notice">文件较大，当前显示前 512 KB。</div> : null}
-        <div className="agent-file-preview-dialog__body" data-status={status}>
+        <div className="agent-file-preview-dialog__body" data-preview-kind={status === 'ready' ? descriptor?.previewKind : undefined} data-status={status}>
           {status === 'loading' ? <div className="agent-file-preview-dialog__state"><LoaderCircle size={20} /><span>正在读取文件</span></div> : null}
           {status === 'error' ? (
             <div className="agent-file-preview-dialog__state" role="alert">

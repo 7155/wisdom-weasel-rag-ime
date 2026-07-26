@@ -1,9 +1,9 @@
 .memory-system-overview {
   display: grid;
   min-width: 0;
-  margin-block: var(--space-3) var(--space-5);
-  border-block: 1px solid var(--color-border-strong);
-  background: var(--color-surface);
+  gap: var(--space-4);
+  margin-block: 0 var(--space-5);
+  padding: 0;
 }
 
 .memory-system-overview__headline {
@@ -11,23 +11,24 @@
   min-width: 0;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 2px;
+  padding: 0;
   gap: var(--space-4);
 }
 
 .memory-system-overview__headline > div:first-child { min-width: 0; }
 .memory-system-overview__headline > div:first-child > span,
 .activity-timeline__eyebrow {
+  display: block;
   color: var(--color-accent);
-  font-size: 12px;
-  font-weight: 800;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: .06em;
 }
 
 .memory-system-overview__headline h2 {
-  margin: 2px 0 0;
-  font-size: 20px;
-  letter-spacing: 0;
+  margin: 3px 0 0;
+  font-size: var(--text-section-lead);
+  line-height: var(--text-section-lead-lh);
 }
 
 .memory-system-overview__headline p {
@@ -41,7 +42,7 @@
 .memory-system-overview__signals {
   display: grid;
   min-width: 0;
-  border-block: 1px solid var(--color-border);
+  border-block: 1px solid var(--color-border-soft);
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
@@ -57,8 +58,8 @@
   min-width: 0;
   min-height: 48px;
   align-items: center;
-  padding: 10px 12px;
-  border-right: 1px solid var(--color-border);
+  padding: 10px 12px 10px 0;
+  border-right: 1px solid var(--color-border-soft);
   grid-template-columns: 8px minmax(0, 1fr);
   gap: 9px;
 }
@@ -75,8 +76,9 @@
   display: grid;
   min-width: 0;
   align-items: stretch;
-  border-block: 1px solid var(--color-border);
-  background: var(--color-surface-subtle);
+  overflow: hidden;
+  border-radius: var(--radius-2);
+  background: color-mix(in srgb, var(--color-surface-subtle) 62%, var(--color-paper));
   grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr);
 }
 
@@ -100,9 +102,20 @@
 }
 
 .memory-system-overview__stage > div { display: grid; min-width: 0; gap: 1px; }
-.memory-system-overview__stage small { color: var(--color-text-secondary); font-size: 12px; }
-.memory-system-overview__stage strong { font-size: 19px; font-variant-numeric: tabular-nums; }
-.memory-system-overview__stage em { color: var(--color-text-tertiary); font-size: 12px; font-style: normal; overflow-wrap: anywhere; }
+.memory-system-overview__stage small { color: var(--color-text-secondary); font-size: var(--font-size-caption); }
+.memory-system-overview__stage strong { font-family: var(--font-ui); font-size: var(--text-figure); line-height: var(--text-figure-lh); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums lining-nums; letter-spacing: 0; }
+/* overflow-wrap: anywhere used to break this line mid-phrase, stranding the
+   last count on its own row. Truncate the tail instead. */
+.memory-system-overview__stage em {
+  min-width: 0;
+  overflow: hidden;
+  cursor: help;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .memory-system-overview__arrow { align-self: center; color: var(--color-text-tertiary); justify-self: center; }
 
 .memory-system-overview__footer {
@@ -163,7 +176,7 @@
   font-size: 13px;
 }
 
-.activity-timeline__loading svg { animation: memory-spin .8s linear infinite; }
+.activity-timeline__loading svg { animation: memory-spin 1.2s linear infinite; }
 
 .activity-timeline__summary-band {
   display: grid;
@@ -189,7 +202,7 @@
 .activity-timeline__summary-metrics > div { display: grid; min-width: 0; align-content: center; padding: 12px; border-right: 1px solid var(--color-border); }
 .activity-timeline__summary-metrics > div:last-child { border-right: 0; }
 .activity-timeline__summary-metrics dt { color: var(--color-text-tertiary); font-size: 12px; }
-.activity-timeline__summary-metrics dd { margin: 3px 0 0; font-family: var(--font-mono); font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
+.activity-timeline__summary-metrics dd { margin: 3px 0 0; font-family: var(--font-ui); font-size: var(--font-size-caption); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
 .activity-timeline__rail { display: grid; min-width: 0; }
 .activity-timeline__segment {
@@ -201,7 +214,7 @@
 .activity-timeline__segment > time {
   padding: 18px 12px 0 0;
   color: var(--color-text-secondary);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -229,7 +242,7 @@
 .activity-timeline__app-mark[data-app-tone='rose'] { background: var(--color-danger); }
 .activity-timeline__segment-body p { max-width: 90ch; margin: 7px 0 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.58; overflow-wrap: anywhere; }
 .activity-timeline__segment-meta { display: flex; min-width: 0; flex-wrap: wrap; gap: 5px 12px; margin-top: 9px; }
-.activity-timeline__segment-meta span { color: var(--color-text-tertiary); font-size: 11px; overflow-wrap: anywhere; }
+.activity-timeline__segment-meta span { color: var(--color-text-tertiary); font-size: 12px; overflow-wrap: anywhere; }
 .activity-timeline__segment-meta span[data-tone='warning'] { color: var(--color-warning); font-weight: 700; }
 
 .activity-timeline__decision-bar {
@@ -295,7 +308,7 @@
   .activity-timeline__summary-metrics > div { border-right: 0; border-bottom: 1px solid var(--color-border); }
   .activity-timeline__summary-metrics > div:last-child { border-bottom: 0; }
   .activity-timeline__segment { grid-template-columns: 66px 18px minmax(0, 1fr); }
-  .activity-timeline__segment > time { padding-right: 7px; font-size: 11px; }
+  .activity-timeline__segment > time { padding-right: 7px; font-size: 12px; }
   .activity-timeline__segment-body { padding-left: 10px; }
 }
 
@@ -318,7 +331,20 @@
   outline: 2px solid var(--color-focus);
   outline-offset: -2px;
 }
-.memory-system-overview__stage-open { color: var(--color-text-tertiary); }
+/* Only surfaces on hover/focus so it never competes with the flow arrows
+   that carry the pipeline itself. */
+.memory-system-overview__stage-open {
+  color: var(--color-accent);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+  transform: translateX(-2px);
+}
+
+.memory-system-overview__stage:hover .memory-system-overview__stage-open,
+.memory-system-overview__stage:focus-visible .memory-system-overview__stage-open {
+  opacity: 1;
+  transform: translateX(0);
+}
 
 .memory-layer-workspace {
   display: grid;
@@ -398,7 +424,7 @@
 .memory-lineage-panel > div:first-child > span {
   color: var(--color-accent);
   font-size: 12px;
-  font-weight: 800;
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
 }
 
@@ -481,7 +507,7 @@
 }
 
 .memory-reference-view__identity > div { display: grid; min-width: 0; gap: 2px; }
-.memory-reference-view__identity small { color: var(--color-text-tertiary); font-size: 11px; }
+.memory-reference-view__identity small { color: var(--color-text-tertiary); font-size: 12px; }
 .memory-reference-view__identity strong { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
 .memory-reference-view__notice { display: inline-flex; align-items: flex-start; gap: 7px; }
 .memory-reference-view__notice svg { flex: 0 0 auto; margin-top: 2px; }
@@ -496,7 +522,7 @@
 
 .memory-reference-view__facts > div { min-width: 0; padding: 9px; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); }
 .memory-reference-view__facts > div:nth-child(3n) { border-right: 0; }
-.memory-reference-view__facts dt { color: var(--color-text-tertiary); font-size: 11px; }
+.memory-reference-view__facts dt { color: var(--color-text-tertiary); font-size: 12px; }
 .memory-reference-view__facts dd { margin: 3px 0 0; font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
 
 .memory-reference-view__children { display: grid; min-width: 0; }
@@ -520,10 +546,10 @@
 .memory-reference-view__children > button:hover:not(:disabled) { background: var(--color-surface-hover); }
 .memory-reference-view__children > button:disabled { cursor: not-allowed; opacity: .64; }
 .memory-reference-view__children > button span { display: grid; min-width: 0; gap: 2px; }
-.memory-reference-view__children > button small { color: var(--color-accent); font-size: 11px; }
+.memory-reference-view__children > button small { color: var(--color-accent); font-size: 12px; }
 .memory-reference-view__children > button strong { font-size: 12px; overflow-wrap: anywhere; }
-.memory-reference-view__children > button em { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 11px; font-style: normal; overflow-wrap: anywhere; }
-.memory-reference-view__children > button b { color: var(--color-warning); font-size: 11px; }
+.memory-reference-view__children > button em { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 12px; font-style: normal; overflow-wrap: anywhere; }
+.memory-reference-view__children > button b { color: var(--color-warning); font-size: 12px; }
 .memory-reference-view__children > p,
 .memory-reference-view__guard { margin: 0; padding: 10px 0; color: var(--color-text-secondary); font-size: 12px; }
 .memory-reference-view__guard { display: inline-flex; align-items: center; gap: 7px; color: var(--color-warning); }
@@ -537,11 +563,11 @@
   padding: var(--space-5) 0 var(--space-3);
 }
 .memory-layer-heading > div { min-width: 0; }
-.memory-layer-heading span { color: var(--color-accent); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.memory-layer-heading span { color: var(--color-accent); font-size: 12px; font-weight: var(--font-weight-semibold); text-transform: uppercase; }
 .memory-layer-heading h3 { margin: 4px 0 0; font-size: 20px; }
 .memory-layer-heading p { margin: 5px 0 0; color: var(--color-text-secondary); font-size: 13px; }
 .memory-layer-loading { display: flex; min-height: 120px; align-items: center; justify-content: center; gap: 7px; color: var(--color-text-secondary); }
-.memory-layer-loading svg { animation: memory-spin .8s linear infinite; }
+.memory-layer-loading svg { animation: memory-spin 1.2s linear infinite; }
 
 .memory-role-book-workspace { grid-template-columns: minmax(260px, .62fr) minmax(0, 1.5fr); }
 .memory-role-book-detail { display: grid; min-width: 0; gap: var(--space-4); padding-top: var(--space-4); }
@@ -554,14 +580,14 @@
 }
 .memory-role-book-detail > header > span { display: grid; width: 34px; height: 34px; border: 1px solid var(--color-border-strong); color: var(--color-accent); place-items: center; }
 .memory-role-book-detail > header > div { min-width: 0; }
-.memory-role-book-detail > header small { color: var(--color-text-tertiary); font-size: 11px; }
+.memory-role-book-detail > header small { color: var(--color-text-tertiary); font-size: 12px; }
 .memory-role-book-detail > header h3 { margin: 2px 0 0; font-size: 16px; }
 .memory-role-book-detail > header p { margin: 3px 0 0; color: var(--color-text-secondary); font-size: 12px; }
 .memory-role-book-revisions { display: flex; min-width: 0; gap: 6px; padding-block: 8px; border-block: 1px solid var(--color-border); overflow-x: auto; }
 .memory-role-book-revisions button { display: grid; min-width: 112px; padding: 7px 9px; border: 1px solid var(--color-border); background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .memory-role-book-revisions button[aria-current='true'] { border-color: var(--color-accent); background: var(--color-accent-soft); }
 .memory-role-book-revisions strong { font-size: 12px; }
-.memory-role-book-revisions small { color: var(--color-text-tertiary); font-size: 11px; }
+.memory-role-book-revisions small { color: var(--color-text-tertiary); font-size: 12px; }
 .memory-role-book-sections { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--color-border); border-left: 1px solid var(--color-border); }
 .memory-role-book-sections > section { min-width: 0; border-right: 1px solid var(--color-border); border-bottom: 1px solid var(--color-border); }
 .memory-role-book-sections > section > header { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: var(--color-surface-subtle); }
@@ -571,8 +597,8 @@
 .memory-role-book-sections > section > button:hover { background: var(--color-surface-hover); }
 .memory-role-book-sections > section > button[aria-current='true'] { box-shadow: inset 3px 0 0 var(--color-accent); background: var(--color-accent-soft); }
 .memory-role-book-sections > section > button span { font-size: 12px; overflow-wrap: anywhere; }
-.memory-role-book-sections > section > p { margin: 0; padding: 10px; color: var(--color-text-tertiary); font-size: 11px; }
-.memory-role-book-detail > footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-block: 10px; border-top: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 11px; }
+.memory-role-book-sections > section > p { margin: 0; padding: 10px; color: var(--color-text-tertiary); font-size: 12px; }
+.memory-role-book-detail > footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-block: 10px; border-top: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 12px; }
 .memory-role-book-detail > footer span { display: inline-flex; align-items: center; gap: 6px; }
 
 @media (max-width: 980px) {
@@ -600,8 +626,11 @@
   .memory-role-book-detail > header .ui-button { grid-column: 2; justify-self: start; }
 }
 
+/* No local tint here: the tab row is the same component on every page and
+   sits on the page canvas like all the others. */
 .memory-view-tabs > .ui-tabs__list {
-  background: var(--color-canvas);
+  margin-bottom: var(--space-3);
+  padding-inline: 2px;
 }
 
 .memory-catalog-detail {
@@ -619,7 +648,7 @@
 .memory-catalog-detail > div:first-child > span {
   color: var(--color-accent);
   font-size: 13px;
-  font-weight: 800;
+  font-weight: var(--font-weight-semibold);
 }
 
 .memory-catalog-detail h3 {
@@ -675,8 +704,10 @@
 
 .memory-action-unavailable {
   margin: 0;
-  padding: 8px 10px;
-  border-left: 2px solid var(--color-warning);
+  padding: 8px 11px;
+  border: 1px solid var(--color-warning-border);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-2);
   background: var(--color-warning-soft);
   color: var(--color-text-secondary);
   font-size: 13px;
@@ -967,7 +998,7 @@
 }
 
 .memory-relation-canvas[data-ready='true'] .memory-relation-canvas__surface {
-  animation: memory-graph-enter 260ms var(--ease-standard) both;
+  animation: memory-graph-enter var(--motion-enter) var(--ease-standard) both;
 }
 
 @keyframes memory-graph-enter {
@@ -1187,7 +1218,7 @@
   fill: var(--color-text);
   font-family: var(--font-mono);
   font-size: 14px;
-  font-weight: 750;
+  font-weight: var(--font-weight-semibold);
 }
 
 .memory-graph__node-label--outside {
@@ -1208,7 +1239,7 @@
 .memory-graph__column-title {
   font-family: var(--font-mono);
   font-size: 13px;
-  font-weight: 750;
+  font-weight: var(--font-weight-semibold);
 }
 
 .memory-graph__inspector {
@@ -1565,3 +1596,97 @@
 :root[data-reduce-motion='true'] .memory-entity__load-more {
   transition: none !important;
 }
+
+
+/* ============================ memory editorial grid ============================
+   One bounded composition: narrative column, compact action rail, quiet
+   marginalia. Status weights differ by importance; the four-stage flow is a
+   small process diagram, not a stretched dashboard band. */
+@media (min-width: 861px) {
+  .memory-system-overview {
+    grid-template-columns: minmax(0, 1fr) 228px;
+    column-gap: 44px;
+    row-gap: var(--space-4);
+  }
+  .memory-system-overview__headline { display: contents; }
+  .memory-system-overview__headline > div:first-child { grid-column: 1; grid-row: 1; }
+  .memory-system-overview__primary-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    flex-direction: column;
+    align-items: stretch;
+    align-self: start;
+    gap: 8px;
+  }
+  .memory-system-overview__primary-actions .ui-button { justify-content: flex-start; }
+  .memory-system-overview__signals { grid-column: 1; grid-row: 2; }
+  .memory-system-overview__pipeline { grid-column: 1; grid-row: 3; }
+  .memory-system-overview__footer { display: contents; }
+  .memory-system-overview__quick-stats {
+    grid-column: 2;
+    grid-row: 3;
+    align-self: end;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 7px;
+    padding-left: 14px;
+    border-left: 1px solid var(--color-border-soft);
+  }
+  .memory-system-overview__actions { grid-column: 2; grid-row: 4; justify-content: flex-start; }
+}
+
+/* Status summary: importance, not symmetry. The confirmation call leads. */
+.memory-system-overview__signals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 22px;
+  padding: 0;
+  border: 0;
+}
+.memory-system-overview__signal {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  grid-template-columns: 8px minmax(0, auto);
+}
+.memory-system-overview__signal:nth-child(2) {
+  order: -1;
+  padding: 7px 12px;
+  border-radius: var(--radius-2);
+  background: color-mix(in srgb, var(--color-warning-soft) 55%, var(--color-paper));
+}
+.memory-system-overview__signal:nth-child(2) strong { font-size: var(--font-size-ui-strong); }
+.memory-system-overview__signal:nth-child(3) small,
+.memory-system-overview__signal:nth-child(3) strong { color: var(--color-text-tertiary); font-weight: var(--font-weight-medium); }
+.memory-system-overview__signal strong { font-size: var(--font-size-ui); }
+
+/* The flow: compact, aligned, progressive. */
+.memory-system-overview__stage { min-height: 56px; padding: 9px 11px; gap: 9px; grid-template-columns: 28px minmax(0, 1fr) 14px; }
+.memory-system-overview__stage > span { width: 26px; height: 26px; border-color: var(--color-border); }
+/* figure size comes from the shared tier; no local override */
+.memory-system-overview__arrow { color: color-mix(in srgb, var(--color-border-strong) 70%, transparent); }
+.memory-system-overview__quick-stats span { color: var(--color-text-tertiary); font-size: var(--font-size-caption); }
+
+/* Tabs sit with the content they control. */
+.memory-system-overview { margin-bottom: var(--space-2); }
+.memory-view-tabs > .ui-tabs__list { margin-top: 0; margin-bottom: var(--space-4); }
+
+
+@media (min-width: 861px) {
+  /* The supporting rail keeps one rhythm: actions, a ruled marginal note,
+     then its own trailing action — no drifting gaps. */
+  .memory-system-overview__primary-actions { gap: 6px; }
+  .memory-system-overview__quick-stats { margin-top: var(--space-2); gap: 6px; }
+  .memory-system-overview__actions { margin-top: var(--space-3); }
+}
+
+
+/* Same anatomy as .mgmt-metric: fixed icon box, caption label, tabular value. */
+.memory-system-overview__stage > span {
+  width: 26px;
+  height: 26px;
+  align-self: center;
+}
+.memory-system-overview__stage small { line-height: var(--text-label-lh); }
+.memory-system-overview__stage em { line-height: var(--text-label-lh); }

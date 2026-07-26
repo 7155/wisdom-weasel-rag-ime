@@ -1,4 +1,4 @@
-import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, PencilLine, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
+import { ArrowDown, ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, PencilLine, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Virtuoso,
@@ -54,6 +54,12 @@ export function AgentTimeline({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [activeTargetId, setActiveTargetId] = useState('');
   const [visibleRange, setVisibleRange] = useState({ startIndex: 0, endIndex: 0 });
+  /* -1 means "follow the active marker"; a real value pins the roving stop
+     to wherever the keyboard user last was. */
+  const [navFocusIndex, setNavFocusIndex] = useState(-1);
+  /* Bottom proximity drives the return-to-latest affordance: it may only
+     appear while the reader has moved away from the newest turn. */
+  const [atBottom, setAtBottom] = useState(true);
   const turnOrder = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
     if (!projection) return emptyIds;
@@ -136,6 +142,7 @@ export function AgentTimeline({
       <Virtuoso
         ref={virtuosoRef}
         key={sessionId}
+        alignToBottom
         data={turnOrder}
         computeItemKey={(_index, turnId) => turnId}
         followOutput={(isAtBottom) => isAtBottom ? 'auto' : false}
@@ -143,6 +150,8 @@ export function AgentTimeline({
         increaseViewportBy={{ top: 320, bottom: 520 }}
         components={timelineComponents}
         rangeChanged={setVisibleRange}
+        atBottomStateChange={setAtBottom}
+        atBottomThreshold={120}
         scrollSeekConfiguration={agentScrollSeekConfiguration}
         itemContent={(_index, turnId) => (
           <AgentTurn
@@ -166,8 +175,47 @@ export function AgentTimeline({
           />
         )}
       />
+      {turnOrder.length > 1 && !atBottom ? (
+        <button
+          className="agent-jump-latest"
+          type="button"
+          onClick={() => {
+            virtuosoRef.current?.scrollToIndex({ index: turnOrder.length - 1, align: 'end', behavior: 'smooth' });
+          }}
+        >
+          <ArrowDown aria-hidden="true" size={14} />
+          回到最新
+        </button>
+      ) : null}
       {turnOrder.length > 1 ? (
-        <nav className="agent-conversation-nav" aria-label="快速跳转对话">
+        <nav
+          className="agent-conversation-nav"
+          aria-label="快速跳转对话"
+          data-density={turnOrder.length > 40 ? 'dense' : turnOrder.length > 18 ? 'tight' : undefined}
+          onKeyDown={(event) => {
+            /* Roving tabindex: only the current marker is a Tab stop, so a
+               60-turn conversation costs one Tab rather than sixty. Arrow
+               keys move between markers, Home/End jump to the ends. */
+            const keys = ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'Home', 'End'];
+            if (!keys.includes(event.key)) return;
+            const markers = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>('button[data-marker="true"]'),
+            );
+            if (markers.length === 0) return;
+            event.preventDefault();
+            const current = markers.findIndex((marker) => marker === document.activeElement);
+            const from = current === -1 ? navFocusIndex : current;
+            const next = event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? markers.length - 1
+                : event.key === 'ArrowUp' || event.key === 'ArrowLeft'
+                  ? Math.max(0, from - 1)
+                  : Math.min(markers.length - 1, from + 1);
+            setNavFocusIndex(next);
+            markers[next]?.focus();
+          }}
+        >
           <span aria-hidden="true" />
           {turnOrder.map((turnId, index) => {
             const activeIndex = Math.floor((visibleRange.startIndex + visibleRange.endIndex) / 2);
@@ -179,6 +227,9 @@ export function AgentTimeline({
               <button
                 aria-current={index === activeIndex ? 'location' : undefined}
                 aria-label={`跳到第 ${index + 1} 轮`}
+                data-marker="true"
+                tabIndex={index === (navFocusIndex >= 0 ? navFocusIndex : activeIndex) ? 0 : -1}
+                onFocus={() => setNavFocusIndex(index)}
                 data-edge={index === 0 ? 'start' : index === turnOrder.length - 1 ? 'end' : undefined}
                 data-kind={markerKind}
                 data-visible={index >= visibleRange.startIndex && index <= visibleRange.endIndex || undefined}
@@ -283,6 +334,12 @@ export function AgentTurn({
     const projection = state.projections[sessionId];
     return (projection?.turnsById[turnId]?.activityIds ?? []).map((id) => projection?.activitiesById[id]).filter(Boolean);
   }));
+  /* Retrying is a request, not an outcome. The control acknowledges that the
+     request left the UI and stops a second identical submission, but it never
+     claims the turn succeeded — only the turn's own status may say that. Keyed
+     to the turn's status so it releases the moment the backend moves the turn,
+     and so a failed submission cannot strand the button forever. */
+  const [retryRequestedFor, setRetryRequestedFor] = useState('');
   const blockFailure = useAgentLiveStore((state) => {
     const projection = state.projections[sessionId];
     const messageIds = projection?.turnsById[turnId]?.messageIds ?? [];
@@ -298,6 +355,7 @@ export function AgentTurn({
   if (!turn) return null;
   const rawFailure = turn.failure || blockFailure;
   const failure = turn.status === 'failed' ? publicAgentErrorText(rawFailure) : '';
+  const retryRequested = retryRequestedFor === `${turnId}:${turn.status}`;
   const showWorking = turn.status === 'queued' || turn.status === 'running';
   const presence: PersonaPresence = turn.status === 'failed' ? 'warning' : turn.status === 'running' || turn.status === 'waiting' ? 'thinking' : 'done';
   const timelineEntries = interleavedTurnEntries(assistantMessages, activities);
@@ -320,6 +378,7 @@ export function AgentTurn({
                     forkAvailable={forkAvailable}
                     historyTarget={activeTargetId === entry.message.id}
                     streaming={entry.message.id === streamingMessageId}
+                    onApprovalDecision={onApprovalDecision}
                     onForkFromMessage={onForkFromMessage}
                   />
                 </div>
@@ -340,7 +399,7 @@ export function AgentTurn({
                 <span><strong>本轮未完成</strong><small>{failure}</small></span>
                 {onRetryTurn && onSwitchModel ? (
                   <div className="agent-turn__failure-actions">
-                    <Button size="small" variant="primary" leadingIcon={<RefreshCcw size={14} />} disabled={turnRecoveryDisabled} onClick={() => onRetryTurn(turnId)}>重试本轮</Button>
+                    <Button size="small" variant="primary" leadingIcon={<RefreshCcw size={14} />} disabled={turnRecoveryDisabled || retryRequested} onClick={() => { setRetryRequestedFor(`${turnId}:${turn.status}`); onRetryTurn(turnId); }}>{retryRequested ? '已请求重试' : '重试本轮'}</Button>
                     <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button>
                   </div>
                 ) : null}
@@ -463,6 +522,7 @@ function MessageView({
   rewriteAvailable = false,
   historyTarget = false,
   streaming,
+  onApprovalDecision,
   onForkFromMessage,
   onEditMessage,
 }: {
@@ -473,6 +533,10 @@ function MessageView({
   rewriteAvailable?: boolean;
   historyTarget?: boolean;
   streaming?: boolean;
+  /* Approval blocks can arrive inside an ordinary assistant message, not only
+     inside an activity group. Without this the renderer has no decision
+     handler and silently drops its Reject/Approve controls. */
+  onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
 }) {
@@ -501,7 +565,7 @@ function MessageView({
   return user ? (
     <div className="agent-user-message-shell" data-actions={canFork || canEdit || undefined} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
       <div className="agent-user-message" data-status={message.status}>
-        <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} />
+        <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} onApprovalDecision={onApprovalDecision} />
         {delivery === 'steer' || delivery === 'followUp' ? (
           <small className="agent-user-message__delivery" data-delivery={delivery}>
             {delivery === 'steer' ? '干预当前执行' : '完成后接续'}
@@ -537,7 +601,7 @@ function MessageView({
   ) : (
     <div className="agent-assistant-message-shell" data-actions={canFork || undefined}>
       <div className="agent-assistant-message" data-status={visibleStatus} data-agent-message-id={messageId} data-history-target={historyTarget || undefined} tabIndex={-1}>
-        <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} streaming={showStreaming} />
+        <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} streaming={showStreaming} onApprovalDecision={onApprovalDecision} />
         {showStreaming ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
       </div>
       {!showStreaming ? <AgentMessageUsage message={message} /> : null}
@@ -564,7 +628,7 @@ function AgentMessageUsage({ message }: { message: AgentMessageProjection }) {
   const cachePercent = promptTokens > 0 ? Math.round((usage.cacheRead / promptTokens) * 100) : 0;
   return (
     <div className="agent-message-usage" aria-label="本轮模型与 Token 用量">
-      {message.model ? <span title="本轮模型">{message.model}</span> : null}
+      {message.model ? <span className="agent-message-usage__model" title="本轮模型">{message.model}</span> : null}
       {message.provider ? <span title="模型提供方">{message.provider}</span> : null}
       <span title="输入 Token">输入 {formatTokens(promptTokens)}</span>
       <span title="输出 Token">输出 {formatTokens(usage.output)}</span>

@@ -338,7 +338,22 @@ export function AgentComposer({
           ))}
         </div>
       ) : null}
-      <div className="agent-composer" data-busy={busy || undefined}>
+      {/* The dock is taller than its text line — the toolbar band and the
+          padding around it are dead space, and clicking there did nothing even
+          though the whole surface looks like one input. Clicks that land on
+          chrome rather than on a real control put the caret back in the
+          message, which is what the surface appears to promise. */}
+      <div
+        className="agent-composer"
+        data-busy={busy || undefined}
+        onMouseDown={(event) => {
+          if (event.button !== 0) return;
+          const target = event.target as HTMLElement;
+          if (target.closest('button, a, input, textarea, select, [role="radiogroup"], [contenteditable]')) return;
+          event.preventDefault();
+          textareaRef.current?.focus();
+        }}
+      >
         {editState ? (
           <div className="agent-composer__edit" role="status">
             <PencilLine size={15} aria-hidden="true" />

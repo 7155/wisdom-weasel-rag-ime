@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Activity,
   CheckCircle2,
@@ -183,7 +184,20 @@ export function ApprovalBlockRenderer({
   const data = block.data;
   const approvalId = text(data.approvalId ?? data.id);
   const hash = text(data.payloadSha256);
-  const pending = !['approved', 'rejected', 'applied'].includes(text(data.state));
+  const state = text(data.state);
+  const pending = !['approved', 'rejected', 'applied'].includes(state);
+  /* One decision per approval: the projection may take a moment to echo the
+     new state back, and a second click in that window would submit twice.
+     The latch is keyed to the approval itself — React reuses this component
+     for whatever block occupies the same position, so instance-only state
+     would render a *new* approval as already decided and trap the user. */
+  const [latched, setLatched] = useState<{ id: string; decision: 'approved' | 'rejected' } | null>(null);
+  const submitted = latched && latched.id === approvalId ? latched.decision : null;
+  const decide = (decision: 'approved' | 'rejected') => {
+    if (submitted || !onApprovalDecision || !approvalId || !hash) return;
+    setLatched({ id: approvalId, decision });
+    onApprovalDecision(approvalId, decision, hash);
+  };
   return (
     <section className="agent-approval-block">
       <ShieldAlert size={18} />
@@ -196,16 +210,18 @@ export function ApprovalBlockRenderer({
           <Button
             size="small"
             variant="quiet"
-            onClick={() => onApprovalDecision(approvalId, 'rejected', hash)}
+            disabled={submitted !== null}
+            onClick={() => decide('rejected')}
           >
-            拒绝
+            {submitted === 'rejected' ? '已拒绝' : '拒绝'}
           </Button>
           <Button
             size="small"
             variant="primary"
-            onClick={() => onApprovalDecision(approvalId, 'approved', hash)}
+            disabled={submitted !== null}
+            onClick={() => decide('approved')}
           >
-            批准
+            {submitted === 'approved' ? '已批准' : '批准'}
           </Button>
         </span>
       ) : null}

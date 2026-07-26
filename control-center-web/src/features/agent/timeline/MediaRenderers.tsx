@@ -4,6 +4,7 @@ import {
   Image as ImageIcon,
   PackageOpen,
 } from 'lucide-react';
+import { useState } from 'react';
 import { IconButton } from '@/components/primitives';
 import { AgentFileBlock } from '../file-preview/AgentFileBlock';
 import { stickerAsset } from './PersonaAvatar';
@@ -85,16 +86,33 @@ export function ImageBlockRenderer({ block }: AgentBlockRenderProps) {
   );
 }
 
+/**
+ * Playback is a backend capability, not a frontend one: the element only ever
+ * points at a managed `/api/agent/...` receipt, and whether those bytes stream
+ * is decided by the media route. When they cannot be fetched the native
+ * control renders as a dead grey bar with no explanation, so the failure is
+ * caught and stated instead — an unplayable result should say so and still
+ * offer the original file.
+ */
 export function AudioBlockRenderer({ block }: AgentBlockRenderProps) {
   const data = block.data;
+  const [unplayable, setUnplayable] = useState(false);
   const source = safeMediaSource(text(data.receiptUrl ?? data.src ?? data.url), 'audio');
   if (!source) {
     return <BlockedMedia icon={<FileAudio size={16} />} label="音频回执不可用" />;
   }
+  const name = text(data.name) || '音频附件';
   return (
-    <figure className="agent-audio-block">
-      <figcaption><FileAudio size={16} />{text(data.name) || '音频附件'}</figcaption>
-      <audio controls preload="metadata" src={source} />
+    <figure className="agent-audio-block" data-unplayable={unplayable || undefined}>
+      <figcaption><FileAudio size={16} />{name}</figcaption>
+      {unplayable ? (
+        <p className="agent-audio-block__unplayable">
+          <span>这段音频无法在对话内播放。</span>
+          <a href={source} rel="noreferrer" target="_blank">打开原文件</a>
+        </p>
+      ) : (
+        <audio controls onError={() => setUnplayable(true)} preload="metadata" src={source} />
+      )}
     </figure>
   );
 }

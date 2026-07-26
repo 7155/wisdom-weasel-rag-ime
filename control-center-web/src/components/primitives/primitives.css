@@ -152,7 +152,7 @@
 }
 
 .ui-spin {
-  animation: ui-spin 900ms linear infinite;
+  animation: ui-spin 1.2s linear infinite;
 }
 
 @keyframes ui-spin {
@@ -300,8 +300,10 @@
 
 .ui-dialog__title {
   margin: 0;
-  font-size: 17px;
-  font-weight: 680;
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -.01em;
 }
 
 .ui-dialog__description {
@@ -318,8 +320,15 @@
   margin-top: var(--space-5);
 }
 
+/* inline-grid alone does not survive being a grid/flex child: the parent
+   stretches it into a full-width tinted band. Pinning the inline size and the
+   self-alignment keeps it a control at every call site. */
 .ui-segmented {
   display: inline-grid;
+  width: fit-content;
+  max-width: 100%;
+  justify-self: start;
+  align-self: center;
   grid-auto-columns: minmax(0, 1fr);
   grid-auto-flow: column;
   gap: 2px;
@@ -355,7 +364,7 @@
 
 .ui-segmented__item[data-state='checked'] {
   background: var(--color-surface);
-  box-shadow: 0 1px 2px rgb(21 31 26 / 12%);
+  box-shadow: var(--shadow-1);
   color: var(--color-text);
 }
 
@@ -416,7 +425,75 @@
 
 .ui-input:focus {
   border-color: var(--color-focus);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus) 20%, transparent);
+  box-shadow: var(--shadow-focus);
+}
+
+/*
+ * Native date/time/number/search widgets keep their platform behaviour but
+ * stop looking like a different design system. Without this the date fields
+ * on the task page render OS chrome that ignores the theme entirely.
+ */
+.ui-input[type='date'],
+.ui-input[type='datetime-local'],
+.ui-input[type='time'],
+.ui-input[type='month'],
+.ui-input[type='week'] {
+  width: auto;
+  min-width: 0;
+  padding-right: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-input::-webkit-calendar-picker-indicator {
+  padding: 3px;
+  border-radius: var(--radius-1);
+  opacity: .55;
+  cursor: pointer;
+  filter: var(--picker-indicator-filter, none);
+  transition: opacity var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
+}
+
+.ui-input::-webkit-calendar-picker-indicator:hover {
+  background: var(--color-surface-hover);
+  opacity: 1;
+}
+
+:root[data-theme='dark'] { --picker-indicator-filter: invert(1) brightness(.92); }
+
+.ui-input[type='number'] { font-variant-numeric: tabular-nums; }
+
+.ui-input[type='number']::-webkit-inner-spin-button,
+.ui-input[type='number']::-webkit-outer-spin-button { opacity: .5; }
+
+.ui-input[type='number']:hover::-webkit-inner-spin-button,
+.ui-input[type='number']:focus::-webkit-inner-spin-button { opacity: 1; }
+
+/* The platform clear button is a second, unstyled affordance next to our own
+   search controls. */
+.ui-input[type='search']::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+/*
+ * There is no Checkbox/Radio primitive yet and ~20 call sites use the native
+ * control directly. Normalising them here gives every one of them the same
+ * size, accent and focus ring without touching their behaviour.
+ */
+input[type='checkbox'],
+input[type='radio'] {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  margin: 0;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+input[type='checkbox']:disabled,
+input[type='radio']:disabled { cursor: not-allowed; opacity: .5; }
+
+input[type='checkbox']:focus-visible,
+input[type='radio']:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .ui-select__trigger {
@@ -523,6 +600,17 @@
     transform var(--duration-press) var(--ease-press),
     box-shadow var(--duration-enter) var(--ease-standard),
     opacity var(--duration-fast) var(--ease-standard);
+}
+
+/* The track stays 34x20 so the control keeps its optical weight in a dense
+   settings column, but a 20px-tall pressable region is below the 24px minimum
+   target size — noticeably fiddly on touch. Expanding the hit area with a
+   pseudo-element grows what the finger can land on without moving a pixel of
+   the layout. */
+.ui-switch::after {
+  content: '';
+  position: absolute;
+  inset: -4px -2px;
 }
 
 .ui-switch:active:not(:disabled) {
@@ -680,16 +768,25 @@
   animation: ui-skeleton 1.4s ease-in-out infinite;
 }
 
+/* An absence is a side-note, not a hero: one compact left-aligned row. It
+   must never claim hundreds of vertical pixels of priority. */
 .ui-empty-state {
   display: grid;
-  max-width: 440px;
-  justify-items: center;
-  gap: var(--space-2);
+  max-width: 560px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: center;
+  align-items: center;
+  justify-items: start;
+  column-gap: var(--space-3);
+  row-gap: 2px;
   margin-inline: auto;
-  padding: var(--space-10) var(--space-5);
+  padding: var(--space-4) var(--space-2);
   color: var(--color-text-secondary);
-  text-align: center;
+  text-align: left;
 }
+.ui-empty-state__icon { grid-row: 1 / span 2; margin-bottom: 0; }
+.ui-empty-state > .ui-empty-state__action,
+.ui-empty-state > button { grid-column: 2; justify-self: start; margin-top: 6px; }
 
 .ui-empty-state__icon {
   display: inline-flex;

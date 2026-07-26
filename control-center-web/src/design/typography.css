@@ -4,9 +4,18 @@ body {
   font-weight: var(--font-weight-regular);
   line-height: 1.5;
   font-kerning: normal;
-  letter-spacing: -.006em;
+  letter-spacing: var(--tracking-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+/* Mixed Chinese/Latin runs are the default in this product. Keeping Latin
+   ahead of PingFang in --font-sans stops Chinese faces from claiming Latin
+   glyphs, and these two rules keep the two scripts on one rhythm: numerals
+   stay the same width everywhere, and CJK punctuation is not double-spaced. */
+:where(body) {
+  font-variant-numeric: tabular-nums;
+  text-spacing-trim: space-first;
 }
 
 h1,
@@ -17,30 +26,49 @@ p {
   margin-block: 0;
 }
 
-h1,
+/*
+ * Display serif is an earned role: genuine page/document titles, major dates,
+ * and selected long-form leads (opt in with .editorial-lead). Operational
+ * headings — dashboard sections, panels, controls — are UI voice. Serif on
+ * operational text reads as costume and drifts off the UI baseline.
+ */
+/* With display on the grotesque, the title earns its rank from weight and a
+   tighter optical track rather than from a change of skeleton. Chinese takes
+   tracking badly, so the negative track stays small — the mass does the work. */
+h1 {
+  color: var(--color-text);
+  font-family: var(--font-display);
+  font-size: var(--text-page-title);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -.018em;
+  line-height: var(--text-page-title-lh);
+  text-wrap: pretty;
+}
+
+.editorial-lead {
+  font-family: var(--font-display);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: -.012em;
+}
+
 h2,
 h3,
 h4 {
   color: var(--color-text);
-  font-family: var(--font-display);
+  font-family: var(--font-ui);
   font-weight: var(--font-weight-semibold);
-  letter-spacing: -.018em;
+  letter-spacing: var(--tracking-heading);
+  text-wrap: pretty;
 }
 
-h1 {
-  font-size: 24px;
-  line-height: 1.25;
-}
+h2 { font-size: var(--text-section-lead); line-height: var(--text-section-lead-lh); }
+h3 { font-size: var(--text-subsection); line-height: var(--text-subsection-lh); }
+h4 { font-size: var(--text-ui); line-height: var(--text-ui-lh); }
 
-h2 {
-  font-size: 19px;
-  line-height: 1.35;
-}
 
-h3 {
-  font-size: 16px;
-  line-height: 1.4;
-}
+
+
+
 
 small {
   color: var(--color-text-secondary);

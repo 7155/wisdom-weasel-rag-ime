@@ -65,7 +65,7 @@ main[data-route-id='configuration'] .configuration-section-nav strong {
 main[data-route-id='configuration'] .configuration-section-nav small,
 main[data-route-id='configuration'] .configuration-editor__heading small {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -256,7 +256,7 @@ main[data-route-id='configuration'] .configuration-transfer > summary small {
 }
 
 main[data-route-id='configuration'] .configuration-transfer > summary svg {
-  transition: transform 150ms ease;
+  transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
 main[data-route-id='configuration'] .configuration-transfer[open] > summary svg {

@@ -1,7 +1,8 @@
 import { Eye, File, FileCode2, FileDiff, FileImage, FileText, Globe2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useOptionalControlTransport } from '@/app/control-transport';
-import { filePreviewRequestFromBlock, fileSizeLabel } from './file-descriptor';
+import { AgentHtmlReportCard } from './AgentHtmlReportCard';
+import { filePreviewRequestFromBlock, fileSizeLabel, isHtmlReport } from './file-descriptor';
 import { useFilePreviewStore } from './file-preview-store';
 import './file-preview.css';
 
@@ -12,6 +13,10 @@ export function AgentFileBlock({ data, sessionId = '' }: { data: Record<string, 
   const fileName = request?.fileNameHint || string(data.fileName ?? data.name ?? data.title) || '文件产物';
   const meta = [request?.mimeTypeHint || string(data.mimeType), fileSizeLabel(request?.byteSizeHint ?? 0)].filter(Boolean).join(' · ');
   const available = Boolean(request && transport);
+
+  if (request && isHtmlReport(fileName, request.mimeTypeHint)) {
+    return <AgentHtmlReportCard fileName={fileName} request={request} transport={transport ?? null} />;
+  }
 
   return (
     <button
@@ -24,7 +29,7 @@ export function AgentFileBlock({ data, sessionId = '' }: { data: Record<string, 
     >
       <span className="agent-file-block__icon">{fileIcon(fileName, request?.mimeTypeHint ?? '')}</span>
       <span><strong>{fileName}</strong><small>{meta || '受控文件'}</small></span>
-      <Eye aria-hidden="true" size={16} />
+      <span aria-hidden="true" className="agent-file-block__open"><Eye size={15} />预览</span>
     </button>
   );
 }

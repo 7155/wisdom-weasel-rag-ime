@@ -138,7 +138,7 @@ test('production Room and Role scenes retain group and persona boundaries', asyn
   });
 
   await page.goto('/#/roles');
-  await expect(page.getByRole('heading', { name: '伙伴', level: 2 })).toBeVisible();
+  await expect(page.locator('#workspace-main').getByRole('heading', { name: '伙伴', level: 1 })).toBeVisible();
   await expect(page.getByRole('region', { name: '伙伴目录' })).toBeVisible();
   expect(await page.locator('.persona-grid > button').count()).toBeGreaterThanOrEqual(3);
   const secondPersona = page.locator('.persona-grid > button').nth(1);

@@ -46,8 +46,11 @@
 .room-kernel-root__planes { display: grid; min-width: 0; grid-template-columns: minmax(0, 1.35fr) minmax(240px, .65fr); gap: 12px; }
 .room-kernel-posts, .room-kernel-sessions { display: grid; min-width: 0; align-content: start; gap: 0; }
 .room-kernel-posts > header, .room-kernel-sessions > header { display: flex; min-height: 32px; align-items: baseline; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--color-border); }
-.room-kernel-posts > header strong, .room-kernel-sessions > header strong { font-size: 13px; }
-.room-kernel-posts > header small, .room-kernel-sessions > header small { color: var(--color-text-tertiary); font-size: 12px; }
+/* The title never wraps; the explanation is the flexible part and may take a
+   second line. CJK wraps between any two characters, so without this the
+   narrow column split the label itself (伙伴运行状 / 态). */
+.room-kernel-posts > header strong, .room-kernel-sessions > header strong { flex: 0 0 auto; font-size: 13px; white-space: nowrap; }
+.room-kernel-posts > header small, .room-kernel-sessions > header small { min-width: 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.4; text-align: right; }
 .room-kernel-posts > article { display: grid; min-width: 0; gap: 5px; border-bottom: 1px solid var(--color-border); padding: 9px 0; }
 .room-kernel-posts > article > span { display: flex; align-items: center; gap: 6px; }
 .room-kernel-posts b { color: var(--color-accent); font-size: 12px; }

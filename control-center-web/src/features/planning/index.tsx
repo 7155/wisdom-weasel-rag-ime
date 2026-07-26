@@ -228,7 +228,7 @@ export function PlanningFeature() {
             <PlanningSummaryItem detail={suggestions.length ? `${suggestions.length} 条待确认完成` : '根据今天的安排'} icon={Sparkles} label="建议" value={companionHints.length} />
           </div>
           <div className="planning-secondary-actions">
-            <Button onClick={() => setHintsDialogOpen(true)} size="small">看看下一步 · {companionHints.length}</Button>
+            <Button onClick={() => setHintsDialogOpen(true)} size="small" variant="quiet">看看下一步 · {companionHints.length}</Button>
             <Button onClick={() => setPlanDialogOpen(true)} size="small" variant="quiet">查看今天的安排</Button>
           </div>
         </ManagementSection>
