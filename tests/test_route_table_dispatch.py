@@ -133,6 +133,83 @@ class ManagementReadDescriptorTests(unittest.TestCase):
                 )
 
 
+class _Recorder:
+    """Stands in for the application service and any of its sub-services.
+
+    Attribute access returns another recorder, so a dotted handler such as
+    `management.planning_assistant` resolves the same way it does against the
+    real service; calling one records the arguments it was given.
+    """
+
+    def __init__(self, calls: list, path: tuple[str, ...] = ()) -> None:
+        self._calls = calls
+        self._path = path
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return _Recorder(self._calls, (*self._path, name))
+
+    def __call__(self, *args, **kwargs):
+        self._calls.append((".".join(self._path), args, kwargs))
+        return {"ok": True}
+
+
+class PostDescriptorPassThroughTests(unittest.TestCase):
+    """Every straight POST descriptor must hand its payload through unchanged.
+
+    Most migrated writes were one chain line -- take the payload, call one
+    method, answer a fixed status -- and only a handful have HTTP tests. This
+    walks the table itself, so a route added later is covered the day it is
+    declared rather than whenever someone remembers to write a test.
+
+    Routes declaring a request or response contract are excluded: a synthetic
+    payload could not satisfy their schemas, and their validation is covered
+    separately below.
+    """
+
+    def _straight_post_routes(self):
+        from rag_ime.control_api.route_table import MIGRATED_ROUTES
+
+        return [
+            route for route in MIGRATED_ROUTES
+            if route.method == "POST"
+            and route.takes_arguments
+            and not route.contract
+            and not route.response_contract
+            and route.transform is None
+        ]
+
+    def test_table_has_straight_post_routes_to_check(self) -> None:
+        # Guards against the filter above quietly matching nothing, which would
+        # make the test below pass while checking no route at all.
+        self.assertGreater(len(self._straight_post_routes()), 20)
+
+    def test_payload_reaches_the_handler_unchanged_with_the_declared_status(self) -> None:
+        from rag_ime.debug_server import DebugRequestHandler
+
+        for route in self._straight_post_routes():
+            with self.subTest(path=route.path, handler=route.handler):
+                calls: list = []
+                handler = DebugRequestHandler.__new__(DebugRequestHandler)
+                handler.service = _Recorder(calls)
+                written: list = []
+                handler._write_json = lambda status, body: written.append((int(status), body))
+
+                payload = {"probe": route.path}
+                handler._dispatch_descriptor_route(route, payload=payload)
+
+                # `payload_args` are keyword arguments, not payload keys:
+                # `vocabulary_item_save(payload, *, action)` declares the
+                # discriminator keyword-only, so merging it into the payload
+                # would both lose the argument and corrupt the payload.
+                self.assertEqual(
+                    calls,
+                    [(route.handler, (payload,), dict(route.payload_args))],
+                )
+                self.assertEqual(written, [(route.status, {"ok": True})])
+
+
 class ResponseContractEnforcementTests(unittest.TestCase):
     """A declared response contract must be enforced however the handler is called.
 

@@ -494,6 +494,45 @@ PREDICTOR_ROUTES: tuple[RouteDescriptor, ...] = (
     _post("/api/predictor/cache/clear", "predictor_cache_clear"),
 )
 
+# Active RAG writes. `/status` and `/session` are two paths for one handler,
+# which the chain served from a single branch; they stay two descriptors so
+# neither can drift. Only the GET side of those paths remains in the chain,
+# because a GET reads its session id from the query string or the trailing
+# path segment rather than from a payload.
+ACTIVE_RAG_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/active-rag/start", "active_rag_start", contract="active-rag-start.v1.json"),
+    _post("/api/active-rag/settings/update", "active_rag_settings_update"),
+    _post("/api/active-rag/preview", "active_rag_preview"),
+    _post("/api/active-rag/status", "active_rag_status"),
+    _post("/api/active-rag/session", "active_rag_status"),
+    _post("/api/active-rag/diagnostics", "active_rag_diagnostics"),
+    _post("/api/active-rag/cancel", "active_rag_cancel"),
+    _post("/api/active-rag/accept", "active_rag_accept"),
+)
+
+# Knowledge workbench writes. The templated `/api/knowledge/{base}/...` routes
+# stay in the chain: they parse path segments into several handler arguments,
+# which a descriptor cannot state.
+KNOWLEDGE_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/knowledge/start", "knowledge_workbench_start"),
+    _post("/api/knowledge/status", "knowledge_workbench_status"),
+    _post("/api/knowledge/session", "knowledge_workbench_status"),
+    _post("/api/knowledge/cancel", "knowledge_workbench_cancel"),
+    _post("/api/knowledge/database/apply-preview", "knowledge_workbench_database_apply_preview"),
+    _post("/api/knowledge/database/apply", "knowledge_workbench_database_apply_contract"),
+    _post("/api/knowledge/database/draft-edit", "knowledge_workbench_database_draft_edit"),
+    _post("/api/knowledge/database/rollback", "knowledge_workbench_database_rollback_contract"),
+)
+
+# `/api/rime-select` validates its request only. Its sibling `/api/rime-suggest`
+# deliberately stays in the chain: that branch validates the response against
+# three schemas, one of them conditionally, and a single `response_contract`
+# field would describe less than the branch does.
+RIME_SELECT_ROUTES: tuple[RouteDescriptor, ...] = (
+    _post("/api/rime-select", "rime_select", aliases=("/rime-select",),
+          contract="rime-select.v1.json"),
+)
+
 # Browser: only the argument-free lifecycle commands. The rest of this family
 # stays in the chains on purpose -- extension routes carry their own
 # authentication, snapshots return binary, several handlers take keyword
@@ -520,6 +559,9 @@ MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *HISTORY_TOMBSTONE_ROUTES,
     *MEMORY_BOOK_ARCHIVE_ROUTES,
     *PREDICTOR_ROUTES,
+    *ACTIVE_RAG_ROUTES,
+    *KNOWLEDGE_ROUTES,
+    *RIME_SELECT_ROUTES,
     *FOREGROUND_ROUTES,
     *MEMORY_TOOL_ROUTES,
     *PREDICTION_ROUTES,

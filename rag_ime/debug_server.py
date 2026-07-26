@@ -7471,10 +7471,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.service.agent.finalize_external_approval(approval_id, payload),
                 )
-            elif path in ("/api/active-rag/settings/update",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_settings_update(payload))
-            elif path in ("/api/active-rag/preview",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_preview(payload))
             elif path in ("/api/rime-suggest", "/rime-suggest"):
                 validate_contract(payload, "rime-suggest-request.v1.json")
                 response = self.service.rime_suggest(payload)
@@ -7483,43 +7479,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 if isinstance(response.get("overlayConfig"), dict):
                     validate_contract(response.get("overlayConfig"), "overlay-config.v1.json")
                 self._write_json(HTTPStatus.OK, response)
-            elif path in ("/api/rime-select", "/rime-select"):
-                validate_contract(payload, "rime-select.v1.json")
-                self._write_json(HTTPStatus.OK, self.service.rime_select(payload))
-            elif path in ("/api/active-rag/start",):
-                validate_contract(payload, "active-rag-start.v1.json")
-                self._write_json(HTTPStatus.OK, self.service.active_rag_start(payload))
-            elif path in ("/api/active-rag/status", "/api/active-rag/session"):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_status(payload))
-            elif path in ("/api/active-rag/diagnostics",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_diagnostics(payload))
-            elif path in ("/api/active-rag/cancel",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_cancel(payload))
-            elif path in ("/api/active-rag/accept",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_accept(payload))
-            elif path in ("/api/knowledge/start",):
-                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_start(payload))
-            elif path in ("/api/knowledge/status", "/api/knowledge/session"):
-                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_status(payload))
-            elif path in ("/api/knowledge/cancel",):
-                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_cancel(payload))
-            elif path in ("/api/knowledge/database/apply-preview",):
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.knowledge_workbench_database_apply_preview(payload),
-                )
-            elif path in ("/api/knowledge/database/apply",):
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.knowledge_workbench_database_apply_contract(payload),
-                )
-            elif path in ("/api/knowledge/database/draft-edit",):
-                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_draft_edit(payload))
-            elif path in ("/api/knowledge/database/rollback",):
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.knowledge_workbench_database_rollback_contract(payload),
-                )
             elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/apply"):
                 diff_id = _cleanup_diff_path_id(path, suffix="/apply")
                 self._write_json(HTTPStatus.OK, self.service.memory_cleanup_diff_apply(diff_id))

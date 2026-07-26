@@ -45,7 +45,7 @@ TABLE_SOURCE = Path("rag_ime/control_api/route_table.py")
 # exposure is stated nowhere. This is a ratchet, not an approval. Migrating a
 # family to the descriptor table lowers it, because a descriptor states
 # exposure explicitly; a rise means a route appeared with no policy decision.
-UNDECLARED_DISPATCH_BUDGET = 55
+UNDECLARED_DISPATCH_BUDGET = 49
 
 
 def dispatched_routes(root: Path) -> dict[str, list[tuple[str, int]]]:
@@ -259,6 +259,24 @@ def handler_arity(root: Path) -> list[str]:
                 f"route {route.method} {route.path} passes a payload to "
                 f"{route.handler!r}, which takes no positional argument; set "
                 f"takes_arguments=False"
+            )
+
+        # Keyword-only arguments are how a shared handler is pinned to one
+        # variant -- `vocabulary_item_save(payload, *, action)` serves add,
+        # edit and phonetic-correction. Omitting `payload_args` for one of
+        # those is a TypeError on the first request, so it is checked with the
+        # same weight as the positional shape.
+        missing_keywords = sorted(
+            p.name for p in parameters
+            if p.kind is inspect.Parameter.KEYWORD_ONLY
+            and p.default is inspect.Parameter.empty
+            and p.name not in supplied_names
+        )
+        if missing_keywords:
+            problems.append(
+                f"route {route.method} {route.path} does not supply "
+                f"{', '.join(missing_keywords)} to {route.handler!r}, which "
+                f"requires it as a keyword argument; add it to payload_args"
             )
     return problems
 
