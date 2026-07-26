@@ -170,6 +170,8 @@ class SessionIdFallbackTests(unittest.TestCase):
             ("/api/active-rag/status", "active_rag_status"),
             ("/api/active-rag/session", "active_rag_status"),
             ("/api/active-rag/diagnostics", "active_rag_diagnostics"),
+            ("/api/knowledge/status", "knowledge_workbench_status"),
+            ("/api/knowledge/session", "knowledge_workbench_status"),
         ):
             with self.subTest(path=path):
                 self.service.calls.clear()

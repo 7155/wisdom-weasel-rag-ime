@@ -6826,14 +6826,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path in ("/api/knowledge/status", "/api/knowledge/session"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.knowledge_workbench_status(
-                    {"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}
-                ),
-            )
-            return
         if parsed.path.startswith("/api/active-rag/session/"):
             session_id = unquote(parsed.path.rsplit("/", 1)[-1])
             self._write_json(HTTPStatus.OK, self.service.active_rag_status({"sessionId": session_id}))

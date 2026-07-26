@@ -569,6 +569,17 @@ ACTIVE_RAG_READ_ROUTES: tuple[RouteDescriptor, ...] = (
          query_args=("sessionId", "id", "limit"), transform=_session_traces_arguments),
 )
 
+# The knowledge reads take the same session-id fallback as the active-RAG ones.
+# `/api/control/v1/bootstrap` is not here on purpose: it passes an access
+# context the handler derives from the request itself, which is neither a query
+# parameter nor a payload, so no descriptor field describes it.
+KNOWLEDGE_READ_ROUTES: tuple[RouteDescriptor, ...] = (
+    _get("/api/knowledge/status", "knowledge_workbench_status", takes_arguments=True,
+         query_args=("sessionId", "id"), transform=_session_id_from_either_key),
+    _get("/api/knowledge/session", "knowledge_workbench_status", takes_arguments=True,
+         query_args=("sessionId", "id"), transform=_session_id_from_either_key),
+)
+
 # Two more filtered management reads, same shape as MANAGEMENT_READ_ROUTES.
 # `/suppressions` and `/governance` are two paths for one handler.
 MEMORY_READ_ROUTES: tuple[RouteDescriptor, ...] = (
@@ -610,6 +621,7 @@ MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
     *KNOWLEDGE_ROUTES,
     *RIME_SELECT_ROUTES,
     *ACTIVE_RAG_READ_ROUTES,
+    *KNOWLEDGE_READ_ROUTES,
     *MEMORY_READ_ROUTES,
     *FOREGROUND_ROUTES,
     *MEMORY_TOOL_ROUTES,
