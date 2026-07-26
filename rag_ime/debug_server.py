@@ -7884,8 +7884,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.predictor_benchmark(payload))
             elif path in ("/api/predictor/cache/clear",):
                 self._write_json(HTTPStatus.OK, self.service.predictor_cache_clear(payload))
-            elif path in ("/api/active-rag/preview",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_preview(payload))
             elif path in ("/api/active-rag/start",):
                 validate_contract(payload, "active-rag-start.v1.json")
                 self._write_json(HTTPStatus.OK, self.service.active_rag_start(payload))

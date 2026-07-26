@@ -26,6 +26,8 @@ jobs:
         run: python -m compileall -q rag_ime scripts tests
       - name: Check package boundaries
         run: python scripts/check_import_boundaries.py
+      - name: Check route ownership
+        run: python scripts/check_route_ownership.py
       - name: Lint correctness rules
         # Narrow correctness-only rule set pinned in pyproject; see the comment
         # there for the rules deliberately not enabled yet.
