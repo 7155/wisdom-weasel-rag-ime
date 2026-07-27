@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Virtuoso } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
 import { useControlTransport } from '@/app/control-transport';
+import { useComposerClearance } from '@/components/layout/use-composer-clearance';
 import {
   Button,
   Dialog,
@@ -123,7 +124,7 @@ export function RoomsFeature() {
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [personas, setPersonas] = useState<AgentPersonaV1[]>([]);
   const [selectedId, setSelectedId] = useState('');
-  const roomDraftsRef = useRef(new Map<string, string>());
+  const roomDraftsRef = useRef(roomDraftsStore);
   const roomErrorsRef = useRef(new Map<string, {
     message: string;
     source: 'connection' | 'operation';
@@ -136,6 +137,8 @@ export function RoomsFeature() {
   const roomRailRef = useRef<HTMLElement>(null);
   const roomStatusToggleRef = useRef<HTMLButtonElement>(null);
   const roomStatusRef = useRef<HTMLElement>(null);
+  const roomWorkspaceRef = useRef<HTMLElement>(null);
+  useComposerClearance(roomWorkspaceRef);
   const [roomRailOpen, setRoomRailOpen] = useState(roomRailInitiallyOpen);
   const roomRailOverlay = useMediaQuery('(max-width: 760px)');
   const roomStatusOverlay = useMediaQuery('(max-width: 1360px)');
@@ -967,7 +970,7 @@ export function RoomsFeature() {
       </aside>
       <RoomPaneResizer side="rail" />
       <button className="rooms-rail-backdrop" aria-hidden="true" disabled={!roomRailModal} tabIndex={-1} onClick={() => closeRoomRail()} type="button" />
-      <section className="room-workspace" aria-hidden={roomRailModal || roomStatusModal || undefined} inert={roomRailModal || roomStatusModal ? true : undefined}>
+      <section ref={roomWorkspaceRef} className="room-workspace" aria-hidden={roomRailModal || roomStatusModal || undefined} inert={roomRailModal || roomStatusModal ? true : undefined}>
         <header><IconButton ref={roomRailTriggerRef} className="rooms-rail-trigger" label={roomRailOpen ? '收起协作空间列表' : '打开协作空间列表'} icon={roomRailOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />} aria-controls="rooms-list-drawer" aria-expanded={roomRailOpen} onClick={() => { if (!roomRailOpen && roomStatusModal) setStatusOpen(false); setRoomRailOpen((current) => !current); }} tooltip /><span><strong>{room?.title ?? '协作空间'}</strong><small>{!room ? '选一个协作空间，或开始新的对话' : room.status === 'archived' ? '已收起' : `${room.roomKind === 'roleplay' ? '一起聊聊' : roomPathName(room)} · ${activeWork ? '正在完成任务' : '先把目标聊清楚'}`}</small></span><SegmentedControl aria-label="协作空间视图" items={roomWorkspaceViewOptions(room?.roomKind)} onValueChange={(value) => setWorkspaceView(value as typeof workspaceView)} value={workspaceView} /><div className="room-header-actions"><span className="room-header-actions__desktop">{room ? <IconButton label="设置这个协作空间" icon={<Settings2 size={16} />} onClick={beginRoomSettings} tooltip /> : null}{room ? <Menu><MenuTrigger asChild><IconButton label="更多协作空间操作" icon={<MoreHorizontal size={17} />} tooltip /></MenuTrigger><MenuContent align="end"><MenuItem onSelect={() => { setError(''); setArchiveOpen(true); }}>{room.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}{room.status === 'archived' ? '恢复协作空间' : '收起协作空间'}</MenuItem></MenuContent></Menu> : null}</span>{room ? <span className="room-header-actions__mobile"><Menu><MenuTrigger asChild><IconButton label="更多协作空间操作" icon={<MoreHorizontal size={17} />} tooltip /></MenuTrigger><MenuContent align="end"><MenuItem onSelect={beginRoomSettings}><Settings2 size={15} />设置协作空间</MenuItem><MenuItem onSelect={() => { setError(''); setArchiveOpen(true); }}>{room.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}{room.status === 'archived' ? '恢复协作空间' : '收起协作空间'}</MenuItem></MenuContent></Menu></span> : null}<IconButton ref={roomStatusToggleRef} label={statusOpen ? '关闭协作进展' : '看看协作进展'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} onClick={() => { if (!statusOpen && roomRailModal) setRoomRailOpen(false); setStatusOpen((current) => !current); }} tooltip /></div></header>
         {room ? <div className="room-context-bar">
           <div className="room-topic-tabs" aria-label="协作话题">
@@ -986,7 +989,7 @@ export function RoomsFeature() {
           {!error && !roomCatalogError && roleCatalogError ? <p className="room-catalog-warning" role="status">{roleCatalogError}</p> : null}
         </div>
         {workspaceView === 'posts' ? <><div className="room-timeline" aria-label="协作对话时间线">
-          {room ? visibleTurnOrder.length ? <Virtuoso components={roomTimelineComponents} data={visibleTurnOrder} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} roomId={room.id} room={room} personas={personas} abortingSessionIds={abortingSessionIds} abortingTurnIds={abortingTurnIds} onAbortTurn={(rootId) => void abortRootTurn(rootId)} onAbortSession={(sessionId) => void abortParticipantTurn(sessionId, turnId)} />} /> : snapshotLoading ? <p className="room-empty">正在读取对话…</p> : <EmptyState icon={MessagesSquare} title="还没有公开消息" description="先对话澄清目标、交付物、验收和禁区；确认后再开始任务。" /> : catalogLoading ? <p className="room-empty">正在读取协作空间…</p> : <EmptyState icon={MessagesSquare} title="选择一个协作空间" description="从左侧选择，或新建一个协作空间。" />}
+          {room ? visibleTurnOrder.length ? <Virtuoso alignToBottom components={roomTimelineComponents} data={visibleTurnOrder} followOutput={(isAtBottom) => isAtBottom ? 'auto' : false} increaseViewportBy={300} itemContent={(_index, turnId) => <RoomTurn key={turnId} turnId={turnId} roomId={room.id} room={room} personas={personas} abortingSessionIds={abortingSessionIds} abortingTurnIds={abortingTurnIds} onAbortTurn={(rootId) => void abortRootTurn(rootId)} onAbortSession={(sessionId) => void abortParticipantTurn(sessionId, turnId)} />} /> : snapshotLoading ? <p className="room-empty">正在读取对话…</p> : <EmptyState icon={MessagesSquare} title="还没有公开消息" description="先对话澄清目标、交付物、验收和禁区；确认后再开始任务。" /> : catalogLoading ? <p className="room-empty">正在读取协作空间…</p> : <EmptyState icon={MessagesSquare} title="选择一个协作空间" description="从左侧选择，或新建一个协作空间。" />}
         </div><div className="room-composer-dock"><div className="room-composer-cluster">{room?.roomKind !== 'roleplay' && room ? <RoomExecutionPhase
           activeWork={activeWork}
           ownerName={activeWork ? participantName(room, activeWork.currentOwnerParticipantId) : ''}
@@ -1014,7 +1017,7 @@ export function RoomsFeature() {
           {room ? <RoomKernelLivePanel roomId={room.id} /> : <p className="room-empty">请选择一个协作空间。</p>}
         </section> : <section className="room-session-workspace" aria-label="伙伴与权限">
           <header><span><strong>伙伴与工作权限</strong><small>每位伙伴保留自己的工作上下文；分工负责引导协作，真正能做什么仍由工作目录、工具和你的授权决定。</small></span></header>
-          <div>{activeParticipants.map((participant) => <article key={participant.id}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} size="small" /><span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {roomExecutionModeLabel(room?.executionMode)}</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => setBoundaryParticipant(participant)}>查看能做什么</Button></article>)}</div>
+          <div>{activeParticipants.map((participant) => <article key={participant.id}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} /><span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {roomExecutionModeLabel(room?.executionMode)}</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => setBoundaryParticipant(participant)}>查看能做什么</Button></article>)}</div>
           {!activeParticipants.length ? <p className="room-empty">还没有伙伴加入这个协作空间。</p> : null}
         </section>}
       </section>
@@ -1166,6 +1169,11 @@ function cancellationTargetLabels(value: unknown): string[] {
   }))];
 }
 function textValue(value: unknown): string { return typeof value === 'string' ? value : ''; }
+/* Drafts survive route unmount (the route is lazy-mounted): module scope, not
+   component refs — the pattern Clowder gets right. */
+const roomDraftsStore = new Map<string, string>();
+((globalThis as { __RAG_DRAFT_STORES__?: Array<{ clear(): void }> }).__RAG_DRAFT_STORES__ ??= []).push(roomDraftsStore);
+
 function roomRailInitiallyOpen(): boolean {
   return typeof window === 'undefined'
     || typeof window.matchMedia !== 'function'

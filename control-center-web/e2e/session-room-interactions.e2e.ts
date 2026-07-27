@@ -33,6 +33,26 @@ test('Room publishes once immediately and preserves the in-flight turn across ro
   const feature = page.locator('main[data-route-id="rooms"]');
   await expect(feature).toBeVisible();
 
+  const executionLayout = await feature.locator('.room-execution-phase').evaluate((root) => {
+    const boxes = Array.from(root.children).map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+    });
+    const overlaps = boxes.flatMap((first, firstIndex) => boxes.slice(firstIndex + 1).map((second) => ({
+      width: Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left)),
+      height: Math.max(0, Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top)),
+    })));
+    return {
+      overlaps,
+      rootWidth: root.getBoundingClientRect().width,
+      scrollWidth: root.scrollWidth,
+    };
+  });
+  expect(executionLayout.scrollWidth - executionLayout.rootWidth).toBeLessThanOrEqual(1);
+  for (const overlap of executionLayout.overlaps) {
+    expect(overlap.width * overlap.height).toBeLessThanOrEqual(0.5);
+  }
+
   const probe = `Room optimistic ${Date.now()}`;
   const composer = feature.getByRole('textbox', { name: '协作消息' });
   await composer.fill(probe);

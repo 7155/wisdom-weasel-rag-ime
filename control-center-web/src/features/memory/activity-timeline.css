@@ -27,7 +27,7 @@
   color: var(--color-text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .activity-timeline__day-source svg:first-child { color: var(--color-accent); }
@@ -69,15 +69,16 @@
 .activity-day-map > header > div { display: inline-flex; align-items: center; gap: 7px; }
 .activity-day-map > header svg { color: var(--color-accent); }
 .activity-day-map > header strong { font-size: 13px; }
-.activity-day-map > header > span { color: var(--color-text-tertiary); font-size: 11px; }
+.activity-day-map > header > span { color: var(--color-text-tertiary); font-size: 12px; }
 
 .activity-day-map__axis {
   display: flex;
   justify-content: space-between;
   padding-left: 1px;
   color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
 }
 
 .activity-day-map__rows {
@@ -104,16 +105,16 @@
   color: var(--color-text-primary);
   cursor: pointer;
   text-align: left;
-  transition: background-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+  transition: background-color var(--motion-exit) var(--ease-standard), box-shadow var(--motion-exit) var(--ease-standard), transform var(--motion-press) var(--ease-standard);
 }
 
 .activity-day-map__row > button[data-period='morning'] { --period-color: var(--color-warning); }
 .activity-day-map__row > button[data-period='afternoon'] { --period-color: var(--color-info); }
 .activity-day-map__row > button[data-period='evening'] { --period-color: var(--color-accent); }
 .activity-day-map__row > button[data-period='day'] { --period-color: var(--color-success); }
-.activity-day-map__row > button:hover { background: color-mix(in srgb, var(--period-color) 21%, var(--color-surface)); box-shadow: 0 3px 10px rgb(0 0 0 / 9%); transform: translateY(-1px); }
+.activity-day-map__row > button:hover { background: color-mix(in srgb, var(--period-color) 21%, var(--color-surface)); box-shadow: var(--shadow-2); transform: translateY(-1px); }
 .activity-day-map__row > button:focus-visible { outline: 2px solid var(--period-color); outline-offset: 2px; }
-.activity-day-map__row > button span { display: block; overflow: hidden; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.activity-day-map__row > button span { display: block; overflow: hidden; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 
 .activity-timeline__period {
   display: grid;
@@ -177,7 +178,8 @@
 .activity-timeline__period-header > span {
   flex: 0 0 auto;
   color: var(--color-text-secondary);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -217,7 +219,7 @@
   font: inherit;
   grid-template-columns: 118px minmax(0, 1fr) 156px 34px;
   text-align: left;
-  transition: background-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  transition: background-color var(--motion-exit) var(--ease-standard), box-shadow var(--motion-exit) var(--ease-standard), transform var(--motion-press) var(--ease-standard);
 }
 
 .activity-timeline__task::before {
@@ -257,7 +259,8 @@
 }
 
 .activity-timeline__task-time time {
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
   font-size: 12px;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
@@ -266,7 +269,7 @@
 
 .activity-timeline__task-time small {
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .activity-timeline__task-main {
@@ -320,7 +323,7 @@
   border-radius: 3px;
   background: var(--color-canvas);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .activity-timeline__task-apps i,
@@ -356,7 +359,7 @@
   align-items: center;
   gap: 6px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .activity-timeline__task-stats svg { flex: 0 0 auto; }
@@ -424,7 +427,7 @@
 }
 
 .activity-timeline__task-detail-metrics > div:last-child { border-right: 0; }
-.activity-timeline__task-detail-metrics dt { color: var(--color-text-tertiary); font-size: 11px; }
+.activity-timeline__task-detail-metrics dt { color: var(--color-text-tertiary); font-size: 12px; }
 .activity-timeline__task-detail-metrics dd { margin: 0; font-size: 17px; font-weight: 800; }
 
 .activity-timeline__detail-section {
@@ -446,7 +449,7 @@
 .activity-timeline__detail-section > p { margin: -3px 0 0; color: var(--color-text-tertiary); font-size: 12px; }
 .activity-timeline__detail-apps > span { padding: 6px 8px; }
 .activity-timeline__detail-apps strong { font-size: 12px; }
-.activity-timeline__detail-apps small { color: var(--color-text-tertiary); font-size: 11px; }
+.activity-timeline__detail-apps small { color: var(--color-text-tertiary); font-size: 12px; }
 
 .activity-timeline__event-list {
   display: grid;
@@ -480,8 +483,9 @@
 
 .activity-timeline__event > summary > span {
   color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
 }
 
 .activity-timeline__event > summary > strong {
@@ -494,7 +498,7 @@
 .activity-timeline__event summary svg,
 .activity-timeline__source-refs summary svg {
   color: var(--color-text-tertiary);
-  transition: transform 120ms ease;
+  transition: transform var(--motion-disclose) var(--ease-standard);
 }
 
 .activity-timeline__event[open] > summary > svg,
@@ -527,7 +531,7 @@
   color: var(--color-accent);
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -544,8 +548,9 @@
 
 .activity-timeline__event-meta > * {
   color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
 }
 
 .activity-timeline__event-meta > [data-tone='warning'] { color: var(--color-warning); }
@@ -561,7 +566,7 @@
   min-height: 38px;
   padding: 7px 10px;
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   grid-template-columns: minmax(0, 1fr) 18px;
 }
@@ -600,15 +605,15 @@
 .activity-timeline__source-refs li > button:hover { color: var(--color-accent); }
 .activity-timeline__source-refs li > button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -1px; }
 .activity-timeline__source-refs li > button > span { display: grid; min-width: 0; gap: 2px; }
-.activity-timeline__source-refs li strong { font-size: 11px; overflow-wrap: anywhere; }
+.activity-timeline__source-refs li strong { font-size: 12px; overflow-wrap: anywhere; }
 .activity-timeline__source-refs li small,
-.activity-timeline__source-refs li time { color: var(--color-text-tertiary); font-size: 10px; overflow-wrap: anywhere; }
+.activity-timeline__source-refs li time { color: var(--color-text-tertiary); font-size: 12px; overflow-wrap: anywhere; }
 
 .activity-timeline__source-unavailable,
 .activity-timeline__evidence-empty,
 .activity-timeline__evidence-limit {
   color: var(--color-text-tertiary) !important;
-  font-size: 11px !important;
+  font-size: 12px !important;
 }
 
 .activity-timeline__evidence-empty {

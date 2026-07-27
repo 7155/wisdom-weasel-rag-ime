@@ -1,8 +1,25 @@
+/*
+ * Management surfaces.
+ *
+ * One quiet sheet of paper per page, not a mosaic of cards. Depth changes
+ * exactly once — canvas to sheet — and everything above that is separated by
+ * rhythm and a soft rule instead of another border and another shadow. A
+ * stack of eleven bordered cards is what the Overview page used to be; it
+ * read as busy long before it read as organised.
+ */
 .mgmt-page {
-  width: min(100%, var(--content-max));
+  width: 100%;
   min-height: calc(100dvh - var(--topbar-height));
+  padding: var(--space-5) var(--space-8) var(--space-12);
+  background: var(--color-paper);
+}
+
+
+/* Long-form reading measure. Content stays comfortable on wide displays
+   instead of stretching to the full 1440. */
+.mgmt-page > * {
+  width: min(100%, 1120px);
   margin-inline: auto;
-  padding: var(--space-5) var(--space-6) var(--space-10);
 }
 
 .mgmt-page__header {
@@ -11,33 +28,30 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-2) 0 var(--space-5);
 }
 
 .mgmt-page__heading { min-width: 0; }
-.mgmt-page__heading h1 {
-  margin: 2px 0 4px;
-  font-size: 24px;
-  line-height: 1.25;
-  letter-spacing: 0;
-}
+.mgmt-page__heading h1 { margin: 4px 0 6px; font-family: var(--font-display); text-wrap: balance; }
 
 .mgmt-page__heading p,
 .mgmt-section__header p,
 .mgmt-workflow p {
   margin: 0;
+  max-width: 78ch;
   color: var(--color-text-secondary);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--font-size-ui-strong);
+  line-height: 1.55;
 }
 
+/* Eyebrows are usually Chinese, where a mono/uppercase treatment just falls
+   back to an unrelated face. Tracking carries the label role instead. */
 .mgmt-page__eyebrow {
+  display: block;
   color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: .06em;
 }
 
 .mgmt-page__actions,
@@ -46,19 +60,32 @@
 .mgmt-filter-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--space-2);
 }
 
-.mgmt-page__body { display: grid; }
-
-.mgmt-section {
-  min-width: 0;
-  padding-block: var(--space-5);
-  border-bottom: 1px solid var(--color-border);
+/* A filter action belongs to the control row, not halfway between the label
+   and its input. Small buttons retain their compact typography but share the
+   same physical height as the fields beside them. */
+.mgmt-filter-row > .ui-button {
+  min-height: var(--control-height);
 }
 
-.mgmt-section:last-child { border-bottom: 0; }
+.mgmt-page__body {
+  display: grid;
+  align-content: start;
+}
+
+/* No border, no fill, no shadow: space does the separating, and a soft rule
+   only appears between siblings so the first section never starts with one. */
+.mgmt-section {
+  min-width: 0;
+  padding-block: var(--space-6);
+}
+
+.mgmt-section + .mgmt-section { border-top: 1px solid var(--color-border-soft); }
+.mgmt-section:last-child { padding-bottom: var(--space-4); }
+
 .mgmt-section__header {
   display: flex;
   min-width: 0;
@@ -68,11 +95,31 @@
   margin-bottom: var(--space-3);
 }
 
+/* Marginalia, not ornament: a 2px accent tick hung in the left margin marks
+   where a section begins. On sparse pages the headings were floating in white
+   with nothing to register them against the grid — this is the crisp-edge
+   device the design leans on instead of texture, and it costs one rule. */
 .mgmt-section__header h2 {
+  position: relative;
   margin: 0 0 3px;
-  font-size: 18px;
-  line-height: 1.35;
-  letter-spacing: 0;
+  font-size: var(--font-size-section);
+  line-height: var(--line-height-heading);
+}
+
+.mgmt-section__header h2::before {
+  position: absolute;
+  top: .34em;
+  left: calc(var(--space-3) * -1);
+  width: 2px;
+  height: 1.02em;
+  border-radius: 1px;
+  background: var(--color-accent);
+  content: '';
+}
+
+@media (max-width: 760px) {
+  /* The narrow layout has no left margin to hang it in. */
+  .mgmt-section__header h2::before { display: none; }
 }
 
 .mgmt-section__trailing { flex: 0 0 auto; }
@@ -80,11 +127,13 @@
 .mgmt-status {
   display: inline-flex;
   min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: 6px;
+  overflow: hidden;
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: var(--font-weight-semibold);
   white-space: nowrap;
 }
 
@@ -104,45 +153,46 @@
 .mgmt-metrics {
   display: grid;
   margin: 0;
-  border-block: 1px solid var(--color-border);
-  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-4) var(--space-6);
 }
 
 .mgmt-metric {
   min-width: 0;
-  padding: var(--space-3) var(--space-4);
-  border-right: 1px solid var(--color-border);
+  padding: 0;
 }
 
-.mgmt-metric:last-child { border-right: 0; }
 .mgmt-metric dt {
   display: flex;
   align-items: center;
   gap: 6px;
   color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 650;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-semibold);
 }
 
+/* Metric values were 24px/720 here, which made every management page read
+   like a marketing dashboard. The label and the value now sit one step
+   apart instead of three. */
 .mgmt-metric dd {
-  margin: 6px 0 0;
-  font-size: 24px;
+  margin: 4px 0 0;
+  font-size: var(--font-size-section);
   font-variant-numeric: tabular-nums;
-  font-weight: 720;
-  line-height: 1.1;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.2;
+  letter-spacing: var(--tracking-heading);
 }
 
 .mgmt-metric .mgmt-metric__detail {
   display: block;
-  margin-top: 4px;
+  margin-top: 3px;
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-regular);
+  letter-spacing: 0;
 }
 
-.mgmt-list {
-  min-width: 0;
-  border-block: 1px solid var(--color-border);
-}
+.mgmt-list { min-width: 0; }
 
 .mgmt-list__row {
   display: grid;
@@ -160,6 +210,7 @@
   text-align: left;
 }
 
+.mgmt-list__row { border-bottom-color: var(--color-border-soft); }
 .mgmt-list__row:last-child { border-bottom: 0; }
 .mgmt-list__row--button { cursor: pointer; }
 .mgmt-list__row--button:hover,
@@ -189,7 +240,7 @@
 .mgmt-table-wrap {
   width: 100%;
   max-height: 520px;
-  border-block: 1px solid var(--color-border);
+  border-block: 1px solid var(--color-border-soft);
   overflow: auto;
 }
 
@@ -245,23 +296,24 @@
   display: grid;
   gap: 3px;
   margin-block: var(--space-2);
-  padding: 9px 11px;
-  border-left: 3px solid var(--color-info);
-  background: var(--color-info-soft);
-  font-size: 13px;
-  line-height: 1.45;
+  padding: 9px 12px;
+  border-left: 2px solid var(--color-info);
+  border-radius: 0 var(--radius-2) var(--radius-2) 0;
+  background: color-mix(in srgb, var(--color-info-soft) 68%, var(--color-paper));
+  font-size: var(--font-size-ui);
+  line-height: 1.5;
 }
 
-.mgmt-notice[data-tone='warning'] { border-left-color: var(--color-warning); background: var(--color-warning-soft); }
-.mgmt-notice[data-tone='danger'] { border-left-color: var(--color-danger); background: var(--color-danger-soft); }
-.mgmt-notice[data-tone='success'] { border-left-color: var(--color-success); background: var(--color-success-soft); }
+.mgmt-notice[data-tone='warning'] { border-left-color: var(--color-warning); background: color-mix(in srgb, var(--color-warning-soft) 68%, var(--color-paper)); }
+.mgmt-notice[data-tone='danger'] { border-left-color: var(--color-danger); background: color-mix(in srgb, var(--color-danger-soft) 68%, var(--color-paper)); }
+.mgmt-notice[data-tone='success'] { border-left-color: var(--color-success); background: color-mix(in srgb, var(--color-success-soft) 68%, var(--color-paper)); }
 .mgmt-notice span { color: var(--color-text-secondary); }
 
 .mgmt-workflow {
   padding: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-2);
-  background: var(--color-surface);
+  background: var(--color-surface-subtle);
 }
 
 .mgmt-workflow + .mgmt-workflow { margin-top: var(--space-2); }
@@ -279,7 +331,7 @@
   color: var(--color-warning);
   font-family: var(--font-mono);
   font-size: 13px;
-  font-weight: 760;
+  font-weight: var(--font-weight-semibold);
 }
 
 .mgmt-workflow__steps {
@@ -308,7 +360,9 @@
   display: grid;
   gap: var(--space-2);
   padding: var(--space-3);
-  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
+  background: var(--color-surface);
 }
 
 .mgmt-workflow__panel strong { font-size: 13px; }
@@ -347,7 +401,9 @@
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-3);
+  border: 1px solid var(--color-success-border);
   border-left: 3px solid var(--color-success);
+  border-radius: var(--radius-2);
   background: var(--color-success-soft);
 }
 
@@ -367,6 +423,8 @@
 .mgmt-code {
   margin: 0;
   padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2);
   background: var(--color-surface-subtle);
   font-family: var(--font-mono);
   font-size: 13px;
@@ -379,8 +437,9 @@
 @media (max-width: 860px) {
   .mgmt-grid-2,
   .mgmt-grid-3 { grid-template-columns: 1fr; }
-  .mgmt-metric { border-right: 0; border-bottom: 1px solid var(--color-border); }
-  .mgmt-metric:last-child { border-bottom: 0; }
+  /* Figures are separated by rhythm now; the old strip borders left stray
+     rules under every cell but the last at narrow widths. */
+  .mgmt-metric { border-right: 0; border-bottom: 0; }
   .mgmt-list__row { grid-template-columns: minmax(0, 1fr) auto auto; }
   .mgmt-list__meta { display: none; }
   .mgmt-list__status { grid-column: 2; }
@@ -391,7 +450,11 @@
   .mgmt-page { min-height: calc(100dvh - 52px - var(--mobile-nav-height)); padding: var(--space-4) 12px calc(var(--mobile-nav-height) + var(--space-5)); }
   .mgmt-page__header { display: grid; }
   .mgmt-page__actions { width: 100%; }
-  .mgmt-page__actions .ui-button { flex: 1; }
+  /* Grow to share a row when several actions are present, but never blow a
+     lone secondary action up to full width. */
+  .mgmt-page__actions .ui-button { flex: 1 1 auto; }
+  .mgmt-page__actions:has(> .ui-button:only-child) { justify-content: flex-start; }
+  .mgmt-page__actions > .ui-button:only-child { flex: 0 0 auto; }
   .mgmt-workflow__heading,
   .mgmt-workflow__receipt { display: grid; }
   .mgmt-workflow__steps li { justify-content: center; padding-inline: 3px; }
@@ -399,3 +462,165 @@
   .mgmt-kv { grid-template-columns: 1fr; }
   .mgmt-kv dd { padding-top: 0; }
 }
+
+
+/* ============================== editorial page grammar ==============================
+   Management routes share the workspace macro grid: same gutter, a content
+   column derived from the reading measure, and display-serif titles that make
+   each page read as an edited document rather than an admin screen. */
+
+.mgmt-page { padding-inline: var(--workspace-gutter); }
+.mgmt-page > * { width: min(100%, calc(var(--workspace-measure) + 160px)); }
+
+.mgmt-page__heading h1,
+.mgmt-section__header h2,
+.memory-system-overview__headline h2 {
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -.012em;
+}
+
+/* Page titles keep the editorial voice; section headings are operational. */
+.mgmt-page__heading h1 { font-family: var(--font-display); }
+.mgmt-section__header h2 { font-family: var(--font-ui); font-size: var(--text-section-lead); line-height: var(--text-section-lead-lh); }
+
+.mgmt-metric dd {
+  font-size: var(--text-figure);
+  line-height: var(--text-figure-lh);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+
+/* ============================== the floating sheet ==============================
+   A management route is one sheet of paper lifted off the canvas — the canvas
+   must actually show around it for the material ladder to exist. */
+@media (min-width: 761px) {
+  .mgmt-page {
+    width: min(100% - 2 * var(--workspace-gutter), calc(var(--workspace-measure) + 200px));
+    min-height: 0;
+    margin: 0 auto var(--space-8);
+    margin-top: var(--space-5);
+    padding: var(--space-6) clamp(28px, 4vw, 56px) var(--space-10);
+    border: 1px solid var(--color-border-soft);
+    border-radius: var(--radius-sheet);
+    background: var(--color-paper);
+    box-shadow: var(--shadow-2);
+  }
+  .mgmt-page > * { width: 100%; }
+}
+
+.mgmt-page__heading p,
+.mgmt-section__header p,
+.mgmt-workflow p { font-size: 15px; color: var(--color-text-secondary); }
+
+/* Editorial figures: a strong rule above, serif numerals, hanging captions. */
+.mgmt-metrics { padding-top: var(--space-3); border-top: var(--rule-figure); }
+.mgmt-metric dd { font-family: var(--font-ui); font-size: var(--text-figure); line-height: var(--text-figure-lh); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums lining-nums; letter-spacing: 0; }
+.mgmt-metric dt { color: var(--color-text-tertiary); font-weight: var(--font-weight-medium); }
+
+/* Entries, not spreadsheet rows: title and description lead, technical meta
+   tucks under in small mono, status sits quietly at the line's end. */
+.mgmt-list__row {
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  padding: 13px 2px;
+  border-bottom-color: var(--color-border-soft);
+}
+.mgmt-list__copy { gap: 4px; }
+.mgmt-list__copy strong { font-size: 15px; letter-spacing: -.006em; }
+.mgmt-list__meta {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  margin-top: 2px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+.mgmt-list__status { grid-column: 2; }
+.mgmt-list__row > svg { grid-column: 3; }
+@media (max-width: 860px) {
+  .mgmt-list__meta { display: block; grid-column: 1 / -1; }
+}
+
+
+/* Overview reads as one report: supporting figures are quiet, sections sit in
+   a tighter sequence, absence never dominates. */
+
+main[data-route-id='overview'] .mgmt-section { padding-block: var(--space-5); }
+main[data-route-id='overview'] .ui-empty-state { padding-block: var(--space-3); }
+
+
+/* ===================== overview: report, not dashboard =====================
+   Six equal thin columns read as a metric strip. Three roomy columns with a
+   hanging figure read as a report. */
+/* Six figures resolve as an even 3x2 block; auto-fit left a ragged 4+2. */
+main[data-route-id='overview'] .mgmt-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5) var(--space-8);
+  padding-top: var(--space-4);
+}
+@media (min-width: 1100px) {
+  main[data-route-id='overview'] .mgmt-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* A section holding only an absence should not reserve a full section's air. */
+.mgmt-section:has(> .ui-empty-state:last-child) { padding-block: var(--space-4); }
+.mgmt-section:has(> .ui-empty-state:last-child) .mgmt-section__header { margin-bottom: var(--space-2); }
+main[data-route-id='overview'] .mgmt-metric dt { font-size: var(--font-size-caption); letter-spacing: .04em; }
+main[data-route-id='overview'] .mgmt-metric dd { margin-top: 2px; }
+main[data-route-id='overview'] .mgmt-metric .mgmt-metric__detail { margin-top: 1px; }
+
+/* Key/value pairs: hanging labels on a quiet rule, not table rows. */
+.mgmt-kv {
+  grid-template-columns: minmax(96px, max-content) minmax(0, 1fr);
+  column-gap: var(--space-5);
+}
+.mgmt-kv dt,
+.mgmt-kv dd {
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-soft) 60%, transparent);
+}
+.mgmt-kv dt { color: var(--color-text-tertiary); font-size: var(--font-size-caption); }
+.mgmt-kv dd { font-size: var(--font-size-ui); }
+
+
+/* ===================== shared alignment primitives =====================
+   One anatomy for every figure, status and key/value across all routes:
+   a fixed icon box optically aligned to the first text line, a label row, a
+   tabular value row, and an optional detail row on the same 4px rhythm.
+   Pages must not approximate this locally. */
+.mgmt-metric {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 2px;
+  align-content: start;
+}
+
+.mgmt-metric dt {
+  display: contents;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: .04em;
+}
+
+/* Fixed alignment box; optical centring against a 12px caption line. */
+.mgmt-metric dt > svg {
+  width: 14px;
+  height: 14px;
+  grid-column: 1;
+  align-self: center;
+  margin-top: 1px;
+  color: var(--color-text-tertiary);
+}
+
+.mgmt-metric dt > svg ~ * { grid-column: 2; }
+.mgmt-metric dd { grid-column: 2; line-height: 1.2; }
+.mgmt-metric .mgmt-metric__detail { grid-column: 2; line-height: 1.45; }
+
+/* Status chips share the caption tier and the same icon box. */
+.mgmt-status { font-size: var(--text-label); line-height: var(--text-label-lh); font-weight: var(--font-weight-medium); letter-spacing: .03em; }
+.mgmt-status > svg { width: 14px; height: 14px; flex: 0 0 14px; }
+
+/* Key/value rows share one label column and one baseline across routes. */
+.mgmt-kv dt,
+.mgmt-kv dd { line-height: var(--line-height-ui); }

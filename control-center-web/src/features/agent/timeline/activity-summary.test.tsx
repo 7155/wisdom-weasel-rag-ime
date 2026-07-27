@@ -196,11 +196,13 @@ describe('Agent tool activity details', () => {
     openActivity(container);
 
     const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveTextContent('完成 · 3500 ms');
+    /* Durations are reported in the largest honest unit: raw milliseconds stop
+       being readable above a second, and sub-second work still gets ms. */
+    expect(dialog).toHaveTextContent('完成 · 3.5 秒');
     expect(dialog).toHaveTextContent('过程记录');
     expect(dialog).toHaveTextContent('+0 ms · 开始检索知识库 · 进行中');
-    expect(dialog).toHaveTextContent('+1000 ms · 已找到候选来源 · 进行中');
-    expect(dialog).toHaveTextContent('+3500 ms · 知识检索完成 · 完成');
+    expect(dialog).toHaveTextContent('+1.0 秒 · 已找到候选来源 · 进行中');
+    expect(dialog).toHaveTextContent('+3.5 秒 · 知识检索完成 · 完成');
   });
 
   it('summarizes document knowledge citations without expanding raw chunks or paths', () => {

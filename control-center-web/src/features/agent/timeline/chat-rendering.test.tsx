@@ -213,8 +213,34 @@ describe('Agent chat rendering', () => {
     expect(container.querySelector('tr[data-kind="remove"]')).toHaveTextContent('const state = "queued";');
     expect(container.querySelector('tr[data-kind="add"]')).toHaveTextContent('const state = "running";');
 
-    fireEvent.click(screen.getByRole('radio', { name: '并排' }));
+    fireEvent.click(screen.getByRole('radio', { name: /并排/ }));
     expect(container.querySelectorAll('.agent-diff-split')).toHaveLength(4);
+  });
+
+  it('renders hunk-only diffs with the trusted block file name', () => {
+    const { container } = render(
+      <TooltipProvider>
+        <AgentBlock block={{
+          id: 'diff-hunk-only',
+          type: 'diff',
+          status: 'completed',
+          presentationKind: 'diff.v1',
+          data: {
+            fileName: 'src/state/live-store.ts',
+            diff: [
+              '@@ -12,2 +12,2 @@ export function commit(events) {',
+              '-  set(next);',
+              '+  set((state) => reduceBatch(state, events));',
+            ].join('\n'),
+          },
+        }} />
+      </TooltipProvider>,
+    );
+
+    expect(container.querySelector('.agent-diff-file')).toBeInTheDocument();
+    expect(screen.getAllByText('src/state/live-store.ts')).toHaveLength(2);
+    expect(container.querySelector('tr[data-kind="remove"]')).toHaveTextContent('set(next)');
+    expect(container.querySelector('tr[data-kind="add"]')).toHaveTextContent('reduceBatch');
   });
 
   it('folds a completed long Markdown reply without hiding its readable prefix', () => {

@@ -105,7 +105,7 @@ export function HistoryFeature() {
           <InlineNotice title="隐私" tone="info">列表只显示脱敏摘要；完整输入仅在你主动打开详情时读取。</InlineNotice>
         </ManagementSection>
 
-        <ManagementSection title="筛选与分页">
+        <ManagementSection title="查找记录">
           <div aria-label="筛选输入记录" className="history-filter-toolbar" role="search">
             <Field className="history-filter-toolbar__search" htmlFor="history-search" label="搜索">
               <Input id="history-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') setQuery(draftQuery.trim()); }} placeholder="文本、应用或项目" value={draftQuery} />

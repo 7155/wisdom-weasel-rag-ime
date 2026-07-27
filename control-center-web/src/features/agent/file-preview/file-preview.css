@@ -1,22 +1,44 @@
+/* Joins the insert family: same measure, same 3px hanging edge, same wash. It
+   used to be a solid grey slab with a 1px box on all four sides — the one
+   result type that did not look like it belonged to the document. */
 .agent-file-block {
   display: grid;
   width: min(100%, 620px);
   max-width: 620px;
-  grid-template-columns: 30px minmax(0, 1fr) 24px;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  margin: 8px 0;
-  padding: 9px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-2);
-  background: var(--color-surface-subtle);
+  margin: 9px 0;
+  padding: 8px 11px;
+  border: 0;
+  border-left: 3px solid color-mix(in srgb, var(--color-border-strong) 55%, transparent);
+  border-radius: 4px var(--radius-2) var(--radius-2) 4px;
+  background: color-mix(in srgb, var(--color-surface-subtle) 72%, var(--color-paper));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-border-soft) 55%, transparent);
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--motion-exit) var(--ease-standard), border-left-color var(--motion-exit) var(--ease-standard);
 }
 
-.agent-file-block:hover:not(:disabled) { border-color: var(--color-accent); background: var(--color-surface-hover); }
+.agent-file-block:hover:not(:disabled) { border-left-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent-soft) 14%, var(--color-paper)); }
+/* The affordance used to be a bare 16px eye pinned ~600px from the file name.
+   Pairing it with a word makes the row's one action legible at a glance. */
+.agent-file-block__open {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.agent-file-block:hover:not(:disabled) .agent-file-block__open { color: var(--color-accent); }
+/* A result card is a physical thing on the page: pressing it should register.
+   Translating the sheet by 1px reads as the card taking the press, where a
+   scale transform would read as a button inflating. */
+.agent-file-block:active:not(:disabled) { transform: translateY(1px); transition-duration: var(--motion-press); }
 .agent-file-block:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .agent-file-block:disabled { cursor: not-allowed; opacity: .62; }
 .agent-file-block > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
@@ -24,18 +46,115 @@
 .agent-file-block strong { font-size: 13px; }
 .agent-file-block small { color: var(--color-text-tertiary); font-size: 13px; }
 .agent-file-block > svg { color: var(--color-text-tertiary); }
-.agent-file-block__icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: var(--radius-2); background: var(--color-surface); color: var(--color-accent); }
+.agent-file-block__icon { display: grid; width: 26px; height: 26px; place-items: center; border-radius: var(--radius-2); background: var(--color-surface); color: var(--color-accent); }
 
-.agent-file-preview-dialog.ui-dialog {
+/* File rows use the same restrained semantic grammar as inline results.
+   Documents are informational, code/diffs are technical, images are media,
+   and an unknown file stays neutral. Only the edge and icon well carry type. */
+.agent-file-block[data-kind='document'] {
+  --agent-insert-color: var(--color-info);
+  --agent-insert-soft: var(--color-info-soft);
+}
+.agent-file-block[data-kind='code'],
+.agent-file-block[data-kind='diff'] {
+  --agent-insert-color: var(--color-project);
+  --agent-insert-soft: var(--color-project-soft);
+}
+.agent-file-block[data-kind='image'] {
+  --agent-insert-color: var(--color-collaboration);
+  --agent-insert-soft: var(--color-collaboration-soft);
+}
+.agent-file-block__icon {
+  border: 1px solid color-mix(in srgb, var(--agent-insert-color, var(--color-accent)) 26%, var(--color-border-soft));
+  background: color-mix(in srgb, var(--agent-insert-soft, var(--color-accent-soft)) 58%, var(--color-paper));
+  color: var(--agent-insert-color, var(--color-accent));
+}
+.agent-file-block strong {
+  color: var(--color-text);
+  font: var(--font-weight-semibold) var(--text-ui) / var(--text-ui-lh) var(--font-ui);
+}
+.agent-file-block small { color: var(--color-text-secondary); }
+
+/* Same measure and hanging edge as every other insert, so the deliverable reads
+   as the emphatic member of one family rather than a card-shaped exception.
+   The accent edge is the only thing separating it from its quieter siblings. */
+.agent-report-card {
+  width: min(100%, 620px);
+  margin: 9px 0;
+  padding: 10px 13px 11px;
+  border-left: 3px solid var(--color-accent);
+  border-radius: 4px var(--radius-2) var(--radius-2) 4px;
+  /* Against neutral stock this wash was the most saturated thing on the page,
+     which is not what "one controlled accent" means. The edge carries the rank;
+     the fill only needs to lift the card off the sheet. */
+  background: color-mix(in srgb, var(--color-accent-soft) 15%, var(--color-paper));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-border-soft) 55%, transparent);
+}
+
+.agent-report-card > header {
   display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+}
+.agent-report-card__kind {
+  grid-row: 1;
+  border-radius: var(--radius-1);
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--color-accent) 11%, transparent);
+  color: var(--color-accent);
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  white-space: nowrap;
+}
+.agent-report-card > header strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font: var(--font-weight-semibold) 14px / 20px var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The safety statement is the reason a reader is willing to open generated
+   HTML at all, so it sits with the identity rather than hiding in the dialog. */
+.agent-report-card__assurance {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 7px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.agent-report-card__assurance > svg { flex: 0 0 auto; color: var(--color-success); }
+.agent-report-card__actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+/* The accent edge is the card's one signal of rank; brightening it on hover
+   ties the whole sheet to the pointer without lighting up the fill. */
+.agent-report-card { transition: border-left-color var(--motion-exit) var(--ease-standard), background-color var(--motion-exit) var(--ease-standard); }
+.agent-report-card:hover { border-left-color: var(--color-accent-hover); }
+
+@media (max-width: 560px) {
+  .agent-report-card__actions > * { flex: 1 1 auto; }
+}
+
+/* Flex, not three fixed grid rows: the truncation notice is conditional, so
+   with it absent the body landed in an `auto` row and collapsed to the HTML
+   preview's 520px min-height — leaving ~190px of dead cream below the report
+   in a 780px dialog. A flex column gives the body the remaining space whether
+   or not the notice is there. */
+.agent-file-preview-dialog.ui-dialog {
+  display: flex;
   width: min(1120px, calc(100vw - 32px));
   height: min(780px, calc(100dvh - 40px));
   max-height: calc(100dvh - 40px);
-  grid-template-rows: auto auto minmax(0, 1fr);
+  flex-direction: column;
   gap: 0;
   padding: 0;
   overflow: hidden;
 }
+.agent-file-preview-dialog .ui-dialog__header,
+.agent-file-preview-dialog__notice { flex: 0 0 auto; }
+.agent-file-preview-dialog__body { flex: 1 1 auto; }
 
 .agent-file-preview-dialog .ui-dialog__close { top: 13px; right: 12px; }
 .agent-file-preview-dialog .ui-dialog__header {
@@ -56,7 +175,7 @@
 .agent-file-preview-dialog__body { min-width: 0; min-height: 0; overflow: auto; background: var(--color-surface); }
 .agent-file-preview-dialog__state { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 9px; padding: 24px; color: var(--color-text-secondary); font-size: 13px; }
 .agent-file-preview-dialog__state > svg:first-child { flex: 0 0 auto; }
-.agent-file-preview-dialog__body[data-status='loading'] .agent-file-preview-dialog__state > svg { animation: agent-status-spin 1s linear infinite; }
+.agent-file-preview-dialog__body[data-status='loading'] .agent-file-preview-dialog__state > svg { animation: agent-status-spin 1.2s linear infinite; }
 
 .agent-file-markdown { max-width: 860px; margin: 0 auto; padding: 28px 36px 56px; color: var(--color-text); font-size: 15px; line-height: 1.68; overflow-wrap: anywhere; }
 .agent-file-markdown h1 { margin: 0 0 18px; font-size: 28px; line-height: 1.25; }
@@ -72,38 +191,66 @@
 .agent-file-markdown th, .agent-file-markdown td { padding: 7px 9px; border: 1px solid var(--color-border); text-align: left; }
 .agent-file-markdown__blocked-media { color: var(--color-text-tertiary); font-style: italic; }
 
-.agent-file-code { display: grid; min-width: 0; min-height: 100%; grid-template-rows: 38px minmax(0, 1fr); margin: 0; background: #111915; color: #eef5f0; }
-.agent-file-code figcaption { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px 0 14px; border-bottom: 1px solid #344139; color: #bdcac2; font: 13px var(--font-mono); }
+.agent-file-code { display: grid; min-width: 0; min-height: 100%; grid-template-rows: 38px minmax(0, 1fr); margin: 0; background: var(--color-code-bg); color: var(--color-code-text); }
+.agent-file-code figcaption { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--color-code-border); color: var(--color-code-muted); font: 13px var(--font-mono); }
 .agent-file-code figcaption > span { display: flex; min-width: 0; align-items: center; gap: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-file-code > pre, .agent-file-code__highlight, .agent-file-code__highlight pre { min-height: 100%; margin: 0; }
 .agent-file-code > pre { overflow: auto; padding: 16px; font: 13px/1.6 var(--font-mono); }
 .agent-file-code__highlight { overflow: auto; }
 .agent-file-code__highlight pre { box-sizing: border-box; min-width: max-content; padding: 16px; font: 13px/1.6 var(--font-mono); }
 
-.agent-diff-preview { display: grid; min-width: 0; min-height: 100%; grid-template-rows: auto minmax(0, 1fr); background: #111915; color: #eaf1ed; }
-.agent-diff-preview > header { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; border-bottom: 1px solid #344139; }
-.agent-diff-preview > header small { color: #aab9b0; font-size: 13px; }
+.agent-diff-preview { display: grid; min-width: 0; min-height: 100%; grid-template-rows: auto minmax(0, 1fr); background: var(--color-code-bg); color: var(--color-code-text); }
+.agent-diff-preview > header { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 10px 5px 14px; border-bottom: 1px solid var(--color-code-border); }
+.agent-diff-preview > header small { color: var(--color-code-muted); font: 12px/18px var(--font-ui); }
+.agent-diff-preview__mode.ui-segmented {
+  min-height: 28px;
+  padding: 1px;
+  border-color: var(--color-code-border);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-code-surface) 78%, transparent);
+}
+.agent-diff-preview__mode .ui-segmented__item {
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 7px;
+  border-radius: 2px;
+  color: var(--color-code-muted);
+  font: var(--font-weight-medium) 12px/18px var(--font-ui);
+}
+.agent-diff-preview__mode .ui-segmented__item > span { display: inline-flex; align-items: center; gap: 4px; }
+.agent-diff-preview__mode .ui-segmented__item[data-state='checked'] {
+  background: color-mix(in srgb, var(--color-code-border) 74%, var(--color-code-surface));
+  box-shadow: none;
+  color: var(--color-code-text);
+}
+.agent-diff-preview__mode .ui-segmented__item:active:not(:disabled) { box-shadow: none; transform: none; }
 .agent-diff-preview__files { display: grid; align-content: start; gap: 14px; padding: 14px; overflow: auto; }
-.agent-diff-file { min-width: 0; overflow: hidden; border: 1px solid #344139; border-radius: var(--radius-2); background: #17201c; }
-.agent-diff-file > header { display: flex; min-width: 0; height: 34px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px; border-bottom: 1px solid #344139; font: 13px var(--font-mono); }
+.agent-diff-file { min-width: 0; overflow: hidden; border: 1px solid var(--color-code-border); border-radius: var(--radius-2); background: var(--color-code-surface); }
+.agent-diff-file > header { display: flex; min-width: 0; height: 34px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px; border-bottom: 1px solid var(--color-code-border); font: 13px var(--font-mono); }
 .agent-diff-file > header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-diff-file > header span { color: #aab9b0; font-size: 12px; }
+.agent-diff-file > header span { color: var(--color-code-muted); font-size: 12px; }
 .agent-diff-file__scroll { overflow-x: auto; }
-.agent-diff-hunk__header { padding: 5px 10px; background: #18344a; color: #b9def8; font: 12px/1.5 var(--font-mono); white-space: pre; }
+.agent-diff-hunk__header { padding: 5px 10px; background: var(--color-diff-hunk); color: var(--color-diff-hunk-text); font: 12px/1.5 var(--font-mono); white-space: pre; }
 .agent-diff-hunk table { width: 100%; min-width: max-content; border-collapse: collapse; font: 12px/1.55 var(--font-mono); }
 .agent-diff-hunk td { height: 20px; padding: 0; }
-.agent-diff-gutter { width: 44px; box-sizing: border-box; padding: 0 7px !important; border-right: 1px solid #344139; color: #829289; text-align: right; user-select: none; }
+.agent-diff-gutter { width: 44px; box-sizing: border-box; padding: 0 7px !important; border-right: 1px solid var(--color-code-border); color: var(--color-code-gutter); text-align: right; user-select: none; }
 .agent-diff-code { min-width: 640px; padding: 0 10px !important; white-space: pre; }
-.agent-diff-code > span { display: inline-block; width: 14px; color: #829289; user-select: none; }
-.agent-diff-hunk tr[data-kind='add'] td, .agent-diff-split[data-kind='add'] { background: #173b2a; color: #bdebcf; }
-.agent-diff-hunk tr[data-kind='remove'] td, .agent-diff-split[data-kind='remove'] { background: #462424; color: #f3c2c2; }
+.agent-diff-code > span { display: inline-block; width: 14px; color: var(--color-code-gutter); user-select: none; }
+.agent-diff-hunk tr[data-kind='add'] td, .agent-diff-split[data-kind='add'] { background: var(--color-diff-add); color: var(--color-diff-add-text); }
+.agent-diff-hunk tr[data-kind='remove'] td, .agent-diff-split[data-kind='remove'] { background: var(--color-diff-remove); color: var(--color-diff-remove-text); }
 .agent-diff-hunk tr[data-kind='notice'] td, .agent-diff-split[data-kind='notice'] { color: #d7bd76; font-style: italic; }
-.agent-diff-split { min-width: 520px; padding: 0; border-right: 1px solid #344139; white-space: pre; }
+.agent-diff-split { min-width: 520px; padding: 0; border-right: 1px solid var(--color-code-border); white-space: pre; }
 .agent-diff-split > .agent-diff-gutter { display: inline-block; height: 20px; line-height: 20px; }
 .agent-diff-split > code { display: inline-block; padding: 0 9px; font: inherit; }
-.agent-diff-split[data-empty='true'] { background: #101713; }
+.agent-diff-split[data-empty='true'] { background: var(--color-code-bg); }
 
+/* The report keeps its own light appearance — it is the author's document, and
+   recolouring it would misrepresent what they wrote. In dark mode that white
+   page needs a matte so it reads as a sheet resting on the surface instead of a
+   lit rectangle butted against the dialog edge. */
 .agent-static-html-preview { display: block; width: 100%; height: 100%; min-height: 520px; border: 0; background: #fff; }
+.agent-file-preview-dialog__body[data-preview-kind='html'] { padding: 10px; background: var(--color-canvas, var(--color-surface-subtle)); }
+@media (max-width: 720px) { .agent-file-preview-dialog__body[data-preview-kind='html'] { padding: 0; } }
 .agent-file-image-preview { display: grid; min-height: 100%; place-items: center; padding: 20px; background: var(--color-surface-subtle); }
 .agent-file-image-preview img { display: block; max-width: 100%; max-height: calc(100dvh - 160px); object-fit: contain; }
 .agent-file-preview__unsupported { display: grid; min-height: 240px; place-items: center; align-content: center; gap: 7px; color: var(--color-text-secondary); }
@@ -118,3 +265,16 @@
   .agent-diff-preview__files { padding: 8px; }
   .agent-diff-split { min-width: 340px; }
 }
+
+
+/* Added/removed must not rely on colour alone: the split view gets the same
+   sign channel the unified view already has. */
+.agent-diff-split[data-kind='add'] > code::before,
+.agent-diff-split[data-kind='remove'] > code::before {
+  display: inline-block;
+  width: 12px;
+  color: #829289;
+  user-select: none;
+}
+.agent-diff-split[data-kind='add'] > code::before { content: '+'; }
+.agent-diff-split[data-kind='remove'] > code::before { content: '\2212'; }

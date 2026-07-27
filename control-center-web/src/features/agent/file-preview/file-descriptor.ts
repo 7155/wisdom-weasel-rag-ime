@@ -62,6 +62,23 @@ export function safeManagedContentUrl(
   }
 }
 
+/**
+ * The managed content URL for a file we have a validated request for, built
+ * locally so a result card can offer "open the original" without first loading
+ * a preview. Deliberately routed back through safeManagedContentUrl rather than
+ * trusted as constructed: the card and the dialog then accept exactly the same
+ * shape of URL, and there is one place where that shape is decided.
+ */
+export function managedContentUrl(request: FilePreviewRequest): string | null {
+  if (!MEDIA_ID_PATTERN.test(request.mediaId) || !SESSION_ID_PATTERN.test(request.sessionId)) return null;
+  const candidate = `/api/agent/media/${encodeURIComponent(request.mediaId)}/content?sessionId=${encodeURIComponent(request.sessionId)}`;
+  return safeManagedContentUrl(candidate, { mediaId: request.mediaId, sessionId: request.sessionId });
+}
+
+export function isHtmlReport(fileName: string, mimeType: string): boolean {
+  return /^text\/html\b/iu.test(mimeType.trim()) || /\.html?$/iu.test(fileName.trim());
+}
+
 export function fileSizeLabel(byteSize: number): string {
   if (!Number.isFinite(byteSize) || byteSize <= 0) return '';
   if (byteSize >= 1_048_576) return `${(byteSize / 1_048_576).toFixed(1)} MB`;

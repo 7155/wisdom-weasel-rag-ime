@@ -84,7 +84,7 @@ function MarkdownFragment({
   return (
     <ReactMarkdown
       skipHtml
-      remarkPlugins={streamingTail ? [remarkGfm, remarkStreamingTail] : [remarkGfm]}
+      remarkPlugins={streamingTail ? [remarkGfm, remarkLiteralHtml, remarkStreamingTail] : [remarkGfm, remarkLiteralHtml]}
       components={{
         a: ({ href, children }) => {
           const safe = safeLink(href);
@@ -242,9 +242,33 @@ function isSafeMarkdownFragmentStart(line: string, fenced: boolean): boolean {
 
 type MarkdownAstNode = {
   type?: string;
+  value?: string;
   children?: MarkdownAstNode[];
   data?: { hProperties?: Record<string, unknown> };
 };
+
+/**
+ * Raw HTML in assistant prose is turned into literal text.
+ *
+ * react-markdown does not render HTML without rehype-raw, so these nodes were
+ * being dropped outright — an agent quoting `<script>alert(1)</script>` in its
+ * explanation produced a blank line, and the reader never learned what was
+ * quoted. Rewriting the node to text keeps the content visible while React's
+ * own escaping keeps it inert; the alternative, rehype-raw, would make the
+ * transcript a live HTML renderer, which is exactly what it must never be.
+ */
+function remarkLiteralHtml() {
+  return (tree: MarkdownAstNode) => {
+    const visit = (node: MarkdownAstNode) => {
+      if (!node.children?.length) return;
+      node.children = node.children.map((child) => {
+        visit(child);
+        return child.type === 'html' ? { type: 'text', value: child.value ?? '' } : child;
+      });
+    };
+    visit(tree);
+  };
+}
 
 function remarkStreamingTail() {
   return (tree: MarkdownAstNode) => {

@@ -15,15 +15,19 @@
 
 .planning-companion__focus span {
   color: var(--color-text-tertiary);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: .06em;
 }
 
+/* The focus statement is the page's editorial voice. */
 .planning-companion__focus strong {
   max-width: 720px;
   overflow-wrap: anywhere;
-  font-size: 18px;
-  line-height: 1.4;
+  font-size: 19px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -.012em;
+  line-height: 1.42;
 }
 
 .planning-companion__actions {
@@ -35,7 +39,8 @@
 }
 
 main[data-route-id='planning'] .mgmt-section__header h2 {
-  font-size: 17px;
+  font-size: var(--text-section-lead);
+  line-height: var(--text-section-lead-lh);
 }
 
 main[data-route-id='planning'] .mgmt-section__header p {
@@ -69,7 +74,7 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   grid-template-columns: 18px minmax(0, 1fr) auto;
 }
 
-.planning-summary-item:last-child { border-right: 0; }
+/* Figures separate by rhythm; strip borders removed at every width. */
 
 .planning-summary-item > svg {
   color: var(--color-text-tertiary);
@@ -82,12 +87,15 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
 .planning-summary-item > span {
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 680;
+  font-weight: var(--font-weight-semibold);
 }
 
 .planning-summary-item > strong {
-  font-size: 17px;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--font-ui);
+  font-size: var(--text-figure);
+  line-height: var(--text-figure-lh);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 .planning-summary-item > small {
@@ -109,7 +117,10 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
 .planning-overview-grid {
   display: grid;
   min-width: 0;
-  gap: 0 var(--space-6);
+  /* start, not stretch: a short card should not be padded out to match a tall
+     neighbour just because they share a row. */
+  align-items: start;
+  gap: var(--space-3) var(--space-3);
   grid-template-columns: minmax(0, 1.08fr) minmax(340px, .92fr);
 }
 
@@ -119,7 +130,7 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
 
 .planning-plan dt {
   font-size: 13px;
-  font-weight: 680;
+  font-weight: var(--font-weight-semibold);
 }
 
 .planning-plan dd {
@@ -141,7 +152,7 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
 .planning-plan-summary > span {
   color: var(--color-text-tertiary);
   font-size: 13px;
-  font-weight: 680;
+  font-weight: var(--font-weight-semibold);
 }
 
 .planning-plan-summary > strong {
@@ -340,7 +351,7 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   gap: 6px;
   color: var(--color-text-secondary);
   font-size: 13px;
-  font-weight: 680;
+  font-weight: var(--font-weight-semibold);
 }
 
 .planning-dialog__context .ui-button {
@@ -394,8 +405,6 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .planning-summary-item:nth-child(2) { border-right: 0; }
-  .planning-summary-item:nth-child(-n + 2) { border-bottom: 1px solid var(--color-border); }
 
   .planning-list .mgmt-list__row {
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -428,16 +437,13 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
   }
 
   .planning-summary-strip {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4) var(--space-5);
   }
 
   .planning-summary-item,
-  .planning-summary-item:nth-child(2) {
-    border-right: 0;
-    border-bottom: 1px solid var(--color-border);
-  }
+  .planning-summary-item:nth-child(2) { border-right: 0; border-bottom: 0; }
 
-  .planning-summary-item:last-child { border-bottom: 0; }
 
   .planning-plan-summary {
     grid-template-columns: minmax(0, 1fr);
@@ -463,3 +469,55 @@ main[data-route-id='planning'] .mgmt-page__actions .ui-input[type='date'] {
 
   .planning-wake-form__wide { grid-column: auto; }
 }
+
+
+/* ============== planning adopts the shared report grammar ==============
+   The boxed four-across strip with vertical rules was the last dashboard
+   card row: same figures, now hanging under one ink rule like Overview. */
+.planning-summary-strip {
+  border-block: 0;
+  border-top: var(--rule-figure);
+  padding-top: var(--space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5) var(--space-8);
+}
+@media (min-width: 1100px) {
+  .planning-summary-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.planning-summary-item {
+  min-height: 0;
+  padding: 0;
+  border-right: 0;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 3px 8px;
+}
+.planning-summary-item > span { color: var(--color-text-tertiary); font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); letter-spacing: .04em; }
+.planning-summary-item > strong {
+  grid-column: 2;
+  font-family: var(--font-ui);
+  font-size: var(--text-figure);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0;
+}
+.planning-summary-item > small { grid-column: 2; color: var(--color-text-tertiary); font-size: var(--font-size-caption); }
+
+
+/* Same anatomy as .mgmt-metric: fixed icon box, caption label, tabular value. */
+.planning-summary-item {
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 2px;
+  align-content: start;
+}
+.planning-summary-item > svg {
+  width: 14px;
+  height: 14px;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  margin-top: 1px;
+}
+.planning-summary-item > span { grid-column: 2; grid-row: 1; line-height: 1.35; }
+.planning-summary-item > strong { grid-row: 2; line-height: var(--text-figure-lh); }
+.planning-summary-item > small { grid-row: 3; line-height: 1.45; }

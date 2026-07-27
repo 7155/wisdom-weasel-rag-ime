@@ -51,7 +51,7 @@
 .context-debug-heading small {
   gap: 4px;
   color: var(--color-text-tertiary);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
   white-space: normal;
@@ -98,17 +98,17 @@
 .context-xray-summary { display: grid; gap: 11px; padding: 14px var(--space-4); border-bottom: 1px solid var(--color-border-strong); background: var(--color-surface-subtle); }
 .context-xray-summary > header { align-items: center; display: flex; justify-content: space-between; gap: 10px; }
 .context-xray-summary > header > span { align-items: center; display: flex; gap: 8px; }
-.context-xray-summary > header small, .context-xray-summary > p { color: var(--color-text-tertiary); font-size: 11px; }
+.context-xray-summary > header small, .context-xray-summary > p { color: var(--color-text-tertiary); font-size: 12px; }
 .context-xray-summary > dl { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin: 0; border: 1px solid var(--color-border); }
 .context-xray-summary > dl > div { display: grid; gap: 3px; min-width: 0; padding: 9px 10px; border-right: 1px solid var(--color-border); }
 .context-xray-summary > dl > div:last-child { border-right: 0; }
-.context-xray-summary dt { color: var(--color-text-tertiary); font-size: 10px; }
+.context-xray-summary dt { color: var(--color-text-tertiary); font-size: 12px; }
 .context-xray-summary dd { margin: 0; font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
 .context-xray-summary [data-available='false'] dd { color: var(--color-warning); font-weight: 600; }
 .context-xray-summary__states { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .context-xray-summary__states > span { display: grid; gap: 2px; min-width: 0; }
-.context-xray-summary__states strong { font-size: 10px; }
-.context-xray-summary__states small { color: var(--color-text-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.context-xray-summary__states strong { font-size: 12px; }
+.context-xray-summary__states small { color: var(--color-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .context-xray-summary > p { margin: 0; }
 
 .context-debug-audit { display: grid; min-height: 0; overflow: hidden; }
@@ -116,7 +116,7 @@
 .context-debug-audit > summary::-webkit-details-marker { display: none; }
 .context-debug-audit > summary > span { display: grid; gap: 2px; }
 .context-debug-audit > summary strong { font-size: 12px; }
-.context-debug-audit > summary small { color: var(--color-text-tertiary); font-size: 10px; }
+.context-debug-audit > summary small { color: var(--color-text-tertiary); font-size: 12px; }
 .context-debug-audit[open] { grid-template-rows: auto minmax(0, 1fr); }
 
 .context-debug-workspace {
@@ -153,13 +153,13 @@
   align-items: center;
   gap: 4px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
 }
 .context-debug-summary dd {
   overflow: hidden;
   margin: 3px 0 0;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -172,7 +172,7 @@
   padding: 0 11px;
   border-bottom: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -215,7 +215,7 @@
   color: var(--color-text-secondary);
   background: var(--color-surface);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 750;
 }
 .context-debug-call__copy { display: grid; min-width: 0; gap: 3px; }
@@ -223,7 +223,7 @@
 .context-debug-call__copy small {
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -232,13 +232,13 @@
   padding: 1px 4px;
   border-radius: var(--radius-1);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 700;
 }
 .context-debug-call__copy em[data-tone='added'] { color: var(--color-success); background: var(--color-success-soft); }
 .context-debug-call__copy em[data-tone='removed'] { color: var(--color-danger); background: var(--color-danger-soft); }
-.context-debug-call__copy time { margin-left: auto; color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 9px; }
+.context-debug-call__copy time { margin-left: auto; color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 12px; }
 .context-debug-call-rail__empty { margin: 0; padding: 24px 12px; color: var(--color-text-tertiary); font-size: 12px; text-align: center; }
 
 .context-debug-main {
@@ -268,11 +268,11 @@
 .context-debug-payload > header strong,
 .context-debug-tools > header strong { font-size: 12px; }
 .context-debug-payload > header small,
-.context-debug-tools > header small { color: var(--color-text-tertiary); font-size: 10px; }
+.context-debug-tools > header small { color: var(--color-text-tertiary); font-size: 12px; }
 .context-debug-state {
   padding: 2px 6px;
   border-radius: var(--radius-round);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 .context-debug-state[data-tone='success'] { color: var(--color-success); background: var(--color-success-soft); }
@@ -293,7 +293,7 @@
   border-right: 1px solid var(--color-border);
   color: var(--color-text-secondary);
   background: var(--color-surface-subtle);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 650;
   cursor: pointer;
 }
@@ -311,14 +311,14 @@
   color: var(--color-text);
   background: transparent;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.58;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .context-debug-code { min-height: 100%; padding: 12px 14px 28px; }
 .context-debug-code--text { font-family: var(--font-sans); font-size: 12px; line-height: 1.7; }
-.context-debug-empty-copy { margin: 0; padding: 20px 14px; color: var(--color-text-tertiary); font-size: 11px; }
+.context-debug-empty-copy { margin: 0; padding: 20px 14px; color: var(--color-text-tertiary); font-size: 12px; }
 
 .context-debug-delta > dl {
   display: grid;
@@ -328,8 +328,8 @@
 }
 .context-debug-delta > dl > div { padding: 8px 10px; border-right: 1px solid var(--color-border); }
 .context-debug-delta > dl > div:last-child { border-right: 0; }
-.context-debug-delta dt { color: var(--color-text-tertiary); font-size: 9px; }
-.context-debug-delta dd { margin: 2px 0 0; font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+.context-debug-delta dt { color: var(--color-text-tertiary); font-size: 12px; }
+.context-debug-delta dd { margin: 2px 0 0; font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
 .context-debug-delta [data-tone='added'] dd { color: var(--color-success); }
 .context-debug-delta [data-tone='removed'] dd { color: var(--color-danger); }
 
@@ -352,7 +352,7 @@
   color: var(--color-info);
   background: var(--color-info-soft);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -361,12 +361,12 @@
 .context-debug-message-list summary > span[data-role='tool'] { color: var(--color-warning); background: var(--color-warning-soft); }
 .context-debug-message-list summary strong {
   overflow: hidden;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 560;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.context-debug-message-list summary small { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 9px; }
+.context-debug-message-list summary small { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 12px; }
 .context-debug-message-list pre { padding: 10px 14px 16px; border-top: 1px dashed var(--color-border); background: var(--color-surface-subtle); }
 
 .context-debug-tools {
@@ -374,7 +374,7 @@
   border-top: 1px solid var(--color-border-strong);
   background: color-mix(in srgb, var(--color-surface) 88%, var(--color-memory-soft));
 }
-.context-debug-tools > header > span { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 10px; }
+.context-debug-tools > header > span { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 12px; }
 .context-debug-tools__body { display: flex; min-width: 0; min-height: 0; gap: 8px; padding: 8px; overflow: auto; }
 .context-debug-tool-stage {
   width: min(420px, 44vw);
@@ -395,9 +395,9 @@
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-subtle);
 }
-.context-debug-tool-stage > header strong { color: var(--color-memory); font-size: 10px; }
-.context-debug-tool-stage > header small { overflow: hidden; color: var(--color-text-tertiary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.context-debug-tool-stage__number { font-size: 10px; font-weight: 700; }
+.context-debug-tool-stage > header strong { color: var(--color-memory); font-size: 12px; }
+.context-debug-tool-stage > header small { overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.context-debug-tool-stage__number { font-size: 12px; font-weight: 700; }
 .context-debug-tool-stage__items { display: grid; gap: 1px; background: var(--color-border); }
 .context-debug-tool-stage[data-mode='parallel'] .context-debug-tool-stage__items { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
 .context-debug-tool { min-width: 0; background: var(--color-surface); }
@@ -412,9 +412,9 @@
 }
 .context-debug-tool summary:hover { background: var(--color-surface-hover); }
 .context-debug-tool summary > span:nth-child(2) { display: grid; min-width: 0; }
-.context-debug-tool summary strong { overflow: hidden; font-family: var(--font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.context-debug-tool summary small { overflow: hidden; color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-.context-debug-tool summary em { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 9px; font-style: normal; }
+.context-debug-tool summary strong { overflow: hidden; font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.context-debug-tool summary small { overflow: hidden; color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.context-debug-tool summary em { color: var(--color-text-tertiary); font-family: var(--font-mono); font-size: 12px; font-style: normal; }
 .context-debug-tool__state {
   display: grid;
   width: 22px;
@@ -433,10 +433,10 @@
   padding: 5px 8px;
   color: var(--color-text-tertiary);
   background: var(--color-surface-subtle);
-  font-size: 9px;
+  font-size: 12px;
   text-transform: uppercase;
 }
-.context-debug-tool__payloads pre { max-height: 180px; padding: 7px 8px 11px; overflow: auto; font-size: 9px; }
+.context-debug-tool__payloads pre { max-height: 180px; padding: 7px 8px 11px; overflow: auto; font-size: 12px; }
 
 @media (max-width: 1120px) {
   .context-debug-heading > span:last-child small,
@@ -476,3 +476,43 @@
   .context-debug-message-list summary { grid-template-columns: 68px minmax(0, 1fr) auto; }
   .context-debug-tool-stage { width: calc(100vw - 36px); min-width: 0; }
 }
+
+
+/* Adopts the shared sheet grammar: a paper console page on the canvas. */
+.shell-route-stage > main.context-debug-feature {
+  height: auto;
+  min-height: calc(100dvh - var(--topbar-height));
+  padding: var(--space-4) var(--workspace-gutter) var(--space-6);
+  overflow: visible;
+  background: var(--color-canvas);
+}
+.context-debug-header {
+  border: 1px solid var(--color-border-soft);
+  border-bottom: 0;
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  background: var(--color-paper);
+}
+.context-debug-header h1 { font-family: var(--font-ui); font-size: 17px; font-weight: var(--font-weight-semibold); }
+.context-debug-feature > .context-debug-header ~ * { border-inline: 1px solid var(--color-border-soft); background: var(--color-paper); }
+.context-debug-feature > :last-child { border-bottom: 1px solid var(--color-border-soft); border-radius: 0 0 var(--radius-sheet) var(--radius-sheet); }
+
+/* Phones: the console sheet goes full-bleed, like every framed route. */
+@media (max-width: 760px) {
+  .shell-route-stage > main.context-debug-feature { padding-inline: 0; }
+  .context-debug-header,
+  .context-debug-feature > .context-debug-header ~ * { border-inline: 0; border-radius: 0; }
+  .context-debug-feature > :last-child { border-bottom: 0; border-radius: 0; }
+}
+
+/* The X-ray tallies follow the shared report grammar instead of a six-cell
+   bordered strip. */
+.context-xray-summary > dl {
+  border: 0;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3) var(--space-5);
+  padding-top: var(--space-2);
+  border-top: var(--rule-figure);
+}
+.context-xray-summary > dl > div { padding: 0; border-right: 0; }
+.context-xray-summary dt { letter-spacing: .04em; }
+.context-xray-summary dd { font-size: var(--font-size-ui-strong); font-variant-numeric: tabular-nums lining-nums; }

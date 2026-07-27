@@ -189,8 +189,8 @@
 
 .shell-brand__mark {
   display: block;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   flex: 0 0 auto;
   border: 1px solid color-mix(in srgb, var(--color-accent) 72%, var(--color-border));
   border-radius: var(--radius-2);
@@ -214,7 +214,7 @@
 .shell-brand__copy small {
   margin-top: 3px;
   color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--font-size-caption);
 }
 
@@ -345,10 +345,12 @@
   padding-inline: 0;
 }
 
+/* The workspace is the desk, not the page. Conversation surfaces paint their
+   own paper on top of it; management routes lay cards on it. */
 .shell-workspace {
   min-width: 0;
   min-height: 100dvh;
-  background: var(--color-paper);
+  background: var(--color-canvas);
 }
 
 @media (min-width: 761px) {
@@ -423,7 +425,7 @@
 
 .shell-topbar__title span {
   color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--font-size-caption);
 }
 
@@ -582,8 +584,8 @@
   }
 
   .shell-topbar__mobile-brand .shell-brand__mark {
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
   }
 
   .shell-mobile-menu__trigger {
@@ -672,3 +674,30 @@
   .shell-topbar__title h1 { font-size: 14px; }
   .shell-mobile-nav__link span { font-size: 13px; }
 }
+
+
+/* ============================== quiet navigation ==============================
+   The rail is furniture on the canvas: smaller ink, no filled pills, a thin
+   accent rule for the current place. Content owns the light. */
+.shell-sidebar { background: var(--color-chrome); }
+.shell-nav__link {
+  min-height: 34px;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
+}
+.shell-nav__link[aria-current='page'] {
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+.shell-nav__link[aria-current='page']::before { top: 7px; bottom: 7px; left: -9px; width: 2px; }
+.shell-nav__group-label { color: var(--color-text-tertiary); font-weight: var(--font-weight-medium); letter-spacing: .05em; }
+.shell-brand__copy strong { font-size: var(--font-size-ui-strong); }
+
+
+/* The route stage owns the page gutter. Previously .mgmt-page's top margin
+   collapsed through it, pushing the stage down and exposing a bare strip
+   between the translucent topbar and the sheet. */
+.shell-route-stage { background: var(--color-canvas); }

@@ -2,6 +2,7 @@ import { AlertCircle, GitBranch, PanelLeftClose, PanelLeftOpen, PanelRightClose,
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
+import { useComposerClearance } from '@/components/layout/use-composer-clearance';
 import { IconButton } from '@/components/primitives';
 import { createAgentDeltaBatcher } from '@/contracts/batching';
 import type { AgentActivityProjection, AgentProjectionState } from '@/contracts/agent-reducer';
@@ -84,6 +85,8 @@ function AgentWorkspace() {
   const [forkDialogNodes, setForkDialogNodes] = useState<ConversationNode[]>([]);
   const [forkDialogInitialEntryId, setForkDialogInitialEntryId] = useState('');
   const [timelineJumpRequest, setTimelineJumpRequest] = useState<{ messageId: string; requestId: number }>();
+  const [timelineAtBottom, setTimelineAtBottom] = useState(true);
+  const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [statusOpen, setStatusOpen] = useState(false);
   const [error, setVisibleError] = useState('');
@@ -91,11 +94,10 @@ function AgentWorkspace() {
   const railRef = useRef<HTMLElement>(null);
   const statusToggleRef = useRef<HTMLButtonElement>(null);
   const statusRef = useRef<HTMLElement>(null);
+  const conversationRef = useRef<HTMLElement>(null);
+  useComposerClearance(conversationRef);
   const selectedIdRef = useRef(selectedId);
-  const composerInputsRef = useRef(new Map<string, {
-    draft: string;
-    attachments: ComposerAttachment[];
-  }>());
+  const composerInputsRef = useRef(sessionComposerStore);
   const sessionErrorsRef = useRef(new Map<string, string>());
   const sessionSendLocksRef = useRef(new Set<string>());
   selectedIdRef.current = selectedId;
@@ -251,6 +253,10 @@ function AgentWorkspace() {
   useEffect(() => {
     if (statusOverlayViewport) setStatusOpen(false);
   }, [statusOverlayViewport]);
+
+  useEffect(() => {
+    setTimelineAtBottom(true);
+  }, [selectedId]);
 
   useModalPanel({
     active: railModal,
@@ -1124,10 +1130,9 @@ function AgentWorkspace() {
       <AgentPaneResizer side="rail" />
       <button className="agent-rail-backdrop" aria-hidden="true" disabled={!railModal} tabIndex={-1} onClick={closeMobileRail} type="button" />
       <section
+        ref={conversationRef}
         className="agent-conversation"
         aria-hidden={railModal || statusModal || undefined}
-        data-composer-attachments={attachments.length > 0 || undefined}
-        data-composer-edit={Boolean(editTarget) || undefined}
         inert={railModal || statusModal ? true : undefined}
       >
         <header className="agent-conversation__header">
@@ -1139,9 +1144,9 @@ function AgentWorkspace() {
             <IconButton ref={statusToggleRef} className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
-          <AgentComposer assistantName={identity.assistantName} draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || rewriteResolving} modelChanging={modelChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={persistSelectedDraft} onAttachmentsChange={setSelectedAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery, value) => void send(delivery, value)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onContextResourcesChange={(selection) => contextResources.select(session, selection)} onModelChange={changeModel} />
+          <AgentComposer assistantName={identity.assistantName} draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || rewriteResolving} modelChanging={modelChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} showJumpLatest={!timelineAtBottom} onJumpLatest={() => setScrollToLatestRequest((current) => current + 1)} onDraftChange={persistSelectedDraft} onAttachmentsChange={setSelectedAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery, value) => void send(delivery, value)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onContextResourcesChange={(selection) => contextResources.select(session, selection)} onModelChange={changeModel} />
         ) : <AgentComposerPending />}
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />
@@ -1177,6 +1182,13 @@ function AgentWorkspace() {
     </main>
   );
 }
+
+/* Session composer inputs survive route unmount: module scope, not a ref. */
+const sessionComposerStore = new Map<string, {
+  draft: string;
+  attachments: ComposerAttachment[];
+}>();
+((globalThis as { __RAG_DRAFT_STORES__?: Array<{ clear(): void }> }).__RAG_DRAFT_STORES__ ??= []).push(sessionComposerStore);
 
 function AgentComposerPending() {
   return (

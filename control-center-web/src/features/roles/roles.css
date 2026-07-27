@@ -3,14 +3,14 @@
 .roles-header > span { display: grid; min-width: 0; flex: 1; gap: 3px; }
 .roles-header > .ui-segmented { min-width: 0; flex: 0 1 260px; }
 .roles-header-actions { display: flex; align-items: center; gap: 6px; }
-.roles-header h2 { margin: 0; font-size: 18px; }
+
 .roles-header p { margin: 0; color: var(--color-text-tertiary); font-size: 13px; }
-.roles-notice { margin: 10px 0 0; padding: 7px 10px; border-left: 3px solid var(--color-warning); background: var(--color-warning-soft); color: var(--color-text-secondary); font-size: 13px; }
+.roles-notice { margin: 10px 0 0; padding: 8px 11px; border: 1px solid var(--color-warning-border); border-left: 3px solid var(--color-warning); border-radius: var(--radius-2); background: var(--color-warning-soft); color: var(--color-text-secondary); font-size: 13px; }
 .roles-empty { margin: 0; padding: 22px 4px; color: var(--color-text-tertiary); font-size: 13px; }
 .roles-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 28px; padding-top: 20px; }
 .roles-layout > * { min-width: 0; }
 .persona-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 8px; }
-.persona-grid > button { display: grid; min-height: 112px; grid-template-columns: 54px minmax(0, 1fr); align-content: center; align-items: center; gap: 10px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); color: inherit; text-align: left; cursor: pointer; }
+.persona-grid > button { display: grid; min-height: 120px; grid-template-columns: 72px minmax(0, 1fr); align-content: center; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); color: inherit; text-align: left; cursor: pointer; }
 .persona-grid > button:hover { background: var(--color-surface-hover); }
 .persona-grid > button[aria-current='true'] { border-color: var(--color-accent); box-shadow: inset 3px 0 var(--color-accent); }
 .persona-grid .agent-persona-avatar { grid-column: 1; grid-row: 1; }
@@ -24,7 +24,7 @@
 .role-inspector { align-self: start; border-left: 1px solid var(--color-border); padding-left: 24px; }
 .role-inspector__hero { display: flex; align-items: center; gap: 16px; padding-bottom: 18px; }
 .role-inspector__hero > span { min-width: 0; }
-.role-inspector small { color: var(--color-accent); font: 700 13px var(--font-mono); }
+.role-inspector small { color: var(--color-accent); font: var(--font-label); letter-spacing: .05em; }
 .role-inspector h3 { margin: 3px 0 6px; font-size: 20px; }
 .role-inspector p { margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.5; }
 .role-inspector dl { display: grid; margin: 0; border-top: 1px solid var(--color-border); }
@@ -43,7 +43,7 @@
 .companion-expression { display: grid; gap: 8px; border-top: 1px solid var(--color-border); padding-top: 11px; }
 .companion-expression header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .companion-expression header strong { font-size: 13px; }
-.companion-expression header small { color: var(--color-text-tertiary); font: 500 13px var(--font-sans); }
+.companion-expression header small { color: var(--color-text-tertiary); font: var(--font-weight-semibold) 13px var(--font-sans); }
 .companion-expression > div { display: flex; flex-wrap: wrap; gap: 5px; }
 .companion-expression > div span { border: 1px solid var(--color-border); border-radius: var(--radius-round); padding: 3px 7px; color: var(--color-text-secondary); font-size: 13px; }
 .companion-links { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
@@ -53,14 +53,14 @@
 .role-runtime-disclosure > summary::-webkit-details-marker { display: none; }
 .role-runtime-disclosure > summary > span { display: grid; min-width: 0; gap: 2px; }
 .role-runtime-disclosure > summary strong { font-size: 13px; }
-.role-runtime-disclosure > summary small { color: var(--color-text-tertiary); font: 500 12px var(--font-sans); }
+.role-runtime-disclosure > summary small { color: var(--color-text-tertiary); font: var(--font-weight-semibold) 12px var(--font-sans); }
 .role-runtime-disclosure__body { display: grid; gap: 14px; padding-top: 14px; }
 .role-runtime-disclosure__body > dl { border-top: 0; }
 .role-runtime-disclosure__body > dl > div { grid-template-columns: 86px minmax(0, 1fr); padding: 8px 0; }
 .role-runtime-defaults { display: grid; gap: 9px; padding-top: 18px; }
 .role-runtime-defaults header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .role-runtime-defaults header > span { display: flex; align-items: center; gap: 6px; font-size: 13px; }
-.role-runtime-defaults header small { color: var(--color-text-tertiary); font: 500 13px var(--font-sans); }
+.role-runtime-defaults header small { color: var(--color-text-tertiary); font: var(--font-weight-semibold) 13px var(--font-sans); }
 .role-runtime-defaults label { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--color-text-secondary); font-size: 13px; }
 .role-runtime-defaults .ui-select__trigger { width: 100%; }
 .role-runtime-defaults > .ui-button { justify-self: end; }
@@ -68,7 +68,7 @@
 .role-runtime-fixed { display: grid; grid-template-columns: minmax(0, 1fr) 104px; gap: 1px; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-border); }
 .role-runtime-fixed > span { display: grid; min-width: 0; gap: 3px; padding: 10px; background: var(--color-surface-subtle); }
 .role-runtime-fixed b { font-size: 13px; overflow-wrap: anywhere; }
-.role-runtime-fixed small { color: var(--color-text-tertiary); font: 500 12px var(--font-mono); overflow-wrap: anywhere; }
+.role-runtime-fixed small { color: var(--color-text-tertiary); font: var(--font-weight-semibold) 12px var(--font-mono); overflow-wrap: anywhere; }
 .capability-workspace { display: grid; }
 .capability-workspace > header { display: flex; align-items: center; gap: 14px; padding: 16px 0 0; }
 .capability-workspace > header > .ui-segmented { flex: 0 0 auto; }
@@ -104,31 +104,31 @@
 .role-book-active, .role-book-review, .role-book-history { display: grid; gap: 10px; border-top: 1px solid var(--color-border); padding-top: 14px; }
 .role-book-active > header, .role-book-review > header, .role-book-history > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .role-book-active > header > span, .role-book-review > header > span, .role-book-history > header > span { display: flex; align-items: center; gap: 6px; font-size: 13px; }
-.role-book-active > header small, .role-book-review > header small { color: var(--color-text-tertiary); font: 500 13px var(--font-sans); }
+.role-book-active > header small, .role-book-review > header small { color: var(--color-text-tertiary); font: var(--font-weight-semibold) 13px var(--font-sans); }
 .role-book-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-border); }
 .role-book-counts span { display: flex; align-items: baseline; gap: 6px; min-width: 0; padding: 9px 10px; background: var(--color-surface); color: var(--color-text-tertiary); font-size: 13px; }
-.role-book-counts b { color: var(--color-text-primary); font: 700 15px var(--font-mono); }
+.role-book-counts b { color: var(--color-text-primary); font: var(--font-weight-semibold) 15px var(--font-mono); }
 .role-book-draft-tabs { display: flex; min-width: 0; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
 .role-book-draft-tabs button { display: grid; flex: 0 0 auto; gap: 2px; border: 1px solid transparent; border-radius: var(--radius-2); padding: 6px 8px; background: transparent; color: var(--color-text-secondary); text-align: left; cursor: pointer; }
 .role-book-draft-tabs button[aria-current='true'] { border-color: var(--color-border-strong); background: var(--color-surface-subtle); color: var(--color-text-primary); }
-.role-book-draft-tabs small { color: var(--color-text-tertiary); font: 500 13px var(--font-sans); }
+.role-book-draft-tabs small { color: var(--color-text-tertiary); font: var(--font-weight-semibold) 13px var(--font-sans); }
 .role-book-proposals { display: grid; gap: 12px; }
 .role-book-proposals fieldset { display: grid; min-width: 0; gap: 1px; margin: 0; padding: 0; border: 0; }
 .role-book-proposals legend { margin-bottom: 5px; color: var(--color-text-tertiary); font-size: 13px; font-weight: 700; }
 .role-book-proposals label { display: grid; min-width: 0; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: start; gap: 7px; padding: 8px 0; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 13px; cursor: pointer; }
 .role-book-proposals label span { overflow-wrap: anywhere; line-height: 1.4; }
-.role-book-proposals label small { color: var(--color-text-tertiary); font: 500 13px var(--font-mono); }
+.role-book-proposals label small { color: var(--color-text-tertiary); font: var(--font-weight-semibold) 13px var(--font-mono); }
 .role-book-actions { display: flex; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
 .role-book-history > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--color-border); }
 .role-book-history > div > span { display: grid; min-width: 0; gap: 2px; }
 .role-book-history > div b { font-size: 13px; }
-.role-book-history > div small { color: var(--color-text-tertiary); font: 500 13px var(--font-sans); overflow-wrap: anywhere; }
+.role-book-history > div small { color: var(--color-text-tertiary); font: var(--font-weight-semibold) 13px var(--font-sans); overflow-wrap: anywhere; }
 .role-book-preview-items { display: grid; gap: 7px; margin: 0; padding-left: 20px; color: var(--color-text-secondary); font-size: 13px; }
 .role-book-preview-diff { display: grid; max-height: min(46vh, 420px); gap: 14px; overflow-y: auto; border-top: 1px solid var(--color-border); padding-top: 12px; }
 .role-book-preview-diff section { display: grid; gap: 6px; }
 .role-book-preview-diff header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .role-book-preview-diff header strong { font-size: 13px; }
-.role-book-preview-diff header small { color: var(--color-text-tertiary); font: 500 13px var(--font-mono); }
+.role-book-preview-diff header small { color: var(--color-text-tertiary); font: var(--font-weight-semibold) 13px var(--font-mono); }
 .role-book-preview-diff p { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: start; gap: 7px; margin: 0; padding: 7px 0; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 13px; }
 .role-book-preview-diff p b { font-size: 12px; }
 .role-book-preview-diff p[data-change='added'] b { color: var(--color-success); }
@@ -176,9 +176,38 @@
 .definition-audit > summary::-webkit-details-marker { display: none; }
 .definition-audit > summary span { display: grid; gap: 2px; min-width: 0; }
 .definition-audit > summary strong { font-size: 12px; }
-.definition-audit > summary small { color: var(--color-success); font-size: 11px; }
+.definition-audit > summary small { color: var(--color-success); font-size: 12px; }
 .definition-audit > dl { display: grid; gap: 7px; margin: 12px 0 0; }
 .definition-audit > dl > div { display: grid; gap: 2px; grid-template-columns: 58px minmax(0, 1fr); }
-.definition-audit dt { color: var(--color-text-muted); font-size: 11px; }
+.definition-audit dt { color: var(--color-text-muted); font-size: 12px; }
 .definition-audit dd { font-size: 12px; margin: 0; overflow-wrap: anywhere; }
-.definition-audit > p { color: var(--color-text-muted); font-size: 11px; line-height: 1.55; margin: 10px 0 0; }
+.definition-audit > p { color: var(--color-text-muted); font-size: 12px; line-height: 1.55; margin: 10px 0 0; }
+
+
+/* Adopts the shared page grammar: measure-derived width, gutters, serif title. */
+/* Roles is a management route and must be the same sheet of paper as the
+   others; it was rendering straight onto the canvas. */
+.shell-route-stage > main.roles-feature {
+  width: min(100% - 2 * var(--workspace-gutter), calc(var(--workspace-measure) + 200px));
+  min-height: 0;
+  margin: var(--space-5) auto var(--space-8);
+  padding: var(--space-6) clamp(28px, 4vw, 56px) var(--space-10);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sheet);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-2);
+}
+
+@media (max-width: 760px) {
+  .shell-route-stage > main.roles-feature {
+    width: 100%;
+    margin: 0;
+    padding: var(--space-4) 14px calc(var(--mobile-nav-height) + var(--space-5));
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+/* Page title, same role and tier as every other route's h1. */
+.roles-header h1 { margin: 0; }
+.persona-grid > button { border-color: var(--color-border-soft); border-radius: var(--radius-3); box-shadow: var(--shadow-1); }

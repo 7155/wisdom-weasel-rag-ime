@@ -460,8 +460,25 @@ function checkpointOffset(createdAtMs: number, startedAtMs: number): string {
   return `+${elapsedLabel(Math.max(0, createdAtMs - startedAtMs))}`;
 }
 
+/**
+ * Raw milliseconds stop being information almost immediately: a tool that has
+ * been running for two minutes rendered as "98530095 ms", which a reader has to
+ * decode before learning anything, and which looks like a bug even when the
+ * number is correct. Milliseconds are kept only where they are the honest unit
+ * — sub-second work, where "0.1 s" would round away the detail being reported.
+ */
 function elapsedLabel(elapsedMs: number): string {
-  return `${Math.max(0, Math.round(elapsedMs))} ms`;
+  const ms = Math.max(0, Math.round(elapsedMs));
+  if (ms < 1_000) return `${ms} ms`;
+  if (ms < 60_000) return `${(ms / 1_000).toFixed(ms < 10_000 ? 1 : 0)} 秒`;
+  if (ms < 3_600_000) {
+    const minutes = Math.floor(ms / 60_000);
+    const seconds = Math.round((ms % 60_000) / 1_000);
+    return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`;
+  }
+  const hours = Math.floor(ms / 3_600_000);
+  const minutes = Math.round((ms % 3_600_000) / 60_000);
+  return minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`;
 }
 
 function text(value: unknown): string {

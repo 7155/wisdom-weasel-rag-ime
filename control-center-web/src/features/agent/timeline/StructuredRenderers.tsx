@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import {
   Activity,
   CheckCircle2,
+  ChevronRight,
   CircleDashed,
   ListChecks,
   ShieldAlert,
@@ -33,7 +35,10 @@ export function CardBlockRenderer({ block }: AgentBlockRenderProps) {
   const fields = safeLabelValuePairs(data.fields);
   return (
     <section className="agent-rich-card" data-tone={tone} aria-label={title}>
-      <header><strong>{title}</strong></header>
+      <header>
+        <span className="agent-insert-icon">{statusIcon(tone)}</span>
+        <strong>{title}</strong>
+      </header>
       {text(data.bodyMarkdown) ? <MarkdownBody text={text(data.bodyMarkdown)} /> : null}
       {fields.length ? (
         <dl>
@@ -62,12 +67,19 @@ export function ChecklistBlockRenderer({ block }: AgentBlockRenderProps) {
     })
     .slice(0, 100);
   const title = text(data.title) || '检查清单';
+  const completed = items.filter((item) => item.checked).length;
+  const tone = items.length > 0 && completed === items.length ? 'success' : 'warning';
   return (
-    <details className="agent-rich-checklist agent-rich-collapsible" open={items.length <= 8}>
+    <details
+      className="agent-rich-checklist agent-rich-collapsible"
+      data-tone={tone}
+      open={items.length <= 8}
+    >
       <summary>
-        <ListChecks size={16} />
-        {title}
-        <small>{items.filter((item) => item.checked).length}/{items.length}</small>
+        <span className="agent-insert-icon"><ListChecks size={16} /></span>
+        <span>{title}</span>
+        <small>{completed}/{items.length}</small>
+        <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
       </summary>
       {items.length ? (
         <ul>
@@ -101,8 +113,17 @@ export function TableBlockRenderer({ block }: AgentBlockRenderProps) {
   const rows = (Array.isArray(data.rows) ? data.rows : []).slice(0, 100);
   const title = text(data.title ?? data.caption) || '数据表';
   return (
-    <details className="agent-rich-table agent-rich-collapsible" open={rows.length <= 8}>
-      <summary><Table2 size={16} />{title}<small>{rows.length} 行</small></summary>
+    <details
+      className="agent-rich-table agent-rich-collapsible"
+      data-tone="info"
+      open={rows.length <= 8}
+    >
+      <summary>
+        <span className="agent-insert-icon"><Table2 size={16} /></span>
+        <span>{title}</span>
+        <small>{rows.length} 行</small>
+        <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
+      </summary>
       {columns.length ? (
         <div>
           <table>
@@ -114,7 +135,10 @@ export function TableBlockRenderer({ block }: AgentBlockRenderProps) {
                 return (
                   <tr key={rowIndex}>
                     {columns.map((column, columnIndex) => (
-                      <td key={column.key}>{displayScalar(rowArray[columnIndex] ?? rowRecord[column.key])}</td>
+                      <TableCell
+                        key={column.key}
+                        value={rowArray[columnIndex] ?? rowRecord[column.key]}
+                      />
                     ))}
                   </tr>
                 );
@@ -132,12 +156,14 @@ export function StatusBlockRenderer({ block }: AgentBlockRenderProps) {
   const state = text(data.state ?? data.status) || 'recorded';
   const tone = ['failed', 'blocked', 'danger'].includes(state)
     ? 'danger'
-    : ['done', 'completed', 'success'].includes(state) ? 'success' : 'info';
+    : ['waiting', 'pending', 'paused'].includes(state)
+      ? 'warning'
+      : ['done', 'completed', 'success'].includes(state) ? 'success' : 'info';
   const title = text(data.title) || '状态更新';
   const fields = safeLabelValuePairs(data.fields);
   return (
-    <section className="agent-rich-status" data-tone={tone} aria-label={title}>
-      <Activity size={17} />
+    <section className="agent-rich-status" data-state={state} data-tone={tone} aria-label={title}>
+      <span className="agent-insert-icon">{statusIcon(tone)}</span>
       <span>
         <strong>{title}</strong>
         <small>{text(data.detail ?? data.summary ?? data.label) || publicStructuredValue(state)}</small>
@@ -158,9 +184,17 @@ export function TaskPlanBlockRenderer({ block }: AgentBlockRenderProps) {
   const items = Array.isArray(data.items)
     ? data.items
     : Array.isArray(data.tasks) ? data.tasks : [];
+  const completed = items.filter((item) => {
+    const state = text(record(item).status);
+    return ['done', 'completed', 'passed', 'success'].includes(state);
+  }).length;
   return (
-    <section className="agent-task-plan">
-      <strong>{text(data.title) || '任务计划'}</strong>
+    <section className="agent-task-plan" data-tone="project">
+      <header>
+        <span className="agent-insert-icon"><ListChecks size={16} /></span>
+        <strong>{text(data.title) || '任务计划'}</strong>
+        {items.length ? <small>{completed}/{items.length}</small> : null}
+      </header>
       <ol>
         {items.map((item, index) => {
           const value = record(item);
@@ -183,7 +217,20 @@ export function ApprovalBlockRenderer({
   const data = block.data;
   const approvalId = text(data.approvalId ?? data.id);
   const hash = text(data.payloadSha256);
-  const pending = !['approved', 'rejected', 'applied'].includes(text(data.state));
+  const state = text(data.state);
+  const pending = !['approved', 'rejected', 'applied'].includes(state);
+  /* One decision per approval: the projection may take a moment to echo the
+     new state back, and a second click in that window would submit twice.
+     The latch is keyed to the approval itself — React reuses this component
+     for whatever block occupies the same position, so instance-only state
+     would render a *new* approval as already decided and trap the user. */
+  const [latched, setLatched] = useState<{ id: string; decision: 'approved' | 'rejected' } | null>(null);
+  const submitted = latched && latched.id === approvalId ? latched.decision : null;
+  const decide = (decision: 'approved' | 'rejected') => {
+    if (submitted || !onApprovalDecision || !approvalId || !hash) return;
+    setLatched({ id: approvalId, decision });
+    onApprovalDecision(approvalId, decision, hash);
+  };
   return (
     <section className="agent-approval-block">
       <ShieldAlert size={18} />
@@ -196,16 +243,18 @@ export function ApprovalBlockRenderer({
           <Button
             size="small"
             variant="quiet"
-            onClick={() => onApprovalDecision(approvalId, 'rejected', hash)}
+            disabled={submitted !== null}
+            onClick={() => decide('rejected')}
           >
-            拒绝
+            {submitted === 'rejected' ? '已拒绝' : '拒绝'}
           </Button>
           <Button
             size="small"
             variant="primary"
-            onClick={() => onApprovalDecision(approvalId, 'approved', hash)}
+            disabled={submitted !== null}
+            onClick={() => decide('approved')}
           >
-            批准
+            {submitted === 'approved' ? '已批准' : '批准'}
           </Button>
         </span>
       ) : null}
@@ -226,15 +275,42 @@ export function ErrorBlockRenderer({ block }: AgentBlockRenderProps) {
 export function ReasoningSummaryBlockRenderer() {
   const identity = useProductIdentity();
   return (
-    <details className="agent-structured-block">
-      <summary>处理进度</summary>
+    <details className="agent-rich-collapsible agent-reasoning-summary" data-tone="info">
+      <summary>
+        <span className="agent-insert-icon"><CircleDashed size={16} /></span>
+        <span>处理进度</span>
+        <small>思考中</small>
+        <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
+      </summary>
       <p>{identity.assistantName}正在整理信息与下一步。</p>
     </details>
   );
 }
 
 export function ProgressBlockRenderer({ block }: AgentBlockRenderProps) {
-  return <StructuredSummaryBlock type="progress" data={block.data} />;
+  const data = block.data;
+  const state = text(data.state ?? data.status) || 'running';
+  const title = text(data.title ?? data.summary) || '处理进度';
+  const detail = text(data.detail ?? data.label) || publicStructuredValue(state);
+  const percent = typeof data.percent === 'number'
+    ? Math.max(0, Math.min(100, Math.round(data.percent)))
+    : null;
+  return (
+    <section
+      aria-label={title}
+      className="agent-rich-status agent-rich-progress"
+      data-state={state}
+      data-tone={['failed', 'blocked'].includes(state) ? 'danger' : 'info'}
+    >
+      <span className="agent-insert-icon">
+        <CircleDashed className={state === 'running' ? 'agent-tool-activity__spinner' : undefined} size={16} />
+      </span>
+      <span><strong>{title}</strong><small>{detail}</small></span>
+      {percent === null ? null : (
+        <strong className="agent-rich-status__metric">{percent}%</strong>
+      )}
+    </section>
+  );
 }
 
 export function ToolCallBlockRenderer({ block }: AgentBlockRenderProps) {
@@ -257,14 +333,27 @@ function ToolActivityBlock({
   const label = publicToolLabel(toolId);
   const status = text(data.status) || block.status;
   const running = status === 'running' || status === 'pending';
+  const tone = ['failed', 'error', 'blocked'].includes(status)
+    ? 'danger'
+    : ['waiting', 'pending', 'paused'].includes(status)
+      ? 'warning'
+      : running ? 'info' : 'success';
   const summary = text(data.summary ?? data.title)
     || (type === 'tool_call' ? `${label}正在处理` : `${label}已返回`);
   return (
-    <details className="agent-tool-activity agent-structured-block" open={running}>
+    <details
+      className="agent-tool-activity agent-structured-block"
+      data-state={status}
+      data-tone={tone}
+      open={running}
+    >
       <summary>
-        {running ? <CircleDashed className="agent-tool-activity__spinner" size={15} /> : <Wrench size={15} />}
+        <span className="agent-insert-icon">
+          {running ? <CircleDashed className="agent-tool-activity__spinner" size={15} /> : <Wrench size={15} />}
+        </span>
         <span>{summary}</span>
         <small>{running ? '进行中' : publicStructuredValue(status)}</small>
+        <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
       </summary>
       <SafeFieldList data={data} />
     </details>
@@ -279,8 +368,11 @@ function StructuredSummaryBlock({
   data: Record<string, unknown>;
 }) {
   return (
-    <details className="agent-structured-block">
-      <summary>{text(data.summary ?? data.title ?? data.label) || structuredLabel(type)}</summary>
+    <details className="agent-structured-block" data-tone="info">
+      <summary>
+        <span>{text(data.summary ?? data.title ?? data.label) || structuredLabel(type)}</span>
+        <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
+      </summary>
       <SafeFieldList data={data} />
     </details>
   );
@@ -342,4 +434,41 @@ function safeFieldValue(value: unknown): string {
 
 export function BlockedMedia({ icon, label }: { icon: ReactNode; label: string }) {
   return <div className="agent-inline-notice" data-tone="neutral">{icon}<span>{label}</span></div>;
+}
+
+function statusIcon(tone: string): ReactNode {
+  if (tone === 'success') return <CheckCircle2 size={16} />;
+  if (tone === 'danger' || tone === 'warning') return <TriangleAlert size={16} />;
+  return <Activity size={16} />;
+}
+
+function TableCell({ value }: { value: unknown }) {
+  const label = displayScalar(value);
+  const tone = tableCellTone(label);
+  return (
+    <td data-tone={tone || undefined}>
+      {tone ? <span>{label}</span> : label}
+    </td>
+  );
+}
+
+function tableCellTone(value: string): 'success' | 'warning' | 'danger' | 'info' | null {
+  const normalized = value.trim().toLowerCase();
+  if ([
+    '已完成', '完成', '通过', '已通过', '成功', '已覆盖', '健康',
+    'completed', 'done', 'passed', 'success', 'healthy',
+  ].includes(normalized)) return 'success';
+  if ([
+    '需确认', '待确认', '等待', '等待中', '待处理', '待审批',
+    'pending', 'waiting', 'needs review',
+  ].includes(normalized)) return 'warning';
+  if ([
+    '失败', '错误', '阻塞', '已阻塞', '不健康',
+    'failed', 'error', 'blocked', 'unhealthy',
+  ].includes(normalized)) return 'danger';
+  if ([
+    '进行中', '处理中', '运行中',
+    'running', 'in progress', 'processing',
+  ].includes(normalized)) return 'info';
+  return null;
 }

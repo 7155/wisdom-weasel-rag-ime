@@ -8,7 +8,7 @@
   "theme_color": "#f4f5f1",
   "icons": [
     {
-      "src": "./companions/personas/companion-present-v2.webp",
+      "src": "./companions/personas/companion-present-v4.webp",
       "sizes": "640x640",
       "type": "image/webp",
       "purpose": "any maskable"

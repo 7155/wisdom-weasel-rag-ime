@@ -1,7 +1,8 @@
 import { Eye, File, FileCode2, FileDiff, FileImage, FileText, Globe2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useOptionalControlTransport } from '@/app/control-transport';
-import { filePreviewRequestFromBlock, fileSizeLabel } from './file-descriptor';
+import { AgentHtmlReportCard } from './AgentHtmlReportCard';
+import { filePreviewRequestFromBlock, fileSizeLabel, isHtmlReport } from './file-descriptor';
 import { useFilePreviewStore } from './file-preview-store';
 import './file-preview.css';
 
@@ -13,20 +14,34 @@ export function AgentFileBlock({ data, sessionId = '' }: { data: Record<string, 
   const meta = [request?.mimeTypeHint || string(data.mimeType), fileSizeLabel(request?.byteSizeHint ?? 0)].filter(Boolean).join(' · ');
   const available = Boolean(request && transport);
 
+  if (request && isHtmlReport(fileName, request.mimeTypeHint)) {
+    return <AgentHtmlReportCard fileName={fileName} request={request} transport={transport ?? null} />;
+  }
+
   return (
     <button
       aria-label={available ? `预览 ${fileName}` : `${fileName} 的预览回执不可用`}
       className="agent-file-block"
       data-disabled={!available || undefined}
+      data-kind={fileKind(fileName, request?.mimeTypeHint ?? '')}
       disabled={!available}
       onClick={() => request && transport && openPreview(request, transport)}
       type="button"
     >
       <span className="agent-file-block__icon">{fileIcon(fileName, request?.mimeTypeHint ?? '')}</span>
       <span><strong>{fileName}</strong><small>{meta || '受控文件'}</small></span>
-      <Eye aria-hidden="true" size={16} />
+      <span aria-hidden="true" className="agent-file-block__open"><Eye size={15} />预览</span>
     </button>
   );
+}
+
+function fileKind(fileName: string, mimeType: string): 'code' | 'diff' | 'document' | 'image' | 'file' {
+  const lower = fileName.toLowerCase();
+  if (mimeType.startsWith('image/')) return 'image';
+  if (/\.(?:diff|patch)$/u.test(lower)) return 'diff';
+  if (/\.(?:md|markdown|mdx|pdf|docx?)$/u.test(lower)) return 'document';
+  if (mimeType.startsWith('text/') || /\.[a-z0-9]{1,8}$/u.test(lower)) return 'code';
+  return 'file';
 }
 
 function fileIcon(fileName: string, mimeType: string): ReactNode {

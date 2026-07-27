@@ -13,14 +13,14 @@
 .debug-context-inspector__storage[data-persistent='true'] { color: var(--color-success); }
 .debug-context-inspector__storage > span { display: grid; min-width: 0; gap: 1px; }
 .debug-context-inspector__storage strong { color: var(--color-text); font-size: 12px; }
-.debug-context-inspector__storage small { overflow: hidden; color: var(--color-text-tertiary); font: 11px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
-.debug-context-inspector__storage b { color: var(--color-text-secondary); font: 600 11px var(--font-mono); white-space: nowrap; }
+.debug-context-inspector__storage small { overflow: hidden; color: var(--color-text-tertiary); font: 12px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.debug-context-inspector__storage b { color: var(--color-text-secondary); font: 600 12px var(--font-mono); white-space: nowrap; }
 
 .debug-context-inspector__metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--color-border); }
 .debug-context-inspector__metrics > span { display: grid; min-width: 0; grid-template-columns: 16px minmax(0, 1fr); gap: 0 6px; padding: 8px 10px; border-left: 1px solid var(--color-border); }
 .debug-context-inspector__metrics > span:first-child { border-left: 0; }
 .debug-context-inspector__metrics svg { grid-row: 1 / 3; align-self: center; color: var(--color-text-tertiary); }
-.debug-context-inspector__metrics small { overflow: hidden; color: var(--color-text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.debug-context-inspector__metrics small { overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .debug-context-inspector__metrics strong { overflow: hidden; font: 600 12px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 
 .debug-context-inspector__workspace { position: relative; display: grid; min-width: 0; min-height: 0; height: min(54vh, 560px); grid-template-columns: minmax(0, 1fr); overflow: hidden; background: var(--color-surface); }
@@ -34,16 +34,16 @@
 .debug-context-inspector__pipeline > li > button:hover { background: var(--color-surface-hover); }
 .debug-context-inspector__pipeline > li > button[aria-pressed='true'] { background: color-mix(in srgb, var(--color-accent-soft) 45%, var(--color-surface)); box-shadow: inset 3px 0 0 var(--color-accent); }
 .debug-context-inspector__pipeline > li > button > svg { color: var(--color-text-tertiary); }
-.debug-context-inspector__ordinal { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--color-border-strong); border-radius: 50%; background: var(--color-surface); color: var(--color-text-secondary); font: 600 11px var(--font-mono); }
+.debug-context-inspector__ordinal { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--color-border-strong); border-radius: 50%; background: var(--color-surface); color: var(--color-text-secondary); font: 600 12px var(--font-mono); }
 .debug-context-inspector__stage-copy { display: grid; min-width: 0; gap: 1px; }
 .debug-context-inspector__stage-copy strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.debug-context-inspector__stage-copy small { overflow: hidden; color: var(--color-text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.debug-context-inspector__pipeline button em { color: var(--color-success); font-size: 11px; font-style: normal; white-space: nowrap; }
+.debug-context-inspector__stage-copy small { overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.debug-context-inspector__pipeline button em { color: var(--color-success); font-size: 12px; font-style: normal; white-space: nowrap; }
 .debug-context-inspector__pipeline > li[data-channel='wire'] button em { color: var(--color-info); }
 .debug-context-inspector__stage-detail { display: grid; min-width: 0; min-height: 0; height: 100%; grid-template-rows: auto auto minmax(0, 1fr); overflow: hidden; border-left: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-surface-subtle) 52%, var(--color-surface)); animation: debug-context-detail-in var(--duration-fast) var(--ease-standard) both; }
 .debug-context-inspector__stage-detail > header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
 .debug-context-inspector__stage-detail > header > span { display: grid; min-width: 0; gap: 2px; }
-.debug-context-inspector__stage-detail > header small { color: var(--color-accent-strong); font-size: 11px; }
+.debug-context-inspector__stage-detail > header small { color: var(--color-accent-strong); font-size: 12px; }
 .debug-context-inspector__stage-detail > header strong { overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .debug-context-inspector__stage-detail > header p { margin: 0; overflow: hidden; color: var(--color-text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .debug-context-inspector__stage-detail > header > div { display: flex; flex: 0 0 auto; gap: 4px; }

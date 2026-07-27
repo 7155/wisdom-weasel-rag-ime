@@ -68,7 +68,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="shell-topbar__mobile-brand">
             <img
               className="shell-brand__mark"
-              src="./companions/personas/companion-present-v2.webp"
+              src="./companions/personas/companion-present-v4.webp"
               alt=""
               aria-hidden="true"
             />

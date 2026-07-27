@@ -53,6 +53,9 @@ test('managed Markdown, code, Diff, image, and static HTML previews stay usable 
   await expect(iframe.contentFrame().getByRole('heading', { name: '静态验收报告' })).toBeVisible();
   await expect(iframe.contentFrame().getByText('脚本与网络已隔离。')).toBeVisible();
   await expect(iframe.contentFrame().locator('script, form, iframe')).toHaveCount(0);
+  // Nothing may survive that could still reach the network, and nothing may be
+  // left as a broken-image husk where a remote asset was removed.
+  await expect(iframe.contentFrame().locator('img[src^="http"], link, [onerror], [onload]')).toHaveCount(0);
   await expectNoHorizontalPageOverflow(page);
   expect(externalRequests).toEqual([]);
 
@@ -62,8 +65,20 @@ test('managed Markdown, code, Diff, image, and static HTML previews stay usable 
   });
 });
 
+/**
+ * Generated HTML is delivered as a report card with its own labelled action
+ * rather than the one-line chip every other managed file gets, so opening it
+ * goes through that card. Everything after the click is identical — one preview
+ * shell, one sandbox, one set of guarantees.
+ */
 async function open(page: Page, fileName: string): Promise<void> {
-  await page.getByRole('button', { name: `预览 ${fileName}` }).click();
+  if (/\.html?$/u.test(fileName)) {
+    const card = page.locator('.agent-report-card', { hasText: fileName });
+    await expect(card).toBeVisible();
+    await card.getByRole('button', { name: '预览报告' }).click();
+  } else {
+    await page.getByRole('button', { name: `预览 ${fileName}` }).click();
+  }
   await expect(page.getByRole('dialog')).toBeVisible();
 }
 

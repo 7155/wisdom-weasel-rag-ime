@@ -55,7 +55,7 @@
 .knowledge-graph__stats { display: flex; align-items: stretch; gap: 0; margin: 0; border-bottom: 1px solid var(--color-border); }
 .knowledge-graph__stats > div { display: grid; min-width: 84px; gap: 2px; padding: 9px var(--space-3); border-right: 1px solid var(--color-border); }
 .knowledge-graph__stats dt { color: var(--color-text-tertiary); font-size: 13px; }
-.knowledge-graph__stats dd { margin: 0; font-size: 15px; font-weight: 680; }
+.knowledge-graph__stats dd { margin: 0; font-size: 15px; font-weight: var(--font-weight-semibold); }
 .knowledge-graph__stats > span { align-self: center; margin-left: auto; padding-inline: var(--space-3); color: var(--color-warning); font-size: 13px; }
 .knowledge-graph__workspace { position: relative; display: grid; min-height: 0; grid-template-columns: minmax(0, 1fr); }
 .knowledge-graph__canvas { position: relative; min-width: 0; height: clamp(520px, 62vh, 700px); overflow: hidden; background: var(--color-canvas); isolation: isolate; }
@@ -111,7 +111,7 @@
 .knowledge-graph__build-status dl > div { min-width: 0; padding: var(--space-3); border-right: 1px solid var(--color-border); }
 .knowledge-graph__build-status dl > div:last-child { border-right: 0; }
 .knowledge-graph__build-status dt { color: var(--color-text-tertiary); font-size: 13px; }
-.knowledge-graph__build-status dd { margin: 4px 0 0; overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-graph__build-status dd { margin: 4px 0 0; overflow: hidden; font-size: 13px; font-weight: var(--font-weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
 
 @container knowledge-graph (max-width: 900px) {
   .knowledge-graph__toolbar { grid-template-columns: minmax(180px, 1fr) minmax(140px, 190px) 140px; }
@@ -215,7 +215,7 @@
 .knowledge-base-rail__worker[data-state='success'] i { background: var(--color-success); }
 .knowledge-base-rail__worker[data-state='warning'] i { background: var(--color-warning); }
 .knowledge-base-rail__worker[data-state='danger'] i { background: var(--color-danger); }
-.knowledge-base-rail__worker b { color: var(--color-text-primary); font-weight: 650; }
+.knowledge-base-rail__worker b { color: var(--color-text-primary); font-weight: var(--font-weight-semibold); }
 
 .knowledge-base-rail__list {
   min-height: 360px;
@@ -548,21 +548,19 @@
 .knowledge-material-stats {
   display: grid;
   margin: 0 0 var(--space-3);
-  border-block: 1px solid var(--color-border);
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-4);
 }
 
 .knowledge-material-stats > div {
   display: grid;
   min-width: 0;
-  padding: 8px 10px;
-  border-right: 1px solid var(--color-border);
+  padding: 0;
   gap: 2px;
 }
 
-.knowledge-material-stats > div:last-child { border-right: 0; }
 .knowledge-material-stats dt { color: var(--color-text-tertiary); font-size: 13px; }
-.knowledge-material-stats dd { margin: 0; font-size: 14px; font-weight: 750; }
+.knowledge-material-stats dd { margin: 0; font-size: var(--font-size-ui-strong); font-variant-numeric: tabular-nums; font-weight: var(--font-weight-semibold); }
 
 .knowledge-upload-queue {
   margin: 0 0 var(--space-3);
@@ -590,7 +588,7 @@
   display: grid;
   min-width: 0;
   min-height: 470px;
-  border-bottom: 1px solid var(--color-border);
+  border-top: 1px solid var(--color-border-soft);
   grid-template-columns: minmax(0, 1fr) minmax(250px, 31%);
 }
 
@@ -616,7 +614,7 @@
   background: var(--color-surface-subtle);
   color: var(--color-text-tertiary);
   font-size: 13px;
-  font-weight: 650;
+  font-weight: var(--font-weight-semibold);
 }
 
 .knowledge-material-list__body { min-height: 390px; }
@@ -657,7 +655,8 @@
 .knowledge-document-summary {
   min-width: 0;
   padding: var(--space-3);
-  background: var(--color-surface-subtle);
+  border-left: 1px solid var(--color-border-soft);
+  background: color-mix(in srgb, var(--color-surface-subtle) 55%, var(--color-paper));
 }
 
 .knowledge-document-summary > header {
@@ -756,7 +755,7 @@
   padding: var(--space-4);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
-  box-shadow: 0 2px 8px rgb(0 0 0 / 5%);
+  box-shadow: var(--shadow-2);
 }
 
 .knowledge-page-preview > section > header { display: flex; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--color-border); color: var(--color-text-tertiary); font-size: 13px; }
@@ -961,3 +960,147 @@
   .knowledge-job-detail dl { grid-template-columns: 1fr; }
   .knowledge-chunk-preview-controls { grid-template-columns: 1fr; }
 }
+
+
+/* Adopts the shared sheet grammar: the library is a paper sheet on the
+   canvas, framed by the workspace gutter, not a full-bleed app frame. */
+.shell-route-stage > main.knowledge-feature {
+  height: auto;
+  min-height: calc(100dvh - var(--topbar-height));
+  padding: var(--space-4) var(--workspace-gutter) var(--space-6);
+  background: var(--color-canvas);
+}
+.knowledge-library {
+  height: calc(100dvh - var(--topbar-height) - 72px);
+  overflow: hidden;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-3);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-1);
+}
+
+
+/* Document facts read as hanging key/value lines, not a properties table. */
+.knowledge-document-summary dl > div {
+  grid-template-columns: minmax(72px, max-content) minmax(0, 1fr);
+  gap: var(--space-4);
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-soft) 60%, transparent);
+}
+.knowledge-document-summary dt { color: var(--color-text-tertiary); font-size: var(--font-size-caption); }
+.knowledge-document-summary dd { font-size: var(--font-size-ui); }
+
+/* Its stat row follows the same report grammar as Overview and Planning. */
+.knowledge-material-stats { padding-top: var(--space-3); border-top: var(--rule-figure); gap: var(--space-4) var(--space-6); }
+.knowledge-material-stats dt { color: var(--color-text-tertiary); font-size: var(--font-size-caption); letter-spacing: .04em; }
+.knowledge-material-stats dd { font-family: var(--font-ui); font-size: 19px; font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums lining-nums; }
+
+
+/* ============== knowledge adopts the workspace pane grammar ==============
+   The three panes were a filled sidebar beside a plain table. They now read
+   like Session's rails: chrome-toned index, paper reading pane, and a
+   marginal detail column separated by a soft rule. */
+.knowledge-base-rail {
+  border-right: 1px solid var(--color-border-soft);
+  background: var(--color-chrome);
+}
+.knowledge-base-rail__list { padding: 4px 7px 10px; }
+.knowledge-base-row {
+  border-radius: var(--radius-2);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+.knowledge-base-row[aria-current='true'],
+.knowledge-base-row[data-selected='true'] {
+  background: color-mix(in srgb, var(--color-surface-hover) 46%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+.knowledge-base-rail > header strong { font-size: var(--font-size-ui-strong); font-weight: var(--font-weight-semibold); }
+
+/* Reading pane and its marginal column sit on the paper, not on grey. */
+.knowledge-material-list { background: transparent; }
+.knowledge-material-list__head {
+  border-bottom: 1px solid var(--color-border-soft);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+  letter-spacing: .04em;
+}
+.knowledge-material-row { border-bottom: 1px solid color-mix(in srgb, var(--color-border-soft) 55%, transparent); }
+.knowledge-material-row[data-selected] { box-shadow: inset 2px 0 0 var(--color-accent); }
+
+/* The trailing attachment tally belongs to the facts above it. */
+.knowledge-document-summary__counts {
+  margin-top: 2px;
+  padding-top: 8px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-caption);
+}
+
+/* Phones: the library sheet goes full-bleed like the other framed routes, so
+   the icon rail is not squeezed inside page gutters. */
+@media (max-width: 760px) {
+  .shell-route-stage > main.knowledge-feature { padding: 0; }
+  .knowledge-library { height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+}
+
+
+/* ================= knowledge reads as one flowing sheet =================
+   It was a fixed-height frame with three independently scrolling panes, which
+   produced a horizontal scrollbar under a nearly empty rail and clipped the
+   detail list mid-row. The sheet now grows with its content and the page
+   scrolls once, like every other route. */
+.shell-route-stage > main.knowledge-feature {
+  height: auto;
+  min-height: calc(100dvh - var(--topbar-height));
+  overflow: visible;
+}
+
+.knowledge-library {
+  height: auto;
+  min-height: 520px;
+  overflow: visible;
+  align-items: start;
+}
+
+.knowledge-base-rail {
+  min-height: 100%;
+  overflow: visible;
+}
+/* The rail index never scrolls sideways: rows fit the column and truncate. */
+.knowledge-base-rail__list { min-height: 0; overflow-x: hidden; overflow-y: visible; }
+.knowledge-base-row { min-width: 0; max-width: 100%; }
+
+/* Names truncate deliberately with a tooltip instead of being cut twice in a
+   column that has room. */
+.knowledge-base-row strong,
+.knowledge-base-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-material-workspace { min-height: 0; }
+/* Keep the list body's own height: zeroing it collapsed the file rows. */
+.knowledge-material-list__body { overflow: visible; }
+.knowledge-document-summary { align-self: stretch; }
+.knowledge-library__detail { min-height: 0; overflow: visible; }
+.knowledge-library__tabs > [role='tabpanel'] { overflow: visible; }
+
+
+/* The library name is the row's subject and gets the width: the Agent badge
+   drops under it rather than squeezing the title into an ellipsis in a column
+   that has room. */
+.knowledge-base-row {
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 3px;
+  align-items: start;
+  border-bottom-color: var(--color-border-soft);
+}
+.knowledge-base-row > :first-child { grid-row: 1 / span 2; align-self: center; }
+.knowledge-base-row strong { white-space: normal; overflow-wrap: anywhere; }
+.knowledge-base-row__agent { grid-column: 2; justify-self: start; }
+
+/* Reading column and its marginal column end on the same edge. */
+.knowledge-material-workspace > * { min-height: 100%; }

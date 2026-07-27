@@ -45,15 +45,48 @@
 .room-kernel-root__receipts > span[data-receipt-state='unknown'] { color: var(--color-warning); }
 .room-kernel-root__planes { display: grid; min-width: 0; grid-template-columns: minmax(0, 1.35fr) minmax(240px, .65fr); gap: 12px; }
 .room-kernel-posts, .room-kernel-sessions { display: grid; min-width: 0; align-content: start; gap: 0; }
-.room-kernel-posts > header, .room-kernel-sessions > header { display: flex; min-height: 32px; align-items: baseline; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--color-border); }
-.room-kernel-posts > header strong, .room-kernel-sessions > header strong { font-size: 13px; }
-.room-kernel-posts > header small, .room-kernel-sessions > header small { color: var(--color-text-tertiary); font-size: 12px; }
+.room-kernel-posts > header, .room-kernel-sessions > header {
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+/* The title never wraps; the explanation is the flexible part and may take a
+   second line. CJK wraps between any two characters, so without this the
+   narrow column split the label itself (伙伴运行状 / 态). */
+.room-kernel-posts > header strong, .room-kernel-sessions > header strong {
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.room-kernel-posts > header small, .room-kernel-sessions > header small {
+  min-width: 0;
+  align-self: start;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 17px;
+  text-align: right;
+}
 .room-kernel-posts > article { display: grid; min-width: 0; gap: 5px; border-bottom: 1px solid var(--color-border); padding: 9px 0; }
 .room-kernel-posts > article > span { display: flex; align-items: center; gap: 6px; }
 .room-kernel-posts b { color: var(--color-accent); font-size: 12px; }
 .room-kernel-posts p { margin: 0; color: var(--color-text-secondary); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
 .room-kernel-sessions details { border-bottom: 1px solid var(--color-border); }
-.room-kernel-sessions summary { display: grid; min-width: 0; min-height: 48px; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 7px; cursor: pointer; list-style: none; }
+.room-kernel-sessions summary {
+  display: grid;
+  min-width: 0;
+  min-height: 62px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  padding: 9px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.room-kernel-sessions summary > svg { margin-top: 3px; }
 .room-kernel-sessions summary::-webkit-details-marker { display: none; }
 .room-kernel-sessions summary > span { display: grid; min-width: 0; gap: 2px; }
 .room-kernel-sessions summary strong { overflow: hidden; font: 600 12px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }

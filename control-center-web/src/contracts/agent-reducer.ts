@@ -1035,6 +1035,24 @@ function completeTurn(
   turn.status = status;
   turn.updatedAtMs = nowMs;
   if (failure) turn.failure = failure;
+  /*
+   * Settle activities the turn never finished. Without this a stopped or
+   * failed turn keeps rendering its in-flight tools as "running" forever:
+   * the turn header reads 已停止 while the tool row underneath still reads
+   * 进行中, and its elapsed timer keeps counting. A completed turn is left
+   * alone — a tool that is genuinely still running there is real state.
+   */
+  if (status !== 'completed') {
+    for (const activityId of turn.activityIds) {
+      const activity = state.activitiesById[activityId];
+      if (!activity || !['running', 'waiting'].includes(activity.status)) continue;
+      state.activitiesById[activityId] = {
+        ...activity,
+        status: status === 'aborted' ? 'completed' : 'failed',
+        updatedAtMs: nowMs,
+      };
+    }
+  }
   for (const messageId of turn.messageIds) {
     const message = state.messagesById[messageId];
     if (!message) continue;
@@ -1044,7 +1062,14 @@ function completeTurn(
       status: messageStatus,
       blocks: message.blocks.map((block) => ({
         ...block,
-        status: block.status === 'running' ? messageStatus : block.status,
+        /* A queued block never started; once the turn is over it cannot still
+           be waiting its turn. Settling only `running` left finished turns
+           displaying tools as 排队中 forever — the same stale-state defect the
+           activity list had. Aborted turns settle their pending work to
+           completed rather than failed: the user stopped it, it did not break. */
+        status: block.status === 'running' || block.status === 'queued'
+          ? (status === 'aborted' ? 'completed' : messageStatus)
+          : block.status,
       })),
       completedAtMs: nowMs,
     };

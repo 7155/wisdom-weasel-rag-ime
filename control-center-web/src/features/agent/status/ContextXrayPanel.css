@@ -76,7 +76,7 @@
   align-items: center;
   gap: 4px;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .agent-context-xray__runtime dd {
@@ -84,7 +84,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--color-text);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: 700;
   text-overflow: ellipsis;
@@ -135,7 +135,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -156,7 +156,7 @@
   border: 1px solid color-mix(in srgb, var(--color-border) 78%, transparent);
   border-radius: 4px;
   color: var(--color-text-tertiary);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 650;
   white-space: nowrap;
 }
@@ -181,7 +181,7 @@
 .agent-context-xray__notice {
   margin: 0;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -195,7 +195,7 @@
 
 @media (max-width: 560px) {
   .agent-context-xray__runtime dt {
-    font-size: 11px;
+    font-size: 12px;
   }
 
   .agent-context-xray__runtime dd,
@@ -206,7 +206,7 @@
   .agent-context-xray__layers small,
   .agent-context-xray__layers em,
   .agent-context-xray__footnote {
-    font-size: 11px;
+    font-size: 12px;
   }
 }
 

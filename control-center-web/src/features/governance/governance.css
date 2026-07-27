@@ -30,3 +30,35 @@
   .governance-filters, .governance-columns, .governance-columns--two { grid-template-columns: minmax(0, 1fr); }
   .governance-list article header, .governance-timeline article header { align-items: flex-start; flex-direction: column; }
 }
+
+/* ============== governance adopts the editorial page grammar ==============
+   Five bordered panels each holding one "nothing yet" line was clutter around
+   emptiness. Sections now hang under a quiet label with a hairline, so an
+   absence costs one line instead of a whole card. */
+.governance-columns { gap: var(--space-6) var(--space-8); }
+.governance-list {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.governance-list > h3 {
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--color-border-soft);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-caption);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: .04em;
+}
+.governance-list article,
+.governance-timeline article {
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border-soft) 55%, transparent);
+}
+.governance-list__empty,
+.governance-list > p {
+  margin: 0;
+  padding: 9px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-ui);
+}
