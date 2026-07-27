@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "6f4bfd6d8131a94c94f3475661e26b7c88163a52",
+  "minimumHandlersCommit": "0cb10fa18118632b6e3d3233cbc18d7ea6486114",
   "requiredMethods": [
     "session.control_state",
     "room.dispatch",
@@ -46,7 +46,9 @@
       "return record ? structuredClone(record) : undefined;",
       "normalizeDebugContextRecord(parsed, this.maxCallsPerTurn)",
       "loadedSkillRecoveryReceipts()",
-      "safeReasoningInspectionValue"
+      "safeReasoningInspectionValue",
+      "const DEFAULT_STORAGE_BYTES = 5 * 1024 * 1024 * 1024;",
+      "const MAX_STORAGE_BYTES = 64 * 1024 * 1024 * 1024;"
     ],
     "skills": [
       "input: routing?.input",

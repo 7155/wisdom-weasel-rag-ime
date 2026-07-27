@@ -2736,7 +2736,14 @@ function previewConfigurationSettings(): Record<string, unknown> {
         refinementModel: 'inherit',
         refinementThinkingLevel: 'off',
       },
-      privacy: { traceIncludeText: false, redactSecrets: true },
+      privacy: {
+        traceIncludeText: false,
+        debugIncludeText: false,
+        debugContextDirectory: '/Volumes/External/Cheng/context-snapshots',
+        debugContextMaxGiB: 5,
+        debugContextMaxCallsPerTurn: 128,
+        redactSecrets: true,
+      },
     },
   };
 }
@@ -2783,7 +2790,7 @@ function previewConfigurationSchema(): Record<string, unknown> {
         id: 'models',
         label: 'Models',
         fields: [
-          { key: 'models.hot', type: 'string', label: '即时预测模型', applyMode: 'restart_predictor' },
+          { key: 'models.hot', type: 'string', label: '本机预测配置 ID', applyMode: 'restart_predictor' },
         ],
       },
       {
@@ -2828,6 +2835,7 @@ function previewConfigurationSchema(): Record<string, unknown> {
         fields: [
           { key: 'agent.pi.enabled', type: 'boolean', label: '连接 Pi', applyMode: 'live' },
           { key: 'agent.pi.idleTimeoutSeconds', type: 'integer', label: '空闲退出时间', min: 0, max: 86400, applyMode: 'live' },
+          { key: 'agent.pi.systemProxy', type: 'boolean', label: '远程模型跟随系统代理', applyMode: 'restart_agent_gateway' },
           { key: 'agent.pi.resumeLastSession', type: 'boolean', label: '恢复上次对话', applyMode: 'live' },
         ],
       },
@@ -2835,6 +2843,38 @@ function previewConfigurationSchema(): Record<string, unknown> {
         id: 'privacy',
         label: 'Privacy',
         fields: [
+          {
+            key: 'privacy.debugIncludeText',
+            type: 'boolean',
+            label: '保存并查看本机上下文快照',
+            applyMode: 'restart_agent_gateway',
+          },
+          {
+            key: 'privacy.debugContextDirectory',
+            type: 'string',
+            label: '上下文快照目录（支持外置硬盘）',
+            applyMode: 'restart_agent_gateway',
+            maxLength: 1024,
+          },
+          {
+            key: 'privacy.debugContextMaxGiB',
+            type: 'integer',
+            label: '上下文快照容量',
+            min: 1,
+            max: 64,
+            unit: 'GiB',
+            applyMode: 'restart_agent_gateway',
+          },
+          {
+            key: 'privacy.debugContextMaxCallsPerTurn',
+            type: 'integer',
+            label: '每回合保留的模型调用',
+            min: 1,
+            max: 256,
+            unit: '次/回合',
+            applyMode: 'restart_agent_gateway',
+            expert: true,
+          },
           { key: 'privacy.traceIncludeText', type: 'boolean', label: '诊断记录包含正文', applyMode: 'live', expert: true },
           { key: 'privacy.redactSecrets', type: 'boolean', label: '诊断中隐藏秘密', applyMode: 'live' },
         ],

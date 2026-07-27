@@ -95,7 +95,7 @@ export function ToolPicker({
 function publicToolDescription(tool: ToolManifest): string {
   return ({
     ime_overview: '查看伙伴、模型、记忆、输入和近期活动',
-    ime_voice: '查看语音输入状态，并按当前权限切换已配置的识别服务',
+    ime_voice: '查看语音输入状态，并按当前权限切换已配置的转写引擎',
     ime_memory: '查找过去的输入、偏好、决定和有来源的长期记忆；变更会先进入审阅',
     agent_role_book: '查看伙伴形成的工作习惯和边界；新的成长内容会先成为待确认草案',
     ime_browser: '查看已连接的浏览器页面，并按当前权限执行可追踪操作',

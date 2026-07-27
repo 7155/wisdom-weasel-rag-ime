@@ -10,19 +10,24 @@ import subprocess
 import threading
 import time
 import uuid
+import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
+from urllib.parse import urlsplit
 
 from .pi_runtime import PiRuntimeConfig
 
 
 _PROVIDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
-_ALLOWED_ACTIONS = frozenset({"set_api_key", "logout", "oauth_device_code"})
+_ALLOWED_ACTIONS = frozenset(
+    {"set_api_key", "logout", "oauth_browser", "oauth_device_code"}
+)
 _OAUTH_TIMEOUT_SECONDS = 15 * 60
 _CONFIRM_TEXT = {
     "set_api_key": "replace",
     "logout": "logout",
+    "oauth_browser": "connect",
     "oauth_device_code": "connect",
 }
 
@@ -113,6 +118,7 @@ class _OAuthJob:
     login_id: str
     provider: str
     provider_name: str
+    login_method: str
     process: subprocess.Popen[str]
     state: str = "starting"
     created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
@@ -127,8 +133,14 @@ class _OAuthJob:
 class PiProviderAuthService:
     """A secret-free control surface backed by Pi's AuthStorage and ModelRegistry."""
 
-    def __init__(self, config: PiProviderBridgeConfig) -> None:
+    def __init__(
+        self,
+        config: PiProviderBridgeConfig,
+        *,
+        oauth_url_opener: Callable[[str], object] | None = None,
+    ) -> None:
         self.config = config
+        self._oauth_url_opener = oauth_url_opener or webbrowser.open
         self._lock = threading.RLock()
         self._bridge_lock = threading.Lock()
         self._oauth_start_lock = threading.Lock()
@@ -185,7 +197,12 @@ class PiProviderAuthService:
             raise PiProviderAuthError("不支持这项凭据操作。")
         provider_item = self._provider(provider)
         auth = provider_item.get("auth") if isinstance(provider_item.get("auth"), Mapping) else {}
-        if action == "oauth_device_code" and not bool(auth.get("oauthDeviceCodeSupported")):
+        if action == "oauth_browser" and not bool(auth.get("oauthBrowserSupported")):
+            raise PiProviderAuthError("这个 Provider 暂不支持浏览器登录。")
+        if (
+            action == "oauth_device_code"
+            and not bool(auth.get("oauthDeviceCodeSupported"))
+        ):
             raise PiProviderAuthError("这个 Provider 暂不支持设备码登录。")
         token = secrets.token_urlsafe(32)
         expires_at_ms = int(time.time() * 1000) + 120_000
@@ -240,8 +257,17 @@ class PiProviderAuthService:
         if preview.action == "logout":
             result = self._call({"action": "logout", "provider": preview.provider})
             return self._receipt(preview, before_type=str(result.get("beforeType") or ""))
-        if preview.action == "oauth_device_code":
-            login = self._start_oauth(preview.provider, preview.provider_name)
+        if preview.action in {"oauth_browser", "oauth_device_code"}:
+            method = (
+                "browser"
+                if preview.action == "oauth_browser"
+                else "device_code"
+            )
+            login = self._start_oauth(
+                preview.provider,
+                preview.provider_name,
+                method=method,
+            )
             return self._receipt(preview, before_type="", login=login)
         raise PiProviderAuthError("不支持这项凭据操作。")
 
@@ -342,7 +368,15 @@ class PiProviderAuthService:
             raise PiProviderAuthError(_public_error(result.get("error")) or "Pi 凭据操作失败。")
         return result
 
-    def _start_oauth(self, provider: str, provider_name: str) -> dict[str, object]:
+    def _start_oauth(
+        self,
+        provider: str,
+        provider_name: str,
+        *,
+        method: str = "browser",
+    ) -> dict[str, object]:
+        if method not in {"browser", "device_code"}:
+            raise PiProviderAuthError("不支持这项登录方式。")
         bridge_entry = self.config.bridge_entry
         if not self.config.available or bridge_entry is None:
             raise PiProviderAuthError("当前 Agent 运行时没有可用的 Pi 登录组件。")
@@ -353,7 +387,14 @@ class PiProviderAuthService:
                     if existing.provider == provider and existing.state not in {"completed", "failed", "cancelled"}:
                         raise PiProviderAuthError("这个 Provider 已有一个登录流程正在进行。")
             request = self._bridge_payload(
-                {"action": "oauth_device_code", "provider": provider}
+                {
+                    "action": (
+                        "oauth_browser"
+                        if method == "browser"
+                        else "oauth_device_code"
+                    ),
+                    "provider": provider,
+                }
             )
             process: subprocess.Popen[str] | None = None
             try:
@@ -380,6 +421,7 @@ class PiProviderAuthService:
                 login_id=login_id,
                 provider=provider,
                 provider_name=provider_name,
+                login_method=method,
                 process=process,
                 created_at_ms=now,
                 updated_at_ms=now,
@@ -427,6 +469,7 @@ class PiProviderAuthService:
         try:
             if stdout is not None:
                 for line in stdout:
+                    browser_url = ""
                     try:
                         event = json.loads(line)
                     except json.JSONDecodeError:
@@ -439,10 +482,17 @@ class PiProviderAuthService:
                         now = int(time.time() * 1000)
                         job.updated_at_ms = now
                         kind = str(event.get("event") or "")
-                        if kind == "device_code":
+                        if kind == "auth_url":
+                            job.state = "waiting_for_user"
+                            job.user_code = ""
+                            job.verification_uri = _openai_codex_login_uri(
+                                event.get("url")
+                            )
+                            browser_url = job.verification_uri
+                        elif kind == "device_code":
                             job.state = "waiting_for_user"
                             job.user_code = str(event.get("userCode") or "")[:64]
-                            job.verification_uri = _openai_codex_verification_uri(
+                            job.verification_uri = _openai_codex_login_uri(
                                 event.get("verificationUri")
                             )
                             expires_in = _bounded_int(event.get("expiresInSeconds"), 0, 3600)
@@ -450,10 +500,17 @@ class PiProviderAuthService:
                         elif kind == "completed":
                             job.state = "completed"
                             job.user_code = ""
+                            job.verification_uri = ""
                         elif kind == "failed":
                             job.state = "failed"
                             job.error = _public_error(event.get("error"))
                             job.user_code = ""
+                            job.verification_uri = ""
+                    if browser_url:
+                        try:
+                            self._oauth_url_opener(browser_url)
+                        except (OSError, RuntimeError):
+                            pass
             return_code = job.process.wait(timeout=2)
             with self._lock:
                 if job.state not in {"completed", "failed", "cancelled"}:
@@ -540,12 +597,37 @@ def _preview_summary(action: str, provider_name: str) -> list[str]:
         return [f"替换 {provider_name} 的 API Key。", "现有密钥不会读取或显示。", "确认后由 Pi 安全写入。"]
     if action == "logout":
         return [f"退出 {provider_name}。", "本机保存的登录信息会移除。", "环境变量与外部配置不会改变。"]
-    return [f"连接 {provider_name}。", "将显示一次性设备码并在浏览器完成登录。", "令牌只由 Pi 保存。"]
+    if action == "oauth_browser":
+        return [
+            f"连接 {provider_name}。",
+            "默认打开浏览器，并通过本机 localhost 回调完成登录。",
+            "令牌只由 Pi 保存。",
+        ]
+    return [
+        f"使用设备码连接 {provider_name}。",
+        "设备码仅用于本机回调不可用的备用流程。",
+        "令牌只由 Pi 保存。",
+    ]
 
 
-def _openai_codex_verification_uri(value: object) -> str:
+def _openai_codex_login_uri(value: object) -> str:
     uri = str(value or "").strip()
-    return uri if uri == "https://auth.openai.com/codex/device" else ""
+    if not uri or len(uri) > 4096:
+        return ""
+    try:
+        parsed = urlsplit(uri)
+    except ValueError:
+        return ""
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "auth.openai.com"
+        or parsed.username
+        or parsed.password
+        or parsed.port not in {None, 443}
+        or parsed.path not in {"/oauth/authorize", "/codex/device"}
+    ):
+        return ""
+    return uri
 
 
 def _oauth_payload(job: _OAuthJob) -> dict[str, object]:
@@ -555,6 +637,7 @@ def _oauth_payload(job: _OAuthJob) -> dict[str, object]:
         "loginId": job.login_id,
         "provider": job.provider,
         "providerName": job.provider_name,
+        "loginMethod": job.login_method,
         "state": job.state,
         "verificationUri": job.verification_uri,
         "userCode": job.user_code,

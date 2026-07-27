@@ -60,7 +60,7 @@ describe('Pi provider credential UI', () => {
     ).toBeGreaterThanOrEqual(2));
   });
 
-  it('shows OAuth as pending until the device-code flow actually completes', async () => {
+  it('uses browser callback OAuth by default and stays pending until completion', async () => {
     const user = userEvent.setup();
     const transport = new MockControlTransport({
       capabilities: { features: { piProviderCredentials: true } },
@@ -71,7 +71,7 @@ describe('Pi provider credential UI', () => {
           previewToken: 'preview-oauth',
           requiredConfirm: 'connect',
           provider: 'openai-codex',
-          action: 'oauth_device_code',
+          action: 'oauth_browser',
           secretPolicy: '令牌只由 Pi 保存。',
           sessionBoundary: '登录完成后重启运行时。',
         },
@@ -79,21 +79,21 @@ describe('Pi provider credential UI', () => {
           ok: true,
           receiptId: 'oauth-started',
           provider: 'openai-codex',
-          action: 'oauth_device_code',
+          action: 'oauth_browser',
           receiptState: 'login_started',
           requiresAgentRestart: false,
           login: {
             loginId: 'pi-login-1',
             state: 'waiting_for_user',
-            userCode: 'TEST-CODE',
-            verificationUri: 'https://auth.openai.com/codex/device',
+            loginMethod: 'browser',
+            verificationUri: 'https://auth.openai.com/oauth/authorize?client_id=test&state=test',
           },
         },
         'agent.provider.oauth.status': {
           loginId: 'pi-login-1',
           state: 'waiting_for_user',
-          userCode: 'TEST-CODE',
-          verificationUri: 'https://auth.openai.com/codex/device',
+          loginMethod: 'browser',
+          verificationUri: 'https://auth.openai.com/oauth/authorize?client_id=test&state=test',
         },
       },
     });
@@ -103,8 +103,51 @@ describe('Pi provider credential UI', () => {
     await user.click(await screen.findByRole('button', { name: '确认继续' }));
 
     expect(await screen.findByText('登录流程已启动')).toBeInTheDocument();
-    expect(screen.getByText('设备码：TEST-CODE')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /继续浏览器登录/ })).toHaveAttribute(
+      'href',
+      'https://auth.openai.com/oauth/authorize?client_id=test&state=test',
+    );
+    expect(screen.queryByText(/设备码：/)).not.toBeInTheDocument();
     expect(screen.queryByText('操作已完成。结束当前回复后重启 Agent 运行时，新凭据会统一生效。')).not.toBeInTheDocument();
+  });
+
+  it('explains how to enable ChatGPT device-code authorization', async () => {
+    const user = userEvent.setup();
+    const transport = new MockControlTransport({
+      capabilities: { features: { piProviderCredentials: true } },
+      routes: {
+        'agent.providers.get': oauthProviderCatalog(),
+        'agent.provider.auth.preview': {
+          ok: true,
+          previewToken: 'preview-oauth-disabled',
+          requiredConfirm: 'connect',
+          provider: 'openai-codex',
+          action: 'oauth_device_code',
+        },
+        'agent.provider.auth.apply': {
+          ok: true,
+          receiptId: 'oauth-disabled',
+          provider: 'openai-codex',
+          action: 'oauth_device_code',
+          receiptState: 'login_started',
+          requiresAgentRestart: false,
+          login: {
+            loginId: 'pi-login-disabled',
+            state: 'failed',
+            error: 'Enable device code authorization for Codex in ChatGPT Security Settings, then run "codex login --device-auth" again.',
+          },
+        },
+      },
+    });
+    renderProvider(transport);
+
+    await user.click(await screen.findByRole('button', { name: '使用设备码' }));
+    await user.click(await screen.findByRole('button', { name: '确认继续' }));
+
+    expect(await screen.findByText('登录失败')).toBeInTheDocument();
+    expect(screen.getByText('请先在 ChatGPT「设置 → 安全」中开启设备码授权，然后重新连接。'))
+      .toBeInTheDocument();
+    expect(screen.queryByText(/codex login --device-auth/)).not.toBeInTheDocument();
   });
 });
 
@@ -135,6 +178,7 @@ function providerCatalog() {
         source: '',
         sourceLabel: '',
         oauthSupported: false,
+        oauthBrowserSupported: false,
         oauthDeviceCodeSupported: false,
       },
       configuredInCatalog: true,
@@ -157,6 +201,7 @@ function oauthProviderCatalog() {
       auth: {
         ...catalog.providers[0].auth,
         oauthSupported: true,
+        oauthBrowserSupported: true,
         oauthDeviceCodeSupported: true,
       },
     }],

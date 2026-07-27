@@ -162,6 +162,7 @@ function DebugStorage({ storage }: { storage: Record<string, unknown> }) {
   const persistent = storage.persistent === true;
   const directory = text(storage.directory);
   const error = text(storage.error);
+  const fileCount = Math.max(0, Math.floor(finiteNumber(storage.fileCount) ?? 0));
   if (!Object.keys(storage).length) return null;
   return (
     <div className="debug-context-inspector__storage" data-persistent={persistent || undefined}>
@@ -172,7 +173,7 @@ function DebugStorage({ storage }: { storage: Record<string, unknown> }) {
           {directory || error || '未开启本机快照保存，Runtime 重启后旧轮次不可恢复'}
         </small>
       </span>
-      <b>{formatBytes(finiteNumber(storage.usedBytes) ?? 0)} / {formatBytes(finiteNumber(storage.maxBytes) ?? 0)}</b>
+      <b>{fileCount} 个 · {formatBytes(finiteNumber(storage.usedBytes) ?? 0)} / {formatBytes(finiteNumber(storage.maxBytes) ?? 0)}</b>
     </div>
   );
 }
@@ -181,7 +182,7 @@ function debugContextEmptyMessage(storage: Record<string, unknown>): string {
   const error = text(storage.error);
   if (error) return `本轮快照写入失败：${error}`;
   if (storage.persistent === false && !text(storage.directory)) {
-    return '本轮快照只存在于原 Runtime；Runtime 重启后已经无法恢复';
+    return '本轮快照只存在于原 Runtime；请在“设置 → 隐私与安全”开启本机上下文快照';
   }
   return '本轮还没有到达可核对的 Provider 请求边界';
 }

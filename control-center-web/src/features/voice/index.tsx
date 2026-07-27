@@ -39,9 +39,24 @@ import { useProductIdentity } from '@/features/identity/product-identity';
 import './voice.css';
 
 const providers = [
-  { value: 'native_streaming', label: '内置流式识别' },
-  { value: 'realtime_websocket', label: '实时识别' },
-  { value: 'http_transcription', label: '录完再转写' },
+  {
+    value: 'native_streaming',
+    label: '火山引擎',
+    description: '火山引擎专用流式 API：边说边显示，支持热词和服务端最终稿。',
+    supportsHotwords: true,
+  },
+  {
+    value: 'realtime_websocket',
+    label: 'Realtime API',
+    description: 'OpenAI Realtime 协议兼容 WebSocket：边说边显示，可自定义地址、模型和请求头。',
+    supportsHotwords: false,
+  },
+  {
+    value: 'http_transcription',
+    label: 'HTTP 转写 API',
+    description: 'OpenAI Audio Transcriptions 形状兼容 HTTP：松开按键后上传整段音频。',
+    supportsHotwords: false,
+  },
 ] as const;
 
 const hotkeys = [
@@ -131,6 +146,11 @@ export function VoiceFeature() {
   const hotwordDirty = hotwordsEnabled !== booleanValue(voiceSettings.hotwordsEnabled)
     || JSON.stringify(hotwordDraft.words) !== JSON.stringify(savedHotwords);
   const serviceDirty = provider !== (configuredProvider || 'native_streaming') || hotkey !== configuredHotkey;
+  const selectedProvider = providers.find((item) => item.value === provider) ?? providers[0];
+  const activeProvider = providers.find(
+    (item) => item.value === (configuredProvider || 'native_streaming'),
+  ) ?? providers[0];
+  const hotwordsSupported = activeProvider.supportsHotwords;
   const refinementDirty = refinementModel !== configuredRefinementModel
     || refinementThinking !== configuredRefinementThinking;
   const resolvedRefinementReference = refinementModel === 'inherit'
@@ -231,7 +251,7 @@ export function VoiceFeature() {
             { label: '听写服务', value: queries.runtime.isPending ? '正在检查' : agentRunning ? '运行中' : '未运行', detail: stringValue(valueAt(voiceControl, 'agent.statusText')) || '随时按住快捷键开始听写', icon: Waves, tone: agentRunning ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '麦克风', value: queries.runtime.isPending ? '正在检查' : permissionLabel(microphone), detail: '需要系统授权', icon: Mic, tone: booleanValue(microphone.ok) ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '辅助功能', value: queries.runtime.isPending ? '正在检查' : permissionLabel(accessibility), detail: '用于将文字写回当前应用', icon: Shield, tone: booleanValue(accessibility.ok) ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
-            { label: '服务账号', value: credentialState.label, detail: '保存后不会在页面显示', icon: KeyRound, tone: credentialState.tone },
+            { label: 'API 凭据', value: credentialState.label, detail: '按引擎隔离保存在钥匙串', icon: KeyRound, tone: credentialState.tone },
           ]} />
           <InlineNotice title="隐私保护" tone="info">页面不会显示已保存的密钥或请求头。没有取得明确状态时，相关操作保持关闭。</InlineNotice>
           {queries.runtime.error ? <InlineNotice title="权限状态读取失败" tone="warning">暂时无法确认麦克风和辅助功能权限，请刷新后重试。</InlineNotice> : null}
@@ -271,14 +291,15 @@ export function VoiceFeature() {
         </ManagementSection>
 
         <ManagementSection
-          title="识别方式与按键"
-          description="选择声音如何识别，以及按住哪个键开始说话。保存前会先让你确认变化。"
+          title="转写引擎与按键"
+          description="选择真正处理音频的 Provider/API，以及按住哪个键开始说话。保存前会先让你确认变化。"
           trailing={<StatusBadge label={currentProviderStatus(queries.settings.isPending, Boolean(queries.settings.error), configuredProvider)} tone={configuredProvider ? 'info' : 'warning'} />}
         >
           <div className="voice-service-layout">
             <div className="voice-service-choice">
-              <strong>识别服务</strong>
-              <SegmentedControl aria-label="语音识别服务" items={providers} onValueChange={setProvider} value={provider} />
+              <strong>转写引擎</strong>
+              <SegmentedControl aria-label="语音转写引擎" items={providers} onValueChange={setProvider} value={provider} />
+              <p className="mgmt-muted">{selectedProvider.description}</p>
               <strong>按住说话</strong>
               <SegmentedControl aria-label="语音快捷键" items={hotkeys} onValueChange={setHotkey} value={hotkey} />
             </div>
@@ -290,7 +311,7 @@ export function VoiceFeature() {
                     ? '选择不同的服务或快捷键后才能生成预览。'
                     : '',
               )}
-              description="只更新识别方式和快捷键；保存后，听写服务会自动重新载入。"
+              description="只更新转写引擎和快捷键；保存后，听写服务会自动重新载入。"
               draftKey={JSON.stringify({ provider, hotkey, runtimeRevision })}
               mutationKey={['voice', 'mutation', 'service']}
               onApply={async (preview) => parseManagementWorkReceipt(
@@ -327,13 +348,13 @@ export function VoiceFeature() {
               )}
               onRolledBack={reloadVoice}
               risk="R1"
-              title="保存识别方式与按键"
+              title="保存转写引擎与按键"
             />
           </div>
-          {queries.settings.error ? <InlineNotice title="当前设置读取失败" tone="warning">暂时无法核对正在使用的语音服务，请刷新后重试。</InlineNotice> : null}
+          {queries.settings.error ? <InlineNotice title="当前设置读取失败" tone="warning">暂时无法核对正在使用的转写引擎，请刷新后重试。</InlineNotice> : null}
         </ManagementSection>
 
-        <ManagementSection title="服务账号" description="连接识别服务所需的信息只保存在 macOS 钥匙串中；保存后不会再次显示原值。">
+        <ManagementSection title="API 凭据" description="连接当前转写引擎所需的信息只保存在 macOS 钥匙串中；保存后不会再次显示原值。">
           <div className="voice-credential-grid">
             <Field description={credentialState.label === '已配置' ? '已配置；留空可保留现有 Token。' : '首次保存必须填写。'} htmlFor="voice-access-token" label="Access Token">
               <Input autoComplete="new-password" id="voice-access-token" onChange={(event) => setCredentialDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder={credentialState.label === '已配置' ? '已配置，留空保持不变' : '输入 Access Token'} type="password" value={credentialDraft.accessToken} />
@@ -351,7 +372,7 @@ export function VoiceFeature() {
               </>
             )}
           </div>
-          {serviceDirty ? <InlineNotice title="先保存服务选择" tone="warning">凭据按服务隔离保存。请先完成上方服务切换，再保存该服务的凭据。</InlineNotice> : null}
+          {serviceDirty ? <InlineNotice title="先保存引擎选择" tone="warning">凭据按引擎隔离保存。请先完成上方引擎切换，再保存该引擎的凭据。</InlineNotice> : null}
           {!credentials.supported ? <InlineNotice title="安全存储暂不可用" tone="warning">当前页面不能访问 macOS 钥匙串，因此不会发送或保存这些信息。</InlineNotice> : null}
           {credentials.status.error ? <InlineNotice title="账号状态读取失败" tone="danger">暂时无法确认钥匙串中是否已经保存账号信息，请刷新后重试。</InlineNotice> : null}
           {credentialSave.error ? <InlineNotice title="账号保存失败" tone="danger">{credentialSave.error instanceof Error ? credentialSave.error.message : '账号信息没有保存完成。'}</InlineNotice> : null}
@@ -361,7 +382,7 @@ export function VoiceFeature() {
           </div>
         </ManagementSection>
 
-        <ManagementSection title="按住说话与专有词" description="热词只在你预览并确认保存后发送给当前语音识别服务。">
+        <ManagementSection title="按住说话与专有词" description="专有词只会随火山引擎请求发送；切换其他 API 时保留词表但不发送。">
           <div className="mgmt-grid-2">
             <OperationalList items={[
               { id: 'push-to-talk', title: '按住说话', detail: '按下开始、松开后形成最终文字', meta: hotkeyLabel(stringValue(valueAt(voiceControl, 'agent.hotkeyMode'), stringValue(voiceSettings.hotkey))), status: <StatusBadge label={booleanValue(voiceAgent.ok) ? '已就绪' : '待检查'} tone={booleanValue(voiceAgent.ok) ? 'success' : 'warning'} /> },
@@ -370,7 +391,10 @@ export function VoiceFeature() {
             <div className="mgmt-stack">
               <Switch
                 checked={hotwordsEnabled}
-                description="关闭时保留词表，但不会随识别请求发送。"
+                description={hotwordsSupported
+                  ? '关闭时保留词表，但不会随识别请求发送。'
+                  : '当前转写引擎不支持请求级热词；切回火山引擎后可继续使用现有词表。'}
+                disabled={!hotwordsSupported}
                 label="启用热词"
                 onCheckedChange={setHotwordsEnabled}
               />
@@ -378,6 +402,7 @@ export function VoiceFeature() {
                 <span>每行一个词</span>
                 <TextArea
                   aria-label="语音热词"
+                  disabled={!hotwordsSupported}
                   onChange={(event) => setHotwordsText(event.target.value)}
                   placeholder={`例如：${identity.assistantName}`}
                   rows={7}
@@ -388,7 +413,7 @@ export function VoiceFeature() {
               {hotwordDraft.error ? <InlineNotice title="词表需要调整" tone="warning">{hotwordDraft.error}</InlineNotice> : null}
               <div className="voice-hotword-suggestions" aria-label="热词建议">
                 {suggestedHotwords.map((word) => (
-                  <button key={word} onClick={() => addSuggestedHotword(word)} type="button">
+                  <button disabled={!hotwordsSupported} key={word} onClick={() => addSuggestedHotword(word)} type="button">
                     <Plus size={12} aria-hidden="true" />
                     {word}
                   </button>
@@ -396,7 +421,9 @@ export function VoiceFeature() {
               </div>
               <ManagementMutationWorkflow
                 availability={mutationBoundary.availability(
-                  runtimeRevision === null
+                  !hotwordsSupported
+                    ? '当前转写引擎不支持请求级热词。'
+                    : runtimeRevision === null
                     ? '当前语音设置尚未同步，刷新后才能预览。'
                     : hotwordDraft.error
                       ? '请先修正上方词表。'
@@ -458,6 +485,11 @@ export function VoiceFeature() {
                 risk="R1"
                 title="保存热词词表"
               />
+              {!hotwordsSupported ? (
+                <InlineNotice title={`${activeProvider.label} 不发送热词`} tone="info">
+                  词表仍保存在本机；只有火山引擎适配器会把它写入识别请求。
+                </InlineNotice>
+              ) : null}
             </div>
           </div>
         </ManagementSection>
@@ -596,7 +628,7 @@ export function VoiceFeature() {
             />
           </div>
           <MetricStrip items={[
-            { label: '服务最终稿', value: finalRevisionLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '识别服务会在结束时给出最终文字', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
+            { label: '引擎最终稿', value: finalRevisionLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '转写引擎会在结束时给出最终文字', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
             { label: '保守校对', value: thirdPassLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: thirdPassDetail(deployedRecognition, lastRecognition), icon: Sparkles, tone: thirdPassTone(deployedRecognition, lastRecognition) },
             { label: '替换临时文字', value: replacementLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '最终文字会替换临时稿，而不是继续追加', icon: Waves, tone: deployedTone(deployedRecognition.fullResultReplacement) },
             { label: '最近一次定稿', value: booleanValue(lastRecognition.finalReceived) ? '已收到' : '暂无验证', detail: providerResponseSummary(lastRecognition), icon: Mic, tone: booleanValue(lastRecognition.finalReceived) ? 'success' : 'warning' },
@@ -614,14 +646,14 @@ export function VoiceFeature() {
               {thirdPassResultSummary(lastRecognition)}
             </InlineNotice>
           ) : booleanValue(lastRecognition.thirdPassRequested) ? (
-            <InlineNotice title="保守校对没有完成，已保留服务最终稿" tone="warning">
+            <InlineNotice title="保守校对没有完成，已保留引擎最终稿" tone="warning">
               {stringValue(lastRecognition.thirdPassError, '校对服务没有返回可安全采用的独立文本。')}
             </InlineNotice>
           ) : lastRecognition.finalRevisedPartial !== true && lastRecognition.localSmoothingApplied !== true ? (
-            <InlineNotice title="服务最终稿与临时稿相同" tone="info">
+            <InlineNotice title="引擎最终稿与临时稿相同" tone="info">
               {deployedRecognition.thirdPassRefinementEnabled === true
                 ? '这次无需替换；下次遇到相同情况仍会进行一次独立的保守校对。'
-                : '这次无需替换；保守校对当前关闭，将直接采用识别服务的最终稿。'}
+                : '这次无需替换；保守校对当前关闭，将直接采用转写引擎的最终稿。'}
             </InlineNotice>
           ) : null}
           {booleanValue(lastRecognition.finalReceived) && stringValue(lastRecognition.providerResponseStage) ? (
@@ -663,18 +695,18 @@ function validateCredentialDraft(
   ) as unknown as VoiceCredentialDraft;
   if (provider === 'native_streaming') {
     if (!normalized.appId || !normalized.resourceId) {
-      throw new Error('原生流式服务需要 App ID 和 Resource ID。');
+      throw new Error('火山引擎需要 App ID 和 Resource ID。');
     }
   } else {
     let endpoint: URL;
     try {
       endpoint = new URL(normalized.endpoint);
     } catch {
-      throw new Error('请填写有效的语音服务地址。');
+      throw new Error('请填写有效的转写 API 地址。');
     }
     const acceptedSchemes = provider === 'realtime_websocket' ? ['ws:', 'wss:'] : ['http:', 'https:'];
     if (!acceptedSchemes.includes(endpoint.protocol) || !normalized.model) {
-      throw new Error('语音服务地址协议或转写模型不完整。');
+      throw new Error('转写 API 地址协议或模型不完整。');
     }
   }
   if (normalized.headersJson) {
@@ -848,14 +880,14 @@ function thirdPassDetail(
   last: Record<string, unknown>,
 ): string {
   if (deployed.thirdPassRefinementEnabled === false) {
-    return '关闭后直接采用识别服务的最终稿';
+    return '关闭后直接采用转写引擎的最终稿';
   }
   if (booleanValue(last.thirdPassApplied)) {
     const latency = durationLabel(last.thirdPassLatencyMs);
     const model = stringValue(last.thirdPassModel);
     return model ? `${latency} · ${model}` : latency;
   }
-  if (booleanValue(last.thirdPassRequested)) return '失败时保留服务最终稿，不影响已输入文字';
+  if (booleanValue(last.thirdPassRequested)) return '失败时保留引擎最终稿，不影响已输入文字';
   return '最终稿与临时稿相同时，再做一次独立的保守校对';
 }
 

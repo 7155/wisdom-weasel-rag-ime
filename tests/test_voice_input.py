@@ -169,6 +169,11 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("http_transcription", page)
         self.assertIn("saveVoiceCredentials", page)
         self.assertIn("useVoiceCredentialStatus", page)
+        self.assertIn("火山引擎专用流式 API", page)
+        self.assertIn("OpenAI Realtime 协议兼容 WebSocket", page)
+        self.assertIn("OpenAI Audio Transcriptions 形状兼容 HTTP", page)
+        self.assertNotIn("内置流式识别", page)
+        self.assertIn('case .nativeStreaming: return "火山引擎流式 API"', keychain)
         self.assertNotIn("providerHandoffAvailable", page)
 
         bridge = (ROOT / "macos/RagImeControlWebHost/NativeBridge.swift").read_text(encoding="utf-8")
@@ -290,7 +295,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("Color(nsColor: .windowBackgroundColor).opacity(0.98)", overlay)
         self.assertIn("scheduleDismiss(after: 1.4)", overlay)
         self.assertIn("overlay.showRecording()", coordinator)
-        self.assertIn("服务账号", page)
+        self.assertIn("API 凭据", page)
         self.assertIn("页面不会显示已保存的密钥或请求头", page)
 
         with tempfile.TemporaryDirectory(prefix="rag-ime-voice-hotkey-") as directory:
@@ -326,7 +331,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("VoiceHotwordConfigStore.read()", coordinator)
         self.assertIn("allowedTechnicalSeparators", config)
         self.assertIn('".-_+#/&"', config)
-        self.assertIn("热词只在你预览并确认保存后发送", page)
+        self.assertIn("专有词只会随火山引擎请求发送", page)
         self.assertIn("每行一个词", page)
         self.assertNotIn("rime", config.lower())
 

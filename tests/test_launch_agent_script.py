@@ -432,6 +432,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(launch_env["RAG_IME_PI_VERSION"], "0.80.7")
         self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_DIR", launch_env)
         self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES", launch_env)
+        self.assertNotIn("RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS", launch_env)
         self.assertEqual(launch_env["RAG_IME_AGENT_TOOL_URL"], "http://127.0.0.1:8768/api/agent/tool/execute")
         self.assertEqual(launch_env["RAG_IME_REMOTE_ALLOWED_LOGINS"], "owner@example.com")
         self.assertIn("--web-dist", payload["ProgramArguments"])
@@ -447,6 +448,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         opt_in_env = opt_in_payload["EnvironmentVariables"]
         self.assertEqual(opt_in_env["RAG_IME_PI_DEBUG_CONTEXT_DIR"], str(opt_in_directory))
         self.assertEqual(opt_in_env["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"], "65536")
+        self.assertEqual(opt_in_env["RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS"], "128")
 
     def test_restart_runtime_script_defaults_to_foreground_rag_profile(self) -> None:
         root = Path(__file__).resolve().parents[1]

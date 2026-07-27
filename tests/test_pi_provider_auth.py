@@ -12,6 +12,7 @@ from rag_ime.pi_provider_auth import (
     PiProviderAuthError,
     PiProviderAuthService,
     PiProviderBridgeConfig,
+    _openai_codex_login_uri,
 )
 from rag_ime.pi_runtime import PiRuntimeConfig
 
@@ -36,6 +37,7 @@ class _FakePiProviderAuthService(PiProviderAuthService):
                     "name": "ChatGPT Plus/Pro",
                     "auth": {
                         "configured": False,
+                        "oauthBrowserSupported": True,
                         "oauthDeviceCodeSupported": True,
                     },
                 },
@@ -55,13 +57,27 @@ class _FakePiProviderAuthService(PiProviderAuthService):
             "beforeType": "api_key",
         }
 
-    def _start_oauth(self, provider: str, provider_name: str) -> dict[str, object]:
+    def _start_oauth(
+        self,
+        provider: str,
+        provider_name: str,
+        *,
+        method: str = "browser",
+    ) -> dict[str, object]:
+        self.calls.append(
+            {
+                "action": "oauth",
+                "provider": provider,
+                "method": method,
+            }
+        )
         return {
             "schemaVersion": "rag-ime.pi-provider-oauth-status.v1",
             "ok": True,
             "loginId": "pi-login-test",
             "provider": provider,
             "providerName": provider_name,
+            "loginMethod": method,
             "state": "starting",
         }
 
@@ -112,7 +128,7 @@ class PiProviderAuthTests(unittest.TestCase):
                 }
             )
 
-    def test_logout_and_oauth_device_code_are_explicit_receipted_actions(self) -> None:
+    def test_logout_and_oauth_methods_are_explicit_receipted_actions(self) -> None:
         logout = self.service.preview(
             {"provider": "test-provider", "action": "logout"}
         )
@@ -121,6 +137,15 @@ class PiProviderAuthTests(unittest.TestCase):
         )
         self.assertEqual(logout_receipt["action"], "logout")
 
+        browser = self.service.preview(
+            {"provider": "openai-codex", "action": "oauth_browser"}
+        )
+        browser_receipt = self.service.apply(
+            {"previewToken": browser["previewToken"], "confirmText": "connect"}
+        )
+        self.assertEqual(browser_receipt["login"]["loginMethod"], "browser")
+        self.assertEqual(self.service.calls[-1]["method"], "browser")
+
         oauth = self.service.preview(
             {"provider": "openai-codex", "action": "oauth_device_code"}
         )
@@ -128,6 +153,8 @@ class PiProviderAuthTests(unittest.TestCase):
             {"previewToken": oauth["previewToken"], "confirmText": "connect"}
         )
         self.assertEqual(oauth_receipt["login"]["state"], "starting")
+        self.assertEqual(oauth_receipt["login"]["loginMethod"], "device_code")
+        self.assertEqual(self.service.calls[-1]["method"], "device_code")
         self.assertEqual(oauth_receipt["receiptState"], "login_started")
         self.assertFalse(oauth_receipt["requiresAgentRestart"])
         self.assertNotIn("token", json.dumps(oauth_receipt).lower())
@@ -137,6 +164,24 @@ class PiProviderAuthTests(unittest.TestCase):
             self.service.preview({"provider": "../../auth.json", "action": "logout"})
         with self.assertRaises(PiProviderAuthError):
             self.service.preview({"provider": "test-provider", "action": "read_secret"})
+
+    def test_browser_login_url_is_restricted_to_openai_oauth_routes(self) -> None:
+        authorize = (
+            "https://auth.openai.com/oauth/authorize"
+            "?client_id=test&state=test&code_challenge=test"
+        )
+        self.assertEqual(_openai_codex_login_uri(authorize), authorize)
+        self.assertEqual(
+            _openai_codex_login_uri("https://auth.openai.com/codex/device"),
+            "https://auth.openai.com/codex/device",
+        )
+        for unsafe in (
+            "http://auth.openai.com/oauth/authorize",
+            "https://auth.openai.com.evil.example/oauth/authorize",
+            "https://auth.openai.com:444/oauth/authorize",
+            "https://auth.openai.com/other",
+        ):
+            self.assertEqual(_openai_codex_login_uri(unsafe), "")
 
     def test_managed_runtime_bridge_is_discovered_without_a_pi_package_entry(self) -> None:
         root = Path(self.temporary.name)
@@ -250,9 +295,17 @@ class PiProviderAuthTests(unittest.TestCase):
             )
         )
         try:
-            started = service._start_oauth("openai-codex", "ChatGPT Plus/Pro")
+            started = service._start_oauth(
+                "openai-codex",
+                "ChatGPT Plus/Pro",
+                method="device_code",
+            )
             with self.assertRaisesRegex(PiProviderAuthError, "正在进行"):
-                service._start_oauth("openai-codex", "ChatGPT Plus/Pro")
+                service._start_oauth(
+                    "openai-codex",
+                    "ChatGPT Plus/Pro",
+                    method="device_code",
+                )
 
             status = started
             deadline = time.monotonic() + 4
@@ -262,6 +315,49 @@ class PiProviderAuthTests(unittest.TestCase):
             self.assertEqual(status["state"], "failed")
             self.assertIn("超时", status["error"])
             self.assertFalse(status["requiresAgentRestart"])
+        finally:
+            service.close()
+
+    def test_browser_oauth_opens_only_the_allowlisted_openai_url(self) -> None:
+        root = Path(self.temporary.name)
+        bridge = root / "browser_oauth_bridge.py"
+        bridge.write_text(
+            "import json, sys, time\n"
+            "json.load(sys.stdin)\n"
+            "print(json.dumps({'event': 'auth_url', "
+            "'url': 'https://auth.openai.com/oauth/authorize?client_id=test&state=test'}), "
+            "flush=True)\n"
+            "time.sleep(30)\n",
+            encoding="utf-8",
+        )
+        opened: list[str] = []
+        service = PiProviderAuthService(
+            PiProviderBridgeConfig(
+                node_executable=sys.executable,
+                package_entry=root / "index.js",
+                agent_dir=root / "agent",
+                bridge_script=bridge,
+                oauth_timeout_seconds=2,
+            ),
+            oauth_url_opener=lambda url: opened.append(url),
+        )
+        try:
+            started = service._start_oauth(
+                "openai-codex",
+                "ChatGPT Plus/Pro",
+                method="browser",
+            )
+            status = started
+            deadline = time.monotonic() + 2
+            while status["state"] != "waiting_for_user" and time.monotonic() < deadline:
+                time.sleep(0.05)
+                status = service.oauth_status(started["loginId"])
+            self.assertEqual(status["loginMethod"], "browser")
+            self.assertEqual(
+                status["verificationUri"],
+                "https://auth.openai.com/oauth/authorize?client_id=test&state=test",
+            )
+            self.assertEqual(opened, [status["verificationUri"]])
         finally:
             service.close()
 

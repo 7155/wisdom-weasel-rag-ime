@@ -3307,15 +3307,36 @@ def pi_runtime_config_from_settings(settings: Mapping[str, object]) -> PiRuntime
             minimum=0,
             maximum=86400,
         ),
+        system_proxy_default=_bool(pi.get("systemProxy", True)),
     )
     if (
         runtime_config.debug_context_dir is None
         and _bool(privacy.get("debugIncludeText"))
     ):
+        configured_directory = str(
+            privacy.get("debugContextDirectory") or ""
+        ).strip()
+        storage_gib = _integer(
+            privacy.get("debugContextMaxGiB"),
+            default=5,
+            minimum=1,
+            maximum=64,
+        )
+        max_calls_per_turn = _integer(
+            privacy.get("debugContextMaxCallsPerTurn"),
+            default=128,
+            minimum=1,
+            maximum=256,
+        )
         runtime_config = replace(
             runtime_config,
-            debug_context_dir=runtime_config.agent_dir.parent / "debug-context",
-            debug_context_max_bytes=64 * 1024 * 1024,
+            debug_context_dir=(
+                Path(configured_directory).expanduser()
+                if configured_directory
+                else runtime_config.agent_dir.parent / "debug-context"
+            ),
+            debug_context_max_bytes=storage_gib * 1024 * 1024 * 1024,
+            debug_context_max_calls=max_calls_per_turn,
         )
     return runtime_config
 

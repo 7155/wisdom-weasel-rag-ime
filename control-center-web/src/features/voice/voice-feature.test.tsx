@@ -6,6 +6,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type { ControlPathId } from '@/platform/routes';
+import type { VoiceProviderId } from '@/platform/transport';
 import { MockControlTransport } from '@/test/mock-transport';
 import { VoiceFeature } from '.';
 
@@ -30,12 +31,14 @@ describe('VoiceFeature', () => {
     const transport = renderVoiceWithHotwordWrites();
 
     await screen.findByRole('heading', { name: '语音输入', level: 1 });
-    expect(await screen.findByText('当前：内置流式识别')).toBeInTheDocument();
+    expect(await screen.findByText('当前：火山引擎')).toBeInTheDocument();
+    expect(screen.getByText(/火山引擎专用流式 API/)).toBeInTheDocument();
     expect(screen.queryByText(/让澄确认切换|provider_apply/i)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('radio', { name: '实时识别' }));
+    await user.click(screen.getByRole('radio', { name: 'Realtime API' }));
+    expect(screen.getByText(/OpenAI Realtime 协议兼容 WebSocket/)).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: 'Option + 空格' }));
-    const workflow = screen.getByText('保存识别方式与按键', { selector: 'strong' }).closest('.mgmt-workflow');
+    const workflow = screen.getByText('保存转写引擎与按键', { selector: 'strong' }).closest('.mgmt-workflow');
     expect(workflow).not.toBeNull();
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
     await waitFor(() => expect(configurationRequest(transport, 'configuration.settings.preview')).toMatchObject({
@@ -159,9 +162,25 @@ describe('VoiceFeature', () => {
     expect(within(workflow as HTMLElement).queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
     expect(configurationRequest(transport, 'configuration.settings.preview')).toBeUndefined();
   });
+
+  it('names provider APIs accurately and disables unsupported hotword writes', async () => {
+    renderVoice(false, 'http_transcription');
+
+    expect(await screen.findByText('当前：HTTP 转写 API')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '火山引擎' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Realtime API' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'HTTP 转写 API' })).toBeChecked();
+    expect(screen.getByText(/松开按键后上传整段音频/)).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: '启用热词' })).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: '语音热词' })).toBeDisabled();
+    expect(screen.getByText('HTTP 转写 API 不发送热词')).toBeInTheDocument();
+  });
 });
 
-function renderVoice(toolAvailable: boolean): MockControlTransport {
+function renderVoice(
+  toolAvailable: boolean,
+  provider: VoiceProviderId = 'native_streaming',
+): MockControlTransport {
   const routeIds = [
     'configuration.settings',
     'configuration.schema',
@@ -178,7 +197,7 @@ function renderVoice(toolAvailable: boolean): MockControlTransport {
         runtimeRevision: 4,
         settings: {
           voice: {
-            provider: 'native_streaming',
+            provider,
             hotkey: 'Option + Space',
             hotwords: ['澄助手'],
             hotwordsEnabled: true,

@@ -79,6 +79,31 @@ class SettingsStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be <= 65535"):
             self.store.update_settings({"knowledgeLibrary.parser.mineru.port": 65536})
 
+    def test_debug_context_archive_requires_a_bounded_absolute_directory(self) -> None:
+        result = self.store.update_settings(
+            {
+                "privacy.debugIncludeText": True,
+                "privacy.debugContextDirectory": "/Volumes/External/Cheng/context-snapshots",
+                "privacy.debugContextMaxGiB": 5,
+                "privacy.debugContextMaxCallsPerTurn": 128,
+            }
+        )
+
+        privacy = result.settings["privacy"]
+        self.assertEqual(
+            privacy["debugContextDirectory"],
+            "/Volumes/External/Cheng/context-snapshots",
+        )
+        self.assertEqual(privacy["debugContextMaxGiB"], 5)
+        with self.assertRaisesRegex(ValueError, "absolute or ~/ path"):
+            self.store.update_settings(
+                {"privacy.debugContextDirectory": "relative/context-snapshots"}
+            )
+        with self.assertRaisesRegex(ValueError, "bounded subdirectory"):
+            self.store.update_settings({"privacy.debugContextDirectory": "/"})
+        with self.assertRaisesRegex(ValueError, "must be <= 64"):
+            self.store.update_settings({"privacy.debugContextMaxGiB": 65})
+
     def test_one_shot_lightning_model_reference_and_thinking_are_bounded(self) -> None:
         result = self.store.update_settings(
             {

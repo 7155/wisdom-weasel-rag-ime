@@ -21,7 +21,7 @@ describe('ObservabilityFeature', () => {
     const timeline = await screen.findByRole('list', { name: '运行记录事件' });
     expect(within(timeline).getByText('记忆工具 已完成')).toBeInTheDocument();
     expect(screen.getByText('运行记录只保存状态、耗时、数量和脱敏后的标识。', { exact: false })).toBeInTheDocument();
-    expect(screen.getByText('原始提示词和消息正文不会写进运行记录。', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('开启“本机上下文快照”后', { exact: false })).toBeInTheDocument();
     expect(screen.queryByText('PRIVATE_TOOL_RESULT')).not.toBeInTheDocument();
 
     await waitFor(() => expect(transport.subscriptionCalls).toHaveLength(1));

@@ -214,7 +214,7 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             contract["minimumHandlersCommit"],
-            "6f4bfd6d8131a94c94f3475661e26b7c88163a52",
+            "0cb10fa18118632b6e3d3233cbc18d7ea6486114",
         )
         self.assertEqual(contract["sourceRepository"], "https://github.com/7155/pi.git")
         self.assertEqual(
@@ -253,6 +253,14 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
         self.assertIn(
             "return record ? structuredClone(record) : undefined;",
+            contract["requiredSourceMarkers"]["contextInspection"],
+        )
+        self.assertIn(
+            "const DEFAULT_STORAGE_BYTES = 5 * 1024 * 1024 * 1024;",
+            contract["requiredSourceMarkers"]["contextInspection"],
+        )
+        self.assertIn(
+            "const MAX_STORAGE_BYTES = 64 * 1024 * 1024 * 1024;",
             contract["requiredSourceMarkers"]["contextInspection"],
         )
         self.assertEqual(

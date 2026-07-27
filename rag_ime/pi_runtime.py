@@ -100,6 +100,10 @@ _SUBAGENT_READ_ONLY_TOOLS = (
 _MAX_PERSISTED_TRANSCRIPT_BYTES = 64 * 1024 * 1024
 _MAX_PERSISTED_TRANSCRIPT_ENTRIES = 100_000
 _MAX_PERSISTED_TRANSCRIPT_LINE_BYTES = 4 * 1024 * 1024
+_DEFAULT_DEBUG_CONTEXT_MAX_BYTES = 5 * 1024 * 1024 * 1024
+_MAX_DEBUG_CONTEXT_MAX_BYTES = 64 * 1024 * 1024 * 1024
+_DEFAULT_DEBUG_CONTEXT_MAX_CALLS = 128
+_MAX_DEBUG_CONTEXT_MAX_CALLS = 256
 _IME_SURFACE_SYSTEM_PROMPT = """你是输入法中的连续联想引擎，只处理用户明确点击触发的文字生成。
 
 输出规则：
@@ -175,8 +179,8 @@ class PiRuntimeConfig:
     session_dir: Path
     logs_dir: Path
     debug_context_dir: Path | None = None
-    debug_context_max_bytes: int = 1024 * 1024 * 1024
-    debug_context_max_calls: int = 12
+    debug_context_max_bytes: int = _DEFAULT_DEBUG_CONTEXT_MAX_BYTES
+    debug_context_max_calls: int = _DEFAULT_DEBUG_CONTEXT_MAX_CALLS
     node_executable: str = "node"
     idle_timeout_seconds: int = 900
     command_timeout_seconds: float = 15.0
@@ -213,6 +217,7 @@ class PiRuntimeConfig:
         *,
         enabled_default: bool = False,
         idle_timeout_default: int = 900,
+        system_proxy_default: bool = True,
     ) -> PiRuntimeConfig:
         app_support = Path(
             os.environ.get("RAG_IME_APP_SUPPORT_DIR")
@@ -265,7 +270,9 @@ class PiRuntimeConfig:
                 pi_version = installation.pi_version
                 protocol_version = protocol_version or installation.protocol_version
         provider, model, model_base_url, provider_environment, model_providers, model_error = (
-            _pi_model_configuration_from_environment()
+            _pi_model_configuration_from_environment(
+                system_proxy_default=system_proxy_default
+            )
         )
         return cls(
             enabled=_env_bool("RAG_IME_PI_ENABLED", enabled_default),
@@ -280,15 +287,15 @@ class PiRuntimeConfig:
             ),
             debug_context_max_bytes=_env_int(
                 "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES",
-                1024 * 1024 * 1024,
+                _DEFAULT_DEBUG_CONTEXT_MAX_BYTES,
                 minimum=1,
-                maximum=1024 * 1024 * 1024,
+                maximum=_MAX_DEBUG_CONTEXT_MAX_BYTES,
             ),
             debug_context_max_calls=_env_int(
                 "RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS",
-                12,
+                _DEFAULT_DEBUG_CONTEXT_MAX_CALLS,
                 minimum=1,
-                maximum=256,
+                maximum=_MAX_DEBUG_CONTEXT_MAX_CALLS,
             ),
             node_executable=node_executable,
             idle_timeout_seconds=_env_int(
@@ -474,10 +481,16 @@ class PiRuntimeConfig:
         if self.debug_context_dir is not None:
             environment["RAG_IME_PI_DEBUG_CONTEXT_DIR"] = str(self.debug_context_dir)
             environment["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"] = str(
-                min(1024 * 1024 * 1024, max(1, int(self.debug_context_max_bytes)))
+                min(
+                    _MAX_DEBUG_CONTEXT_MAX_BYTES,
+                    max(1, int(self.debug_context_max_bytes)),
+                )
             )
             environment["RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS"] = str(
-                min(256, max(1, int(self.debug_context_max_calls)))
+                min(
+                    _MAX_DEBUG_CONTEXT_MAX_CALLS,
+                    max(1, int(self.debug_context_max_calls)),
+                )
             )
         environment["RAG_IME_PI_MAX_SESSIONS"] = str(self.max_sessions)
         if self.tool_gateway_token:
@@ -2358,7 +2371,10 @@ def _split_model_reference(value: object) -> tuple[str, str]:
 
 
 
-def _pi_model_configuration_from_environment() -> tuple[
+def _pi_model_configuration_from_environment(
+    *,
+    system_proxy_default: bool = True,
+) -> tuple[
     str,
     str,
     str,
@@ -2369,7 +2385,9 @@ def _pi_model_configuration_from_environment() -> tuple[
     explicit_provider = os.environ.get("RAG_IME_PI_PROVIDER", "").strip()
     explicit_model = os.environ.get("RAG_IME_PI_MODEL", "").strip()
     providers: dict[str, Mapping[str, object]] = {}
-    provider_environment = _pi_system_proxy_environment()
+    provider_environment = _pi_system_proxy_environment(
+        enabled_default=system_proxy_default
+    )
     deepseek_error = ""
     try:
         knowledge = load_deepseek_config()
@@ -2449,15 +2467,16 @@ def _pi_model_configuration_from_environment() -> tuple[
     return provider, model, model_base_url, provider_environment, providers, ""
 
 
-def _pi_system_proxy_environment() -> dict[str, str]:
+def _pi_system_proxy_environment(*, enabled_default: bool = True) -> dict[str, str]:
     """Pass the user's HTTP proxy only to remote Pi provider processes."""
 
-    if os.environ.get("RAG_IME_PI_SYSTEM_PROXY", "1").strip().lower() in {
-        "0",
-        "false",
-        "no",
-        "off",
-    }:
+    configured = os.environ.get("RAG_IME_PI_SYSTEM_PROXY")
+    enabled = (
+        enabled_default
+        if configured is None
+        else configured.strip().lower() not in {"0", "false", "no", "off"}
+    )
+    if not enabled:
         return {}
     try:
         proxies = getproxies()

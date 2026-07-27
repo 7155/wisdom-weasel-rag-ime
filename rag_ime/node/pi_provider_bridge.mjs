@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
@@ -110,6 +111,7 @@ function legacyProviderCatalog(auth, registry, configuredIds) {
         source: status.source ?? '',
         sourceLabel: status.label ?? '',
         oauthSupported: Boolean(oauth),
+        oauthBrowserSupported: id === 'openai-codex' && Boolean(oauth),
         oauthDeviceCodeSupported: id === 'openai-codex',
         ...(credential?.type === 'oauth'
           ? { expiresAtMs: Number.isFinite(credential.expires) ? credential.expires : 0 }
@@ -164,6 +166,7 @@ async function runtimeProviderCatalog(runtime, configuredIds) {
         source: status?.source ?? '',
         sourceLabel: status?.label ?? '',
         oauthSupported: Boolean(provider?.auth?.oauth),
+        oauthBrowserSupported: id === 'openai-codex' && Boolean(provider?.auth?.oauth),
         oauthDeviceCodeSupported: id === 'openai-codex' && Boolean(provider?.auth?.oauth),
         apiKeySupported: Boolean(provider?.auth?.apiKey),
       },
@@ -257,9 +260,38 @@ async function logout(request) {
   return { event: 'result', ok: true, provider, beforeType, authType: '' };
 }
 
-async function oauthDeviceCode(request) {
+async function assertBrowserCallbackAvailable() {
+  const host = process.env.PI_OAUTH_CALLBACK_HOST?.trim() || '127.0.0.1';
+  await new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', () => {
+      reject(new Error('OpenAI Codex browser callback port 1455 is unavailable; use device-code fallback'));
+    });
+    server.listen(1455, host, () => {
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+  });
+}
+
+function waitForBrowserCallback(signal) {
+  return new Promise((_resolve, reject) => {
+    const aborted = () => reject(new Error('Browser callback prompt closed'));
+    if (signal?.aborted) {
+      aborted();
+      return;
+    }
+    signal?.addEventListener('abort', aborted, { once: true });
+  });
+}
+
+async function oauthLogin(request) {
   const provider = providerId(request);
-  if (provider !== 'openai-codex') throw new Error('device-code login is unavailable for this provider');
+  if (provider !== 'openai-codex') throw new Error('OAuth login is unavailable for this provider');
+  const method = request.action === 'oauth_browser' ? 'browser' : 'device_code';
+  if (method === 'browser') await assertBrowserCallbackAvailable();
   const pi = await loadPi(request);
   emit({ event: 'state', state: 'starting', provider });
   if (pi.mode === 'runtime') {
@@ -272,9 +304,12 @@ async function oauthDeviceCode(request) {
         if (
           prompt?.type === 'select'
           && Array.isArray(prompt.options)
-          && prompt.options.some((option) => option.id === 'device_code')
+          && prompt.options.some((option) => option.id === method)
         ) {
-          return 'device_code';
+          return method;
+        }
+        if (method === 'browser' && prompt?.type === 'manual_code') {
+          return waitForBrowserCallback(prompt.signal);
         }
         throw new Error('interactive OAuth input is unavailable');
       },
@@ -292,9 +327,12 @@ async function oauthDeviceCode(request) {
         intervalSeconds: info.intervalSeconds ?? 0,
         expiresInSeconds: info.expiresInSeconds ?? 0,
       }),
-      onPrompt: async () => { throw new Error('interactive OAuth input is unavailable'); },
+      onPrompt: async (prompt) => {
+        if (method === 'browser') return waitForBrowserCallback(prompt?.signal);
+        throw new Error('interactive OAuth input is unavailable');
+      },
       onProgress: (message) => emit({ event: 'progress', message: String(message).slice(0, 200) }),
-      onSelect: async () => 'device_code',
+      onSelect: async () => method,
     });
     const errors = pi.auth.drainErrors();
     if (errors.length) throw errors[0];
@@ -315,7 +353,8 @@ async function main() {
       emit(await logout(request));
       return;
     case 'oauth_device_code':
-      await oauthDeviceCode(request);
+    case 'oauth_browser':
+      await oauthLogin(request);
       return;
     default:
       throw new Error('action is not allowed');

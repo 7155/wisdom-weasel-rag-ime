@@ -15,7 +15,7 @@ import {
 import { InlineNotice, ManagementSection, StatusBadge, arrayRecords, asRecord, stringValue } from '@/features/overview/management-ui';
 import { usePiProviderCatalog } from './api';
 
-type ProviderAction = 'set_api_key' | 'logout' | 'oauth_device_code';
+type ProviderAction = 'set_api_key' | 'logout' | 'oauth_browser' | 'oauth_device_code';
 
 export function PiProviderCredentials() {
   const {
@@ -84,7 +84,10 @@ export function PiProviderCredentials() {
   const selected = providers.find((item) => stringValue(item.id) === providerId) ?? providers[0] ?? {};
   const auth = asRecord(selected.auth);
   const models = arrayRecords(selected.availableModels);
-  const canUseOAuth = auth.oauthDeviceCodeSupported === true
+  const canUseBrowserOAuth = auth.oauthBrowserSupported === true
+    && authChangesSupported
+    && oauthStatusSupported;
+  const canUseDeviceOAuth = auth.oauthDeviceCodeSupported === true
     && authChangesSupported
     && oauthStatusSupported;
   const refresh = () => void refetchCatalog();
@@ -190,12 +193,15 @@ export function PiProviderCredentials() {
   }
 
   async function retryLogin(): Promise<void> {
+    const action = stringValue(login?.loginMethod) === 'device_code'
+      ? 'oauth_device_code'
+      : 'oauth_browser';
     loginEpochRef.current += 1;
     setLogin(null);
     setReceipt(null);
     setLoginStatusError('');
     setError('');
-    await openPreview('oauth_device_code');
+    await openPreview(action);
   }
 
   if (capabilities.isPending) {
@@ -242,7 +248,8 @@ export function PiProviderCredentials() {
           </Field>
           <div className="mgmt-toolbar">
             <Button disabled={!authChangesSupported || !apiKey.trim() || loginWaiting} leadingIcon={<KeyRound size={15} />} loading={working} onClick={() => void openPreview('set_api_key')} size="small" variant="primary">{auth.configured === true ? '替换密钥' : '保存密钥'}</Button>
-            {canUseOAuth ? <Button disabled={loginWaiting} leadingIcon={<UserRoundCheck size={15} />} loading={working} onClick={() => void openPreview('oauth_device_code')} size="small">{auth.configured === true && stringValue(auth.type) === 'oauth' ? '重新连接 ChatGPT' : '连接 ChatGPT'}</Button> : null}
+            {canUseBrowserOAuth ? <Button disabled={loginWaiting} leadingIcon={<UserRoundCheck size={15} />} loading={working} onClick={() => void openPreview('oauth_browser')} size="small">{auth.configured === true && stringValue(auth.type) === 'oauth' ? '重新连接 ChatGPT' : '连接 ChatGPT'}</Button> : null}
+            {canUseDeviceOAuth ? <Button disabled={loginWaiting} loading={working} onClick={() => void openPreview('oauth_device_code')} size="small" variant="quiet">使用设备码</Button> : null}
             {auth.configured === true ? <Button disabled={!authChangesSupported || loginWaiting} leadingIcon={<LogOut size={15} />} loading={working} onClick={() => void openPreview('logout')} size="small" variant="quiet">断开账号</Button> : null}
             <Button leadingIcon={<RefreshCw size={15} />} loading={catalog.isFetching} onClick={refresh} size="small" variant="quiet">刷新</Button>
           </div>
@@ -332,7 +339,7 @@ function OAuthStatus({
     <InlineNotice title={state === 'completed' ? 'ChatGPT 已连接' : state === 'failed' ? '登录失败' : state === 'cancelled' ? '登录已取消' : '等待完成 ChatGPT 登录'} tone={state === 'completed' ? 'success' : state === 'failed' ? 'danger' : state === 'cancelled' ? 'warning' : 'info'}>
       <div className="mgmt-stack">
         {stringValue(login.userCode) ? <strong>设备码：{stringValue(login.userCode)}</strong> : null}
-        {safeLoginUrl(login.verificationUri) ? <a href={safeLoginUrl(login.verificationUri)} rel="noreferrer" target="_blank">在浏览器中继续 <ExternalLink aria-hidden="true" size={14} /></a> : null}
+        {safeLoginUrl(login.verificationUri) ? <a href={safeLoginUrl(login.verificationUri)} rel="noreferrer" target="_blank">{stringValue(login.userCode) ? '输入设备码' : '继续浏览器登录'} <ExternalLink aria-hidden="true" size={14} /></a> : null}
         {stringValue(login.error) ? <span>{errorText(login.error)}</span> : null}
         {error ? <span role="alert">{error}</span> : null}
         <div className="mgmt-toolbar">
@@ -351,7 +358,7 @@ function providerReceiptNotice(
 ): { title: string; body: string; tone: 'success' | 'info' } | null {
   if (!receipt) return null;
   const action = stringValue(receipt.action);
-  if (action === 'oauth_device_code') {
+  if (isOAuthAction(action)) {
     if (!isPendingLoginState(loginState)) return null;
     return {
       title: '登录流程已启动',
@@ -384,19 +391,22 @@ function providerOrder(left: Record<string, unknown>, right: Record<string, unkn
 
 function previewTitle(action: ProviderAction): string {
   if (action === 'logout') return '断开这个模型账号？';
-  if (action === 'oauth_device_code') return '连接 ChatGPT？';
+  if (action === 'oauth_browser') return '连接 ChatGPT？';
+  if (action === 'oauth_device_code') return '使用设备码连接 ChatGPT？';
   return '替换 API Key？';
 }
 
 function previewDescription(action: ProviderAction): string {
   if (action === 'logout') return '确认后会移除本机保存的账号授权，不会删除对话。';
-  if (action === 'oauth_device_code') return '确认后会打开安全登录流程，网页不会读取你的密码。';
+  if (action === 'oauth_browser') return '确认后会打开浏览器，并通过本机回调完成登录；网页不会读取你的密码。';
+  if (action === 'oauth_device_code') return '仅在本机回调不可用时使用；ChatGPT 必须已开启设备码授权。';
   return '新密钥只会交给本机安全保存，不会在确认页中回显。';
 }
 
 function previewLines(action: ProviderAction): string[] {
   if (action === 'logout') return ['这个模型服务的本机授权将被移除。', '已有对话和角色保持不变。'];
-  if (action === 'oauth_device_code') return ['需要在浏览器中完成一次授权。', '未完成授权前，登录状态不会改变。'];
+  if (action === 'oauth_browser') return ['默认使用 Pi 的浏览器 OAuth 与 localhost 回调。', '未完成授权前，登录状态不会改变。'];
+  if (action === 'oauth_device_code') return ['这是无界面或本机回调不可用时的备用方式。', '设备码不会替代或改变你的 ChatGPT 套餐。'];
   return ['现有密钥不会被读取或显示。', '仅在确认后替换这个模型服务的密钥。'];
 }
 
@@ -420,9 +430,9 @@ function parseProviderApplyResult(value: unknown, providerId: string, action: Pr
     || !stringValue(payload.receiptId)
     || stringValue(payload.provider) !== providerId
     || stringValue(payload.action) !== action
-    || (action === 'oauth_device_code' ? receiptState !== 'login_started' : receiptState !== 'applied')
+    || (isOAuthAction(action) ? receiptState !== 'login_started' : receiptState !== 'applied')
   ) throw new Error('模型账号设置没有完成，请刷新后重试。');
-  if (action === 'oauth_device_code') {
+  if (isOAuthAction(action)) {
     const login = asRecord(payload.login);
     if (!stringValue(login.loginId) || !isValidLoginState(stringValue(login.state))) {
       throw new Error('登录流程没有正确启动，请重新连接。');
@@ -466,7 +476,10 @@ function safeLoginUrl(value: unknown): string {
     const url = new URL(raw);
     return url.protocol === 'https:'
       && url.hostname === 'auth.openai.com'
-      && url.pathname === '/codex/device'
+      && ['/oauth/authorize', '/codex/device'].includes(url.pathname)
+      && !url.username
+      && !url.password
+      && (!url.port || url.port === '443')
       ? url.toString()
       : '';
   } catch {
@@ -476,6 +489,12 @@ function safeLoginUrl(value: unknown): string {
 
 function errorText(error: unknown, secret = ''): string {
   const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  if (/enable device code authorization for codex in chatgpt security settings/i.test(message)) {
+    return '请先在 ChatGPT「设置 → 安全」中开启设备码授权，然后重新连接。';
+  }
+  if (/browser callback port 1455 is unavailable/i.test(message)) {
+    return '本机 OAuth 回调端口 1455 正在被占用；关闭占用程序后重试，或改用设备码。';
+  }
   if (
     (secret && message.includes(secret))
     || /(?:sk|key|token|bearer)[-_A-Za-z0-9.]{8,}/i.test(message)
@@ -486,4 +505,8 @@ function errorText(error: unknown, secret = ''): string {
   }
   if (message && /[\u3400-\u9fff]/.test(message)) return message;
   return '操作失败，请刷新后重试。';
+}
+
+function isOAuthAction(action: string): action is 'oauth_browser' | 'oauth_device_code' {
+  return action === 'oauth_browser' || action === 'oauth_device_code';
 }

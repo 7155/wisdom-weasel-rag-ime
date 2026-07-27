@@ -2568,25 +2568,53 @@ class AgentServiceTests(unittest.TestCase):
             self.service.prompt(session_id, {"message": "bad", "delivery": "later"})
 
     def test_persisted_runtime_toggle_is_used_unless_development_env_overrides_it(self) -> None:
-        settings = {"agent": {"pi": {"enabled": True, "idleTimeoutSeconds": 321}}}
-        with patch.dict("os.environ", {}, clear=True):
+        settings = {
+            "agent": {
+                "pi": {
+                    "enabled": True,
+                    "idleTimeoutSeconds": 321,
+                    "systemProxy": False,
+                }
+            }
+        }
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "rag_ime.pi_runtime.getproxies",
+            return_value={"https": "http://127.0.0.1:7897"},
+        ):
             configured = pi_runtime_config_from_settings(settings)
         self.assertTrue(configured.enabled)
         self.assertEqual(configured.idle_timeout_seconds, 321)
+        self.assertNotIn("HTTPS_PROXY", configured.provider_environment)
 
         with patch.dict(
             "os.environ",
-            {"RAG_IME_PI_ENABLED": "false", "RAG_IME_PI_IDLE_TIMEOUT_SECONDS": "12"},
+            {
+                "RAG_IME_PI_ENABLED": "false",
+                "RAG_IME_PI_IDLE_TIMEOUT_SECONDS": "12",
+                "RAG_IME_PI_SYSTEM_PROXY": "true",
+            },
             clear=True,
+        ), patch(
+            "rag_ime.pi_runtime.getproxies",
+            return_value={"https": "http://127.0.0.1:7897"},
         ):
             overridden = pi_runtime_config_from_settings(settings)
         self.assertFalse(overridden.enabled)
         self.assertEqual(overridden.idle_timeout_seconds, 12)
+        self.assertEqual(
+            overridden.provider_environment["HTTPS_PROXY"],
+            "http://127.0.0.1:7897",
+        )
 
     def test_debug_text_opt_in_persists_bounded_agent_context_snapshots(self) -> None:
         settings = {
             "agent": {"pi": {"enabled": True}},
-            "privacy": {"debugIncludeText": True},
+            "privacy": {
+                "debugIncludeText": True,
+                "debugContextDirectory": str(self.root / "external-context"),
+                "debugContextMaxGiB": 5,
+                "debugContextMaxCallsPerTurn": 128,
+            },
         }
         with patch.dict(
             "os.environ",
@@ -2594,12 +2622,27 @@ class AgentServiceTests(unittest.TestCase):
             clear=True,
         ):
             configured = pi_runtime_config_from_settings(settings)
+            default_location = pi_runtime_config_from_settings(
+                {"privacy": {"debugIncludeText": True}}
+            )
 
         self.assertEqual(
             configured.debug_context_dir,
+            self.root / "external-context",
+        )
+        self.assertEqual(
+            configured.debug_context_max_bytes,
+            5 * 1024 * 1024 * 1024,
+        )
+        self.assertEqual(configured.debug_context_max_calls, 128)
+        self.assertEqual(
+            default_location.debug_context_dir,
             self.root / "support" / "Agent" / "debug-context",
         )
-        self.assertEqual(configured.debug_context_max_bytes, 64 * 1024 * 1024)
+        self.assertEqual(
+            default_location.debug_context_max_bytes,
+            5 * 1024 * 1024 * 1024,
+        )
 
         with patch.dict(
             "os.environ",
@@ -2615,6 +2658,7 @@ class AgentServiceTests(unittest.TestCase):
             )
         self.assertEqual(explicit.debug_context_dir, self.root / "explicit")
         self.assertEqual(explicit.debug_context_max_bytes, 4096)
+        self.assertEqual(explicit.debug_context_max_calls, 128)
 
     def test_approval_api_lists_and_rejects_but_cannot_fake_an_approval(self) -> None:
         session = self.service.create_session({"title": "审批"})["session"]

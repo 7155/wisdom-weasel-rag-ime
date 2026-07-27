@@ -66,10 +66,14 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertTrue(defaults["pinyin"]["pairs"]["ongOn"])
         self.assertFalse(defaults["pinyin"]["pairs"]["nL"])
         self.assertFalse(defaults["privacy"]["debugIncludeText"])
+        self.assertEqual(defaults["privacy"]["debugContextDirectory"], "")
+        self.assertEqual(defaults["privacy"]["debugContextMaxGiB"], 5)
+        self.assertEqual(defaults["privacy"]["debugContextMaxCallsPerTurn"], 128)
         self.assertEqual(defaults["context"]["tokenBudget"], 4096)
         self.assertEqual(defaults["context"]["reservedOutputTokens"], 1024)
         self.assertFalse(defaults["agent"]["pi"]["enabled"])
         self.assertEqual(defaults["agent"]["pi"]["idleTimeoutSeconds"], 900)
+        self.assertTrue(defaults["agent"]["pi"]["systemProxy"])
         self.assertEqual(defaults["agent"]["pi"]["defaultRoleId"], "companion-future-v1")
         self.assertTrue(defaults["memory"]["automaticOrganization"]["enabled"])
         self.assertEqual(
@@ -94,6 +98,18 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(fields["interaction.postCommit.maxCallsPer10s"]["default"], 6)
         self.assertEqual(fields["interaction.postCommit.panelTtlMs"]["default"], 5000)
         self.assertEqual(fields["models.hot"]["default"], "minimind_ime_v2")
+        self.assertEqual(fields["models.hot"]["label"], "本机预测配置 ID")
+        self.assertIn("不是 Pi Provider 模型", fields["models.hot"]["description"])
+        self.assertEqual(fields["privacy.debugContextMaxGiB"]["default"], 5)
+        self.assertEqual(fields["privacy.debugContextMaxGiB"]["max"], 64)
+        self.assertEqual(
+            fields["privacy.debugContextMaxCallsPerTurn"]["default"],
+            128,
+        )
+        self.assertEqual(
+            fields["privacy.debugContextDirectory"]["maxLength"],
+            1024,
+        )
         self.assertEqual(fields["context.tokenBudget"]["default"], 4096)
         # Persona selection belongs to the Agent partner flow, not the generic
         # runtime settings form. Keep the internal default without exposing a
@@ -117,6 +133,14 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(
             fields["voice.refinementModel"]["type"],
             "pi-model-or-inherit",
+        )
+        self.assertEqual(
+            fields["memory.automaticOrganization.model"]["label"],
+            "DeepSeek V4 自动整理模型 ID",
+        )
+        self.assertIn(
+            "不是通用 Pi 模型槽位",
+            fields["memory.automaticOrganization.model"]["description"],
         )
         self.assertEqual(
             fields["voice.refinementThinkingLevel"]["modelKey"],

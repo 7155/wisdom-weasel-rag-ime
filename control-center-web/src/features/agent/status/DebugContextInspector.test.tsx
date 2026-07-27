@@ -37,7 +37,7 @@ describe('DebugContextInspector', () => {
     );
 
     expect(await screen.findByText('仅保留当前 Runtime')).toBeVisible();
-    expect(screen.getByText('本轮快照只存在于原 Runtime；Runtime 重启后已经无法恢复')).toBeVisible();
+    expect(screen.getByText('本轮快照只存在于原 Runtime；请在“设置 → 隐私与安全”开启本机上下文快照')).toBeVisible();
     expect(screen.queryByText('这轮尚未生成上下文快照')).not.toBeInTheDocument();
   });
 

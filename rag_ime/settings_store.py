@@ -667,6 +667,23 @@ def _validated_setting_value(
         else:
             normalized = value
 
+    if key == "privacy.debugContextDirectory" and isinstance(normalized, str):
+        normalized = normalized.strip()
+        if normalized:
+            if any(ord(character) < 32 for character in normalized):
+                raise ValueError(
+                    "setting privacy.debugContextDirectory contains control characters"
+                )
+            directory = Path(normalized).expanduser()
+            if not directory.is_absolute():
+                raise ValueError(
+                    "setting privacy.debugContextDirectory must be an absolute or ~/ path"
+                )
+            if directory == Path("/") or ".." in directory.parts:
+                raise ValueError(
+                    "setting privacy.debugContextDirectory must name a bounded subdirectory"
+                )
+
     options = field.get("options")
     if field_type in {"enum", "pi-thinking"} and isinstance(options, list) and normalized not in options:
         raise ValueError(f"setting {key} must be one of: {', '.join(str(item) for item in options)}")

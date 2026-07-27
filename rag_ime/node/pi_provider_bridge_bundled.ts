@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import process from "node:process";
 
@@ -110,6 +111,7 @@ async function providerCatalog(
 				source: status.source ?? "",
 				sourceLabel: status.label ?? "",
 				oauthSupported: Boolean(provider?.auth.oauth),
+				oauthBrowserSupported: id === "openai-codex" && Boolean(provider?.auth.oauth),
 				oauthDeviceCodeSupported: id === "openai-codex" && Boolean(provider?.auth.oauth),
 				apiKeySupported: Boolean(provider?.auth.apiKey),
 			},
@@ -169,18 +171,50 @@ async function logout(request: RequestPayload): Promise<Record<string, unknown>>
 	return { event: "result", ok: true, provider, beforeType, authType: "" };
 }
 
-async function oauthDeviceCode(request: RequestPayload): Promise<void> {
+async function assertBrowserCallbackAvailable(): Promise<void> {
+	const host = process.env.PI_OAUTH_CALLBACK_HOST?.trim() || "127.0.0.1";
+	await new Promise<void>((resolve, reject) => {
+		const server = createServer();
+		server.once("error", () => {
+			reject(new Error("OpenAI Codex browser callback port 1455 is unavailable; use device-code fallback"));
+		});
+		server.listen(1455, host, () => {
+			server.close((error) => {
+				if (error) reject(error);
+				else resolve();
+			});
+		});
+	});
+}
+
+function waitForBrowserCallback(signal?: AbortSignal): Promise<string> {
+	return new Promise((_resolve, reject) => {
+		const aborted = () => reject(new Error("Browser callback prompt closed"));
+		if (signal?.aborted) {
+			aborted();
+			return;
+		}
+		signal?.addEventListener("abort", aborted, { once: true });
+	});
+}
+
+async function oauthLogin(request: RequestPayload): Promise<void> {
 	const provider = providerId(request);
 	if (provider !== "openai-codex") {
-		throw new Error("device-code login is unavailable for this provider");
+		throw new Error("OAuth login is unavailable for this provider");
 	}
+	const method = request.action === "oauth_browser" ? "browser" : "device_code";
+	if (method === "browser") await assertBrowserCallbackAvailable();
 	const agentDir = requiredString(request, "agentDir", 4096);
 	const auth = AuthStorage.create(join(agentDir, "auth.json"));
 	emit({ event: "state", state: "starting", provider });
 	const credential = await openaiCodexOAuth.login({
 		prompt: async (prompt) => {
-			if (prompt.type === "select" && prompt.options.some((option) => option.id === "device_code")) {
-				return "device_code";
+			if (prompt.type === "select" && prompt.options.some((option) => option.id === method)) {
+				return method;
+			}
+			if (method === "browser" && prompt.type === "manual_code") {
+				return waitForBrowserCallback(prompt.signal);
 			}
 			throw new Error("interactive OAuth input is unavailable");
 		},
@@ -203,7 +237,8 @@ async function main(): Promise<void> {
 			emit(await logout(request));
 			return;
 		case "oauth_device_code":
-			await oauthDeviceCode(request);
+		case "oauth_browser":
+			await oauthLogin(request);
 			return;
 		default:
 			throw new Error("action is not allowed");

@@ -580,7 +580,9 @@ class PiRuntimeTests(unittest.TestCase):
                 "RAG_IME_PI_EXECUTABLE": str(self.fake_pi),
                 "RAG_IME_PI_ENABLED": "1",
                 "RAG_IME_PI_DEBUG_CONTEXT_DIR": str(debug_directory),
-                "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES": "65536",
+                "RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES": str(
+                    5 * 1024 * 1024 * 1024
+                ),
                 "RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS": "128",
             },
             clear=True,
@@ -596,7 +598,10 @@ class PiRuntimeTests(unittest.TestCase):
 
         child = config.child_environment()
         self.assertEqual(child["RAG_IME_PI_DEBUG_CONTEXT_DIR"], str(debug_directory))
-        self.assertEqual(child["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"], "65536")
+        self.assertEqual(
+            child["RAG_IME_PI_DEBUG_CONTEXT_MAX_BYTES"],
+            str(5 * 1024 * 1024 * 1024),
+        )
         self.assertEqual(child["RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS"], "128")
 
     def test_native_deepseek_endpoint_keeps_native_thinking_contract(self) -> None:

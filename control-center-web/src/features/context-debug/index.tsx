@@ -200,7 +200,7 @@ export function ContextDebugFeature() {
       ) : null}
       {!contextQuery.isPending && !contextQuery.error && sessionId && !response.available ? (
         <DebugNotice tone="warning">
-          {response.error || '当前回合没有原始上下文。Pi Runtime 重启后不会保留旧的原始 Prompt，但对话中的脱敏工具轨迹仍会从 JSONL 恢复。'}
+          {response.error || '当前回合没有上下文快照。请在“设置 → 隐私与安全”开启本机上下文快照并选择保存目录；未开启时 Runtime 重启后无法恢复旧 Prompt。'}
         </DebugNotice>
       ) : null}
 
