@@ -670,10 +670,11 @@ def _validated_setting_value(
     options = field.get("options")
     if field_type in {"enum", "pi-thinking"} and isinstance(options, list) and normalized not in options:
         raise ValueError(f"setting {key} must be one of: {', '.join(str(item) for item in options)}")
-    if field_type == "pi-model" and isinstance(normalized, str):
-        provider, separator, model_id = normalized.partition("/")
-        if not separator or not provider or not model_id or any(character.isspace() for character in normalized):
-            raise ValueError(f"setting {key} must be a Pi provider/model reference")
+    if field_type in {"pi-model", "pi-model-or-inherit"} and isinstance(normalized, str):
+        if not (field_type == "pi-model-or-inherit" and normalized == "inherit"):
+            provider, separator, model_id = normalized.partition("/")
+            if not separator or not provider or not model_id or any(character.isspace() for character in normalized):
+                raise ValueError(f"setting {key} must be a Pi provider/model reference")
     if key in {
         "memory.automaticOrganization.model",
         "memory.dreaming.model",

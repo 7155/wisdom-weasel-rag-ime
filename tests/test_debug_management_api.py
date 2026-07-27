@@ -979,6 +979,10 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(blocked["skipReason"], "active_rag_remote_not_allowed")
         self.assertTrue(ready["remoteReady"])
         self.assertTrue(all(ready["gates"].values()))
+        self.assertEqual(
+            ready["selectedModel"],
+            f"{ready['provider']}/{ready['model']}",
+        )
         self.assertFalse(ready["passivePostCommitRemoteAllowed"])
 
     def test_knowledge_workbench_runs_explicit_deepseek_session(self) -> None:

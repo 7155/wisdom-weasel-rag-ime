@@ -8,6 +8,7 @@ export const voiceQueryKeys = {
   schema: () => [...voiceQueryKeys.root, 'schema'] as const,
   runtime: () => [...voiceQueryKeys.root, 'runtime'] as const,
   capabilities: () => [...voiceQueryKeys.root, 'capabilities'] as const,
+  models: () => [...voiceQueryKeys.root, 'pi-models'] as const,
   credentials: (provider: VoiceProviderId) => [...voiceQueryKeys.root, 'credentials', provider] as const,
 };
 
@@ -31,7 +32,25 @@ export function useVoiceQueries() {
     queryFn: () => transport.capabilities(),
     staleTime: Infinity,
   });
-  return { capabilities, runtime, schema, settings, transport, transportKind: transport.kind };
+  const modelCatalogSupported = Boolean(
+    capabilities.data?.routeIds?.includes('agent.role.models'),
+  );
+  const modelCatalog = useQuery({
+    queryKey: voiceQueryKeys.models(),
+    queryFn: ({ signal }) => transport.request({ pathId: 'agent.role.models', signal }),
+    enabled: modelCatalogSupported,
+    staleTime: 0,
+  });
+  return {
+    capabilities,
+    modelCatalog,
+    modelCatalogSupported,
+    runtime,
+    schema,
+    settings,
+    transport,
+    transportKind: transport.kind,
+  };
 }
 
 export function useVoiceCredentialStatus(provider: VoiceProviderId) {

@@ -1745,7 +1745,6 @@ class DebugImeService:
         runtime_config = self.runtime_config_snapshot(settings=settings)
         active = settings.get("activeRag") if isinstance(settings.get("activeRag"), dict) else {}
         privacy = settings.get("privacy") if isinstance(settings.get("privacy"), dict) else {}
-        models = settings.get("models") if isinstance(settings.get("models"), dict) else {}
         resolved_local_only = bool(active.get("localOnlyDefault", True)) if local_only is None else bool(local_only)
         config = load_deepseek_config()
         flags = load_hybrid_rag_runtime_flags()
@@ -1777,7 +1776,11 @@ class DebugImeService:
             "remoteReady": all(gates.values()),
             "provider": config.provider_name,
             "model": config.model,
-            "selectedModel": _string(models.get("activeRag")) or "local",
+            "selectedModel": (
+                f"{config.provider_name}/{config.model}"
+                if config.provider_name and config.model
+                else "local"
+            ),
             "shortcut": runtime_config.active_rag.shortcut,
             "stream": True,
             "skipReason": skip_reason,

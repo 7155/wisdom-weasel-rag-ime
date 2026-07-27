@@ -93,6 +93,56 @@ class SettingsStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provider/model reference"):
             self.store.update_settings({"activeRag.quickModel": "deepseek-v4-flash"})
 
+    def test_voice_refinement_model_can_inherit_or_select_a_pi_model(self) -> None:
+        inherited = self.store.update_settings(
+            {
+                "voice.refinementModel": "inherit",
+                "voice.refinementThinkingLevel": "off",
+            }
+        )
+        selected = self.store.update_settings(
+            {
+                "voice.refinementModel": "gpt/gpt-5.6-luna",
+                "voice.refinementThinkingLevel": "high",
+            }
+        )
+
+        self.assertEqual(inherited.settings["voice"]["refinementModel"], "inherit")
+        self.assertEqual(selected.settings["voice"]["refinementModel"], "gpt/gpt-5.6-luna")
+        self.assertEqual(selected.settings["voice"]["refinementThinkingLevel"], "high")
+        with self.assertRaisesRegex(ValueError, "provider/model reference"):
+            self.store.update_settings({"voice.refinementModel": "gpt-5.6-luna"})
+        with self.assertRaisesRegex(ValueError, "must be one of"):
+            self.store.update_settings({"voice.refinementThinkingLevel": "unbounded"})
+
+    def test_legacy_unconsumed_model_fields_are_ignored_on_read(self) -> None:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute(
+                """
+                INSERT INTO management_settings(key, value_json, updated_at_ms, updated_by)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    "models",
+                    json.dumps(
+                        {
+                            "hot": "minimind_ime_v2",
+                            "activeRag": "deepseek-v4",
+                            "offlineCleanup": "deepseek-v4",
+                            "main": "unused",
+                            "quality": "unused",
+                            "embedding": "unused",
+                        }
+                    ),
+                    1,
+                    "legacy-test",
+                ),
+            )
+
+        settings = self.store.get_settings(include_sensitive=True)
+
+        self.assertEqual(settings["models"], {"hot": "minimind_ime_v2"})
+
     def test_lightning_off_setting_is_preserved(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(

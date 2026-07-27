@@ -1,8 +1,12 @@
 import { CheckCircle2, KeyRound, Mic, Play, Plus, RefreshCw, Save, Shield, Sparkles, Square, Waves } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { Button, Field, Input, SegmentedControl, Switch, TextArea } from '@/components/primitives';
+import { Button, Field, Input, SegmentedControl, Select, Switch, TextArea } from '@/components/primitives';
 import { useVoiceCredentialStatus, useVoiceQueries } from './api';
+import {
+  parsePiModelCatalogOptions,
+  supportedPiThinkingLevels,
+} from '@/features/agent/model-catalog-options';
 import {
   configurationMutationPathIds,
   useConfigurationMutationBoundary,
@@ -78,10 +82,23 @@ export function VoiceFeature() {
   const configuredHotkey = hotkeys.find((item) => item.value === stringValue(voiceSettings.hotkey))?.value
     ?? hotkeys.find((item) => item.value === stringValue(voiceControl.hotkey))?.value
     ?? 'middle_mouse';
+  const modelCatalog = useMemo(
+    () => parsePiModelCatalogOptions(queries.modelCatalog.data),
+    [queries.modelCatalog.data],
+  );
+  const configuredRefinementModel = stringValue(voiceSettings.refinementModel, 'inherit');
+  const configuredRefinementThinking = stringValue(
+    voiceSettings.refinementThinkingLevel,
+    'off',
+  );
   const [provider, setProvider] = useState<VoiceProviderId>(configuredProvider || 'native_streaming');
   const [hotkey, setHotkey] = useState<(typeof hotkeys)[number]['value']>(configuredHotkey);
+  const [refinementModel, setRefinementModel] = useState(configuredRefinementModel);
+  const [refinementThinking, setRefinementThinking] = useState(configuredRefinementThinking);
   useEffect(() => setProvider(configuredProvider || 'native_streaming'), [configuredProvider]);
   useEffect(() => setHotkey(configuredHotkey), [configuredHotkey]);
+  useEffect(() => setRefinementModel(configuredRefinementModel), [configuredRefinementModel]);
+  useEffect(() => setRefinementThinking(configuredRefinementThinking), [configuredRefinementThinking]);
   const credentials = useVoiceCredentialStatus(provider);
   const credentialState = credentialStatus(credentials.status.data?.configured);
   const voiceAgent = asRecord(components.voiceAgent);
@@ -114,22 +131,47 @@ export function VoiceFeature() {
   const hotwordDirty = hotwordsEnabled !== booleanValue(voiceSettings.hotwordsEnabled)
     || JSON.stringify(hotwordDraft.words) !== JSON.stringify(savedHotwords);
   const serviceDirty = provider !== (configuredProvider || 'native_streaming') || hotkey !== configuredHotkey;
+  const refinementDirty = refinementModel !== configuredRefinementModel
+    || refinementThinking !== configuredRefinementThinking;
+  const resolvedRefinementReference = refinementModel === 'inherit'
+    ? modelCatalog.selectedReference
+    : refinementModel;
+  const selectedRefinementModel = modelCatalog.models.find(
+    (model) => model.reference === resolvedRefinementReference,
+  );
+  const refinementThinkingLevels = supportedPiThinkingLevels(
+    selectedRefinementModel,
+    { includeOff: true },
+  );
   const nativeActionsAvailable = queries.capabilities.data?.native.tcc === true
     && typeof queries.transport.runVoiceAction === 'function';
   const agentRunning = booleanValue(voiceAgent.ok) || booleanValue(valueAt(voiceControl, 'agent.running'));
   const error = queries.capabilities.error as Error | null;
-  const pending = queries.capabilities.isPending;
+  const pending = queries.capabilities.isPending
+    || (queries.modelCatalogSupported && queries.modelCatalog.isPending);
   const refreshing = queries.settings.isFetching
     || queries.schema.isFetching
     || queries.runtime.isFetching
+    || (queries.modelCatalogSupported && queries.modelCatalog.isFetching)
     || credentials.status.isFetching;
   const refresh = () => void Promise.all([
     queries.capabilities.refetch(),
     queries.settings.refetch(),
     queries.schema.refetch(),
     queries.runtime.refetch(),
+    ...(queries.modelCatalogSupported ? [queries.modelCatalog.refetch()] : []),
     ...(credentials.status.isEnabled ? [credentials.status.refetch()] : []),
   ]);
+
+  const changeRefinementModel = (value: string) => {
+    setRefinementModel(value);
+    const reference = value === 'inherit' ? modelCatalog.selectedReference : value;
+    const selected = modelCatalog.models.find((model) => model.reference === reference);
+    const levels = supportedPiThinkingLevels(selected, { includeOff: true });
+    if (!levels.includes(refinementThinking)) {
+      setRefinementThinking(levels.includes('off') ? 'off' : levels[0] ?? 'off');
+    }
+  };
 
   const [nativeReceipt, setNativeReceipt] = useState<VoiceNativeActionReceipt | null>(null);
   const voiceAction = useMutation({
@@ -421,6 +463,138 @@ export function VoiceFeature() {
         </ManagementSection>
 
         <ManagementSection title="文字定稿" description="检查临时听写是否会被完整替换成最终文字，避免重复或半句话残留。">
+          <div className="mgmt-grid-2">
+            <div className="mgmt-stack">
+              <Field
+                description={
+                  refinementModel === 'inherit'
+                    ? `跟随当前 Agent 默认模型${selectedRefinementModel ? `：${selectedRefinementModel.name}` : ''}`
+                    : '只影响语音识别结束后的独立、无工具校对 Session。'
+                }
+                htmlFor="voice-refinement-model"
+                label="保守校对模型"
+              >
+                {queries.modelCatalogSupported && modelCatalog.models.length ? (
+                  <Select
+                    id="voice-refinement-model"
+                    onValueChange={changeRefinementModel}
+                    options={[
+                      {
+                        value: 'inherit',
+                        label: selectedRefinementModel && refinementModel === 'inherit'
+                          ? `跟随 Agent 默认模型（${selectedRefinementModel.name}）`
+                          : '跟随 Agent 默认模型',
+                      },
+                      ...modelCatalog.models.map((model) => ({
+                        value: model.reference,
+                        label: `${model.name} (${model.reference})`,
+                      })),
+                    ]}
+                    value={refinementModel}
+                  />
+                ) : (
+                  <StatusBadge
+                    label={queries.modelCatalogSupported ? '当前没有可用模型' : '暂时无法读取模型列表'}
+                    tone="warning"
+                  />
+                )}
+              </Field>
+              <Field
+                description="关闭思考时延迟最低；只有当前模型声明支持的档位才会出现。"
+                htmlFor="voice-refinement-thinking"
+                label="保守校对思考"
+              >
+                {queries.modelCatalogSupported && refinementThinkingLevels.length ? (
+                  <Select
+                    id="voice-refinement-thinking"
+                    onValueChange={setRefinementThinking}
+                    options={refinementThinkingLevels.map((level) => ({
+                      value: level,
+                      label: thinkingLabel(level),
+                    }))}
+                    value={refinementThinking}
+                  />
+                ) : (
+                  <StatusBadge label="请先选择可用模型" tone="warning" />
+                )}
+              </Field>
+            </div>
+            <ManagementMutationWorkflow
+              availability={mutationBoundary.availability(
+                runtimeRevision === null
+                  ? '当前语音设置尚未同步，刷新后才能预览。'
+                  : !queries.modelCatalogSupported || !selectedRefinementModel
+                    ? '当前无法确认保守校对模型，请刷新模型列表。'
+                    : !refinementThinkingLevels.includes(refinementThinking)
+                      ? '当前模型不支持所选思考档位。'
+                      : !refinementDirty
+                        ? '选择不同的模型或思考档位后才能生成预览。'
+                        : '',
+              )}
+              description="保存后下一次语音定稿立即使用；不会改变普通 Agent、Room 或闪电生成的模型。"
+              draftKey={JSON.stringify({
+                model: refinementModel,
+                thinking: refinementThinking,
+                runtimeRevision,
+              })}
+              mutationKey={['voice', 'mutation', 'refinement']}
+              onApply={async (preview) => parseManagementWorkReceipt(
+                await mutationBoundary.request({
+                  pathId: configurationMutationPathIds.apply,
+                  body: {
+                    changes: preview.context.changes,
+                    expectedRuntimeRevision: preview.expectedRuntimeRevision,
+                    previewToken: preview.previewToken,
+                    payloadSha256: preview.payloadSha256,
+                    confirmText: preview.requiredConfirm,
+                  },
+                }),
+                configurationMutationPathIds.apply,
+                preview.payloadSha256,
+              )}
+              onApplied={() => void queries.settings.refetch()}
+              onPreview={async () => {
+                if (
+                  runtimeRevision === null
+                  || !refinementDirty
+                  || !selectedRefinementModel
+                  || !refinementThinkingLevels.includes(refinementThinking)
+                ) {
+                  throw new Error('语音校对模型草案没有可应用的变化。');
+                }
+                const context = {
+                  changes: {
+                    'voice.refinementModel': refinementModel,
+                    'voice.refinementThinkingLevel': refinementThinking,
+                  },
+                };
+                return parseManagementWorkPreview(
+                  await mutationBoundary.request({
+                    pathId: configurationMutationPathIds.preview,
+                    body: { ...context, expectedRuntimeRevision: runtimeRevision },
+                  }),
+                  configurationMutationPathIds.apply,
+                  context,
+                );
+              }}
+              onRollback={async (receipt, preview) => parseManagementWorkReceipt(
+                await mutationBoundary.request({
+                  pathId: configurationMutationPathIds.rollback,
+                  body: {
+                    receiptId: receipt.receiptId,
+                    rollbackToken: receipt.rollbackToken,
+                    payloadSha256: receipt.payloadSha256,
+                    confirmText: 'rollback',
+                  },
+                }),
+                configurationMutationPathIds.rollback,
+                preview.payloadSha256,
+              )}
+              onRolledBack={() => void queries.settings.refetch()}
+              risk="R1"
+              title="保存保守校对模型"
+            />
+          </div>
           <MetricStrip items={[
             { label: '服务最终稿', value: finalRevisionLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: '识别服务会在结束时给出最终文字', icon: CheckCircle2, tone: deployedTone(deployedRecognition.secondPass) },
             { label: '保守校对', value: thirdPassLabel(deployedRecognition, lastRecognition, deployedRecognitionState), detail: thirdPassDetail(deployedRecognition, lastRecognition), icon: Sparkles, tone: thirdPassTone(deployedRecognition, lastRecognition) },
@@ -553,6 +727,18 @@ function hotkeyLabel(value: string): string {
   if (normalized === 'passive_middle_mouse' || normalized === 'middle_mouse') return '鼠标中键';
   if (normalized === 'option_+_space' || normalized === 'option_space') return 'Option + 空格';
   return value && /[\u3400-\u9fff]/u.test(value) ? value : '未读取到快捷键';
+}
+
+function thinkingLabel(value: string): string {
+  return ({
+    off: '关闭',
+    minimal: '极低',
+    low: '低',
+    medium: '中',
+    high: '高',
+    xhigh: '很高',
+    max: '最高',
+  } as Record<string, string>)[value] ?? value;
 }
 
 function credentialStatus(value: unknown): { label: string; tone: 'success' | 'warning' } {

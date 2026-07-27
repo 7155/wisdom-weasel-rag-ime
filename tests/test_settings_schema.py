@@ -57,7 +57,9 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertNotIn("visualModel", defaults["activeRag"])
         self.assertTrue(defaults["activeRag"]["allowRemoteModel"])
         self.assertTrue(defaults["privacy"]["allowRemoteModelForActiveRag"])
-        self.assertEqual(defaults["models"]["activeRag"], "deepseek-v4")
+        self.assertEqual(set(defaults["models"]), {"hot"})
+        self.assertEqual(defaults["voice"]["refinementModel"], "inherit")
+        self.assertEqual(defaults["voice"]["refinementThinkingLevel"], "off")
         self.assertEqual(defaults["pinyin"]["fuzzyProfile"], "sichuan-mild")
         self.assertTrue(defaults["pinyin"]["rerankUsesFuzzy"])
         self.assertTrue(defaults["pinyin"]["pairs"]["sSh"])
@@ -110,6 +112,16 @@ class SettingsSchemaTests(unittest.TestCase):
             fields["activeRag.quickThinkingLevel"]["description"],
         )
         self.assertNotIn("activeRag.visualModel", fields)
+        self.assertNotIn("models.activeRag", fields)
+        self.assertNotIn("models.offlineCleanup", fields)
+        self.assertEqual(
+            fields["voice.refinementModel"]["type"],
+            "pi-model-or-inherit",
+        )
+        self.assertEqual(
+            fields["voice.refinementThinkingLevel"]["modelKey"],
+            "voice.refinementModel",
+        )
         self.assertEqual(
             fields["memory.automaticOrganization.enabled"]["label"],
             "自动整理",

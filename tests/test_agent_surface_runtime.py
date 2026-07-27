@@ -24,6 +24,7 @@ class _SurfaceRuntimeStub:
         self.images: list[list[dict[str, str]]] = []
         self.messages: list[str] = []
         self.thinking_levels: list[tuple[str, str]] = []
+        self.model_selections: list[tuple[str, str, str]] = []
         self.completions: list[dict[str, object]] = []
         self.cancelled_completion_ids: list[str] = []
         self.completion_text = "继续完成这段文字。"
@@ -104,7 +105,8 @@ class _SurfaceRuntimeStub:
     def model_catalog(self, _session_id):
         return {"selected": dict(self.selected), "models": [dict(item) for item in self.models]}
 
-    def set_model(self, _session_id, *, provider, model_id):
+    def set_model(self, session_id, *, provider, model_id):
+        self.model_selections.append((session_id, provider, model_id))
         self.selected = next(
             dict(item)
             for item in self.models
@@ -139,7 +141,11 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
                 "quickThinkingLevel": "high",
                 "visualModel": "gpt/gpt-5.6-luna",
                 "visualThinkingLevel": "low",
-            }
+            },
+            "voice": {
+                "refinementModel": "inherit",
+                "refinementThinkingLevel": "off",
+            },
         }
         self.surface = AgentSurfaceRuntime(
             self.agent,
@@ -309,6 +315,37 @@ class AgentSurfaceRuntimeTests(unittest.TestCase):
         self.assertEqual(hidden[0]["allowedTools"], [])
         self.assertEqual(hidden[0]["thinkingLevel"], "off")
         self.assertEqual(self.runtime.thinking_levels, [])
+        self.assertEqual(self.runtime.model_selections, [])
+        self.assertEqual(result["model"], "test/text-only")
+
+    def test_voice_refinement_applies_its_own_model_and_thinking_selection(self) -> None:
+        self.settings["voice"] = {
+            "refinementModel": "test/gpt-5.6-luna",
+            "refinementThinkingLevel": "high",
+        }
+
+        result = self.surface.refine_voice(
+            {
+                "privacyDisposition": "allowed",
+                "requestId": "voice-refine-model-selection",
+                "frontAppBundleId": "com.example.Editor",
+                "transcript": (
+                    "这个项目是在哪里注入这些工具的？如果你要是用自使用自定义的话，"
+                    "就得把工具和功能都注入进去，对吧？"
+                ),
+            }
+        )
+
+        hidden = self.sessions.list(include_internal=True)
+        self.assertEqual(
+            self.runtime.model_selections,
+            [(str(hidden[0]["id"]), "test", "gpt-5.6-luna")],
+        )
+        self.assertEqual(
+            self.runtime.thinking_levels,
+            [(str(hidden[0]["id"]), "high")],
+        )
+        self.assertEqual(result["model"], "test/gpt-5.6-luna")
 
     def test_voice_refinement_rejects_answer_or_large_semantic_drift(self) -> None:
         with self.assertRaises(ValueError):

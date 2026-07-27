@@ -149,14 +149,11 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "hotkey": "middle_mouse",
         "hotwordsEnabled": False,
         "hotwords": [],
+        "refinementModel": "inherit",
+        "refinementThinkingLevel": "off",
     },
     "models": {
         "hot": "minimind_ime_v2",
-        "main": "",
-        "quality": "",
-        "activeRag": "deepseek-v4",
-        "offlineCleanup": "deepseek-v4",
-        "embedding": "local-hash",
     },
     "activeRag": {
         "enabled": True,
@@ -311,8 +308,6 @@ SETTINGS_SCHEMA: dict[str, object] = {
             "label": "Models",
             "fields": [
                 {"key": "models.hot", "type": "string", "label": "Hot path model", "default": "minimind_ime_v2"},
-                {"key": "models.activeRag", "type": "string", "label": "显式生成模型", "default": "deepseek-v4", "expert": True},
-                {"key": "models.offlineCleanup", "type": "string", "label": "离线整理模型", "default": "deepseek-v4"},
             ],
         },
         {
@@ -427,6 +422,20 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "voice.hotkey", "type": "enum", "label": "按住说话", "options": ["middle_mouse", "right_option", "option_space"], "default": "middle_mouse"},
                 {"key": "voice.hotwordsEnabled", "type": "boolean", "label": "启用语音热词", "default": False},
                 {"key": "voice.hotwords", "type": "string-list", "label": "语音热词", "default": []},
+                {
+                    "key": "voice.refinementModel",
+                    "type": "pi-model-or-inherit",
+                    "label": "保守校对模型",
+                    "default": "inherit",
+                },
+                {
+                    "key": "voice.refinementThinkingLevel",
+                    "type": "pi-thinking",
+                    "label": "保守校对思考",
+                    "default": "off",
+                    "modelKey": "voice.refinementModel",
+                    "options": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+                },
             ],
         },
         {
@@ -540,11 +549,17 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
     "voice.hotkey": {"description": "选择全局按住说话快捷键", "applyMode": "next_voice_session", "restartComponent": "voice"},
     "voice.hotwordsEnabled": {"description": "仅在豆包/火山原生流式识别请求中发送已确认的热词", "applyMode": "next_voice_session", "restartComponent": "voice"},
     "voice.hotwords": {"description": "每行一个中英文或技术词，最多 32 个，每个 2 至 9 个字符", "applyMode": "next_voice_session", "restartComponent": "voice"},
+    "voice.refinementModel": {
+        "description": "语音识别结束后的保守文字校对模型；跟随默认时使用当前 Agent 默认模型",
+        "applyMode": "live",
+    },
+    "voice.refinementThinkingLevel": {
+        "description": "只影响语音校对的独立无工具 Session；默认关闭思考以降低定稿等待",
+        "applyMode": "live",
+    },
     "pinyin.rimeManagedPatch": {"description": "写入受管理的 Rime 模糊音 patch", "applyMode": "redeploy_rime", "restartComponent": "rime"},
     "pinyin.fuzzyProfile": {"applyMode": "redeploy_rime", "restartComponent": "rime"},
     "models.hot": {"applyMode": "restart_predictor", "restartComponent": "predictor"},
-    "models.activeRag": {"applyMode": "restart_sidecar", "restartComponent": "sidecar"},
-    "models.offlineCleanup": {"applyMode": "restart_sidecar", "restartComponent": "sidecar", "expert": True},
     "privacy.traceIncludeText": {"risk": "sensitive", "expert": True},
     "privacy.debugIncludeText": {
         "description": "允许管理页显示调试原文，并在本机保存经凭证与隐藏推理脱敏的 Agent Provider/Tool 快照；关闭后只保留当前 Runtime 内存",

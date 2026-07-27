@@ -45,18 +45,15 @@ import {
 } from '@/features/overview/management-ui';
 import { PiProviderCredentials } from './PiProviderCredentials';
 import { PortabilityWorkflows } from './PortabilityWorkflows';
+import {
+  parsePiModelCatalogOptions,
+  supportedPiThinkingLevels,
+  type PiModelOption,
+} from '@/features/agent/model-catalog-options';
 import { useProductIdentity } from '@/features/identity/product-identity';
 import './configuration.css';
 
 type DraftValue = string | number | boolean;
-
-type PiModelOption = {
-  id: string;
-  name: string;
-  provider: string;
-  reference: string;
-  thinkingLevels: string[];
-};
 
 export function ConfigurationFeature() {
   const navigate = useNavigate();
@@ -77,7 +74,7 @@ export function ConfigurationFeature() {
     [queries.schema.data],
   );
   const piModels = useMemo(
-    () => parsePiModelOptions(queries.modelCatalog.data),
+    () => parsePiModelCatalogOptions(queries.modelCatalog.data).models,
     [queries.modelCatalog.data],
   );
   const [activeSection, setActiveSection] = useState('');
@@ -149,7 +146,7 @@ export function ConfigurationFeature() {
       const thinkingKey = stringValue(thinkingField?.key);
       if (!thinkingKey) return next;
       const selected = piModels.find((model) => model.reference === String(value));
-      const supported = oneShotThinkingLevels(selected);
+      const supported = supportedPiThinkingLevels(selected);
       const currentThinking = String(current[thinkingKey] ?? valueAt(settings, thinkingKey) ?? '');
       if (!supported.includes(currentThinking) && supported.length) {
         next[thinkingKey] = supported.includes('off') ? 'off' : supported[0];
@@ -420,7 +417,7 @@ function SettingField({
     const modelKey = stringValue(field.modelKey);
     const modelReference = String(changes[modelKey] ?? valueAt(settings, modelKey) ?? '');
     const selected = models.find((model) => model.reference === modelReference);
-    const levels = oneShotThinkingLevels(selected);
+    const levels = supportedPiThinkingLevels(selected);
     if (!modelCatalogSupported || !selected || !levels.length) {
       return <div className="mgmt-list__row"><span>{label}</span><StatusBadge label="请先选择支持思考的模型" tone="warning" /></div>;
     }
@@ -515,7 +512,7 @@ function previewDiffItems(rows: readonly { key: string; before: string; after: s
 }
 
 const sectionLabels: Record<string, string> = { identity: '称呼与外观', interaction: '输入体验', display: '候选窗口', rag: '知识检索', models: '模型分工', activeRag: '深度生成', memory: '记忆', context: '上下文', planning: '任务与规划', agent: '伙伴对话', voice: '语音', pinyin: '拼音', privacy: '隐私与安全' };
-const fieldLabels: Record<string, string> = { 'interaction.postCommit.numberKeys': '预测结果出现时的数字键', 'interaction.postCommit.tabAction': 'Tab 键行为', 'display.maxPostCommitCandidates': '续写候选数量', 'models.hot': '输入时即时预测模型', 'models.activeRag': '深度生成模型', 'models.offlineCleanup': '离线整理模型', 'activeRag.quickModel': '闪电生成模型', 'activeRag.quickThinkingLevel': '闪电生成思考', 'managementSecurity.requireToken': '限制本机管理请求' };
+const fieldLabels: Record<string, string> = { 'interaction.postCommit.numberKeys': '预测结果出现时的数字键', 'interaction.postCommit.tabAction': 'Tab 键行为', 'display.maxPostCommitCandidates': '续写候选数量', 'models.hot': '输入时即时预测模型', 'activeRag.quickModel': '闪电生成模型', 'activeRag.quickThinkingLevel': '闪电生成思考', 'managementSecurity.requireToken': '限制本机管理请求' };
 
 function publicSectionLabel(id: string, label: string): string { return sectionLabels[id] ?? (/[\u3400-\u9fff]/.test(label) ? label : '其他设置'); }
 function publicFieldLabel(key: string, label: string): string { return fieldLabels[key] ?? (label && !/pathId|schema|revision|hash|receipt|provider/i.test(label) ? publicDescription(label) : '设置项'); }
@@ -590,28 +587,3 @@ const settingDestinations = [
   { path: '/roles', label: '伙伴', detail: '身份、表达方式和默认模型', icon: Bot },
   { path: '/rooms', label: '多人协作', detail: '伙伴、任务和交接', icon: UsersRound },
 ] as const;
-
-function parsePiModelOptions(value: unknown): PiModelOption[] {
-  const envelope = asRecord(value);
-  return arrayRecords(envelope.providers).flatMap((provider) => (
-    arrayRecords(provider.models).map((model) => {
-      const providerId = stringValue(model.provider, stringValue(provider.id));
-      const id = stringValue(model.id);
-      return {
-        id,
-        name: stringValue(model.name, id),
-        provider: providerId,
-        reference: providerId && id ? `${providerId}/${id}` : '',
-        thinkingLevels: Array.isArray(model.thinkingLevels)
-          ? model.thinkingLevels.map(String)
-          : [],
-      };
-    })
-  )).filter((model) => model.reference);
-}
-
-function oneShotThinkingLevels(model: PiModelOption | undefined): string[] {
-  if (!model) return [];
-  return ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-    .filter((level) => model.thinkingLevels.includes(level));
-}

@@ -259,10 +259,31 @@ class AgentSurfaceRuntime:
             min(30.0, int(payload.get("latencyBudgetMs") or 8_000) / 1000),
         )
         prompt = _voice_refinement_prompt(transcript, hotwords=hotwords)
+        provider, model_id, thinking_level = self._voice_refinement_config()
 
         with self._session_lock(session_id):
-            if str(session.get("thinkingLevel") or "") != "off":
-                self.agent.runtime.set_thinking_level(session_id, level="off")
+            selected = self.agent.runtime.model_catalog(session_id).get("selected")
+            selected_provider = (
+                str(selected.get("provider") or "")
+                if isinstance(selected, Mapping)
+                else ""
+            )
+            selected_model_id = (
+                str(selected.get("id") or selected.get("modelId") or "")
+                if isinstance(selected, Mapping)
+                else ""
+            )
+            if (selected_provider, selected_model_id) != (provider, model_id):
+                self.agent.runtime.set_model(
+                    session_id,
+                    provider=provider,
+                    model_id=model_id,
+                )
+            if str(session.get("thinkingLevel") or "") != thinking_level:
+                self.agent.runtime.set_thinking_level(
+                    session_id,
+                    level=thinking_level,
+                )
             with self._lock:
                 self._active_requests[request_id] = session_id
             try:
@@ -318,18 +339,47 @@ class AgentSurfaceRuntime:
             raise ValueError("Active RAG one-shot model settings are unavailable")
         model_key = "quickModel"
         thinking_key = "quickThinkingLevel"
-        model_reference = str(active_rag.get(model_key) or "").strip()
-        if "/" not in model_reference:
-            raise ValueError(f"activeRag.{model_key} must be a Pi provider/model reference")
-        provider, model_id = (part.strip() for part in model_reference.split("/", 1))
-        if not provider or not model_id:
-            raise ValueError(f"activeRag.{model_key} must be a Pi provider/model reference")
+        provider, model_id = _pi_model_reference(
+            active_rag.get(model_key),
+            field=f"activeRag.{model_key}",
+        )
         # Active RAG is an explicit quality-generation request rather than the
         # per-keystroke predictor hot path.  A missing setting must therefore
         # preserve reasoning; an explicit user-selected "off" is still honored.
         thinking_level = str(active_rag.get(thinking_key) or "high").strip().lower()
         if thinking_level not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
             raise ValueError(f"activeRag.{thinking_key} must use a supported thinking level")
+        return provider, model_id, thinking_level
+
+    def _voice_refinement_config(self) -> tuple[str, str, str]:
+        settings = self._settings_provider()
+        voice = settings.get("voice") if isinstance(settings, Mapping) else None
+        if not isinstance(voice, Mapping):
+            voice = {}
+        model_reference = str(voice.get("refinementModel") or "inherit").strip()
+        if model_reference == "inherit":
+            model_reference = str(
+                self.agent.runtime_factory.default_model_profile or ""
+            ).strip()
+        provider, model_id = _pi_model_reference(
+            model_reference,
+            field="voice.refinementModel",
+        )
+        thinking_level = str(
+            voice.get("refinementThinkingLevel") or "off"
+        ).strip().lower()
+        if thinking_level not in {
+            "off",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        }:
+            raise ValueError(
+                "voice.refinementThinkingLevel must use a supported thinking level"
+            )
         return provider, model_id, thinking_level
 
     def _internal_session(
@@ -417,6 +467,21 @@ class AgentSurfaceRuntime:
 def _internal_session_title(app: str, *, title_prefix: str) -> str:
     digest = hashlib.sha256(app.encode("utf-8")).hexdigest()[:12]
     return f"{title_prefix} · {digest}"
+
+
+def _pi_model_reference(value: object, *, field: str) -> tuple[str, str]:
+    model_reference = str(value or "").strip()
+    provider, separator, model_id = model_reference.partition("/")
+    provider = provider.strip()
+    model_id = model_id.strip()
+    if (
+        not separator
+        or not provider
+        or not model_id
+        or any(character.isspace() for character in model_reference)
+    ):
+        raise ValueError(f"{field} must be a Pi provider/model reference")
+    return provider, model_id
 
 
 def _one_shot_surface_message(

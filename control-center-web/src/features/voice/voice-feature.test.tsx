@@ -53,6 +53,37 @@ describe('VoiceFeature', () => {
     expect(configurationRequest(transport, 'configuration.settings.apply')).toBeDefined();
   });
 
+  it('selects a real Pi model for independent voice refinement', async () => {
+    const user = userEvent.setup();
+    const transport = renderVoiceWithHotwordWrites();
+
+    await screen.findByRole('heading', { name: '语音输入', level: 1 });
+    expect(await screen.findByRole('combobox', { name: '保守校对模型' }))
+      .toHaveTextContent('跟随 Agent 默认模型');
+
+    await user.click(screen.getByRole('combobox', { name: '保守校对模型' }));
+    await user.click(await screen.findByRole('option', { name: /GPT-5.6 Luna/ }));
+    await user.click(screen.getByRole('combobox', { name: '保守校对思考' }));
+    await user.click(await screen.findByRole('option', { name: '高' }));
+
+    const workflow = screen.getByText('保存保守校对模型', { selector: 'strong' })
+      .closest('.mgmt-workflow');
+    expect(workflow).not.toBeNull();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
+    await waitFor(() => expect(configurationRequest(
+      transport,
+      'configuration.settings.preview',
+    )).toMatchObject({
+      body: {
+        changes: {
+          'voice.refinementModel': 'gpt/gpt-5.6-luna',
+          'voice.refinementThinkingLevel': 'high',
+        },
+        expectedRuntimeRevision: 12,
+      },
+    }));
+  });
+
   it('fails closed outside the native host for Keychain and system actions', async () => {
     renderVoice(false);
 
@@ -137,6 +168,7 @@ function renderVoice(toolAvailable: boolean): MockControlTransport {
     'diagnostics.runtime',
     'agent.tools.list',
     'agent.session.prompt',
+    'agent.role.models',
   ] as ControlPathId[];
   const transport = new MockControlTransport({
     capabilities: { routeIds },
@@ -178,6 +210,7 @@ function renderVoice(toolAvailable: boolean): MockControlTransport {
           ],
         }] : [],
       },
+      'agent.role.models': voiceModelCatalog(),
     },
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -206,6 +239,7 @@ function renderVoiceWithHotwordWrites(): MockControlTransport {
     'diagnostics.runtime',
     'agent.tools.list',
     'agent.session.prompt',
+    'agent.role.models',
   ] as ControlPathId[];
   const transport = new MockControlTransport({
     capabilities: {
@@ -226,6 +260,8 @@ function renderVoiceWithHotwordWrites(): MockControlTransport {
             hotkey: 'middle_mouse',
             hotwords: [],
             hotwordsEnabled: false,
+            refinementModel: 'inherit',
+            refinementThinkingLevel: 'off',
             tokenConfigured: true,
           },
         },
@@ -318,6 +354,7 @@ function renderVoiceWithHotwordWrites(): MockControlTransport {
           ],
         }],
       },
+      'agent.role.models': voiceModelCatalog(),
     },
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -349,6 +386,34 @@ function voiceReceipt(pathId: string, receiptId: string, rollbackAvailable: bool
     rollbackToken: rollbackAvailable ? 'rollback-voice-hotwords' : '',
     rollbackAuthority: { settingKeys: ['voice.hotwords', 'voice.hotwordsEnabled'] },
     restartComponents: [],
+  };
+}
+
+function voiceModelCatalog() {
+  return {
+    schemaVersion: 'rag-ime.agent-role-model-catalog.v1',
+    ok: true,
+    selected: { provider: 'deepseek', id: 'deepseek-v4-flash' },
+    thinkingLevel: 'off',
+    providers: [{
+      id: 'deepseek',
+      displayName: 'DeepSeek',
+      models: [{
+        provider: 'deepseek',
+        id: 'deepseek-v4-flash',
+        name: 'DeepSeek V4 Flash',
+        thinkingLevels: ['off', 'high'],
+      }],
+    }, {
+      id: 'gpt',
+      displayName: 'GPT',
+      models: [{
+        provider: 'gpt',
+        id: 'gpt-5.6-luna',
+        name: 'GPT-5.6 Luna',
+        thinkingLevels: ['off', 'low', 'high', 'max'],
+      }],
+    }],
   };
 }
 

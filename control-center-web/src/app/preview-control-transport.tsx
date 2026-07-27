@@ -636,6 +636,8 @@ function previewResponse(pathId: ControlPathId): unknown {
           },
         ],
       };
+    case 'agent.role.models':
+      return previewModelCatalog('role-default');
     case 'agent.session.contextItems.list':
       return { ok: true, items: [] };
     case 'agent.session.contextTraces.list':
@@ -2708,7 +2710,6 @@ function previewConfigurationSettings(): Record<string, unknown> {
       },
       models: {
         hot: 'minimind_ime_v2',
-        activeRag: 'deepseek/deepseek-v4',
       },
       activeRag: {
         enabled: true,
@@ -2727,6 +2728,14 @@ function previewConfigurationSettings(): Record<string, unknown> {
       },
       planning: { enabled: true, injectIntoContext: true },
       agent: { pi: { enabled: true, idleTimeoutSeconds: 900, resumeLastSession: true } },
+      voice: {
+        provider: 'native_streaming',
+        hotkey: 'middle_mouse',
+        hotwordsEnabled: true,
+        hotwords: ['Pi', 'Agent', 'Tool'],
+        refinementModel: 'inherit',
+        refinementThinkingLevel: 'off',
+      },
       privacy: { traceIncludeText: false, redactSecrets: true },
     },
   };
@@ -2775,7 +2784,6 @@ function previewConfigurationSchema(): Record<string, unknown> {
         label: 'Models',
         fields: [
           { key: 'models.hot', type: 'string', label: '即时预测模型', applyMode: 'restart_predictor' },
-          { key: 'models.activeRag', type: 'pi-model', label: '深度生成模型', applyMode: 'live' },
         ],
       },
       {
