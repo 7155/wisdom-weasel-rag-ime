@@ -11,19 +11,27 @@ type PersonaAssetRecord = Readonly<{
 }>;
 
 const portraitAssets = {
-  flash: '/companions/personas/companion-flash-v6.webp',
-  luna: '/companions/personas/companion-firstlight-v6.webp',
-  sol: '/companions/personas/companion-future-v6.webp',
-  terra: '/companions/personas/companion-present-v6.webp',
+  flash: '/companions/personas/companion-flash-v9.webp',
+  luna: '/companions/personas/companion-firstlight-v9.webp',
+  sol: '/companions/personas/companion-future-v9.webp',
+  terra: '/companions/personas/companion-present-v9.webp',
 } as const;
 
+const presentReactions: PersonaAssetStates = {
+  idle: portraitAssets.terra,
+  listening: portraitAssets.terra,
+  thinking: '/companions/personas/companion-present-thinking-v9.webp',
+  done: '/companions/personas/companion-present-done-v9.webp',
+  warning: '/companions/personas/companion-present-warning-v9.webp',
+};
+
 export const personaAssetManifest = {
-  schemaVersion: 'rag-ime.persona-assets.v10',
+  schemaVersion: 'rag-ime.persona-assets.v12',
   fallbackAssetId: 'rag-ime-timeline-present-v1',
   assets: {
-    'rag-ime-presence-v2': assetRecord('companion-present-v1', 'presence', '运行状态', singlePortrait(portraitAssets.terra)),
+    'rag-ime-presence-v2': assetRecord('companion-present-v1', 'presence', '运行状态', presentReactions),
     'rag-ime-timeline-past-v1': assetRecord('companion-firstlight-v1', 'past', '初识阶段', singlePortrait(portraitAssets.luna)),
-    'rag-ime-timeline-present-v1': assetRecord('companion-present-v1', 'present', '此刻阶段', singlePortrait(portraitAssets.terra)),
+    'rag-ime-timeline-present-v1': assetRecord('companion-present-v1', 'present', '此刻阶段', presentReactions),
     'rag-ime-timeline-future-v1': assetRecord('companion-future-v1', 'future', '构筑阶段', singlePortrait(portraitAssets.sol)),
     'rag-ime-timeline-flash-v1': assetRecord('companion-flash-v1', 'flash', '闪念阶段', singlePortrait(portraitAssets.flash)),
   },

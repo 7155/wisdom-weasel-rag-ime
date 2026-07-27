@@ -18,7 +18,7 @@ class PersonaArtAssetTests(unittest.TestCase):
         self.manifest: dict[str, Any] = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
     def test_generated_assets_match_manifest_and_webp_dimensions(self) -> None:
-        self.assertEqual(self.manifest["schemaVersion"], "rag-ime.persona-assets.v10")
+        self.assertEqual(self.manifest["schemaVersion"], "rag-ime.persona-assets.v12")
         portraits = [
             asset for asset in self.manifest["assets"].values()
             if isinstance(asset.get("source"), str)
@@ -34,6 +34,13 @@ class PersonaArtAssetTests(unittest.TestCase):
             self.assertEqual(hashlib.sha256(content).hexdigest(), asset["sha256"], path)
             self.assertEqual(_webp_dimensions(content), (asset["width"], asset["height"]), path)
 
+        referenced_sources = _referenced_sources(self.manifest)
+        self.assertEqual(len(referenced_sources), 7)
+        for source in referenced_sources:
+            path = PUBLIC_ROOT / source.lstrip("/")
+            content = path.read_bytes()
+            self.assertEqual(_webp_dimensions(content), (640, 640), path)
+
     def test_rejected_animal_pack_is_not_referenced(self) -> None:
         manifest_text = MANIFEST_PATH.read_text(encoding="utf-8")
         self.assertNotIn("wisdom-weasel-", manifest_text)
@@ -46,15 +53,24 @@ class PersonaArtAssetTests(unittest.TestCase):
 
     def test_generated_pack_stays_within_delivery_budgets(self) -> None:
         budgets = self.manifest["budgets"]
-        portraits = [
-            asset for asset in self.manifest["assets"].values()
-            if isinstance(asset.get("source"), str)
-        ]
-        self.assertTrue(all(asset["bytes"] <= budgets["portraitMaxBytes"] for asset in portraits))
+        sources = _referenced_sources(self.manifest)
+        sizes = [(PUBLIC_ROOT / source.lstrip("/")).stat().st_size for source in sources]
+        self.assertTrue(all(size <= budgets["portraitMaxBytes"] for size in sizes))
         self.assertLessEqual(
-            sum(asset["bytes"] for asset in portraits),
+            sum(sizes),
             budgets["generatedPackMaxBytes"],
         )
+
+
+def _referenced_sources(manifest: dict[str, Any]) -> set[str]:
+    sources: set[str] = set()
+    for asset in manifest["assets"].values():
+        if isinstance(asset.get("source"), str):
+            sources.add(asset["source"])
+        states = asset.get("states")
+        if isinstance(states, dict):
+            sources.update(value for value in states.values() if isinstance(value, str))
+    return sources
 
 
 def _webp_dimensions(content: bytes) -> tuple[int, int]:

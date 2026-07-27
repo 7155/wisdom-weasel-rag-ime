@@ -1,4 +1,4 @@
-import { Menu as MenuIcon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Activity, Menu as MenuIcon, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useState } from 'react';
 import {
   routeGroupLabels,
@@ -71,12 +71,10 @@ export function DesktopNavigation({
   return (
     <aside className="shell-sidebar" aria-label="主导航">
       <div className="shell-brand">
-        <img
-          className="shell-brand__mark"
-          src="./app-icon-64.png"
-          alt=""
-          aria-hidden="true"
-        />
+        <span className="shell-brand__signal" role="img" aria-label={`${identity.productName}，本地运行`}>
+          <Activity size={18} strokeWidth={1.8} aria-hidden="true" />
+          <i aria-hidden="true" />
+        </span>
         <span className="shell-brand__copy">
           <strong>{identity.productName}</strong>
           <small>{identity.tagline}</small>

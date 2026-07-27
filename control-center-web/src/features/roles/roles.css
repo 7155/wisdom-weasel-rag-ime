@@ -10,7 +10,7 @@
 .roles-layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, .75fr); gap: 28px; padding-top: 20px; }
 .roles-layout > * { min-width: 0; }
 .persona-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 8px; }
-.persona-grid > button { display: grid; min-height: 120px; grid-template-columns: 72px minmax(0, 1fr); align-content: center; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); color: inherit; text-align: left; cursor: pointer; }
+.persona-grid > button { display: grid; min-height: 132px; grid-template-columns: 80px minmax(0, 1fr); align-content: center; align-items: center; gap: 14px; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-surface); color: inherit; text-align: left; cursor: pointer; }
 .persona-grid > button:hover { background: var(--color-surface-hover); }
 .persona-grid > button[aria-current='true'] { border-color: var(--color-accent); box-shadow: inset 3px 0 var(--color-accent); }
 .persona-grid .agent-persona-avatar { grid-column: 1; grid-row: 1; }
@@ -170,7 +170,7 @@
 @media (max-width: 820px) { .roles-layout { grid-template-columns: 1fr; } .role-inspector { border-top: 1px solid var(--color-border); border-left: 0; padding: 18px 0 0; } }
 @media (max-width: 560px) { .shell-route-stage > main.roles-feature { padding: 14px 12px; } .roles-header { flex-wrap: wrap; } .roles-header > span { flex-basis: 100%; } .roles-header > .ui-segmented { flex: 1 1 180px; } .capability-workspace > header { align-items: stretch; flex-direction: column; gap: 8px; } .capability-workspace > header > .ui-segmented { width: 100%; } .persona-grid { grid-template-columns: 1fr; } .role-create-two-columns, .role-timeline-options { grid-template-columns: 1fr; } }
 @media (max-width: 520px) { .companion-fit { grid-template-columns: 1fr; } }
-@media (max-width: 420px) { .roles-header > .ui-segmented, .roles-header-actions { width: 100%; flex-basis: 100%; } .roles-header-actions > .ui-button:not(.ui-icon-button), .companion-actions > .ui-button { flex: 1; } .role-inspector dl > div { grid-template-columns: 92px minmax(0, 1fr); } .role-inspector__hero { align-items: flex-start; } .role-inspector__hero .agent-persona-avatar[data-size='hero'] { width: 88px; height: 88px; } .role-mode-options, .role-book-counts, .role-runtime-fixed { grid-template-columns: 1fr; } .role-book-actions > .ui-button { flex: 1; } }
+@media (max-width: 420px) { .roles-header > .ui-segmented, .roles-header-actions { width: 100%; flex-basis: 100%; } .roles-header-actions > .ui-button:not(.ui-icon-button), .companion-actions > .ui-button { flex: 1; } .role-inspector dl > div { grid-template-columns: 92px minmax(0, 1fr); } .role-inspector__hero { align-items: flex-start; } .role-inspector__hero .agent-persona-avatar[data-size='hero'] { width: 104px; height: 104px; } .role-mode-options, .role-book-counts, .role-runtime-fixed { grid-template-columns: 1fr; } .role-book-actions > .ui-button { flex: 1; } }
 .definition-audit { border-top: 1px solid var(--color-border); padding-top: 12px; }
 .definition-audit > summary { align-items: center; cursor: pointer; display: flex; gap: 9px; list-style: none; }
 .definition-audit > summary::-webkit-details-marker { display: none; }
