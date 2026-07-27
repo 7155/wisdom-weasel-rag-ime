@@ -849,8 +849,8 @@ index 0000000..1111111
 +  private func scheduleTTL(for payload: RagImeAssistantOverlayPayload) {
 +    ttlDismissWorkItem?.cancel()
 +    ttlDismissWorkItem = nil
-+    if currentState.isExplicit {
-+      trace("assistant_explicit_result_pinned", [
++    if currentState.isExplicit && currentState != .explicitGenerating {
++      trace("assistant_explicit_surface_pinned", [
 +        "snapshotId": payload.snapshotId,
 +        "surfaceState": currentState.rawValue,
 +        "dismissPolicy": "accept_close_retry_or_focus_change",
@@ -861,8 +861,11 @@ index 0000000..1111111
 +    let requestedMs = Int(payload.overlayConfigNumber("expiresAfterMs") ?? Double(payload.expiresAfterMs))
 +    let hasRealCandidate = payload.candidates.contains(where: RagImeSuggestionCardView.isRealCandidate)
 +    let pendingWithoutResult = currentState == .pendingPrediction
++    let explicitGeneration = currentState == .explicitGenerating
 +    let isNoResultFeedback = payload.statusText.contains("没有合适")
-+    let maximumMs = hasRealCandidate ? 30_000 : (pendingWithoutResult && !isNoResultFeedback ? 12_000 : 2_000)
++    let maximumMs = hasRealCandidate
++      ? 30_000
++      : (explicitGeneration ? 30_000 : (pendingWithoutResult && !isNoResultFeedback ? 12_000 : 2_000))
 +    let boundedMs = min(max(requestedMs > 0 ? requestedMs : fallbackMs, 500), maximumMs)
 +    // A ready completion should not vanish while the user is deciding whether
 +    // to press Tab. New typing, focus changes, Escape, and stale guards still
@@ -880,7 +883,9 @@ index 0000000..1111111
 +        "expiresAfterMs": expiresAfterMs,
 +        "ttlSource": hasRealCandidate
 +          ? (requestedMs > 0 ? "payload" : "fail_safe")
-+          : (pendingWithoutResult && !isNoResultFeedback ? "pending_feedback_guard" : "no_result_guard"),
++          : (explicitGeneration
++            ? "active_rag_budget"
++            : (pendingWithoutResult && !isNoResultFeedback ? "pending_feedback_guard" : "no_result_guard")),
 +      ])
 +      self.dismiss(reason: "ttl_expired")
 +    }
@@ -3720,6 +3725,7 @@ index 0000000000000000000000000000000000000000..c73c7d0c8942f477eefcd01407d413a8
 +  let error: String?
 +  let elapsedMs: Int?
 +  let pollAfterMs: Int?
++  let expiresAfterMs: Int?
 +  let keyPolicy: RagImeKeyPolicyPayload?
 +}
 +
@@ -3748,6 +3754,7 @@ index 0000000000000000000000000000000000000000..c73c7d0c8942f477eefcd01407d413a8
 +      error: reason,
 +      elapsedMs: nil,
 +      pollAfterMs: 0,
++      expiresAfterMs: nil,
 +      keyPolicy: RagImeKeyPolicyPayload(
 +        numberKeys: "pass_through",
 +        tab: "noop",
@@ -6593,15 +6600,15 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +    let update = NSMenuItem(title: NSLocalizedString("Check for updates...", comment: "Menu item"), action: #selector(checkForUpdates), keyEquivalent: "")
 +    update.target = self
 +
-+    let controlCenter = NSMenuItem(title: "打开 RAG-IME 控制中心...", action: #selector(openRagImeControlCenter), keyEquivalent: "")
++    let controlCenter = NSMenuItem(title: "打开澄控制中心...", action: #selector(openRagImeControlCenter), keyEquivalent: "")
 +    controlCenter.target = self
 +    let pauseAI = NSMenuItem(title: "暂停 AI 建议", action: #selector(pauseRagImeAI), keyEquivalent: "")
 +    pauseAI.target = self
-+    let currentProfile = NSMenuItem(title: "当前配置：由 Sidecar 同步", action: nil, keyEquivalent: "")
++    let currentProfile = NSMenuItem(title: "配置由控制中心管理", action: nil, keyEquivalent: "")
 +    currentProfile.isEnabled = false
-+    let restartSidecar = NSMenuItem(title: "重新启动 RAG-IME Sidecar", action: #selector(restartRagImeSidecar), keyEquivalent: "")
++    let restartSidecar = NSMenuItem(title: "重新启动后台服务", action: #selector(restartRagImeSidecar), keyEquivalent: "")
 +    restartSidecar.target = self
-+    let diagnostics = NSMenuItem(title: "RAG-IME 诊断...", action: #selector(openRagImeDiagnostics), keyEquivalent: "")
++    let diagnostics = NSMenuItem(title: "诊断与修复...", action: #selector(openRagImeDiagnostics), keyEquivalent: "")
 +    diagnostics.target = self
 +
 +    let menu = NSMenu()
@@ -7994,7 +8001,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      contextHash: ragImeStableTextHash(requestContext),
 +      project: sidecarClient.project,
 +      maxCandidates: 1,
-+      latencyBudgetMs: 15000,
++      latencyBudgetMs: 30000,
 +      windowContext: nil,
 +      visualContext: nil
 +    )
@@ -8195,7 +8202,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      contextHash: ragImeStableTextHash(requestContext),
 +      project: sidecarClient.project,
 +      maxCandidates: 1,
-+      latencyBudgetMs: 15000,
++      latencyBudgetMs: 30000,
 +      windowContext: windowContext,
 +      visualContext: visualContext
 +    )
@@ -8456,7 +8463,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      sourceCards: [],
 +      snapshotId: request.sessionId,
 +      sessionFingerprint: "",
-+      expiresAfterMs: max(15000, request.latencyBudgetMs + 3000),
++      expiresAfterMs: min(max(request.latencyBudgetMs, 2_000), 8_000),
 +      keyPolicy: RagImeKeyPolicyPayload(
 +        numberKeys: "pass_through",
 +        tab: "accept_top_when_ready",
@@ -8778,7 +8785,8 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      sourceCards: activeSourceCards,
 +      snapshotId: response.sessionId,
 +      sessionFingerprint: "",
-+      expiresAfterMs: Int(ragImePostCommitDisplayHoldoverDuration * 1000),
++      expiresAfterMs: response.expiresAfterMs
++        ?? min(max(request.latencyBudgetMs, 2_000), 30_000),
 +      keyPolicy: response.keyPolicy,
 +      overlayConfig: nil,
 +      progressive: nil,

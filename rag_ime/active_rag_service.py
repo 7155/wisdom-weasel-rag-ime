@@ -1864,6 +1864,7 @@ def _session_payload(session: ActiveRagSession) -> dict[str, object]:
         "updatedAtMs": session.updated_at_ms,
         "elapsedMs": elapsed_ms,
         "pollAfterMs": poll_after_ms,
+        "expiresAfterMs": session.request.latency_budget_ms,
     }
 
 

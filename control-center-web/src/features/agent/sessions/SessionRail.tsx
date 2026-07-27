@@ -1,5 +1,16 @@
-import { Archive, ArchiveRestore, Folder, MessageSquarePlus, MoreHorizontal, Search, Trash2, X } from 'lucide-react';
-import { forwardRef, useMemo, useState } from 'react';
+import {
+  Archive,
+  ArchiveRestore,
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  MessageSquarePlus,
+  MoreHorizontal,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { forwardRef, useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Dialog,
@@ -51,8 +62,28 @@ export const SessionRail = forwardRef<HTMLElement, {
   const [deleteTarget, setDeleteTarget] = useState<SessionSummary>();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [collapsedRoots, setCollapsedRoots] = useState<ReadonlySet<string>>(new Set());
   const groups = useMemo(() => projectGroups(sessions, query), [query, sessions]);
   const projectCount = new Set(sessions.map((session) => primaryRoot(session)).filter(Boolean)).size;
+  useEffect(() => {
+    const selectedRoot = primaryRoot(sessions.find((session) => session.id === selectedId));
+    setCollapsedRoots((current) => {
+      if (!current.has(selectedRoot)) return current;
+      const next = new Set(current);
+      next.delete(selectedRoot);
+      return next;
+    });
+  }, [selectedId, sessions]);
+
+  function toggleProject(root: string): void {
+    setCollapsedRoots((current) => {
+      const next = new Set(current);
+      if (next.has(root)) next.delete(root);
+      else next.add(root);
+      return next;
+    });
+  }
+
   return (
     <aside
       ref={ref}
@@ -86,51 +117,75 @@ export const SessionRail = forwardRef<HTMLElement, {
         <input data-drawer-autofocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话或项目" />
       </label>
       <div className="agent-session-list" aria-busy={loading || undefined}>
-        {groups.map((group) => (
-          <section className="agent-session-project" key={group.root || 'unassigned'} data-selected={group.sessions.some((session) => session.id === selectedId) || undefined}>
-            <header title={group.root || '这段对话没有关联工作目录'}>
-              <Folder size={15} />
-              <strong>{group.label}</strong>
-              <small>{group.sessions.length}</small>
-            </header>
-            {group.sessions.map((session) => (
-              <div className="agent-session-row-shell" data-selected={selectedId === session.id || undefined} key={session.id}>
-                <button
-                  type="button"
-                  className="agent-session-row"
-                  aria-current={selectedId === session.id ? 'true' : undefined}
-                  onClick={() => onSelect(session.id)}
-                >
-                  <span className="agent-session-row__status" data-status={session.status} aria-hidden="true" />
-                  <span className="agent-session-row__copy">
-                    <strong>{session.title}</strong>
-                    <small>{session.lastMessagePreview || `${session.messageCount ?? 0} 条消息`}</small>
-                  </span>
-                  <time>{relativeTime(session.updatedAtMs)}</time>
-                </button>
-                <Menu>
-                  <MenuTrigger asChild>
-                    <IconButton className="agent-session-row__menu" label="更多对话操作" icon={<MoreHorizontal size={16} />} size="small" title={session.title} />
-                  </MenuTrigger>
-                  <MenuContent align="end">
-                    <MenuItem onSelect={() => onArchive?.(session.id, session.status !== 'archived')}>
-                      {session.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}
-                      {session.status === 'archived' ? '恢复对话' : '归档对话'}
-                    </MenuItem>
-                    <MenuSeparator />
-                    <MenuItem className="agent-session-row__delete" onSelect={() => {
-                      setDeleteError('');
-                      setDeleteTarget(session);
-                    }}>
-                      <Trash2 size={15} />
-                      删除对话
-                    </MenuItem>
-                  </MenuContent>
-                </Menu>
+        {groups.map((group, groupIndex) => {
+          const collapsed = collapsedRoots.has(group.root);
+          const groupId = `agent-session-project-${groupIndex}`;
+          return (
+            <section className="agent-session-project" key={group.root || 'unassigned'} data-selected={group.sessions.some((session) => session.id === selectedId) || undefined}>
+              <button
+                type="button"
+                className="agent-session-project__toggle"
+                aria-controls={groupId}
+                aria-expanded={!collapsed}
+                onClick={() => toggleProject(group.root)}
+                title={group.root || '这些对话没有关联工作目录'}
+              >
+                {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                <Folder size={15} />
+                <strong>{group.label}</strong>
+                <small>{group.sessions.length}</small>
+              </button>
+              <div className="agent-session-project__sessions" hidden={collapsed} id={groupId}>
+                {group.sessions.map((session, sessionIndex) => (
+                  <div className="agent-session-row-shell" data-selected={selectedId === session.id || undefined} key={session.id}>
+                    <button
+                      type="button"
+                      className="agent-session-row"
+                      aria-current={selectedId === session.id ? 'true' : undefined}
+                      onClick={() => onSelect(session.id)}
+                      title={session.title}
+                    >
+                      <span className="agent-session-row__status" data-status={session.status} aria-hidden="true" />
+                      <span className="agent-session-row__copy">
+                        <strong id={`agent-session-title-${groupIndex}-${sessionIndex}`}>{session.title}</strong>
+                        <small title={session.lastMessagePreview || undefined}>
+                          {session.messageCount ?? 0} 条消息
+                          {session.lastMessagePreview ? ` · ${session.lastMessagePreview}` : ''}
+                        </small>
+                      </span>
+                      <time>{relativeTime(session.updatedAtMs)}</time>
+                    </button>
+                    {onArchive ? (
+                      <IconButton
+                        className="agent-session-row__archive"
+                        label={session.status === 'archived' ? '恢复此对话' : '归档此对话'}
+                        aria-describedby={`agent-session-title-${groupIndex}-${sessionIndex}`}
+                        title={`${session.status === 'archived' ? '恢复' : '归档'} ${session.title}`}
+                        icon={session.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+                        onClick={() => onArchive(session.id, session.status !== 'archived')}
+                        size="small"
+                      />
+                    ) : null}
+                    <Menu>
+                      <MenuTrigger asChild>
+                        <IconButton className="agent-session-row__menu" label="更多对话操作" icon={<MoreHorizontal size={16} />} size="small" title={session.title} />
+                      </MenuTrigger>
+                      <MenuContent align="end">
+                        <MenuItem className="agent-session-row__delete" onSelect={() => {
+                          setDeleteError('');
+                          setDeleteTarget(session);
+                        }}>
+                          <Trash2 size={15} />
+                          删除对话
+                        </MenuItem>
+                      </MenuContent>
+                    </Menu>
+                  </div>
+                ))}
               </div>
-            ))}
-          </section>
-        ))}
+            </section>
+          );
+        })}
       </div>
       <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => {
         if (!open && !deleting) {
@@ -187,12 +242,17 @@ function projectGroups(sessions: SessionSummary[], query: string): Array<{ root:
   }));
 }
 
-function primaryRoot(session: SessionSummary): string {
-  return session.workspaceRoots?.[0]?.trim() ?? '';
+function primaryRoot(session: SessionSummary | undefined): string {
+  return session?.workspaceRoots?.[0]?.trim() ?? '';
 }
 
 function pathName(path: string): string {
-  return path.split('/').filter(Boolean).at(-1) ?? path;
+  const segments = path.split('/').filter(Boolean);
+  const leaf = segments.at(-1) ?? path;
+  if (['workspace', 'project', 'repo', 'repository'].includes(leaf.toLowerCase()) && segments.length > 1) {
+    return `${segments.at(-2)} / ${leaf}`;
+  }
+  return leaf;
 }
 
 function relativeTime(value: number): string {

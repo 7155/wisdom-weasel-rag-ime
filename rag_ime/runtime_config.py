@@ -137,9 +137,14 @@ class OverlayRuntimeConfig:
 class ActiveRagRuntimeConfig:
     enabled: bool
     shortcut: str
+    latency_budget_ms: int
 
     def payload(self) -> dict[str, object]:
-        return {"enabled": self.enabled, "shortcut": self.shortcut}
+        return {
+            "enabled": self.enabled,
+            "shortcut": self.shortcut,
+            "latencyBudgetMs": self.latency_budget_ms,
+        }
 
 
 @dataclass(frozen=True)
@@ -462,6 +467,12 @@ class RuntimeConfigResolver:
         active_rag = ActiveRagRuntimeConfig(
             enabled=_bool_value(active_rag_settings.get("enabled"), True),
             shortcut=_string_value(active_rag_settings.get("shortcut")) or "ctrl+.",
+            latency_budget_ms=_bounded_int(
+                active_rag_settings.get("latencyBudgetMs"),
+                8000,
+                2000,
+                30000,
+            ),
         )
         post_commit_number_keys = _enum_override(
             self.environ,

@@ -32,6 +32,7 @@ from .active_rag_service import (
 from .activity_timeline import DailyActivityTimelineStore
 from .agent_extensions import AgentExtensionService
 from .agent_lifecycle_hooks import AgentLifecycleHookService
+from .agent_runtime_driver import AgentRuntimeError
 from .agent_surface_runtime import AgentSurfaceRuntime, PiSurfaceCompletionProvider
 from .agent_role_book_control import AgentRoleBookControlService
 from .agent_service import AgentService, agent_service_from_settings
@@ -2018,6 +2019,12 @@ class DebugImeService:
         window_context = validate_window_context(
             enrich_window_context_with_app_semantics(window_context)
         )
+        requested_latency_budget_ms = _bounded_int(
+            payload.get("latencyBudgetMs"),
+            default=runtime_config.active_rag.latency_budget_ms,
+            minimum=100,
+            maximum=300_000,
+        )
         return ActiveRagStartRequest(
             selected_text=selected_text,
             selected_text_hash=(
@@ -2053,10 +2060,13 @@ class DebugImeService:
                 maximum=12000,
             ),
             latency_budget_ms=_bounded_int(
-                payload.get("latencyBudgetMs"),
-                default=120_000,
+                min(
+                    requested_latency_budget_ms,
+                    runtime_config.active_rag.latency_budget_ms,
+                ),
+                default=runtime_config.active_rag.latency_budget_ms,
                 minimum=100,
-                maximum=300_000,
+                maximum=runtime_config.active_rag.latency_budget_ms,
             ),
             remote_model_allowed=(
                 _bool(payload.get("remoteModelAllowed"), default=False)
@@ -6673,7 +6683,29 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.OK, self.service.agent.command_catalog(agent_session_id))
             return
         if agent_session_id and agent_action == "models":
-            self._write_json(HTTPStatus.OK, self.service.agent.model_catalog(agent_session_id))
+            try:
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.model_catalog(agent_session_id),
+                )
+            except AgentRuntimeError:
+                # Model discovery restores the Session runtime, which can
+                # legitimately fail after an ephemeral workspace disappears.
+                # Keep the transcript readable and project a stable public
+                # failure instead of dropping the HTTP connection with an
+                # uncaught runtime exception (and leaking the local path).
+                self._write_json(
+                    HTTPStatus.CONFLICT,
+                    {
+                        "schemaVersion": "rag-ime.local-api-error.v1",
+                        "ok": False,
+                        "errorCode": "session_runtime_unavailable",
+                        "error": (
+                            "session runtime is unavailable because its "
+                            "workspace no longer exists"
+                        ),
+                    },
+                )
             return
         if agent_session_id and agent_action == "intercom":
             try:

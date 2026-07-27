@@ -48,6 +48,30 @@ describe('file preview store', () => {
     expect(useFilePreviewStore.getState()).toMatchObject({ open: false, status: 'idle', preview: null });
   });
 
+  it('preserves inline presentation while retrying a failed preview', async () => {
+    let calls = 0;
+    const transport = new StubControlTransport('mock', {
+      'agent.media.preview': () => {
+        calls += 1;
+        if (calls === 1) throw new Error('temporary read failure');
+        return previewFor(requestOne, '# recovered');
+      },
+    });
+
+    act(() => useFilePreviewStore.getState().openPreview(requestOne, transport, 'inline'));
+    await waitFor(() => expect(useFilePreviewStore.getState().status).toBe('error'));
+    expect(useFilePreviewStore.getState().presentation).toBe('inline');
+
+    act(() => useFilePreviewStore.getState().retry(transport));
+    await waitFor(() => expect(useFilePreviewStore.getState().status).toBe('ready'));
+    expect(useFilePreviewStore.getState()).toMatchObject({
+      presentation: 'inline',
+      preview: expect.objectContaining({
+        content: '# recovered',
+      }),
+    });
+  });
+
   it('caches verified immutable receipts and does not read the same digest twice', async () => {
     const transport = new StubControlTransport('mock', {
       'agent.media.preview': previewFor(requestOne, '# cached'),

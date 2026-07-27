@@ -78,6 +78,7 @@ const commonInputSettingKeys = new Set([
   'display.maxPostCommitCandidates',
   'display.panelStyle',
   'activeRag.defaultPlacement',
+  'activeRag.latencyBudgetMs',
   'pinyin.fuzzyProfile',
 ]);
 
@@ -739,6 +740,7 @@ function inputFieldFallback(key: string): string {
     'display.maxPostCommitCandidates': '续写候选数量',
     'display.panelStyle': '候选界面样式',
     'activeRag.defaultPlacement': '结果插入方式',
+    'activeRag.latencyBudgetMs': '生成框最长等待',
     'pinyin.fuzzyProfile': '模糊音方案',
   } as Record<string, string>)[key] ?? '输入设置';
 }

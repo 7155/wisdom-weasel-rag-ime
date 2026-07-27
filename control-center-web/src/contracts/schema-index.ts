@@ -168,6 +168,10 @@ export const contractSchemas = {
         "type": "integer",
         "minimum": 0
       },
+      "expiresAfterMs": {
+        "type": "integer",
+        "minimum": 0
+      },
       "candidates": {
         "type": "array"
       },

@@ -417,7 +417,9 @@ function AgentWorkspace() {
         modelSelection.acceptConfirmedCatalog(selectedId, previewModelCatalog(selectedId));
       } else {
         setCatalog(undefined);
-        notices.push('模型目录暂时不可用，对话记录仍可查看。');
+        notices.push(modelCatalogNotice(
+          modelResult.status === 'rejected' ? modelResult.reason : undefined,
+        ));
       }
       if (commandResult.status === 'fulfilled') {
         setCommands(commandItems(commandResult.value));
@@ -1245,6 +1247,13 @@ function errorText(value: unknown): string {
   const message = value instanceof Error ? value.message : String(value);
   if (/invalid route parameter:\s*limit/i.test(message)) return '对话列表暂时无法加载，请刷新后重试。';
   return publicAgentErrorText(value, '操作未完成，请刷新状态后重试。');
+}
+function modelCatalogNotice(value: unknown): string {
+  const message = value instanceof Error ? value.message : String(value ?? '');
+  if (/session runtime is unavailable|workspace (?:does not exist|no longer exists)/i.test(message)) {
+    return '这段对话的工作目录已不可用；对话记录仍保留，可以归档后选择其他对话。';
+  }
+  return '模型目录暂时不可用，对话记录仍可查看。';
 }
 function isMobileViewport(): boolean { return window.matchMedia?.('(max-width: 760px)').matches === true; }
 

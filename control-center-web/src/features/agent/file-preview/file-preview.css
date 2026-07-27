@@ -1,14 +1,18 @@
 /* Joins the insert family: same measure, same 3px hanging edge, same wash. It
    used to be a solid grey slab with a 1px box on all four sides — the one
    result type that did not look like it belonged to the document. */
+.agent-file-block-shell {
+  width: min(100%, 920px);
+  margin: 9px 0;
+}
 .agent-file-block {
   display: grid;
-  width: min(100%, 620px);
-  max-width: 620px;
+  width: 100%;
+  max-width: none;
   grid-template-columns: 26px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  margin: 9px 0;
+  margin: 0;
   padding: 8px 11px;
   border: 0;
   border-left: 3px solid color-mix(in srgb, var(--color-border-strong) 55%, transparent);
@@ -74,6 +78,58 @@
   font: var(--font-weight-semibold) var(--text-ui) / var(--text-ui-lh) var(--font-ui);
 }
 .agent-file-block small { color: var(--color-text-secondary); }
+
+.agent-file-preview-inline {
+  overflow: hidden;
+  border: 1px solid var(--color-code-border);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-2) var(--radius-2);
+  background: var(--color-code-bg);
+  color: var(--color-code-text);
+}
+.agent-file-block-shell[data-expanded='true'] .agent-file-block {
+  border-radius: 4px var(--radius-2) 0 0;
+  border-left-color: var(--color-accent);
+}
+.agent-file-preview-inline > header {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 7px 3px 12px;
+  border-bottom: 1px solid var(--color-code-border);
+  color: var(--color-code-muted);
+  font-size: 12px;
+}
+.agent-file-preview-inline__body {
+  max-height: min(620px, 68dvh);
+  min-height: 120px;
+  overflow: auto;
+}
+.agent-file-preview-inline__state {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 20px;
+  color: var(--color-code-muted);
+  font-size: 13px;
+}
+.agent-file-preview-inline[data-status='loading'] .agent-file-preview-inline__state > svg {
+  animation: agent-status-spin 1.2s linear infinite;
+}
+.agent-file-preview-inline__body > .agent-file-code,
+.agent-file-preview-inline__body > .agent-diff-preview,
+.agent-file-preview-inline__body > .agent-file-image-preview,
+.agent-file-preview-inline__body > .agent-file-markdown {
+  min-height: 280px;
+}
+.agent-file-preview-inline__body > .agent-file-markdown {
+  background: var(--color-paper);
+  color: var(--color-text);
+}
 
 /* Same measure and hanging edge as every other insert, so the deliverable reads
    as the emphatic member of one family rather than a card-shaped exception.

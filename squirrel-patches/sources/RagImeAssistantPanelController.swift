@@ -631,8 +631,8 @@ final class RagImeAssistantPanelController {
   private func scheduleTTL(for payload: RagImeAssistantOverlayPayload) {
     ttlDismissWorkItem?.cancel()
     ttlDismissWorkItem = nil
-    if currentState.isExplicit {
-      trace("assistant_explicit_result_pinned", [
+    if currentState.isExplicit && currentState != .explicitGenerating {
+      trace("assistant_explicit_surface_pinned", [
         "snapshotId": payload.snapshotId,
         "surfaceState": currentState.rawValue,
         "dismissPolicy": "accept_close_retry_or_focus_change",
@@ -643,8 +643,11 @@ final class RagImeAssistantPanelController {
     let requestedMs = Int(payload.overlayConfigNumber("expiresAfterMs") ?? Double(payload.expiresAfterMs))
     let hasRealCandidate = payload.candidates.contains(where: RagImeSuggestionCardView.isRealCandidate)
     let pendingWithoutResult = currentState == .pendingPrediction
+    let explicitGeneration = currentState == .explicitGenerating
     let isNoResultFeedback = payload.statusText.contains("没有合适")
-    let maximumMs = hasRealCandidate ? 30_000 : (pendingWithoutResult && !isNoResultFeedback ? 12_000 : 2_000)
+    let maximumMs = hasRealCandidate
+      ? 30_000
+      : (explicitGeneration ? 30_000 : (pendingWithoutResult && !isNoResultFeedback ? 12_000 : 2_000))
     let boundedMs = min(max(requestedMs > 0 ? requestedMs : fallbackMs, 500), maximumMs)
     // A ready completion should not vanish while the user is deciding whether
     // to press Tab. New typing, focus changes, Escape, and stale guards still
@@ -662,7 +665,9 @@ final class RagImeAssistantPanelController {
         "expiresAfterMs": expiresAfterMs,
         "ttlSource": hasRealCandidate
           ? (requestedMs > 0 ? "payload" : "fail_safe")
-          : (pendingWithoutResult && !isNoResultFeedback ? "pending_feedback_guard" : "no_result_guard"),
+          : (explicitGeneration
+            ? "active_rag_budget"
+            : (pendingWithoutResult && !isNoResultFeedback ? "pending_feedback_guard" : "no_result_guard")),
       ])
       self.dismiss(reason: "ttl_expired")
     }

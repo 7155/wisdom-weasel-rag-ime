@@ -27,7 +27,7 @@ describe('Roles experience', () => {
     expect(await screen.findByText(previewPersonas[0]!.tagline)).toBeInTheDocument();
     expect(screen.getByText('适合交给她')).toBeInTheDocument();
     expect(screen.getByText('不建议交给她')).toBeInTheDocument();
-    expect((await screen.findAllByText('GPT-5.6 Sol')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('GPT-5.6 Sol · GPT')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('内置伙伴').length).toBeGreaterThan(0);
     expect(screen.getByText('默认')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '复制为我的伙伴' })).toBeInTheDocument();
@@ -217,7 +217,7 @@ describe('Roles experience', () => {
       ...configured,
       defaults: {
         ...configured.defaults,
-        modelProfile: 'gpt/gpt-5.6-terra',
+        modelProfile: 'openai-codex/gpt-5.6-terra',
         thinkingLevel: 'high' as const,
       },
     };
@@ -227,26 +227,36 @@ describe('Roles experience', () => {
       'agent.role.runtimeDefaults.update': { ok: true, role: updated, defaults: updated.defaults },
       'agent.role.models': {
         ok: true,
-        providers: [{
-          id: 'gpt',
-          displayName: 'GPT',
-          models: [
-            { provider: 'gpt', id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'high'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
-            { provider: 'gpt', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', api: 'responses', reasoning: true, thinkingLevels: ['off', 'max'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
-            { provider: 'deepseek', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', api: 'responses', reasoning: false, thinkingLevels: ['off'], supportsImages: false, contextWindow: 1000000, maxTokens: 128000 },
-          ],
-        }],
+        providers: [
+          {
+            id: 'gpt',
+            displayName: 'OpenAI API',
+            models: [
+              { provider: 'gpt', id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'high'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
+              { provider: 'gpt', id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol', api: 'responses', reasoning: true, thinkingLevels: ['off', 'max'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
+              { provider: 'deepseek', id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', api: 'responses', reasoning: false, thinkingLevels: ['off'], supportsImages: false, contextWindow: 1000000, maxTokens: 128000 },
+            ],
+          },
+          {
+            id: 'openai-codex',
+            displayName: 'OpenAI Codex',
+            models: [
+              { provider: 'openai-codex', id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra', api: 'responses', reasoning: true, thinkingLevels: ['off', 'low', 'high'], supportsImages: true, contextWindow: 1000000, maxTokens: 128000 },
+            ],
+          },
+        ],
       },
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    expect((await screen.findAllByText('GPT-5.6 Sol')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('GPT-5.6 Sol · OpenAI API')).length).toBeGreaterThan(0);
     expect(screen.getByText('内置伙伴 · 复制后可以调整')).toBeInTheDocument();
     await user.click(screen.getByText('新对话设置'));
     await user.click(screen.getByLabelText('角色默认模型'));
-    expect(await screen.findByRole('option', { name: 'GPT-5.6 Terra' })).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'GPT-5.6 Terra · OpenAI API' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'GPT-5.6 Terra · OpenAI Codex' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'DeepSeek V4 Flash' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('option', { name: 'GPT-5.6 Terra' }));
+    await user.click(screen.getByRole('option', { name: 'GPT-5.6 Terra · OpenAI Codex' }));
     await user.click(screen.getByLabelText('角色默认推理强度'));
     expect(screen.queryByRole('option', { name: '不启用推理' })).not.toBeInTheDocument();
     await user.click(await screen.findByRole('option', { name: '高' }));
@@ -254,7 +264,7 @@ describe('Roles experience', () => {
     await waitFor(() => expect(transport.requests.find((call) => call.request.pathId === 'agent.role.runtimeDefaults.update')?.request.body).toEqual({
       roleId: configured.roleId,
       roleVersion: configured.version,
-      provider: 'gpt',
+      provider: 'openai-codex',
       modelId: 'gpt-5.6-terra',
       thinkingLevel: 'high',
     }));
@@ -277,7 +287,7 @@ describe('Roles experience', () => {
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
     await user.click(await screen.findByRole('button', { name: /澄·瞬/ }));
-    expect(screen.getAllByText('GPT-5.6 Luna').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('GPT-5.6 Luna · GPT').length).toBeGreaterThan(0);
     expect(screen.getByText('超长材料高速扫读与提取')).toBeInTheDocument();
     expect(screen.getByText('归类、去重和格式转换')).toBeInTheDocument();
     expect(screen.getByText('复杂推理')).toBeInTheDocument();

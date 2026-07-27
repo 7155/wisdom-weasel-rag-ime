@@ -169,7 +169,7 @@ DEFAULT_SETTINGS: dict[str, object] = {
         "defaultIntent": "auto",
         "defaultPlacement": "replace_selection",
         "maxCandidates": 1,
-        "latencyBudgetMs": 15000,
+        "latencyBudgetMs": 8000,
         "localOnlyDefault": True,
         "allowRemoteModel": True,
         "sensitiveTextGuard": True,
@@ -339,7 +339,12 @@ SETTINGS_SCHEMA: dict[str, object] = {
                 {"key": "activeRag.capture.manualClipboardFallback", "type": "boolean", "label": "允许手动剪贴板兜底", "default": True},
                 {"key": "activeRag.defaultPlacement", "type": "enum", "label": "插入方式", "options": ["replace_selection", "insert_after_selection", "show_only"], "default": "replace_selection"},
                 {"key": "activeRag.maxCandidates", "type": "integer", "label": "生成候选数量", "default": 1},
-                {"key": "activeRag.latencyBudgetMs", "type": "integer", "label": "生成等待毫秒", "default": 15000},
+                {
+                    "key": "activeRag.latencyBudgetMs",
+                    "type": "integer",
+                    "label": "生成框最长等待",
+                    "default": 8000,
+                },
                 {"key": "activeRag.localOnlyDefault", "type": "boolean", "label": "预览默认仅使用本地 RAG", "default": True},
                 {"key": "activeRag.allowRemoteModel", "type": "boolean", "label": "启用高质量生成", "default": True},
             ],
@@ -542,7 +547,13 @@ _FIELD_METADATA: dict[str, dict[str, object]] = {
             "该请求不创建 Agent Session，也不加载工具"
         )
     },
-    "activeRag.latencyBudgetMs": {"description": "显式多段生成的最长等待时间", "min": 1000, "max": 300000, "step": 1000, "unit": "ms"},
+    "activeRag.latencyBudgetMs": {
+        "description": "显式生成仍在准备或生成时，等待框自动收起前的最长时间",
+        "min": 2000,
+        "max": 30000,
+        "step": 1000,
+        "unit": "ms",
+    },
     "activeRag.allowRemoteModel": {"description": "只允许显式 Active RAG 使用远程模型", "risk": "sensitive", "validation": {"confirmText": "ALLOW REMOTE MODEL"}},
     "knowledgeLibrary.parser.mineru.enabled": {
         "description": "只连接本机 loopback MinerU 解析服务；不会启动命令或使用云端 API",

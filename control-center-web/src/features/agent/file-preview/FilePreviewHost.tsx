@@ -17,6 +17,7 @@ import './file-preview.css';
 export function FilePreviewHost() {
   const transport = useOptionalControlTransport();
   const open = useFilePreviewStore((state) => state.open);
+  const presentation = useFilePreviewStore((state) => state.presentation);
   const request = useFilePreviewStore((state) => state.request);
   const status = useFilePreviewStore((state) => state.status);
   const preview = useFilePreviewStore((state) => state.preview);
@@ -30,7 +31,7 @@ export function FilePreviewHost() {
     : [request?.mimeTypeHint, fileSizeLabel(request?.byteSizeHint ?? 0)].filter(Boolean).join(' · ');
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) close(); }}>
+    <Dialog open={open && presentation === 'dialog'} onOpenChange={(next) => { if (!next) close(); }}>
       <DialogContent className="agent-file-preview-dialog">
         <DialogHeader>
           {/* The icon names what is being previewed rather than defaulting to a

@@ -10,6 +10,7 @@ export interface ActiveRagStatusV1 {
   status: string;
   evidenceCount: number;
   candidateCount: number;
+  expiresAfterMs?: number;
   candidates?: unknown[];
   stored?: boolean;
   noStore?: boolean;

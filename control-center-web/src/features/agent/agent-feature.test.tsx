@@ -42,6 +42,32 @@ describe('Agent experience', () => {
     expect(onSelect).toHaveBeenCalledWith('session-memory');
   });
 
+  it('collapses complete project groups and restores their conversations', async () => {
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <SessionRail
+          sessions={previewSessions}
+          selectedId="session-preview"
+          loading={false}
+          onSelect={() => {}}
+          onCreate={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    const project = screen.getByRole('button', { name: /learnA/ });
+    expect(project).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: /控制中心迁移/ })).toBeInTheDocument();
+
+    await user.click(project);
+    expect(project).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: /控制中心迁移/ })).not.toBeInTheDocument();
+
+    await user.click(project);
+    expect(screen.getByRole('button', { name: /控制中心迁移/ })).toBeInTheDocument();
+  });
+
   it('offers archive, delete confirmation, and archived visibility controls per conversation', async () => {
     const onArchive = vi.fn();
     const onDelete = vi.fn();
@@ -65,8 +91,7 @@ describe('Agent experience', () => {
       .find((row) => row.textContent?.includes('记忆整理'));
     expect(targetRow).toBeDefined();
 
-    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多对话操作' }));
-    await user.click(await screen.findByRole('menuitem', { name: '归档对话' }));
+    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '归档此对话' }));
     expect(onArchive).toHaveBeenCalledWith('session-memory', true);
 
     await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多对话操作' }));
@@ -1901,9 +1926,9 @@ describe('Agent experience', () => {
     const composer = await screen.findByRole('textbox', { name: '消息' });
 
     const modelPicker = await screen.findByRole('button', {
-      name: '模型：DeepSeek V4，思考强度：不启用推理',
+      name: '模型：DeepSeek V4 · DeepSeek，思考强度：不启用推理',
     });
-    expect(modelPicker).toHaveTextContent('DeepSeek V4 · 不启用推理');
+    expect(modelPicker).toHaveTextContent('DeepSeek V4 · DeepSeek · 不启用推理');
     expect(screen.getByRole('button', { name: '当前模型不支持图片' })).toBeDisabled();
 
     const image = new File(['png'], 'clipboard.png', { type: 'image/png' });
@@ -1986,6 +2011,20 @@ describe('Agent experience', () => {
     await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.messageOrder).toHaveLength(4));
     expect(useAgentLiveStore.getState().projections['session-preview']?.turnOrder).toHaveLength(2);
     expect(await screen.findByRole('alert')).toHaveTextContent('模型目录暂时不可用，对话记录仍可查看');
+  });
+
+  it('identifies an expired Session workspace separately from Provider availability', async () => {
+    const transport = productionTransport({
+      'agent.session.models': () => {
+        throw new Error('session runtime is unavailable because its workspace no longer exists');
+      },
+    });
+    renderAgent(transport);
+
+    await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.messageOrder).toHaveLength(4));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '这段对话的工作目录已不可用；对话记录仍保留，可以归档后选择其他对话',
+    );
   });
 
   it('makes the model and tool controls ready while a slow history snapshot is still loading', async () => {
@@ -2186,7 +2225,7 @@ describe('Agent experience', () => {
 
     expect(screen.queryByText('模型与推理强度')).not.toBeInTheDocument();
     const optimistic = screen.getByRole('button', {
-      name: '模型：Codex Mini，思考强度：中',
+      name: '模型：Codex Mini · GPT，思考强度：中',
     });
     expect(optimistic).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByRole('textbox', { name: '消息' })).toBeEnabled();
@@ -2248,19 +2287,19 @@ describe('Agent experience', () => {
     codexDetails!.open = true;
     await user.click(within(codexDetails!).getByRole('button', { name: '中' }));
 
-    await user.click(screen.getByRole('button', { name: '模型：Codex Mini，思考强度：中' }));
+    await user.click(screen.getByRole('button', { name: '模型：Codex Mini · GPT，思考强度：中' }));
     const lunaDetails = screen.getByText('GPT-5.6 Luna', { selector: 'summary' }).closest('details');
     expect(lunaDetails).not.toBeNull();
     lunaDetails!.open = true;
     await user.click(within(lunaDetails!).getByRole('button', { name: '高' }));
     expect(screen.getByRole('button', {
-      name: '模型：GPT-5.6 Luna，思考强度：高',
+      name: '模型：GPT-5.6 Luna · GPT，思考强度：高',
     })).toHaveAttribute('aria-busy', 'true');
 
     firstSelection.resolve({ ok: true });
     await waitFor(() => expect(modelSelectionCalls).toBe(2));
     await waitFor(() => expect(screen.getByRole('button', {
-      name: '模型：GPT-5.6 Luna，思考强度：高',
+      name: '模型：GPT-5.6 Luna · GPT，思考强度：高',
     })).not.toHaveAttribute('aria-busy'));
     expect(transport.requests.filter((call) => (
       call.request.pathId === 'agent.session.model.select'
@@ -2307,7 +2346,7 @@ describe('Agent experience', () => {
     });
 
     expect(await screen.findByRole('button', {
-      name: '模型：GPT-5.6 Luna，思考强度：高',
+      name: '模型：GPT-5.6 Luna · GPT，思考强度：高',
     })).toBeInTheDocument();
     expect(modelCatalogCalls).toBe(1);
   });
@@ -2338,15 +2377,21 @@ describe('Agent experience', () => {
 
     const sessionRows = rail.querySelectorAll<HTMLButtonElement>('.agent-session-row');
     const lastSession = sessionRows.item(sessionRows.length - 1);
+    const lastSessionArchive = lastSession.parentElement?.querySelector<HTMLButtonElement>('.agent-session-row__archive');
     const lastSessionMenu = lastSession.parentElement?.querySelector<HTMLButtonElement>('.agent-session-row__menu');
+    expect(lastSessionArchive).not.toBeNull();
     expect(lastSessionMenu).not.toBeNull();
     lastSession.focus();
+    await user.tab();
+    expect(lastSessionArchive).toHaveFocus();
     await user.tab();
     expect(lastSessionMenu).toHaveFocus();
     await user.tab();
     expect(within(rail).getByRole('button', { name: '新建对话' })).toHaveFocus();
     await user.tab({ shift: true });
     expect(lastSessionMenu).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(lastSessionArchive).toHaveFocus();
     await user.tab({ shift: true });
     expect(lastSession).toHaveFocus();
 

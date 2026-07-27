@@ -95,7 +95,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         gate = threading.Event()
         provider = BlockingActiveRagProvider(gate)
         service = ActiveRagService(completion_provider=provider)
-        request = _request(selected_text="选区")
+        request = _request(selected_text="选区", latency_budget_ms=7000)
 
         with patch.dict(os.environ, {"RAG_IME_DEEPSEEK_ACTIVE_RAG": "1"}):
             started = service.start(request)
@@ -104,11 +104,13 @@ class ActiveRagServiceTests(unittest.TestCase):
             ready = _wait_ready(service, str(started["sessionId"]))
 
         self.assertEqual(pending["status"], "pending")
+        self.assertEqual(pending["expiresAfterMs"], 7000)
         self.assertGreaterEqual(pending["elapsedMs"], 0)
         self.assertGreater(pending["pollAfterMs"], 0)
         self.assertLessEqual(pending["pollAfterMs"], 160)
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["pollAfterMs"], 0)
+        self.assertEqual(ready["expiresAfterMs"], 7000)
 
     def test_active_rag_pending_status_exposes_truthful_context_and_retrieval_progress(self) -> None:
         gate = threading.Event()
@@ -1593,6 +1595,7 @@ def _request(
     front_app_bundle_id: str = "",
     max_candidates: int = 1,
     max_chars: int = 24,
+    latency_budget_ms: int = 120_000,
     evidence_pack: tuple[dict[str, object], ...] | None = None,
 ) -> ActiveRagStartRequest:
     return ActiveRagStartRequest(
@@ -1606,6 +1609,7 @@ def _request(
         evidence_pack=evidence_pack or ({"surfaceHints": ["主动候选"], "tags": ["RAG"]},),
         max_candidates=max_candidates,
         max_chars=max_chars,
+        latency_budget_ms=latency_budget_ms,
     )
 
 

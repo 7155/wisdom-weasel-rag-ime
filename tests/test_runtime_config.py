@@ -105,6 +105,7 @@ class RuntimeConfigResolverTests(unittest.TestCase):
                 "display.fadeAnimation": False,
                 "activeRag.enabled": False,
                 "activeRag.shortcut": "ctrl+r",
+                "activeRag.latencyBudgetMs": 6500,
             }
         )
 
@@ -122,7 +123,14 @@ class RuntimeConfigResolverTests(unittest.TestCase):
         self.assertEqual(payload["overlayConfig"]["candidateFontSize"], 17)
         self.assertEqual(payload["overlayConfig"]["maxWidth"], 440)
         self.assertFalse(payload["overlayConfig"]["fadeAnimation"])
-        self.assertEqual(payload["activeRag"], {"enabled": False, "shortcut": "ctrl+r"})
+        self.assertEqual(
+            payload["activeRag"],
+            {
+                "enabled": False,
+                "shortcut": "ctrl+r",
+                "latencyBudgetMs": 6500,
+            },
+        )
 
     def test_configured_remote_embedding_keeps_vector_lanes_enabled(self) -> None:
         snapshot = RuntimeConfigResolver(
@@ -415,6 +423,7 @@ class RuntimeConfigIntegrationTests(unittest.TestCase):
                 "display.fadeAnimation": False,
                 "activeRag.enabled": False,
                 "activeRag.shortcut": "ctrl+r",
+                "activeRag.latencyBudgetMs": 6500,
             }
         )
         response = self.service.rime_suggest(self._post_commit_payload("runtime-overlay"))
@@ -430,7 +439,14 @@ class RuntimeConfigIntegrationTests(unittest.TestCase):
         self.assertEqual(config["maxWidth"], 460)
         self.assertFalse(config["fadeAnimation"])
         self.assertFalse(config["showSourceBadge"])
-        self.assertEqual(config["activeRag"], {"enabled": False, "shortcut": "ctrl+r"})
+        self.assertEqual(
+            config["activeRag"],
+            {
+                "enabled": False,
+                "shortcut": "ctrl+r",
+                "latencyBudgetMs": 6500,
+            },
+        )
         applied = [
             item
             for item in response["predictionTraceEvents"]

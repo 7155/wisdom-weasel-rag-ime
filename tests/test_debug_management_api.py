@@ -17,6 +17,7 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from rag_ime.agent_runtime_driver import AgentRuntimeError
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trace
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
@@ -2137,6 +2138,47 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(context_ack["item"]["status"], "acknowledged")
         self.assertEqual(updated["session"]["title"], "深度检索")
         self.assertEqual(deleted["sessionId"], session_id)
+
+    def test_agent_session_models_projects_missing_workspace_as_json_conflict(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}/api/agent"
+        try:
+            with patch.object(
+                self.service.agent,
+                "model_catalog",
+                side_effect=AgentRuntimeError(
+                    "Workspace does not exist: /private/tmp/expired/workspace"
+                ),
+            ):
+                with self.assertRaises(HTTPError) as raised:
+                    urlopen(f"{base_url}/sessions/agent%3Astale/models", timeout=5)
+                failure = raised.exception
+                payload = json.loads(failure.read().decode("utf-8"))
+                failure.close()
+
+            # The failed request returned a typed response rather than dropping
+            # the socket; the same server remains usable afterwards.
+            with urlopen(f"{base_url}/sessions?limit=1", timeout=5) as response:
+                healthy_status = response.status
+                healthy_payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(failure.code, 409)
+        self.assertEqual(payload["schemaVersion"], "rag-ime.local-api-error.v1")
+        self.assertEqual(payload["errorCode"], "session_runtime_unavailable")
+        self.assertNotIn("/private/", json.dumps(payload))
+        self.assertEqual(healthy_status, 200)
+        self.assertTrue(healthy_payload["ok"])
 
     def test_agent_file_preview_http_route_preserves_session_and_digest_authority(self) -> None:
         session = self.service.agent.create_session({"title": "文件预览"})["session"]

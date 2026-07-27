@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 describe('file preview interaction', () => {
-  it('opens a managed Markdown file from the message and renders it in one global host', async () => {
+  it('expands a managed Markdown file in its message instead of opening a dialog', async () => {
     const transport = new StubControlTransport('mock', {
       'agent.media.preview': preview('# 交付\n\n- 类型检查通过'),
     });
@@ -36,16 +36,20 @@ describe('file preview interaction', () => {
       </TooltipProvider>,
     );
 
-    await user.click(screen.getByRole('button', { name: '预览 acceptance.md' }));
+    await user.click(screen.getByRole('button', { name: '展开 acceptance.md' }));
 
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(await screen.findByRole('heading', { name: '交付' })).toBeInTheDocument();
-    expect(screen.getByText('类型检查通过')).toBeInTheDocument();
+    const inline = await screen.findByRole('region', { name: 'acceptance.md 内联预览' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(within(inline).getByRole('heading', { name: '交付' })).toBeInTheDocument();
+    expect(within(inline).getByText('类型检查通过')).toBeInTheDocument();
     expect(transport.requests[0]).toMatchObject({
       pathId: 'agent.media.preview',
       params: { mediaId: MEDIA_ID },
       query: { sessionId: SESSION_ID, sha256: SHA256 },
     });
+
+    await user.click(screen.getByRole('button', { name: '收起 acceptance.md' }));
+    expect(screen.queryByRole('region', { name: 'acceptance.md 内联预览' })).not.toBeInTheDocument();
   });
 
   it('keeps a file disabled when no authoritative parent session is available', () => {

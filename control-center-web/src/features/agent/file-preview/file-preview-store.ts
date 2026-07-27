@@ -4,18 +4,20 @@ import type { ControlTransport } from '@/platform/transport';
 import { safeManagedContentUrl, type FilePreviewRequest } from './file-descriptor';
 
 type PreviewStatus = 'idle' | 'loading' | 'ready' | 'error';
+export type PreviewPresentation = 'dialog' | 'inline';
 const MAX_CACHED_PREVIEWS = 8;
 
 interface FilePreviewState {
   open: boolean;
   request: FilePreviewRequest | null;
+  presentation: PreviewPresentation;
   status: PreviewStatus;
   preview: AgentFilePreviewV1 | null;
   error: string;
   requestSequence: number;
   controller: AbortController | null;
   cache: Readonly<Record<string, AgentFilePreviewV1>>;
-  openPreview(request: FilePreviewRequest, transport: ControlTransport): void;
+  openPreview(request: FilePreviewRequest, transport: ControlTransport, presentation?: PreviewPresentation): void;
   retry(transport: ControlTransport): void;
   close(): void;
   reset(): void;
@@ -24,6 +26,7 @@ interface FilePreviewState {
 const INITIAL = {
   open: false,
   request: null,
+  presentation: 'dialog' as const,
   status: 'idle' as const,
   preview: null,
   error: '',
@@ -34,18 +37,19 @@ const INITIAL = {
 
 export const useFilePreviewStore = create<FilePreviewState>((set, get) => ({
   ...INITIAL,
-  openPreview(request, transport) {
-    void loadPreview(request, transport, false, set, get);
+  openPreview(request, transport, presentation = 'dialog') {
+    void loadPreview(request, transport, false, presentation, set, get);
   },
   retry(transport) {
     const request = get().request;
-    if (request) void loadPreview(request, transport, true, set, get);
+    if (request) void loadPreview(request, transport, true, get().presentation, set, get);
   },
   close() {
     get().controller?.abort();
     set((state) => ({
       open: false,
       request: null,
+      presentation: 'dialog',
       status: 'idle',
       preview: null,
       error: '',
@@ -63,6 +67,7 @@ async function loadPreview(
   request: FilePreviewRequest,
   transport: ControlTransport,
   force: boolean,
+  presentation: PreviewPresentation,
   set: (partial: Partial<FilePreviewState> | ((state: FilePreviewState) => Partial<FilePreviewState>)) => void,
   get: () => FilePreviewState,
 ): Promise<void> {
@@ -74,6 +79,7 @@ async function loadPreview(
     set({
       open: true,
       request,
+      presentation,
       status: 'ready',
       preview: cached,
       error: '',
@@ -88,6 +94,7 @@ async function loadPreview(
   set({
     open: true,
     request,
+    presentation,
     status: 'loading',
     preview: null,
     error: '',

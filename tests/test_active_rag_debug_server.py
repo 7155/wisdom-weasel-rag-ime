@@ -14,6 +14,34 @@ from rag_ime.text_utils import stable_text_hash
 
 
 class ActiveRagDebugServerTests(unittest.TestCase):
+    def test_debug_service_caps_active_rag_request_to_the_visible_generation_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = DebugImeService(
+                DebugServerConfig(
+                    db_path=Path(temp_dir) / "active-rag-budget.sqlite",
+                    seed_if_empty=False,
+                )
+            )
+            service.settings_update({"activeRag.latencyBudgetMs": 6000})
+
+            capped = service._active_rag_request_from_payload(
+                {
+                    "selectedText": "按设置收起生成框",
+                    "privacyDisposition": "allowed",
+                    "latencyBudgetMs": 30000,
+                }
+            )
+            shorter = service._active_rag_request_from_payload(
+                {
+                    "selectedText": "允许客户端更早结束",
+                    "privacyDisposition": "allowed",
+                    "latencyBudgetMs": 4000,
+                }
+            )
+
+        self.assertEqual(capped.latency_budget_ms, 6000)
+        self.assertEqual(shorter.latency_budget_ms, 4000)
+
     def test_debug_service_normalizes_accessibility_window_context(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             service = DebugImeService(

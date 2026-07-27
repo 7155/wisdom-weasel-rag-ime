@@ -35,6 +35,9 @@ export function ModelPicker({
     (item) => item.id === selection?.modelId,
   );
   const thinking = selection?.level ?? catalog?.thinkingLevel ?? 'off';
+  const selectedLabel = selectedModel
+    ? `${selectedModel.name} · ${selectedProvider?.displayName || selectedModel.provider}`
+    : '未选择';
 
   function choose(provider: string, modelId: string, level: ThinkingLevel): void {
     setOpen(false);
@@ -46,17 +49,17 @@ export function ModelPicker({
       <PopoverTrigger asChild>
         <Button
           aria-busy={pending || undefined}
-          aria-label={`模型：${selectedModel?.name ?? '未选择'}，思考强度：${thinkingLabel(thinking)}`}
+          aria-label={`模型：${selectedLabel}，思考强度：${thinkingLabel(thinking)}`}
           className="agent-composer__picker"
           size="small"
-          title={`模型：${selectedModel?.name ?? '未选择'}，思考强度：${thinkingLabel(thinking)}`}
+          title={`模型：${selectedLabel}，思考强度：${thinkingLabel(thinking)}`}
           variant="quiet"
           disabled={!catalog || disabled}
           leadingIcon={pending
             ? <LoaderCircle className="ui-spin" size={15} />
             : <BrainCircuit size={15} />}
         >
-          {selectedModel?.name ?? '选择模型'} · {thinkingLabel(thinking)}
+          {selectedModel ? selectedLabel : '选择模型'} · {thinkingLabel(thinking)}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" className="agent-model-tree">

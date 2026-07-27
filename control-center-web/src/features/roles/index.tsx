@@ -436,6 +436,13 @@ function PersonaInspector({
       .filter((model) => model.reasoning === true && model.thinkingLevels.some((level) => level !== 'off')),
     [catalog],
   );
+  const modelOptions = useMemo(() => {
+    const providerNames = new Map(catalog.providers.map((provider) => [provider.id, provider.displayName]));
+    return models.map((model) => ({
+      value: `${model.provider}/${model.id}`,
+      label: `${model.name} · ${providerNames.get(model.provider) || model.provider}`,
+    }));
+  }, [catalog.providers, models]);
   useEffect(() => {
     const configuredProfile = persona.defaults.modelProfile ?? '';
     const configuredLevel = persona.defaults.thinkingLevel ?? '';
@@ -506,7 +513,7 @@ function PersonaInspector({
                       const levels = next?.thinkingLevels.filter(isReasoningLevel) ?? [];
                       if (!thinkingLevel || !levels.includes(thinkingLevel)) setThinkingLevel(levels[0] ?? '');
                     }}
-                    options={models.map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name }))}
+                    options={modelOptions}
                   />
                 </label>
                 <label>

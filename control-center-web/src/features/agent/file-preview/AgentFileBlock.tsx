@@ -1,37 +1,125 @@
-import { Eye, File, FileCode2, FileDiff, FileImage, FileText, Globe2 } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  File,
+  FileCode2,
+  FileDiff,
+  FileImage,
+  FileText,
+  Globe2,
+  LoaderCircle,
+  RefreshCw,
+  TriangleAlert,
+} from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useOptionalControlTransport } from '@/app/control-transport';
+import { Button, IconButton } from '@/components/primitives';
 import { AgentHtmlReportCard } from './AgentHtmlReportCard';
 import { filePreviewRequestFromBlock, fileSizeLabel, isHtmlReport } from './file-descriptor';
+import { FilePreviewRenderer } from './renderer-registry';
 import { useFilePreviewStore } from './file-preview-store';
 import './file-preview.css';
 
 export function AgentFileBlock({ data, sessionId = '' }: { data: Record<string, unknown>; sessionId?: string }) {
   const transport = useOptionalControlTransport();
   const openPreview = useFilePreviewStore((state) => state.openPreview);
+  const closePreview = useFilePreviewStore((state) => state.close);
+  const retryPreview = useFilePreviewStore((state) => state.retry);
+  const previewOpen = useFilePreviewStore((state) => state.open);
+  const presentation = useFilePreviewStore((state) => state.presentation);
+  const activeRequest = useFilePreviewStore((state) => state.request);
+  const status = useFilePreviewStore((state) => state.status);
+  const preview = useFilePreviewStore((state) => state.preview);
+  const error = useFilePreviewStore((state) => state.error);
   const request = filePreviewRequestFromBlock(data, sessionId);
   const fileName = request?.fileNameHint || string(data.fileName ?? data.name ?? data.title) || '文件产物';
   const meta = [request?.mimeTypeHint || string(data.mimeType), fileSizeLabel(request?.byteSizeHint ?? 0)].filter(Boolean).join(' · ');
   const available = Boolean(request && transport);
+  const expanded = Boolean(
+    request
+    && previewOpen
+    && presentation === 'inline'
+    && samePreviewRequest(request, activeRequest),
+  );
+  const regionId = request ? `agent-file-preview-${request.mediaId}` : undefined;
 
   if (request && isHtmlReport(fileName, request.mimeTypeHint)) {
     return <AgentHtmlReportCard fileName={fileName} request={request} transport={transport ?? null} />;
   }
 
   return (
-    <button
-      aria-label={available ? `预览 ${fileName}` : `${fileName} 的预览回执不可用`}
-      className="agent-file-block"
-      data-disabled={!available || undefined}
-      data-kind={fileKind(fileName, request?.mimeTypeHint ?? '')}
-      disabled={!available}
-      onClick={() => request && transport && openPreview(request, transport)}
-      type="button"
-    >
-      <span className="agent-file-block__icon">{fileIcon(fileName, request?.mimeTypeHint ?? '')}</span>
-      <span><strong>{fileName}</strong><small>{meta || '受控文件'}</small></span>
-      <span aria-hidden="true" className="agent-file-block__open"><Eye size={15} />预览</span>
-    </button>
+    <div className="agent-file-block-shell" data-expanded={expanded || undefined}>
+      <button
+        aria-controls={available ? regionId : undefined}
+        aria-expanded={available ? expanded : undefined}
+        aria-label={available ? `${expanded ? '收起' : '展开'} ${fileName}` : `${fileName} 的预览回执不可用`}
+        className="agent-file-block"
+        data-disabled={!available || undefined}
+        data-kind={fileKind(fileName, request?.mimeTypeHint ?? '')}
+        disabled={!available}
+        onClick={() => {
+          if (!request || !transport) return;
+          if (expanded) closePreview();
+          else openPreview(request, transport, 'inline');
+        }}
+        type="button"
+      >
+        <span className="agent-file-block__icon">{fileIcon(fileName, request?.mimeTypeHint ?? '')}</span>
+        <span><strong>{fileName}</strong><small>{meta || '受控文件'}</small></span>
+        <span aria-hidden="true" className="agent-file-block__open">
+          {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          {expanded ? '收起' : '展开'}
+        </span>
+      </button>
+      {expanded ? (
+        <section
+          aria-label={`${fileName} 内联预览`}
+          className="agent-file-preview-inline"
+          data-status={status}
+          id={regionId}
+        >
+          <header>
+            <span>
+              {status === 'loading' ? '正在读取文件' : preview?.truncated ? '显示前 512 KB' : '文件内容'}
+            </span>
+            {preview?.descriptor ? (
+              <IconButton
+                icon={<ExternalLink size={15} />}
+                label={`打开原文件 ${fileName}`}
+                onClick={() => window.open(preview.descriptor.contentUrl, '_blank', 'noopener,noreferrer')}
+                size="small"
+                tooltip
+              />
+            ) : null}
+          </header>
+          <div className="agent-file-preview-inline__body" data-preview-kind={status === 'ready' ? preview?.descriptor.previewKind : undefined}>
+            {status === 'loading' ? <div className="agent-file-preview-inline__state"><LoaderCircle size={19} /><span>正在读取文件</span></div> : null}
+            {status === 'error' ? (
+              <div className="agent-file-preview-inline__state" role="alert">
+                <TriangleAlert size={19} />
+                <span>{error}</span>
+                <Button disabled={!transport} leadingIcon={<RefreshCw size={15} />} onClick={() => transport && retryPreview(transport)} size="small" variant="quiet">重试</Button>
+              </div>
+            ) : null}
+            {status === 'ready' && preview ? <FilePreviewRenderer preview={preview} /> : null}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function samePreviewRequest(
+  left: ReturnType<typeof filePreviewRequestFromBlock>,
+  right: ReturnType<typeof filePreviewRequestFromBlock>,
+): boolean {
+  return Boolean(
+    left
+    && right
+    && left.mediaId === right.mediaId
+    && left.sessionId === right.sessionId
+    && left.expectedSha256 === right.expectedSha256,
   );
 }
 

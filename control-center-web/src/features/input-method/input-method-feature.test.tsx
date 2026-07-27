@@ -150,6 +150,7 @@ describe('InputMethodFeature', () => {
           settings: {
             interaction: { postCommit: { enabled: true } },
             display: { maxPostCommitCandidates: 5 },
+            activeRag: { latencyBudgetMs: 8000 },
           },
         },
         'configuration.schema': {
@@ -167,6 +168,21 @@ describe('InputMethodFeature', () => {
                 applyMode: 'reload',
               }],
             },
+            {
+              id: 'activeRag',
+              label: '主动知识生成',
+              fields: [{
+                key: 'activeRag.latencyBudgetMs',
+                type: 'integer',
+                label: '生成框最长等待',
+                description: '等待框自动收起前的最长时间',
+                min: 2000,
+                max: 30000,
+                step: 1000,
+                unit: 'ms',
+                applyMode: 'live',
+              }],
+            },
           ],
         },
         'input.lexicon.review': emptyReview,
@@ -179,6 +195,7 @@ describe('InputMethodFeature', () => {
     expect(screen.getByText('本机模型已加载')).toBeInTheDocument();
     expect(screen.getByText('降级')).toBeInTheDocument();
     expect(screen.getByLabelText('续写候选数量')).toHaveValue(5);
+    expect(screen.getByLabelText('生成框最长等待')).toHaveValue(8000);
     expect(screen.getByLabelText('续写候选数量').closest('.input-setting-editor-row')).not.toBeNull();
     expect(screen.getByText(/需重新载入/)).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: '提交后预测' })).toBeDisabled();

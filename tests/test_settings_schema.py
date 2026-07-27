@@ -52,6 +52,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertTrue(defaults["activeRag"]["capture"]["clipboardFallback"])
         self.assertEqual(defaults["activeRag"]["defaultPlacement"], "replace_selection")
         self.assertEqual(defaults["activeRag"]["maxCandidates"], 1)
+        self.assertEqual(defaults["activeRag"]["latencyBudgetMs"], 8000)
         self.assertEqual(defaults["activeRag"]["quickModel"], "deepseek/deepseek-v4-flash")
         self.assertEqual(defaults["activeRag"]["quickThinkingLevel"], "high")
         self.assertNotIn("visualModel", defaults["activeRag"])
@@ -118,6 +119,10 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertNotIn("agent.pi.toolProfile", fields)
         self.assertNotIn("agent.pi.startup", fields)
         self.assertEqual(fields["activeRag.quickModel"]["type"], "pi-model")
+        self.assertEqual(fields["activeRag.latencyBudgetMs"]["label"], "生成框最长等待")
+        self.assertEqual(fields["activeRag.latencyBudgetMs"]["default"], 8000)
+        self.assertEqual(fields["activeRag.latencyBudgetMs"]["min"], 2000)
+        self.assertEqual(fields["activeRag.latencyBudgetMs"]["max"], 30000)
         self.assertEqual(
             fields["activeRag.quickThinkingLevel"]["options"],
             ["off", "minimal", "low", "medium", "high", "xhigh", "max"],

@@ -2,7 +2,7 @@
    are declared once in src/design/workspace.css so Session and Room cannot
    drift. Only Session-specific structure lives here. */
 .shell-route-stage > main.agent-feature {
-  --agent-rail-width: 224px;
+  --agent-rail-width: 280px;
   --agent-status-width: 312px;
   grid-template-columns: var(--agent-rail-width) minmax(0, 1fr) 0;
 }
@@ -35,22 +35,45 @@
 .agent-session-search input { width: 100%; min-width: 0; align-self: stretch; border: 0; outline: 0; background: transparent; font-size: 13px; }
 .agent-session-list { min-height: 0; flex: 1; padding: 0 7px 12px; overflow-y: auto; }
 .agent-session-project { display: grid; gap: 1px; margin-bottom: 7px; }
-.agent-session-project > header { display: grid; min-height: 32px; grid-template-columns: 17px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 5px 9px; color: var(--color-text-secondary); }
-.agent-session-project > header svg { color: var(--color-text-tertiary); }
-.agent-session-project > header strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.agent-session-project > header small { min-width: 18px; color: var(--color-text-tertiary); font: var(--font-weight-semibold) 13px var(--font-mono); text-align: right; }
-.agent-session-project[data-selected='true'] > header { color: var(--color-text); }
+.agent-session-project__toggle {
+  display: grid;
+  width: 100%;
+  min-height: 34px;
+  grid-template-columns: 14px 17px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--color-text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+.agent-session-project__toggle:hover { background: var(--color-surface-hover); }
+.agent-session-project__toggle:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
+.agent-session-project__toggle svg { color: var(--color-text-tertiary); }
+.agent-session-project__toggle strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.agent-session-project__toggle small { min-width: 18px; color: var(--color-text-tertiary); font: var(--font-weight-semibold) 13px var(--font-mono); text-align: right; }
+.agent-session-project[data-selected='true'] .agent-session-project__toggle { color: var(--color-text); }
+.agent-session-project__sessions { display: grid; gap: 1px; }
 .agent-session-project .agent-session-row { padding-left: 15px; }
-.agent-session-row-shell { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) 26px; align-items: center; border-radius: var(--radius-2); transition: background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
+.agent-session-row-shell { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) 30px 30px; align-items: center; border-radius: var(--radius-2); transition: background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
 .agent-session-row-shell[data-selected='true'] { background: var(--color-accent-soft); box-shadow: inset 3px 0 0 var(--color-accent); }
-.agent-session-row { display: grid; width: 100%; min-height: 62px; grid-template-columns: 7px minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 9px; border: 0; border-radius: var(--radius-2); background: transparent; text-align: left; cursor: pointer; transition: transform var(--duration-press) var(--ease-press), box-shadow var(--duration-enter) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard); }
+.agent-session-row { display: grid; width: 100%; min-height: 72px; grid-template-columns: 7px minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 9px; border: 0; border-radius: var(--radius-2); background: transparent; text-align: left; cursor: pointer; transition: transform var(--duration-press) var(--ease-press), box-shadow var(--duration-enter) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard); }
 .agent-session-row:active { box-shadow: var(--shadow-control-press); transform: translateY(1px); }
 .agent-session-row[aria-current='true'] { background: var(--color-accent-soft); }
 .agent-session-row-shell[data-selected='true'] .agent-session-row[aria-current='true'] { background: transparent; }
-.agent-session-row__menu { align-self: center; opacity: 0; transition: opacity var(--duration-fast) var(--ease-standard); }
+.agent-session-row__archive,
+.agent-session-row__menu { align-self: center; opacity: .58; transition: opacity var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+.agent-session-row__archive:hover { color: var(--color-accent); opacity: 1; }
+.agent-session-row__menu { opacity: 0; }
 .agent-session-row-shell:hover .agent-session-row__menu,
 .agent-session-row-shell:focus-within .agent-session-row__menu,
 .agent-session-row-shell[data-selected='true'] .agent-session-row__menu { opacity: 1; }
+.agent-session-row-shell:hover .agent-session-row__archive,
+.agent-session-row-shell:focus-within .agent-session-row__archive,
+.agent-session-row-shell[data-selected='true'] .agent-session-row__archive { opacity: 1; }
 .agent-session-row__delete { color: var(--color-danger); }
 .agent-session-delete-dialog__error { margin: 0; padding: 8px 10px; border-radius: var(--radius-1); background: var(--color-danger-soft); color: var(--color-danger); font-size: 13px; }
 .agent-session-row-shell:has(.agent-session-row__status[data-status='archived']) { opacity: .72; }
@@ -59,8 +82,16 @@
 .agent-session-row__status[data-status='active'] { background: var(--color-success); }
 .agent-session-row__status[data-status='faulted'] { background: var(--color-danger); }
 .agent-session-row__copy { display: grid; min-width: 0; gap: 4px; }
-.agent-session-row__copy strong, .agent-session-row__copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-session-row__copy strong { font-size: 13px; font-weight: var(--font-weight-semibold); }
+.agent-session-row__copy strong, .agent-session-row__copy small { overflow: hidden; text-overflow: ellipsis; }
+.agent-session-row__copy strong {
+  display: -webkit-box;
+  font-size: 13px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.agent-session-row__copy small { white-space: nowrap; }
 .agent-session-row__copy small { color: var(--color-text-tertiary); font-size: 13px; }
 .agent-session-row-shell[data-selected='true'] .agent-session-row__copy small,
 .agent-session-row-shell[data-selected='true'] .agent-session-row time { color: var(--color-text-secondary); }
@@ -1000,7 +1031,11 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 
 @media (max-width: 1360px) {
   .shell-route-stage > main.agent-feature,
-  .shell-route-stage > main.agent-feature[data-status-open='true'] { position: relative; grid-template-columns: 224px minmax(0, 1fr) 0; }
+  .shell-route-stage > main.agent-feature[data-status-open='true'] {
+    --agent-rail-width: 260px;
+    position: relative;
+    grid-template-columns: var(--agent-rail-width) minmax(0, 1fr) 0;
+  }
   .shell-route-stage > main.agent-feature[data-rail-open='false'],
   .shell-route-stage > main.agent-feature[data-rail-open='false'][data-status-open='true'] { grid-template-columns: 0 minmax(0, 1fr) 0; }
   .agent-status-panel { position: absolute; z-index: 14; top: 0; right: 0; bottom: 0; width: min(340px, 90vw); box-shadow: var(--shadow-menu); }
@@ -1012,7 +1047,10 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 
 @media (max-width: 900px) {
   .shell-route-stage > main.agent-feature,
-  .shell-route-stage > main.agent-feature[data-status-open='true'] { grid-template-columns: 210px minmax(0, 1fr) 0; }
+  .shell-route-stage > main.agent-feature[data-status-open='true'] {
+    --agent-rail-width: 248px;
+    grid-template-columns: var(--agent-rail-width) minmax(0, 1fr) 0;
+  }
   .shell-route-stage > main.agent-feature[data-rail-open='false'],
   .shell-route-stage > main.agent-feature[data-rail-open='false'][data-status-open='true'] { grid-template-columns: 0 minmax(0, 1fr) 0; }
   .agent-turn, .agent-composer-wrap { padding-inline: 16px 30px; }
@@ -1127,6 +1165,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
   .agent-status-empty[data-animated] > svg,
   .agent-fork-dialog__state svg,
+  .agent-file-preview-inline[data-status='loading'] .agent-file-preview-inline__state > svg,
   .agent-fork-dialog footer button[data-loading='true'] svg {
     animation: none;
     opacity: 1;
@@ -1153,6 +1192,7 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 :root[data-reduce-motion='true'] .agent-status-subagent[data-state='queued'] .agent-status-subagent__state svg,
 :root[data-reduce-motion='true'] .agent-status-empty[data-animated] > svg,
 :root[data-reduce-motion='true'] .agent-fork-dialog__state svg,
+:root[data-reduce-motion='true'] .agent-file-preview-inline[data-status='loading'] .agent-file-preview-inline__state > svg,
 :root[data-reduce-motion='true'] .agent-fork-dialog footer button[data-loading='true'] svg {
   animation: none;
   opacity: 1;

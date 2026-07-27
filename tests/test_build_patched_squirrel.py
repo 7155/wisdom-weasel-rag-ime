@@ -166,7 +166,14 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("let cancelledSelectedTextHash", patch_text)
         self.assertIn("post_commit_pending_overlay_disabled", patch_text)
         self.assertIn("assistant_overlay_local_placeholder_suppressed", patch_text)
-        self.assertIn("打开 RAG-IME 控制中心...", patch_text)
+        self.assertIn("打开澄控制中心...", patch_text)
+        self.assertIn("配置由控制中心管理", patch_text)
+        self.assertIn("重新启动后台服务", patch_text)
+        self.assertIn("诊断与修复...", patch_text)
+        self.assertNotIn("打开 RAG-IME 控制中心...", patch_text)
+        self.assertNotIn("当前配置：由 Sidecar 同步", patch_text)
+        self.assertNotIn("重新启动 RAG-IME Sidecar", patch_text)
+        self.assertNotIn("RAG-IME 诊断...", patch_text)
         self.assertNotIn('urlForApplication(withBundleIdentifier: "com.rag-ime.control")', patch_text)
         self.assertIn('Applications/RagImeControl.app', patch_text)
         self.assertIn('rag-ime-control-web-build-marker.json', patch_text)
@@ -181,14 +188,19 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         panel_text = (overlay_sources / "RagImeNonActivatingPanel.swift").read_text(encoding="utf-8")
         shared_motion_text = (root / "macos" / "Shared" / "RagImeMotion.swift").read_text(encoding="utf-8")
         combined_overlay_text = "\n".join([controller_text, card_text, row_text, state_text, panel_text])
-        self.assertIn("if currentState.isExplicit {", controller_text)
+        self.assertIn(
+            "if currentState.isExplicit && currentState != .explicitGenerating {",
+            controller_text,
+        )
         self.assertNotIn("currentState != .explicitError", controller_text)
-        self.assertIn("assistant_explicit_result_pinned", controller_text)
+        self.assertIn("assistant_explicit_surface_pinned", controller_text)
         self.assertIn('NSMenuItem(title: "查看输入与依据"', controller_text)
         self.assertIn("showContextInspector", controller_text)
         self.assertIn("RagImeAssistantContextInspectorViewController", controller_text)
         self.assertNotIn("copyEvidence", controller_text)
-        self.assertIn("let maximumMs = hasRealCandidate ? 30_000 : (pendingWithoutResult && !isNoResultFeedback ? 12_000 : 2_000)", controller_text)
+        self.assertIn("let explicitGeneration = currentState == .explicitGenerating", controller_text)
+        self.assertIn('? 30_000\n      : (explicitGeneration ? 30_000', controller_text)
+        self.assertIn('"active_rag_budget"', controller_text)
         self.assertIn('"no_result_guard"', controller_text)
         self.assertNotIn("panel.appearance = NSAppearance(named: .aqua)", combined_overlay_text)
         self.assertNotIn("calibratedWhite", combined_overlay_text)
@@ -1485,7 +1497,13 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             'activeStatusText?.contains("没有合适") == true',
             patch_text,
         )
-        self.assertIn("latencyBudgetMs: 15000", patch_text)
+        self.assertIn("latencyBudgetMs: 30000", patch_text)
+        self.assertIn("let expiresAfterMs: Int?", patch_text)
+        self.assertIn("expiresAfterMs: response.expiresAfterMs", patch_text)
+        self.assertIn(
+            "expiresAfterMs: min(max(request.latencyBudgetMs, 2_000), 8_000)",
+            patch_text,
+        )
         self.assertIn("guard attempt <= 1200 else { return }", patch_text)
         self.assertIn("postActiveRagStart", patch_text)
         self.assertIn('endpoint("active-rag/start"', patch_text)
@@ -1853,7 +1871,8 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
             'func forceSideCandidates() { let forceSideCandidates = rawInput.isEmpty && preedit.isEmpty; _ = "forceSideCandidates: forceSideCandidates" }; '
             'func compositionAISuppressed() { _ = "composition_ai_suppressed" }; '
             'func traceRimeComposition() { _ = "rime_composition_started"; _ = "rime_composition_candidates_visible" }; '
-            'func controlCenterMenu() { _ = "打开 RAG-IME 控制中心..."; _ = "com.rag-ime.control" }; '
+            'func controlCenterMenu() { _ = "打开澄控制中心..."; _ = "配置由控制中心管理"; '
+            '_ = "重新启动后台服务"; _ = "诊断与修复..."; _ = "com.rag-ime.control" }; '
             'func suppressPostCommitOverlay() { _ = "RAG_IME_ASSISTANT_OVERLAY_AUTO_PENDING"; _ = "assistant_overlay_local_placeholder_suppressed" }; '
             'func foregroundSnapshot() { _ = "ragImeSelectedTextProvider.captureForegroundTextForSidecar" }; '
             'func queuedForegroundSnapshot() { _ = "ragImeForegroundContextResolver.captureFromAccessibility(" }; '
