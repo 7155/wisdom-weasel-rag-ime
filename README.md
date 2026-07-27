@@ -1,46 +1,70 @@
-# Wisdom Weasel RAG IME
+# 澄 — Personal Agent Workbench
 
-> A local-first macOS input-method research project built on Rime/Squirrel.
+> A local-first macOS workspace for persistent agents, Rooms, tools, governed
+> memory, and optional input, voice, and browser assistance.
 
-**Platform:** macOS 14+ | **Python:** 3.10+ | **License:** [GPL-3.0-only](LICENSE) | **Status:** research prototype
+**Platform:** macOS 14+ | **Python:** 3.12+ | **License:** [GPL-3.0-only](LICENSE) | **Status:** public-source local prototype
 
-Wisdom Weasel RAG IME preserves ordinary Pinyin composition in Rime and adds
-post-commit local completion, curated local retrieval and memory, and optional
-explicit knowledge workflows. It is intentionally conservative about the
-typing path: ordinary composition remains Rime's job, and remote generation is
-never used for passive per-keystroke prediction.
+Personal Agent Workbench combines private Agent Sessions, structured
+multi-Agent Rooms, auditable Tool and Skill execution, Provider adapters,
+governed local memory, and a native Control Center. `澄` is the user-facing
+assistant identity. Input-method, voice, and browser integrations are optional
+interaction surfaces around the same Agent runtime rather than the center of
+the product.
+
+The input path remains deliberately conservative: ordinary Pinyin composition
+is still Rime's job, and remote generation is never used for passive
+per-keystroke prediction.
 
 > [!WARNING]
-> This repository is licensed under GPL-3.0-only, but it is **not a
-> release-ready IME**. The foreground acceptance, completion-quality, signing,
-> notarization, and final release-manifest gates remain open. Do not install it
-> as a daily input method until those gates have been completed.
+> The tracked source repository can be audited and built locally, but the
+> project does **not** yet publish a release-ready macOS binary. Foreground
+> input/voice/Accessibility acceptance, Developer ID signing, notarization,
+> stapling, and the final release manifest remain open. Treat local builds as
+> development installations.
 
 ## What It Does
 
 | Capability | Current boundary |
 | --- | --- |
+| Agent Sessions and Providers | Each companion keeps a private, resumable Session. Pi adapters normalize configured Providers and models without exposing one protocol's private implementation to another. |
+| Structured Rooms | A Room coordinates explicit participants, Tasks, Dispatches, handoffs, evidence, approvals, and terminal receipts while preserving each Session's private history. |
+| Tools and Skills | Tools are progressively disclosed, policy-checked, approval-aware, and recorded as typed receipts. Skills are loaded for the current work stage instead of being dumped into every prompt. |
+| Control Center | The native macOS workspace exposes conversations, projects, companions, memory, knowledge, planning, diagnostics, Provider settings, and bounded context inspection. |
+| Governed memory | SQLite evidence, Atoms, Books, tags, projections, revision fences, and retrieval keep long-term context reviewable and reversible rather than silently rewriting chat history. |
+| Optional interaction adapters | Patched Squirrel, push-to-talk voice, and Browser Co-pilot feed the same local workspace without owning Agent or memory semantics. |
 | Pinyin composition | Rime/librime owns schemas, fuzzy Pinyin, paging, native candidates, and user-dictionary ranking. The sidecar must never replace its composition path. |
 | Local completion | After a commit, a local MLX, Ollama, or loopback OpenAI-compatible runtime may offer short, source-marked continuations. `Tab` accepts the first suggestion and `Option+number` selects an ordinal; ordinary number keys stay with Rime or the host. |
-| Hybrid RAG and memory | Local SQLite FTS5 BM25, precomputed vector scoring, tags, time, feedback, and weighted reciprocal-rank fusion produce traceable local evidence. The current vector lane is an exact scan, not ANN/HNSW/FAISS or a learned cross-encoder reranker. |
-| Explicit knowledge work | Selected-text assistance, long-form answers, memory organization, and optional DeepSeek-compatible generation are explicit Control Center workflows, not background typing behavior. |
-| Voice input | An optional headless macOS agent provides push-to-talk streaming ASR. It is isolated from Squirrel's keystroke path and requires explicit permissions and provider configuration. |
+| Explicit knowledge work | Selected-text assistance, long-form answers, memory organization, and configured remote generation are explicit Control Center workflows, not background typing behavior. |
 
-## Core Features
+## System Capabilities
 
 The status labels below deliberately distinguish code presence from real macOS
 foreground acceptance. "Implemented" does not mean that signing, notarization,
 or every host application's text field has passed manual testing.
 
+### Agent Workspace And Control Center
+
+**Status: implemented for local development; signed distribution remains a
+separate gate.**
+
+The native Control Center is the composition surface for Agent Sessions,
+Provider-qualified model selection, project-grouped conversations, companions,
+Rooms, memory, knowledge, planning, voice, input assistance, and diagnostics.
+Session history remains private; Room posts, Task handoffs, approval receipts,
+and accepted evidence are projected into shared collaboration state. Managed
+file and Diff results expand inline so the work stays in context instead of
+opening an unrelated modal workflow.
+
 ### Rime Input
 
 **Status: implemented; real foreground acceptance remains required.**
 
-The product frontend is a single patched Squirrel/InputMethodKit route. Rime
-continues to own Pinyin parsing, fuzzy Pinyin, paging, native candidates, and
-the user dictionary. Wisdom Weasel adds a source-aware assistant surface rather
-than replacing Rime's decoder. Ordinary number keys stay with Rime/the host;
-`Tab` and `Option+number` select assistant candidates.
+The optional input frontend is a single patched Squirrel/InputMethodKit route.
+Rime continues to own Pinyin parsing, fuzzy Pinyin, paging, native candidates,
+and the user dictionary. 澄 adds a source-aware assistant surface rather than
+replacing Rime's decoder. Ordinary number keys stay with Rime/the host; `Tab`
+and `Option+number` select assistant candidates.
 
 ### Local LLM Prediction
 
@@ -406,6 +430,12 @@ complete document/vector parity, caught-up projection checkpoints, an empty
 failed/dead Outbox, and exact source fingerprints. No Timeline or Role Book draft
 is auto-approved.
 
+The `wisdom-weasel-rag-ime` value in the migration command below is a legacy
+persisted project scope, not the current product name. Existing databases,
+schema identifiers, `rag_ime` imports, and `RAG_IME_*` environment variables
+retain compatibility until a separately versioned data migration can update
+them without losing memory provenance.
+
 ```bash
 DB="$HOME/Library/Application Support/RagIme/rag-ime.sqlite"
 SNAPSHOT="/private/path/rag-ime-reviewed-source.sqlite"
@@ -554,14 +584,19 @@ See the [release-manifest template](release/release-manifest.example.json).
 
 ## Scope And Non-Goals
 
-- This is a macOS Rime/Squirrel experiment, not a general cross-platform IME.
+- This is a local-first personal Agent workbench, not a hosted autonomous
+  workforce, enterprise control plane, or general cloud Agent service.
+- The native product currently targets macOS. The optional input adapter is a
+  Rime/Squirrel experiment, not a general cross-platform IME.
 - Rime remains authoritative during Pinyin composition; model and RAG output
   does not reorder native candidates or train the Rime user dictionary.
 - Remote models are not permitted in passive per-keystroke completion.
+- Room collaboration does not merge private Session histories. Only explicit
+  Room posts, evidence, Tasks, handoffs, and receipts become shared state.
 - The repository does not redistribute trained model weights, personal typing
   history, or a production-scale training corpus.
-- A public source repository and an unsigned engineering build are not proof of
-  a distributable production input method.
+- A public source repository and an ad-hoc signed engineering build are not
+  proof of a distributable macOS product.
 
 ## Contributing
 
