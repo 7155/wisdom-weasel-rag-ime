@@ -1,11 +1,11 @@
 {
-  "schemaVersion": "rag-ime.persona-assets.v9",
+  "schemaVersion": "rag-ime.persona-assets.v10",
   "fallbackAssetId": "rag-ime-timeline-present-v1",
   "provenance": {
     "generator": "OpenAI built-in image_gen",
     "createdFor": "Personal Agent Workbench",
     "externalCharacterReference": true,
-    "style": "user-directed silver-haired companion portrait set with role-specific contrast backdrops, optimized for 22-72px UI use"
+    "style": "user-directed silver-haired companion portrait set with flat role-specific editorial backdrops, optimized for 22-72px UI use"
   },
   "budgets": {
     "portraitMaxBytes": 100000,
@@ -17,52 +17,52 @@
       "timeline": "presence",
       "modelAffinity": "session-selected",
       "states": {
-        "idle": "/companions/personas/companion-present-v5.webp",
-        "listening": "/companions/personas/companion-present-v5.webp",
-        "thinking": "/companions/personas/companion-present-v5.webp",
-        "warning": "/companions/personas/companion-present-v5.webp",
-        "done": "/companions/personas/companion-present-v5.webp"
+        "idle": "/companions/personas/companion-present-v6.webp",
+        "listening": "/companions/personas/companion-present-v6.webp",
+        "thinking": "/companions/personas/companion-present-v6.webp",
+        "warning": "/companions/personas/companion-present-v6.webp",
+        "done": "/companions/personas/companion-present-v6.webp"
       }
     },
     "rag-ime-timeline-past-v1": {
       "personaId": "companion-firstlight-v1",
       "timeline": "past",
       "modelAffinity": "gpt-5.6-luna",
-      "source": "/companions/personas/companion-firstlight-v5.webp",
+      "source": "/companions/personas/companion-firstlight-v6.webp",
       "width": 640,
       "height": 640,
-      "bytes": 74574,
-      "sha256": "5941a6516283fd365790470d2de7305b5cb0d4509fcca6a8c7b58c7ab3767db3"
+      "bytes": 44892,
+      "sha256": "0f972ef79bbcea347aaa8f7b5c295939b663db2e655ff43c6168466372ef0960"
     },
     "rag-ime-timeline-present-v1": {
       "personaId": "companion-present-v1",
       "timeline": "present",
       "modelAffinity": "gpt-5.6-terra",
-      "source": "/companions/personas/companion-present-v5.webp",
+      "source": "/companions/personas/companion-present-v6.webp",
       "width": 640,
       "height": 640,
-      "bytes": 69198,
-      "sha256": "21f2b6d05fb3cd63c5e137bfbaed85243de27664bd8753bbc46ffc4714eefe9d"
+      "bytes": 45184,
+      "sha256": "c558d05fd2cda557c16311fa2d045db16a0dcb21978ad995688ab5bf24d8c667"
     },
     "rag-ime-timeline-future-v1": {
       "personaId": "companion-future-v1",
       "timeline": "future",
       "modelAffinity": "gpt-5.6-sol",
-      "source": "/companions/personas/companion-future-v5.webp",
+      "source": "/companions/personas/companion-future-v6.webp",
       "width": 640,
       "height": 640,
-      "bytes": 86380,
-      "sha256": "6cf6f4361a3ea3e931efe1d098418ea6df0add39a0c976e1b48d924b6b18b3b6"
+      "bytes": 64512,
+      "sha256": "e3303762b5e7c7f9728f0bc44a8c922aafcae3a2da37787f82d1e50ba4d5f13d"
     },
     "rag-ime-timeline-flash-v1": {
       "personaId": "companion-flash-v1",
       "timeline": "flash",
       "modelAffinity": "deepseek-v4-flash",
-      "source": "/companions/personas/companion-flash-v5.webp",
+      "source": "/companions/personas/companion-flash-v6.webp",
       "width": 640,
       "height": 640,
-      "bytes": 91510,
-      "sha256": "81a66854f7a1b13c80d7d8bd6b8201478c3f965ebacaab3ddaea083cb5e0d4f8"
+      "bytes": 49578,
+      "sha256": "55a659dac902b5a256e08e44b05bd121cf562520e9fbfda8d12487424ac9ea11"
     }
   }
 }

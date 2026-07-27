@@ -6,7 +6,7 @@ import { personaAssetManifest, resolvePersonaAsset } from './persona-assets';
 
 describe('Persona timeline assets', () => {
   it('maps all four fixed roles onto distinct portraits', () => {
-    expect(personaAssetManifest.schemaVersion).toBe('rag-ime.persona-assets.v9');
+    expect(personaAssetManifest.schemaVersion).toBe('rag-ime.persona-assets.v10');
     expect(personaAssetManifest.assets['rag-ime-timeline-past-v1'].timeline).toBe('past');
     expect(personaAssetManifest.assets['rag-ime-timeline-present-v1'].timeline).toBe('present');
     expect(personaAssetManifest.assets['rag-ime-timeline-future-v1'].timeline).toBe('future');
@@ -14,10 +14,10 @@ describe('Persona timeline assets', () => {
     expect(personaAssetManifest.assets['rag-ime-timeline-past-v1'].phaseLabel).toBe('初识阶段');
     expect(personaAssetManifest.assets['rag-ime-timeline-present-v1'].phaseLabel).toBe('此刻阶段');
     expect(personaAssetManifest.assets['rag-ime-timeline-future-v1'].phaseLabel).toBe('构筑阶段');
-    expect(resolvePersonaAsset('rag-ime-timeline-past-v1', 'thinking')).toBe('/companions/personas/companion-firstlight-v5.webp');
-    expect(resolvePersonaAsset('rag-ime-timeline-present-v1', 'done')).toBe('/companions/personas/companion-present-v5.webp');
-    expect(resolvePersonaAsset('rag-ime-timeline-future-v1', 'idle')).toBe('/companions/personas/companion-future-v5.webp');
-    expect(resolvePersonaAsset('rag-ime-timeline-flash-v1', 'listening')).toBe('/companions/personas/companion-flash-v5.webp');
+    expect(resolvePersonaAsset('rag-ime-timeline-past-v1', 'thinking')).toBe('/companions/personas/companion-firstlight-v6.webp');
+    expect(resolvePersonaAsset('rag-ime-timeline-present-v1', 'done')).toBe('/companions/personas/companion-present-v6.webp');
+    expect(resolvePersonaAsset('rag-ime-timeline-future-v1', 'idle')).toBe('/companions/personas/companion-future-v6.webp');
+    expect(resolvePersonaAsset('rag-ime-timeline-flash-v1', 'listening')).toBe('/companions/personas/companion-flash-v6.webp');
     expect(new Set([
       resolvePersonaAsset('rag-ime-timeline-past-v1', 'idle'),
       resolvePersonaAsset('rag-ime-timeline-present-v1', 'idle'),
@@ -27,15 +27,15 @@ describe('Persona timeline assets', () => {
   });
 
   it('fails soft to the present timeline and resolves stickers into the current art pack', () => {
-    expect(resolvePersonaAsset('future-persona-v9', 'warning')).toBe('/companions/personas/companion-present-v5.webp');
-    expect(stickerAsset('rag-ime-presence-warning')).toBe('/companions/personas/companion-present-v5.webp');
+    expect(resolvePersonaAsset('future-persona-v9', 'warning')).toBe('/companions/personas/companion-present-v6.webp');
+    expect(stickerAsset('rag-ime-presence-warning')).toBe('/companions/personas/companion-present-v6.webp');
   });
 
   it('renders the timeline names with their manifest-selected portraits', () => {
     render(<>{previewPersonas.map((persona) => <PersonaAvatar key={persona.roleId} persona={persona} />)}</>);
-    expect(screen.getByAltText('澄·今头像').getAttribute('src')).toBe('/companions/personas/companion-present-v5.webp');
-    expect(screen.getByAltText('澄·初头像').getAttribute('src')).toBe('/companions/personas/companion-firstlight-v5.webp');
-    expect(screen.getByAltText('澄·远头像').getAttribute('src')).toBe('/companions/personas/companion-future-v5.webp');
-    expect(screen.getByAltText('澄·瞬头像').getAttribute('src')).toBe('/companions/personas/companion-flash-v5.webp');
+    expect(screen.getByAltText('澄·今头像').getAttribute('src')).toBe('/companions/personas/companion-present-v6.webp');
+    expect(screen.getByAltText('澄·初头像').getAttribute('src')).toBe('/companions/personas/companion-firstlight-v6.webp');
+    expect(screen.getByAltText('澄·远头像').getAttribute('src')).toBe('/companions/personas/companion-future-v6.webp');
+    expect(screen.getByAltText('澄·瞬头像').getAttribute('src')).toBe('/companions/personas/companion-flash-v6.webp');
   });
 });
