@@ -59,7 +59,7 @@ final class VoiceInputCoordinator {
         switch state {
         case .idle: return VoiceAudioRecorder.permissionGranted ? "语音输入已就绪" : "首次使用时申请麦克风权限"
         case .starting: return "正在启动语音输入"
-        case .recording: return interactionSource == .agentComposer ? "正在向智鼬输入" : "正在听写"
+        case .recording: return interactionSource == .agentComposer ? "正在向澄输入" : "正在听写"
         case .finalizing:
             if thirdPassTask != nil { return "正在进行第三遍文字校对" }
             return interactionSource == .agentComposer ? "正在整理对话草稿" : "正在等待最终定稿"
@@ -157,7 +157,7 @@ final class VoiceInputCoordinator {
             return
         }
         guard source != .agentComposer || insertion.appBundleIdentifier == "com.rag-ime.control" else {
-            overlay.showError("请先把光标放回智鼬对话输入框")
+            overlay.showError("请先把光标放回澄对话输入框")
             interactionSource = .hotkey
             return
         }

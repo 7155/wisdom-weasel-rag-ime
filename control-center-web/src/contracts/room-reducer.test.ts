@@ -86,7 +86,7 @@ describe('RoomEventReducer', () => {
       createRoomProjection('room-1'),
       roomEvent(1, 'user_message', {
         messageId: 'room-user-1',
-        text: '@智鼬·未来 请整理下一步',
+        text: '@澄·远 请整理下一步',
       }),
     ).state;
     const reply = reduceRoomEvent(
@@ -279,7 +279,7 @@ describe('RoomEventReducer', () => {
   it('merges optimistic room input by clientMessageId and keeps unknown events', () => {
     const optimistic = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
       clientMessageId: 'room-client-1',
-      text: '@智鼬 检查状态',
+      text: '@澄 检查状态',
       nowMs: 1,
     });
     const merged = reduceRoomEvent(
@@ -287,7 +287,7 @@ describe('RoomEventReducer', () => {
       roomEvent(1, 'user_message', {
         messageId: 'room-user-1',
         clientMessageId: 'room-client-1',
-        text: '@智鼬 检查状态',
+        text: '@澄 检查状态',
       }),
     ).state;
     const unknown = reduceRoomEvent(
@@ -580,13 +580,13 @@ describe('RoomEventReducer', () => {
   it('strictly validates and replays a retained event snapshot without looping on old gap markers', () => {
     const optimistic = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
       clientMessageId: 'room-client-1',
-      text: '@智鼬 检查状态',
+      text: '@澄 检查状态',
       nowMs: 1,
     });
     const snapshot = parseRoomEventSnapshot(roomSnapshotFixture([
       wireRoomEvent(5, 'user_message', {
         clientMessageId: 'room-client-1',
-        text: '@智鼬 检查状态',
+        text: '@澄 检查状态',
       }),
       wireRoomEvent(6, 'snapshot_required', { reason: 'old_replay_gap' }),
       wireRoomEvent(7, 'participant_delta', {
@@ -723,7 +723,7 @@ function roomParticipant(id: string, sessionId: string, ordinal: number) {
     sessionId,
     roleId: ordinal === 0 ? 'companion-present-v1' : 'companion-firstlight-v1',
     roleVersion: '1',
-    displayName: ordinal === 0 ? '智鼬·此刻' : '智鼬·初识',
+    displayName: ordinal === 0 ? '澄·今' : '澄·初',
     collaborationRole: ordinal === 0 ? 'coordinator' : 'researcher',
     status: 'active',
     ordinal,

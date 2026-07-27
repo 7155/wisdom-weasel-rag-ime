@@ -6,11 +6,11 @@
       "id": "session-review",
       "displayName": "Session Review",
       "description": "Summarizes evidenced session outcomes for an explicit user review.",
-      "publisher": "Wisdom Weasel",
+      "publisher": "Personal Agent Workbench",
       "source": {
         "kind": "bundled",
         "label": "Product bundle",
-        "url": "https://github.com/7155/wisdom-weasel-rag-ime"
+        "url": "https://github.com/7155/personal-agent-workbench"
       },
       "permissions": ["session.read"],
       "compatibility": {
@@ -42,7 +42,7 @@
       "id": "community-catalog-preview",
       "displayName": "Community catalog preview",
       "description": "A review-only placeholder for future signed remote distribution.",
-      "publisher": "Wisdom Weasel",
+      "publisher": "Personal Agent Workbench",
       "source": {
         "kind": "review_only",
         "label": "Not distributed",

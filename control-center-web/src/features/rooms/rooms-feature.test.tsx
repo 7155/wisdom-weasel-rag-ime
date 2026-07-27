@@ -40,8 +40,8 @@ describe('Rooms experience', () => {
           id: 'room-a', title: '迁移作战室', status: 'active', routingPolicy: 'moderator',
           moderatorParticipantId: 'p1', updatedAtMs: Date.now(),
           participants: [
-            { id: 'p1', sessionId: 's1', roleId: 'companion-present-v1', roleVersion: '1', displayName: '智鼬', status: 'active', ordinal: 0 },
-            { id: 'p2', sessionId: 's2', roleId: 'companion-firstlight-v1', roleVersion: '1', displayName: '智鼬·初识', status: 'active', ordinal: 1 },
+            { id: 'p1', sessionId: 's1', roleId: 'companion-present-v1', roleVersion: '1', displayName: '澄', status: 'active', ordinal: 0 },
+            { id: 'p2', sessionId: 's2', roleId: 'companion-firstlight-v1', roleVersion: '1', displayName: '澄·初', status: 'active', ordinal: 1 },
           ],
         }],
       },
@@ -55,7 +55,7 @@ describe('Rooms experience', () => {
     const user = userEvent.setup();
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
     const composer = await screen.findByRole('textbox', { name: '协作消息' });
-    expect(screen.queryByAltText(/两位智鼬在私有工作区之间显式交接/)).not.toBeInTheDocument();
+    expect(screen.queryByAltText(/两位伙伴在私有工作区之间显式交接/)).not.toBeInTheDocument();
     const errorSlot = document.querySelector('.room-error-slot');
     expect(errorSlot).toBeInTheDocument();
     expect(errorSlot).toBeEmptyDOMElement();
@@ -315,7 +315,7 @@ describe('Rooms experience', () => {
       ...previewPersonas[2]!,
       roleId: 'persona-morning-guide',
       version: '1',
-      displayName: '智鼬·晨光',
+      displayName: '澄·晨光',
       tagline: '先看清今天，再稳稳向前',
       selectableModes: ['assistant', 'coordinator'] as ['assistant', 'coordinator'],
     };
@@ -389,13 +389,13 @@ describe('Rooms experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
     expect(screen.getByRole('button', { name: '开始协作' })).toBeDisabled();
-    expect(screen.getByRole('checkbox', { name: /智鼬·未来/ })).toHaveAccessibleName(/智鼬·未来.*组织协作/);
-    expect(screen.getByRole('checkbox', { name: /智鼬·未来/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /智鼬·此刻/ })).toHaveAccessibleName(/智鼬·此刻.*动手实现/);
-    expect(screen.getByRole('checkbox', { name: /智鼬·此刻/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /智鼬·初识/ })).toHaveAccessibleName(/智鼬·初识.*独立验收/);
-    expect(screen.getByRole('checkbox', { name: /智鼬·初识/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /智鼬·闪念/ })).toHaveAccessibleName(/智鼬·闪念.*可邀请/);
+    expect(screen.getByRole('checkbox', { name: /澄·远/ })).toHaveAccessibleName(/澄·远.*组织协作/);
+    expect(screen.getByRole('checkbox', { name: /澄·远/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /澄·今/ })).toHaveAccessibleName(/澄·今.*动手实现/);
+    expect(screen.getByRole('checkbox', { name: /澄·今/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /澄·初/ })).toHaveAccessibleName(/澄·初.*独立验收/);
+    expect(screen.getByRole('checkbox', { name: /澄·初/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /澄·瞬/ })).toHaveAccessibleName(/澄·瞬.*可邀请/);
     expect(screen.queryByRole('combobox', { name: '主持伙伴' })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: '发言方式' })).not.toBeInTheDocument();
 
@@ -494,13 +494,13 @@ describe('Rooms experience', () => {
     await user.type(composer, '说说你的看法');
     expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: '点名一位伙伴' }));
-    await user.click(screen.getByRole('option', { name: /智鼬·初识/ }));
-    expect(composer).toHaveValue('说说你的看法 @智鼬·初识 ');
+    await user.click(screen.getByRole('option', { name: /澄·初/ }));
+    expect(composer).toHaveValue('说说你的看法 @澄·初 ');
     await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
-      message: '说说你的看法 @智鼬·初识',
+      message: '说说你的看法 @澄·初',
       participantIds: ['room-invite:p2'],
     });
     expect(composer).toHaveValue('');
@@ -524,14 +524,14 @@ describe('Rooms experience', () => {
 
     const composer = await screen.findByRole('textbox', { name: '协作消息' });
     await user.type(composer, '@初');
-    expect(await screen.findByRole('option', { name: /智鼬·初识/ })).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: /澄·初/ })).toBeInTheDocument();
     await user.keyboard('{Enter}');
-    expect(composer).toHaveValue('@智鼬·初识 ');
+    expect(composer).toHaveValue('@澄·初 ');
 
     await user.type(composer, '核对记忆召回{Enter}');
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
-      message: '@智鼬·初识 核对记忆召回',
+      message: '@澄·初 核对记忆召回',
       participantIds: ['room-mention:p2'],
     });
   });
@@ -553,7 +553,7 @@ describe('Rooms experience', () => {
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
     const composer = await screen.findByRole('textbox', { name: '协作消息' });
-    await user.type(composer, '@智鼬 @智鼬·初识 分别检查实现和证据');
+    await user.type(composer, '@澄 @澄·初 分别检查实现和证据');
     await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     await waitFor(() => expect(
@@ -563,7 +563,7 @@ describe('Rooms experience', () => {
       transport.requests.find((call) => call.request.pathId === 'agent.room.message')
         ?.request.body,
     ).toMatchObject({
-      message: '@智鼬 @智鼬·初识 分别检查实现和证据',
+      message: '@澄 @澄·初 分别检查实现和证据',
       participantIds: ['room-duo:p1', 'room-duo:p2'],
     });
   });
@@ -659,12 +659,12 @@ describe('Rooms experience', () => {
     });
   });
 
-  it('adds 智鼬·未来 to an existing Room and can remove the member again', async () => {
+  it('adds 澄·远 to an existing Room and can remove the member again', async () => {
     const initial = roomSummary('room-members', '成员管理 Room');
     const futurePersona = previewPersonas.find((persona) => persona.roleId === 'companion-future-v1')!;
     const futureParticipant = {
       id: 'room-members:p3', sessionId: 'room-members:s3', roleId: 'companion-future-v1', roleVersion: '1',
-      displayName: '智鼬·未来', collaborationRole: 'implementer' as const, status: 'active', ordinal: 2,
+      displayName: '澄·远', collaborationRole: 'implementer' as const, status: 'active', ordinal: 2,
     };
     const withFuture = { ...initial, participants: [...initial.participants, futureParticipant] };
     const afterRemoval = {
@@ -696,7 +696,7 @@ describe('Rooms experience', () => {
       params: { roomId: initial.id },
       body: { roleId: 'companion-future-v1', roleVersion: '1', collaborationRole: 'implementer' },
     });
-    const remove = await screen.findByRole('button', { name: '移出 智鼬·未来' });
+    const remove = await screen.findByRole('button', { name: '移出 澄·远' });
     expect(remove).toBeEnabled();
     await user.click(remove);
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.remove')).toBe(true));
@@ -945,13 +945,13 @@ describe('Rooms experience', () => {
     await user.type(composer, '核对角色创建契约');
     expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled();
     await user.click(screen.getByRole('button', { name: '点名一位伙伴' }));
-    await user.click(screen.getByRole('option', { name: /智鼬·初识/ }));
-    expect(composer).toHaveValue('核对角色创建契约 @智鼬·初识 ');
+    await user.click(screen.getByRole('option', { name: /澄·初/ }));
+    expect(composer).toHaveValue('核对角色创建契约 @澄·初 ');
     await user.click(screen.getByRole('button', { name: '发送消息' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.message')?.request.body).toMatchObject({
-      message: '核对角色创建契约 @智鼬·初识',
+      message: '核对角色创建契约 @澄·初',
       participantIds: ['room-a:p2'],
     });
   });
@@ -1011,9 +1011,9 @@ describe('Rooms experience', () => {
     expect(create).toBeEnabled();
     await user.click(create);
     expect(screen.getByRole('dialog', { name: '开始一起做事' })).toBeInTheDocument();
-    expect(screen.getByRole('checkbox', { name: /智鼬·此刻/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /智鼬·初识/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /智鼬·未来/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /澄·今/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /澄·初/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /澄·远/ })).toBeChecked();
   });
 
   it('keeps a Room creation failure inside the dialog and preserves the draft', async () => {
@@ -1162,7 +1162,7 @@ describe('Rooms experience', () => {
       (call) => call.request.pathId === 'agent.sessions.list',
     ).length;
     await user.click((await screen.findAllByRole('button', { name: '查看能做什么' }))[0]!);
-    expect(await screen.findByRole('dialog', { name: /智鼬能做什么/ })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: /澄能做什么/ })).toBeInTheDocument();
     expect(transport.requests.filter(
       (call) => call.request.pathId === 'agent.sessions.list',
     )).toHaveLength(sessionListRequestsBeforeBoundary);
@@ -1224,8 +1224,8 @@ describe('Rooms experience', () => {
       id: 'room-a', title: '迁移作战室', status: 'active', routingPolicy: 'moderator',
       moderatorParticipantId: 'p1', updatedAtMs: Date.now(),
       participants: [
-        { id: 'p1', sessionId: 's1', roleId: 'companion-present-v1', roleVersion: '1', displayName: '智鼬', status: 'active', ordinal: 0 },
-        { id: 'p2', sessionId: 's2', roleId: 'companion-firstlight-v1', roleVersion: '1', displayName: '智鼬·初识', status: 'active', ordinal: 1 },
+        { id: 'p1', sessionId: 's1', roleId: 'companion-present-v1', roleVersion: '1', displayName: '澄', status: 'active', ordinal: 0 },
+        { id: 'p2', sessionId: 's2', roleId: 'companion-firstlight-v1', roleVersion: '1', displayName: '澄·初', status: 'active', ordinal: 1 },
       ],
     };
     const projection = createRoomProjection(room.id);
@@ -1328,7 +1328,7 @@ describe('Rooms experience', () => {
       sourceSessionId: 'room-a:s1',
       kind: 'route_decision',
       status: 'completed',
-      summary: '智鼬 已接手',
+      summary: '澄 已接手',
       payload: { rootId: 'turn-a', dispatchId: 'dispatch-a', targetParticipantId: 'room-a:p1' },
       createdAtMs: 1,
     };
@@ -1496,7 +1496,7 @@ describe('Rooms experience', () => {
     projection.activitiesById.route = {
       id: 'route', turnId: 'turn-a', participantId: 'room-a:p1', sourceSessionId: 'room-a:s1',
       kind: 'route_decision', status: 'completed', summary: 'route_decision',
-      payload: { routingPolicy: 'moderator', targetDisplayName: '智鼬' }, createdAtMs: 1,
+      payload: { routingPolicy: 'moderator', targetDisplayName: '澄' }, createdAtMs: 1,
     };
     projection.activitiesById['hidden-tool'] = {
       id: 'hidden-tool', turnId: 'turn-a', participantId: 'room-a:p1', sourceSessionId: 'room-a:s1',
@@ -1555,7 +1555,7 @@ describe('Rooms experience', () => {
 
     expect(screen.getByText('任务分工')).toBeInTheDocument();
     expect(screen.getByText('核对多端网关回放边界')).toBeInTheDocument();
-    expect(screen.getByText(/待验收 · 智鼬·初识 正在处理 · 智鼬 负责最终验收 · 第 1 次修订/)).toBeInTheDocument();
+    expect(screen.getByText(/待验收 · 澄·初 正在处理 · 澄 负责最终验收 · 第 1 次修订/)).toBeInTheDocument();
     expect(screen.getByText('协作规则')).toBeInTheDocument();
     expect(screen.getByText('最终验收人保持明确')).toBeInTheDocument();
     expect(screen.getByText('不会无限循环')).toBeInTheDocument();
@@ -1575,8 +1575,8 @@ function roomSummary(roomId: string, title: string): RoomSummary {
     workspaceRoots: ['/Volumes/work/learnA'],
     updatedAtMs: 2,
     participants: [
-      { id: `${roomId}:p1`, sessionId: `${roomId}:s1`, roleId: 'companion-present-v1', roleVersion: '1', displayName: '智鼬', collaborationRole: 'coordinator', status: 'active', ordinal: 0 },
-      { id: `${roomId}:p2`, sessionId: `${roomId}:s2`, roleId: 'companion-firstlight-v1', roleVersion: '1', displayName: '智鼬·初识', collaborationRole: 'researcher', status: 'active', ordinal: 1 },
+      { id: `${roomId}:p1`, sessionId: `${roomId}:s1`, roleId: 'companion-present-v1', roleVersion: '1', displayName: '澄', collaborationRole: 'coordinator', status: 'active', ordinal: 0 },
+      { id: `${roomId}:p2`, sessionId: `${roomId}:s2`, roleId: 'companion-firstlight-v1', roleVersion: '1', displayName: '澄·初', collaborationRole: 'researcher', status: 'active', ordinal: 1 },
     ],
   };
 }

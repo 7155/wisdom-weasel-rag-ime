@@ -24,7 +24,7 @@ describe('RoomComposer macOS input methods', () => {
                 sessionId: 'session-1',
                 roleId: 'companion-present-v1',
                 roleVersion: '1',
-                displayName: '智鼬',
+                displayName: '澄',
                 status: 'active',
               }],
             }}

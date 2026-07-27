@@ -98,7 +98,7 @@ struct NativeRoutePolicyTests {
             parameters: [:],
             query: [:],
             body: [
-                "displayName": "智鼬·雨天",
+                "displayName": "澄·雨天",
                 "tagline": "陪你安静整理",
                 "summary": "偏向温和复盘与清楚的下一步。",
                 "traits": ["温和", "复盘"],
@@ -554,7 +554,7 @@ struct NativeRoutePolicyTests {
                 parameters: [:],
                 query: [:],
                 body: [
-                    "displayName": "智鼬·雨天",
+                    "displayName": "澄·雨天",
                     "tagline": "陪你安静整理",
                     "summary": "偏向温和复盘。",
                     "traits": ["温和"],

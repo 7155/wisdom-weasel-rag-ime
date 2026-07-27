@@ -59,8 +59,8 @@ describe('product identity', () => {
         },
       },
     })).toEqual({
-      productName: '智鼬',
-      assistantName: '智鼬',
+      productName: '澄',
+      assistantName: '澄',
       tagline: '仍然在这里',
     });
   });

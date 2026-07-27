@@ -31,7 +31,7 @@ describe('VoiceFeature', () => {
 
     await screen.findByRole('heading', { name: '语音输入', level: 1 });
     expect(await screen.findByText('当前：内置流式识别')).toBeInTheDocument();
-    expect(screen.queryByText(/让智鼬确认切换|provider_apply/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/让澄确认切换|provider_apply/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', { name: '实时识别' }));
     await user.click(screen.getByRole('radio', { name: 'Option + 空格' }));
@@ -88,7 +88,7 @@ describe('VoiceFeature', () => {
     renderVoice(false);
 
     await screen.findByRole('heading', { name: '语音输入', level: 1 });
-    expect(await screen.findByText('浏览器预览不能启动听写或打开系统授权；请回到已安装的智鼬。')).toBeInTheDocument();
+    expect(await screen.findByText('浏览器预览不能启动听写或打开系统授权；请回到已安装的澄。')).toBeInTheDocument();
     expect(screen.getByRole('group', { name: '听写服务' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: '麦克风' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: '辅助功能' })).toBeInTheDocument();
@@ -180,7 +180,7 @@ function renderVoice(toolAvailable: boolean): MockControlTransport {
           voice: {
             provider: 'native_streaming',
             hotkey: 'Option + Space',
-            hotwords: ['智鼬'],
+            hotwords: ['澄助手'],
             hotwordsEnabled: true,
             tokenConfigured: true,
           },

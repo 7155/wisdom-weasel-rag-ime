@@ -25,7 +25,7 @@ final class RagImeControlWebApp: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "智鼬"
+        window.title = "澄"
         window.titlebarAppearsTransparent = false
         window.titleVisibility = .visible
         window.isMovable = true
@@ -76,10 +76,10 @@ final class RagImeControlWebApp: NSObject, NSApplicationDelegate {
         let mainMenu = NSMenu()
 
         let applicationItem = NSMenuItem()
-        let applicationMenu = NSMenu(title: "智鼬")
-        applicationMenu.addItem(withTitle: "关于智鼬", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let applicationMenu = NSMenu(title: "澄")
+        applicationMenu.addItem(withTitle: "关于澄", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         applicationMenu.addItem(NSMenuItem.separator())
-        applicationMenu.addItem(withTitle: "退出智鼬", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        applicationMenu.addItem(withTitle: "退出澄", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem)
 

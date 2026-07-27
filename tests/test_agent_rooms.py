@@ -33,7 +33,7 @@ class AgentRoomTests(unittest.TestCase):
             title="  方案   讨论  ",
             routing_policy="manual_mentions",
             participants=[
-                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-present-v1", "澄"),
                 self._participant("companion-firstlight-v1", "Hermes"),
                 self._participant("companion-future-v1", "VCP"),
             ],
@@ -49,11 +49,11 @@ class AgentRoomTests(unittest.TestCase):
         fallback = self.store.route_target(str(room["id"]), "先检查当前状态")
         self.assertEqual(fallback["roleId"], "companion-present-v1")
         fan_out = self.store.plan_routes(
-            str(room["id"]), "@智鼬 和 @VCP 一起回答"
+            str(room["id"]), "@澄 和 @VCP 一起回答"
         )
         self.assertEqual(
             [decision["targetDisplayName"] for decision in fan_out],
-            ["智鼬", "VCP"],
+            ["澄", "VCP"],
         )
         self.assertTrue(
             all(
@@ -119,7 +119,7 @@ class AgentRoomTests(unittest.TestCase):
             title="主持讨论",
             routing_policy="moderator",
             participants=[
-                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-present-v1", "澄"),
                 self._participant("companion-future-v1", "VCP"),
             ],
             moderator_ordinal=1,
@@ -163,8 +163,8 @@ class AgentRoomTests(unittest.TestCase):
             title="公开投影去重",
             routing_policy="natural",
             participants=[
-                self._participant("companion-present-v1", "智鼬·此刻"),
-                self._participant("companion-firstlight-v1", "智鼬·初识"),
+                self._participant("companion-present-v1", "澄·今"),
+                self._participant("companion-firstlight-v1", "澄·初"),
             ],
             created_at_ms=100,
         )
@@ -207,14 +207,14 @@ class AgentRoomTests(unittest.TestCase):
             title="时间线讨论",
             routing_policy="manual_mentions",
             participants=[
-                self._participant("companion-present-v1", "智鼬"),
-                self._participant("zhiyou-sol-v1", "智鼬·未来"),
+                self._participant("companion-present-v1", "澄"),
+                self._participant("zhiyou-sol-v1", "澄·远"),
             ],
         )
         room_id = str(room["id"])
 
-        current = self.store.route_target(room_id, "@智鼬 检查当前状态")
-        future = self.store.route_target(room_id, "@智鼬·未来 做长期规划")
+        current = self.store.route_target(room_id, "@澄 检查当前状态")
+        future = self.store.route_target(room_id, "@澄·远 做长期规划")
 
         self.assertEqual(current["roleId"], "companion-present-v1")
         self.assertEqual(future["roleId"], "zhiyou-sol-v1")
@@ -235,7 +235,7 @@ class AgentRoomTests(unittest.TestCase):
             title="快照房间",
             routing_policy="moderator",
             participants=[
-                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-present-v1", "澄"),
                 self._participant("companion-firstlight-v1", "Hermes"),
             ],
             created_at_ms=1,
@@ -269,7 +269,7 @@ class AgentRoomTests(unittest.TestCase):
             title="游标房间",
             routing_policy="moderator",
             participants=[
-                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-present-v1", "澄"),
                 self._participant("companion-firstlight-v1", "Hermes"),
             ],
         )
@@ -325,8 +325,8 @@ class AgentRoomTests(unittest.TestCase):
             title="长期协作",
             routing_policy="manual_mentions",
             participants=[
-                self._participant("companion-present-v1", "智鼬·此刻"),
-                self._participant("companion-firstlight-v1", "智鼬·初识"),
+                self._participant("companion-present-v1", "澄·今"),
+                self._participant("companion-firstlight-v1", "澄·初"),
             ],
         )
         room_id = str(room["id"])
@@ -340,7 +340,7 @@ class AgentRoomTests(unittest.TestCase):
                 topic_id=topic_id,
             )
         session = self.sessions.create(
-            title="智鼬·未来 room session",
+            title="澄·远 room session",
             role_id="companion-future-v1",
             role_version="1",
         )
@@ -350,7 +350,7 @@ class AgentRoomTests(unittest.TestCase):
             session_id=str(session["id"]),
             role_id="companion-future-v1",
             role_version="1",
-            display_name="智鼬·未来",
+            display_name="澄·远",
         )
 
         unread = self.store.unread_public_messages(
@@ -382,7 +382,7 @@ class AgentRoomTests(unittest.TestCase):
             title="空房间",
             routing_policy="manual_mentions",
             participants=[
-                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-present-v1", "澄"),
                 self._participant("companion-firstlight-v1", "Hermes"),
             ],
         )
@@ -397,7 +397,7 @@ class AgentRoomTests(unittest.TestCase):
 
     def test_room_limits_and_participant_session_ownership_fail_closed(self) -> None:
         participants = [
-            self._participant("companion-present-v1", "智鼬"),
+            self._participant("companion-present-v1", "澄"),
             self._participant("companion-firstlight-v1", "Hermes"),
         ]
         self.store.create(
@@ -500,7 +500,7 @@ class AgentRoomTests(unittest.TestCase):
             title="交付岗位",
             routing_policy="natural",
             participants=[
-                self._participant("companion-present-v1", "智鼬"),
+                self._participant("companion-present-v1", "澄"),
                 self._participant("companion-firstlight-v1", "初识"),
             ],
             created_at_ms=10,
@@ -611,7 +611,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             {"roleId": "companion-future-v1", "roleVersion": "1"},
         )
         future = added["participant"]
-        self.assertEqual(future["displayName"], "智鼬·未来")
+        self.assertEqual(future["displayName"], "澄·远")
         self.assertEqual(len([p for p in added["room"]["participants"] if p["status"] == "active"]), 3)
 
         with patch.object(
@@ -622,7 +622,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             self.service.post_room_message(
                 str(room["id"]),
                 {
-                    "message": "@智鼬·未来 请从现在开始接手规划",
+                    "message": "@澄·远 请从现在开始接手规划",
                     "participantIds": [str(future["id"])],
                 },
             )
@@ -630,7 +630,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         prompt_payload = prompt.call_args.args[1]
         self.assertEqual(
             prompt_payload["message"],
-            "@智鼬·未来 请从现在开始接手规划",
+            "@澄·远 请从现在开始接手规划",
         )
         rendered = prompt_payload["_transientContext"]
         self.assertNotIn("不可重放的旧消息", rendered)
@@ -666,13 +666,13 @@ class AgentRoomServiceTests(unittest.TestCase):
             self.service.post_room_message(
                 str(room["id"]),
                 {
-                    "message": "@智鼬·此刻 继续当前任务",
+                    "message": "@澄·今 继续当前任务",
                     "participantIds": [str(target["id"])],
                 },
             )
 
         prompt_payload = prompt.call_args.args[1]
-        self.assertEqual(prompt_payload["message"], "@智鼬·此刻 继续当前任务")
+        self.assertEqual(prompt_payload["message"], "@澄·今 继续当前任务")
         rendered = prompt_payload["_transientContext"]
         self.assertLessEqual(len(rendered), 24_000)
         self.assertIn("历史编号-29", rendered)
@@ -697,7 +697,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             self.service.post_room_message(
                 str(room["id"]),
                 {
-                    "message": "@智鼬·此刻 " + "超" * 8_000,
+                    "message": "@澄·今 " + "超" * 8_000,
                     "participantIds": [str(target["id"])],
                 },
             )
@@ -1203,26 +1203,26 @@ class AgentRoomServiceTests(unittest.TestCase):
             accepted = self.service.post_room_message(
                 str(room["id"]),
                 {
-                    "message": "@智鼬·初识 请先诊断状态",
+                    "message": "@澄·初 请先诊断状态",
                     "clientMessageId": "room-client-1",
                 },
             )
             replay = self.service.post_room_message(
                 str(room["id"]),
                 {
-                    "message": "@智鼬·初识 请先诊断状态",
+                    "message": "@澄·初 请先诊断状态",
                     "clientMessageId": "room-client-1",
                 },
             )
         prompt.assert_called_once()
         self.assertEqual(prompt.call_args.args[0], str(hermes["sessionId"]))
         prompt_payload = prompt.call_args.args[1]
-        self.assertEqual(prompt_payload["message"], "@智鼬·初识 请先诊断状态")
+        self.assertEqual(prompt_payload["message"], "@澄·初 请先诊断状态")
         room_context = prompt_payload["_transientContext"]
         self.assertIn("<room-context>", room_context)
         self.assertIn("你本轮以 implementer 视角参与", room_context)
         self.assertNotIn(str(self.root.resolve()), room_context)
-        self.assertNotIn("@智鼬·初识 请先诊断状态", room_context)
+        self.assertNotIn("@澄·初 请先诊断状态", room_context)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
         self.assertEqual(accepted["clientMessageId"], "room-client-1")
         self.assertTrue(replay["idempotentReplay"])
@@ -1774,7 +1774,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             }
         )["room"]
         target = created["participants"][0]
-        first_text = "@智鼬·此刻 检查增量上下文"
+        first_text = "@澄·今 检查增量上下文"
         with patch.object(
             self.service.runtime,
             "prompt",

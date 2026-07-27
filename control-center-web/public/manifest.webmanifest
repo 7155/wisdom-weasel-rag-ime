@@ -1,6 +1,6 @@
 {
-  "name": "智鼬 · Agent 记忆与协作",
-  "short_name": "智鼬",
+  "name": "澄 · Agent 记忆与协作",
+  "short_name": "澄",
   "description": "记得你，也陪你做事的本机 Agent 伙伴。",
   "start_url": "./#/agent",
   "display": "standalone",

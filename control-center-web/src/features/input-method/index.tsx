@@ -780,7 +780,7 @@ function inputSourceDetail(source: Record<string, unknown>): string {
 function inputSourceMessage(source: Record<string, unknown>): string {
   if (booleanValue(source.typingReady)) return '输入源已被系统识别并选中；真实应用中的输入与选词结果仍是最终验收。';
   const state = stringValue(source.readinessState);
-  if (state === 'not_selected') return '请先在系统输入法菜单中选择智鼬输入法，再进行前台输入实测。';
+  if (state === 'not_selected') return '请先在系统输入法菜单中选择澄输入法，再进行前台输入实测。';
   if (state === 'not_registered') return '输入法尚未完成系统注册，请重新安装后再试。';
   if (state === 'unavailable') return '输入法服务暂时不可用，请稍后重试。';
   return '正在等待系统确认输入法状态。';

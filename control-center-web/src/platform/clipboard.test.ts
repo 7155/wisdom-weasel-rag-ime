@@ -11,9 +11,9 @@ describe('writeClipboardText', () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
 
-    await writeClipboardText('智鼬');
+    await writeClipboardText('澄');
 
-    expect(writeText).toHaveBeenCalledWith('智鼬');
+    expect(writeText).toHaveBeenCalledWith('澄');
   });
 
   it('falls back to a user-selection copy when the custom scheme denies clipboard access', async () => {

@@ -1,4 +1,4 @@
-# Wisdom Weasel art assets
+# Personal Agent Workbench art assets
 
 ## Product direction
 

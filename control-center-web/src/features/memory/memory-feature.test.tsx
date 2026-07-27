@@ -119,7 +119,7 @@ describe('MemoryFeature relations', () => {
 
     expect(await screen.findByRole('heading', { name: '我的记忆', level: 1 })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '记忆整理审核' })).not.toBeInTheDocument();
-    await user.click(await screen.findByRole('tab', { name: '让智鼬整理' }));
+    await user.click(await screen.findByRole('tab', { name: '让澄整理' }));
     expect(await screen.findByRole('heading', { name: '记忆整理审核', level: 2 })).toBeInTheDocument();
     expect(await screen.findByRole('list', { name: '记忆整理建议' })).toBeInTheDocument();
     expect(screen.queryByPlaceholderText('输入一个明确的知识任务')).not.toBeInTheDocument();
@@ -151,7 +151,7 @@ describe('MemoryFeature relations', () => {
     });
     renderMemory(transport);
 
-    await user.click(await screen.findByRole('tab', { name: '让智鼬整理' }));
+    await user.click(await screen.findByRole('tab', { name: '让澄整理' }));
     const checkbox = await screen.findByRole('checkbox', { name: '选择 合并输入法同义标签' });
     expect(checkbox).not.toBeChecked();
     await user.click(checkbox);

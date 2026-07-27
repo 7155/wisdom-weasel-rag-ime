@@ -189,7 +189,7 @@ class VoiceHotwordWorkContractTests(unittest.TestCase):
     def test_preview_apply_and_rollback_write_the_voice_agent_file(self) -> None:
         changes = {
             "voice.hotwordsEnabled": True,
-            "voice.hotwords": ["GPT-5.6", "API Key", "智鼬"],
+            "voice.hotwords": ["GPT-5.6", "API Key", "澄助手"],
         }
         initial = self.service.settings()
         preview = self.service.configuration_settings_preview(
@@ -217,7 +217,7 @@ class VoiceHotwordWorkContractTests(unittest.TestCase):
             applied["rollbackAuthority"],
             {"settingKeys": ["voice.hotwords", "voice.hotwordsEnabled"]},
         )
-        self.assertEqual(saved["words"], ["GPT-5.6", "API Key", "智鼬"])
+        self.assertEqual(saved["words"], ["GPT-5.6", "API Key", "澄助手"])
         self.assertTrue(saved["enabled"])
         self.assertEqual(hotword_path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(current["settings"]["voice"]["hotwords"], saved["words"])

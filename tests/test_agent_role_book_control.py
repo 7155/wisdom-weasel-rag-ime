@@ -40,7 +40,7 @@ class AgentRoleBookControlTests(unittest.TestCase):
         self.seed = self.roles.ensure_seeded(
             "companion-present-v1",
             "1",
-            "智鼬",
+            "澄",
             "陪用户完成项目",
             "persona-v1",
             created_at_ms=100,

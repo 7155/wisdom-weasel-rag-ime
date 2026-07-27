@@ -408,7 +408,7 @@ class ControlRoutePolicyTests(unittest.TestCase):
 
     def test_persona_creation_accepts_only_public_fields(self) -> None:
         body = {
-            "displayName": "智鼬·雨天",
+            "displayName": "澄·雨天",
             "tagline": "陪你安静整理",
             "summary": "偏向温和复盘与清楚的下一步。",
             "traits": ["温和", "复盘"],

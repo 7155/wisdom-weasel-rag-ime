@@ -31,7 +31,7 @@ export function PrimitivesShowcase() {
     <main className="ui-showcase" aria-label="Design system preview">
       <header className="ui-showcase__header">
         <div>
-          <p className="ui-showcase__eyebrow">RAG IME CONTROL CENTER</p>
+          <p className="ui-showcase__eyebrow">PERSONAL AGENT WORKBENCH</p>
           <h1>界面原语</h1>
         </div>
         <SegmentedControl

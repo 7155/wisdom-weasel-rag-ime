@@ -58,7 +58,7 @@ const metrics: QaMetrics = {
 
 const history = Array.from({ length: metrics.history.total }, (_, index) => ({
   id: `turn-${index + 1}`,
-  actor: index % 4 === 0 ? '用户' : index % 3 === 0 ? '资料鼬' : '智鼬',
+  actor: index % 4 === 0 ? '用户' : index % 3 === 0 ? '澄·初' : '澄·今',
   text: `消息 ${index + 1}：保留 turnId、sequence、来源和结构化活动摘要。`,
   time: `${String(Math.floor(index / 60) % 24).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}`,
 }));
@@ -224,9 +224,9 @@ function renderApprovals(): void {
 function renderRoom(): void {
   const room = requiredElement<HTMLElement>('[data-testid="room-participants"]');
   const participants = [
-    ['智鼬', 'moderator'],
-    ['资料鼬', 'research'],
-    ['排错鼬', 'runtime'],
+    ['澄·远', 'moderator'],
+    ['澄·初', 'research'],
+    ['澄·今', 'runtime'],
   ];
   for (const [name, role] of participants) {
     const item = document.createElement('li');

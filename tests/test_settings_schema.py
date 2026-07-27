@@ -27,8 +27,8 @@ class SettingsSchemaTests(unittest.TestCase):
     def test_defaults_include_user_customization_controls(self) -> None:
         defaults = default_settings()
 
-        self.assertEqual(defaults["identity"]["productName"], "智鼬")
-        self.assertEqual(defaults["identity"]["assistantName"], "智鼬")
+        self.assertEqual(defaults["identity"]["productName"], "澄")
+        self.assertEqual(defaults["identity"]["assistantName"], "澄")
         self.assertEqual(defaults["identity"]["tagline"], "记得你，也陪你做事")
         self.assertFalse(defaults["interaction"]["composition"]["showPrediction"])
         self.assertTrue(defaults["interaction"]["composition"]["showOnlyRime"])

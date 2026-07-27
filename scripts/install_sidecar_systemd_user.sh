@@ -66,7 +66,7 @@ done
 
 {
   echo "[Unit]"
-  echo "Description=Wisdom-Weasel RAG IME sidecar"
+  echo "Description=Personal Agent Workbench local service"
   echo "Documentation=file://$ROOT/docs/linux-fcitx5-adapter.md"
   echo "After=default.target"
   echo

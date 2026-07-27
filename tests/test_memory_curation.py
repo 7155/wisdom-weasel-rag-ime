@@ -45,7 +45,7 @@ class MemoryCurationTests(unittest.TestCase):
                 {
                     "action": "create",
                     "evidenceRefs": ["E2"],
-                    "canonicalText": "用户将该产品称为智鼬输入法。",
+                    "canonicalText": "用户将该产品称为澄输入法。",
                     "kind": "preference",
                     "topicRef": "G1",
                     "tags": ["T1", "new:产品命名"],
@@ -74,7 +74,7 @@ class MemoryCurationTests(unittest.TestCase):
         self.assertEqual(result["topicBooks"][0]["bookId"], "book:topic:input-method")
         self.assertIn("atom:no-fragment-context", result["topicBooks"][0]["memoryAtomIds"])
         self.assertTrue(result["tagEdges"])
-        self.assertEqual([item["text"] for item in result["phraseCandidates"]], ["智鼬输入法"])
+        self.assertEqual([item["text"] for item in result["phraseCandidates"]], ["澄输入法"])
         self.assertEqual(result["phraseCandidates"][0]["pinyin"], "zhi you shu ru fa")
         self.assertNotIn("模型乱造词", str(result))
         self.assertFalse(result["lexiconDiagnostics"]["modelGenerated"])
@@ -125,7 +125,7 @@ class MemoryCurationTests(unittest.TestCase):
             for item in result["memoryAtoms"]
             if item["atomId"] != "atom:no-fragment-context"
         )
-        self.assertEqual(created["canonicalText"], "我会使用智鼬输入法")
+        self.assertEqual(created["canonicalText"], "我会使用澄输入法")
         self.assertEqual(created["sourceEventIds"], [102])
 
     def test_merge_keeps_canonical_atom_and_unions_existing_provenance(self) -> None:
@@ -283,7 +283,7 @@ def _source_bundle(*, include_feedback: bool = True) -> dict[str, object]:
                 "eventId": 102,
                 "sourceEventIds": [102],
                 "createdAtMs": 2,
-                "text": "我会使用智鼬输入法",
+                "text": "我会使用澄输入法",
                 "app": "com.apple.Notes",
                 "contextGroupId": "app:notes",
                 "finalized": True,
@@ -368,7 +368,7 @@ def _source_bundle(*, include_feedback: bool = True) -> dict[str, object]:
                 {
                     "action": "accepted",
                     "preedit": "zhi you shu ru fa",
-                    "acceptedText": "智鼬输入法",
+                    "acceptedText": "澄输入法",
                     "rejectedText": "",
                     "candidateRank": 2,
                     "app": "com.apple.Notes",

@@ -302,7 +302,7 @@ describe('management features', () => {
       },
     });
 
-    expect(await screen.findByText('浏览器预览不能启动听写或打开系统授权；请回到已安装的智鼬。')).toBeInTheDocument();
+    expect(await screen.findByText('浏览器预览不能启动听写或打开系统授权；请回到已安装的澄。')).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: '内置流式识别' })).toBeInTheDocument();
     expect(screen.queryByText(/middle-mouse/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();

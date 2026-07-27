@@ -2096,7 +2096,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(created["ok"])
         self.assertEqual(listed["items"][0]["id"], session_id)
         self.assertEqual(runtime["status"], "disabled")
-        self.assertEqual(roles["items"][0]["displayName"], "智鼬·未来")
+        self.assertEqual(roles["items"][0]["displayName"], "澄·远")
         self.assertNotIn("systemPrompt", roles["items"][0])
         self.assertEqual(maintenance["policy"], "auto_governed")
         self.assertTrue(maintenance["autoApply"])
@@ -2290,7 +2290,7 @@ class DebugManagementApiTests(unittest.TestCase):
         thread.start()
         base_url = f"http://127.0.0.1:{server.server_port}/api/agent"
         persona_body = {
-            "displayName": "智鼬·雨天",
+            "displayName": "澄·雨天",
             "tagline": "陪你安静整理",
             "summary": "偏向温和复盘与清楚的下一步。",
             "traits": ["温和", "复盘"],
@@ -2318,7 +2318,7 @@ class DebugManagementApiTests(unittest.TestCase):
                         **persona_body,
                         "roleId": role["roleId"],
                         "roleVersion": role["version"],
-                        "displayName": "智鼬·暮雨",
+                        "displayName": "澄·暮雨",
                         "tagline": "先安静看清，再一起往前",
                     }
                 ).encode("utf-8"),
@@ -2369,7 +2369,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(str(role["roleId"]).startswith("persona-"))
         self.assertNotIn("personaPrompt", role)
         self.assertNotIn("toolPolicy", role)
-        self.assertEqual(updated_role["displayName"], "智鼬·暮雨")
+        self.assertEqual(updated_role["displayName"], "澄·暮雨")
         self.assertNotIn("personaPrompt", updated_role)
         self.assertEqual(listed["items"][-1], updated_role)
         self.assertEqual(session["roleId"], role["roleId"])
@@ -2419,7 +2419,7 @@ class DebugManagementApiTests(unittest.TestCase):
                     f"{base_url}/rooms/{room_id}/messages",
                     data=json.dumps(
                         {
-                            "message": "@智鼬·初识 请诊断状态",
+                            "message": "@澄·初 请诊断状态",
                             "clientMessageId": "room-http-client-1",
                         }
                     ).encode("utf-8"),

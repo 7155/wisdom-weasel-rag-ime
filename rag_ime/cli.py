@@ -222,7 +222,10 @@ def _add_personal_context_maintenance_parser(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="rag-ime", description="Wisdom-Weasel RAG IME adapter prototype")
+    parser = argparse.ArgumentParser(
+        prog="rag-ime",
+        description="Personal Agent Workbench local runtime",
+    )
     parser.add_argument(
         "--core-mode",
         choices=("local", "fixture", "json"),
@@ -1088,7 +1091,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="append",
         default=[],
         choices=("streaming", "residentModel", "promptCache", "seededPromptReplay", "kvFork", "sequenceFork", "batchCandidates", "logitsTopK", "serverTiming"),
-        help="Require a local model provider capability. Repeat for Wisdom-Weasel-style gates.",
+        help="Require a local model provider capability. Repeat for product readiness gates.",
     )
     quality_gate.add_argument("--include-cases", action="store_true", help="Include full per-case eval details in the quality-gate JSON")
 

@@ -147,7 +147,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(runtime["schemaVersion"], "rag-ime.agent-runtime.v1")
         self.assertEqual(runtime["status"], "disabled")
         roles = self.service.list_roles()
-        self.assertEqual(roles["items"][0]["displayName"], "智鼬·未来")
+        self.assertEqual(roles["items"][0]["displayName"], "澄·远")
         self.assertEqual(
             [item["roleId"] for item in roles["items"]],
             ["companion-future-v1", "companion-present-v1", "companion-firstlight-v1", "companion-flash-v1"],
@@ -1777,7 +1777,7 @@ class AgentServiceTests(unittest.TestCase):
     def test_user_created_persona_can_start_a_real_session(self) -> None:
         created_role = self.service.create_role(
             {
-                "displayName": "智鼬·雨天",
+                "displayName": "澄·雨天",
                 "tagline": "在安静的雨天陪你整理",
                 "summary": "偏向温和复盘与日常记录。",
                 "traits": ["温和", "善于复盘"],
@@ -1800,7 +1800,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(self.service.list_roles()["items"][-1], created_role)
         self.assertEqual(created_role["runtimeCharacteristics"]["suitableTasks"], ["温和复盘", "日常记录"])
         private_role = self.service.personas.resolve(created_role["roleId"], created_role["version"])
-        self.assertIn("智鼬·雨天", private_role.system_prompt)
+        self.assertIn("澄·雨天", private_role.system_prompt)
         self.assertIn("能力可见不等于获得许可", private_role.system_prompt)
         session = self.service.create_session(
             {

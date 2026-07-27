@@ -38,7 +38,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/run_product_readiness_gate.sh [options]
 
-Runs the product readiness gate for Wisdom-Weasel RAG-IME.
+Runs the product readiness gate for Personal Agent Workbench.
 
 Options:
   --dry-run               Print the commands without executing them.

@@ -5,7 +5,7 @@ import './persona-avatar.css';
 export type { PersonaPresence } from './persona-assets';
 
 export function PersonaAvatar({
-  fallbackName = '智鼬',
+  fallbackName = '澄',
   persona,
   presence = 'idle',
   size = 'medium',

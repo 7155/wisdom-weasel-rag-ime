@@ -329,7 +329,7 @@ class ReviewedMemoryCleanupTests(unittest.TestCase):
             """INSERT INTO agent_role_books(
                    role_id, role_version, display_name, mission,
                    base_persona_version, created_at_ms, updated_at_ms
-               ) VALUES ('companion-present-v1', 'v1', '智鼬', '协助用户工作', 'base-v1', ?, ?)""",
+               ) VALUES ('companion-present-v1', 'v1', '澄', '协助用户工作', 'base-v1', ?, ?)""",
             (now, now),
         )
         conn.execute(

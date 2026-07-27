@@ -38,7 +38,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self.seed = self.role_books.ensure_seeded(
             "companion-present-v1",
             "1",
-            "智鼬·此刻",
+            "澄·今",
             "陪用户持续完成项目",
             "persona-1",
             created_at_ms=2,

@@ -1,7 +1,7 @@
 [project]
-name = "wisdom-weasel-rag-ime"
+name = "personal-agent-workbench"
 version = "0.1.0"
-description = "Local-first RAG input method MVP inspired by Wisdom-Weasel."
+description = "Local-first personal agent workbench with Rooms, tools, governed memory, and optional input assistance."
 license = "GPL-3.0-only"
 # 3.12 is the real floor, not a preference: the source uses PEP 701 f-strings
 # (a backslash inside an f-string expression, e.g. rag_ime/memory_cleanup.py),

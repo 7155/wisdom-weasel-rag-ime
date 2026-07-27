@@ -31,8 +31,8 @@ export function createPreviewTransport(): MockControlTransport {
     previewSession('session-memory', '记忆整理', 'companion-present-v1', Date.now() - 360_000, '1', { messageCount: 12, lastMessagePreview: '已把最近输入整理为 3 个主题。' }),
   ];
   const roomSessions: Record<string, unknown>[] = [
-    previewRoomSession('session-room-present', '迁移作战室 · 智鼬·此刻', 'companion-present-v1'),
-    previewRoomSession('session-room-firstlight', '迁移作战室 · 智鼬·初识', 'companion-firstlight-v1'),
+    previewRoomSession('session-room-present', '迁移作战室 · 澄·今', 'companion-present-v1'),
+    previewRoomSession('session-room-firstlight', '迁移作战室 · 澄·初', 'companion-firstlight-v1'),
   ];
   let personas: AgentPersonaV1[] = previewPersonas.map((persona) => ({
     ...persona,
@@ -1101,7 +1101,7 @@ function previewMemoryReference(kind: string, referenceId: string): Record<strin
     ref: { type: 'role_book_revision', id: referenceId },
     item: {
       id: referenceId,
-      title: '智鼬 · 当前角色书',
+      title: '澄 · 当前角色书',
       detail: '维护角色使命、能力画像、协作习惯与已验证教训。',
       status: 'active',
       ownerKind: 'agent',
@@ -2131,7 +2131,7 @@ function previewExtensionCatalogItems(
     id: 'session-review',
     displayName: 'Session Review',
     description: '在项目完成时整理可核验事实，并生成下一轮可消费的复盘建议。',
-    publisher: 'Wisdom Weasel',
+    publisher: 'Personal Agent Workbench',
     source: { kind: 'bundled', label: 'Product bundle' },
     permissions: ['session.read', 'memory.review'],
     security: { notes: '仅生成审阅建议，不直接写入长期记忆。' },
@@ -2704,8 +2704,8 @@ function previewConfigurationSettings(): Record<string, unknown> {
     runtimeConfig: { runtimeRevision: 12, settingsRevision: 'sha256:preview-settings' },
     settings: {
       identity: {
-        productName: '智鼬',
-        assistantName: '智鼬',
+        productName: '澄',
+        assistantName: '澄',
         tagline: '记得你，也陪你做事',
       },
       models: {
@@ -2901,8 +2901,8 @@ function previewRoomSnapshot(roomId: string) {
   const now = Date.now() - 60_000;
   const rootId = `${roomId}:turn-1`;
   const participants = [
-    previewParticipant(roomId, 'participant-present', 'session-room-present', 'companion-present-v1', '智鼬·此刻', 0),
-    previewParticipant(roomId, 'participant-firstlight', 'session-room-firstlight', 'companion-firstlight-v1', '智鼬·初识', 1),
+    previewParticipant(roomId, 'participant-present', 'session-room-present', 'companion-present-v1', '澄·今', 0),
+    previewParticipant(roomId, 'participant-firstlight', 'session-room-firstlight', 'companion-firstlight-v1', '澄·初', 1),
   ];
   const event = (
     sequence: number,
@@ -2956,13 +2956,13 @@ function previewRoomSnapshot(roomId: string) {
     }),
     event(2, 'route_decision', 'participant-present', {
       rootId, dispatchId: 'dispatch-present',
-      targetParticipantId: 'participant-present', targetDisplayName: '智鼬·此刻',
-      reason: '负责前端时间线', summary: '智鼬·此刻已接手前端时间线',
+      targetParticipantId: 'participant-present', targetDisplayName: '澄·今',
+      reason: '负责前端时间线', summary: '澄·今已接手前端时间线',
     }),
     event(3, 'route_decision', 'participant-firstlight', {
       rootId, dispatchId: 'dispatch-firstlight',
-      targetParticipantId: 'participant-firstlight', targetDisplayName: '智鼬·初识',
-      reason: '负责接口边界', summary: '智鼬·初识已接手接口边界',
+      targetParticipantId: 'participant-firstlight', targetDisplayName: '澄·初',
+      reason: '负责接口边界', summary: '澄·初已接手接口边界',
     }),
     event(4, 'participant_activity', 'participant-present', {
       rootId, dispatchId: 'dispatch-present', sourceEventId: 'tool-present-start',
@@ -3119,7 +3119,7 @@ function previewRoomKernelSnapshot(roomId: string): Record<string, unknown> {
       roomId,
       generation: 1,
       state: 'running',
-      owner: '智鼬·此刻',
+      owner: '澄·今',
       requirementAnchorRef: anchorId,
       createdByActorRef: 'user:preview',
       terminalReceiptId: null,
@@ -3135,7 +3135,7 @@ function previewRoomKernelSnapshot(roomId: string): Record<string, unknown> {
       roomId,
       rootId,
       generation: 1,
-      authorActorRef: '智鼬·初识',
+      authorActorRef: '澄·初',
       kind: 'finding',
       visibility: 'room',
       content: '已核对回放游标与权限边界，正在等待独立验收。',

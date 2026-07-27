@@ -1,8 +1,8 @@
 ---
 name: plugin-creator
-description: Create the smallest managed Wisdom Weasel plugin draft, validate it, and submit it to the product approval flow without inventing a second plugin path.
+description: Create the smallest managed Personal Agent Workbench plugin draft, validate it, and submit it to the product approval flow without inventing a second plugin path.
 when:
-  - 用户要求创建、更新、校验或申请安装智鼬插件
+  - 用户要求创建、更新、校验或申请安装澄插件
 does: 设计最小 manifest 和文件，通过统一插件工具生成、校验并提交待审提议。
 input: 插件目的、正面触发、Not for、输入输出、最小权限、文件和验证方式。
 output: 插件草案、manifest、校验结果、待审安装提议和剩余风险。

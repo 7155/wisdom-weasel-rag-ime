@@ -136,8 +136,8 @@ describe('Configuration settings WorkContract UI', () => {
         expectedRuntimeRevision: 12,
       },
     }));
-    expect(await within(workflow as HTMLElement).findByText('应用名称：智鼬 → 记川（立即生效）')).toBeInTheDocument();
-    expect(within(workflow as HTMLElement).getByText('通用伙伴称呼：智鼬 → 阿川（立即生效）')).toBeInTheDocument();
+    expect(await within(workflow as HTMLElement).findByText('应用名称：澄 → 记川（立即生效）')).toBeInTheDocument();
+    expect(within(workflow as HTMLElement).getByText('通用伙伴称呼：澄 → 阿川（立即生效）')).toBeInTheDocument();
     expect(within(workflow as HTMLElement).getByText('侧栏短句：记得你，也陪你做事 → 记得你，也陪你完成（立即生效）')).toBeInTheDocument();
   });
 
@@ -327,8 +327,8 @@ function settingsPayload() {
     settingsHash: 'sha256:settings',
     settings: {
       identity: {
-        productName: '智鼬',
-        assistantName: '智鼬',
+        productName: '澄',
+        assistantName: '澄',
         tagline: '记得你，也陪你做事',
       },
       context: { tokenBudget: 2048 },

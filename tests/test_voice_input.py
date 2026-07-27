@@ -271,7 +271,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertNotIn("Circle()\n                .fill(state.accent.opacity(0.09))", companion)
         self.assertIn("RagImeCompanionState", companion)
         self.assertIn('model.message = "正在听写"', overlay)
-        self.assertIn("请关闭后重新开启智鼬语音", overlay)
+        self.assertIn("请关闭后重新开启澄语音", overlay)
         self.assertIn("VoiceLevelWaveform", overlay)
         self.assertIn("levelHistory", overlay)
         self.assertIn("guard now - lastLevelUpdateAt >= 0.08", overlay)

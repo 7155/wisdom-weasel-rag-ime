@@ -17,7 +17,7 @@ import { useAgentLiveStore } from '../state/live-store';
 import { publicAgentErrorText } from '../public-error';
 
 export function AgentTimeline({
-  assistantName = '智鼬',
+  assistantName = '澄',
   sessionId,
   persona,
   modelSelectionAvailable,
@@ -282,7 +282,7 @@ function AgentTurnTombstone({
 }
 
 export function AgentTurn({
-  assistantName = '智鼬',
+  assistantName = '澄',
   sessionId,
   turnId,
   persona,

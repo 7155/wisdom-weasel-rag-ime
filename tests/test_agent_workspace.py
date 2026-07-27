@@ -17,7 +17,7 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="rag-ime-workspace-")
         self.root = Path(self.temp.name) / "project"
         self.root.mkdir()
-        (self.root / "README.md").write_text("hello 智鼬\n", encoding="utf-8")
+        (self.root / "README.md").write_text("hello 澄\n", encoding="utf-8")
         (self.root / ".env").write_text("API_KEY=must-not-leak\n", encoding="utf-8")
         (self.root / "state.sqlite").write_bytes(b"SQLite format 3\x00")
         nested = self.root / "src"
@@ -50,7 +50,7 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertNotIn(".env", serialized)
         self.assertNotIn("state.sqlite", serialized)
         read = harness.read(self.session, {"path": str(self.root / "README.md")})
-        self.assertEqual(read["content"], "hello 智鼬\n")
+        self.assertEqual(read["content"], "hello 澄\n")
 
     def test_sensitive_binary_symlink_and_outside_reads_fail_closed(self) -> None:
         harness = WorkspaceHarness(executor=lambda prepared: {})
@@ -66,7 +66,7 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
     def test_read_chunks_reconstruct_exact_text_within_pi_result_budget(self) -> None:
         target = self.root / "large-unicode.txt"
         original = "".join(
-            f'第{index:04d}行 "quoted" \\\\ path 智鼬数据\n'
+            f'第{index:04d}行 "quoted" \\\\ path 澄数据\n'
             for index in range(4_200)
         )
         target.write_text(original, encoding="utf-8")
@@ -232,7 +232,7 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
 
     def test_search_is_bounded_and_skips_sensitive_binary_and_symlink_files(self) -> None:
         harness = WorkspaceHarness(executor=lambda prepared: {})
-        result = harness.search(self.session, {"query": "智鼬", "mode": "both", "limit": 10})
+        result = harness.search(self.session, {"query": "澄", "mode": "both", "limit": 10})
 
         self.assertEqual(result["filesScanned"], 2)
         self.assertEqual(len(result["matches"]), 1)
@@ -274,14 +274,14 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         )
         preview = harness.patch_preview(prepared)
 
-        self.assertIn("-hello 智鼬", prepared.diff)
-        self.assertIn("+你好 智鼬", prepared.diff)
+        self.assertIn("-hello 澄", prepared.diff)
+        self.assertIn("+你好 澄", prepared.diff)
         receipt = harness.apply_patch(
             self.session,
             preview["actionPayload"],
             preview["baseState"],
         )
-        self.assertEqual(path.read_text(encoding="utf-8"), "你好 智鼬\n")
+        self.assertEqual(path.read_text(encoding="utf-8"), "你好 澄\n")
         self.assertEqual(
             receipt["postimageSha256"],
             hashlib.sha256(path.read_bytes()).hexdigest(),

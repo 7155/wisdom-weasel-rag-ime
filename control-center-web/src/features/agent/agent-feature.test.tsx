@@ -132,7 +132,7 @@ describe('Agent experience', () => {
     expect(markers.length).toBeGreaterThan(1);
     expect(markers[0]).toHaveTextContent('第 1 轮');
     expect(navigator).toHaveTextContent('读取输入法工具书');
-    expect(navigator).toHaveTextContent('智鼬');
+    expect(navigator).toHaveTextContent('澄');
   });
 
   it('creates a real Pi-backed conversation branch and restores the selected message as draft', async () => {
@@ -331,7 +331,7 @@ describe('Agent experience', () => {
     const roomMember = {
       ...previewSessions[0]!,
       id: 'session-room-member',
-      title: '联调 Room · 智鼬',
+      title: '联调 Room · 澄',
       sessionKind: 'conversation',
     };
 
@@ -349,7 +349,7 @@ describe('Agent experience', () => {
     useAgentLiveStore.getState().applyEvents(sessionId, events);
     const turnId = `${sessionId}:turn-media`;
     render(<TooltipProvider><AgentTurn sessionId={sessionId} turnId={turnId} persona={previewPersonas[0]} onApprovalDecision={() => {}} /></TooltipProvider>);
-    expect(screen.getAllByAltText('智鼬·未来头像')).toHaveLength(1);
+    expect(screen.getAllByAltText('澄·远头像')).toHaveLength(1);
     expect(document.querySelectorAll('.agent-activity')).toHaveLength(1);
     expect(document.querySelector('.agent-user-message')).toBeInTheDocument();
     expect(screen.queryByText(/do-not-render/)).not.toBeInTheDocument();
@@ -655,8 +655,8 @@ describe('Agent experience', () => {
     expect(pending).toHaveTextContent('消息已收到');
     const assistantTurn = pending.closest('.agent-assistant-turn');
     expect(assistantTurn).not.toBeNull();
-    expect(within(assistantTurn as HTMLElement).getByAltText('智鼬·此刻头像')).toBeInTheDocument();
-    expect(within(assistantTurn as HTMLElement).getByText('智鼬·此刻')).toBeInTheDocument();
+    expect(within(assistantTurn as HTMLElement).getByAltText('澄·今头像')).toBeInTheDocument();
+    expect(within(assistantTurn as HTMLElement).getByText('澄·今')).toBeInTheDocument();
     expect(within(assistantTurn as HTMLElement).getByText('正在处理')).toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(true);
   });

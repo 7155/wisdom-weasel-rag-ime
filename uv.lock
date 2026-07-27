@@ -1230,7 +1230,7 @@ wheels = [
 ]
 
 [[package]]
-name = "wisdom-weasel-rag-ime"
+name = "personal-agent-workbench"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

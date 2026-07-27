@@ -96,11 +96,11 @@ class BrandSquirrelAppScriptTests(unittest.TestCase):
             info = _read_plist(app / "Contents" / "Info.plist")
             strings = _read_plist(app / "Contents" / "Resources" / "en.lproj" / "InfoPlist.strings")
 
-        self.assertEqual(info["CFBundleDisplayName"], "智鼬输入法")
+        self.assertEqual(info["CFBundleDisplayName"], "澄输入法")
         self.assertFalse(info["SUEnableAutomaticChecks"])
         self.assertFalse(info["SUAutomaticallyUpdate"])
-        self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hans"], "智鼬输入法")
-        self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hant"], "智鼬输入法（繁体）")
+        self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hans"], "澄输入法")
+        self.assertEqual(strings["im.rime.inputmethod.Squirrel.Hant"], "澄输入法（繁体）")
 
 
 def _write_fake_squirrel_app(path: Path) -> Path:

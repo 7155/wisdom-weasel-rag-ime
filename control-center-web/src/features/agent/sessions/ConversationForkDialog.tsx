@@ -44,7 +44,7 @@ export function resolveConversationEntryId(
 }
 
 export function ConversationForkDialog({
-  assistantName = '智鼬',
+  assistantName = '澄',
   open,
   sessionId,
   sessionTitle,

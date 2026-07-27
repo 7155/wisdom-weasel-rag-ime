@@ -20,7 +20,7 @@ describe('preview control transport', () => {
     });
     const snapshot = parseSnapshot(raw, 'room-preview');
     expect(snapshot.roots).toHaveLength(1);
-    expect(snapshot.roots[0]).toMatchObject({ state: 'running', owner: '智鼬·此刻' });
+    expect(snapshot.roots[0]).toMatchObject({ state: 'running', owner: '澄·今' });
 
     const requirement = parseRoomRequirementsReadProjection(
       record(record(raw).requirementsByRootId)[snapshot.roots[0]!.rootId],

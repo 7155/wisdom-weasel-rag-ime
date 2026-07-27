@@ -35,7 +35,7 @@ class AgentRoleBookTests(unittest.TestCase):
         first = self.store.ensure_seeded(
             "companion-present-v1",
             "1",
-            "智鼬·此刻",
+            "澄·今",
             "陪用户持续完成项目",
             "persona-1",
             created_at_ms=100,
@@ -44,7 +44,7 @@ class AgentRoleBookTests(unittest.TestCase):
         other_version = self.store.ensure_seeded(
             "companion-present-v1",
             "2",
-            "智鼬·此刻",
+            "澄·今",
             "陪用户持续完成项目",
             "persona-2",
             created_at_ms=300,
@@ -84,7 +84,7 @@ class AgentRoleBookTests(unittest.TestCase):
         seeded = self.store.ensure_seeded(
             "companion-future-v1",
             "1",
-            "智鼬·未来",
+            "澄·远",
             "站在长期时间线上深思的构筑者",
             "1",
             created_at_ms=100,
@@ -108,7 +108,7 @@ class AgentRoleBookTests(unittest.TestCase):
                 INSERT INTO agent_role_books(
                     role_id, role_version, display_name, mission,
                     base_persona_version, created_at_ms, updated_at_ms
-                ) VALUES ('companion-flash-v1', '1', '智鼬·闪念', '', '1', 1, 1)
+                ) VALUES ('companion-flash-v1', '1', '澄·瞬', '', '1', 1, 1)
                 """
             )
             conn.execute(
@@ -132,7 +132,7 @@ class AgentRoleBookTests(unittest.TestCase):
         upgraded = self.store.ensure_seeded(
             "companion-flash-v1",
             "1",
-            "智鼬·闪念",
+            "澄·瞬",
             "",
             "1",
             created_at_ms=200,
@@ -671,7 +671,7 @@ class AgentRoleBookTests(unittest.TestCase):
         return self.store.ensure_seeded(
             "companion-present-v1",
             "1",
-            "智鼬·此刻",
+            "澄·今",
             "陪用户持续完成项目",
             "persona-1",
             created_at_ms=100,

@@ -33,9 +33,9 @@ describe('Persona timeline assets', () => {
 
   it('renders the timeline names with their manifest-selected portraits', () => {
     render(<>{previewPersonas.map((persona) => <PersonaAvatar key={persona.roleId} persona={persona} />)}</>);
-    expect(screen.getByAltText('智鼬·此刻头像').getAttribute('src')).toBe('/companions/personas/companion-present-v4.webp');
-    expect(screen.getByAltText('智鼬·初识头像').getAttribute('src')).toBe('/companions/personas/companion-firstlight-v4.webp');
-    expect(screen.getByAltText('智鼬·未来头像').getAttribute('src')).toBe('/companions/personas/companion-future-v4.webp');
-    expect(screen.getByAltText('智鼬·闪念头像').getAttribute('src')).toBe('/companions/personas/companion-flash-v4.webp');
+    expect(screen.getByAltText('澄·今头像').getAttribute('src')).toBe('/companions/personas/companion-present-v4.webp');
+    expect(screen.getByAltText('澄·初头像').getAttribute('src')).toBe('/companions/personas/companion-firstlight-v4.webp');
+    expect(screen.getByAltText('澄·远头像').getAttribute('src')).toBe('/companions/personas/companion-future-v4.webp');
+    expect(screen.getByAltText('澄·瞬头像').getAttribute('src')).toBe('/companions/personas/companion-flash-v4.webp');
   });
 });

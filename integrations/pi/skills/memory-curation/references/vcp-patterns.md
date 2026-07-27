@@ -1,4 +1,4 @@
-# VCP Memory Patterns Adapted by Wisdom Weasel
+# VCP Memory Patterns Adapted by Personal Agent Workbench
 
 Reference implementations inspected locally:
 
@@ -6,9 +6,9 @@ Reference implementations inspected locally:
 - `VCPToolBox/Plugin/LightMemo`: memory operations are explicit tools with bounded inputs and observable results.
 - `VCPToolBox/Plugin/SemanticGroupEditor`: semantic grouping is a governed editing operation rather than an automatic rewrite of raw history.
 
-Wisdom Weasel adapts those ideas as follows:
+Personal Agent Workbench adapts those ideas as follows:
 
-| VCP pressure | Wisdom Weasel rule |
+| VCP pressure | Personal Agent Workbench rule |
 | --- | --- |
 | Raw diary text is not the final prompt | Keep Evidence separate from Current Atom and Topic Book retrieval documents. |
 | Tool calls make memory changes observable | Pi uses preview/apply/rollback operations on `ime_memory`; the skill never writes SQLite. |

@@ -52,7 +52,7 @@ export interface AgentComposerEditState {
 }
 
 export function AgentComposer({
-  assistantName = '智鼬',
+  assistantName = '澄',
   draft,
   attachments,
   session,

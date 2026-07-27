@@ -80,13 +80,13 @@ describe('Roles experience', () => {
       </MemoryRouter>,
     );
 
-    await user.click(await screen.findByRole('button', { name: /智鼬·初识/ }));
+    await user.click(await screen.findByRole('button', { name: /澄·初/ }));
     await user.click(screen.getByRole('button', { name: '开始对话' }));
 
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/agent?session=session-past'));
     const create = transport.requests.find((call) => call.request.pathId === 'agent.sessions.create');
     expect(create?.request.body).toEqual({
-      title: '智鼬·初识 对话',
+      title: '澄·初 对话',
       mode: 'assistant',
       roleId: 'companion-firstlight-v1',
       roleVersion: '1',
@@ -276,7 +276,7 @@ describe('Roles experience', () => {
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    await user.click(await screen.findByRole('button', { name: /智鼬·闪念/ }));
+    await user.click(await screen.findByRole('button', { name: /澄·瞬/ }));
     expect(screen.getAllByText('GPT-5.6 Luna').length).toBeGreaterThan(0);
     expect(screen.getByText('超长材料高速扫读与提取')).toBeInTheDocument();
     expect(screen.getByText('归类、去重和格式转换')).toBeInTheDocument();
@@ -307,7 +307,7 @@ describe('Roles experience', () => {
 
     expect(await screen.findByText(previewPersonas[0]!.tagline)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '开始对话' })).toBeEnabled();
-    await user.click(screen.getByRole('button', { name: /智鼬·初识/ }));
+    await user.click(screen.getByRole('button', { name: /澄·初/ }));
     expect(transport.requests.map((request) => request.pathId)).toEqual([
       'agent.roles.list',
       'agent.role.models',
@@ -331,7 +331,7 @@ describe('Roles experience', () => {
     const createdRole = {
       ...previewPersonas[2],
       roleId: 'morning-guide-v1',
-      displayName: '智鼬·晨光',
+      displayName: '澄·晨光',
       tagline: '先看清今天，再稳稳向前',
       summary: '适合陪我整理早晨计划与关键证据。',
       traits: ['清晰', '温和'] as ['清晰', '温和'],
@@ -370,7 +370,7 @@ describe('Roles experience', () => {
     expect(name).toHaveAttribute('maxlength', '40');
     expect(tagline).toHaveAttribute('maxlength', '80');
     expect(summary).toHaveAttribute('maxlength', '180');
-    await user.type(name, '智鼬·晨光');
+    await user.type(name, '澄·晨光');
     await user.type(tagline, '先看清今天，再稳稳向前');
     await user.type(summary, '适合陪我整理早晨计划与关键证据。');
     await user.type(suitableTasks, '整理早晨计划{Enter}核对关键证据');
@@ -385,7 +385,7 @@ describe('Roles experience', () => {
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.roles.create')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.roles.create')?.request.body).toEqual({
-      displayName: '智鼬·晨光',
+      displayName: '澄·晨光',
       tagline: '先看清今天，再稳稳向前',
       summary: '适合陪我整理早晨计划与关键证据。',
       traits: ['清晰', '温和'],
@@ -394,17 +394,17 @@ describe('Roles experience', () => {
       suitableTasks: ['整理早晨计划', '核对关键证据'],
       unsuitableTasks: ['替用户做高风险决定'],
     });
-    expect(await screen.findByRole('button', { name: /智鼬·晨光/ })).toHaveAttribute('aria-current', 'true');
+    expect(await screen.findByRole('button', { name: /澄·晨光/ })).toHaveAttribute('aria-current', 'true');
     expect(screen.getAllByText('构筑阶段')).not.toHaveLength(0);
     expect(screen.getAllByText('我的伙伴').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: '编辑伙伴' })).toBeInTheDocument();
-    expect(screen.getAllByText('智鼬·晨光').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('澄·晨光').length).toBeGreaterThan(0);
     expect(screen.queryByRole('dialog', { name: '添加伙伴' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '开始对话' }));
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/agent?session=session-morning-guide'));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.sessions.create')?.request.body).toEqual({
-      title: '智鼬·晨光 对话',
+      title: '澄·晨光 对话',
       mode: 'assistant',
       roleId: 'morning-guide-v1',
       roleVersion: '1',
@@ -417,7 +417,7 @@ describe('Roles experience', () => {
     const customRole = {
       ...previewPersonas[2]!,
       roleId: 'persona-rain-v1',
-      displayName: '智鼬·雨天',
+      displayName: '澄·雨天',
       tagline: '陪你安静整理',
       summary: '偏向温和复盘。',
       traits: ['温和'] as ['温和'],
@@ -431,7 +431,7 @@ describe('Roles experience', () => {
     };
     const updatedRole = {
       ...customRole,
-      displayName: '智鼬·暮雨',
+      displayName: '澄·暮雨',
       tagline: '先安静看清，再一起往前',
       summary: '偏向温和复盘与明确下一步。',
       traits: ['温和', '清楚'] as ['温和', '清楚'],
@@ -451,11 +451,11 @@ describe('Roles experience', () => {
 
     expect(await screen.findByRole('button', { name: '复制为我的伙伴' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '编辑伙伴' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /智鼬·雨天/ }));
+    await user.click(screen.getByRole('button', { name: /澄·雨天/ }));
     await user.click(screen.getByRole('button', { name: '编辑伙伴' }));
     expect(screen.getByRole('dialog', { name: '编辑伙伴' })).toHaveTextContent('工具与安全边界仍由系统管理');
     await user.clear(screen.getByRole('textbox', { name: '伙伴名字' }));
-    await user.type(screen.getByRole('textbox', { name: '伙伴名字' }), '智鼬·暮雨');
+    await user.type(screen.getByRole('textbox', { name: '伙伴名字' }), '澄·暮雨');
     await user.clear(screen.getByRole('textbox', { name: '角色一句话介绍' }));
     await user.type(screen.getByRole('textbox', { name: '角色一句话介绍' }), '先安静看清，再一起往前');
     await user.clear(screen.getByRole('textbox', { name: '伙伴说明' }));
@@ -472,7 +472,7 @@ describe('Roles experience', () => {
     expect(transport.requests.find((call) => call.request.pathId === 'agent.roles.update')?.request.body).toEqual({
       roleId: customRole.roleId,
       roleVersion: customRole.version,
-      displayName: '智鼬·暮雨',
+      displayName: '澄·暮雨',
       tagline: '先安静看清，再一起往前',
       summary: '偏向温和复盘与明确下一步。',
       traits: ['温和', '清楚'],
@@ -481,7 +481,7 @@ describe('Roles experience', () => {
       suitableTasks: ['温和复盘', '明确下一步'],
       unsuitableTasks: ['未经证据的个人判断'],
     });
-    expect(await screen.findByRole('button', { name: /智鼬·暮雨/ })).toHaveAttribute('aria-current', 'true');
+    expect(await screen.findByRole('button', { name: /澄·暮雨/ })).toHaveAttribute('aria-current', 'true');
     expect(screen.getByRole('button', { name: '编辑伙伴' })).toBeInTheDocument();
   });
 
@@ -490,7 +490,7 @@ describe('Roles experience', () => {
     const customRole = {
       ...previewPersonas[2]!,
       roleId: 'persona-default-v1',
-      displayName: '智鼬·灯塔',
+      displayName: '澄·灯塔',
       tagline: '每次新对话都先帮你找到方向',
       defaults: { ...previewPersonas[2]!.defaults, modelPolicy: 'session-selected' },
     };
@@ -511,7 +511,7 @@ describe('Roles experience', () => {
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    await user.click(await screen.findByRole('button', { name: /智鼬·灯塔/ }));
+    await user.click(await screen.findByRole('button', { name: /澄·灯塔/ }));
     await user.click(screen.getByRole('button', { name: '设为默认' }));
 
     await waitFor(() => expect(screen.getByText('新对话默认伙伴')).toBeInTheDocument());
@@ -532,7 +532,7 @@ describe('Roles experience', () => {
     const customRole = {
       ...previewPersonas[2]!,
       roleId: 'persona-archive-v1',
-      displayName: '智鼬·旧页',
+      displayName: '澄·旧页',
       tagline: '陪你整理已经完成的章节',
       defaults: { ...previewPersonas[2]!.defaults, modelPolicy: 'session-selected' },
     };
@@ -552,13 +552,13 @@ describe('Roles experience', () => {
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    await user.click(await screen.findByRole('button', { name: /智鼬·旧页/ }));
+    await user.click(await screen.findByRole('button', { name: /澄·旧页/ }));
     await user.click(screen.getByRole('button', { name: '移除伙伴' }));
     const dialog = screen.getByRole('dialog', { name: '移除这个伙伴？' });
     expect(dialog).toHaveTextContent('已有对话仍保留并可继续');
     await user.click(within(dialog).getByRole('button', { name: '移除伙伴' }));
 
-    await waitFor(() => expect(screen.queryByRole('button', { name: /智鼬·旧页/ })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('button', { name: /澄·旧页/ })).not.toBeInTheDocument());
     expect(transport.requests.find((call) => call.request.pathId === 'agent.roles.archive')?.request.body).toEqual({
       roleId: customRole.roleId,
       roleVersion: customRole.version,
@@ -576,7 +576,7 @@ describe('Roles experience', () => {
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
     await user.click(await screen.findByRole('button', { name: '添加伙伴' }));
-    await user.type(screen.getByRole('textbox', { name: '伙伴名字' }), '智鼬·晨光');
+    await user.type(screen.getByRole('textbox', { name: '伙伴名字' }), '澄·晨光');
     await user.type(screen.getByRole('textbox', { name: '角色一句话介绍' }), '先看清今天');
     await user.type(screen.getByRole('textbox', { name: '伙伴说明' }), '陪我整理今天的重点。');
     await user.type(screen.getByRole('textbox', { name: '适合任务' }), '整理今天重点');
@@ -587,7 +587,7 @@ describe('Roles experience', () => {
     const dialog = screen.getByRole('dialog', { name: '添加伙伴' });
     expect(await screen.findByRole('alert')).toHaveTextContent('角色名称已存在');
     expect(dialog).toContainElement(screen.getByRole('alert'));
-    expect(screen.getByRole('textbox', { name: '伙伴名字' })).toHaveValue('智鼬·晨光');
+    expect(screen.getByRole('textbox', { name: '伙伴名字' })).toHaveValue('澄·晨光');
   });
 });
 

@@ -217,7 +217,7 @@ function renderPlugins(
           id: 'session-review',
           displayName: 'Session Review',
           description: '基于事实审阅会话结果',
-          publisher: 'Wisdom Weasel',
+          publisher: 'Personal Agent Workbench',
           source: { kind: 'bundled', label: 'Product bundle' },
           permissions: ['session.read'],
           security: { notes: '只读会话权限' },

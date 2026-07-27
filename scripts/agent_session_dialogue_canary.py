@@ -34,7 +34,7 @@ FINAL_MARKER = "AGENT-SESSION-CANARY-OK"
 RECOVERY_MARKER = "AGENT-SESSION-RECOVERY-OK"
 READ_BOUNDARY_PATH = "read-boundary.txt"
 READ_BOUNDARY_SOURCE = "".join(
-    f'第{index:04d}行 "quoted" \\\\ path 智鼬数据\n'
+    f'第{index:04d}行 "quoted" \\\\ path 澄数据\n'
     for index in range(4_200)
 )
 EXPECTED_SKILL = "test-driven-implementation"

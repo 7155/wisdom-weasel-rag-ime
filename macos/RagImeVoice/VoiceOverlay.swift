@@ -327,7 +327,7 @@ final class VoiceOverlayController {
     }
 
     private func permissionMessage(_ message: String) -> String {
-        if message.contains("辅助功能") { return "若开关已开启，请关闭后重新开启智鼬语音" }
+        if message.contains("辅助功能") { return "若开关已开启，请关闭后重新开启澄语音" }
         if message.contains("麦克风") { return "请在系统设置中允许使用麦克风" }
         return message
     }

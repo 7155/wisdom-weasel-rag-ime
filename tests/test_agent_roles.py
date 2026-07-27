@@ -15,8 +15,8 @@ class AgentRoleTests(unittest.TestCase):
         ]
         role = roles[1]
 
-        self.assertEqual(role.display_name, "智鼬·此刻")
-        self.assertEqual([item.display_name for item in roles], ["智鼬·未来", "智鼬·此刻", "智鼬·初识", "智鼬·闪念"])
+        self.assertEqual(role.display_name, "澄·今")
+        self.assertEqual([item.display_name for item in roles], ["澄·远", "澄·今", "澄·初", "澄·瞬"])
         self.assertEqual(len({item.persona_prompt for item in roles}), 4)
         for item in roles:
             with self.subTest(role=item.role_id):

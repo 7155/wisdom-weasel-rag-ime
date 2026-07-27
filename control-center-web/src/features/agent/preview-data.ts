@@ -9,7 +9,7 @@ const previewNow = 1_785_014_400_000;
 export const previewPersonas: AgentPersonaV1[] = [
   {
     schemaVersion: 'rag-ime.agent-persona.v1', roleId: 'companion-future-v1', version: '1',
-    displayName: '智鼬·未来', tagline: '把记忆、工具与协作构筑成下一步',
+    displayName: '澄·远', tagline: '把记忆、工具与协作构筑成下一步',
     summary: '站在长期时间线上深思的构筑者，默认主持复杂任务，串联证据、工具、角色、实现与验收。',
     traits: ['沉稳', '工具编排'],
     visualProfile: { avatarAssetId: 'rag-ime-timeline-future-v1', symbolName: 'point.3.connected.trianglepath.dotted', accentToken: 'rose' },
@@ -21,7 +21,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     schemaVersion: 'rag-ime.agent-persona.v1',
     roleId: 'companion-present-v1',
     version: '1',
-    displayName: '智鼬·此刻',
+    displayName: '澄·今',
     tagline: '先接住眼前的问题，再一起把它做清楚',
     summary: '贴近当前工作现场的稳健实践者，平衡深度与速度，把正在发生的想法落到下一步。',
     traits: ['温暖', '证据优先'],
@@ -44,7 +44,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     schemaVersion: 'rag-ime.agent-persona.v1',
     roleId: 'companion-firstlight-v1',
     version: '1',
-    displayName: '智鼬·初识',
+    displayName: '澄·初',
     tagline: '从第一笔记录开始，认真认识你的世界',
     summary: '像月光巡游历史线索的敏锐行动者，快速理解意图、核对线索并给出清楚下一步。',
     traits: ['好奇', '记录优先'],
@@ -65,7 +65,7 @@ export const previewPersonas: AgentPersonaV1[] = [
   },
   {
     schemaVersion: 'rag-ime.agent-persona.v1', roleId: 'companion-flash-v1', version: '1',
-    displayName: '智鼬·闪念', tagline: '高速掠过漫长档案，只带回最有用的线索',
+    displayName: '澄·瞬', tagline: '高速掠过漫长档案，只带回最有用的线索',
     summary: '超长档案的高速侦察与整理者，极快提取、聚类和交接线索，但不独自承担复杂实现与高风险结论。',
     traits: ['极速', '线索整理'],
     visualProfile: { avatarAssetId: 'rag-ime-timeline-flash-v1', symbolName: 'bolt', accentToken: 'neutral' },

@@ -30,7 +30,7 @@ describe('mergeAcceptedRoomTimeline', () => {
         dispatchId: 'dispatch-1',
         targetParticipantId: 'participant-1',
         status: 'queued',
-        summary: '智鼬·此刻 已接手',
+        summary: '澄·今 已接手',
       }),
     ];
 
@@ -39,7 +39,7 @@ describe('mergeAcceptedRoomTimeline', () => {
     expect(accepted.messageOrder).toEqual(['post-user-1']);
     expect(accepted.messagesById['post-user-1'].clientMessageId).toBe('client-1');
     expect(accepted.activityOrder).toHaveLength(1);
-    expect(accepted.activitiesById[accepted.activityOrder[0]].summary).toBe('智鼬·此刻 已接手');
+    expect(accepted.activitiesById[accepted.activityOrder[0]].summary).toBe('澄·今 已接手');
 
     const sameHttpReplay = mergeAcceptedRoomTimeline(accepted, { timelineEvents });
     expect(sameHttpReplay).toEqual(accepted);

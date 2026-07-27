@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "智鼬 Browser Co-pilot",
+  "name": "澄 Browser Co-pilot",
   "version": "1.0.0",
-  "description": "将浏览器页面以可审计快照连接到智鼬控制中心。",
+  "description": "将浏览器页面以可审计快照连接到澄控制中心。",
   "permissions": [
     "activeTab",
     "sidePanel",
@@ -20,7 +20,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "打开智鼬 Browser Co-pilot"
+    "default_title": "打开澄 Browser Co-pilot"
   },
   "side_panel": {
     "default_path": "sidepanel.html"

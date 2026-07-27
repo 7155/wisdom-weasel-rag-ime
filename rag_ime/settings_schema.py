@@ -7,8 +7,8 @@ from typing import Any, Mapping
 
 DEFAULT_SETTINGS: dict[str, object] = {
     "identity": {
-        "productName": "智鼬",
-        "assistantName": "智鼬",
+        "productName": "澄",
+        "assistantName": "澄",
         "tagline": "记得你，也陪你做事",
     },
     "interaction": {
@@ -232,7 +232,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
                     "key": "identity.productName",
                     "type": "string",
                     "label": "应用名称",
-                    "default": "智鼬",
+                    "default": "澄",
                     "minLength": 1,
                     "maxLength": 24,
                 },
@@ -240,7 +240,7 @@ SETTINGS_SCHEMA: dict[str, object] = {
                     "key": "identity.assistantName",
                     "type": "string",
                     "label": "通用伙伴称呼",
-                    "default": "智鼬",
+                    "default": "澄",
                     "minLength": 1,
                     "maxLength": 24,
                 },

@@ -34,9 +34,9 @@ BUNDLE_ID="${RAG_IME_SQUIRREL_BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
 INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_INPUT_SOURCE_ID:-$BUNDLE_ID.Hans}"
 HANT_INPUT_SOURCE_ID="${RAG_IME_SQUIRREL_HANT_INPUT_SOURCE_ID:-$BUNDLE_ID.Hant}"
 if [[ "$BUNDLE_ID" == "$DEFAULT_BUNDLE_ID" && "$INSTALL_APP_NAME" == "Squirrel" ]]; then
-  DEFAULT_DISPLAY_NAME="智鼬输入法"
-  DEFAULT_HANS_DISPLAY_NAME="智鼬输入法"
-  DEFAULT_HANT_DISPLAY_NAME="智鼬输入法（繁体）"
+  DEFAULT_DISPLAY_NAME="澄输入法"
+  DEFAULT_HANS_DISPLAY_NAME="澄输入法"
+  DEFAULT_HANT_DISPLAY_NAME="澄输入法（繁体）"
 else
   DEFAULT_DISPLAY_NAME="$INSTALL_APP_NAME"
   DEFAULT_HANS_DISPLAY_NAME="$INSTALL_APP_NAME - Simplified"
@@ -75,7 +75,7 @@ Environment:
   RAG_IME_SQUIRREL_INSTALL_DIR   install target (default: ~/Library/Input Methods)
   RAG_IME_SQUIRREL_INSTALL_APP_NAME installed app bundle name (default: Squirrel)
   RAG_IME_SQUIRREL_BUNDLE_ID     app/input-source bundle prefix (default: im.rime.inputmethod.Squirrel)
-  RAG_IME_SQUIRREL_DISPLAY_NAME  app/input-source display name (default: 智鼬输入法)
+  RAG_IME_SQUIRREL_DISPLAY_NAME  app/input-source display name (default: 澄输入法)
   RAG_IME_SQUIRREL_CONNECTION_NAME input method connection name (must be <bundle id>_Connection)
   RAG_IME_SQUIRREL_PREINSTALL    auto|1|0, run Squirrel action-install when dependencies are missing
   RAG_IME_SQUIRREL_NO_DOWNLOAD   set no_download=1 for action-install

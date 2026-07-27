@@ -177,7 +177,7 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
             "POST",
             "/api/agent/roles",
             {
-                "displayName": "智鼬·页面验收",
+                "displayName": "澄·页面验收",
                 "tagline": "确认真实角色写入",
                 "summary": "只用于隔离数据库中的控制中心验收。",
                 "traits": ["清楚", "可靠"],
@@ -197,7 +197,7 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
             {
                 "roleId": role["roleId"],
                 "roleVersion": role["version"],
-                "displayName": "智鼬·页面验收后",
+                "displayName": "澄·页面验收后",
                 "tagline": "确认自建伙伴可以编辑",
                 "summary": "只用于验证自建伙伴的公开元数据修改。",
                 "traits": ["清楚", "稳定"],
@@ -209,7 +209,7 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
         )
         self.assertEqual(update_status, 200, updated_role)
         self.assertTrue(updated_role["ok"])
-        self.assertEqual(updated_role["role"]["displayName"], "智鼬·页面验收后")
+        self.assertEqual(updated_role["role"]["displayName"], "澄·页面验收后")
         self.assertNotIn("personaPrompt", updated_role["role"])
 
         status, created_session = self._request(
@@ -488,12 +488,12 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
         self._apply_settings(
             {
                 "voice.hotwordsEnabled": True,
-                "voice.hotwords": ["智鼬", "GPT-5.6"],
+                "voice.hotwords": ["澄助手", "GPT-5.6"],
             }
         )
         settings = self._ok("GET", "/api/settings")
         self.assertTrue(settings["settings"]["voice"]["hotwordsEnabled"])
-        self.assertEqual(settings["settings"]["voice"]["hotwords"], ["智鼬", "GPT-5.6"])
+        self.assertEqual(settings["settings"]["voice"]["hotwords"], ["澄助手", "GPT-5.6"])
 
         before_width = int(settings["settings"]["display"]["maxWidth"])
         after_width = before_width + 20 if before_width <= 720 else before_width - 20
@@ -549,7 +549,7 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
             record_rime_rank_feedback(
                 self.db_path,
                 preedit="zhi you",
-                accepted_text="智鼬",
+                accepted_text="澄助手",
                 action="accepted",
                 candidate_rank=1,
                 context_hash=f"page-action-{index}",

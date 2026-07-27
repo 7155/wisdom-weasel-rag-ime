@@ -1,4 +1,4 @@
 interface:
-  display_name: "智鼬插件创建"
+  display_name: "澄插件创建"
   short_description: "创建、校验并提交最小受管插件草案"
-  default_prompt: "Create the smallest managed Wisdom Weasel plugin, reuse existing Skill and Tool boundaries, validate the exact draft, and submit it through the native approval flow."
+  default_prompt: "Create the smallest managed Personal Agent Workbench plugin, reuse existing Skill and Tool boundaries, validate the exact draft, and submit it through the native approval flow."
