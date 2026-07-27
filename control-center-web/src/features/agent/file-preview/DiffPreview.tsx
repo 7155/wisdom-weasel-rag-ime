@@ -1,23 +1,37 @@
 import { useMemo, useState } from 'react';
+import { Columns2, Rows3 } from 'lucide-react';
 import { SegmentedControl } from '@/components/primitives';
 import { pairDiffLines, parseUnifiedDiff, type DiffFile, type DiffLine } from './unified-diff';
 
-export function DiffPreview({ content }: { content: string }) {
+export function DiffPreview({ content, fileName = '' }: { content: string; fileName?: string }) {
   const [mode, setMode] = useState<'unified' | 'split'>('unified');
-  const files = useMemo(() => parseUnifiedDiff(content), [content]);
+  const files = useMemo(() => {
+    const parsed = parseUnifiedDiff(content);
+    if (parsed.length || !fileName || !content.trimStart().startsWith('@@')) return parsed;
+    /* Agent blocks often already carry the path separately and therefore send
+       only hunks. The preview parser correctly rejects that as a standalone
+       patch, but rendering it as undifferentiated preformatted text loses the
+       actual change. Reattach the trusted display path locally; no contract or
+       file content is changed. */
+    return parseUnifiedDiff(`--- a/${fileName}\n+++ b/${fileName}\n${content}`);
+  }, [content, fileName]);
   if (!files.length) {
     return <pre className="agent-file-preview__plain"><code>{content || '没有可展示的变更。'}</code></pre>;
   }
   return (
     <div className="agent-diff-preview">
       <header>
+        <small>{files.length} 个文件</small>
         <SegmentedControl
           aria-label="Diff 展示方式"
-          items={[{ value: 'unified', label: '统一' }, { value: 'split', label: '并排' }]}
+          className="agent-diff-preview__mode"
+          items={[
+            { value: 'unified', label: <span><Rows3 size={13} />单栏</span> },
+            { value: 'split', label: <span><Columns2 size={13} />并排</span> },
+          ]}
           onValueChange={setMode}
           value={mode}
         />
-        <small>{files.length} 个文件</small>
       </header>
       <div className="agent-diff-preview__files">
         {files.map((file, index) => <FileDiff key={`${file.path}:${index}`} file={file} mode={mode} />)}

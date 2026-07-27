@@ -1,4 +1,4 @@
-import { Check, Clipboard, Code2, FileDiff } from 'lucide-react';
+import { Check, ChevronRight, Clipboard, Code2, FileDiff } from 'lucide-react';
 import { useState } from 'react';
 import { IconButton } from '@/components/primitives';
 import { writeClipboardText } from '@/platform/clipboard';
@@ -25,14 +25,16 @@ export function DiffBlockRenderer({ block }: AgentBlockRenderProps) {
   return (
     <details
       className="agent-inline-diff agent-rich-collapsible"
+      data-tone="project"
       open={lineCount <= 80}
     >
       <summary>
-        <FileDiff size={15} />
+        <span className="agent-insert-icon"><FileDiff size={15} /></span>
         <span>{title}</span>
         <small>{lineCount} 行</small>
+        <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
       </summary>
-      <DiffPreview content={content} />
+      <DiffPreview content={content} fileName={title} />
     </details>
   );
 }
@@ -89,11 +91,12 @@ export function CodeContentBlock({
   const lineCount = code ? code.split('\n').length : 0;
   if (!streamingTail && (lineCount > 32 || code.length > 4_000)) {
     return (
-      <details className="agent-code-collapse agent-rich-collapsible">
+      <details className="agent-code-collapse agent-rich-collapsible" data-tone="project">
         <summary>
-          <Code2 size={15} />
-          {fileName || language}
+          <span className="agent-insert-icon"><Code2 size={15} /></span>
+          <span>{fileName || language}</span>
           <small>{lineCount} 行</small>
+          <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
         </summary>
         {figure}
       </details>

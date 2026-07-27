@@ -66,6 +66,7 @@ describe('AgentComposer macOS input methods', () => {
   });
 
   it('keeps responsive controls together while the send action stays fixed', () => {
+    const onJumpLatest = vi.fn();
     const { container } = render(
       <TooltipProvider>
         <AgentComposer
@@ -78,6 +79,8 @@ describe('AgentComposer macOS input methods', () => {
           imageSupport="supported"
           busy={false}
           sending={false}
+          showJumpLatest
+          onJumpLatest={onJumpLatest}
           onDraftChange={() => {}}
           onAttachmentsChange={() => {}}
           onPickAttachments={() => {}}
@@ -102,6 +105,10 @@ describe('AgentComposer macOS input methods', () => {
     expect(controls).not.toContainElement(send);
     expect(send.closest('.agent-composer__toolbar')).not.toBeNull();
     expect(view.queryByRole('button', { name: '打开命令面板' })).not.toBeInTheDocument();
+    const jumpLatest = view.getByRole('button', { name: '回到最新' });
+    expect(jumpLatest.closest('.agent-composer')).not.toBeNull();
+    fireEvent.click(jumpLatest);
+    expect(onJumpLatest).toHaveBeenCalledTimes(1);
   });
 
   it('uses double Escape to request an in-place edit without disturbing IME input', () => {

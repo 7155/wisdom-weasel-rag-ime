@@ -85,6 +85,8 @@ function AgentWorkspace() {
   const [forkDialogNodes, setForkDialogNodes] = useState<ConversationNode[]>([]);
   const [forkDialogInitialEntryId, setForkDialogInitialEntryId] = useState('');
   const [timelineJumpRequest, setTimelineJumpRequest] = useState<{ messageId: string; requestId: number }>();
+  const [timelineAtBottom, setTimelineAtBottom] = useState(true);
+  const [scrollToLatestRequest, setScrollToLatestRequest] = useState(0);
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [statusOpen, setStatusOpen] = useState(false);
   const [error, setVisibleError] = useState('');
@@ -251,6 +253,10 @@ function AgentWorkspace() {
   useEffect(() => {
     if (statusOverlayViewport) setStatusOpen(false);
   }, [statusOverlayViewport]);
+
+  useEffect(() => {
+    setTimelineAtBottom(true);
+  }, [selectedId]);
 
   useModalPanel({
     active: railModal,
@@ -1138,9 +1144,9 @@ function AgentWorkspace() {
             <IconButton ref={statusToggleRef} className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
-          <AgentComposer assistantName={identity.assistantName} draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || rewriteResolving} modelChanging={modelChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} onDraftChange={persistSelectedDraft} onAttachmentsChange={setSelectedAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery, value) => void send(delivery, value)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onContextResourcesChange={(selection) => contextResources.select(session, selection)} onModelChange={changeModel} />
+          <AgentComposer assistantName={identity.assistantName} draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || rewriteResolving} modelChanging={modelChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} showJumpLatest={!timelineAtBottom} onJumpLatest={() => setScrollToLatestRequest((current) => current + 1)} onDraftChange={persistSelectedDraft} onAttachmentsChange={setSelectedAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery, value) => void send(delivery, value)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onContextResourcesChange={(selection) => contextResources.select(session, selection)} onModelChange={changeModel} />
         ) : <AgentComposerPending />}
       </section>
       <button className="agent-status-backdrop" aria-hidden="true" disabled={!statusModal} tabIndex={-1} onClick={closeStatusPanel} type="button" />

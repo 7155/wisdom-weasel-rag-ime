@@ -1,4 +1,5 @@
 import {
+  ArrowDown,
   LoaderCircle,
   Paperclip,
   PencilLine,
@@ -86,6 +87,8 @@ export function AgentComposer({
   helpRequest = 0,
   imageSupport = 'unknown',
   contextResourcesChanging = false,
+  showJumpLatest = false,
+  onJumpLatest,
 }: {
   assistantName?: string;
   draft: string;
@@ -122,6 +125,8 @@ export function AgentComposer({
   helpRequest?: number;
   imageSupport?: 'supported' | 'unsupported' | 'unknown';
   contextResourcesChanging?: boolean;
+  showJumpLatest?: boolean;
+  onJumpLatest?: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
@@ -346,6 +351,7 @@ export function AgentComposer({
       <div
         className="agent-composer"
         data-busy={busy || undefined}
+        data-jump-latest={showJumpLatest || undefined}
         onMouseDown={(event) => {
           if (event.button !== 0) return;
           const target = event.target as HTMLElement;
@@ -354,6 +360,12 @@ export function AgentComposer({
           textareaRef.current?.focus();
         }}
       >
+        {showJumpLatest ? (
+          <button className="agent-jump-latest" onClick={onJumpLatest} type="button">
+            <ArrowDown aria-hidden="true" size={14} />
+            <span>回到最新</span>
+          </button>
+        ) : null}
         {editState ? (
           <div className="agent-composer__edit" role="status">
             <PencilLine size={15} aria-hidden="true" />

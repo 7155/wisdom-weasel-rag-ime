@@ -48,6 +48,33 @@
 .agent-file-block > svg { color: var(--color-text-tertiary); }
 .agent-file-block__icon { display: grid; width: 26px; height: 26px; place-items: center; border-radius: var(--radius-2); background: var(--color-surface); color: var(--color-accent); }
 
+/* File rows use the same restrained semantic grammar as inline results.
+   Documents are informational, code/diffs are technical, images are media,
+   and an unknown file stays neutral. Only the edge and icon well carry type. */
+.agent-file-block[data-kind='document'] {
+  --agent-insert-color: var(--color-info);
+  --agent-insert-soft: var(--color-info-soft);
+}
+.agent-file-block[data-kind='code'],
+.agent-file-block[data-kind='diff'] {
+  --agent-insert-color: var(--color-project);
+  --agent-insert-soft: var(--color-project-soft);
+}
+.agent-file-block[data-kind='image'] {
+  --agent-insert-color: var(--color-collaboration);
+  --agent-insert-soft: var(--color-collaboration-soft);
+}
+.agent-file-block__icon {
+  border: 1px solid color-mix(in srgb, var(--agent-insert-color, var(--color-accent)) 26%, var(--color-border-soft));
+  background: color-mix(in srgb, var(--agent-insert-soft, var(--color-accent-soft)) 58%, var(--color-paper));
+  color: var(--agent-insert-color, var(--color-accent));
+}
+.agent-file-block strong {
+  color: var(--color-text);
+  font: var(--font-weight-semibold) var(--text-ui) / var(--text-ui-lh) var(--font-ui);
+}
+.agent-file-block small { color: var(--color-text-secondary); }
+
 /* Same measure and hanging edge as every other insert, so the deliverable reads
    as the emphatic member of one family rather than a card-shaped exception.
    The accent edge is the only thing separating it from its quieter siblings. */
@@ -164,36 +191,58 @@
 .agent-file-markdown th, .agent-file-markdown td { padding: 7px 9px; border: 1px solid var(--color-border); text-align: left; }
 .agent-file-markdown__blocked-media { color: var(--color-text-tertiary); font-style: italic; }
 
-.agent-file-code { display: grid; min-width: 0; min-height: 100%; grid-template-rows: 38px minmax(0, 1fr); margin: 0; background: #111915; color: #eef5f0; }
-.agent-file-code figcaption { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px 0 14px; border-bottom: 1px solid #344139; color: #bdcac2; font: 13px var(--font-mono); }
+.agent-file-code { display: grid; min-width: 0; min-height: 100%; grid-template-rows: 38px minmax(0, 1fr); margin: 0; background: var(--color-code-bg); color: var(--color-code-text); }
+.agent-file-code figcaption { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--color-code-border); color: var(--color-code-muted); font: 13px var(--font-mono); }
 .agent-file-code figcaption > span { display: flex; min-width: 0; align-items: center; gap: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-file-code > pre, .agent-file-code__highlight, .agent-file-code__highlight pre { min-height: 100%; margin: 0; }
 .agent-file-code > pre { overflow: auto; padding: 16px; font: 13px/1.6 var(--font-mono); }
 .agent-file-code__highlight { overflow: auto; }
 .agent-file-code__highlight pre { box-sizing: border-box; min-width: max-content; padding: 16px; font: 13px/1.6 var(--font-mono); }
 
-.agent-diff-preview { display: grid; min-width: 0; min-height: 100%; grid-template-rows: auto minmax(0, 1fr); background: #111915; color: #eaf1ed; }
-.agent-diff-preview > header { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; border-bottom: 1px solid #344139; }
-.agent-diff-preview > header small { color: #aab9b0; font-size: 13px; }
+.agent-diff-preview { display: grid; min-width: 0; min-height: 100%; grid-template-rows: auto minmax(0, 1fr); background: var(--color-code-bg); color: var(--color-code-text); }
+.agent-diff-preview > header { display: flex; min-height: 40px; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 10px 5px 14px; border-bottom: 1px solid var(--color-code-border); }
+.agent-diff-preview > header small { color: var(--color-code-muted); font: 12px/18px var(--font-ui); }
+.agent-diff-preview__mode.ui-segmented {
+  min-height: 28px;
+  padding: 1px;
+  border-color: var(--color-code-border);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--color-code-surface) 78%, transparent);
+}
+.agent-diff-preview__mode .ui-segmented__item {
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 7px;
+  border-radius: 2px;
+  color: var(--color-code-muted);
+  font: var(--font-weight-medium) 12px/18px var(--font-ui);
+}
+.agent-diff-preview__mode .ui-segmented__item > span { display: inline-flex; align-items: center; gap: 4px; }
+.agent-diff-preview__mode .ui-segmented__item[data-state='checked'] {
+  background: color-mix(in srgb, var(--color-code-border) 74%, var(--color-code-surface));
+  box-shadow: none;
+  color: var(--color-code-text);
+}
+.agent-diff-preview__mode .ui-segmented__item:active:not(:disabled) { box-shadow: none; transform: none; }
 .agent-diff-preview__files { display: grid; align-content: start; gap: 14px; padding: 14px; overflow: auto; }
-.agent-diff-file { min-width: 0; overflow: hidden; border: 1px solid #344139; border-radius: var(--radius-2); background: #17201c; }
-.agent-diff-file > header { display: flex; min-width: 0; height: 34px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px; border-bottom: 1px solid #344139; font: 13px var(--font-mono); }
+.agent-diff-file { min-width: 0; overflow: hidden; border: 1px solid var(--color-code-border); border-radius: var(--radius-2); background: var(--color-code-surface); }
+.agent-diff-file > header { display: flex; min-width: 0; height: 34px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 10px; border-bottom: 1px solid var(--color-code-border); font: 13px var(--font-mono); }
 .agent-diff-file > header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-diff-file > header span { color: #aab9b0; font-size: 12px; }
+.agent-diff-file > header span { color: var(--color-code-muted); font-size: 12px; }
 .agent-diff-file__scroll { overflow-x: auto; }
-.agent-diff-hunk__header { padding: 5px 10px; background: #18344a; color: #b9def8; font: 12px/1.5 var(--font-mono); white-space: pre; }
+.agent-diff-hunk__header { padding: 5px 10px; background: var(--color-diff-hunk); color: var(--color-diff-hunk-text); font: 12px/1.5 var(--font-mono); white-space: pre; }
 .agent-diff-hunk table { width: 100%; min-width: max-content; border-collapse: collapse; font: 12px/1.55 var(--font-mono); }
 .agent-diff-hunk td { height: 20px; padding: 0; }
-.agent-diff-gutter { width: 44px; box-sizing: border-box; padding: 0 7px !important; border-right: 1px solid #344139; color: #829289; text-align: right; user-select: none; }
+.agent-diff-gutter { width: 44px; box-sizing: border-box; padding: 0 7px !important; border-right: 1px solid var(--color-code-border); color: var(--color-code-gutter); text-align: right; user-select: none; }
 .agent-diff-code { min-width: 640px; padding: 0 10px !important; white-space: pre; }
-.agent-diff-code > span { display: inline-block; width: 14px; color: #829289; user-select: none; }
-.agent-diff-hunk tr[data-kind='add'] td, .agent-diff-split[data-kind='add'] { background: #173b2a; color: #bdebcf; }
-.agent-diff-hunk tr[data-kind='remove'] td, .agent-diff-split[data-kind='remove'] { background: #462424; color: #f3c2c2; }
+.agent-diff-code > span { display: inline-block; width: 14px; color: var(--color-code-gutter); user-select: none; }
+.agent-diff-hunk tr[data-kind='add'] td, .agent-diff-split[data-kind='add'] { background: var(--color-diff-add); color: var(--color-diff-add-text); }
+.agent-diff-hunk tr[data-kind='remove'] td, .agent-diff-split[data-kind='remove'] { background: var(--color-diff-remove); color: var(--color-diff-remove-text); }
 .agent-diff-hunk tr[data-kind='notice'] td, .agent-diff-split[data-kind='notice'] { color: #d7bd76; font-style: italic; }
-.agent-diff-split { min-width: 520px; padding: 0; border-right: 1px solid #344139; white-space: pre; }
+.agent-diff-split { min-width: 520px; padding: 0; border-right: 1px solid var(--color-code-border); white-space: pre; }
 .agent-diff-split > .agent-diff-gutter { display: inline-block; height: 20px; line-height: 20px; }
 .agent-diff-split > code { display: inline-block; padding: 0 9px; font: inherit; }
-.agent-diff-split[data-empty='true'] { background: #101713; }
+.agent-diff-split[data-empty='true'] { background: var(--color-code-bg); }
 
 /* The report keeps its own light appearance — it is the author's document, and
    recolouring it would misrepresent what they wrote. In dark mode that white

@@ -167,6 +167,23 @@
   --color-focus: oklch(.52 .14 255);
   --color-selection: oklch(.88 .05 var(--accent-hue));
 
+  /* Technical output is a cool graphite instrument inside the paper system,
+     not a green-black terminal pasted in from another product. The same fixed
+     palette is used in both themes so code and diffs keep stable syntax and
+     addition/removal meaning when the surrounding stock changes. */
+  --color-code-bg: #151a21;
+  --color-code-surface: #1b222b;
+  --color-code-border: #35404d;
+  --color-code-text: #eef3f7;
+  --color-code-muted: #aeb9c5;
+  --color-code-gutter: #8593a1;
+  --color-diff-hunk: #1c3a54;
+  --color-diff-hunk-text: #c2e3fb;
+  --color-diff-add: #17392a;
+  --color-diff-add-text: #c2ebd1;
+  --color-diff-remove: #472526;
+  --color-diff-remove-text: #f3c9c9;
+
   /* Aliases that feature stylesheets already reference. Before these existed
      the declarations using them were invalid and silently dropped. */
   --color-text-primary: var(--color-text);

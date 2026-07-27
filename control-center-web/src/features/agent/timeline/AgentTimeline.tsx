@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, PencilLine, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
+import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, PencilLine, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Virtuoso,
@@ -31,6 +31,8 @@ export function AgentTimeline({
   forkAvailable = false,
   rewriteAvailable = false,
   jumpRequest,
+  scrollToLatestRequest = 0,
+  onAtBottomChange,
   onForkFromMessage,
   onEditMessage,
 }: {
@@ -48,6 +50,8 @@ export function AgentTimeline({
   forkAvailable?: boolean;
   rewriteAvailable?: boolean;
   jumpRequest?: { messageId: string; requestId: number };
+  scrollToLatestRequest?: number;
+  onAtBottomChange?: (atBottom: boolean) => void;
   onForkFromMessage?: (entryId: string) => void;
   onEditMessage?: (messageId: string) => void;
 }) {
@@ -57,9 +61,6 @@ export function AgentTimeline({
   /* -1 means "follow the active marker"; a real value pins the roving stop
      to wherever the keyboard user last was. */
   const [navFocusIndex, setNavFocusIndex] = useState(-1);
-  /* Bottom proximity drives the return-to-latest affordance: it may only
-     appear while the reader has moved away from the newest turn. */
-  const [atBottom, setAtBottom] = useState(true);
   const turnOrder = useAgentLiveStore(useShallow((state) => {
     const projection = state.projections[sessionId];
     if (!projection) return emptyIds;
@@ -104,6 +105,14 @@ export function AgentTimeline({
     const lastIndex = Math.max(0, turnOrder.length - 1);
     setVisibleRange({ startIndex: lastIndex, endIndex: lastIndex });
   }, [sessionId]);
+  useEffect(() => {
+    if (scrollToLatestRequest <= 0 || turnOrder.length === 0) return;
+    virtuosoRef.current?.scrollToIndex({
+      index: turnOrder.length - 1,
+      align: 'end',
+      behavior: 'smooth',
+    });
+  }, [scrollToLatestRequest, turnOrder.length]);
   useEffect(() => {
     if (!jumpRequest?.messageId) return;
     const projection = useAgentLiveStore.getState().projections[sessionId];
@@ -150,7 +159,7 @@ export function AgentTimeline({
         increaseViewportBy={{ top: 320, bottom: 520 }}
         components={timelineComponents}
         rangeChanged={setVisibleRange}
-        atBottomStateChange={setAtBottom}
+        atBottomStateChange={onAtBottomChange}
         atBottomThreshold={120}
         scrollSeekConfiguration={agentScrollSeekConfiguration}
         itemContent={(_index, turnId) => (
@@ -175,18 +184,6 @@ export function AgentTimeline({
           />
         )}
       />
-      {turnOrder.length > 1 && !atBottom ? (
-        <button
-          className="agent-jump-latest"
-          type="button"
-          onClick={() => {
-            virtuosoRef.current?.scrollToIndex({ index: turnOrder.length - 1, align: 'end', behavior: 'smooth' });
-          }}
-        >
-          <ArrowDown aria-hidden="true" size={14} />
-          回到最新
-        </button>
-      ) : null}
       {turnOrder.length > 1 ? (
         <nav
           className="agent-conversation-nav"

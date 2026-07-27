@@ -23,6 +23,7 @@ export function AgentFileBlock({ data, sessionId = '' }: { data: Record<string, 
       aria-label={available ? `预览 ${fileName}` : `${fileName} 的预览回执不可用`}
       className="agent-file-block"
       data-disabled={!available || undefined}
+      data-kind={fileKind(fileName, request?.mimeTypeHint ?? '')}
       disabled={!available}
       onClick={() => request && transport && openPreview(request, transport)}
       type="button"
@@ -32,6 +33,15 @@ export function AgentFileBlock({ data, sessionId = '' }: { data: Record<string, 
       <span aria-hidden="true" className="agent-file-block__open"><Eye size={15} />预览</span>
     </button>
   );
+}
+
+function fileKind(fileName: string, mimeType: string): 'code' | 'diff' | 'document' | 'image' | 'file' {
+  const lower = fileName.toLowerCase();
+  if (mimeType.startsWith('image/')) return 'image';
+  if (/\.(?:diff|patch)$/u.test(lower)) return 'diff';
+  if (/\.(?:md|markdown|mdx|pdf|docx?)$/u.test(lower)) return 'document';
+  if (mimeType.startsWith('text/') || /\.[a-z0-9]{1,8}$/u.test(lower)) return 'code';
+  return 'file';
 }
 
 function fileIcon(fileName: string, mimeType: string): ReactNode {

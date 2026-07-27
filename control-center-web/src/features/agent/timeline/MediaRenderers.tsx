@@ -17,8 +17,8 @@ export function ArtifactBlockRenderer({ block }: AgentBlockRenderProps) {
   const href = safeArtifactLink(text(data.receiptUrl ?? data.href ?? data.url));
   const name = text(data.title ?? data.name ?? data.fileName) || '任务产物';
   return (
-    <section className="agent-rich-artifact" aria-label={name}>
-      <PackageOpen size={18} />
+    <section className="agent-rich-artifact" data-tone="success" aria-label={name}>
+      <span className="agent-insert-icon"><PackageOpen size={17} /></span>
       <span>
         <strong>{name}</strong>
         <small>{text(data.summary) || fileMeta(data)}</small>
@@ -52,6 +52,7 @@ export function CitationBlockRenderer({ block }: AgentBlockRenderProps) {
   return href ? (
     <a
       className="agent-citation"
+      data-tone="info"
       href={href}
       rel="noreferrer"
       target={href.startsWith('http') ? '_blank' : undefined}
@@ -59,7 +60,7 @@ export function CitationBlockRenderer({ block }: AgentBlockRenderProps) {
       {content}
     </a>
   ) : (
-    <div className="agent-citation">{content}</div>
+    <div className="agent-citation" data-tone="info">{content}</div>
   );
 }
 
@@ -103,8 +104,8 @@ export function AudioBlockRenderer({ block }: AgentBlockRenderProps) {
   }
   const name = text(data.name) || '音频附件';
   return (
-    <figure className="agent-audio-block" data-unplayable={unplayable || undefined}>
-      <figcaption><FileAudio size={16} />{name}</figcaption>
+    <figure className="agent-audio-block" data-tone="info" data-unplayable={unplayable || undefined}>
+      <figcaption><span className="agent-insert-icon"><FileAudio size={16} /></span>{name}</figcaption>
       {unplayable ? (
         <p className="agent-audio-block__unplayable">
           <span>这段音频无法在对话内播放。</span>
