@@ -24,11 +24,11 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   await expect(page.locator('.agent-sticker-block')).toBeAttached();
   await expect(page.locator('.agent-citation')).toBeAttached();
   await expect(page.locator('.agent-file-block')).toBeAttached();
-  await page.getByRole('button', { name: '预览 room-runtime-handoff.md' }).click();
-  const filePreview = page.getByRole('dialog');
+  await page.getByRole('button', { name: '展开 room-runtime-handoff.md' }).click();
+  const filePreview = page.getByRole('region', { name: 'room-runtime-handoff.md 内联预览' });
   await expect(filePreview.getByRole('heading', { name: 'Room Runtime 交接' })).toBeVisible();
   await expect(filePreview).toContainText('文件内容按回执和摘要按需读取');
-  await filePreview.getByRole('button', { name: '关闭' }).click();
+  await page.getByRole('button', { name: '收起 room-runtime-handoff.md' }).click();
   await expect(filePreview).toBeHidden();
 
   const activity = page.locator('.agent-activity');

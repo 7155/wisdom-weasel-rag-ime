@@ -30,22 +30,22 @@ test('managed Markdown, code, Diff, image, and static HTML previews stay usable 
 
   await open(page, 'handoff.md');
   await expect(page.getByRole('heading', { name: '交接清单' })).toBeVisible();
-  await close(page);
+  await close(page, 'handoff.md');
 
   await open(page, 'room-commit.ts');
   await expect(page.getByText(/roomCommit/).first()).toBeVisible();
-  await close(page);
+  await close(page, 'room-commit.ts');
 
   await open(page, 'room-runtime.diff');
   await expect(page.locator('.agent-diff-file')).toContainText('runtime.ts');
   await expect(page.locator('.agent-diff-file')).toContainText('managedRoute');
   await page.getByRole('radio', { name: '并排' }).click();
   await expect(page.locator('.agent-diff-split').first()).toBeVisible();
-  await close(page);
+  await close(page, 'room-runtime.diff');
 
   await open(page, 'room-proof.png');
   await expect(page.getByRole('img', { name: 'room-proof.png' })).toBeVisible();
-  await close(page);
+  await close(page, 'room-proof.png');
 
   await open(page, 'acceptance-report.html');
   const iframe = page.locator('iframe[title="acceptance-report.html 静态预览"]');
@@ -68,22 +68,24 @@ test('managed Markdown, code, Diff, image, and static HTML previews stay usable 
 /**
  * Generated HTML is delivered as a report card with its own labelled action
  * rather than the one-line chip every other managed file gets, so opening it
- * goes through that card. Everything after the click is identical — one preview
- * shell, one sandbox, one set of guarantees.
+ * goes through that card and remains a sandboxed dialog. Ordinary managed files
+ * expand beside their originating message so the user keeps conversation
+ * context while inspecting them.
  */
 async function open(page: Page, fileName: string): Promise<void> {
   if (/\.html?$/u.test(fileName)) {
     const card = page.locator('.agent-report-card', { hasText: fileName });
     await expect(card).toBeVisible();
     await card.getByRole('button', { name: '预览报告' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
   } else {
-    await page.getByRole('button', { name: `预览 ${fileName}` }).click();
+    await page.getByRole('button', { name: `展开 ${fileName}` }).click();
+    await expect(page.getByRole('region', { name: `${fileName} 内联预览` })).toBeVisible();
   }
-  await expect(page.getByRole('dialog')).toBeVisible();
 }
 
-async function close(page: Page): Promise<void> {
-  const dialog = page.getByRole('dialog');
-  await dialog.getByRole('button', { name: '关闭' }).click();
-  await expect(dialog).toBeHidden();
+async function close(page: Page, fileName: string): Promise<void> {
+  const inline = page.getByRole('region', { name: `${fileName} 内联预览` });
+  await page.getByRole('button', { name: `收起 ${fileName}` }).click();
+  await expect(inline).toBeHidden();
 }
