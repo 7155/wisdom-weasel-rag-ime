@@ -1,13 +1,13 @@
 {
   "schemaVersion": "rag-ime.product-status.v1",
-  "sourceCommit": "c02560d",
+  "sourceCommit": "bd405fd8649dd5921eeb0dc662ed38cfeaf788ce",
   "verificationScope": {
-    "kind": "working_tree",
-    "baseCommit": "c02560d",
-    "includesUncommittedChanges": true,
-    "automatedEvidenceThrough": "2026-07-16",
+    "kind": "clean_commit",
+    "baseCommit": "bd405fd8649dd5921eeb0dc662ed38cfeaf788ce",
+    "includesUncommittedChanges": false,
+    "automatedEvidenceThrough": "2026-07-27",
     "foregroundPermissionActionsRun": false,
-    "note": "Status includes the current uncommitted working tree. The 1,820-test suite, native desktop-bridge build, and patched-Squirrel typechecks pass; automated evidence does not replace a user-authorized foreground IME, Accessibility, or microphone acceptance run."
+    "note": "The clean checkpoint passed 560 frontend unit tests, TypeScript, the production Web build, 158 full-run Playwright cases plus 2 focused cases after repairing one stale privacy-copy contract, native Control/Voice/Desktop builds with codesign verification, managed Pi v2 packaging and smoke, import/route/Ruff/mypy gates, and focused backend verification. The latest 2,952-test backend run had one SQLite test-literal error that was repaired and rechecked narrowly rather than hiding the nonzero full-run exit. Automated evidence does not replace user-authorized foreground IME, Accessibility, microphone, signing, notarization, or clean-machine installation acceptance."
   },
   "productStatus": "backend_only",
   "releaseStatus": "blocked",
@@ -30,8 +30,8 @@
     ],
     "note": "Release flags are declarations only. scripts/check_public_release.py recalculates artifact/evidence hashes and blocks while the real manifest or any listed file is absent or mismatched."
   },
-  "runtimeProfile": "v1-proof",
-  "lastVerifiedDate": "2026-07-16",
+  "runtimeProfile": "managed-pi-v2",
+  "lastVerifiedDate": "2026-07-27",
   "resolvedBlockers": [
     {
       "id": "duplicate_system_squirrel_bundle",
@@ -60,6 +60,14 @@
     {
       "id": "top_level_project_license_selected",
       "evidence": "Project-authored source is now GPL-3.0-only with a canonical top-level LICENSE, SPDX package metadata, a recorded copyright holder/year, and a release-manifest evidence slot that hashes the license file."
+    },
+    {
+      "id": "clean_source_build_checkpoint",
+      "evidence": "Checkpoint bd405fd builds the production Web Control Center, all three native helper apps, and the pinned managed Pi v2 payload from clean source; the native app markers record gitDirty=false."
+    },
+    {
+      "id": "managed_pi_v2_source_contract",
+      "evidence": "The managed runtime packages Pi 0.80.7 from public commit 0cb10fa18118632b6e3d3233cbc18d7ea6486114, matches source-contract sha256 8470cb3a5266a46c8fe246b8654a28e495189f8da762cdc300b4d954da4fb9e5, and passes the protocol-v2 smoke."
     }
   ],
   "blockers": [
@@ -102,10 +110,6 @@
     {
       "id": "desktop_accessibility_foreground_acceptance_pending",
       "detail": "The Accessibility-only desktop bridge and quick-generate window-context route build and pass automated contracts, but TCC grant, live target-app inspection, approved action execution, and foreground quick-generation context still need one user-authorized macOS run."
-    },
-    {
-      "id": "working_tree_dirty",
-      "detail": "The verification scope includes a large uncommitted working tree, so the exact public artifact set is not reproducible from HEAD."
     },
     {
       "id": "patched_squirrel_distribution_compliance_pending",
