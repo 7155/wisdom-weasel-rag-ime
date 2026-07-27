@@ -16,8 +16,8 @@ event ordering and abort behaviour are untouched.
 
 `__all__` is the projection contract. Every runtime protocol -- v1, v2 and
 any future v3 adapter -- consumes exactly these names; the import-boundary
-gate rejects any cross-module import of a private name inside the Pi family,
-so the contract cannot silently regrow a private back channel.
+gate rejects private imports and public-looking names absent from `__all__`,
+so the contract cannot silently regrow an undeclared back channel.
 """
 
 from __future__ import annotations

@@ -143,7 +143,7 @@ def check_import_boundaries(root: Path) -> list[ImportViolation]:
                     )
     violations.extend(check_flat_layers(root))
     violations.extend(check_module_level_cycles(root))
-    violations.extend(check_pi_family_private_imports(root))
+    violations.extend(check_pi_family_public_contracts(root))
     for relative_path in V1_CORE_FILES:
         path = root / relative_path
         if not path.exists():
@@ -163,13 +163,17 @@ def check_import_boundaries(root: Path) -> list[ImportViolation]:
     return violations
 
 
-# The Pi runtime family's shared surface is `__all__` in pi_runtime_public and
-# pi_runtime_values. v2 once imported 22 private names from v1; that coupling
-# was removed by moving the shared logic to owner modules with public names,
-# and this check is what stops the back channel from regrowing: inside the
-# family, importing any underscore-prefixed name from another module is a
-# violation. Module-level and deferred imports are both checked, because a
-# private import hidden inside a function is still a private dependency.
+# Every Pi runtime family module declares its supported cross-module surface in
+# a literal `__all__`. v2 once imported 22 private names from v1; moving those
+# helpers to shared owners removed the coupling, but merely banning underscores
+# still allowed an undeclared public-looking helper to become a new back
+# channel. This gate therefore enforces both halves of the contract:
+#
+# - a private name may never cross a Pi-family module boundary;
+# - every imported public name must be listed by the target module's `__all__`.
+#
+# Module-level and deferred imports are both checked, because hiding an import
+# inside a function does not make it a private implementation detail.
 PI_FAMILY_MODULES = (
     "rag_ime.pi_runtime",
     "rag_ime.pi_runtime_v2",
@@ -180,8 +184,11 @@ PI_FAMILY_MODULES = (
 )
 
 
-def check_pi_family_private_imports(root: Path) -> list[ImportViolation]:
+def check_pi_family_public_contracts(root: Path) -> list[ImportViolation]:
     violations: list[ImportViolation] = []
+    trees: dict[str, ast.Module] = {}
+    public_exports: dict[str, frozenset[str]] = {}
+
     for module in PI_FAMILY_MODULES:
         path = root / Path(module.replace(".", "/") + ".py")
         if not path.exists():
@@ -194,7 +201,27 @@ def check_pi_family_private_imports(root: Path) -> list[ImportViolation]:
                 )
             )
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        trees[module] = tree
+        exports = _literal_module_exports(tree)
+        if exports is None:
+            violations.append(
+                ImportViolation(
+                    path=str(path.relative_to(root)),
+                    module=module,
+                    imported="",
+                    reason=(
+                        "Pi family modules must declare a literal __all__ "
+                        "public contract"
+                    ),
+                )
+            )
+            continue
+        public_exports[module] = exports
+
+    for module, tree in trees.items():
+        path = root / Path(module.replace(".", "/") + ".py")
         for node in ast.walk(tree):
             if not isinstance(node, ast.ImportFrom):
                 continue
@@ -215,7 +242,130 @@ def check_pi_family_private_imports(root: Path) -> list[ImportViolation]:
                             ),
                         )
                     )
+                    continue
+                target_exports = public_exports.get(imported_module)
+                if target_exports is not None and alias.name not in target_exports:
+                    violations.append(
+                        ImportViolation(
+                            path=str(path.relative_to(root)),
+                            module=module,
+                            imported=f"{imported_module}.{alias.name}",
+                            reason=(
+                                "Pi family modules may import only names "
+                                "declared by the target module's __all__"
+                            ),
+                        )
+                    )
+
+    registry_module = "rag_ime.pi_runtime_protocols"
+    registry_tree = trees.get(registry_module)
+    if registry_tree is not None:
+        targets = _literal_protocol_targets(registry_tree)
+        registry_path = root / Path(registry_module.replace(".", "/") + ".py")
+        if targets is None:
+            violations.append(
+                ImportViolation(
+                    path=str(registry_path.relative_to(root)),
+                    module=registry_module,
+                    imported="",
+                    reason=(
+                        "Pi protocol registry must be a literal mapping so "
+                        "its manager contracts can be checked statically"
+                    ),
+                )
+            )
+        else:
+            for version, target_module, attribute in targets:
+                target_exports = public_exports.get(target_module)
+                if target_module not in PI_FAMILY_MODULES or target_exports is None:
+                    violations.append(
+                        ImportViolation(
+                            path=str(registry_path.relative_to(root)),
+                            module=registry_module,
+                            imported=f"{target_module}.{attribute}",
+                            reason=(
+                                f"Pi protocol {version} targets a module "
+                                "outside the checked public family"
+                            ),
+                        )
+                    )
+                elif attribute not in target_exports:
+                    violations.append(
+                        ImportViolation(
+                            path=str(registry_path.relative_to(root)),
+                            module=registry_module,
+                            imported=f"{target_module}.{attribute}",
+                            reason=(
+                                f"Pi protocol {version} manager must be "
+                                "declared by the target module's __all__"
+                            ),
+                        )
+                    )
     return violations
+
+
+def _literal_module_exports(tree: ast.Module) -> frozenset[str] | None:
+    """Return a static ``__all__`` contract without importing runtime code."""
+
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in targets
+        ):
+            continue
+        value = node.value
+        if not isinstance(value, (ast.List, ast.Tuple)):
+            return None
+        exports: list[str] = []
+        for element in value.elts:
+            if not isinstance(element, ast.Constant) or not isinstance(element.value, str):
+                return None
+            exports.append(element.value)
+        return frozenset(exports)
+    return None
+
+
+def _literal_protocol_targets(
+    tree: ast.Module,
+) -> tuple[tuple[str, str, str], ...] | None:
+    """Read the static protocol registry without importing either runtime."""
+
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(
+            isinstance(target, ast.Name) and target.id == "PROTOCOL_MANAGERS"
+            for target in targets
+        ):
+            continue
+        value = node.value
+        if not isinstance(value, ast.Dict):
+            return None
+        entries: list[tuple[str, str, str]] = []
+        for key, target in zip(value.keys, value.values, strict=True):
+            if (
+                not isinstance(key, ast.Constant)
+                or not isinstance(key.value, str)
+                or not isinstance(target, ast.Tuple)
+                or len(target.elts) != 2
+                or not all(
+                    isinstance(element, ast.Constant)
+                    and isinstance(element.value, str)
+                    for element in target.elts
+                )
+            ):
+                return None
+            module_name = target.elts[0]
+            attribute = target.elts[1]
+            assert isinstance(module_name, ast.Constant)
+            assert isinstance(attribute, ast.Constant)
+            entries.append((key.value, module_name.value, attribute.value))
+        return tuple(entries)
+    return None
 
 
 def _matches_any(module: str, prefixes: Iterable[str]) -> bool:

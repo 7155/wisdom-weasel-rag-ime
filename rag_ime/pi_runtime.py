@@ -75,6 +75,14 @@ from .managed_pi_runtime import ManagedPiRuntimeError, discover_managed_pi_runti
 from .pi_provider_config import PiProviderConfigError, load_pi_provider_config
 
 
+__all__ = [
+    "PiRuntimeConfig",
+    "PiRuntimeDriverFactory",
+    "PiRuntimeError",
+    "PiRuntimeManager",
+]
+
+
 _READ_ONLY_CONTROL_TOOLS = ASSISTANT_CONTROL_TOOL_IDS
 _COORDINATOR_TOOLS = COORDINATOR_TOOL_IDS
 _SUBAGENT_READ_ONLY_TOOLS = (

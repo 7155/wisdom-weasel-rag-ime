@@ -22,6 +22,12 @@ import importlib
 from typing import Any
 
 
+__all__ = [
+    "normalize_protocol_version",
+    "resolve_protocol_manager",
+]
+
+
 # protocol version -> (module, attribute). Resolved lazily so this module can
 # be imported by either runtime without creating an import cycle.
 PROTOCOL_MANAGERS: dict[str, tuple[str, str]] = {

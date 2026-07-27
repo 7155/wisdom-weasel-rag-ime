@@ -52,6 +52,9 @@ from .pi_runtime_values import (
 from .room_runtime_host_kill_gate import RuntimeHostKillGate, process_birth_token
 
 
+__all__ = ["PiRuntimeHostManager"]
+
+
 _PROTOCOL_VERSION = "2"
 _CANCELLATION_SURFACES = (
     "provider", "tool", "exec", "retry", "compaction",

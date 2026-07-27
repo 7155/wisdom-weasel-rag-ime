@@ -9,8 +9,8 @@ they can move without dragging Pi behaviour with them.
 Semantics are exactly the private helpers they replace; the names became
 public when this module became the owner, because a shared contract imported
 by three modules is not private to any of them. `__all__` is that contract,
-and the import-boundary gate rejects private-name imports inside the Pi
-family so the back channel cannot regrow.
+and the import-boundary gate rejects private imports and public-looking names
+absent from `__all__`, so the back channel cannot regrow.
 """
 
 from __future__ import annotations
