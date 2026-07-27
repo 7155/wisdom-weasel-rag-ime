@@ -1,39 +1,41 @@
-# Room v2 original anime companion art QA
+# Companion portrait asset QA
 
-Artifact: `eval/room-v2/art/anime-companion-pack-v2-contact-sheet.webp`
-
-Contact-sheet order: Firstlight, Present, Future, Flash, Room onboarding; structured handoff, memory timeline, authorized knowledge retrieval, task acceptance, safe recovery.
-
-The pack was generated for this product with OpenAI built-in `image_gen`. It is an original bright fantasy-comedy anime ensemble and does not use an external character reference.
+The shipped companion pack uses seven original WebP portraits generated for
+Personal Agent Workbench. Runtime identity is carried by the adjacent name and
+status text; the portrait supplies visual continuity and is never the only
+semantic signal.
 
 ## Delivery inventory
 
-| UI asset | Relative path | Dimensions | Bytes | SHA-256 | Intended slot |
-|---|---|---:|---:|---|---|
-| Firstlight | `control-center-web/public/companions/personas/companion-firstlight-v2.webp` | 640 x 640 | 80,028 | `2740539c3623116521cff5052cd0b57c49dc34e954fe18ad006bf2ca8d8fff31` | Role card, details, Session/Room avatar |
-| Present | `control-center-web/public/companions/personas/companion-present-v2.webp` | 640 x 640 | 89,908 | `bda60bcc300fb6854e827e1db01739e7b76b4b5c1e339dcaa58483eb3b2604c1` | Role card, details, Session/Room avatar |
-| Future | `control-center-web/public/companions/personas/companion-future-v2.webp` | 640 x 640 | 83,490 | `071ef1f2119640edb8e13d1526f6331c90fbc3fc0dcbe64932c157c7cfe7a91a` | Role card, details, Session/Room avatar |
-| Flash | `control-center-web/public/companions/personas/companion-flash-v2.webp` | 640 x 640 | 90,180 | `29db94d978dcc6bb5764ad45dc6b5b446ec65451a2ae4ce5dfdaf860a98cdde5` | Role card, details, Session/Room avatar |
-| Room onboarding | `control-center-web/public/companions/scenes/room-ensemble-onboarding-v2.webp` | 960 x 640 | 147,394 | `46e29a6bca57b2397ad7b8a61b9fea414b880eb30ca4c450c8a71e2ad7d04cb1` | Room Posts empty state and onboarding |
-| Structured handoff | `control-center-web/public/companions/scenes/room-structured-handoff-v2.webp` | 960 x 640 | 128,086 | `347b848b7433a353f6443c9d8eea801359859a3373616aa926bf47efbaa3161a` | Room execution empty state and handoff |
-| Memory timeline | `control-center-web/public/companions/scenes/memory-evidence-timeline-v2.webp` | 960 x 640 | 86,918 | `5e816450437a2d40252c37845543c99076910649f5f18228fe6fceadc55f3b91` | Memory evidence empty state |
-| Knowledge retrieval | `control-center-web/public/companions/scenes/knowledge-authorized-retrieval-v2.webp` | 960 x 640 | 122,098 | `35ff43e002551abad2d97842ae10653d5e4c25c88c022d9ab08cecdfef0f8157` | Knowledge library empty state |
-| Task acceptance | `control-center-web/public/companions/scenes/task-evidence-acceptance-v2.webp` | 960 x 640 | 121,742 | `8ea61f5ab134cb35520cdd09f6b6d0b02107741856e474186ef4e0f7f65a2677` | Planning task empty state and acceptance |
-| Safe recovery | `control-center-web/public/companions/scenes/recovery-safe-resume-v2.webp` | 960 x 640 | 126,768 | `fc48bda14f6eac0b5e73c8e22fba80d2b5e5146194f8f18174f47562e293a111` | Room runtime error and recovery |
+| Companion/state | Relative path | Dimensions | Bytes | SHA-256 |
+|---|---|---:|---:|---|
+| 澄·初 | `control-center-web/public/companions/personas/companion-firstlight-v9.webp` | 640 x 640 | 49,330 | `25c2da7d715a2c373e5b0637b89eed896308dca992bf20661ecb528f1a98145e` |
+| 澄·今 | `control-center-web/public/companions/personas/companion-present-v9.webp` | 640 x 640 | 40,648 | `d125a8558a67ec268ac33106549e60b09ca78bb7adb73907fba470c7b21f14a2` |
+| 澄·远 | `control-center-web/public/companions/personas/companion-future-v9.webp` | 640 x 640 | 51,440 | `d083b1da5a7572bfb73e8e68a1ccaf666a29966f8fa1be4a93ad158a3f17affd` |
+| 澄·瞬 | `control-center-web/public/companions/personas/companion-flash-v9.webp` | 640 x 640 | 42,056 | `b1ab6e92828ba20308540f9508029893ee97ebec45c0afb6673bc1815b531028` |
+| 澄·今 / 思考 | `control-center-web/public/companions/personas/companion-present-thinking-v9.webp` | 640 x 640 | 39,610 | `867e037c9cc0358acf75b6c49170d134563a26182db89fad434ff51244f104ad` |
+| 澄·今 / 完成 | `control-center-web/public/companions/personas/companion-present-done-v9.webp` | 640 x 640 | 39,568 | `56a553a2d559bbdfe1d7f24ad766a3cae3e2de666019c4cf25bde0be7e97478e` |
+| 澄·今 / 警告 | `control-center-web/public/companions/personas/companion-present-warning-v9.webp` | 640 x 640 | 41,330 | `1f1dab2942a27cba4cbdc8c5cd1995bbfaf6f5377606dc4dc55f19bfe3e8f586` |
 
-Generated runtime pack: 1,076,612 bytes. The 223,562-byte contact sheet is a QA artifact and is not shipped by the Control Center build.
+The unique runtime portrait pack is 303,982 bytes. The manifest references
+only these files; superseded v2/v4/v5/v6 portraits are deliberately not
+shipped.
 
 ## Visual inspection
 
-- PASS: all four partners remain recognizable in circular avatar crops through hair color, silhouette, clothing accents, and task prop; identity is not carried by color alone.
-- PASS: portraits and scenes share the same bright workshop, archive, navy uniform, brass instrument, and daylight vocabulary without becoming recolors of one image.
-- PASS: no animal avatar, watermark, external logo, readable pseudo-interface, microphone, speaker, headphones, TTS, or speaking-agent imagery appears.
-- PASS: Room onboarding shows four distinct collaborators around one real task. Handoff visibly passes a bounded artifact from the current implementer to an independent reviewer.
-- PASS: memory and knowledge scenes show selection rather than indiscriminate dumping. History and library material remain in the background while a small useful set reaches the active task.
-- PASS: task acceptance separates implementation from review. Recovery contains the failure, preserves evidence and checkpoint material, and avoids a catastrophic visual state.
-- PASS: important faces, hands, artifacts, and evidence remain inside the central crop-safe area at desktop and mobile sizes.
-- PASS: all delivered files are RGB lossy WebP. The manifest records dimensions, byte budgets, SHA-256 hashes, intended slots, and the contact-sheet hash.
+- PASS: all four companions remain distinguishable in circular crops through
+  hair silhouette, clothing, expression, and background contrast.
+- PASS: idle, thinking, done, and warning states remain recognizable at 36 px
+  and 72 px without relying on text inside the image.
+- PASS: the portraits contain no watermark, external logo, readable
+  pseudo-interface, microphone, speaker, or TTS imagery.
+- PASS: important facial features stay inside the crop-safe area across
+  desktop and mobile views.
+- PASS: all files are 640 x 640 RGB lossy WebP and remain within the checked
+  asset budget.
 
 ## Small-size residual risk
 
-At 28 px, props and evidence gestures disappear before the face silhouette does. Runtime meaning therefore remains in the adjacent role name and status text; art provides identity and tone, never the only semantic label.
+At 28 px, clothing details disappear before the face silhouette does. The UI
+therefore keeps the companion name and status as accessible text; portrait art
+never carries state or identity alone.

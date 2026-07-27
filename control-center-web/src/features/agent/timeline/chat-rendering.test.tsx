@@ -471,7 +471,7 @@ describe('Agent chat rendering', () => {
     rerender(<AgentBlock block={imageBlock({ receiptUrl: 'https://example.com/remote.png', alt: '远程回执' })} />);
     expect(screen.queryByRole('img', { name: '远程回执' })).not.toBeInTheDocument();
 
-    rerender(<AgentBlock block={imageBlock({ receiptUrl: '/companions/personas/companion-present-v2.webp', alt: '静态资产' })} />);
+    rerender(<AgentBlock block={imageBlock({ receiptUrl: '/companions/personas/companion-present-v9.webp', alt: '静态资产' })} />);
     expect(screen.queryByRole('img', { name: '静态资产' })).not.toBeInTheDocument();
   });
 
