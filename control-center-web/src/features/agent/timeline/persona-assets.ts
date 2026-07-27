@@ -11,14 +11,14 @@ type PersonaAssetRecord = Readonly<{
 }>;
 
 const portraitAssets = {
-  flash: '/companions/personas/companion-flash-v2.webp',
-  luna: '/companions/personas/companion-firstlight-v2.webp',
-  sol: '/companions/personas/companion-future-v2.webp',
-  terra: '/companions/personas/companion-present-v2.webp',
+  flash: '/companions/personas/companion-flash-v4.webp',
+  luna: '/companions/personas/companion-firstlight-v4.webp',
+  sol: '/companions/personas/companion-future-v4.webp',
+  terra: '/companions/personas/companion-present-v4.webp',
 } as const;
 
 export const personaAssetManifest = {
-  schemaVersion: 'rag-ime.persona-assets.v6',
+  schemaVersion: 'rag-ime.persona-assets.v8',
   fallbackAssetId: 'rag-ime-timeline-present-v1',
   assets: {
     'rag-ime-presence-v2': assetRecord('companion-present-v1', 'presence', '运行状态', singlePortrait(portraitAssets.terra)),

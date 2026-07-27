@@ -204,12 +204,12 @@ export function MemoryFeature() {
                   onValueChange={(next) => openCatalogLayer(next as MemoryLayer)}
                   value={layer}
                 />
-                <div className="mgmt-filter-row">
-                  <Field htmlFor="memory-search" label="搜索">
+                <div className="mgmt-filter-row memory-catalog-filters">
+                  <Field className="memory-catalog-filters__query" htmlFor="memory-search" label="搜索">
                     <Input id="memory-search" onChange={(event) => setDraftQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') runSearch(); }} placeholder="标题、正文或标签" value={draftQuery} />
                   </Field>
-                  <Button leadingIcon={<Search size={14} />} onClick={runSearch} size="small">搜索</Button>
-                  <Field htmlFor="memory-status-filter" label="状态">
+                  <Button className="memory-catalog-filters__submit" leadingIcon={<Search size={14} />} onClick={runSearch} size="small">搜索</Button>
+                  <Field className="memory-catalog-filters__status" htmlFor="memory-status-filter" label="状态">
                     <Select
                       id="memory-status-filter"
                       onValueChange={(value) => {
@@ -222,7 +222,7 @@ export function MemoryFeature() {
                     />
                   </Field>
                   {ownerAwareKind(kind) ? (
-                    <Field htmlFor="memory-owner-filter" label="归属">
+                    <Field className="memory-catalog-filters__owner" htmlFor="memory-owner-filter" label="归属">
                       <Select
                         id="memory-owner-filter"
                         onValueChange={(value) => {

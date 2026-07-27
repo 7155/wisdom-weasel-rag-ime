@@ -60,8 +60,15 @@
 .mgmt-filter-row {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   gap: var(--space-2);
+}
+
+/* A filter action belongs to the control row, not halfway between the label
+   and its input. Small buttons retain their compact typography but share the
+   same physical height as the fields beside them. */
+.mgmt-filter-row > .ui-button {
+  min-height: var(--control-height);
 }
 
 .mgmt-page__body {

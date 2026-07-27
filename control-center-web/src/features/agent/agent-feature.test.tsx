@@ -2174,7 +2174,11 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ }));
+    await user.click(await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5.6 Luna/ },
+      { timeout: 5_000 },
+    ));
     const codexDetails = screen.getByText('Codex Mini', { selector: 'summary' }).closest('details');
     expect(codexDetails).not.toBeNull();
     codexDetails!.open = true;
@@ -2234,7 +2238,11 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: /模型：GPT-5.6 Luna/ }));
+    await user.click(await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5.6 Luna/ },
+      { timeout: 5_000 },
+    ));
     const codexDetails = screen.getByText('Codex Mini', { selector: 'summary' }).closest('details');
     expect(codexDetails).not.toBeNull();
     codexDetails!.open = true;

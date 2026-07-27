@@ -7,6 +7,32 @@ test('Room control plane stays readable and target Stop remains reachable', asyn
   await expect(plane).toBeVisible();
   await expect(page.getByRole('region', { name: /公开交付/ }).first()).toContainText('显式提交');
   await expect(page.getByRole('region', { name: /伙伴运行状态/ }).first()).toContainText('只公开状态，不公开私有对话正文');
+  const planeAlignment = await plane.evaluate((root) => {
+    const postHeader = root.querySelector('.room-kernel-posts > header')?.getBoundingClientRect();
+    const sessionHeader = root.querySelector('.room-kernel-sessions > header')?.getBoundingClientRect();
+    const postRow = root.querySelector('.room-kernel-posts > article')?.getBoundingClientRect();
+    const sessionRow = root.querySelector('.room-kernel-sessions > details')?.getBoundingClientRect();
+    if (!postHeader || !sessionHeader || !postRow || !sessionRow) return null;
+    return {
+      sideBySide: Math.abs(postHeader.left - sessionHeader.left) > 1,
+      headerTopDelta: Math.abs(postHeader.top - sessionHeader.top),
+      headerBottomDelta: Math.abs(postHeader.bottom - sessionHeader.bottom),
+      firstRowTopDelta: Math.abs(postRow.top - sessionRow.top),
+      headerLeftDelta: Math.abs(postHeader.left - sessionHeader.left),
+      sessionHeaderTop: sessionHeader.top,
+      postRowBottom: postRow.bottom,
+    };
+  });
+  expect(planeAlignment).not.toBeNull();
+  if (planeAlignment!.sideBySide) {
+    expect(planeAlignment!.headerTopDelta).toBeLessThanOrEqual(1);
+    expect(planeAlignment!.headerBottomDelta).toBeLessThanOrEqual(1);
+    expect(planeAlignment!.firstRowTopDelta).toBeLessThanOrEqual(1);
+  } else {
+    expect(planeAlignment!.headerLeftDelta).toBeLessThanOrEqual(1);
+    expect(planeAlignment!.sessionHeaderTop).toBeGreaterThanOrEqual(planeAlignment!.postRowBottom);
+  }
+
   await page.getByText('查看验收与证据详情', { exact: true }).click();
   const requirements = page.getByRole('region', { name: /需求、证明与审查/ });
   await expect(requirements).toContainText('永久保留，不可修改');

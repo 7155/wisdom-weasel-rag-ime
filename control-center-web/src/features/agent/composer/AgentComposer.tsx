@@ -343,6 +343,12 @@ export function AgentComposer({
           ))}
         </div>
       ) : null}
+      {showJumpLatest ? (
+        <button className="agent-jump-latest" onClick={onJumpLatest} type="button">
+          <ArrowDown aria-hidden="true" size={14} />
+          <span>回到最新</span>
+        </button>
+      ) : null}
       {/* The dock is taller than its text line — the toolbar band and the
           padding around it are dead space, and clicking there did nothing even
           though the whole surface looks like one input. Clicks that land on
@@ -360,12 +366,6 @@ export function AgentComposer({
           textareaRef.current?.focus();
         }}
       >
-        {showJumpLatest ? (
-          <button className="agent-jump-latest" onClick={onJumpLatest} type="button">
-            <ArrowDown aria-hidden="true" size={14} />
-            <span>回到最新</span>
-          </button>
-        ) : null}
         {editState ? (
           <div className="agent-composer__edit" role="status">
             <PencilLine size={15} aria-hidden="true" />

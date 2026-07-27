@@ -106,7 +106,8 @@ describe('AgentComposer macOS input methods', () => {
     expect(send.closest('.agent-composer__toolbar')).not.toBeNull();
     expect(view.queryByRole('button', { name: '打开命令面板' })).not.toBeInTheDocument();
     const jumpLatest = view.getByRole('button', { name: '回到最新' });
-    expect(jumpLatest.closest('.agent-composer')).not.toBeNull();
+    expect(jumpLatest.closest('.agent-composer-wrap')).not.toBeNull();
+    expect(jumpLatest.closest('.agent-composer')).toBeNull();
     fireEvent.click(jumpLatest);
     expect(onJumpLatest).toHaveBeenCalledTimes(1);
   });

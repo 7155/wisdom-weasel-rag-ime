@@ -230,7 +230,7 @@
 .agent-user-message-shell:focus-within .agent-message-actions,
 .agent-assistant-message-shell:hover .agent-message-actions,
 .agent-assistant-message-shell:focus-within .agent-message-actions { opacity: 1; }
-.agent-assistant-turn { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: start; gap: 11px; animation: agent-message-enter var(--duration-panel) var(--ease-standard) both; }
+.agent-assistant-turn { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: start; gap: 11px; animation: agent-message-enter var(--duration-panel) var(--ease-standard) both; }
 .agent-assistant-turn__body { min-width: 0; }
 .agent-assistant-turn__body > header { display: flex; align-items: baseline; gap: 7px; min-height: 24px; }
 .agent-assistant-turn__body > header strong { font-size: var(--font-size-ui-strong); font-weight: var(--font-weight-bold); }
@@ -1033,8 +1033,8 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
   .agent-conversation-nav { display: none; }
   .agent-user-message-shell { max-width: 92%; margin-bottom: 14px; }
   .agent-user-message-shell[data-actions='true'] { margin-bottom: 28px; }
-  .agent-assistant-turn { grid-template-columns: 32px minmax(0, 1fr); gap: 8px; }
-  .agent-persona-avatar { width: 30px; height: 30px; }
+  .agent-assistant-turn { grid-template-columns: 46px minmax(0, 1fr); gap: 8px; }
+  .agent-assistant-turn > .agent-persona-avatar { width: 44px; height: 44px; }
   .agent-composer-wrap { padding: 5px 9px 8px; }
   .agent-composer textarea { min-height: 70px; padding: 10px 12px 41px; }
   .agent-composer__toolbar { grid-template-columns: minmax(0, 1fr) auto; }
@@ -1854,17 +1854,17 @@ details.agent-activity--inline > summary > .agent-activity__inline-status {
   position: relative;
   z-index: 1;
   display: flex;
-  width: 100%;
+  width: max-content;
   min-height: 30px;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  margin: 0 auto 4px;
   padding: 0 10px;
-  border: 0;
-  border-bottom: 1px solid var(--color-border-soft);
-  border-radius: 0;
-  background: color-mix(in srgb, var(--color-paper-subtle) 72%, var(--color-paper));
-  box-shadow: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-1);
+  background: var(--color-paper);
+  box-shadow: var(--shadow-1);
   color: var(--color-text-secondary);
   cursor: pointer;
   font-family: var(--font-ui);

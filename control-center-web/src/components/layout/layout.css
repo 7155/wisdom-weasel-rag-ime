@@ -189,8 +189,8 @@
 
 .shell-brand__mark {
   display: block;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   flex: 0 0 auto;
   border: 1px solid color-mix(in srgb, var(--color-accent) 72%, var(--color-border));
   border-radius: var(--radius-2);
@@ -584,8 +584,8 @@
   }
 
   .shell-topbar__mobile-brand .shell-brand__mark {
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
   }
 
   .shell-mobile-menu__trigger {
