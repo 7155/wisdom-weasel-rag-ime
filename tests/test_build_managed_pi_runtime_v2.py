@@ -8,11 +8,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.build_managed_pi_runtime_v2 import (
+    _OAUTH_RUNTIME_MODULES,
     ROOT,
     _ROOM_RUNTIME_SOURCE_KEYS,
     _copy_product_skills,
     _default_pi_worktree,
+    _default_node,
     _runtime_host_banner,
+    _smoke_oauth_runtime_modules,
     _verified_room_runtime_contract,
 )
 
@@ -168,6 +171,43 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
 
             (canonical / "packages" / "rag-ime-runtime-host").rmdir()
             self.assertEqual(_default_pi_worktree(workspace), legacy)
+
+    def test_oauth_runtime_smoke_loads_every_lazy_module_and_derives_codex_auth(
+        self,
+    ) -> None:
+        node = Path(_default_node())
+        if not node.is_file():
+            self.skipTest("Node runtime is unavailable")
+        with tempfile.TemporaryDirectory(prefix="rag-ime-oauth-runtime-") as temporary:
+            runtime_dir = Path(temporary)
+            for output_name, (_source, export_name) in _OAUTH_RUNTIME_MODULES.items():
+                if export_name == "openaiCodexOAuth":
+                    body = (
+                        "export const openaiCodexOAuth = {"
+                        "async toAuth(credential) { return {apiKey: credential.access}; }"
+                        "};\n"
+                    )
+                elif export_name == "createRadiusOAuth":
+                    body = "export function createRadiusOAuth() { return {}; }\n"
+                else:
+                    body = f"export const {export_name} = {{}};\n"
+                (runtime_dir / output_name).write_text(body, encoding="utf-8")
+
+            result = _smoke_oauth_runtime_modules(node, runtime_dir)
+
+        self.assertEqual(
+            result,
+            {"ok": True, "moduleCount": len(_OAUTH_RUNTIME_MODULES)},
+        )
+        self.assertEqual(
+            set(_OAUTH_RUNTIME_MODULES),
+            {
+                "anthropic.ts",
+                "github-copilot.ts",
+                "openai-codex.ts",
+                "radius.ts",
+            },
+        )
 
     def test_payload_version_and_manifest_are_bound_to_the_product_commit(self) -> None:
         script = (ROOT / "scripts" / "build_managed_pi_runtime_v2.py").read_text(

@@ -51,6 +51,24 @@ _ROOM_RUNTIME_SOURCE_KEYS = (
     "deterministicTestAdapter",
     "session",
 )
+_OAUTH_RUNTIME_MODULES = {
+    "anthropic.ts": (
+        "packages/ai/src/auth/oauth/anthropic.ts",
+        "anthropicOAuth",
+    ),
+    "github-copilot.ts": (
+        "packages/ai/src/auth/oauth/github-copilot.ts",
+        "githubCopilotOAuth",
+    ),
+    "openai-codex.ts": (
+        "packages/ai/src/auth/oauth/openai-codex.ts",
+        "openaiCodexOAuth",
+    ),
+    "radius.ts": (
+        "packages/ai/src/auth/oauth/radius.ts",
+        "createRadiusOAuth",
+    ),
+}
 
 
 def _run(command: list[str], *, cwd: Path) -> str:
@@ -309,6 +327,92 @@ def _runtime_host_banner(skills_root: Path) -> str:
     )
 
 
+def _bundle_oauth_runtime_modules(
+    *,
+    esbuild: Path,
+    pi_root: Path,
+    runtime_dir: Path,
+) -> None:
+    """Package the OAuth modules intentionally left opaque to Pi's main bundle.
+
+    Pi keeps these modules behind variable dynamic imports so browser builds do
+    not absorb Node-only callback servers and PKCE code. The managed Runtime
+    Host is a self-contained Node payload, so its packager must preserve those
+    runtime-loaded files next to ``cli.mjs``. Bundling each module independently
+    keeps the browser boundary intact while making the installed Host complete.
+    """
+
+    for output_name, (relative_source, _export_name) in _OAUTH_RUNTIME_MODULES.items():
+        source = pi_root / relative_source
+        if not source.is_file() or source.is_symlink():
+            raise ManagedPiRuntimeError(
+                f"managed Pi OAuth runtime source is missing: {relative_source}"
+            )
+        output = runtime_dir / output_name
+        _run(
+            [
+                str(esbuild),
+                str(source),
+                "--bundle",
+                "--platform=node",
+                "--format=esm",
+                "--target=node22",
+                f"--outfile={output}",
+                (
+                    '--banner:js=import { createRequire as __createRequire } '
+                    'from "node:module"; const require = __createRequire(import.meta.url);'
+                ),
+            ],
+            cwd=pi_root,
+        )
+        output.chmod(0o644)
+
+
+def _smoke_oauth_runtime_modules(node: Path, runtime_dir: Path) -> dict[str, object]:
+    module_specs = [
+        {
+            "url": (runtime_dir / output_name).as_uri(),
+            "exportName": export_name,
+        }
+        for output_name, (_relative_source, export_name) in _OAUTH_RUNTIME_MODULES.items()
+    ]
+    probe = (
+        f"const specs = {json.dumps(module_specs, separators=(',', ':'))};"
+        "const loaded = new Map();"
+        "for (const spec of specs) {"
+        " const module = await import(spec.url);"
+        " if (!(spec.exportName in module))"
+        "  throw new Error(`missing OAuth export ${spec.exportName}`);"
+        " loaded.set(spec.exportName, module[spec.exportName]);"
+        "}"
+        "const codex = loaded.get('openaiCodexOAuth');"
+        "const resolved = await codex.toAuth({"
+        " type:'oauth',access:'managed-runtime-smoke',refresh:'unused',"
+        " expires:Date.now()+60000,accountId:'smoke'"
+        "});"
+        "if (resolved.apiKey !== 'managed-runtime-smoke')"
+        " throw new Error('OpenAI Codex OAuth derivation failed');"
+        "process.stdout.write(JSON.stringify({ok:true,moduleCount:specs.length}));"
+    )
+    completed = subprocess.run(
+        [str(node), "--input-type=module", "-e", probe],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=30,
+    )
+    try:
+        response = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ManagedPiRuntimeError(
+            "managed Pi OAuth runtime smoke returned invalid JSON"
+        ) from exc
+    if response != {"ok": True, "moduleCount": len(_OAUTH_RUNTIME_MODULES)}:
+        raise ManagedPiRuntimeError("managed Pi OAuth runtime smoke did not load every module")
+    return response
+
+
 def _smoke_runtime(node: Path, entrypoint: Path) -> dict[str, object]:
     request = {
         "protocolVersion": "2",
@@ -470,6 +574,11 @@ def main(argv: list[str] | None = None) -> int:
                 cwd=pi_root,
             )
             provider_bridge.chmod(0o755)
+            _bundle_oauth_runtime_modules(
+                esbuild=esbuild,
+                pi_root=pi_root,
+                runtime_dir=runtime_dir,
+            )
             packaged_node = bin_dir / "node"
             shutil.copy2(node, packaged_node)
             packaged_node.chmod(0o755)
@@ -479,7 +588,12 @@ def main(argv: list[str] | None = None) -> int:
                 "export default function managedRuntimeV2Placeholder() {}\n",
                 encoding="ascii",
             )
-            smoke = {} if args.skip_smoke else _smoke_runtime(packaged_node, bundled_entrypoint)
+            if args.skip_smoke:
+                smoke: dict[str, object] = {}
+                oauth_smoke: dict[str, object] = {}
+            else:
+                oauth_smoke = _smoke_oauth_runtime_modules(packaged_node, runtime_dir)
+                smoke = _smoke_runtime(packaged_node, bundled_entrypoint)
             manifest = build_managed_pi_runtime_manifest(
                 staging,
                 runtime_version=runtime_version,
@@ -528,6 +642,7 @@ def main(argv: list[str] | None = None) -> int:
         "manifest": str(destination / MANIFEST_NAME),
         "fileCount": len(manifest["files"]),
         "smoke": smoke.get("result", {}) if smoke else {"skipped": True},
+        "oauthSmoke": oauth_smoke if oauth_smoke else {"skipped": True},
     }
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
