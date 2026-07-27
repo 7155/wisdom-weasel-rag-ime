@@ -1,4 +1,4 @@
-# RAG-IME Visual Assets
+# Personal Agent Workbench Visual Assets
 
 The product mark and the companion portraits have separate jobs. The abstract
 mark identifies the application; the silver-haired companion expresses roles
@@ -9,9 +9,10 @@ collaboration surfaces.
 
 ## Runtime Assets
 
-- `rag-ime-icon.png`: a silver weasel-tail orbit around an emerald working
+- `rag-ime-icon.png`: the legacy build filename for a silver-tail orbit around an emerald working
   spark, used to build the macOS `.icns` files and derive the PWA icons. It is
-  a product mark rather than a document glyph or role portrait, keeping app
+  retained so existing release scripts do not need a path migration. The image
+  is a product mark rather than a document glyph or role portrait, keeping app
   identity and companion identity visually distinct.
 - `macos/Shared/Assets/CompanionStates/`: tight UI crops for idle, listening,
   thinking, success, and warning states.
