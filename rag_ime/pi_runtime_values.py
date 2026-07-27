@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any, cast
 
 from .agent_runtime_driver import AgentRuntimeError
 
@@ -50,7 +51,10 @@ def as_mapping(value: object) -> Mapping[str, object]:
 
 def as_integer(value: object) -> int:
     try:
-        return max(0, int(value or 0))
+        # Preserve the runtime boundary's deliberately permissive coercion:
+        # Provider payload objects may implement Python's numeric protocols
+        # even though this public contract accepts the safer static `object`.
+        return max(0, int(cast(Any, value) or 0))
     except (TypeError, ValueError):
         return 0
 

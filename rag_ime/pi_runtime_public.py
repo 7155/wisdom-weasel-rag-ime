@@ -107,8 +107,8 @@ def supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
     explicit = raw.get("thinkingLevels")
     if isinstance(explicit, list):
         allowed = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
-        levels = [str(level) for level in explicit if str(level) in allowed]
-        return list(dict.fromkeys(levels)) or ["off"]
+        explicit_levels = [str(level) for level in explicit if str(level) in allowed]
+        return list(dict.fromkeys(explicit_levels)) or ["off"]
     mapping = as_mapping(raw.get("thinkingLevelMap"))
     levels: list[str] = []
     for level in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
@@ -337,7 +337,8 @@ def public_pi_model(raw: Mapping[str, object]) -> dict[str, object]:
     model_id = str(raw.get("id") or "").strip()
     if not provider or not model_id:
         return {}
-    inputs = raw.get("input") if isinstance(raw.get("input"), list) else []
+    raw_inputs = raw.get("input")
+    inputs = raw_inputs if isinstance(raw_inputs, list) else []
     return {
         "provider": provider[:80],
         "id": model_id[:160],
