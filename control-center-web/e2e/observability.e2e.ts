@@ -14,7 +14,10 @@ test('runtime observation stays bounded and filters its causal trace', async ({
   await expect(feature).toBeVisible();
   await expectNoHorizontalPageOverflow(page);
   await expect(feature).toContainText('运行记录只保存状态、耗时、数量和脱敏后的标识');
-  await expect(feature).toContainText('原始提示词和消息正文不会写进运行记录');
+  await expect(feature).toContainText(
+    '开启“本机上下文快照”后，上下文检查可从你指定的目录恢复经凭证与隐藏推理脱敏的内容',
+  );
+  await expect(feature).toContainText('未开启时只读取当前 Runtime');
   await expect(page.getByRole('list', { name: '运行记录事件' }).getByRole('listitem')).toHaveCount(8);
 
   const bounds = await feature.evaluate((element) => ({

@@ -325,7 +325,8 @@ the project with sensitive material.
 ### Requirements
 
 - macOS 14 or newer for the native build and foreground verification route.
-- Python 3.10 or newer.
+- Python 3.12 or newer. The source uses PEP 701 f-string syntax that does not
+  parse on Python 3.10 or 3.11.
 - Xcode command-line tools; full Xcode is required to build patched Squirrel.
 - Apple Silicon plus `mlx` / `mlx-lm` only when using the resident MLX
   predictor.
@@ -385,6 +386,10 @@ scripts/check_installed_product_components.py --require-current
 The stack installer isolates each worker's copied Python package, records its
 source commit, refuses dirty tracked source by default, and audits the complete
 installed generation before returning success.
+
+For the pinned Pi checkout, non-destructive native build walkthrough, local
+installation variants, rollback command, and the separate source-public versus
+signed-distribution gates, see [Build, Install, And Release](release/README.md).
 
 ### Review And Migrate A Legacy Memory Database
 
