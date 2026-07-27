@@ -1,8 +1,8 @@
 .agent-persona-avatar {
   position: relative;
   display: block;
-  width: 56px;
-  height: 56px;
+  width: 60px;
+  height: 60px;
   flex: 0 0 auto;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--persona-accent, var(--color-accent)) 48%, var(--color-border));
@@ -20,15 +20,16 @@
   background: var(--color-danger-soft);
 }
 
-.agent-persona-avatar[data-size='small'] { width: 36px; height: 36px; }
-.agent-persona-avatar[data-size='large'] { width: 72px; height: 72px; }
-.agent-persona-avatar[data-size='hero'] { width: 112px; height: 112px; border-radius: var(--radius-3); }
+.agent-persona-avatar[data-size='small'] { width: 40px; height: 40px; }
+.agent-persona-avatar[data-size='large'] { width: 80px; height: 80px; }
+.agent-persona-avatar[data-size='hero'] { width: 120px; height: 120px; }
 
 .agent-persona-avatar img {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
 }
 
 .agent-persona-avatar:is([data-size='small'], [data-size='medium'], [data-size='large']) img {
@@ -64,16 +65,60 @@
 .agent-persona-avatar[data-presence='thinking'] > i { background: var(--color-warning); }
 .agent-persona-avatar[data-presence='warning'] > i { background: var(--color-danger); }
 
+/* State changes read as a new expression landing in place, not as a looping
+   mascot animation. Distinct names make the one-shot motion restart only when
+   the semantic state changes. */
+.agent-persona-avatar[data-presence='listening'] img {
+  animation: persona-expression-listening 180ms var(--ease-standard) both;
+}
+
+.agent-persona-avatar[data-presence='thinking'] img {
+  animation: persona-expression-thinking 210ms var(--ease-standard) both;
+}
+
+.agent-persona-avatar[data-presence='done'] img {
+  animation: persona-expression-done 200ms var(--ease-standard) both;
+}
+
+.agent-persona-avatar[data-presence='warning'] img {
+  animation: persona-expression-warning 160ms var(--ease-standard) both;
+}
+
 @keyframes persona-presence-breathe {
   0% { opacity: .52; transform: scale(.82); }
   72%, 100% { opacity: 0; transform: scale(1.04); }
 }
 
+@keyframes persona-expression-listening {
+  from { opacity: .72; transform: translateY(2px) rotate(-1deg); }
+  to { opacity: 1; transform: translateY(0) rotate(0); }
+}
+
+@keyframes persona-expression-thinking {
+  from { opacity: .72; transform: translateY(2px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes persona-expression-done {
+  from { opacity: .72; transform: translateY(3px) scale(.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes persona-expression-warning {
+  from { opacity: .72; transform: translateX(-2px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .agent-persona-avatar[data-presence='thinking']::after { animation: none; opacity: 0; }
+  .agent-persona-avatar img { animation: none !important; }
 }
 
 :root[data-reduce-motion='true'] .agent-persona-avatar[data-presence='thinking']::after {
   animation: none;
   opacity: 0;
+}
+
+:root[data-reduce-motion='true'] .agent-persona-avatar img {
+  animation: none !important;
 }
