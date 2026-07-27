@@ -1,17 +1,20 @@
 # Agent Guide
 
 This repository is being prepared for public inspection at
-`https://github.com/7155/wisdom-weasel-rag-ime`.
+`https://github.com/7155/personal-agent-workbench`.
 
 ## Product Boundary
 
-- Product route: patched macOS Squirrel/Rime plus the local Python sidecar.
+- Product center: explicit Agent Sessions, multi-Agent Rooms, Tools, governed
+  memory, and the Control Center.
+- Patched macOS Squirrel/Rime, voice, browser, and desktop bridges are optional
+  adapters around that core.
 - Do not reintroduce an independent InputMethodKit frontend; use the patched
   Squirrel sources and engine-neutral frontend contracts as the single route.
 - Base IME responsibility stays with Rime/Wanxiang: pinyin parsing, fuzzy pinyin,
   dictionary candidates, paging, and fallback.
-- RAG-IME adds side candidates from local model prediction and local
-  RAG/memory. It should not replace Rime's decoder.
+- The input adapter adds side candidates from local prediction and governed
+  retrieval. It must not replace Rime's decoder.
 
 ## User Requirements
 
@@ -23,13 +26,14 @@ This repository is being prepared for public inspection at
 - Backspace/Delete and app/context switches must invalidate stale context.
 - Selecting an LLM/RAG side candidate should immediately schedule the next
   prediction opportunity.
-- Realtime prediction uses a local small model. High-intelligence generation,
-  memory organization, and lexicon cleanup use DeepSeek V4 only on explicit or
-  offline routes.
+- Feature model choices must resolve through their owned runtime boundary.
+  Passive input prediction stays local; explicit Agent, Active RAG, voice, and
+  offline workflows may use configured Providers.
 
 ## Main Files
 
 - `README.md`: public product boundary, setup, and validation entry points.
+- `ARCHITECTURE.md`: ownership, dependency direction, and extension boundaries.
 - `release/`: public-safe machine-readable feature and release metadata.
 - `eval/`: synthetic public evaluation fixtures; never copy private input here.
 - `squirrel-patches/0001-add-rag-ime-sidecar.patch`: product frontend patch.
@@ -40,13 +44,10 @@ This repository is being prepared for public inspection at
 
 ## Current Priorities
 
-1. Verify the real foreground Squirrel install and avoid duplicate stale input
-   sources.
-2. Keep foreground context correct after Backspace/Delete.
-3. Deduplicate and reorganize RAG memory so old input does not dominate.
-4. Improve local multi-word prediction toward top-3 logits seed branching with
-   prompt/KV-cache reuse.
-5. Keep public guidance concise in root files; `docs/` is local-only and must
+1. Keep Session, Room, Tool, Provider, and persistence ownership explicit.
+2. Preserve model-selection locality and runtime-neutral Provider boundaries.
+3. Keep foreground input context correct after Backspace/Delete and app changes.
+4. Keep public guidance concise in root files; `docs/` is local-only and must
    never be committed.
 
 ## Safety
@@ -67,6 +68,9 @@ substantial changes:
 
 ```bash
 python3 -m unittest discover -s tests
+python3 scripts/check_import_boundaries.py
+python3 scripts/check_route_ownership.py
+python3 scripts/check_public_release.py --repository-only
 scripts/doctor_squirrel_integration.sh
 scripts/verify_squirrel_foreground_trace.sh
 ```

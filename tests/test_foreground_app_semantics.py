@@ -28,6 +28,7 @@ class ForegroundApplicationSemanticsTests(unittest.TestCase):
             (target_project / "README.md").write_text("readme", encoding="utf-8")
             (target_project / "node_modules").mkdir()
             db_path = root / "zed.sqlite"
+            fixture_key = "sk-" + "1234567890abcdefghijklmnop"
             _create_zed_state_db(db_path)
             _insert_editor(
                 db_path,
@@ -37,7 +38,7 @@ class ForegroundApplicationSemanticsTests(unittest.TestCase):
                 timestamp="2026-07-23 12:00:00",
                 contents=(
                     "unsaved line 1\n"
-                    "api_key = sk-1234567890abcdefghijklmnop\n"
+                    f"api_key = {fixture_key}\n"
                     f"workspace = {target_project}\n"
                     "unsaved line 4"
                 ),
@@ -65,7 +66,7 @@ class ForegroundApplicationSemanticsTests(unittest.TestCase):
         self.assertEqual(semantics["projectName"], "TargetProject")
         self.assertEqual(semantics["activeFile"], "src/target.py")
         self.assertIn("api_key = [REDACTED_SECRET]", semantics["editorExcerpt"])
-        self.assertNotIn("sk-1234567890abcdefghijklmnop", semantics["editorExcerpt"])
+        self.assertNotIn(fixture_key, semantics["editorExcerpt"])
         self.assertIn("workspace = [WORKSPACE]", semantics["editorExcerpt"])
         self.assertIn("\n", semantics["editorExcerpt"])
         self.assertEqual(semantics["contentOrigin"], "zed_recovery_buffer")
@@ -156,7 +157,12 @@ class ForegroundApplicationSemanticsTests(unittest.TestCase):
             project = root / "Project"
             active_file = project / ".env"
             project.mkdir()
-            active_file.write_text("API_KEY=sk-should-never-leave-the-file", encoding="utf-8")
+            disk_fixture_key = "sk-" + "should-never-leave-the-file"
+            stored_fixture_key = "sk-" + "stored-secret-should-not-leave"
+            active_file.write_text(
+                f"API_KEY={disk_fixture_key}",
+                encoding="utf-8",
+            )
             db_path = root / "zed.sqlite"
             _create_zed_state_db(db_path)
             _insert_editor(
@@ -165,7 +171,7 @@ class ForegroundApplicationSemanticsTests(unittest.TestCase):
                 project=project,
                 buffer_path=active_file,
                 timestamp="2026-07-24 12:00:00",
-                contents="API_KEY=sk-stored-secret-should-not-leave",
+                contents=f"API_KEY={stored_fixture_key}",
                 scroll_top_row=0,
             )
 

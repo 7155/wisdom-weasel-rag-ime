@@ -5,7 +5,7 @@ substitute for legal review. Before distributing a release, pin every shipped
 version, include the corresponding upstream license text, and verify that the
 release bundle satisfies each license.
 
-The release gate also requires `rag-ime.release-manifest.v1` evidence for the
+The release gate also requires `rag-ime.release-manifest.v2` evidence for the
 exact `THIRD_PARTY_NOTICES.md` digest and the patched-Squirrel corresponding
 source archive. A notice filename or product-status boolean is not treated as
 proof: the manifest-listed files must exist and their SHA-256 values must match.

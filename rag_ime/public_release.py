@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-SCHEMA_VERSION = "rag-ime.public-release-audit.v2"
+SCHEMA_VERSION = "rag-ime.public-release-audit.v3"
 RELEASE_MANIFEST_SCHEMA_VERSION = "rag-ime.release-manifest.v2"
 DEFAULT_RELEASE_MANIFEST_PATH = "output/release/release-manifest.json"
 REQUIRED_ARTIFACT_KINDS = {"macos_release", "corresponding_source"}
@@ -23,7 +23,12 @@ REQUIRED_RELEASE_EVIDENCE = {
 }
 LICENSE_NAMES = ("LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING")
 REQUIRED_FILES = (
+    "ARCHITECTURE.md",
+    "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
     "README.md",
+    "SECURITY.md",
     "THIRD_PARTY_NOTICES.md",
     "pyproject.toml",
     "release/feature-registry.json",
@@ -130,46 +135,77 @@ def audit_public_release(
     dirty_state = bool(_git_status(repo_root)) if dirty is None else bool(dirty)
     product_status, product_status_error = _load_product_status(repo_root)
     release_manifest = audit_release_manifest(repo_root, release_manifest_path)
-    blockers: list[dict[str, object]] = []
+    repository_blockers: list[dict[str, object]] = []
     if required_missing:
-        blockers.append({"id": "required_public_files_missing", "paths": required_missing})
+        repository_blockers.append(
+            {"id": "required_public_files_missing", "paths": required_missing}
+        )
     if required_untracked:
-        blockers.append({"id": "required_public_files_untracked", "paths": required_untracked})
+        repository_blockers.append(
+            {"id": "required_public_files_untracked", "paths": required_untracked}
+        )
     if not license_files:
-        blockers.append({"id": "top_level_license_missing", "paths": list(LICENSE_NAMES)})
+        repository_blockers.append(
+            {"id": "top_level_license_missing", "paths": list(LICENSE_NAMES)}
+        )
     if forbidden:
-        blockers.append({"id": "forbidden_tracked_artifacts", "paths": forbidden})
+        repository_blockers.append(
+            {"id": "forbidden_tracked_artifacts", "paths": forbidden}
+        )
     if forbidden_candidates:
-        blockers.append({"id": "forbidden_candidate_artifacts", "paths": forbidden_candidates})
+        repository_blockers.append(
+            {
+                "id": "forbidden_candidate_artifacts",
+                "paths": forbidden_candidates,
+            }
+        )
     if secret_hits:
-        blockers.append({"id": "possible_secret_shapes", "hits": secret_hits})
+        repository_blockers.append(
+            {"id": "possible_secret_shapes", "hits": secret_hits}
+        )
     if machine_path_hits:
-        blockers.append({"id": "machine_specific_paths", "hits": machine_path_hits})
+        repository_blockers.append(
+            {"id": "machine_specific_paths", "hits": machine_path_hits}
+        )
     if dirty_state:
-        blockers.append({"id": "working_tree_dirty"})
+        repository_blockers.append({"id": "working_tree_dirty"})
     if product_status_error:
-        blockers.append({"id": "product_status_invalid", "detail": product_status_error})
-    elif product_status:
+        repository_blockers.append(
+            {"id": "product_status_invalid", "detail": product_status_error}
+        )
+
+    distribution_blockers: list[dict[str, object]] = []
+    if not product_status_error and product_status:
         evidence = product_status.get("foregroundEvidence")
         foreground = evidence if isinstance(evidence, dict) else {}
         if product_status.get("productStatus") != "foreground_verified" or foreground.get("strictSoakPassed") is not True:
-            blockers.append({"id": "foreground_acceptance_pending"})
+            distribution_blockers.append({"id": "foreground_acceptance_pending"})
         if product_status.get("releaseStatus") != "ready":
-            blockers.append({"id": "release_status_declared_blocked"})
+            distribution_blockers.append({"id": "release_status_declared_blocked"})
     if release_manifest["status"] == "missing":
-        blockers.append({"id": "release_manifest_missing", "path": release_manifest["path"]})
+        distribution_blockers.append(
+            {"id": "release_manifest_missing", "path": release_manifest["path"]}
+        )
     elif release_manifest["status"] != "valid":
-        blockers.append(
+        distribution_blockers.append(
             {
                 "id": "release_manifest_invalid",
                 "path": release_manifest["path"],
                 "issues": release_manifest["issues"],
             }
         )
+    blockers = [*repository_blockers, *distribution_blockers]
+    repository_ready = not repository_blockers
+    distribution_ready = not blockers
     total_bytes = sum((repo_root / path).stat().st_size for path in existing)
     return {
         "schemaVersion": SCHEMA_VERSION,
-        "ok": not blockers,
+        # `ok` retains its v2 meaning: a distributable macOS release is ready.
+        # A source repository can be safe to make public while signing,
+        # notarization, foreground acceptance, or a binary manifest is pending.
+        "ok": distribution_ready,
+        "repositoryReady": repository_ready,
+        "distributionReady": distribution_ready,
         "root": str(repo_root),
         "trackedFileCount": len(existing),
         "trackedBytes": total_bytes,
@@ -194,11 +230,14 @@ def audit_public_release(
             ),
         },
         "releaseManifest": release_manifest,
+        "repositoryBlockers": repository_blockers,
+        "distributionBlockers": distribution_blockers,
         "blockers": blockers,
         "notes": [
             "Missing tracked files are reported separately because a pending deletion is not removed from HEAD until committed.",
             "This shape scan is a release guard, not a substitute for provider-side credential rotation.",
             "Candidate scans include tracked files plus non-ignored untracked files so a clean commit cannot introduce an unaudited artifact.",
+            "repositoryReady covers public source hygiene; distributionReady additionally requires foreground acceptance and a verified macOS release manifest.",
             "Product-status release flags are declarations only; release readiness also requires a valid, hash-verified release manifest.",
         ],
     }

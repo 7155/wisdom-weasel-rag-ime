@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a bounded user-facing capability
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What concrete workflow is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Proposed boundary
+      description: Which current owner consumes the input and produces the result?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and risks
+      description: Include privacy, Provider, Tool, Session, Room, and persistence impact.
+    validations:
+      required: true

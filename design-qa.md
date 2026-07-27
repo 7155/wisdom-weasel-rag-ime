@@ -3,9 +3,9 @@
 - Date: 2026-07-14
 - Scope: native macOS Agent conversation workspace, compact composer, transcript, session rail, activity state, and navigation responsiveness
 - Reference: Hermes single-flow TUI hierarchy and VCPChat role/session/tool presentation
-- Installed direct-chat build: `/Users/undo/Applications/RagImeControl.app`
-- Current Room source build: `/Volumes/undo 4t/git/learnA/wisdom-weasel-rag-ime/build/RagImeControl.app` (not copied over the installed build in this pass)
-- Captures: `/tmp/rag-ime-agent-redesign-final.png`, `/tmp/rag-ime-agent-active-qa.png`, `/tmp/rag-ime-agent-activity-final.png`, `/tmp/rag-ime-agent-room.png`
+- Installed direct-chat build: `~/Applications/RagImeControl.app`
+- Current Room source build: `<repo>/build/RagImeControl.app` (not copied over the installed build in this pass)
+- Captures: temporary local QA images; they are intentionally not tracked
 
 ## Comparison
 

@@ -40,10 +40,11 @@ class ManualMemoryReviewTests(unittest.TestCase):
         # The current checkpoint gate already blocks secrets. Simulate a legacy
         # row captured before that gate existed to verify the review export also
         # fails closed.
+        fixture_key = "sk-" + "test-1234567890abcdef"
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 "UPDATE input_events SET committed_text = ? WHERE id = (SELECT MAX(id) FROM input_events)",
-                ("API key 是 sk-test-1234567890abcdef",),
+                (f"API key 是 {fixture_key}",),
             )
         with sqlite3.connect(self.db_path) as conn:
             before = conn.total_changes

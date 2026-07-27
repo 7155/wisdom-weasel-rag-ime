@@ -45,8 +45,11 @@ jobs:
         run: python scripts/check_product_status.py --json
       - name: Audit public MiniMind completion contract
         run: python scripts/minimind_retraining.py audit
-      - name: Inspect public release blockers
-        run: python scripts/check_public_release.py --allow-blocked
+      - name: Enforce public source repository hygiene
+        # A source repository may be public before a signed/notarized macOS
+        # package exists. Secret shapes, machine paths, generated artifacts,
+        # missing notices, and dirty state must still fail CI.
+        run: python scripts/check_public_release.py --repository-only
       - name: Run unit suite
         env:
           PYTHONWARNINGS: "error::ResourceWarning"

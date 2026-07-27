@@ -72,9 +72,9 @@ index 0000000000000000000000000000000000000000..7a5399c16db4bc78f4cc01e048490085
 +rag_ime:
 +  enabled: true
 +  sidecar_url: http://127.0.0.1:8766/api
-+  python: /opt/homebrew/bin/python3
-+  repo_root: /Volumes/undo 4t/git/learnA/rag-ime-surface-final
-+  db_path: /Users/undo/Library/Application Support/RagIme/rag-ime.sqlite
++  python: /path/to/python3
++  repo_root: /path/to/personal-agent-workbench
++  db_path: /path/to/rag-ime.sqlite
 +  project: wisdom-weasel-rag-ime
 +  max_visible_candidates: 8
 +  max_side_candidates: 5

@@ -25,8 +25,40 @@ class PublicReleaseAuditTests(unittest.TestCase):
 
         self.assertEqual(report["schemaVersion"], SCHEMA_VERSION)
         self.assertTrue(report["ok"])
+        self.assertTrue(report["repositoryReady"])
+        self.assertTrue(report["distributionReady"])
         self.assertEqual(report["releaseManifest"]["status"], "valid")
         self.assertEqual(report["blockers"], [])
+
+    def test_public_source_can_be_ready_while_distribution_remains_blocked(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-public-release-") as tmp:
+            root = Path(tmp)
+            tracked = self._write_public_metadata(
+                root,
+                ready=False,
+                include_license=True,
+            )
+
+            report = audit_public_release(
+                root,
+                tracked_files=tracked,
+                dirty=False,
+            )
+
+        self.assertTrue(report["repositoryReady"], report)
+        self.assertFalse(report["distributionReady"])
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["repositoryBlockers"], [])
+        self.assertEqual(
+            {item["id"] for item in report["distributionBlockers"]},
+            {
+                "foreground_acceptance_pending",
+                "release_manifest_missing",
+                "release_status_declared_blocked",
+            },
+        )
 
     def test_ready_status_cannot_bypass_missing_release_manifest(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-public-release-") as tmp:
@@ -248,7 +280,16 @@ class PublicReleaseAuditTests(unittest.TestCase):
 
     @staticmethod
     def _write_public_metadata(root: Path, *, ready: bool, include_license: bool) -> tuple[str, ...]:
-        for name in ("README.md", "THIRD_PARTY_NOTICES.md", "pyproject.toml"):
+        for name in (
+            "ARCHITECTURE.md",
+            "CHANGELOG.md",
+            "CODE_OF_CONDUCT.md",
+            "CONTRIBUTING.md",
+            "README.md",
+            "SECURITY.md",
+            "THIRD_PARTY_NOTICES.md",
+            "pyproject.toml",
+        ):
             (root / name).write_text("public metadata\n", encoding="utf-8")
         if include_license:
             (root / "LICENSE").write_text("test license\n", encoding="utf-8")
@@ -271,7 +312,12 @@ class PublicReleaseAuditTests(unittest.TestCase):
             encoding="utf-8",
         )
         tracked = [
+            "ARCHITECTURE.md",
+            "CHANGELOG.md",
+            "CODE_OF_CONDUCT.md",
+            "CONTRIBUTING.md",
             "README.md",
+            "SECURITY.md",
             "THIRD_PARTY_NOTICES.md",
             "pyproject.toml",
             "release/feature-registry.json",
