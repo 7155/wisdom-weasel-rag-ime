@@ -22,6 +22,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Sync locked Python dependencies
+        run: |
+          python -m pip install "uv==0.11.1"
+          uv sync --locked --python python
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Compile Python
         run: python -m compileall -q rag_ime scripts tests
       - name: Check package boundaries
@@ -38,9 +43,7 @@ jobs:
       - name: Type-check stable boundary contracts
         # Scope and strictness live in [tool.mypy] in pyproject.toml: only the
         # stable contract modules are checked, strictly, and they are clean.
-        run: |
-          pip install "mypy==2.3.0"
-          mypy
+        run: uvx --from "mypy==2.3.0" mypy
       - name: Validate product status
         run: python scripts/check_product_status.py --json
       - name: Audit public MiniMind completion contract
@@ -72,6 +75,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Sync locked Python dependencies
+        run: |
+          python -m pip install "uv==0.11.1"
+          uv sync --locked --python python
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - uses: actions/setup-node@v6
         with:
           node-version: "22"

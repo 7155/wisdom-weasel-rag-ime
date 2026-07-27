@@ -18,7 +18,7 @@ change can therefore cross privacy or lifecycle boundaries.
 ## Local Setup
 
 ```bash
-uv sync
+uv sync --locked --python 3.12
 corepack enable
 corepack prepare pnpm@11.9.0 --activate
 pnpm --dir control-center-web install --frozen-lockfile
@@ -44,14 +44,14 @@ build products, or macOS permission state to fixtures.
 Run focused tests while working. Before a substantial pull request, run:
 
 ```bash
-python3 -m compileall -q rag_ime scripts tests
-python3 scripts/check_import_boundaries.py
-python3 scripts/check_route_ownership.py
+uv run --locked python -m compileall -q rag_ime scripts tests
+uv run --locked python scripts/check_import_boundaries.py
+uv run --locked python scripts/check_route_ownership.py
 uvx --from ruff==0.14.2 ruff check rag_ime scripts tests
 uvx --from mypy==2.3.0 mypy
-python3 scripts/check_product_status.py --json
-python3 scripts/check_public_release.py --repository-only
-python3 -m unittest discover -s tests
+uv run --locked python scripts/check_product_status.py --json
+uv run --locked python scripts/check_public_release.py --repository-only
+uv run --locked python -m unittest discover -s tests
 pnpm --dir control-center-web typecheck
 pnpm --dir control-center-web test
 pnpm --dir control-center-web build
