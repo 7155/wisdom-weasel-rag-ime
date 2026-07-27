@@ -73,7 +73,7 @@ export function DesktopNavigation({
       <div className="shell-brand">
         <img
           className="shell-brand__mark"
-          src="./companions/personas/companion-present-v4.webp"
+          src="./app-icon-64.png"
           alt=""
           aria-hidden="true"
         />
