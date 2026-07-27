@@ -101,8 +101,9 @@ class MemoryBookLifecycleTests(unittest.TestCase):
                 conn.execute(
                     """UPDATE memory_books
                        SET status = 'archived', archive_reason = 'discarded_by_manual_review',
-                           archived_at_ms = 1_800_000_000_000
-                       WHERE book_id = 'book:topic:raw-tool-log'"""
+                           archived_at_ms = ?
+                       WHERE book_id = 'book:topic:raw-tool-log'""",
+                    (1_800_000_000_000,),
                 )
                 rebuild_retrieval_docs(conn)
                 count = conn.execute(
