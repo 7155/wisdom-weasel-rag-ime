@@ -18,7 +18,7 @@ class PersonaArtAssetTests(unittest.TestCase):
         self.manifest: dict[str, Any] = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
     def test_generated_assets_match_manifest_and_webp_dimensions(self) -> None:
-        self.assertEqual(self.manifest["schemaVersion"], "rag-ime.persona-assets.v6")
+        self.assertEqual(self.manifest["schemaVersion"], "rag-ime.persona-assets.v8")
         portraits = [
             asset for asset in self.manifest["assets"].values()
             if isinstance(asset.get("source"), str)

@@ -634,6 +634,48 @@ class RoomKernelApplicationService:
             raise ToolAuthorizationError(
                 "canonical Room Tools must execute through Room Kernel"
             )
+        existing_execution = self.capabilities.execution_receipt(
+            str(invocation["receiptId"])
+        )
+        if existing_execution is not None:
+            raise ToolAuthorizationError(
+                "Room product Tool invocation already has a terminal "
+                "execution receipt; reuse its evidence instead of executing "
+                f"again ({existing_execution['executionReceiptId']})"
+            )
+        replay = self.capabilities.failed_command_replay(
+            session_id=session_id,
+            dispatch_id=str(_live["dispatchId"]),
+            invocation_receipt_id=str(invocation["receiptId"]),
+        )
+        if replay is not None:
+            prior_receipt_id = str(
+                replay.get("executionReceiptId") or ""
+            )
+            reason = {
+                "reason": "duplicate_failed_invocation",
+                "priorExecutionReceiptId": prior_receipt_id,
+                "retryable": False,
+            }
+            self.capabilities.record_runtime_execution(
+                session_id=session_id,
+                invocation_receipt_id=str(invocation["receiptId"]),
+                status="rejected",
+                result_hash=hashlib.sha256(
+                    json.dumps(
+                        reason,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+                created_at_ms=int(time.time() * 1000),
+            )
+            raise ToolAuthorizationError(
+                "duplicate failed Room Tool command blocked; inspect the "
+                "previous failure or produce new successful Tool evidence "
+                f"before retrying ({prior_receipt_id})"
+            )
         return {
             "ok": True,
             "created": created,

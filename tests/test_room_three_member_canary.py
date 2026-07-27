@@ -593,7 +593,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                     "workspace_shell",
                     "applied",
                     6,
-                    command=CANARY.TEST_COMMAND,
+                    command="python3 -m unittest -v test_calculator",
                 )
             ],
         }
@@ -602,11 +602,12 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             all(CANARY.natural_managed_approval_checks(approvals).values())
         )
         approvals["A"][3]["receipt"].pop("networkAllowed")
-        self.assertTrue(
+        self.assertFalse(
             CANARY.natural_managed_approval_checks(approvals)[
                 "shellNetworkDenied"
             ]
         )
+        approvals["A"][3]["receipt"]["networkAllowed"] = False
         approvals["C"][0]["receipt"]["networkAllowed"] = True
         self.assertFalse(
             CANARY.natural_managed_approval_checks(approvals)[
@@ -614,6 +615,17 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             ]
         )
         approvals["C"][0]["receipt"]["networkAllowed"] = False
+        approvals["C"][0]["preview"]["actionPayload"]["command"] = (
+            "echo all tests passed"
+        )
+        self.assertFalse(
+            CANARY.natural_managed_approval_checks(approvals)[
+                "cFinalTestObserved"
+            ]
+        )
+        approvals["C"][0]["preview"]["actionPayload"]["command"] = (
+            "python3 -m unittest -v test_calculator"
+        )
         approvals["A"].append(
             self._approval(
                 "workspace_shell",
@@ -689,7 +701,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                     "workspace_shell",
                     "applied",
                     4,
-                    command=CANARY.TEST_COMMAND,
+                    command="python3 -m unittest -v test_calculator",
                 )
             ],
         }
@@ -701,6 +713,18 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         )
 
         self.assertTrue(all(checks.values()))
+        approvals["C"][0]["preview"]["actionPayload"]["command"] = (
+            "echo all tests passed"
+        )
+        checks = CANARY.natural_tool_workload_checks(
+            receipts,
+            approvals=approvals,
+            repeated_failed_commands=[],
+        )
+        self.assertFalse(checks["cVerifiedIndependently"])
+        approvals["C"][0]["preview"]["actionPayload"]["command"] = (
+            "python3 -m unittest -v test_calculator"
+        )
         checks = CANARY.natural_tool_workload_checks(
             receipts,
             approvals=approvals,
@@ -782,19 +806,22 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                         "INSERT INTO room_v2_capability_runtime_bindings VALUES (?, ?)",
                         (f"manifest-{member}", f"session-{member}"),
                     )
-                for receipt_id, command_hash in (
-                    ("invoke-a-1", "same-command"),
-                    ("invoke-a-2", "same-command"),
-                    ("invoke-a-3", "different-command"),
+                for receipt_id, tool_name, command_hash, status in (
+                    ("invoke-a-1", "workspace_shell", "same-command", "failed"),
+                    ("invoke-a-2", "workspace_shell", "same-command", "failed"),
+                    ("invoke-a-3", "workspace_shell", "evidence-reset", "failed"),
+                    ("invoke-a-4", "workspace_read", "read-command", "applied"),
+                    ("invoke-a-5", "workspace_shell", "evidence-reset", "failed"),
+                    ("invoke-a-6", "workspace_shell", "same-command", "rejected"),
                 ):
                     connection.execute(
                         "INSERT INTO room_v2_tool_invocation_receipts "
-                        "VALUES (?, 'manifest-A', 'hash', 'workspace_shell', ?)",
-                        (receipt_id, command_hash),
+                        "VALUES (?, 'manifest-A', 'hash', ?, ?)",
+                        (receipt_id, tool_name, command_hash),
                     )
                     connection.execute(
-                        "INSERT INTO room_v2_tool_execution_receipts VALUES (?, 'failed')",
-                        (receipt_id,),
+                        "INSERT INTO room_v2_tool_execution_receipts VALUES (?, ?)",
+                        (receipt_id, status),
                     )
 
             repeated = CANARY.repeated_failed_invocation_commands(
@@ -1197,6 +1224,11 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         command: str = "",
         network_allowed: bool = False,
     ) -> dict[str, object]:
+        unittest_passed = (
+            tool == "workspace_shell"
+            and state == "applied"
+            and " -m unittest" in command
+        )
         return {
             "approvalId": f"approval:{requested_at_ms}",
             "toolId": tool,
@@ -1211,6 +1243,12 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             "receipt": {
                 "summary": "done",
                 "networkAllowed": network_allowed,
+                "exitCode": 0 if state == "applied" else 1,
+                "output": (
+                    "Ran 3 tests in 0.001s\n\nOK\n"
+                    if unittest_passed
+                    else ""
+                ),
             },
         }
 

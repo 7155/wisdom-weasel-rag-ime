@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
+import shlex
 import sqlite3
 import time
 from pathlib import Path
@@ -651,6 +653,49 @@ def _test_command_states(
     ]
 
 
+def _successful_unittest_observed(
+    approvals: Mapping[str, list[dict[str, Any]]],
+    member: str,
+) -> bool:
+    """Accept a direct successful unittest invocation, not a success claim.
+
+    Natural mode intentionally does not prescribe one command string. The
+    final verifier may use the project's exact discovery command or name its
+    only test module, but wrappers, pipelines, redirects and `echo passed`
+    remain non-evidence.
+    """
+
+    for item in approvals.get(member, []):
+        if (
+            item.get("toolId") != "workspace_shell"
+            or item.get("state") != "applied"
+        ):
+            continue
+        command = _approval_command(item)
+        if any(token in command for token in (";", "&&", "||", "|", ">", "<")):
+            continue
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            continue
+        if (
+            len(parts) >= 3
+            and Path(parts[0]).name in {"python", "python3"}
+            and parts[1:3] == ["-m", "unittest"]
+        ):
+            receipt = item.get("receipt")
+            if not isinstance(receipt, Mapping):
+                continue
+            output = str(receipt.get("output") or "")
+            if (
+                receipt.get("exitCode") == 0
+                and re.search(r"\bRan 3 tests?\b", output)
+                and re.search(r"(?m)^OK$", output)
+            ):
+                return True
+    return False
+
+
 def _workspace_shell_commands(
     approvals: Mapping[str, list[dict[str, Any]]],
 ) -> list[str]:
@@ -680,7 +725,6 @@ def natural_managed_approval_checks(
     """Validate policy and effects without requiring one scripted call list."""
 
     a_test_states = _test_command_states(approvals, "A")
-    c_test_states = _test_command_states(approvals, "C")
     shell_commands = _workspace_shell_commands(approvals)
     a_patches = [
         item
@@ -710,7 +754,10 @@ def natural_managed_approval_checks(
             not _is_standalone_sleep_command(command)
             for command in shell_commands
         ),
-        "cFinalTestObserved": "applied" in c_test_states,
+        "cFinalTestObserved": _successful_unittest_observed(
+            approvals,
+            "C",
+        ),
         "onlyWorkspaceActions": all(
             item.get("toolId") in {"workspace_patch", "workspace_shell"}
             for values in approvals.values()
@@ -937,7 +984,7 @@ def repeated_failed_invocation_commands(
     session_ids: Mapping[str, str],
     dispatches: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Find exact failed command replays, not distinct failures of one Tool."""
+    """Find exact failed replays without intervening successful evidence."""
 
     repeated: list[dict[str, Any]] = []
     with sqlite3.connect(db_path) as connection:
@@ -946,7 +993,7 @@ def repeated_failed_invocation_commands(
                 """
                 SELECT invocation.canonical_tool_name,
                        invocation.command_hash,
-                       COUNT(DISTINCT invocation.receipt_id)
+                       execution.status
                 FROM room_v2_tool_invocation_receipts invocation
                 JOIN room_v2_capability_manifests manifest
                   ON manifest.manifest_id = invocation.manifest_id
@@ -956,27 +1003,43 @@ def repeated_failed_invocation_commands(
                  AND binding.session_id = ?
                 JOIN room_v2_tool_execution_receipts execution
                   ON execution.invocation_receipt_id = invocation.receipt_id
-                 AND execution.status = 'failed'
                 WHERE manifest.dispatch_id = ?
-                GROUP BY invocation.canonical_tool_name,
-                         invocation.command_hash
-                HAVING COUNT(DISTINCT invocation.receipt_id) > 1
-                ORDER BY invocation.canonical_tool_name,
-                         invocation.command_hash
+                ORDER BY execution.rowid
                 """,
                 (
                     session_ids[member],
                     str(dispatches[index].get("dispatchId") or ""),
                 ),
             ).fetchall()
+            evidence_generation = 0
+            failed_generation: dict[tuple[str, str], int] = {}
+            repeated_counts: dict[tuple[str, str], int] = {}
+            for tool_name, command_hash, status in rows:
+                canonical = str(tool_name)
+                normalized_status = str(status)
+                if (
+                    normalized_status == "applied"
+                    and canonical
+                    not in {"room_post", "room_collaborate", "room_commit"}
+                ):
+                    evidence_generation += 1
+                    continue
+                if normalized_status != "failed":
+                    continue
+                key = (canonical, str(command_hash))
+                if failed_generation.get(key) == evidence_generation:
+                    repeated_counts[key] = repeated_counts.get(key, 1) + 1
+                failed_generation[key] = evidence_generation
             repeated.extend(
                 {
                     "member": member,
-                    "toolName": str(row[0]),
-                    "commandHash": str(row[1]),
-                    "count": int(row[2]),
+                    "toolName": tool_name,
+                    "commandHash": command_hash,
+                    "count": count,
                 }
-                for row in rows
+                for (tool_name, command_hash), count in sorted(
+                    repeated_counts.items()
+                )
             )
     return repeated
 
@@ -1313,7 +1376,6 @@ def natural_tool_workload_checks(
     b = receipts["B"]
     c = receipts["C"]
     a_test_states = _test_command_states(approvals, "A")
-    c_test_states = _test_command_states(approvals, "C")
     checks = {
         "aReadProject": a["workspace_read"]["appliedExecutionCount"] >= 2,
         "aReproducedThenFixed": (
@@ -1344,7 +1406,7 @@ def natural_tool_workload_checks(
         ),
         "cVerifiedIndependently": (
             c["workspace_read"]["appliedExecutionCount"] >= 2
-            and "applied" in c_test_states
+            and _successful_unittest_observed(approvals, "C")
             and c["workspace_patch"]["invocationCount"] == 0
             and c["room_collaborate"]["invocationCount"] == 0
         ),

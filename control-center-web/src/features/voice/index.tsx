@@ -319,7 +319,7 @@ export function VoiceFeature() {
           </div>
         </ManagementSection>
 
-        <ManagementSection title="按住说话与专有词" description="把人名、项目名和常用术语加进词表，听写时会更容易认对。">
+        <ManagementSection title="按住说话与专有词" description="热词只在你预览并确认保存后发送给当前语音识别服务。">
           <div className="mgmt-grid-2">
             <OperationalList items={[
               { id: 'push-to-talk', title: '按住说话', detail: '按下开始、松开后形成最终文字', meta: hotkeyLabel(stringValue(valueAt(voiceControl, 'agent.hotkeyMode'), stringValue(voiceSettings.hotkey))), status: <StatusBadge label={booleanValue(voiceAgent.ok) ? '已就绪' : '待检查'} tone={booleanValue(voiceAgent.ok) ? 'success' : 'warning'} /> },

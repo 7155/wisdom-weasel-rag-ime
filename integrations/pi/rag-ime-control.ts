@@ -881,6 +881,8 @@ const coordinatorToolSpecs: ToolSpec[] = [
     progress: { run: "正在准备受控命令预览" },
     guidelines: [
       "先用 workspace_list/workspace_read 理解工作区，再提出最小命令。",
+      "目录浏览、文本读取和文本搜索能由专用工具完成时，不要用 pwd、ls、find、cat、head、tail、grep、sed 或 awk 代替。",
+      "项目说明或验收条件给出精确命令与工作目录时原样使用；不要替换解释器路径，也不要添加 cd、管道、重定向或命令串。",
       "每条命令都要原生批准；不要放入密码、Token、API Key、提权或系统安全命令。",
       "网络默认关闭；确实需要时必须把 allowNetwork 明确设为 true 并等待本次批准。",
     ],

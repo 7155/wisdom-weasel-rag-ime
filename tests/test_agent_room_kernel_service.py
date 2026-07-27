@@ -2839,7 +2839,10 @@ class RoomKernelServiceTests(unittest.TestCase):
             workspace_roots=[str(self.root)],
         )
 
-        def reject_command(_prepared):
+        attempted_commands: list[object] = []
+
+        def reject_command(prepared):
+            attempted_commands.append(prepared)
             raise RuntimeError("test executor rejected this command")
 
         gateway = ControlToolGateway(
@@ -2899,6 +2902,76 @@ class RoomKernelServiceTests(unittest.TestCase):
             ),
             execution,
         )
+        repeated_call = {
+            "schemaVersion": "rag-ime.agent-tool-call.v1",
+            "sessionId": self.session_id,
+            "tool": "workspace_shell",
+            "toolCallId": "tool:room-failed-shell",
+            "loadReceiptId": loaded["receiptId"],
+            "args": {
+                "op": "run",
+                "command": "printf ok",
+                "cwd": str(self.root),
+                "allowNetwork": False,
+            },
+        }
+        with self.assertRaisesRegex(
+            ToolAuthorizationError,
+            "already has a terminal execution receipt",
+        ):
+            gateway.execute(repeated_call)
+        self.assertEqual(len(attempted_commands), 1)
+
+        repeated_call = {
+            **repeated_call,
+            "toolCallId": "tool:room-failed-shell-replay",
+        }
+        with self.assertRaisesRegex(
+            ToolAuthorizationError,
+            "duplicate failed Room Tool command blocked",
+        ):
+            gateway.execute(repeated_call)
+        self.assertEqual(len(attempted_commands), 1)
+        rejected = self.service.room_capabilities.execution_receipt(
+            "invoke:tool:room-failed-shell-replay"
+        )
+        self.assertIsNotNone(rejected)
+        self.assertEqual(rejected["status"], "rejected")
+
+        evidence_target = self.root / "new-evidence.txt"
+        evidence_target.write_text("new evidence\n", encoding="utf-8")
+        read_load = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:room-replay-evidence",
+                "toolName": "workspace_read",
+                "createdAtMs": 6,
+            }
+        )["result"]
+        read_response = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": self.session_id,
+                "tool": "workspace_read",
+                "toolCallId": "tool:room-replay-evidence",
+                "loadReceiptId": read_load["receiptId"],
+                "args": {
+                    "op": "read",
+                    "path": str(evidence_target),
+                },
+            }
+        )
+        self.assertEqual(
+            read_response["result"]["content"],
+            "new evidence\n",
+        )
+        repeated_call["toolCallId"] = "tool:room-failed-shell-after-evidence"
+        retried = gateway.execute(repeated_call)
+        self.assertEqual(
+            retried["roomExecutionReceipt"]["status"],
+            "failed",
+        )
+        self.assertEqual(len(attempted_commands), 2)
 
     def test_room_dispatch_exposes_the_complete_normal_agent_tool_surface(self) -> None:
         gateway = ControlToolGateway(

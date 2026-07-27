@@ -1149,6 +1149,88 @@ class RoomCapabilityManifestStore:
             raise RuntimeError("tool execution receipt is corrupt")
         return payload
 
+    def failed_command_replay(
+        self,
+        *,
+        session_id: str,
+        dispatch_id: str,
+        invocation_receipt_id: str,
+    ) -> dict[str, object] | None:
+        """Return the failed/rejected command that the current call would replay.
+
+        A new Tool call id is not new evidence. Once an exact command has
+        failed, the same Session and Dispatch may retry it only after another
+        Tool has produced a successful execution receipt. That keeps immediate
+        model retries from re-running the same side effect while preserving the
+        normal red-test -> patch -> green-test workflow.
+        """
+
+        invocation = self.invocation_receipt(invocation_receipt_id)
+        command = _mapping(invocation.get("canonicalCommand"))
+        command_hash = _hash(command.get("commandHash"), "command_hash")
+        with self._connect() as conn:
+            prior = conn.execute(
+                """
+                SELECT execution.rowid AS execution_order,
+                       execution.payload_json
+                FROM room_v2_tool_execution_receipts execution
+                JOIN room_v2_tool_invocation_receipts candidate
+                  ON candidate.receipt_id = execution.invocation_receipt_id
+                JOIN room_v2_capability_manifests manifest
+                  ON manifest.manifest_id = candidate.manifest_id
+                 AND manifest.manifest_hash = candidate.manifest_hash
+                WHERE execution.session_id = ?
+                  AND manifest.dispatch_id = ?
+                  AND candidate.command_hash = ?
+                  AND execution.invocation_receipt_id <> ?
+                ORDER BY execution.rowid DESC
+                LIMIT 1
+                """,
+                (
+                    _required(session_id, "session_id"),
+                    _required(dispatch_id, "dispatch_id"),
+                    command_hash,
+                    _required(
+                        invocation_receipt_id,
+                        "invocation_receipt_id",
+                    ),
+                ),
+            ).fetchone()
+            if prior is None:
+                return None
+            payload = json.loads(str(prior["payload_json"]))
+            if not isinstance(payload, dict):
+                raise RuntimeError("tool execution receipt is corrupt")
+            if payload.get("status") not in {"failed", "rejected"}:
+                return None
+            successful_evidence = conn.execute(
+                """
+                SELECT 1
+                FROM room_v2_tool_execution_receipts execution
+                JOIN room_v2_tool_invocation_receipts candidate
+                  ON candidate.receipt_id = execution.invocation_receipt_id
+                JOIN room_v2_capability_manifests manifest
+                  ON manifest.manifest_id = candidate.manifest_id
+                 AND manifest.manifest_hash = candidate.manifest_hash
+                WHERE execution.session_id = ?
+                  AND manifest.dispatch_id = ?
+                  AND execution.status = 'applied'
+                  AND execution.tool_name NOT IN (
+                    'room_post',
+                    'room_collaborate',
+                    'room_commit'
+                  )
+                  AND execution.rowid > ?
+                LIMIT 1
+                """,
+                (
+                    _required(session_id, "session_id"),
+                    _required(dispatch_id, "dispatch_id"),
+                    int(prior["execution_order"]),
+                ),
+            ).fetchone()
+        return None if successful_evidence is not None else payload
+
     def runtime_evidence_refs(
         self,
         *,

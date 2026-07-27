@@ -95,6 +95,11 @@ class AgentCorePolicyTests(unittest.TestCase):
             "有界备选已经耗尽",
             "阻塞证据和解除条件",
             "不要重复同一失败动作空转",
+            "先读取回执原因",
+            "不得只更换调用 ID 就重发同一工具和完全相同的参数",
+            "目录浏览、文本读取和文本搜索能由专用工作区工具完成时",
+            "不得改用 Shell 的 pwd、ls、find、cat、head、tail、grep、sed 或 awk",
+            "不要替换解释器路径，也不要添加 cd、管道、重定向或命令串",
             "不能靠重复 Prompt 维持循环",
             "Kernel 根据证据、权限、取消和预算决定真实状态",
         ):
