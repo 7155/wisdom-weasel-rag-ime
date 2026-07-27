@@ -11,8 +11,13 @@ projections for usage, models, retry status, fork candidates, tool activity
 and confirmation values. Names and bodies are unchanged, so Provider payloads,
 event ordering and abort behaviour are untouched.
 
-`_pi_message_payload` and the media URL builder it uses now live here too, so
+`pi_message_payload` and the media URL builder it uses now live here too, so
 `pi_runtime_v2` imports no private name from `pi_runtime` at all.
+
+`__all__` is the projection contract. Every runtime protocol -- v1, v2 and
+any future v3 adapter -- consumes exactly these names; the import-boundary
+gate rejects any cross-module import of a private name inside the Pi family,
+so the contract cannot silently regrow a private back channel.
 """
 
 from __future__ import annotations
@@ -33,19 +38,41 @@ from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
 
 from .pi_runtime_values import (
     PiRuntimeError,
-    _integer,
-    _mapping,
-    _redact_runtime_text,
+    as_integer,
+    as_mapping,
+    redact_runtime_text,
 )
 
+__all__ = [
+    "APPROVAL_TITLE_PREFIX",
+    "REVIEW_TITLE_PREFIX",
+    "last_assistant_error",
+    "last_assistant_preview",
+    "managed_media_content_url",
+    "pi_message_id",
+    "pi_message_is_public",
+    "pi_message_payload",
+    "provider_retry_status",
+    "public_code_tool_activity",
+    "public_file_name",
+    "public_fork_candidate_text",
+    "public_pi_model",
+    "public_usage",
+    "redact_mapping",
+    "safe_scalar",
+    "supported_thinking_levels",
+    "ui_confirmation_value",
+    "visible_message_text",
+]
 
-_APPROVAL_TITLE_PREFIX = "RAG-IME-APPROVAL:"
+
+APPROVAL_TITLE_PREFIX = "RAG-IME-APPROVAL:"
 
 
-_REVIEW_TITLE_PREFIX = "RAG-IME-REVIEW:"
+REVIEW_TITLE_PREFIX = "RAG-IME-REVIEW:"
 
 
-def _visible_message_text(role: str, text: str) -> str:
+def visible_message_text(role: str, text: str) -> str:
     if role != "user":
         return text
     tagged = re.search(
@@ -64,7 +91,7 @@ def _visible_message_text(role: str, text: str) -> str:
     return text
 
 
-def _public_file_name(value: str) -> str:
+def public_file_name(value: str) -> str:
     normalized = str(value or "").replace("\\", "/").rstrip("/")
     file_name = normalized.rsplit("/", 1)[-1].strip()
     if not file_name or len(file_name) > 240 or any(ord(character) < 32 for character in file_name):
@@ -74,7 +101,7 @@ def _public_file_name(value: str) -> str:
     return file_name
 
 
-def _supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
+def supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
     if not bool(raw.get("reasoning")):
         return ["off"]
     explicit = raw.get("thinkingLevels")
@@ -82,7 +109,7 @@ def _supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
         allowed = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
         levels = [str(level) for level in explicit if str(level) in allowed]
         return list(dict.fromkeys(levels)) or ["off"]
-    mapping = _mapping(raw.get("thinkingLevelMap"))
+    mapping = as_mapping(raw.get("thinkingLevelMap"))
     levels: list[str] = []
     for level in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
         mapped = mapping.get(level)
@@ -94,26 +121,26 @@ def _supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
     return levels or ["off"]
 
 
-def _safe_scalar(value: object) -> object:
+def safe_scalar(value: object) -> object:
     if value is None or isinstance(value, (bool, int, float)):
         return value
-    return _redact_runtime_text(str(value))[:2000]
+    return redact_runtime_text(str(value))[:2000]
 
 
-def _last_assistant_error(messages: list[object]) -> str:
+def last_assistant_error(messages: list[object]) -> str:
     for item in reversed(messages):
-        message = _mapping(item)
+        message = as_mapping(item)
         if str(message.get("role") or "") != "assistant":
             continue
         if str(message.get("stopReason") or "").lower() != "error" and not message.get("errorMessage"):
             return ""
-        return _redact_runtime_text(str(message.get("errorMessage") or "模型请求失败，请重试"))
+        return redact_runtime_text(str(message.get("errorMessage") or "模型请求失败，请重试"))
     return ""
 
 
-def _last_assistant_preview(messages: list[object]) -> str:
+def last_assistant_preview(messages: list[object]) -> str:
     for item in reversed(messages):
-        message = _mapping(item)
+        message = as_mapping(item)
         if str(message.get("role") or "") != "assistant":
             continue
         content = message.get("content")
@@ -121,19 +148,19 @@ def _last_assistant_preview(messages: list[object]) -> str:
             return " ".join(content.split())[:240]
         if isinstance(content, list):
             text = " ".join(
-                str(_mapping(block).get("text") or "")
+                str(as_mapping(block).get("text") or "")
                 for block in content
-                if str(_mapping(block).get("type") or "") == "text"
+                if str(as_mapping(block).get("type") or "") == "text"
             )
             return " ".join(text.split())[:240]
     return ""
 
 
-def _pi_message_id(raw: Mapping[str, object], turn_id: str) -> str:
+def pi_message_id(raw: Mapping[str, object], turn_id: str) -> str:
     value = str(raw.get("id") or "").strip()
     if value:
         return value
-    timestamp = _integer(raw.get("timestamp"))
+    timestamp = as_integer(raw.get("timestamp"))
     role = str(raw.get("role") or "assistant").lower()
     if timestamp:
         return f"pi:message:{role}:{timestamp}"
@@ -142,7 +169,7 @@ def _pi_message_id(raw: Mapping[str, object], turn_id: str) -> str:
     return f"pi:message:{role}:{digest}"
 
 
-def _pi_message_is_public(raw: Mapping[str, object]) -> bool:
+def pi_message_is_public(raw: Mapping[str, object]) -> bool:
     """Keep Pi's loop protocol out of the human conversation transcript."""
 
     role = str(raw.get("role") or "assistant").lower()
@@ -154,23 +181,23 @@ def _pi_message_is_public(raw: Mapping[str, object]) -> bool:
     if not isinstance(content, list):
         return bool(str(content or "").strip()) or bool(raw.get("errorMessage"))
     for item in content:
-        value = _mapping(item)
+        value = as_mapping(item)
         if str(value.get("type") or "") in {"toolCall", "tool_call"}:
             return False
     return any(
-        str(_mapping(item).get("type") or "") in {"text", "image"}
+        str(as_mapping(item).get("type") or "") in {"text", "image"}
         for item in content
     ) or bool(raw.get("errorMessage"))
 
 
-def _public_usage(value: object) -> dict[str, int]:
-    message = _mapping(value)
-    usage = _mapping(message.get("usage"))
-    input_tokens = _integer(usage.get("input"))
-    output_tokens = _integer(usage.get("output"))
-    cache_read = _integer(usage.get("cacheRead"))
-    cache_write = _integer(usage.get("cacheWrite"))
-    total = _integer(usage.get("totalTokens"))
+def public_usage(value: object) -> dict[str, int]:
+    message = as_mapping(value)
+    usage = as_mapping(message.get("usage"))
+    input_tokens = as_integer(usage.get("input"))
+    output_tokens = as_integer(usage.get("output"))
+    cache_read = as_integer(usage.get("cacheRead"))
+    cache_write = as_integer(usage.get("cacheWrite"))
+    total = as_integer(usage.get("totalTokens"))
     if total <= 0:
         total = input_tokens + output_tokens + cache_read + cache_write
     return {
@@ -182,15 +209,15 @@ def _public_usage(value: object) -> dict[str, int]:
     }
 
 
-def _provider_retry_status(
+def provider_retry_status(
     payload: Mapping[str, object],
     *,
     started: bool,
 ) -> dict[str, object]:
     """Project retry progress without leaking raw Provider diagnostics."""
 
-    attempt = max(1, _integer(payload.get("attempt")))
-    maximum = max(attempt, _integer(payload.get("maxAttempts")))
+    attempt = max(1, as_integer(payload.get("attempt")))
+    maximum = max(attempt, as_integer(payload.get("maxAttempts")))
     if started:
         return {
             "status": "retrying",
@@ -199,7 +226,7 @@ def _provider_retry_status(
             "summary": f"模型连接暂时失败，正在自动重试（{attempt}/{maximum}）",
             "attempt": attempt,
             "maxAttempts": maximum,
-            "delayMs": max(0, _integer(payload.get("delayMs"))),
+            "delayMs": max(0, as_integer(payload.get("delayMs"))),
         }
     success = payload.get("success") is True
     return {
@@ -217,7 +244,7 @@ def _provider_retry_status(
     }
 
 
-def _ui_confirmation_value(value: object) -> bool:
+def ui_confirmation_value(value: object) -> bool:
     normalized = str(value or "").strip().lower()
     affirmative = (
         "yes",
@@ -255,12 +282,12 @@ def _ui_confirmation_value(value: object) -> bool:
     raise PiRuntimeError("confirm UI response must explicitly approve or reject the request")
 
 
-def _public_fork_candidate_text(value: object, *, role: str = "user") -> str:
+def public_fork_candidate_text(value: object, *, role: str = "user") -> str:
     """Return a public transcript preview without leaking injected context."""
 
     normalized = " ".join(str(value or "").split())[:8000]
     visible = (
-        " ".join(_visible_message_text("user", normalized).split())[:8000]
+        " ".join(visible_message_text("user", normalized).split())[:8000]
         if role == "user"
         else normalized
     )
@@ -277,7 +304,7 @@ def _public_fork_candidate_text(value: object, *, role: str = "user") -> str:
     return visible
 
 
-def _public_code_tool_activity(tool_name: str, args: Mapping[str, object]) -> dict[str, object]:
+def public_code_tool_activity(tool_name: str, args: Mapping[str, object]) -> dict[str, object]:
     normalized_tool = str(tool_name or "").strip().lower()
     file_tools = {
         "read", "read_file", "workspace_read",
@@ -287,7 +314,7 @@ def _public_code_tool_activity(tool_name: str, args: Mapping[str, object]) -> di
     if normalized_tool not in file_tools:
         return {}
     raw_path = str(args.get("relativePath") or args.get("fileName") or args.get("file_path") or args.get("path") or "")
-    file_name = _public_file_name(raw_path)
+    file_name = public_file_name(raw_path)
     result: dict[str, object] = {}
     if file_name:
         result["fileName"] = file_name
@@ -305,7 +332,7 @@ def _public_code_tool_activity(tool_name: str, args: Mapping[str, object]) -> di
     return result
 
 
-def _public_pi_model(raw: Mapping[str, object]) -> dict[str, object]:
+def public_pi_model(raw: Mapping[str, object]) -> dict[str, object]:
     provider = str(raw.get("provider") or "").strip()
     model_id = str(raw.get("id") or "").strip()
     if not provider or not model_id:
@@ -317,14 +344,14 @@ def _public_pi_model(raw: Mapping[str, object]) -> dict[str, object]:
         "name": str(raw.get("name") or model_id).strip()[:160] or model_id[:160],
         "api": str(raw.get("api") or "").strip()[:80],
         "reasoning": bool(raw.get("reasoning")),
-        "thinkingLevels": _supported_thinking_levels(raw),
+        "thinkingLevels": supported_thinking_levels(raw),
         "supportsImages": "image" in {str(item) for item in inputs},
-        "contextWindow": _integer(raw.get("contextWindow")),
-        "maxTokens": _integer(raw.get("maxTokens")),
+        "contextWindow": as_integer(raw.get("contextWindow")),
+        "maxTokens": as_integer(raw.get("maxTokens")),
     }
 
 
-def _redact_mapping(value: Mapping[str, object], *, depth: int = 0) -> dict[str, object]:
+def redact_mapping(value: Mapping[str, object], *, depth: int = 0) -> dict[str, object]:
     if depth >= 4:
         return {"truncated": True}
     result: dict[str, object] = {}
@@ -333,25 +360,25 @@ def _redact_mapping(value: Mapping[str, object], *, depth: int = 0) -> dict[str,
         if re.search(r"token|secret|password|api.?key|authorization|cookie", key, re.IGNORECASE):
             result[key] = "[REDACTED_SECRET]"
         elif isinstance(raw_value, Mapping):
-            result[key] = _redact_mapping(raw_value, depth=depth + 1)
+            result[key] = redact_mapping(raw_value, depth=depth + 1)
         elif isinstance(raw_value, list):
             result[key] = [
-                _redact_mapping(item, depth=depth + 1) if isinstance(item, Mapping) else _safe_scalar(item)
+                redact_mapping(item, depth=depth + 1) if isinstance(item, Mapping) else safe_scalar(item)
                 for item in raw_value[:64]
             ]
         else:
-            result[key] = _safe_scalar(raw_value)
+            result[key] = safe_scalar(raw_value)
     return result
 
 
-def _managed_media_content_url(session_id: str, media_id: str) -> str:
+def managed_media_content_url(session_id: str, media_id: str) -> str:
     return (
         f"/api/agent/media/{quote(str(media_id), safe='')}/content"
         f"?sessionId={quote(str(session_id), safe='')}"
     )
 
 
-def _pi_message_payload(
+def pi_message_payload(
     raw: Mapping[str, object],
     *,
     session_id: str,
@@ -364,7 +391,7 @@ def _pi_message_payload(
     if role not in {"user", "assistant", "tool", "system"}:
         role = "tool" if role.lower().startswith("tool") else "assistant"
     content = raw.get("content")
-    resolved_message_id = message_id or _pi_message_id(raw, turn_id)
+    resolved_message_id = message_id or pi_message_id(raw, turn_id)
     fallback_blocks_enabled = trusted_blocks is None
     blocks: list[AgentBlock] = []
     blocks.extend(
@@ -377,7 +404,7 @@ def _pi_message_payload(
     )
     attachments: list[str] = []
     if isinstance(content, str):
-        visible_content = _visible_message_text(role, content)
+        visible_content = visible_message_text(role, content)
         extracted = (
             extract_completed_agent_blocks(
                 visible_content,
@@ -405,10 +432,10 @@ def _pi_message_payload(
             )
     elif isinstance(content, list):
         for index, item in enumerate(content):
-            value = _mapping(item)
+            value = as_mapping(item)
             content_type = str(value.get("type") or "unknown")
             if content_type == "text":
-                visible_content = _visible_message_text(role, str(value.get("text") or ""))
+                visible_content = visible_message_text(role, str(value.get("text") or ""))
                 extracted = (
                     extract_completed_agent_blocks(
                         visible_content,
@@ -442,7 +469,7 @@ def _pi_message_payload(
                 )
                 if media_id:
                     attachments.append(media_id)
-                    receipt_url = _managed_media_content_url(session_id, media_id)
+                    receipt_url = managed_media_content_url(session_id, media_id)
                     blocks.append(
                         normalize_agent_block(
                             {
@@ -470,12 +497,12 @@ def _pi_message_payload(
                             "data": {
                                 "toolCallId": str(value.get("id") or ""),
                                 "toolName": str(value.get("name") or value.get("toolName") or ""),
-                                "arguments": _redact_mapping(_mapping(value.get("arguments"))),
+                                "arguments": redact_mapping(as_mapping(value.get("arguments"))),
                             },
                         }
                     )
                 )
-    error_message = _redact_runtime_text(str(raw.get("errorMessage") or "").strip())
+    error_message = redact_runtime_text(str(raw.get("errorMessage") or "").strip())
     failed = str(raw.get("stopReason") or "").lower() == "error" or bool(error_message)
     if failed:
         blocks.append(
@@ -501,7 +528,7 @@ def _pi_message_payload(
                 }
             )
         )
-    created_at = _integer(raw.get("timestamp")) or int(time.time() * 1000)
+    created_at = as_integer(raw.get("timestamp")) or int(time.time() * 1000)
     return AgentMessage(
         message_id=resolved_message_id,
         session_id=session_id,
@@ -514,5 +541,5 @@ def _pi_message_payload(
         completed_at_ms=created_at,
         provider=str(raw.get("provider") or "").strip()[:80],
         model=str(raw.get("responseModel") or raw.get("model") or "").strip()[:160],
-        usage=_public_usage(raw) if role == "assistant" else None,
+        usage=public_usage(raw) if role == "assistant" else None,
     )

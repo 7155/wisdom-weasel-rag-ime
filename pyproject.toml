@@ -60,8 +60,12 @@ target-version = "py312"
 # loop variable (B023), and the always-false/always-true forms Pylint detects.
 select = [
     "E9", "E711", "E712", "E713", "E714", "E722",
+    # F823 catches a rename hazard proven real in this repository: a local
+    # assignment `name = name(...)` shadows an imported function for the whole
+    # scope and raises UnboundLocalError at runtime, which an event pump can
+    # swallow into silently dropped events.
     "F402", "F502", "F506", "F522", "F601", "F621", "F622",
-    "F632", "F701", "F702", "F704", "F706", "F707", "F811", "F821",
+    "F632", "F701", "F702", "F704", "F706", "F707", "F811", "F821", "F823",
     "B002", "B006", "B012", "B023",
     "PLE0101", "PLE0704", "PLE1142",
     "PLW0127", "PLW0129", "PLW0602", "PLW0711",

@@ -20,8 +20,8 @@ from rag_ime.pi_runtime import (
     PiRuntimeError,
     PiRuntimeManager,
     _deepseek_pi_provider,
-    _pi_message_payload,
-    _public_pi_model,
+    pi_message_payload,
+    public_pi_model,
     _tools_for_session,
 )
 
@@ -803,7 +803,7 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertEqual(bundle.providers["gpt"]["models"], [{"id": "gpt-5.6-luna"}])
 
     def test_pi_max_mapping_exposes_the_distinct_max_reasoning_level(self) -> None:
-        model = _public_pi_model(
+        model = public_pi_model(
             {
                 "provider": "gpt",
                 "id": "gpt-5.6-luna",
@@ -1537,7 +1537,7 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertNotIn("turn_completed", [event.event_type for event in events])
 
     def test_deep_search_transport_prompt_is_not_exposed_as_user_message(self) -> None:
-        message = _pi_message_payload(
+        message = pi_message_payload(
             {
                 "role": "user",
                 "timestamp": 104,

@@ -28,35 +28,35 @@ from .agent_tool_ids import (
 from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
 from .pi_runtime_protocols import resolve_protocol_manager
 from .pi_runtime_public import (
-    _pi_message_payload,
-    _APPROVAL_TITLE_PREFIX,
-    _REVIEW_TITLE_PREFIX,
-    _last_assistant_error,
-    _last_assistant_preview,
-    _pi_message_id,
-    _pi_message_is_public,
-    _provider_retry_status,
-    _public_code_tool_activity,
-    _public_file_name,
-    _public_fork_candidate_text,
-    _public_pi_model,
-    _public_usage,
-    _redact_mapping,
-    _safe_scalar,
-    _supported_thinking_levels,
-    _ui_confirmation_value,
-    _visible_message_text,
+    pi_message_payload,
+    APPROVAL_TITLE_PREFIX,
+    REVIEW_TITLE_PREFIX,
+    last_assistant_error,
+    last_assistant_preview,
+    pi_message_id,
+    pi_message_is_public,
+    provider_retry_status,
+    public_code_tool_activity,
+    public_file_name,
+    public_fork_candidate_text,
+    public_pi_model,
+    public_usage,
+    redact_mapping,
+    safe_scalar,
+    supported_thinking_levels,
+    ui_confirmation_value,
+    visible_message_text,
 )
 from .pi_runtime_values import (
     PiRuntimeError,
-    _effective_thinking_level,
-    _integer,
-    _is_within,
-    _mapping,
-    _message_delivery,
-    _model_reference_part,
-    _public_message_queue,
-    _redact_runtime_text,
+    effective_thinking_level,
+    as_integer,
+    path_is_within,
+    as_mapping,
+    message_delivery,
+    model_reference_part,
+    public_message_queue,
+    redact_runtime_text,
 )
 from .agent_runtime_driver import (
     AgentRuntimeError,
@@ -364,7 +364,7 @@ class PiRuntimeConfig:
         if session_file:
             resolved_session = Path(session_file).expanduser().resolve(strict=False)
             session_root = self.session_dir.expanduser().resolve(strict=False)
-            if not _is_within(resolved_session, session_root):
+            if not path_is_within(resolved_session, session_root):
                 raise PiRuntimeError("Pi session file is outside the managed session directory")
             if resolved_session.is_file():
                 command.extend(["--session", str(resolved_session)])
@@ -748,7 +748,7 @@ class PiRpcClient:
             self._process = None
 
     def diagnostic_error(self) -> str:
-        return _redact_runtime_text(self._stderr[-1] if self._stderr else "")
+        return redact_runtime_text(self._stderr[-1] if self._stderr else "")
 
     def _read_stdout(self) -> None:
         process = self._process
@@ -874,11 +874,11 @@ class PiRuntimeManager:
         if self.config.enabled and not installed:
             status = "not_installed"
             if not last_error:
-                last_error = _redact_runtime_text(self.config.installation_error)
+                last_error = redact_runtime_text(self.config.installation_error)
         elif self.config.enabled and installed and not self.config.model_configured:
             status = "needs_configuration"
             if not last_error:
-                last_error = _redact_runtime_text(self.config.model_configuration_error)
+                last_error = redact_runtime_text(self.config.model_configuration_error)
         return {
             "schemaVersion": "rag-ime.agent-runtime.v1",
             "enabled": self.config.enabled,
@@ -955,9 +955,9 @@ class PiRuntimeManager:
             self._client = client
         try:
             response = client.start()
-            state = _mapping(response.get("data"))
+            state = as_mapping(response.get("data"))
             desired_provider, desired_model_id = self.config.resolved_model_reference(session)
-            started_model = _mapping(state.get("model"))
+            started_model = as_mapping(state.get("model"))
             if (
                 desired_provider
                 and desired_model_id
@@ -977,8 +977,8 @@ class PiRuntimeManager:
                         "modelId": desired_model_id,
                     }
                 )
-                state = _mapping(client.send({"type": "get_state"}).get("data"))
-            selected_model = _mapping(state.get("model"))
+                state = as_mapping(client.send({"type": "get_state"}).get("data"))
+            selected_model = as_mapping(state.get("model"))
             selected_provider = str(selected_model.get("provider") or "").strip()
             selected_model_id = str(selected_model.get("id") or "").strip()
             if selected_provider and selected_model_id:
@@ -989,7 +989,7 @@ class PiRuntimeManager:
             desired_thinking = str(session.get("thinkingLevel") or "").strip().lower()
             if desired_thinking and str(state.get("thinkingLevel") or "") != desired_thinking:
                 client.send({"type": "set_thinking_level", "level": desired_thinking})
-                state = _mapping(client.send({"type": "get_state"}).get("data"))
+                state = as_mapping(client.send({"type": "get_state"}).get("data"))
             bound = self.sessions.bind_runtime_session(
                 session_id,
                 driver_id=self.driver_id,
@@ -998,7 +998,7 @@ class PiRuntimeManager:
                 transcript_ref=str(state.get("sessionFile") or ""),
                 branch_anchor=str(state.get("leafId") or ""),
                 binding_state="active",
-                message_count=_integer(state.get("messageCount")),
+                message_count=as_integer(state.get("messageCount")),
             )
             with self._lock:
                 self._status = "ready"
@@ -1013,7 +1013,7 @@ class PiRuntimeManager:
                     self._active_turn_id = ""
                     self._active_client_message_id = ""
                 self._status = "faulted"
-                self._last_error = _redact_runtime_text(str(exc))
+                self._last_error = redact_runtime_text(str(exc))
             client.stop()
             self.sessions.set_status(session_id, "faulted")
             self.events.publish(session_id, "turn_failed", {"error": self._last_error})
@@ -1031,7 +1031,7 @@ class PiRuntimeManager:
         text = str(message).strip()
         if not text:
             raise ValueError("agent prompt must not be empty")
-        normalized_delivery = _message_delivery(delivery)
+        normalized_delivery = message_delivery(delivery)
         if normalized_delivery != "prompt":
             with self._lock:
                 if not self._active_turn_id:
@@ -1083,7 +1083,7 @@ class PiRuntimeManager:
                     if self._last_pi_entry_id:
                         command["since"] = self._last_pi_entry_id
                 entries_response = client.send(command)
-                entries_data = _mapping(entries_response.get("data"))
+                entries_data = as_mapping(entries_response.get("data"))
                 pi_entry_id = _latest_user_entry_id(entries_data.get("entries"), text)
                 leaf_id = str(entries_data.get("leafId") or "")
                 if leaf_id:
@@ -1132,7 +1132,7 @@ class PiRuntimeManager:
         except AgentRuntimeError:
             found, persisted = self._persisted_messages(session_id)
             return persisted if found else []
-        data = _mapping(response.get("data"))
+        data = as_mapping(response.get("data"))
         messages = data.get("messages")
         if not isinstance(messages, list):
             return []
@@ -1141,15 +1141,15 @@ class PiRuntimeManager:
         for raw_message in messages:
             if not isinstance(raw_message, Mapping):
                 continue
-            value = _mapping(raw_message)
-            if not _pi_message_is_public(value):
+            value = as_mapping(raw_message)
+            if not pi_message_is_public(value):
                 continue
             role = str(value.get("role") or "assistant").lower()
-            message_id = _pi_message_id(value, "history")
+            message_id = pi_message_id(value, "history")
             if role == "user" or not current_turn_id:
                 current_turn_id = f"history:{message_id}"
             result.append(
-                _pi_message_payload(
+                pi_message_payload(
                     value,
                     session_id=session_id,
                     turn_id=current_turn_id,
@@ -1219,12 +1219,12 @@ class PiRuntimeManager:
             branch_transcript: Path | None = None
             try:
                 fork_started = True
-                fork_response = _mapping(
+                fork_response = as_mapping(
                     client.send({"type": "fork", "entryId": normalized_entry_id}).get("data")
                 )
                 if bool(fork_response.get("cancelled")):
                     raise PiRuntimeError("Pi cancelled the conversation fork")
-                state = _mapping(client.send({"type": "get_state"}).get("data"))
+                state = as_mapping(client.send({"type": "get_state"}).get("data"))
                 external_session_id = str(state.get("sessionId") or "").strip()
                 transcript_ref = str(state.get("sessionFile") or "").strip()
                 if not external_session_id or not transcript_ref:
@@ -1234,7 +1234,7 @@ class PiRuntimeManager:
                     raise PiRuntimeError("Pi conversation fork file must not be a symlink")
                 branch_transcript = branch_candidate.resolve(strict=False)
                 session_root = self.config.session_dir.expanduser().resolve(strict=False)
-                if not _is_within(branch_transcript, session_root):
+                if not path_is_within(branch_transcript, session_root):
                     raise PiRuntimeError("Pi conversation fork file is outside the managed session directory")
                 if not branch_transcript.is_file():
                     raise PiRuntimeError("Pi conversation fork file was not persisted")
@@ -1251,7 +1251,7 @@ class PiRuntimeManager:
                     branch_anchor=str(state.get("leafId") or normalized_entry_id),
                     binding_state="active",
                     metadata={"forkedFromSessionId": source_session_id, "forkEntryId": normalized_entry_id},
-                    message_count=_integer(state.get("messageCount")),
+                    message_count=as_integer(state.get("messageCount")),
                 )
                 with self._lock:
                     self._active_session_id = target_session_id
@@ -1330,7 +1330,7 @@ class PiRuntimeManager:
     @staticmethod
     def _fork_candidates_from_client(client: PiRpcClient) -> list[dict[str, object]]:
         response = client.send({"type": "get_fork_messages"})
-        data = _mapping(response.get("data"))
+        data = as_mapping(response.get("data"))
         raw_messages = data.get("messages")
         if not isinstance(raw_messages, list):
             raise PiRuntimeError("Pi returned an invalid conversation fork catalog")
@@ -1340,7 +1340,7 @@ class PiRuntimeManager:
             if not isinstance(raw, Mapping):
                 continue
             entry_id = str(raw.get("entryId") or "").strip()[:240]
-            text = _public_fork_candidate_text(raw.get("text"), role="user")
+            text = public_fork_candidate_text(raw.get("text"), role="user")
             if not entry_id or not text or entry_id in seen:
                 continue
             seen.add(entry_id)
@@ -1374,7 +1374,7 @@ class PiRuntimeManager:
             raise PiRuntimeError("Pi session file must not be a symlink")
         transcript = transcript_candidate.resolve(strict=False)
         session_root = self.config.session_dir.expanduser().resolve(strict=False)
-        if not _is_within(transcript, session_root):
+        if not path_is_within(transcript, session_root):
             raise PiRuntimeError("Pi session file is outside the managed session directory")
         try:
             size = transcript.stat().st_size
@@ -1431,14 +1431,14 @@ class PiRuntimeManager:
             if not isinstance(raw_message, Mapping):
                 continue
             value = dict(raw_message)
-            if not _pi_message_is_public(value):
+            if not pi_message_is_public(value):
                 continue
             role = str(value.get("role") or "assistant").lower()
-            message_id = str(entry.get("id") or _pi_message_id(value, "history"))
+            message_id = str(entry.get("id") or pi_message_id(value, "history"))
             if role == "user" or not current_turn_id:
                 current_turn_id = f"history:{message_id}"
             public_messages.append(
-                _pi_message_payload(
+                pi_message_payload(
                     value,
                     session_id=session_id,
                     turn_id=current_turn_id,
@@ -1461,7 +1461,7 @@ class PiRuntimeManager:
             client = self._require_client_locked(session_id)
             self._schedule_idle_locked()
         response = client.send({"type": "get_commands"})
-        data = _mapping(response.get("data"))
+        data = as_mapping(response.get("data"))
         raw_commands = data.get("commands")
         if not isinstance(raw_commands, list):
             return []
@@ -1506,19 +1506,19 @@ class PiRuntimeManager:
             self._schedule_idle_locked()
         state_response = client.send({"type": "get_state"})
         models_response = client.send({"type": "get_available_models"})
-        state = _mapping(state_response.get("data"))
-        data = _mapping(models_response.get("data"))
+        state = as_mapping(state_response.get("data"))
+        data = as_mapping(models_response.get("data"))
         raw_models = data.get("models") if isinstance(data.get("models"), list) else []
-        selected = _public_pi_model(_mapping(state.get("model")))
+        selected = public_pi_model(as_mapping(state.get("model")))
         models = [
             model
             for value in raw_models
             if isinstance(value, Mapping)
-            for model in [_public_pi_model(value)]
+            for model in [public_pi_model(value)]
             if model
         ]
         models.sort(key=lambda item: (str(item["provider"]).lower(), str(item["name"]).lower()))
-        thinking_level = _effective_thinking_level(state.get("thinkingLevel"), selected)
+        thinking_level = effective_thinking_level(state.get("thinkingLevel"), selected)
         return {
             "selected": selected or None,
             "models": models,
@@ -1531,13 +1531,13 @@ class PiRuntimeManager:
         if client is None or not client.running:
             raise PiRuntimeError("Pi model catalog requires an active runtime session")
         response = client.send({"type": "get_available_models"})
-        data = _mapping(response.get("data"))
+        data = as_mapping(response.get("data"))
         raw_models = data.get("models") if isinstance(data.get("models"), list) else []
         models = [
             model
             for value in raw_models
             if isinstance(value, Mapping)
-            for model in [_public_pi_model(value)]
+            for model in [public_pi_model(value)]
             if model
         ]
         models.sort(key=lambda item: (str(item["provider"]).lower(), str(item["name"]).lower()))
@@ -1562,8 +1562,8 @@ class PiRuntimeManager:
         return False
 
     def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
-        normalized_provider = _model_reference_part(provider, field="provider", maximum=80)
-        normalized_model = _model_reference_part(model_id, field="modelId", maximum=160)
+        normalized_provider = model_reference_part(provider, field="provider", maximum=80)
+        normalized_model = model_reference_part(model_id, field="modelId", maximum=160)
         self.ensure(session_id)
         with self._lock:
             if self._active_turn_id:
@@ -1578,7 +1578,7 @@ class PiRuntimeManager:
                     "modelId": normalized_model,
                 }
             )
-            selected = _public_pi_model(_mapping(response.get("data")))
+            selected = public_pi_model(as_mapping(response.get("data")))
             if not selected:
                 raise PiRuntimeError("Pi did not return the selected model")
             session = self.sessions.set_model_profile(
@@ -1601,16 +1601,16 @@ class PiRuntimeManager:
             client = self._require_client_locked(session_id)
             self._cancel_idle_locked()
         try:
-            before = _mapping(client.send({"type": "get_state"}).get("data"))
-            before_model = _public_pi_model(_mapping(before.get("model")))
+            before = as_mapping(client.send({"type": "get_state"}).get("data"))
+            before_model = public_pi_model(as_mapping(before.get("model")))
             supported = before_model.get("thinkingLevels") if before_model else ["off"]
             if not isinstance(supported, list) or normalized not in supported:
                 raise ValueError("当前 Pi 模型不支持这个思考强度")
             client.send({"type": "set_thinking_level", "level": normalized})
             state_response = client.send({"type": "get_state"})
-            state = _mapping(state_response.get("data"))
-            selected = _public_pi_model(_mapping(state.get("model")))
-            effective = _effective_thinking_level(
+            state = as_mapping(state_response.get("data"))
+            selected = public_pi_model(as_mapping(state.get("model")))
+            effective = effective_thinking_level(
                 state.get("thinkingLevel") or normalized,
                 selected,
             )
@@ -1653,7 +1653,7 @@ class PiRuntimeManager:
             command["customInstructions"] = instructions.strip()[:2000]
         try:
             response = client.send(command, timeout=max(60.0, self.config.command_timeout_seconds))
-            result = dict(_mapping(response.get("data")))
+            result = dict(as_mapping(response.get("data")))
             checkpoint = self._observe_compaction(session_id, result, "manual")
             if checkpoint:
                 result["memoryCheckpoint"] = checkpoint
@@ -1678,7 +1678,7 @@ class PiRuntimeManager:
                 "ok": False,
                 "stored": False,
                 "status": "checkpoint_failed",
-                "error": _redact_runtime_text(str(exc)),
+                "error": redact_runtime_text(str(exc)),
             }
         return dict(checkpoint or {})
 
@@ -1720,7 +1720,7 @@ class PiRuntimeManager:
         event_type = str(raw.get("type") or "")
         if event_type == "compaction_end":
             compaction = (
-                dict(_mapping(raw.get("result")))
+                dict(as_mapping(raw.get("result")))
                 if isinstance(raw.get("result"), Mapping)
                 else dict(raw)
             )
@@ -1731,21 +1731,23 @@ class PiRuntimeManager:
             )
             return
         if event_type == "message_update":
-            update = _mapping(raw.get("assistantMessageEvent"))
+            update = as_mapping(raw.get("assistantMessageEvent"))
             update_type = str(update.get("type") or "")
             if update_type == "text_delta":
-                raw_message = _mapping(raw.get("message"))
-                pi_message_id = _pi_message_id(raw_message, turn_id)
+                raw_message = as_mapping(raw.get("message"))
+                streamed_message_id = pi_message_id(raw_message, turn_id)
                 with self._lock:
-                    replace_block = pi_message_id != self._stream_pi_message_id
-                    self._stream_pi_message_id = pi_message_id
+                    replace_block = (
+                        streamed_message_id != self._stream_pi_message_id
+                    )
+                    self._stream_pi_message_id = streamed_message_id
                 self.events.publish(
                     session_id,
                     "text_delta",
                     {
                         "messageId": f"{turn_id}:assistant",
                         "blockId": f"{turn_id}:assistant:text",
-                        "contentIndex": _integer(update.get("contentIndex")),
+                        "contentIndex": as_integer(update.get("contentIndex")),
                         "delta": str(update.get("delta") or ""),
                         "replaceBlock": replace_block,
                     },
@@ -1763,7 +1765,7 @@ class PiRuntimeManager:
             self.events.publish(
                 session_id,
                 "status_changed",
-                _provider_retry_status(
+                provider_retry_status(
                     raw,
                     started=event_type == "auto_retry_start",
                 ),
@@ -1771,8 +1773,8 @@ class PiRuntimeManager:
             )
             return
         if event_type == "message_end":
-            raw_message = _mapping(raw.get("message"))
-            if not _pi_message_is_public(raw_message):
+            raw_message = as_mapping(raw.get("message"))
+            if not pi_message_is_public(raw_message):
                 return
             role = str(raw_message.get("role") or "assistant").lower()
             trusted_blocks = raw.get("agentBlocks")
@@ -1787,7 +1789,7 @@ class PiRuntimeManager:
             # forwarding that echo creates a second bubble for one send.
             if role == "user":
                 return
-            message = _pi_message_payload(
+            message = pi_message_payload(
                 raw_message,
                 session_id=session_id,
                 turn_id=turn_id,
@@ -1797,7 +1799,7 @@ class PiRuntimeManager:
             )
             event_payload: dict[str, object] = {
                 "message": message.to_payload(),
-                "usage": _public_usage(raw.get("message")),
+                "usage": public_usage(raw.get("message")),
             }
             if role == "user" and client_message_id:
                 event_payload["clientMessageId"] = client_message_id
@@ -1813,8 +1815,8 @@ class PiRuntimeManager:
                 session_id,
                 "message_queue_updated",
                 {
-                    "steering": _public_message_queue(raw.get("steering")),
-                    "followUp": _public_message_queue(raw.get("followUp")),
+                    "steering": public_message_queue(raw.get("steering")),
+                    "followUp": public_message_queue(raw.get("followUp")),
                 },
                 turn_id=turn_id,
             )
@@ -1825,20 +1827,20 @@ class PiRuntimeManager:
                 "tool_execution_update": "tool_progress",
                 "tool_execution_end": "tool_finished",
             }[event_type]
-            raw_args = _mapping(raw.get("args"))
+            raw_args = as_mapping(raw.get("args"))
             tool_name = str(raw.get("toolName") or "")
             payload = {
                 "toolCallId": str(raw.get("toolCallId") or ""),
                 "toolName": tool_name,
-                "args": _redact_mapping(raw_args),
+                "args": redact_mapping(raw_args),
                 "isError": bool(raw.get("isError")),
             }
-            public_result = _public_code_tool_activity(tool_name, raw_args)
+            public_result = public_code_tool_activity(tool_name, raw_args)
             if public_result:
                 payload["publicResult"] = public_result
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             if raw.get(result_key) is not None:
-                payload[result_key] = _redact_mapping(_mapping(raw.get(result_key)))
+                payload[result_key] = redact_mapping(as_mapping(raw.get(result_key)))
             if event_type == "tool_execution_end" and not bool(raw.get("isError")):
                 captured = self._tool_blocks.capture(
                     raw.get("result"),
@@ -1855,8 +1857,8 @@ class PiRuntimeManager:
             method = str(raw.get("method") or "")
             request_id = str(raw.get("id") or "")
             title = str(raw.get("title") or "")
-            if method == "confirm" and title.startswith(_APPROVAL_TITLE_PREFIX):
-                approval_id = title[len(_APPROVAL_TITLE_PREFIX) :].strip()
+            if method == "confirm" and title.startswith(APPROVAL_TITLE_PREFIX):
+                approval_id = title[len(APPROVAL_TITLE_PREFIX) :].strip()
                 try:
                     approval = self.sessions.get_approval(approval_id)
                 except (KeyError, ValueError):
@@ -1877,8 +1879,8 @@ class PiRuntimeManager:
                     turn_id=turn_id,
                 )
                 return
-            if method == "confirm" and title.startswith(_REVIEW_TITLE_PREFIX):
-                run_id = title[len(_REVIEW_TITLE_PREFIX) :].strip()
+            if method == "confirm" and title.startswith(REVIEW_TITLE_PREFIX):
+                run_id = title[len(REVIEW_TITLE_PREFIX) :].strip()
                 if not run_id:
                     client.respond_extension_ui(request_id, confirmed=False)
                     return
@@ -1938,8 +1940,8 @@ class PiRuntimeManager:
             if raw.get("willRetry") is True:
                 return
             messages = raw.get("messages") if isinstance(raw.get("messages"), list) else []
-            preview = _last_assistant_preview(messages)
-            provider_error = _last_assistant_error(messages)
+            preview = last_assistant_preview(messages)
+            provider_error = last_assistant_error(messages)
             with self._lock:
                 if (
                     self._client is not client
@@ -1990,7 +1992,7 @@ class PiRuntimeManager:
                     "status": "analyzing" if turn_id else "ready",
                     "phase": "extension_warning",
                     "extensionEvent": str(raw.get("event") or ""),
-                    "warning": _redact_runtime_text(
+                    "warning": redact_runtime_text(
                         str(raw.get("error") or "Pi extension failed")
                     ),
                 },
@@ -2119,7 +2121,7 @@ class PiRuntimeManager:
         if method == "confirm" and not cancelled:
             confirmed = response.get("confirmed")
             if not isinstance(confirmed, bool):
-                confirmed = _ui_confirmation_value(value)
+                confirmed = ui_confirmation_value(value)
             client.respond_extension_ui(
                 normalized_request_id,
                 confirmed=confirmed,
@@ -2165,7 +2167,7 @@ class PiRuntimeManager:
                 self._status = "stopped"
             else:
                 self._status = "faulted"
-                self._last_error = _redact_runtime_text(error or f"Pi exited with code {exit_code}")
+                self._last_error = redact_runtime_text(error or f"Pi exited with code {exit_code}")
             self._pending_approval_requests.clear()
             self._pending_review_requests.clear()
             self._pending_ui_requests.clear()
@@ -2179,7 +2181,7 @@ class PiRuntimeManager:
             )
 
     def _turn_failed(self, session_id: str, turn_id: str, error: BaseException) -> None:
-        safe_error = _redact_runtime_text(str(error))
+        safe_error = redact_runtime_text(str(error))
         self.sessions.set_status(session_id, "idle")
         with self._lock:
             self._cancel_abort_locked()
@@ -2283,10 +2285,10 @@ def _latest_user_entry_id(entries: object, expected_text: str) -> str:
         return ""
     expected = " ".join(expected_text.split())
     for value in reversed(entries):
-        entry = _mapping(value)
+        entry = as_mapping(value)
         if str(entry.get("type") or "") != "message":
             continue
-        message = _mapping(entry.get("message"))
+        message = as_mapping(entry.get("message"))
         if str(message.get("role") or "") != "user":
             continue
         if _message_text(message) == expected:
@@ -2301,9 +2303,9 @@ def _message_text(message: Mapping[str, object]) -> str:
     if not isinstance(content, list):
         return ""
     text = " ".join(
-        str(_mapping(block).get("text") or "")
+        str(as_mapping(block).get("text") or "")
         for block in content
-        if str(_mapping(block).get("type") or "") == "text"
+        if str(as_mapping(block).get("type") or "") == "text"
     )
     return " ".join(text.split())
 

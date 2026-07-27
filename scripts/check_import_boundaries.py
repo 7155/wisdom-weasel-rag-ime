@@ -143,6 +143,7 @@ def check_import_boundaries(root: Path) -> list[ImportViolation]:
                     )
     violations.extend(check_flat_layers(root))
     violations.extend(check_module_level_cycles(root))
+    violations.extend(check_pi_family_private_imports(root))
     for relative_path in V1_CORE_FILES:
         path = root / relative_path
         if not path.exists():
@@ -159,6 +160,61 @@ def check_import_boundaries(root: Path) -> list[ImportViolation]:
                         reason=f"v1 realtime core must not import frozen lane {matched}",
                     )
                 )
+    return violations
+
+
+# The Pi runtime family's shared surface is `__all__` in pi_runtime_public and
+# pi_runtime_values. v2 once imported 22 private names from v1; that coupling
+# was removed by moving the shared logic to owner modules with public names,
+# and this check is what stops the back channel from regrowing: inside the
+# family, importing any underscore-prefixed name from another module is a
+# violation. Module-level and deferred imports are both checked, because a
+# private import hidden inside a function is still a private dependency.
+PI_FAMILY_MODULES = (
+    "rag_ime.pi_runtime",
+    "rag_ime.pi_runtime_v2",
+    "rag_ime.pi_runtime_public",
+    "rag_ime.pi_runtime_values",
+    "rag_ime.pi_runtime_protocols",
+    "rag_ime.agent_runtime_driver",
+)
+
+
+def check_pi_family_private_imports(root: Path) -> list[ImportViolation]:
+    violations: list[ImportViolation] = []
+    for module in PI_FAMILY_MODULES:
+        path = root / Path(module.replace(".", "/") + ".py")
+        if not path.exists():
+            violations.append(
+                ImportViolation(
+                    path=str(path.relative_to(root)),
+                    module=module,
+                    imported="",
+                    reason="Pi family module is missing; update PI_FAMILY_MODULES",
+                )
+            )
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            imported_module = resolve_import_from(node, current_package="rag_ime")
+            if imported_module not in PI_FAMILY_MODULES:
+                continue
+            for alias in node.names:
+                if alias.name.startswith("_"):
+                    violations.append(
+                        ImportViolation(
+                            path=str(path.relative_to(root)),
+                            module=module,
+                            imported=f"{imported_module}.{alias.name}",
+                            reason=(
+                                "Pi family modules share only the public "
+                                "projection contract; private names stay "
+                                "module-local"
+                            ),
+                        )
+                    )
     return violations
 
 
