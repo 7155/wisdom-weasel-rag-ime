@@ -1479,6 +1479,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("timeoutOverride: requestTimeout", patch_text)
         self.assertIn("active_rag_status_poll_scheduled", patch_text)
         self.assertIn("response.pollAfterMs", patch_text)
+        self.assertIn('candidate.metadata["activeRagNoSuggestion"]', patch_text)
+        self.assertIn("} else if activeStatusNoSuggestion {", patch_text)
+        self.assertNotIn(
+            'activeStatusText?.contains("没有合适") == true',
+            patch_text,
+        )
         self.assertIn("latencyBudgetMs: 15000", patch_text)
         self.assertIn("guard attempt <= 1200 else { return }", patch_text)
         self.assertIn("postActiveRagStart", patch_text)

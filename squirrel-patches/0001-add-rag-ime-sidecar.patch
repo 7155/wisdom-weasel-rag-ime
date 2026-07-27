@@ -8570,7 +8570,15 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      ])
 +      return
 +    }
-+    let activeStatusText = response.candidates.first(where: { $0.sourceType == "status" || $0.isStatus == true })?.text
++    let activeStatusCandidate = response.candidates.first(where: {
++      $0.sourceType == "status" || $0.isStatus == true
++    })
++    let activeStatusText = activeStatusCandidate?.text
++    let activeStatusNoSuggestion: Bool = {
++      guard let candidate = activeStatusCandidate,
++        case .bool(let value)? = candidate.metadata["activeRagNoSuggestion"] else { return false }
++      return value
++    }()
 +    let activeOverlayCandidates = response.candidates.filter { candidate in
 +      candidate.sourceType != "status" && candidate.isStatus != true
 +    }
@@ -8674,7 +8682,7 @@ index c2adf74ebea9190ab27bcb5a7f8b91554162000d..e29a7ebe9287286b7a58a211f01ff2a6
 +      diagnosticStatus = "context_missing"
 +    } else if response.status == "error" {
 +      diagnosticStatus = "remote_model_error"
-+    } else if activeStatusText?.contains("没有合适") == true {
++    } else if activeStatusNoSuggestion {
 +      diagnosticStatus = "no_suitable_suggestion"
 +    } else if remoteReady == false {
 +      diagnosticStatus = remoteModelReason.isEmpty ? "remote_model_disabled" : remoteModelReason
