@@ -3,6 +3,10 @@ from __future__ import annotations
 import uuid
 
 from .agent_room_kernel import kernel_owns_room_execution
+from .agent_room_turn_registry import (
+    RoomSessionBusyError,
+    RoomTurnRegistry,
+)
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Protocol
@@ -19,10 +23,7 @@ class LegacyRoomHost(Protocol):
     room_events: Any
     room_kernel: Any
     room_application: Any
-    _room_turn_lock: Any
-    _room_user_priority_sessions: set[str]
-    _pending_room_turn_by_session: dict[str, str]
-    _room_turn_by_session_turn: dict[tuple[str, str], str]
+    room_turns: RoomTurnRegistry
     _context_source_token: object
 
     def _restore_legacy_room_participant_sessions(
@@ -212,29 +213,38 @@ class RoomLegacyDispatchService:
                     session_id,
                 )
 
-        with self.host._room_turn_lock:
-            for target, session_id in zip(targets, target_session_ids, strict=True):
-                latest_target = self.host.rooms.participant(str(target["id"]))
-                if str(latest_target.get("status") or "") != "active":
-                    raise ValueError("selected Room participant is no longer active")
-                if (
-                    session_id in self.host._room_user_priority_sessions
-                    or session_id in self.host._pending_room_turn_by_session
-                    or any(key[0] == session_id for key in self.host._room_turn_by_session_turn)
-                ):
-                    raise ValueError(
-                        f"{target.get('displayName') or 'selected Room participant'} "
-                        "is currently busy"
-                    )
-            self.host._room_user_priority_sessions.update(target_session_ids)
+        target_by_session_id = {
+            session_id: target
+            for target, session_id in zip(targets, target_session_ids, strict=True)
+        }
+
+        def _ensure_participant_active(session_id: str) -> None:
+            target = target_by_session_id[session_id]
+            latest_target = self.host.rooms.participant(str(target["id"]))
+            if str(latest_target.get("status") or "") != "active":
+                raise ValueError("selected Room participant is no longer active")
+
+        try:
+            # ensure_available runs inside the registry lock, so the
+            # participant re-check and the priority reservation remain the
+            # single critical section they were as inline code.
+            self.host.room_turns.hold_priority_if_idle(
+                target_session_ids,
+                ensure_available=_ensure_participant_active,
+            )
+        except RoomSessionBusyError as busy:
+            target = target_by_session_id[busy.session_id]
+            raise ValueError(
+                f"{target.get('displayName') or 'selected Room participant'} "
+                "is currently busy"
+            ) from None
         busy_targets = [
             target
             for target, session_id in zip(targets, target_session_ids, strict=True)
             if not self.host._room_target_idle(session_id, allow_user_priority=True)
         ]
         if busy_targets:
-            with self.host._room_turn_lock:
-                self.host._room_user_priority_sessions.difference_update(target_session_ids)
+            self.host.room_turns.release_priority(target_session_ids)
             names = "、".join(str(item.get("displayName") or "Agent") for item in busy_targets)
             raise ValueError(f"Room participants are currently busy: {names}")
 
@@ -307,8 +317,7 @@ class RoomLegacyDispatchService:
         except Exception:
             for session_id in target_session_ids:
                 self.host._cancel_room_turn(session_id, room_turn_id)
-            with self.host._room_turn_lock:
-                self.host._room_user_priority_sessions.difference_update(target_session_ids)
+            self.host.room_turns.release_priority(target_session_ids)
             raise
 
         work_claimed = False
@@ -343,8 +352,7 @@ class RoomLegacyDispatchService:
                     source_session_id=str(target["sessionId"]),
                     topic_id=topic_id,
                 )
-            with self.host._room_turn_lock:
-                self.host._room_user_priority_sessions.difference_update(target_session_ids)
+            self.host.room_turns.release_priority(target_session_ids)
             # The compatibility path historically failed synchronously when the
             # authoritative WorkItem changed between route planning and claim.
             # Do not turn that concurrency fence into a superficially successful
@@ -526,8 +534,7 @@ class RoomLegacyDispatchService:
                 "_exception": exc,
             }
         finally:
-            with self.host._room_turn_lock:
-                self.host._room_user_priority_sessions.discard(session_id)
+            self.host.room_turns.release_priority_session(session_id)
 
 def _role_book_profile_texts(value: object) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):

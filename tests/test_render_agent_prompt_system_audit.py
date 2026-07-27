@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -515,6 +517,142 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
             self.assertIn("skill_load 后完整生效", html)
             self.assertIn("本项目 Skill", html)
             self.assertNotIn("__AGENT_PROMPT_AUDIT_DATA__", html)
+
+
+class SiblingRepositoryRootTests(unittest.TestCase):
+    """Sibling repositories resolve through Git's common directory.
+
+    `ROOT.parent` is only the sibling root when ROOT is the canonical
+    checkout; in a physical worktree it pointed into `.worktrees/`, which
+    made every default sibling path nonexistent and failed three audit
+    assertions. The resolver must locate the canonical repository from Git
+    and fall back to the historical `ROOT.parent` when Git cannot answer.
+    """
+
+    def _init_repository(self, repository: Path) -> None:
+        for command in (
+            ["git", "init", "--quiet", str(repository)],
+            [
+                "git", "-C", str(repository),
+                "-c", "user.email=audit@test", "-c", "user.name=audit",
+                "commit", "--allow-empty", "--quiet", "-m", "seed",
+            ],
+        ):
+            completed = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_normal_checkout_resolves_the_repository_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            siblings = Path(raw)
+            repository = siblings / "repo"
+            self._init_repository(repository)
+            self.assertEqual(
+                AUDIT._sibling_repository_root(repository).resolve(),
+                siblings.resolve(),
+            )
+
+    def test_worktree_resolves_through_the_common_git_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            siblings = Path(raw)
+            repository = siblings / "repo"
+            self._init_repository(repository)
+            worktree = repository / ".worktrees" / "lane"
+            completed = subprocess.run(
+                ["git", "-C", str(repository), "worktree", "add",
+                 "--quiet", str(worktree)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            # ROOT.parent would be repo/.worktrees -- the defect. The
+            # resolver must come back to the sibling root instead.
+            self.assertEqual(
+                AUDIT._sibling_repository_root(worktree).resolve(),
+                siblings.resolve(),
+            )
+
+    def test_git_unavailable_preserves_the_root_parent_fallback(self) -> None:
+        somewhere = Path("/definitely/not/a/repository/checkout")
+        with unittest.mock.patch.object(
+            AUDIT.subprocess,
+            "run",
+            side_effect=FileNotFoundError("git not installed"),
+        ):
+            self.assertEqual(
+                AUDIT._sibling_repository_root(somewhere),
+                somewhere.parent,
+            )
+
+    def test_git_error_preserves_the_root_parent_fallback(self) -> None:
+        somewhere = Path("/definitely/not/a/repository/checkout")
+        failed = subprocess.CompletedProcess(
+            args=["git"], returncode=128, stdout="", stderr="fatal: not a git repository",
+        )
+        with unittest.mock.patch.object(
+            AUDIT.subprocess, "run", return_value=failed
+        ):
+            self.assertEqual(
+                AUDIT._sibling_repository_root(somewhere),
+                somewhere.parent,
+            )
+
+    def test_evidence_prefers_a_local_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            siblings = Path(raw)
+            repository = siblings / "repo"
+            self._init_repository(repository)
+            relative = Path("docs/agent/audits/agent-prompt-system-current")
+            (repository / relative).mkdir(parents=True)
+            self.assertEqual(
+                AUDIT._deterministic_evidence_root(repository).resolve(),
+                (repository / relative).resolve(),
+            )
+
+    def test_evidence_falls_back_to_the_canonical_checkout(self) -> None:
+        """A worktree has no gitignored evidence of its own; the canonical
+        checkout's capture must be found, and with no capture anywhere the
+        historical local path is still reported."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            siblings = Path(raw)
+            repository = siblings / "repo"
+            self._init_repository(repository)
+            worktree = repository / ".worktrees" / "lane"
+            completed = subprocess.run(
+                ["git", "-C", str(repository), "worktree", "add",
+                 "--quiet", str(worktree)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            relative = Path("docs/agent/audits/agent-prompt-system-current")
+
+            self.assertEqual(
+                AUDIT._deterministic_evidence_root(worktree).resolve(),
+                (worktree / relative).resolve(),
+                "with no capture anywhere, the local path is still reported",
+            )
+            (repository / relative).mkdir(parents=True)
+            self.assertEqual(
+                AUDIT._deterministic_evidence_root(worktree).resolve(),
+                (repository / relative).resolve(),
+            )
+
+    def test_explicit_pi_root_remains_authoritative(self) -> None:
+        """An explicit --pi-root value must win over the resolved default.
+
+        `main()` passes the argparse values straight into `build_audit`, so
+        proving `build_audit` honours an explicit (nonexistent) root proves
+        the override path end to end: the inventory must report that root's
+        files as missing even though the resolved default exists.
+        """
+
+        with tempfile.TemporaryDirectory() as raw:
+            bogus = Path(raw) / "nowhere"
+            audit = AUDIT.build_audit(pi_root=bogus)
+        inventory = audit["piRuntimePromptProducerInventory"]
+        self.assertTrue(inventory)
+        self.assertFalse(any(item["exists"] for item in inventory.values()))
 
 
 if __name__ == "__main__":

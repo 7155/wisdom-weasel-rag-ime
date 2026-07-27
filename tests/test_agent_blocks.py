@@ -10,7 +10,7 @@ from rag_ime.agent_blocks import (
     provider_block_projection,
     validate_persisted_blocks,
 )
-from rag_ime.pi_runtime import _pi_message_payload
+from rag_ime.pi_runtime import pi_message_payload
 
 
 def fenced(blocks: list[dict[str, object]]) -> str:
@@ -94,7 +94,7 @@ class AgentBlocksTest(unittest.TestCase):
 
     def test_pi_completed_message_projects_blocks_without_duplicate_json_text(self) -> None:
         raw_text = fenced([{"id": "card:1", "type": "card", "data": {"title": "完成"}}])
-        message = _pi_message_payload(
+        message = pi_message_payload(
             {"role": "assistant", "content": [{"type": "text", "text": raw_text}], "timestamp": 1},
             session_id="session:1",
             turn_id="turn:1",
@@ -105,7 +105,7 @@ class AgentBlocksTest(unittest.TestCase):
         self.assertNotIn("rag_ime_blocks", json.dumps(message, ensure_ascii=False))
 
     def test_trusted_runtime_event_is_main_path_and_server_binds_scope(self) -> None:
-        message = _pi_message_payload(
+        message = pi_message_payload(
             {"role": "assistant", "content": [{"type": "text", "text": "正文"}], "timestamp": 1},
             session_id="session:1",
             turn_id="turn:1",
@@ -127,7 +127,7 @@ class AgentBlocksTest(unittest.TestCase):
 
     def test_trusted_runtime_blocks_suppress_fenced_fallback_without_leaking_json(self) -> None:
         raw_text = fenced([{"id": "status:1", "type": "status", "data": {"title": "fallback"}}])
-        message = _pi_message_payload(
+        message = pi_message_payload(
             {"role": "assistant", "content": [{"type": "text", "text": raw_text}]},
             session_id="session:1",
             turn_id="turn:1",

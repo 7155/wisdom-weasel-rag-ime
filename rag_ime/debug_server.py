@@ -67,6 +67,8 @@ from .control_api import (
     default_route_policy,
 )
 from .control_api.gateway_access import GatewayAccessDecision, resolve_gateway_access
+from .control_api.route_table import build_arguments, find_route
+from .models import InputSuggestion
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
 from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
@@ -5958,6 +5960,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             return
         if self._serve_gateway_static(parsed.path):
             return
+        descriptor_route = find_route("GET", parsed.path)
+        if descriptor_route is not None:
+            self._dispatch_descriptor_route(
+                descriptor_route, query=parse_qs(parsed.query or "")
+            )
+            return
         if parsed.path == "/api/events/stream":
             self._stream_management_events()
             return
@@ -6039,14 +6047,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path in ("/api/health", "/health"):
-            self._write_json(HTTPStatus.OK, self.service.health())
-            return
-        if parsed.path in ("/api/frontend/v1/capabilities", "/frontend/v1/capabilities"):
-            response = self.service.frontend_capabilities()
-            validate_contract(response, "frontend-capabilities.v1.json")
-            self._write_json(HTTPStatus.OK, response)
-            return
         if parsed.path in ("/api/control/v1/bootstrap", "/api/agent/control/bootstrap"):
             self._write_json(
                 HTTPStatus.OK,
@@ -6058,9 +6058,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.OK,
                 self.service.control_capabilities(self._request_access_context()),
             )
-            return
-        if parsed.path in ("/api/input-source", "/input-source"):
-            self._write_json(HTTPStatus.OK, self.service.input_source_status())
             return
         query = parse_qs(parsed.query or "")
         if parsed.path == "/api/browser/extension/next":
@@ -6075,9 +6072,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path == "/api/browser/status":
-            self._write_json(HTTPStatus.OK, self.service.browser_control.status())
-            return
         if parsed.path == "/api/browser/managed/bootstrap":
             self._write_json(
                 HTTPStatus.OK,
@@ -6087,12 +6081,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     "summary": "托管浏览器正在完成隔离连接",
                 },
             )
-            return
-        if parsed.path == "/api/browser/pairing":
-            self._write_json(HTTPStatus.OK, self.service.browser_control.pairing())
-            return
-        if parsed.path == "/api/browser/tabs":
-            self._write_json(HTTPStatus.OK, self.service.browser_control.tabs())
             return
         if parsed.path == "/api/browser/snapshots/latest":
             tab_value = _query_first(query, "tabId")
@@ -6257,12 +6245,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, response)
             except Exception as exc:
                 self._write_json(HTTPStatus.BAD_REQUEST, self._knowledge_error(exc))
-            return
-        if parsed.path == "/api/agent/runtime":
-            self._write_json(HTTPStatus.OK, self.service.agent.runtime_status())
-            return
-        if parsed.path == "/api/agent/providers":
-            self._write_json(HTTPStatus.OK, self.service.pi_provider_auth.catalog())
             return
         if parsed.path == "/api/agent/providers/oauth/status":
             try:
@@ -6502,15 +6484,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path == "/api/agent/extensions":
-            self._write_json(HTTPStatus.OK, self.service.agent_extensions.list())
-            return
-        if parsed.path == "/api/agent/extensions/catalog":
-            self._write_json(HTTPStatus.OK, self.service.agent_extensions.catalog())
-            return
-        if parsed.path == "/api/agent/extensions/proposals":
-            self._write_json(HTTPStatus.OK, self.service.agent_extensions.proposals())
-            return
         if parsed.path == "/api/agent/lifecycle-hooks":
             self._write_json(
                 HTTPStatus.OK,
@@ -6523,12 +6496,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     )
                 ),
             )
-            return
-        if parsed.path == "/api/agent/roles":
-            self._write_json(HTTPStatus.OK, self.service.agent.list_roles())
-            return
-        if parsed.path == "/api/agent/roles/models":
-            self._write_json(HTTPStatus.OK, self.service.agent.role_model_catalog())
             return
         if parsed.path == "/api/agent/role-book":
             self._write_json(
@@ -6559,9 +6526,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     ),
                 ),
             )
-            return
-        if parsed.path == "/api/agent/subagents/templates":
-            self._write_json(HTTPStatus.OK, self.service.agent.list_agent_templates())
             return
         if parsed.path == "/api/agent/subagents/runs":
             self._write_json(
@@ -6730,21 +6694,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 return
             self._write_json(HTTPStatus.OK, response)
             return
-        if parsed.path == "/api/agent/configuration":
-            self._write_json(HTTPStatus.OK, self.service.agent.configuration())
-            return
-        if parsed.path == "/api/overview":
-            self._write_json(HTTPStatus.OK, self.service.management.overview())
-            return
-        if parsed.path == "/api/runtime/status":
-            self._write_json(HTTPStatus.OK, self.service.management.runtime_status())
-            return
-        if parsed.path == "/api/runtime/config":
-            self._write_json(HTTPStatus.OK, self.service.runtime_config())
-            return
-        if parsed.path == "/api/runtime/components":
-            self._write_json(HTTPStatus.OK, self.service.management.runtime_components())
-            return
         if parsed.path.startswith("/api/runtime/job/"):
             job_id = unquote(parsed.path.rsplit("/", 1)[-1])
             self._write_json(HTTPStatus.OK, self.service.management.runtime_job(job_id))
@@ -6784,9 +6733,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.BAD_REQUEST, _memory_read_error(str(exc)))
                 return
             self._write_json(HTTPStatus.OK, response)
-            return
-        if parsed.path == "/api/memory/summary":
-            self._write_json(HTTPStatus.OK, self.service.management.memory_summary())
             return
         if parsed.path == "/api/memory/activity-timeline":
             try:
@@ -6871,49 +6817,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 response,
             )
             return
-        if parsed.path in ("/api/predictor/status",):
-            self._write_json(HTTPStatus.OK, self.service.predictor_status())
-            return
-        if parsed.path in ("/api/settings",):
-            self._write_json(HTTPStatus.OK, self.service.settings())
-            return
-        if parsed.path in ("/api/settings/schema",):
-            self._write_json(HTTPStatus.OK, self.service.settings_schema())
-            return
-        if parsed.path in ("/api/profiles",):
-            self._write_json(HTTPStatus.OK, self.service.profiles({"kind": _query_first(query, "kind")}))
-            return
-        if parsed.path in ("/api/audit",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_audit(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "action": _query_first(query, "action"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/vocabulary/items",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.vocabulary_items(
-                    {
-                        "status": _query_first(query, "status"),
-                        "query": _query_first(query, "query"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/models/status",):
-            self._write_json(HTTPStatus.OK, self.service.models_status())
-            return
-        if parsed.path in ("/api/models/profiles",):
-            self._write_json(HTTPStatus.OK, self.service.model_profiles())
-            return
-        if parsed.path in ("/api/active-rag/settings",):
-            self._write_json(HTTPStatus.OK, self.service.active_rag_settings())
-            return
         if parsed.path in ("/api/active-rag/route-status",):
             local_only_raw = _query_first(query, "localOnly")
             self._write_json(
@@ -6923,171 +6826,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        if parsed.path in ("/api/knowledge/route-status",):
-            self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_route_status())
-            return
-        if parsed.path in ("/api/knowledge/status", "/api/knowledge/session"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.knowledge_workbench_status(
-                    {"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}
-                ),
-            )
-            return
-        if parsed.path in ("/api/predictor/latency",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.predictor_latency(
-                    {
-                        "log": _query_first(query, "log"),
-                        "last": _query_first(query, "last"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/predictor/cache/stats",):
-            self._write_json(HTTPStatus.OK, self.service.predictor_cache_stats())
-            return
-        if parsed.path in ("/api/active-rag/status", "/api/active-rag/session"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.active_rag_status({"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}),
-            )
-            return
-        if parsed.path in ("/api/active-rag/diagnostics",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.active_rag_diagnostics(
-                    {"sessionId": _query_first(query, "sessionId") or _query_first(query, "id")}
-                ),
-            )
-            return
-        if parsed.path in ("/api/active-rag/traces", "/api/active-rag/chain-trace"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.active_rag_traces(
-                    {
-                        "sessionId": _query_first(query, "sessionId") or _query_first(query, "id"),
-                        "limit": _query_first(query, "limit"),
-                    }
-                ),
-            )
-            return
         if parsed.path.startswith("/api/active-rag/session/"):
             session_id = unquote(parsed.path.rsplit("/", 1)[-1])
             self._write_json(HTTPStatus.OK, self.service.active_rag_status({"sessionId": session_id}))
-            return
-        if parsed.path in ("/api/prediction/live-trace", "/prediction/live-trace"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.prediction_live_trace(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "sessionId": _query_first(query, "sessionId"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/prediction/drop-stats", "/prediction/drop-stats"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.prediction_drop_stats({"limit": _query_first(query, "limit")}),
-            )
-            return
-        if parsed.path in ("/api/candidates/explain",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.candidate_explain(
-                    {
-                        "query": _query_first(query, "query"),
-                        "currentInput": _query_first(query, "currentInput"),
-                        "recentContext": _query_first(query, "recentContext"),
-                        "project": _query_first(query, "project"),
-                        "app": _query_first(query, "app"),
-                        "topK": _query_first(query, "topK"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/history",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_history(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "project": _query_first(query, "project"),
-                        "query": _query_first(query, "query"),
-                        "source": _query_first(query, "source"),
-                        "includeDeleted": _query_first(query, "includeDeleted"),
-                        "generatedOnly": _query_first(query, "generatedOnly"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/memories",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_memories(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "project": _query_first(query, "project"),
-                        "status": _query_first(query, "status"),
-                        "kind": _query_first(query, "kind"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/lexicon",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_lexicon(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "project": _query_first(query, "project"),
-                        "status": _query_first(query, "status"),
-                        "kind": _query_first(query, "kind"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/lexicon/export-rime",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_lexicon_export_rime(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "project": _query_first(query, "project"),
-                        "status": _query_first(query, "status"),
-                        "kind": _query_first(query, "kind"),
-                        "dryRun": _query_first(query, "dryRun"),
-                    }
-                ),
-            )
-            return
-        if parsed.path == "/api/rime-lexicon/review":
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.rime_lexicon_review(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "project": _query_first(query, "project"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/cleanup-diff",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.management_cleanup_diff(
-                    {
-                        "id": _query_first(query, "id"),
-                        "diffId": _query_first(query, "diffId"),
-                        "runId": _query_first(query, "runId"),
-                        "status": _query_first(query, "status"),
-                        "limit": _query_first(query, "limit"),
-                    }
-                ),
-            )
             return
         if parsed.path.startswith("/api/memory/optimizer/trace/"):
             trace_id = unquote(parsed.path.rsplit("/", 1)[-1])
@@ -7101,43 +6842,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     {
                         "candidateId": candidate_id,
                         "contextHash": _query_first(query, "contextHash"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/memory/suppressions", "/api/memory/governance"):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.memory_governance(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "includeInactive": _query_first(query, "includeInactive"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/memory/cleanup-runs",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.memory_cleanup_runs(
-                    {
-                        "limit": _query_first(query, "limit"),
-                        "runId": _query_first(query, "runId"),
-                        "status": _query_first(query, "status"),
-                    }
-                ),
-            )
-            return
-        if parsed.path in ("/api/rag-core-v3/doc",):
-            self._write_json(HTTPStatus.OK, self.service.rag_core_v3_doc({"id": _query_first(query, "id")}))
-            return
-        if parsed.path in ("/api/rag-core-v3/tag-graph",):
-            self._write_json(
-                HTTPStatus.OK,
-                self.service.rag_core_v3_tag_graph(
-                    {
-                        "tag": _query_first(query, "tag"),
-                        "limit": _query_first(query, "limit"),
                     }
                 ),
             )
@@ -7378,6 +7082,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.FORBIDDEN, security_error)
                 return
             payload = self._read_json()
+            # Migrated families are served from the route table. This sits
+            # after the security gate and payload read so those semantics are
+            # identical to the chain it replaces.
+            descriptor_route = find_route("POST", path)
+            if descriptor_route is not None:
+                self._dispatch_descriptor_route(descriptor_route, payload=payload)
+                return
             if knowledge_parts is not None:
                 control = self._knowledge_control()
                 if knowledge_parts == ():
@@ -7417,18 +7128,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/browser/mode":
                 self._write_json(HTTPStatus.OK, self.service.browser_control.set_mode(payload.get("mode")))
-                return
-            if path == "/api/browser/pairing/rotate":
-                self._write_json(HTTPStatus.OK, self.service.browser_control.rotate_pairing())
-                return
-            if path == "/api/browser/stop":
-                self._write_json(HTTPStatus.OK, self.service.browser_control.stop())
-                return
-            if path == "/api/browser/managed/start":
-                self._write_json(HTTPStatus.OK, self.service.browser_control.start_managed())
-                return
-            if path == "/api/browser/managed/stop":
-                self._write_json(HTTPStatus.OK, self.service.browser_control.stop_managed())
                 return
             if path == "/api/browser/command":
                 action = str(payload.pop("action", ""))
@@ -7716,148 +7415,6 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     self.service.agent.finalize_external_approval(approval_id, payload),
                 )
-            elif path in ("/api/suggest", "/suggest"):
-                self._write_json(HTTPStatus.OK, self.service.suggest(payload))
-            elif path in ("/api/frontend/v1/suggest", "/frontend/v1/suggest"):
-                validate_contract(payload, "frontend-suggest-request.v1.json")
-                response = self.service.frontend_suggest(payload)
-                validate_contract(response, "frontend-suggest-response.v1.json")
-                self._write_json(HTTPStatus.OK, response)
-            elif path in ("/api/frontend/v1/select", "/frontend/v1/select"):
-                validate_contract(payload, "frontend-selection.v1.json")
-                response = self.service.frontend_select(payload)
-                validate_contract(response, "frontend-selection-response.v1.json")
-                self._write_json(HTTPStatus.OK, response)
-            elif path == "/api/runtime/action":
-                self._write_json(HTTPStatus.ACCEPTED, self.service.management.start_runtime_action(payload))
-            elif path == "/api/runtime/action/preview":
-                self._write_json(HTTPStatus.OK, self.service.management.runtime_action_preview(payload))
-            elif path == "/api/runtime/action/start":
-                self._write_json(HTTPStatus.ACCEPTED, self.service.management.runtime_action_start(payload))
-            elif path == "/api/memory/action":
-                self._write_json(HTTPStatus.OK, self.service.management.memory_action(payload))
-            elif path == "/api/memory/edit":
-                self._write_json(HTTPStatus.OK, self.service.management.memory_edit(payload))
-            elif path == "/api/memory/source/disposition":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.memory_source_disposition(payload),
-                )
-            elif path == "/api/memory/book/archive-status":
-                self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_status(payload))
-            elif path == "/api/memory/book/archive/preview":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.memory_book_archive_preview(payload),
-                )
-            elif path == "/api/memory/book/archive/apply":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.memory_book_archive_apply(payload),
-                )
-            elif path == "/api/memory/book/archive/rollback":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.memory_book_archive_rollback(payload),
-                )
-            elif path == "/api/memory/book/archive-maintenance":
-                self._write_json(HTTPStatus.OK, self.service.management.memory_book_archive_maintenance(payload))
-            elif path == "/api/planning/mutation/preview":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_mutation_preview(payload))
-            elif path == "/api/planning/mutation/rollback":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_mutation_rollback(payload))
-            elif path == "/api/planning/plan/save":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_save_plan(payload))
-            elif path == "/api/planning/goal/save":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_goal_save(payload))
-            elif path == "/api/planning/task/save":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_task_save(payload))
-            elif path == "/api/planning/task/action":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_apply_task_action(payload))
-            elif path == "/api/planning/task-event/undo":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.planning_undo_task_event_contract(payload),
-                )
-            elif path == "/api/history/tombstone/preview":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.history_tombstone_preview(payload),
-                )
-            elif path == "/api/history/tombstone/apply":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.history_tombstone_apply(payload),
-                )
-            elif path == "/api/history/tombstone/rollback":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.management.history_tombstone_rollback(payload),
-                )
-            elif path == "/api/planning/completion/resolve":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_resolve_completion(payload))
-            elif path == "/api/planning/assistant":
-                self._write_json(HTTPStatus.OK, self.service.management.planning_assistant(payload))
-            elif path == "/api/settings/preview":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.configuration_settings_preview(payload),
-                )
-            elif path == "/api/settings/apply":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.configuration_settings_apply(payload),
-                )
-            elif path == "/api/settings/rollback":
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.configuration_settings_rollback(payload),
-                )
-            elif path in ("/api/settings/update",):
-                self._write_json(HTTPStatus.OK, self.service.settings_update(payload))
-            elif path in ("/api/settings/reset-section",):
-                self._write_json(HTTPStatus.OK, self.service.settings_reset_section(payload))
-            elif path == "/api/configuration/import-preview":
-                self._write_json(HTTPStatus.OK, self.service.management.configuration_import_preview(payload))
-            elif path == "/api/configuration/import-apply":
-                self._write_json(HTTPStatus.OK, self.service.management.configuration_import_apply(payload))
-            elif path == "/api/configuration/backup-export":
-                self._write_json(HTTPStatus.OK, self.service.management.portable_backup_export(payload))
-            elif path == "/api/configuration/restore-preview":
-                self._write_json(HTTPStatus.OK, self.service.management.portable_restore_preview(payload))
-            elif path == "/api/configuration/restore-apply":
-                self._write_json(HTTPStatus.OK, self.service.management.portable_restore_apply(payload))
-            elif path in ("/api/profiles/save",):
-                self._write_json(HTTPStatus.OK, self.service.profile_save(payload))
-            elif path in ("/api/profiles/activate-dry-run",):
-                self._write_json(HTTPStatus.OK, self.service.profile_activate_dry_run(payload))
-            elif path in ("/api/vocabulary/item/add",):
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_item_save(payload, action="add"))
-            elif path in ("/api/vocabulary/item/edit",):
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_item_save(payload, action="edit"))
-            elif path in ("/api/vocabulary/item/delete",):
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_item_delete(payload))
-            elif path in ("/api/vocabulary/phonetic-correction/add",):
-                payload = {**payload, "tags": [*_string_list(payload.get("tags")), "phonetic_correction"]}
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_item_save(payload, action="phonetic_correction_add"))
-            elif path in ("/api/vocabulary/rime-export-preview",):
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_rime_export_preview(payload))
-            elif path in ("/api/vocabulary/rime-export-apply",):
-                self._write_json(HTTPStatus.OK, self.service.vocabulary_rime_export_apply(payload))
-            elif path in ("/api/models/probe",):
-                self._write_json(HTTPStatus.OK, self.service.model_probe(payload))
-            elif path in ("/api/models/benchmark",):
-                self._write_json(HTTPStatus.OK, self.service.model_benchmark_job(payload))
-            elif path in ("/api/models/matrix-eval",):
-                self._write_json(HTTPStatus.OK, self.service.model_benchmark_job(payload))
-            elif path in ("/api/models/profile/save",):
-                self._write_json(HTTPStatus.OK, self.service.profile_save({**payload, "kind": "model_profile"}))
-            elif path in ("/api/models/profile/activate-dry-run",):
-                self._write_json(HTTPStatus.OK, self.service.model_activate_dry_run(payload))
-            elif path in ("/api/active-rag/settings/update",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_settings_update(payload))
-            elif path in ("/api/active-rag/preview",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_preview(payload))
             elif path in ("/api/rime-suggest", "/rime-suggest"):
                 validate_contract(payload, "rime-suggest-request.v1.json")
                 response = self.service.rime_suggest(payload)
@@ -7866,116 +7423,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 if isinstance(response.get("overlayConfig"), dict):
                     validate_contract(response.get("overlayConfig"), "overlay-config.v1.json")
                 self._write_json(HTTPStatus.OK, response)
-            elif path in ("/api/rime-select", "/rime-select"):
-                validate_contract(payload, "rime-select.v1.json")
-                self._write_json(HTTPStatus.OK, self.service.rime_select(payload))
-            elif path in ("/api/rime-rank-feedback", "/rime-rank-feedback"):
-                validate_contract(payload, "rime-rank-selection.v1.json")
-                self._write_json(HTTPStatus.OK, self.service.rime_rank_feedback(payload))
-            elif path in ("/api/candidate-edit-feedback", "/candidate-edit-feedback"):
-                self._write_json(HTTPStatus.OK, self.service.candidate_edit_feedback(payload))
-            elif path == "/api/rime-lexicon/apply":
-                self._write_json(HTTPStatus.OK, self.service.rime_lexicon_apply(payload))
-            elif path == "/api/rime-lexicon/rollback":
-                self._write_json(HTTPStatus.OK, self.service.rime_lexicon_rollback(payload))
-            elif path in ("/api/predictor-ttfc", "/predictor-ttfc"):
-                self._write_json(HTTPStatus.OK, self.service.predictor_ttfc(payload))
-            elif path in ("/api/predictor/benchmark",):
-                self._write_json(HTTPStatus.OK, self.service.predictor_benchmark(payload))
-            elif path in ("/api/predictor/cache/clear",):
-                self._write_json(HTTPStatus.OK, self.service.predictor_cache_clear(payload))
-            elif path in ("/api/active-rag/preview",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_preview(payload))
-            elif path in ("/api/active-rag/start",):
-                validate_contract(payload, "active-rag-start.v1.json")
-                self._write_json(HTTPStatus.OK, self.service.active_rag_start(payload))
-            elif path in ("/api/active-rag/status", "/api/active-rag/session"):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_status(payload))
-            elif path in ("/api/active-rag/diagnostics",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_diagnostics(payload))
-            elif path in ("/api/active-rag/cancel",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_cancel(payload))
-            elif path in ("/api/active-rag/accept",):
-                self._write_json(HTTPStatus.OK, self.service.active_rag_accept(payload))
-            elif path in ("/api/knowledge/start",):
-                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_start(payload))
-            elif path in ("/api/knowledge/status", "/api/knowledge/session"):
-                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_status(payload))
-            elif path in ("/api/knowledge/cancel",):
-                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_cancel(payload))
-            elif path in ("/api/knowledge/database/apply-preview",):
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.knowledge_workbench_database_apply_preview(payload),
-                )
-            elif path in ("/api/knowledge/database/apply",):
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.knowledge_workbench_database_apply_contract(payload),
-                )
-            elif path in ("/api/knowledge/database/draft-edit",):
-                self._write_json(HTTPStatus.OK, self.service.knowledge_workbench_database_draft_edit(payload))
-            elif path in ("/api/knowledge/database/rollback",):
-                self._write_json(
-                    HTTPStatus.OK,
-                    self.service.knowledge_workbench_database_rollback_contract(payload),
-                )
-            elif path in ("/api/cache-probe", "/cache-probe"):
-                self._write_json(HTTPStatus.OK, self.service.cache_probe(payload))
-            elif path in ("/api/rebuild-vector-index", "/rebuild-vector-index"):
-                self._write_json(HTTPStatus.OK, self.service.rebuild_vector_index(payload))
-            elif path in ("/api/memory-history", "/memory-history"):
-                self._write_json(HTTPStatus.OK, self.service.memory_history(payload))
-            elif path in ("/api/memory-optimizer-trace", "/memory-optimizer-trace"):
-                self._write_json(HTTPStatus.OK, self.service.memory_optimizer_trace(payload))
-            elif path in ("/api/memory-candidate-explain", "/memory-candidate-explain"):
-                self._write_json(HTTPStatus.OK, self.service.memory_candidate_explain(payload))
-            elif path in ("/api/memory-governance", "/memory-governance"):
-                self._write_json(HTTPStatus.OK, self.service.memory_governance(payload))
-            elif path in ("/api/memory-cleanup-runs", "/memory-cleanup-runs"):
-                self._write_json(HTTPStatus.OK, self.service.memory_cleanup_runs(payload))
-            elif path in ("/api/memory-tombstone", "/memory-tombstone", "/api/memory/tombstone"):
-                self._write_json(HTTPStatus.OK, self.service.memory_tombstone(payload))
-            elif path in ("/api/history/tombstone",):
-                self._write_json(HTTPStatus.OK, self.service.management_history_tombstone(payload))
-            elif path in ("/api/memories/action",):
-                self._write_json(HTTPStatus.OK, self.service.management_memory_action(payload))
-            elif path in ("/api/lexicon/action",):
-                self._write_json(HTTPStatus.OK, self.service.management_lexicon_action(payload))
-            elif path in ("/api/lexicon/export-rime",):
-                self._write_json(HTTPStatus.OK, self.service.management_lexicon_export_rime(payload))
-            elif path in ("/api/cleanup-diff/apply",):
-                self._write_json(HTTPStatus.OK, self.service.management_cleanup_diff_apply(payload))
-            elif path in ("/api/cleanup-diff/rollback",):
-                self._write_json(HTTPStatus.OK, self.service.management_cleanup_diff_rollback(payload))
             elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/apply"):
                 diff_id = _cleanup_diff_path_id(path, suffix="/apply")
                 self._write_json(HTTPStatus.OK, self.service.memory_cleanup_diff_apply(diff_id))
             elif path.startswith("/api/memory/cleanup-diff/") and path.endswith("/rollback"):
                 diff_id = _cleanup_diff_path_id(path, suffix="/rollback")
                 self._write_json(HTTPStatus.OK, self.service.memory_cleanup_diff_rollback(diff_id))
-            elif path in ("/api/generate-memory", "/generate-memory"):
-                self._write_json(HTTPStatus.OK, self.service.generate_memory(payload))
-            elif path in ("/api/organize-rag-db", "/organize-rag-db"):
-                self._write_json(HTTPStatus.OK, self.service.organize_rag_database(payload))
-            elif path in ("/api/rag-core-v3/query-preview",):
-                self._write_json(HTTPStatus.OK, self.service.rag_core_v3_query_preview(payload))
-            elif path in ("/api/rag-core-v3/rebuild-retrieval-docs",):
-                self._write_json(HTTPStatus.OK, self.service.rag_core_v3_rebuild_retrieval_docs(payload))
-            elif path in ("/api/rag-core-v3/memory-book-preview",):
-                self._write_json(HTTPStatus.OK, self.service.rag_core_v3_memory_book_preview(payload))
-            elif path in ("/api/deepseek/completion-preview",):
-                self._write_json(HTTPStatus.OK, self.service.deepseek_completion_preview(payload))
-            elif path in ("/api/commit", "/commit"):
-                validate_contract(payload, "foreground-commit.v1.json")
-                self._write_json(HTTPStatus.OK, self.service.commit(payload))
-            elif path in ("/api/action", "/action"):
-                self._write_json(HTTPStatus.OK, self.service.action(payload))
-            elif path in ("/api/assistant-candidate-action", "/assistant-candidate-action"):
-                validate_contract(payload, "assistant-candidate-action.v1.json")
-                self._write_json(HTTPStatus.OK, self.service.assistant_candidate_action(payload))
-            elif path in ("/api/seed", "/seed"):
-                self._write_json(HTTPStatus.OK, self.service.seed())
             else:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
         except Exception as exc:  # pragma: no cover - exercised through browser/manual debugging
@@ -8421,6 +7874,46 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             raise ValueError("JSON payload must be an object")
         return data
+
+    def _dispatch_descriptor_route(
+        self,
+        route,
+        *,
+        payload: dict[str, object] | None = None,
+        query: dict[str, list[str]] | None = None,
+    ) -> None:
+        """Serve one migrated route from its descriptor.
+
+        The descriptor owns method, path, parsing and the application handler,
+        so this is the only place those are combined. Routes still living in
+        the if/elif chains are untouched; `find_route` returning None means the
+        chain remains the single owner for that path.
+        """
+
+        target = self.service
+        for part in route.handler.split("."):
+            target = getattr(target, part)
+        handler = target
+        if route.contract:
+            validate_contract(payload or {}, route.contract)
+
+        # `takes_arguments` decides only how the handler is called. Response
+        # validation used to sit inside the argument-free branch, so a route
+        # that both took arguments and declared a response contract would have
+        # been served unvalidated -- the declaration would have looked
+        # enforced while doing nothing. It applies to every route now.
+        if route.takes_arguments:
+            arguments = build_arguments(
+                route,
+                payload=payload,
+                query_first=lambda name: _query_first(query or {}, name),
+            )
+            response = handler(arguments, **dict(route.payload_args))
+        else:
+            response = handler(**dict(route.payload_args))
+        if route.response_contract:
+            validate_contract(response, route.response_contract)
+        self._write_json(HTTPStatus(route.status), response)
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, object]) -> None:
         body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")

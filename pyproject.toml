@@ -3,7 +3,11 @@ name = "wisdom-weasel-rag-ime"
 version = "0.1.0"
 description = "Local-first RAG input method MVP inspired by Wisdom-Weasel."
 license = "GPL-3.0-only"
-requires-python = ">=3.10"
+# 3.12 is the real floor, not a preference: the source uses PEP 701 f-strings
+# (a backslash inside an f-string expression, e.g. rag_ime/memory_cleanup.py),
+# which is a SyntaxError on 3.10 and 3.11. Declaring >=3.10 advertised an
+# install that cannot import. CI already runs 3.12.
+requires-python = ">=3.12"
 dependencies = [
   "pypdf>=5.0,<7",
   "PyYAML>=6.0,<7",
@@ -25,3 +29,69 @@ knowledge-ann = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.mypy]
+# Strict checking for the stable boundary contracts only -- the modules other
+# code programs against: protocol selection, the runtime-neutral driver
+# contract, control-api models, the route descriptor table and the Room turn
+# registry. Everything below is strict-clean today, so a failure means a new
+# contract break rather than pre-existing debt. This is deliberately NOT the
+# start of whole-repository typing: large application modules stay unchecked
+# until a boundary they own stabilises enough to join this list.
+files = [
+    "rag_ime/pi_runtime_protocols.py",
+    "rag_ime/agent_runtime_driver.py",
+    "rag_ime/pi_runtime_public.py",
+    "rag_ime/pi_runtime_values.py",
+    "rag_ime/control_api/models.py",
+    "rag_ime/control_api/route_table.py",
+    "rag_ime/agent_room_turn_registry.py",
+]
+python_version = "3.12"
+strict = true
+# The checked modules import large untyped neighbours (agent_protocol,
+# debug_server handlers by name only); following those imports would drag the
+# whole repository into scope, which is exactly what this configuration
+# refuses to do.
+follow_imports = "silent"
+
+[tool.ruff]
+# Must match the real floor above; at py310/py311 ruff reports 6 spurious
+# syntax errors for valid PEP 701 f-strings.
+target-version = "py312"
+
+[tool.ruff.lint]
+# Deliberately narrow: every rule here passes today, so a failure means a new
+# defect rather than pre-existing debt. These are correctness rules only --
+# duplicate dict keys and redefined symbols are how dead code silently
+# overrides live code, which this repository had two real instances of.
+# No formatting or style rules: reformatting the repository is out of scope.
+#
+# Known non-zero and deliberately NOT enabled yet, with counts measured at
+# this commit, so the gate is never mistaken for full coverage:
+#   F401 unused-import      32   (removal touches many files; needs its own pass)
+#   B904 raise-without-from-inside-except  3  (changes exception chaining)
+#   F841 unused-variable     5
+#   F541 f-string-no-placeholder  2
+# F821 is now enabled: both findings were real and are fixed.
+# B023 is now enabled: its one finding was in a test lambda closing over a loop
+# variable, which is now bound explicitly.
+#
+# Every rule below is at zero, so a failure means a new defect rather than
+# pre-existing debt. Each is a way code can be wrong while still importing:
+# comparison and membership written backwards (E711-E714), a bare except
+# swallowing everything (E722), a mutable default shared between calls (B006),
+# a return inside finally discarding an exception (B012), a closure capturing a
+# loop variable (B023), and the always-false/always-true forms Pylint detects.
+select = [
+    "E9", "E711", "E712", "E713", "E714", "E722",
+    # F823 catches a rename hazard proven real in this repository: a local
+    # assignment `name = name(...)` shadows an imported function for the whole
+    # scope and raises UnboundLocalError at runtime, which an event pump can
+    # swallow into silently dropped events.
+    "F402", "F502", "F506", "F522", "F601", "F621", "F622",
+    "F632", "F701", "F702", "F704", "F706", "F707", "F811", "F821", "F823",
+    "B002", "B006", "B012", "B023",
+    "PLE0101", "PLE0704", "PLE1142",
+    "PLW0127", "PLW0129", "PLW0602", "PLW0711",
+]

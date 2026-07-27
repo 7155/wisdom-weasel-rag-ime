@@ -26,6 +26,38 @@ from .agent_tool_ids import (
     COORDINATOR_TOOL_IDS,
 )
 from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
+from .pi_runtime_protocols import resolve_protocol_manager
+from .pi_runtime_public import (
+    pi_message_payload,
+    APPROVAL_TITLE_PREFIX,
+    REVIEW_TITLE_PREFIX,
+    last_assistant_error,
+    last_assistant_preview,
+    pi_message_id,
+    pi_message_is_public,
+    provider_retry_status,
+    public_code_tool_activity,
+    public_file_name,
+    public_fork_candidate_text,
+    public_pi_model,
+    public_usage,
+    redact_mapping,
+    safe_scalar,
+    supported_thinking_levels,
+    ui_confirmation_value,
+    visible_message_text,
+)
+from .pi_runtime_values import (
+    PiRuntimeError,
+    effective_thinking_level,
+    as_integer,
+    path_is_within,
+    as_mapping,
+    message_delivery,
+    model_reference_part,
+    public_message_queue,
+    redact_runtime_text,
+)
 from .agent_runtime_driver import (
     AgentRuntimeError,
     AgentRuntimePolicy,
@@ -43,8 +75,12 @@ from .managed_pi_runtime import ManagedPiRuntimeError, discover_managed_pi_runti
 from .pi_provider_config import PiProviderConfigError, load_pi_provider_config
 
 
-class PiRuntimeError(AgentRuntimeError):
-    pass
+__all__ = [
+    "PiRuntimeConfig",
+    "PiRuntimeDriverFactory",
+    "PiRuntimeError",
+    "PiRuntimeManager",
+]
 
 
 _READ_ONLY_CONTROL_TOOLS = ASSISTANT_CONTROL_TOOL_IDS
@@ -61,8 +97,6 @@ _SUBAGENT_READ_ONLY_TOOLS = (
     "workspace_read",
     "workspace_search",
 )
-_APPROVAL_TITLE_PREFIX = "RAG-IME-APPROVAL:"
-_REVIEW_TITLE_PREFIX = "RAG-IME-REVIEW:"
 _MAX_PERSISTED_TRANSCRIPT_BYTES = 64 * 1024 * 1024
 _MAX_PERSISTED_TRANSCRIPT_ENTRIES = 100_000
 _MAX_PERSISTED_TRANSCRIPT_LINE_BYTES = 4 * 1024 * 1024
@@ -338,7 +372,7 @@ class PiRuntimeConfig:
         if session_file:
             resolved_session = Path(session_file).expanduser().resolve(strict=False)
             session_root = self.session_dir.expanduser().resolve(strict=False)
-            if not _is_within(resolved_session, session_root):
+            if not path_is_within(resolved_session, session_root):
                 raise PiRuntimeError("Pi session file is outside the managed session directory")
             if resolved_session.is_file():
                 command.extend(["--session", str(resolved_session)])
@@ -550,19 +584,10 @@ class PiRuntimeDriverFactory:
                 0 if purpose == "delegated" else self._config.idle_timeout_seconds
             ),
         )
-        if config.protocol_version == "2":
-            from .pi_runtime_v2 import PiRuntimeHostManager
-
-            return PiRuntimeHostManager(
-                config=config,
-                sessions=context.sessions,
-                events=context.events,
-                media_resolver=context.media_resolver,
-                session_context_provider=session_context_provider,
-                tool_manifest_provider=context.tool_manifest_provider,
-                compaction_observer=context.compaction_observer,
-            )
-        return PiRuntimeManager(
+        # Which implementation serves this protocol version is owned by the
+        # registry, so this factory no longer has to know that v2 exists.
+        manager = resolve_protocol_manager(config.protocol_version)
+        return manager(
             config=config,
             sessions=context.sessions,
             events=context.events,
@@ -731,7 +756,7 @@ class PiRpcClient:
             self._process = None
 
     def diagnostic_error(self) -> str:
-        return _redact_runtime_text(self._stderr[-1] if self._stderr else "")
+        return redact_runtime_text(self._stderr[-1] if self._stderr else "")
 
     def _read_stdout(self) -> None:
         process = self._process
@@ -857,11 +882,11 @@ class PiRuntimeManager:
         if self.config.enabled and not installed:
             status = "not_installed"
             if not last_error:
-                last_error = _redact_runtime_text(self.config.installation_error)
+                last_error = redact_runtime_text(self.config.installation_error)
         elif self.config.enabled and installed and not self.config.model_configured:
             status = "needs_configuration"
             if not last_error:
-                last_error = _redact_runtime_text(self.config.model_configuration_error)
+                last_error = redact_runtime_text(self.config.model_configuration_error)
         return {
             "schemaVersion": "rag-ime.agent-runtime.v1",
             "enabled": self.config.enabled,
@@ -938,9 +963,9 @@ class PiRuntimeManager:
             self._client = client
         try:
             response = client.start()
-            state = _mapping(response.get("data"))
+            state = as_mapping(response.get("data"))
             desired_provider, desired_model_id = self.config.resolved_model_reference(session)
-            started_model = _mapping(state.get("model"))
+            started_model = as_mapping(state.get("model"))
             if (
                 desired_provider
                 and desired_model_id
@@ -960,8 +985,8 @@ class PiRuntimeManager:
                         "modelId": desired_model_id,
                     }
                 )
-                state = _mapping(client.send({"type": "get_state"}).get("data"))
-            selected_model = _mapping(state.get("model"))
+                state = as_mapping(client.send({"type": "get_state"}).get("data"))
+            selected_model = as_mapping(state.get("model"))
             selected_provider = str(selected_model.get("provider") or "").strip()
             selected_model_id = str(selected_model.get("id") or "").strip()
             if selected_provider and selected_model_id:
@@ -972,7 +997,7 @@ class PiRuntimeManager:
             desired_thinking = str(session.get("thinkingLevel") or "").strip().lower()
             if desired_thinking and str(state.get("thinkingLevel") or "") != desired_thinking:
                 client.send({"type": "set_thinking_level", "level": desired_thinking})
-                state = _mapping(client.send({"type": "get_state"}).get("data"))
+                state = as_mapping(client.send({"type": "get_state"}).get("data"))
             bound = self.sessions.bind_runtime_session(
                 session_id,
                 driver_id=self.driver_id,
@@ -981,7 +1006,7 @@ class PiRuntimeManager:
                 transcript_ref=str(state.get("sessionFile") or ""),
                 branch_anchor=str(state.get("leafId") or ""),
                 binding_state="active",
-                message_count=_integer(state.get("messageCount")),
+                message_count=as_integer(state.get("messageCount")),
             )
             with self._lock:
                 self._status = "ready"
@@ -996,7 +1021,7 @@ class PiRuntimeManager:
                     self._active_turn_id = ""
                     self._active_client_message_id = ""
                 self._status = "faulted"
-                self._last_error = _redact_runtime_text(str(exc))
+                self._last_error = redact_runtime_text(str(exc))
             client.stop()
             self.sessions.set_status(session_id, "faulted")
             self.events.publish(session_id, "turn_failed", {"error": self._last_error})
@@ -1014,7 +1039,7 @@ class PiRuntimeManager:
         text = str(message).strip()
         if not text:
             raise ValueError("agent prompt must not be empty")
-        normalized_delivery = _message_delivery(delivery)
+        normalized_delivery = message_delivery(delivery)
         if normalized_delivery != "prompt":
             with self._lock:
                 if not self._active_turn_id:
@@ -1066,7 +1091,7 @@ class PiRuntimeManager:
                     if self._last_pi_entry_id:
                         command["since"] = self._last_pi_entry_id
                 entries_response = client.send(command)
-                entries_data = _mapping(entries_response.get("data"))
+                entries_data = as_mapping(entries_response.get("data"))
                 pi_entry_id = _latest_user_entry_id(entries_data.get("entries"), text)
                 leaf_id = str(entries_data.get("leafId") or "")
                 if leaf_id:
@@ -1115,7 +1140,7 @@ class PiRuntimeManager:
         except AgentRuntimeError:
             found, persisted = self._persisted_messages(session_id)
             return persisted if found else []
-        data = _mapping(response.get("data"))
+        data = as_mapping(response.get("data"))
         messages = data.get("messages")
         if not isinstance(messages, list):
             return []
@@ -1124,15 +1149,15 @@ class PiRuntimeManager:
         for raw_message in messages:
             if not isinstance(raw_message, Mapping):
                 continue
-            value = _mapping(raw_message)
-            if not _pi_message_is_public(value):
+            value = as_mapping(raw_message)
+            if not pi_message_is_public(value):
                 continue
             role = str(value.get("role") or "assistant").lower()
-            message_id = _pi_message_id(value, "history")
+            message_id = pi_message_id(value, "history")
             if role == "user" or not current_turn_id:
                 current_turn_id = f"history:{message_id}"
             result.append(
-                _pi_message_payload(
+                pi_message_payload(
                     value,
                     session_id=session_id,
                     turn_id=current_turn_id,
@@ -1202,12 +1227,12 @@ class PiRuntimeManager:
             branch_transcript: Path | None = None
             try:
                 fork_started = True
-                fork_response = _mapping(
+                fork_response = as_mapping(
                     client.send({"type": "fork", "entryId": normalized_entry_id}).get("data")
                 )
                 if bool(fork_response.get("cancelled")):
                     raise PiRuntimeError("Pi cancelled the conversation fork")
-                state = _mapping(client.send({"type": "get_state"}).get("data"))
+                state = as_mapping(client.send({"type": "get_state"}).get("data"))
                 external_session_id = str(state.get("sessionId") or "").strip()
                 transcript_ref = str(state.get("sessionFile") or "").strip()
                 if not external_session_id or not transcript_ref:
@@ -1217,7 +1242,7 @@ class PiRuntimeManager:
                     raise PiRuntimeError("Pi conversation fork file must not be a symlink")
                 branch_transcript = branch_candidate.resolve(strict=False)
                 session_root = self.config.session_dir.expanduser().resolve(strict=False)
-                if not _is_within(branch_transcript, session_root):
+                if not path_is_within(branch_transcript, session_root):
                     raise PiRuntimeError("Pi conversation fork file is outside the managed session directory")
                 if not branch_transcript.is_file():
                     raise PiRuntimeError("Pi conversation fork file was not persisted")
@@ -1234,7 +1259,7 @@ class PiRuntimeManager:
                     branch_anchor=str(state.get("leafId") or normalized_entry_id),
                     binding_state="active",
                     metadata={"forkedFromSessionId": source_session_id, "forkEntryId": normalized_entry_id},
-                    message_count=_integer(state.get("messageCount")),
+                    message_count=as_integer(state.get("messageCount")),
                 )
                 with self._lock:
                     self._active_session_id = target_session_id
@@ -1313,7 +1338,7 @@ class PiRuntimeManager:
     @staticmethod
     def _fork_candidates_from_client(client: PiRpcClient) -> list[dict[str, object]]:
         response = client.send({"type": "get_fork_messages"})
-        data = _mapping(response.get("data"))
+        data = as_mapping(response.get("data"))
         raw_messages = data.get("messages")
         if not isinstance(raw_messages, list):
             raise PiRuntimeError("Pi returned an invalid conversation fork catalog")
@@ -1323,7 +1348,7 @@ class PiRuntimeManager:
             if not isinstance(raw, Mapping):
                 continue
             entry_id = str(raw.get("entryId") or "").strip()[:240]
-            text = _public_fork_candidate_text(raw.get("text"), role="user")
+            text = public_fork_candidate_text(raw.get("text"), role="user")
             if not entry_id or not text or entry_id in seen:
                 continue
             seen.add(entry_id)
@@ -1357,7 +1382,7 @@ class PiRuntimeManager:
             raise PiRuntimeError("Pi session file must not be a symlink")
         transcript = transcript_candidate.resolve(strict=False)
         session_root = self.config.session_dir.expanduser().resolve(strict=False)
-        if not _is_within(transcript, session_root):
+        if not path_is_within(transcript, session_root):
             raise PiRuntimeError("Pi session file is outside the managed session directory")
         try:
             size = transcript.stat().st_size
@@ -1414,14 +1439,14 @@ class PiRuntimeManager:
             if not isinstance(raw_message, Mapping):
                 continue
             value = dict(raw_message)
-            if not _pi_message_is_public(value):
+            if not pi_message_is_public(value):
                 continue
             role = str(value.get("role") or "assistant").lower()
-            message_id = str(entry.get("id") or _pi_message_id(value, "history"))
+            message_id = str(entry.get("id") or pi_message_id(value, "history"))
             if role == "user" or not current_turn_id:
                 current_turn_id = f"history:{message_id}"
             public_messages.append(
-                _pi_message_payload(
+                pi_message_payload(
                     value,
                     session_id=session_id,
                     turn_id=current_turn_id,
@@ -1444,7 +1469,7 @@ class PiRuntimeManager:
             client = self._require_client_locked(session_id)
             self._schedule_idle_locked()
         response = client.send({"type": "get_commands"})
-        data = _mapping(response.get("data"))
+        data = as_mapping(response.get("data"))
         raw_commands = data.get("commands")
         if not isinstance(raw_commands, list):
             return []
@@ -1489,19 +1514,19 @@ class PiRuntimeManager:
             self._schedule_idle_locked()
         state_response = client.send({"type": "get_state"})
         models_response = client.send({"type": "get_available_models"})
-        state = _mapping(state_response.get("data"))
-        data = _mapping(models_response.get("data"))
+        state = as_mapping(state_response.get("data"))
+        data = as_mapping(models_response.get("data"))
         raw_models = data.get("models") if isinstance(data.get("models"), list) else []
-        selected = _public_pi_model(_mapping(state.get("model")))
+        selected = public_pi_model(as_mapping(state.get("model")))
         models = [
             model
             for value in raw_models
             if isinstance(value, Mapping)
-            for model in [_public_pi_model(value)]
+            for model in [public_pi_model(value)]
             if model
         ]
         models.sort(key=lambda item: (str(item["provider"]).lower(), str(item["name"]).lower()))
-        thinking_level = _effective_thinking_level(state.get("thinkingLevel"), selected)
+        thinking_level = effective_thinking_level(state.get("thinkingLevel"), selected)
         return {
             "selected": selected or None,
             "models": models,
@@ -1514,13 +1539,13 @@ class PiRuntimeManager:
         if client is None or not client.running:
             raise PiRuntimeError("Pi model catalog requires an active runtime session")
         response = client.send({"type": "get_available_models"})
-        data = _mapping(response.get("data"))
+        data = as_mapping(response.get("data"))
         raw_models = data.get("models") if isinstance(data.get("models"), list) else []
         models = [
             model
             for value in raw_models
             if isinstance(value, Mapping)
-            for model in [_public_pi_model(value)]
+            for model in [public_pi_model(value)]
             if model
         ]
         models.sort(key=lambda item: (str(item["provider"]).lower(), str(item["name"]).lower()))
@@ -1545,8 +1570,8 @@ class PiRuntimeManager:
         return False
 
     def set_model(self, session_id: str, *, provider: str, model_id: str) -> dict[str, object]:
-        normalized_provider = _model_reference_part(provider, field="provider", maximum=80)
-        normalized_model = _model_reference_part(model_id, field="modelId", maximum=160)
+        normalized_provider = model_reference_part(provider, field="provider", maximum=80)
+        normalized_model = model_reference_part(model_id, field="modelId", maximum=160)
         self.ensure(session_id)
         with self._lock:
             if self._active_turn_id:
@@ -1561,7 +1586,7 @@ class PiRuntimeManager:
                     "modelId": normalized_model,
                 }
             )
-            selected = _public_pi_model(_mapping(response.get("data")))
+            selected = public_pi_model(as_mapping(response.get("data")))
             if not selected:
                 raise PiRuntimeError("Pi did not return the selected model")
             session = self.sessions.set_model_profile(
@@ -1584,16 +1609,16 @@ class PiRuntimeManager:
             client = self._require_client_locked(session_id)
             self._cancel_idle_locked()
         try:
-            before = _mapping(client.send({"type": "get_state"}).get("data"))
-            before_model = _public_pi_model(_mapping(before.get("model")))
+            before = as_mapping(client.send({"type": "get_state"}).get("data"))
+            before_model = public_pi_model(as_mapping(before.get("model")))
             supported = before_model.get("thinkingLevels") if before_model else ["off"]
             if not isinstance(supported, list) or normalized not in supported:
                 raise ValueError("当前 Pi 模型不支持这个思考强度")
             client.send({"type": "set_thinking_level", "level": normalized})
             state_response = client.send({"type": "get_state"})
-            state = _mapping(state_response.get("data"))
-            selected = _public_pi_model(_mapping(state.get("model")))
-            effective = _effective_thinking_level(
+            state = as_mapping(state_response.get("data"))
+            selected = public_pi_model(as_mapping(state.get("model")))
+            effective = effective_thinking_level(
                 state.get("thinkingLevel") or normalized,
                 selected,
             )
@@ -1636,7 +1661,7 @@ class PiRuntimeManager:
             command["customInstructions"] = instructions.strip()[:2000]
         try:
             response = client.send(command, timeout=max(60.0, self.config.command_timeout_seconds))
-            result = dict(_mapping(response.get("data")))
+            result = dict(as_mapping(response.get("data")))
             checkpoint = self._observe_compaction(session_id, result, "manual")
             if checkpoint:
                 result["memoryCheckpoint"] = checkpoint
@@ -1661,7 +1686,7 @@ class PiRuntimeManager:
                 "ok": False,
                 "stored": False,
                 "status": "checkpoint_failed",
-                "error": _redact_runtime_text(str(exc)),
+                "error": redact_runtime_text(str(exc)),
             }
         return dict(checkpoint or {})
 
@@ -1703,7 +1728,7 @@ class PiRuntimeManager:
         event_type = str(raw.get("type") or "")
         if event_type == "compaction_end":
             compaction = (
-                dict(_mapping(raw.get("result")))
+                dict(as_mapping(raw.get("result")))
                 if isinstance(raw.get("result"), Mapping)
                 else dict(raw)
             )
@@ -1714,21 +1739,23 @@ class PiRuntimeManager:
             )
             return
         if event_type == "message_update":
-            update = _mapping(raw.get("assistantMessageEvent"))
+            update = as_mapping(raw.get("assistantMessageEvent"))
             update_type = str(update.get("type") or "")
             if update_type == "text_delta":
-                raw_message = _mapping(raw.get("message"))
-                pi_message_id = _pi_message_id(raw_message, turn_id)
+                raw_message = as_mapping(raw.get("message"))
+                streamed_message_id = pi_message_id(raw_message, turn_id)
                 with self._lock:
-                    replace_block = pi_message_id != self._stream_pi_message_id
-                    self._stream_pi_message_id = pi_message_id
+                    replace_block = (
+                        streamed_message_id != self._stream_pi_message_id
+                    )
+                    self._stream_pi_message_id = streamed_message_id
                 self.events.publish(
                     session_id,
                     "text_delta",
                     {
                         "messageId": f"{turn_id}:assistant",
                         "blockId": f"{turn_id}:assistant:text",
-                        "contentIndex": _integer(update.get("contentIndex")),
+                        "contentIndex": as_integer(update.get("contentIndex")),
                         "delta": str(update.get("delta") or ""),
                         "replaceBlock": replace_block,
                     },
@@ -1746,7 +1773,7 @@ class PiRuntimeManager:
             self.events.publish(
                 session_id,
                 "status_changed",
-                _provider_retry_status(
+                provider_retry_status(
                     raw,
                     started=event_type == "auto_retry_start",
                 ),
@@ -1754,8 +1781,8 @@ class PiRuntimeManager:
             )
             return
         if event_type == "message_end":
-            raw_message = _mapping(raw.get("message"))
-            if not _pi_message_is_public(raw_message):
+            raw_message = as_mapping(raw.get("message"))
+            if not pi_message_is_public(raw_message):
                 return
             role = str(raw_message.get("role") or "assistant").lower()
             trusted_blocks = raw.get("agentBlocks")
@@ -1770,7 +1797,7 @@ class PiRuntimeManager:
             # forwarding that echo creates a second bubble for one send.
             if role == "user":
                 return
-            message = _pi_message_payload(
+            message = pi_message_payload(
                 raw_message,
                 session_id=session_id,
                 turn_id=turn_id,
@@ -1780,7 +1807,7 @@ class PiRuntimeManager:
             )
             event_payload: dict[str, object] = {
                 "message": message.to_payload(),
-                "usage": _public_usage(raw.get("message")),
+                "usage": public_usage(raw.get("message")),
             }
             if role == "user" and client_message_id:
                 event_payload["clientMessageId"] = client_message_id
@@ -1796,8 +1823,8 @@ class PiRuntimeManager:
                 session_id,
                 "message_queue_updated",
                 {
-                    "steering": _public_message_queue(raw.get("steering")),
-                    "followUp": _public_message_queue(raw.get("followUp")),
+                    "steering": public_message_queue(raw.get("steering")),
+                    "followUp": public_message_queue(raw.get("followUp")),
                 },
                 turn_id=turn_id,
             )
@@ -1808,20 +1835,20 @@ class PiRuntimeManager:
                 "tool_execution_update": "tool_progress",
                 "tool_execution_end": "tool_finished",
             }[event_type]
-            raw_args = _mapping(raw.get("args"))
+            raw_args = as_mapping(raw.get("args"))
             tool_name = str(raw.get("toolName") or "")
             payload = {
                 "toolCallId": str(raw.get("toolCallId") or ""),
                 "toolName": tool_name,
-                "args": _redact_mapping(raw_args),
+                "args": redact_mapping(raw_args),
                 "isError": bool(raw.get("isError")),
             }
-            public_result = _public_code_tool_activity(tool_name, raw_args)
+            public_result = public_code_tool_activity(tool_name, raw_args)
             if public_result:
                 payload["publicResult"] = public_result
             result_key = "partialResult" if event_type == "tool_execution_update" else "result"
             if raw.get(result_key) is not None:
-                payload[result_key] = _redact_mapping(_mapping(raw.get(result_key)))
+                payload[result_key] = redact_mapping(as_mapping(raw.get(result_key)))
             if event_type == "tool_execution_end" and not bool(raw.get("isError")):
                 captured = self._tool_blocks.capture(
                     raw.get("result"),
@@ -1838,8 +1865,8 @@ class PiRuntimeManager:
             method = str(raw.get("method") or "")
             request_id = str(raw.get("id") or "")
             title = str(raw.get("title") or "")
-            if method == "confirm" and title.startswith(_APPROVAL_TITLE_PREFIX):
-                approval_id = title[len(_APPROVAL_TITLE_PREFIX) :].strip()
+            if method == "confirm" and title.startswith(APPROVAL_TITLE_PREFIX):
+                approval_id = title[len(APPROVAL_TITLE_PREFIX) :].strip()
                 try:
                     approval = self.sessions.get_approval(approval_id)
                 except (KeyError, ValueError):
@@ -1860,8 +1887,8 @@ class PiRuntimeManager:
                     turn_id=turn_id,
                 )
                 return
-            if method == "confirm" and title.startswith(_REVIEW_TITLE_PREFIX):
-                run_id = title[len(_REVIEW_TITLE_PREFIX) :].strip()
+            if method == "confirm" and title.startswith(REVIEW_TITLE_PREFIX):
+                run_id = title[len(REVIEW_TITLE_PREFIX) :].strip()
                 if not run_id:
                     client.respond_extension_ui(request_id, confirmed=False)
                     return
@@ -1921,8 +1948,8 @@ class PiRuntimeManager:
             if raw.get("willRetry") is True:
                 return
             messages = raw.get("messages") if isinstance(raw.get("messages"), list) else []
-            preview = _last_assistant_preview(messages)
-            provider_error = _last_assistant_error(messages)
+            preview = last_assistant_preview(messages)
+            provider_error = last_assistant_error(messages)
             with self._lock:
                 if (
                     self._client is not client
@@ -1973,7 +2000,7 @@ class PiRuntimeManager:
                     "status": "analyzing" if turn_id else "ready",
                     "phase": "extension_warning",
                     "extensionEvent": str(raw.get("event") or ""),
-                    "warning": _redact_runtime_text(
+                    "warning": redact_runtime_text(
                         str(raw.get("error") or "Pi extension failed")
                     ),
                 },
@@ -2102,7 +2129,7 @@ class PiRuntimeManager:
         if method == "confirm" and not cancelled:
             confirmed = response.get("confirmed")
             if not isinstance(confirmed, bool):
-                confirmed = _ui_confirmation_value(value)
+                confirmed = ui_confirmation_value(value)
             client.respond_extension_ui(
                 normalized_request_id,
                 confirmed=confirmed,
@@ -2148,7 +2175,7 @@ class PiRuntimeManager:
                 self._status = "stopped"
             else:
                 self._status = "faulted"
-                self._last_error = _redact_runtime_text(error or f"Pi exited with code {exit_code}")
+                self._last_error = redact_runtime_text(error or f"Pi exited with code {exit_code}")
             self._pending_approval_requests.clear()
             self._pending_review_requests.clear()
             self._pending_ui_requests.clear()
@@ -2162,7 +2189,7 @@ class PiRuntimeManager:
             )
 
     def _turn_failed(self, session_id: str, turn_id: str, error: BaseException) -> None:
-        safe_error = _redact_runtime_text(str(error))
+        safe_error = redact_runtime_text(str(error))
         self.sessions.set_status(session_id, "idle")
         with self._lock:
             self._cancel_abort_locked()
@@ -2245,282 +2272,20 @@ class PiRuntimeManager:
         self.stop()
 
 
-def _pi_message_payload(
-    raw: Mapping[str, object],
-    *,
-    session_id: str,
-    turn_id: str,
-    media_resolver: Callable[[str, str, str], str] | None = None,
-    message_id: str | None = None,
-    trusted_blocks: object = None,
-) -> AgentMessage:
-    role = str(raw.get("role") or "assistant")
-    if role not in {"user", "assistant", "tool", "system"}:
-        role = "tool" if role.lower().startswith("tool") else "assistant"
-    content = raw.get("content")
-    resolved_message_id = message_id or _pi_message_id(raw, turn_id)
-    fallback_blocks_enabled = trusted_blocks is None
-    blocks: list[AgentBlock] = []
-    blocks.extend(
-        AgentBlock.from_payload(item)
-        for item in normalize_trusted_agent_blocks(
-            trusted_blocks,
-            source_kind="pi_runtime_event",
-            source_ref=f"{session_id}:{resolved_message_id}",
-        )
-    )
-    attachments: list[str] = []
-    if isinstance(content, str):
-        visible_content = _visible_message_text(role, content)
-        extracted = (
-            extract_completed_agent_blocks(
-                visible_content,
-                source_kind="pi_session_message",
-                source_ref=f"{session_id}:{resolved_message_id}",
-            )
-            if role == "assistant"
-            else None
-        )
-        if extracted is not None:
-            visible_content = extracted.text
-            if fallback_blocks_enabled:
-                blocks.extend(AgentBlock.from_payload(item) for item in extracted.blocks)
-        if visible_content:
-            blocks.append(
-                normalize_agent_block(
-                    {
-                        "id": f"{turn_id}:text:0",
-                        "type": "text",
-                        "status": "completed",
-                        "presentationKind": "markdown",
-                        "data": {"text": visible_content},
-                    }
-                )
-            )
-    elif isinstance(content, list):
-        for index, item in enumerate(content):
-            value = _mapping(item)
-            content_type = str(value.get("type") or "unknown")
-            if content_type == "text":
-                visible_content = _visible_message_text(role, str(value.get("text") or ""))
-                extracted = (
-                    extract_completed_agent_blocks(
-                        visible_content,
-                        source_kind="pi_session_message",
-                        source_ref=f"{session_id}:{resolved_message_id}",
-                    )
-                    if role == "assistant"
-                    else None
-                )
-                if extracted is not None:
-                    visible_content = extracted.text
-                    if fallback_blocks_enabled:
-                        blocks.extend(AgentBlock.from_payload(item) for item in extracted.blocks)
-                if visible_content:
-                    blocks.append(
-                        normalize_agent_block(
-                            {
-                                "id": f"{turn_id}:text:{index}",
-                                "type": "text",
-                                "status": "completed",
-                                "presentationKind": "markdown",
-                                "data": {"text": visible_content},
-                            }
-                        )
-                    )
-            elif content_type == "image" and media_resolver is not None:
-                media_id = media_resolver(
-                    session_id,
-                    str(value.get("mimeType") or ""),
-                    str(value.get("data") or ""),
-                )
-                if media_id:
-                    attachments.append(media_id)
-                    receipt_url = _managed_media_content_url(session_id, media_id)
-                    blocks.append(
-                        normalize_agent_block(
-                            {
-                                "id": f"{turn_id}:image:{index}",
-                                "type": "image",
-                                "status": "completed",
-                                "presentationKind": "image",
-                                "data": {
-                                    "mediaId": media_id,
-                                    "receiptUrl": receipt_url,
-                                },
-                            }
-                        )
-                    )
-            elif content_type in {"thinking", "redacted_thinking"}:
-                continue
-            elif content_type in {"toolCall", "tool_call"}:
-                blocks.append(
-                    normalize_agent_block(
-                        {
-                            "id": str(value.get("id") or f"{turn_id}:tool:{index}"),
-                            "type": "tool_call",
-                            "status": "completed",
-                            "presentationKind": "tool_call",
-                            "data": {
-                                "toolCallId": str(value.get("id") or ""),
-                                "toolName": str(value.get("name") or value.get("toolName") or ""),
-                                "arguments": _redact_mapping(_mapping(value.get("arguments"))),
-                            },
-                        }
-                    )
-                )
-    error_message = _redact_runtime_text(str(raw.get("errorMessage") or "").strip())
-    failed = str(raw.get("stopReason") or "").lower() == "error" or bool(error_message)
-    if failed:
-        blocks.append(
-            normalize_agent_block(
-                {
-                    "id": f"{turn_id}:error:0",
-                    "type": "error",
-                    "status": "failed",
-                    "presentationKind": "error",
-                    "data": {"message": error_message or "模型请求失败，请重试"},
-                }
-            )
-        )
-    if not blocks:
-        blocks.append(
-            normalize_agent_block(
-                {
-                    "id": f"{turn_id}:progress:0",
-                    "type": "progress",
-                    "status": "completed",
-                    "presentationKind": "progress",
-                    "data": {"label": "本轮没有可展示正文"},
-                }
-            )
-        )
-    created_at = _integer(raw.get("timestamp")) or int(time.time() * 1000)
-    return AgentMessage(
-        message_id=resolved_message_id,
-        session_id=session_id,
-        turn_id=turn_id,
-        role=role,
-        status="failed" if failed else "completed",
-        blocks=tuple(blocks),
-        attachments=tuple(dict.fromkeys(attachments)),
-        created_at_ms=created_at,
-        completed_at_ms=created_at,
-        provider=str(raw.get("provider") or "").strip()[:80],
-        model=str(raw.get("responseModel") or raw.get("model") or "").strip()[:160],
-        usage=_public_usage(raw) if role == "assistant" else None,
-    )
 
 
-def _pi_message_is_public(raw: Mapping[str, object]) -> bool:
-    """Keep Pi's loop protocol out of the human conversation transcript."""
-
-    role = str(raw.get("role") or "assistant").lower()
-    if role == "user":
-        return True
-    if role != "assistant":
-        return False
-    content = raw.get("content")
-    if not isinstance(content, list):
-        return bool(str(content or "").strip()) or bool(raw.get("errorMessage"))
-    for item in content:
-        value = _mapping(item)
-        if str(value.get("type") or "") in {"toolCall", "tool_call"}:
-            return False
-    return any(
-        str(_mapping(item).get("type") or "") in {"text", "image"}
-        for item in content
-    ) or bool(raw.get("errorMessage"))
 
 
-def _managed_media_content_url(session_id: str, media_id: str) -> str:
-    return (
-        f"/api/agent/media/{quote(str(media_id), safe='')}/content"
-        f"?sessionId={quote(str(session_id), safe='')}"
-    )
 
 
-def _pi_message_id(raw: Mapping[str, object], turn_id: str) -> str:
-    value = str(raw.get("id") or "").strip()
-    if value:
-        return value
-    timestamp = _integer(raw.get("timestamp"))
-    role = str(raw.get("role") or "assistant").lower()
-    if timestamp:
-        return f"pi:message:{role}:{timestamp}"
-    serialized = json.dumps(raw.get("content"), ensure_ascii=False, sort_keys=True, default=str)
-    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:20]
-    return f"pi:message:{role}:{digest}"
 
 
-def _visible_message_text(role: str, text: str) -> str:
-    if role != "user":
-        return text
-    tagged = re.search(
-        r"<(?:agent|rag-ime)-user-query>\s*(.*?)\s*</(?:agent|rag-ime)-user-query>",
-        text,
-        flags=re.DOTALL,
-    )
-    if tagged:
-        return tagged.group(1).strip()
-    legacy_prefix = "请在当前连续会话中处理这个输入法深度查找任务。"
-    marker = "\n用户问题：\n"
-    if text.startswith(legacy_prefix) and marker in text:
-        question = text.split(marker, 1)[1].split("\n\n本地时间：", 1)[0].strip()
-        if question:
-            return question
-    return text
 
 
-def _public_fork_candidate_text(value: object, *, role: str = "user") -> str:
-    """Return a public transcript preview without leaking injected context."""
-
-    normalized = " ".join(str(value or "").split())[:8000]
-    visible = (
-        " ".join(_visible_message_text("user", normalized).split())[:8000]
-        if role == "user"
-        else normalized
-    )
-    if any(
-        marker in visible
-        for marker in (
-            "<agent-deep-search-context",
-            "<agent-user-query",
-            "<rag-ime-deep-search-context",
-            "<rag-ime-user-query",
-        )
-    ):
-        return ""
-    return visible
 
 
-def _last_assistant_error(messages: list[object]) -> str:
-    for item in reversed(messages):
-        message = _mapping(item)
-        if str(message.get("role") or "") != "assistant":
-            continue
-        if str(message.get("stopReason") or "").lower() != "error" and not message.get("errorMessage"):
-            return ""
-        return _redact_runtime_text(str(message.get("errorMessage") or "模型请求失败，请重试"))
-    return ""
 
 
-def _last_assistant_preview(messages: list[object]) -> str:
-    for item in reversed(messages):
-        message = _mapping(item)
-        if str(message.get("role") or "") != "assistant":
-            continue
-        content = message.get("content")
-        if isinstance(content, str):
-            return " ".join(content.split())[:240]
-        if isinstance(content, list):
-            text = " ".join(
-                str(_mapping(block).get("text") or "")
-                for block in content
-                if str(_mapping(block).get("type") or "") == "text"
-            )
-            return " ".join(text.split())[:240]
-    return ""
 
 
 def _latest_user_entry_id(entries: object, expected_text: str) -> str:
@@ -2528,10 +2293,10 @@ def _latest_user_entry_id(entries: object, expected_text: str) -> str:
         return ""
     expected = " ".join(expected_text.split())
     for value in reversed(entries):
-        entry = _mapping(value)
+        entry = as_mapping(value)
         if str(entry.get("type") or "") != "message":
             continue
-        message = _mapping(entry.get("message"))
+        message = as_mapping(entry.get("message"))
         if str(message.get("role") or "") != "user":
             continue
         if _message_text(message) == expected:
@@ -2546,125 +2311,31 @@ def _message_text(message: Mapping[str, object]) -> str:
     if not isinstance(content, list):
         return ""
     text = " ".join(
-        str(_mapping(block).get("text") or "")
+        str(as_mapping(block).get("text") or "")
         for block in content
-        if str(_mapping(block).get("type") or "") == "text"
+        if str(as_mapping(block).get("type") or "") == "text"
     )
     return " ".join(text.split())
 
 
-def _public_usage(value: object) -> dict[str, int]:
-    message = _mapping(value)
-    usage = _mapping(message.get("usage"))
-    input_tokens = _integer(usage.get("input"))
-    output_tokens = _integer(usage.get("output"))
-    cache_read = _integer(usage.get("cacheRead"))
-    cache_write = _integer(usage.get("cacheWrite"))
-    total = _integer(usage.get("totalTokens"))
-    if total <= 0:
-        total = input_tokens + output_tokens + cache_read + cache_write
-    return {
-        "input": input_tokens,
-        "output": output_tokens,
-        "cacheRead": cache_read,
-        "cacheWrite": cache_write,
-        "totalTokens": total,
-    }
 
 
-def _mapping(value: object) -> Mapping[str, object]:
-    return value if isinstance(value, Mapping) else {}
 
 
-def _message_delivery(value: object) -> str:
-    delivery = str(value or "prompt").strip()
-    if delivery not in {"prompt", "steer", "followUp"}:
-        raise ValueError("agent message delivery must be prompt, steer, or followUp")
-    return delivery
 
 
-def _public_message_queue(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item)[:4_000] for item in value[:100] if isinstance(item, str) and item]
 
 
-def _integer(value: object) -> int:
-    try:
-        return max(0, int(value or 0))
-    except (TypeError, ValueError):
-        return 0
 
 
-def _redact_mapping(value: Mapping[str, object], *, depth: int = 0) -> dict[str, object]:
-    if depth >= 4:
-        return {"truncated": True}
-    result: dict[str, object] = {}
-    for raw_key, raw_value in list(value.items())[:64]:
-        key = str(raw_key)[:120]
-        if re.search(r"token|secret|password|api.?key|authorization|cookie", key, re.IGNORECASE):
-            result[key] = "[REDACTED_SECRET]"
-        elif isinstance(raw_value, Mapping):
-            result[key] = _redact_mapping(raw_value, depth=depth + 1)
-        elif isinstance(raw_value, list):
-            result[key] = [
-                _redact_mapping(item, depth=depth + 1) if isinstance(item, Mapping) else _safe_scalar(item)
-                for item in raw_value[:64]
-            ]
-        else:
-            result[key] = _safe_scalar(raw_value)
-    return result
 
 
-def _public_code_tool_activity(tool_name: str, args: Mapping[str, object]) -> dict[str, object]:
-    normalized_tool = str(tool_name or "").strip().lower()
-    file_tools = {
-        "read", "read_file", "workspace_read",
-        "write", "write_file", "workspace_write_file",
-        "edit", "edit_file", "workspace_edit_file",
-    }
-    if normalized_tool not in file_tools:
-        return {}
-    raw_path = str(args.get("relativePath") or args.get("fileName") or args.get("file_path") or args.get("path") or "")
-    file_name = _public_file_name(raw_path)
-    result: dict[str, object] = {}
-    if file_name:
-        result["fileName"] = file_name
-    if normalized_tool in {"write", "write_file", "workspace_write_file"}:
-        content = args.get("content")
-        if isinstance(content, str) and content:
-            normalized = content.replace("\r\n", "\n").replace("\r", "\n")
-            lines = normalized.split("\n")
-            while lines and not lines[-1]:
-                lines.pop()
-            line_count = max(1, len(lines))
-            result.update({"lineCount": line_count, "additions": line_count})
-            if file_name:
-                result["summary"] = f"{file_name} +{line_count}"
-    return result
 
 
-def _public_file_name(value: str) -> str:
-    normalized = str(value or "").replace("\\", "/").rstrip("/")
-    file_name = normalized.rsplit("/", 1)[-1].strip()
-    if not file_name or len(file_name) > 240 or any(ord(character) < 32 for character in file_name):
-        return ""
-    if re.search(r"token|secret|password|api.?key|authorization|cookie", file_name, re.IGNORECASE):
-        return ""
-    return file_name
 
 
-def _safe_scalar(value: object) -> object:
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    return _redact_runtime_text(str(value))[:2000]
 
 
-def _redact_runtime_text(value: str) -> str:
-    text = " ".join(str(value).split())[:500]
-    text = re.sub(r"\bsk-[A-Za-z0-9_-]{6,}\b", "[REDACTED_SECRET]", text)
-    text = re.sub(r"(?:/Users/|/Volumes/|/private/var/|/var/folders/)[^\s，。；;]+", "[REDACTED_PATH]", text)
-    return text
 
 
 def _split_model_reference(value: object) -> tuple[str, str]:
@@ -2677,68 +2348,14 @@ def _split_model_reference(value: object) -> tuple[str, str]:
     return provider, model
 
 
-def _model_reference_part(value: object, *, field: str, maximum: int) -> str:
-    normalized = str(value or "").strip()
-    if not normalized or len(normalized) > maximum:
-        raise ValueError(f"{field} must be a non-empty Pi model identifier")
-    if any(character.isspace() for character in normalized) or (field == "provider" and "/" in normalized):
-        raise ValueError(f"{field} contains unsupported characters")
-    return normalized
 
 
-def _public_pi_model(raw: Mapping[str, object]) -> dict[str, object]:
-    provider = str(raw.get("provider") or "").strip()
-    model_id = str(raw.get("id") or "").strip()
-    if not provider or not model_id:
-        return {}
-    inputs = raw.get("input") if isinstance(raw.get("input"), list) else []
-    return {
-        "provider": provider[:80],
-        "id": model_id[:160],
-        "name": str(raw.get("name") or model_id).strip()[:160] or model_id[:160],
-        "api": str(raw.get("api") or "").strip()[:80],
-        "reasoning": bool(raw.get("reasoning")),
-        "thinkingLevels": _supported_thinking_levels(raw),
-        "supportsImages": "image" in {str(item) for item in inputs},
-        "contextWindow": _integer(raw.get("contextWindow")),
-        "maxTokens": _integer(raw.get("maxTokens")),
-    }
 
 
-def _supported_thinking_levels(raw: Mapping[str, object]) -> list[str]:
-    if not bool(raw.get("reasoning")):
-        return ["off"]
-    explicit = raw.get("thinkingLevels")
-    if isinstance(explicit, list):
-        allowed = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
-        levels = [str(level) for level in explicit if str(level) in allowed]
-        return list(dict.fromkeys(levels)) or ["off"]
-    mapping = _mapping(raw.get("thinkingLevelMap"))
-    levels: list[str] = []
-    for level in ("off", "minimal", "low", "medium", "high", "xhigh", "max"):
-        mapped = mapping.get(level)
-        if mapped is None and level in mapping:
-            continue
-        if level in {"xhigh", "max"} and level not in mapping:
-            continue
-        levels.append(level)
-    return levels or ["off"]
 
 
-def _effective_thinking_level(value: object, selected: Mapping[str, object]) -> str:
-    normalized = str(value or "off").strip().lower() or "off"
-    supported = selected.get("thinkingLevels")
-    if not isinstance(supported, list) or normalized not in supported:
-        return "off"
-    return normalized
 
 
-def _is_within(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
 
 
 def _pi_model_configuration_from_environment() -> tuple[
@@ -2969,77 +2586,8 @@ def _provider_credential_values(environment: Mapping[str, str]) -> list[str]:
     ]
 
 
-def _ui_confirmation_value(value: object) -> bool:
-    normalized = str(value or "").strip().lower()
-    affirmative = (
-        "yes",
-        "y",
-        "true",
-        "confirm",
-        "confirmed",
-        "allow",
-        "approve",
-        "是",
-        "确认",
-        "同意",
-        "允许",
-        "批准",
-        "保留",
-    )
-    negative = (
-        "no",
-        "n",
-        "false",
-        "cancel",
-        "deny",
-        "reject",
-        "否",
-        "取消",
-        "不同意",
-        "拒绝",
-        "不允许",
-        "删除",
-    )
-    if any(normalized == item or normalized.startswith(f"{item}，") or normalized.startswith(f"{item},") for item in affirmative):
-        return True
-    if any(normalized == item or normalized.startswith(f"{item}，") or normalized.startswith(f"{item},") for item in negative):
-        return False
-    raise PiRuntimeError("confirm UI response must explicitly approve or reject the request")
 
 
-def _provider_retry_status(
-    payload: Mapping[str, object],
-    *,
-    started: bool,
-) -> dict[str, object]:
-    """Project retry progress without leaking raw Provider diagnostics."""
-
-    attempt = max(1, _integer(payload.get("attempt")))
-    maximum = max(attempt, _integer(payload.get("maxAttempts")))
-    if started:
-        return {
-            "status": "retrying",
-            "phase": "provider_retry",
-            "activityState": "running",
-            "summary": f"模型连接暂时失败，正在自动重试（{attempt}/{maximum}）",
-            "attempt": attempt,
-            "maxAttempts": maximum,
-            "delayMs": max(0, _integer(payload.get("delayMs"))),
-        }
-    success = payload.get("success") is True
-    return {
-        "status": "analyzing" if success else "working",
-        "phase": "provider_retry",
-        "activityState": "completed" if success else "failed",
-        "summary": (
-            "模型连接已恢复，继续处理"
-            if success
-            else "自动重试未恢复，正在结束本轮"
-        ),
-        "attempt": attempt,
-        "maxAttempts": maximum,
-        "success": success,
-    }
 
 
 def _legacy_abort_receipt(

@@ -1,0 +1,239 @@
+"""RoomTurnRegistry is the sole owner of Room-turn in-memory state.
+
+Phase 3 Batch 1 moved the last direct dict/set mutations out of AgentService
+and the legacy dispatch/cancellation services. These tests pin the contract
+that migration relied on: reservations are atomic, caller pre-checks run
+inside the registry lock, snapshots preserve the pending-before-registered
+ordering, and the cancellation-receipt history keeps its exact 2048 bound and
+eviction order. A final gate proves the deleted private aliases cannot creep
+back into production code unnoticed.
+"""
+
+from __future__ import annotations
+
+import ast
+import threading
+import unittest
+from pathlib import Path
+
+from rag_ime.agent_room_turn_registry import (
+    RoomSessionBusyError,
+    RoomTurnRegistry,
+)
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# The private aliases deleted from AgentService. Production code must reach
+# this state only through RoomTurnRegistry.
+BANNED_ATTRIBUTES = frozenset(
+    {
+        "_room_turn_lock",
+        "_pending_room_turn_by_session",
+        "_pending_room_dispatch_by_session",
+        "_room_turn_by_session_turn",
+        "_room_dispatch_by_session_turn",
+        "_room_topic_by_room_turn",
+        "_room_user_priority_sessions",
+        "_cancelled_room_turns",
+        "_cancelled_room_root_by_session",
+        "_cancelled_room_turn_by_session_turn",
+    }
+)
+
+
+class PriorityReservationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.registry = RoomTurnRegistry()
+
+    def _lock_is_held(self) -> bool:
+        """True when another thread cannot take the registry lock."""
+
+        acquired: list[bool] = []
+
+        def _try() -> None:
+            got = self.registry.lock.acquire(timeout=0.05)
+            acquired.append(got)
+            if got:
+                self.registry.lock.release()
+
+        probe = threading.Thread(target=_try)
+        probe.start()
+        probe.join()
+        return not acquired[0]
+
+    def test_hold_if_idle_reserves_all_or_nothing(self) -> None:
+        self.registry.begin("s2", "turn-1")
+        with self.assertRaises(RoomSessionBusyError) as caught:
+            self.registry.hold_priority_if_idle(["s1", "s2", "s3"])
+        self.assertEqual(caught.exception.session_id, "s2")
+        # s1 passed its check before s2 failed; nothing may stay reserved.
+        self.assertEqual(self.registry.user_priority_sessions, set())
+
+    def test_hold_if_idle_rejects_priority_pending_and_registered(self) -> None:
+        self.registry.hold_priority(["p"])
+        self.registry.begin("q", "turn-q")
+        self.registry.begin("r", "turn-r")
+        self.registry.accept("r", "session-turn-r", "turn-r")
+        for session_id in ("p", "q", "r"):
+            with self.subTest(session_id=session_id):
+                with self.assertRaises(RoomSessionBusyError):
+                    self.registry.hold_priority_if_idle([session_id])
+        self.registry.hold_priority_if_idle(["free"])
+        self.assertIn("free", self.registry.user_priority_sessions)
+
+    def test_ensure_available_runs_inside_the_registry_lock(self) -> None:
+        held: list[bool] = []
+
+        def _probe(session_id: str) -> None:
+            held.append(self._lock_is_held())
+
+        self.registry.hold_priority_if_idle(["s1"], ensure_available=_probe)
+        self.assertEqual(held, [True])
+
+    def test_ensure_available_failure_reserves_nothing(self) -> None:
+        def _reject(session_id: str) -> None:
+            if session_id == "s2":
+                raise ValueError("participant is no longer active")
+
+        with self.assertRaises(ValueError):
+            self.registry.hold_priority_if_idle(
+                ["s1", "s2"],
+                ensure_available=_reject,
+            )
+        self.assertEqual(self.registry.user_priority_sessions, set())
+
+    def test_release_variants_match_previous_set_semantics(self) -> None:
+        self.registry.hold_priority(["a", "b", "c"])
+        # difference_update semantics: absent members are ignored.
+        self.registry.release_priority(["a", "missing"])
+        self.assertEqual(self.registry.user_priority_sessions, {"b", "c"})
+        # discard semantics: releasing twice is a no-op, not an error.
+        self.registry.release_priority_session("b")
+        self.registry.release_priority_session("b")
+        self.assertEqual(self.registry.user_priority_sessions, {"c"})
+
+    def test_session_turn_active_excludes_the_priority_set(self) -> None:
+        """The direct-Agent guard never treated a priority hold as busy."""
+
+        self.registry.hold_priority(["held"])
+        self.assertFalse(self.registry.session_turn_active("held"))
+        self.registry.begin("pending", "turn-p")
+        self.assertTrue(self.registry.session_turn_active("pending"))
+        self.registry.begin("reg", "turn-g")
+        self.registry.accept("reg", "st-1", "turn-g")
+        self.assertTrue(self.registry.session_turn_active("reg"))
+
+
+class TurnTargetSnapshotTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.registry = RoomTurnRegistry()
+
+    def test_pending_come_first_with_dispatch_then_registered_without(self) -> None:
+        self.registry.begin("s-pending", "turn-1", dispatch_id="d-1")
+        self.registry.begin("s-reg", "turn-1", dispatch_id="d-2")
+        self.registry.accept("s-reg", "st-9", "turn-1")
+        self.registry.begin("s-other", "turn-2", dispatch_id="d-3")
+
+        rows = self.registry.turn_targets(
+            "turn-1",
+            resolve=lambda session_id: f"participant:{session_id}",
+        )
+        self.assertEqual(
+            rows,
+            (
+                ("participant:s-pending", "s-pending", "d-1"),
+                # Registered session-turns historically reported no dispatch
+                # id in this traversal, even though one exists.
+                ("participant:s-reg", "s-reg", ""),
+            ),
+        )
+
+    def test_resolve_none_drops_the_entry(self) -> None:
+        self.registry.begin("gone", "turn-1")
+        self.registry.begin("kept", "turn-1")
+        rows = self.registry.turn_targets(
+            "turn-1",
+            resolve=lambda session_id: None if session_id == "gone" else session_id,
+        )
+        self.assertEqual(rows, (("kept", "kept", ""),))
+
+    def test_resolve_runs_inside_the_registry_lock(self) -> None:
+        self.registry.begin("s1", "turn-1")
+        held: list[bool] = []
+
+        def _resolve(session_id: str) -> str:
+            got = self.registry.lock.acquire(blocking=False)
+            if got:
+                # RLock: re-acquiring from the owning thread succeeds, which
+                # is itself the proof the lock is already held by us.
+                self.registry.lock.release()
+            held.append(got)
+            return session_id
+
+        self.registry.turn_targets("turn-1", resolve=_resolve)
+        self.assertEqual(held, [True])
+
+
+class CancellationReceiptHistoryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.registry = RoomTurnRegistry()
+
+    def test_evicts_the_oldest_only_after_2048_entries(self) -> None:
+        for index in range(2048):
+            self.registry.record_cancellation(f"turn-{index}", f"receipt-{index}")
+        self.assertEqual(len(self.registry.cancelled_turns), 2048)
+        self.assertIn("turn-0", self.registry.cancelled_turns)
+
+        self.registry.record_cancellation("turn-2048", "receipt-2048")
+        self.assertEqual(len(self.registry.cancelled_turns), 2048)
+        self.assertNotIn("turn-0", self.registry.cancelled_turns)
+        self.assertIn("turn-1", self.registry.cancelled_turns)
+        self.assertEqual(
+            self.registry.cancelled_turns["turn-2048"],
+            "receipt-2048",
+        )
+
+    def test_recancelling_overwrites_without_refreshing_position(self) -> None:
+        """dict assignment keeps first-insert order; the inline code relied
+        on that, so a re-cancelled turn is still evicted at its original
+        seniority."""
+
+        self.registry.record_cancellation("turn-a", "receipt-1")
+        self.registry.record_cancellation("turn-b", "receipt-2")
+        self.registry.record_cancellation("turn-a", "receipt-3")
+        self.assertEqual(
+            list(self.registry.cancelled_turns),
+            ["turn-a", "turn-b"],
+        )
+        self.assertEqual(self.registry.cancelled_turns["turn-a"], "receipt-3")
+
+
+class AliasReintroductionGateTests(unittest.TestCase):
+    def test_production_code_never_touches_the_deleted_aliases(self) -> None:
+        """No attribute access on any of the ten deleted alias names.
+
+        AST-based rather than text-based so a mention in a comment or
+        docstring does not fail, while `self._room_turn_lock` or
+        `host._cancelled_room_turns` anywhere in rag_ime/ does.
+        """
+
+        offenders: list[str] = []
+        for path in sorted((ROOT / "rag_ime").rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and node.attr in BANNED_ATTRIBUTES
+                ):
+                    offenders.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno} .{node.attr}"
+                    )
+        self.assertEqual(
+            offenders,
+            [],
+            "RoomTurnRegistry owns this state; go through its methods",
+        )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    unittest.main()

@@ -11,6 +11,7 @@ from .agent_room_cancellation_proofs import (
     _merge_root_surface,
     _root_resource_surface,
 )
+from .agent_room_turn_registry import RoomTurnRegistry
 
 
 class LegacyCancellationHost(Protocol):
@@ -19,12 +20,7 @@ class LegacyCancellationHost(Protocol):
     delegation: Any
     room_intercom: Any
     wake_schedules: Any
-    _room_turn_lock: Any
-    _pending_room_turn_by_session: dict[str, str]
-    _pending_room_dispatch_by_session: dict[str, str]
-    _room_turn_by_session_turn: dict[tuple[str, str], str]
-    _room_user_priority_sessions: set[str]
-    _cancelled_room_turns: dict[str, str]
+    room_turns: RoomTurnRegistry
 
     def abort(
         self,
@@ -93,47 +89,31 @@ class RoomLegacyCancellationService:
                 "dispatchId": str(data.get("dispatchId") or ""),
             }
 
-        with self.host._room_turn_lock:
-            for session_id, pending_turn_id in self.host._pending_room_turn_by_session.items():
-                if pending_turn_id != room_turn_id:
-                    continue
-                participant = self.host.rooms.participant_for_session(
-                    session_id,
-                    active_only=False,
-                )
-                if participant is None:
-                    continue
-                participant_id = str(participant.get("id") or "")
-                targets.setdefault(
-                    participant_id,
-                    {
-                        "participantId": participant_id,
-                        "sessionId": session_id,
-                        "dispatchId": self.host._pending_room_dispatch_by_session.get(
-                            session_id, ""
-                        ),
-                    },
-                )
-            for (session_id, _session_turn_id), bound_turn_id in (
-                self.host._room_turn_by_session_turn.items()
-            ):
-                if bound_turn_id != room_turn_id:
-                    continue
-                participant = self.host.rooms.participant_for_session(
-                    session_id,
-                    active_only=False,
-                )
-                if participant is None:
-                    continue
-                participant_id = str(participant.get("id") or "")
-                targets.setdefault(
-                    participant_id,
-                    {
-                        "participantId": participant_id,
-                        "sessionId": session_id,
-                        "dispatchId": "",
-                    },
-                )
+        def _resolve_participant_id(session_id: str) -> str | None:
+            participant = self.host.rooms.participant_for_session(
+                session_id,
+                active_only=False,
+            )
+            if participant is None:
+                return None
+            return str(participant.get("id") or "")
+
+        # resolve runs inside the registry lock, keeping participant lookup
+        # and mapping traversal one critical section as the inline loops were.
+        for participant_id, session_id, dispatch_id in (
+            self.host.room_turns.turn_targets(
+                room_turn_id,
+                resolve=_resolve_participant_id,
+            )
+        ):
+            targets.setdefault(
+                participant_id,
+                {
+                    "participantId": participant_id,
+                    "sessionId": session_id,
+                    "dispatchId": dispatch_id,
+                },
+            )
 
         terminal_participant_ids = {
             str(event.get("participantId") or "")
@@ -159,10 +139,10 @@ class RoomLegacyCancellationService:
             }
 
         cancellation_receipt_id = f"room-cancel:{uuid.uuid4()}"
-        with self.host._room_turn_lock:
-            self.host._cancelled_room_turns[room_turn_id] = cancellation_receipt_id
-            while len(self.host._cancelled_room_turns) > 2048:
-                self.host._cancelled_room_turns.pop(next(iter(self.host._cancelled_room_turns)))
+        self.host.room_turns.record_cancellation(
+            room_turn_id,
+            cancellation_receipt_id,
+        )
         self.host.room_events.publish(
             room_id=room_id,
             event_type="participant_status",
@@ -388,8 +368,9 @@ class RoomLegacyCancellationService:
                     topic_id=self.host._room_topic_for_turn(room_turn_id),
                 )
                 self.host._cancel_room_turn(target["sessionId"], room_turn_id)
-            with self.host._room_turn_lock:
-                self.host._room_user_priority_sessions.difference_update(primary_session_ids)
+            self.host.room_turns.release_priority(
+                primary_session_ids
+            )
 
         final_event = self.host.room_events.publish(
             room_id=room_id,

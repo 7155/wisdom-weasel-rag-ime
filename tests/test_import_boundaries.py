@@ -2,7 +2,13 @@ import ast
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
+
+from scripts.check_import_boundaries import (
+    PI_FAMILY_MODULES,
+    check_pi_family_public_contracts,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +62,152 @@ class ImportBoundaryTests(unittest.TestCase):
                     violations.append(f"{path.relative_to(ROOT)} imports {module}")
 
         self.assertEqual(violations, [])
+
+    def test_pi_family_import_must_be_declared_by_target_all(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self._write_pi_family(
+                root,
+                {
+                    "rag_ime.pi_runtime": (
+                        "__all__ = []\n"
+                        "from .pi_runtime_public import undeclared\n"
+                    ),
+                    "rag_ime.pi_runtime_public": (
+                        "__all__ = ['declared']\n"
+                        "declared = object()\n"
+                        "undeclared = object()\n"
+                    ),
+                },
+            )
+
+            violations = check_pi_family_public_contracts(root)
+
+        self.assertTrue(
+            any(
+                violation.imported
+                == "rag_ime.pi_runtime_public.undeclared"
+                and "target module's __all__" in violation.reason
+                for violation in violations
+            )
+        )
+
+    def test_pi_family_private_import_fails_even_if_exported(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self._write_pi_family(
+                root,
+                {
+                    "rag_ime.pi_runtime": (
+                        "__all__ = []\n"
+                        "from .pi_runtime_public import _private\n"
+                    ),
+                    "rag_ime.pi_runtime_public": (
+                        "__all__ = ['_private']\n"
+                        "_private = object()\n"
+                    ),
+                },
+            )
+
+            violations = check_pi_family_public_contracts(root)
+
+        self.assertTrue(
+            any(
+                violation.imported == "rag_ime.pi_runtime_public._private"
+                and "private names stay module-local" in violation.reason
+                for violation in violations
+            )
+        )
+
+    def test_pi_family_missing_literal_all_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self._write_pi_family(
+                root,
+                {"rag_ime.pi_runtime_public": "visible = object()\n"},
+            )
+
+            violations = check_pi_family_public_contracts(root)
+
+        self.assertTrue(
+            any(
+                violation.module == "rag_ime.pi_runtime_public"
+                and "literal __all__" in violation.reason
+                for violation in violations
+            )
+        )
+
+    def test_pi_protocol_manager_must_be_exported_by_target(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self._write_pi_family(
+                root,
+                {
+                    "rag_ime.pi_runtime": (
+                        "__all__ = []\n"
+                        "class PiRuntimeManager: pass\n"
+                    ),
+                    "rag_ime.pi_runtime_protocols": (
+                        "__all__ = []\n"
+                        "PROTOCOL_MANAGERS = {\n"
+                        "    '1': ('rag_ime.pi_runtime', 'PiRuntimeManager'),\n"
+                        "}\n"
+                    ),
+                },
+            )
+
+            violations = check_pi_family_public_contracts(root)
+
+        self.assertTrue(
+            any(
+                violation.imported == "rag_ime.pi_runtime.PiRuntimeManager"
+                and "protocol 1 manager" in violation.reason
+                for violation in violations
+            )
+        )
+
+    def test_pi_family_declared_import_and_protocol_manager_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            self._write_pi_family(
+                root,
+                {
+                    "rag_ime.pi_runtime": (
+                        "__all__ = ['PiRuntimeManager']\n"
+                        "from .pi_runtime_public import declared\n"
+                        "class PiRuntimeManager: pass\n"
+                    ),
+                    "rag_ime.pi_runtime_public": (
+                        "__all__ = ['declared']\n"
+                        "declared = object()\n"
+                    ),
+                    "rag_ime.pi_runtime_protocols": (
+                        "__all__ = []\n"
+                        "PROTOCOL_MANAGERS = {\n"
+                        "    '1': ('rag_ime.pi_runtime', 'PiRuntimeManager'),\n"
+                        "}\n"
+                    ),
+                },
+            )
+
+            violations = check_pi_family_public_contracts(root)
+
+        self.assertEqual(violations, [])
+
+    def _write_pi_family(
+        self,
+        root: Path,
+        sources: dict[str, str],
+    ) -> None:
+        for module in PI_FAMILY_MODULES:
+            path = root / Path(module.replace(".", "/") + ".py")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            default = (
+                "__all__ = []\nPROTOCOL_MANAGERS = {}\n"
+                if module == "rag_ime.pi_runtime_protocols"
+                else "__all__ = []\n"
+            )
+            path.write_text(sources.get(module, default), encoding="utf-8")
 
 
 def _imported_module_name(node: ast.AST) -> str:

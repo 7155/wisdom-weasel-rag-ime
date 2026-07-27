@@ -24,12 +24,82 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PI_ROOT = ROOT.parent / "pi-rag-ime-runtime"
-DEFAULT_CAFE_ROOT = ROOT.parent / "clowder-ai"
-DEFAULT_VCP_ROOT = ROOT.parent / "VCPToolBox"
-DETERMINISTIC_EVIDENCE_ROOT = (
-    ROOT / "docs" / "agent" / "audits" / "agent-prompt-system-current"
-)
+
+
+def _canonical_repository(root: Path) -> Path | None:
+    """The repository that owns `root`'s Git metadata, or None.
+
+    A physical worktree's paths are relative to wherever the worktree was
+    created, but Git's common directory always belongs to the canonical
+    checkout. Returns None when Git is missing, errors, or the answer is
+    unusable, so callers can preserve their historical path behaviour
+    instead of failing at import.
+    """
+
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    common_dir = result.stdout.strip()
+    if result.returncode != 0 or not common_dir:
+        return None
+    repository = Path(common_dir).parent
+    return repository if repository.is_dir() else None
+
+
+def _sibling_repository_root(root: Path) -> Path:
+    """Directory holding the sibling audit repositories.
+
+    The siblings live next to the canonical checkout, so `root.parent` is
+    only correct when `root` IS the canonical checkout. In a physical Git
+    worktree (`<siblings>/<repo>/.worktrees/<name>` or any other location),
+    `root.parent` points somewhere else entirely, which is what produced the
+    `exists: False` audit failures.
+    """
+
+    repository = _canonical_repository(root)
+    return repository.parent if repository is not None else root.parent
+
+
+def _deterministic_evidence_root(root: Path) -> Path:
+    """Where the machine-local deterministic Provider evidence lives.
+
+    The evidence directory is gitignored, so a physical worktree never has a
+    copy of its own; it exists only where it was captured, normally the
+    canonical checkout. A locally captured copy still wins -- the renderer
+    writes to `root`, and re-rendering must read what it just wrote -- and
+    when neither location has evidence the historical local path is
+    returned so the absence is reported against the same directory as
+    before.
+    """
+
+    relative = Path("docs") / "agent" / "audits" / "agent-prompt-system-current"
+    local = root / relative
+    if local.is_dir():
+        return local
+    repository = _canonical_repository(root)
+    if repository is not None and (repository / relative).is_dir():
+        return repository / relative
+    return local
+
+
+_SIBLING_ROOT = _sibling_repository_root(ROOT)
+DEFAULT_PI_ROOT = _SIBLING_ROOT / "pi-rag-ime-runtime"
+DEFAULT_CAFE_ROOT = _SIBLING_ROOT / "clowder-ai"
+DEFAULT_VCP_ROOT = _SIBLING_ROOT / "VCPToolBox"
+DETERMINISTIC_EVIDENCE_ROOT = _deterministic_evidence_root(ROOT)
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))

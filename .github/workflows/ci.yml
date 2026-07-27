@@ -26,6 +26,21 @@ jobs:
         run: python -m compileall -q rag_ime scripts tests
       - name: Check package boundaries
         run: python scripts/check_import_boundaries.py
+      - name: Check route ownership
+        run: python scripts/check_route_ownership.py
+      - name: Lint correctness rules
+        # Narrow correctness-only rule set pinned in pyproject; see the comment
+        # there for the rules deliberately not enabled yet.
+        uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.14.2"
+          args: "check rag_ime scripts tests"
+      - name: Type-check stable boundary contracts
+        # Scope and strictness live in [tool.mypy] in pyproject.toml: only the
+        # stable contract modules are checked, strictly, and they are clean.
+        run: |
+          pip install "mypy==2.3.0"
+          mypy
       - name: Validate product status
         run: python scripts/check_product_status.py --json
       - name: Audit public MiniMind completion contract

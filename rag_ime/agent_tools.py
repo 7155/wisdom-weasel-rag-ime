@@ -765,8 +765,15 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "claimKey": {"type": "string", "minLength": 1, "maxLength": 240},
     "revisionId": {"type": "string", "minLength": 1, "maxLength": 240},
     "instruction": {"type": "string", "minLength": 1, "maxLength": 8_000},
-    "text": {"type": "string", "minLength": 1, "maxLength": 1_200},
-    "reason": {"type": "string", "minLength": 1, "maxLength": 400},
+    # `text` and `reason` were declared twice in this literal. Python keeps the
+    # last binding, so these earlier entries never took effect: the schemas
+    # actually in force are the ones defined further down. They are removed so
+    # the table states what the runtime really enforces. This is not a schema
+    # change -- the emitted argument schemas are byte-identical before and
+    # after. The narrower limits these lines appeared to impose (text
+    # minLength 1 / maxLength 1200, reason maxLength 400) have never been
+    # applied, which is recorded as a separate finding rather than silently
+    # "restored" here, because tightening them would change Tool validation.
     "memoryKind": {
         "type": "string",
         "enum": ["fact", "preference", "decision", "commitment", "project_state"],
