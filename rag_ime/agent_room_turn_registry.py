@@ -1,8 +1,27 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from threading import RLock
 
 from .agent_protocol import AgentEventEnvelope
+
+
+# Cancelled-turn receipts kept for late event stamping. The bound lives next to
+# the dict it bounds; it is a memory cap, not a cancellation policy.
+_CANCELLED_TURN_RECEIPT_LIMIT = 2048
+
+
+class RoomSessionBusyError(RuntimeError):
+    """One target Session already has priority, a pending turn or a live turn.
+
+    Raised inside the registry lock so the reservation that failed leaves no
+    partial state. Carries the Session id; the caller owns the user-facing
+    message, which names a Room participant rather than a Session.
+    """
+
+    def __init__(self, session_id: str) -> None:
+        super().__init__(f"session busy: {session_id}")
+        self.session_id = session_id
 
 
 class RoomTurnRegistry:
@@ -137,6 +156,156 @@ class RoomTurnRegistry:
                     )
                 )
             self._drop_topic_if_idle(room_turn_id)
+
+    def hold_priority(
+        self,
+        session_ids: Iterable[str],
+    ) -> None:
+        """Mark Sessions user-priority unconditionally.
+
+        The direct-Agent entry path proves availability separately before
+        claiming, so this hold does not re-check; use
+        `hold_priority_if_idle` when the check and the hold must be one
+        critical section.
+        """
+
+        with self.lock:
+            self.user_priority_sessions.update(session_ids)
+
+    def hold_priority_if_idle(
+        self,
+        session_ids: Iterable[str],
+        *,
+        ensure_available: Callable[[str], None] | None = None,
+    ) -> None:
+        """Atomically reserve Sessions that are not already engaged.
+
+        For each Session, in order: run `ensure_available` (inside the lock,
+        so caller pre-checks stay atomic with the reservation), then reject
+        with `RoomSessionBusyError` if the Session holds priority, a pending
+        turn or a registered turn. Only after every Session passes is the
+        whole set marked priority -- a failure reserves nothing.
+        """
+
+        ordered = list(session_ids)
+        with self.lock:
+            for session_id in ordered:
+                if ensure_available is not None:
+                    ensure_available(session_id)
+                if (
+                    session_id in self.user_priority_sessions
+                    or session_id in self.pending_turn_by_session
+                    or any(
+                        key[0] == session_id
+                        for key in self.turn_by_session_turn
+                    )
+                ):
+                    raise RoomSessionBusyError(session_id)
+            self.user_priority_sessions.update(ordered)
+
+    def release_priority(
+        self,
+        session_ids: Iterable[str],
+    ) -> None:
+        with self.lock:
+            self.user_priority_sessions.difference_update(
+                session_ids
+            )
+
+    def release_priority_session(
+        self,
+        session_id: str,
+    ) -> None:
+        with self.lock:
+            self.user_priority_sessions.discard(session_id)
+
+    def session_turn_active(self, session_id: str) -> bool:
+        """Whether a Session has a pending or registered Room turn.
+
+        This is the direct-Agent guard's decision. It deliberately excludes
+        the priority set: a Session held for an imminent dispatch has no turn
+        yet, and the guard treated it as available.
+        """
+
+        with self.lock:
+            return (
+                session_id in self.pending_turn_by_session
+                or any(
+                    key[0] == session_id
+                    for key in self.turn_by_session_turn
+                )
+            )
+
+    def turn_targets(
+        self,
+        room_turn_id: str,
+        *,
+        resolve: Callable[[str], str | None],
+    ) -> tuple[tuple[str, str, str], ...]:
+        """(resolved id, session id, dispatch id) for Sessions bound to a turn.
+
+        Pending Sessions come first, each with its pending dispatch id;
+        registered session-turns follow with an empty dispatch id, matching
+        the traversal this replaces. `resolve` runs inside the registry lock
+        so participant resolution and map traversal remain one critical
+        section, exactly as the caller's inline loops were; returning None
+        drops the entry.
+        """
+
+        results: list[tuple[str, str, str]] = []
+        with self.lock:
+            for session_id, pending_turn_id in (
+                self.pending_turn_by_session.items()
+            ):
+                if pending_turn_id != room_turn_id:
+                    continue
+                resolved = resolve(session_id)
+                if resolved is None:
+                    continue
+                results.append(
+                    (
+                        resolved,
+                        session_id,
+                        self.pending_dispatch_by_session.get(
+                            session_id,
+                            "",
+                        ),
+                    )
+                )
+            for (session_id, _session_turn_id), bound_turn_id in (
+                self.turn_by_session_turn.items()
+            ):
+                if bound_turn_id != room_turn_id:
+                    continue
+                resolved = resolve(session_id)
+                if resolved is None:
+                    continue
+                results.append((resolved, session_id, ""))
+        return tuple(results)
+
+    def record_cancellation(
+        self,
+        room_turn_id: str,
+        cancellation_receipt_id: str,
+    ) -> None:
+        """Remember a turn's cancellation receipt, evicting oldest past 2048.
+
+        Same dict semantics as the inline code this replaces: re-cancelling a
+        turn overwrites the receipt in place without refreshing its insertion
+        position, and eviction starts only once the size exceeds the limit.
+        """
+
+        with self.lock:
+            self.cancelled_turns[room_turn_id] = (
+                cancellation_receipt_id
+            )
+            while (
+                len(self.cancelled_turns)
+                > _CANCELLED_TURN_RECEIPT_LIMIT
+            ):
+                self.cancelled_turns.pop(
+                    next(iter(self.cancelled_turns))
+                )
 
     def turn_for_event(
         self,

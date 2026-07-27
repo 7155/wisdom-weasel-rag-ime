@@ -1855,7 +1855,7 @@ class AgentRoomServiceTests(unittest.TestCase):
                 )
         self.assertNotIn(
             str(target["sessionId"]),
-            self.service._room_user_priority_sessions,
+            self.service.room_turns.user_priority_sessions,
         )
 
     def test_room_rejects_duplicate_roles_and_archives_without_deleting_sessions(self) -> None:

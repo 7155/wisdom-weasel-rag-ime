@@ -201,36 +201,6 @@ class AgentService:
         self._context_source_token = object()
         self.session_mode_gate = AgentSessionModeGate()
         self.room_turns = RoomTurnRegistry()
-        # Compatibility aliases for the legacy dispatcher/canceller. The
-        # registry owns these collections; no second source of truth exists.
-        self._room_turn_lock = self.room_turns.lock
-        self._pending_room_turn_by_session = (
-            self.room_turns.pending_turn_by_session
-        )
-        self._pending_room_dispatch_by_session = (
-            self.room_turns.pending_dispatch_by_session
-        )
-        self._room_turn_by_session_turn = (
-            self.room_turns.turn_by_session_turn
-        )
-        self._room_dispatch_by_session_turn = (
-            self.room_turns.dispatch_by_session_turn
-        )
-        self._room_topic_by_room_turn = (
-            self.room_turns.topic_by_room_turn
-        )
-        self._room_user_priority_sessions = (
-            self.room_turns.user_priority_sessions
-        )
-        self._cancelled_room_turns = (
-            self.room_turns.cancelled_turns
-        )
-        self._cancelled_room_root_by_session = (
-            self.room_turns.cancelled_root_by_session
-        )
-        self._cancelled_room_turn_by_session_turn = (
-            self.room_turns.cancelled_turn_by_session_turn
-        )
         self.runtime_factory.apply_policy(
             runtime_policy_from_configuration(
                 self.configuration_store.snapshot()["configuration"]
@@ -535,10 +505,12 @@ class AgentService:
                 context_runtime=self.context_runtime,
                 room_events=self.room_events,
                 runtime_provider=lambda: self.runtime,
+                # Read-only membership checks; the registry stays the only
+                # mutation owner.
                 user_priority_sessions=(
-                    self._room_user_priority_sessions
+                    self.room_turns.user_priority_sessions
                 ),
-                turn_lock=self._room_turn_lock,
+                turn_lock=self.room_turns.lock,
                 guard_legacy_room_route=(
                     lambda route_id, session_id: (
                         self._guard_legacy_room_route(
@@ -637,9 +609,13 @@ class AgentService:
                 self.delete_session(session_id)
             ),
             runtime_status=lambda: self.runtime_status(),
-            turn_lock=self._room_turn_lock,
-            pending_turns=self._pending_room_turn_by_session,
-            user_priority_sessions=self._room_user_priority_sessions,
+            # Read-only busy checks under the shared lock; mutation stays
+            # inside the registry.
+            turn_lock=self.room_turns.lock,
+            pending_turns=self.room_turns.pending_turn_by_session,
+            user_priority_sessions=(
+                self.room_turns.user_priority_sessions
+            ),
         )
         if self._room_kernel_worker_enabled:
             self.room_kernel_worker_loop.start()
@@ -2421,15 +2397,13 @@ class AgentService:
     ) -> Iterator[None]:
         with self.session_mode_gate.claim_agent(session_id):
             self._assert_direct_agent_prompt_available(session_id)
-            with self._room_turn_lock:
-                self._room_user_priority_sessions.add(session_id)
+            self.room_turns.hold_priority((session_id,))
             try:
                 yield
             finally:
-                with self._room_turn_lock:
-                    self._room_user_priority_sessions.discard(
-                        session_id
-                    )
+                self.room_turns.release_priority_session(
+                    session_id
+                )
 
     def _assert_direct_agent_prompt_available(
         self,
@@ -2439,14 +2413,9 @@ class AgentService:
         capability_binding = self.room_capabilities.runtime_binding(
             session_id
         )
-        with self._room_turn_lock:
-            legacy_busy = (
-                session_id in self._pending_room_turn_by_session
-                or any(
-                    key[0] == session_id
-                    for key in self._room_turn_by_session_turn
-                )
-            )
+        legacy_busy = self.room_turns.session_turn_active(
+            session_id
+        )
         if (
             kernel_binding is None
             and capability_binding is None
