@@ -303,7 +303,14 @@ RIME_LEXICON_ROUTES: tuple[RouteDescriptor, ...] = (
     RouteDescriptor(method="POST", path="/api/rime-lexicon/rollback", handler="rime_lexicon_rollback"),
 )
 
-def _post(path, handler, *, aliases=(), contract="", takes_arguments=True):
+def _post(
+    path: str,
+    handler: str,
+    *,
+    aliases: tuple[str, ...] = (),
+    contract: str = "",
+    takes_arguments: bool = True,
+) -> RouteDescriptor:
     return RouteDescriptor(
         method="POST", path=path, handler=handler, aliases=aliases,
         contract=contract, takes_arguments=takes_arguments,
@@ -336,8 +343,16 @@ MEMORY_TOOL_ROUTES: tuple[RouteDescriptor, ...] = (
     _post("/api/deepseek/completion-preview", "deepseek_completion_preview"),
 )
 
-def _get(path, handler, *, aliases=(), query_args=(), takes_arguments=False,
-         response_contract="", transform=None):
+def _get(
+    path: str,
+    handler: str,
+    *,
+    aliases: tuple[str, ...] = (),
+    query_args: tuple[str, ...] = (),
+    takes_arguments: bool = False,
+    response_contract: str = "",
+    transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> RouteDescriptor:
     """Most migrated reads take no request data, so that is the default here."""
 
     return RouteDescriptor(

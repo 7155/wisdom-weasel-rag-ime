@@ -30,6 +30,29 @@ knowledge-ann = [
 pythonpath = ["."]
 testpaths = ["tests"]
 
+[tool.mypy]
+# Strict checking for the stable boundary contracts only -- the modules other
+# code programs against: protocol selection, the runtime-neutral driver
+# contract, control-api models, the route descriptor table and the Room turn
+# registry. Everything below is strict-clean today, so a failure means a new
+# contract break rather than pre-existing debt. This is deliberately NOT the
+# start of whole-repository typing: large application modules stay unchecked
+# until a boundary they own stabilises enough to join this list.
+files = [
+    "rag_ime/pi_runtime_protocols.py",
+    "rag_ime/agent_runtime_driver.py",
+    "rag_ime/control_api/models.py",
+    "rag_ime/control_api/route_table.py",
+    "rag_ime/agent_room_turn_registry.py",
+]
+python_version = "3.12"
+strict = true
+# The checked modules import large untyped neighbours (agent_protocol,
+# debug_server handlers by name only); following those imports would drag the
+# whole repository into scope, which is exactly what this configuration
+# refuses to do.
+follow_imports = "silent"
+
 [tool.ruff]
 # Must match the real floor above; at py310/py311 ruff reports 6 spurious
 # syntax errors for valid PEP 701 f-strings.

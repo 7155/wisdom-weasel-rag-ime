@@ -35,6 +35,12 @@ jobs:
         with:
           version: "0.14.2"
           args: "check rag_ime scripts tests"
+      - name: Type-check stable boundary contracts
+        # Scope and strictness live in [tool.mypy] in pyproject.toml: only the
+        # stable contract modules are checked, strictly, and they are clean.
+        run: |
+          pip install "mypy==2.3.0"
+          mypy
       - name: Validate product status
         run: python scripts/check_product_status.py --json
       - name: Audit public MiniMind completion contract
