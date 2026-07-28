@@ -40,13 +40,8 @@ export function ModelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<PickerView>('models');
+  const [activeProviderId, setActiveProviderId] = useState('');
   const reasoningRailRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (requestOpen > 0 && catalog && !disabled) {
-      setView('models');
-      setOpen(true);
-    }
-  }, [catalog, disabled, requestOpen]);
   const selection = catalog ? modelSelectionFromCatalog(catalog) : undefined;
   const selectedProvider = catalog?.providers.find(
     (item) => item.id === selection?.provider,
@@ -58,9 +53,19 @@ export function ModelPicker({
   const selectedLabel = selectedModel
     ? `${selectedModel.name} · ${selectedProvider?.displayName || selectedModel.provider}`
     : '未选择';
-  const models = catalog?.providers.flatMap((provider) => (
-    provider.models.map((model) => ({ provider, model }))
-  )) ?? [];
+  const defaultProviderId = selectedProvider?.id ?? catalog?.providers[0]?.id ?? '';
+  const activeProvider = catalog?.providers.find(
+    (provider) => provider.id === activeProviderId,
+  ) ?? selectedProvider ?? catalog?.providers[0];
+  const models = activeProvider?.models ?? [];
+
+  useEffect(() => {
+    if (requestOpen > 0 && catalog && !disabled) {
+      setView('models');
+      setActiveProviderId(defaultProviderId);
+      setOpen(true);
+    }
+  }, [catalog, defaultProviderId, disabled, requestOpen]);
 
   useEffect(() => {
     if (!open || view !== 'reasoning') return undefined;
@@ -78,7 +83,10 @@ export function ModelPicker({
   }
 
   function handleOpenChange(nextOpen: boolean): void {
-    if (nextOpen) setView('models');
+    if (nextOpen) {
+      setView('models');
+      setActiveProviderId(defaultProviderId);
+    }
     setOpen(nextOpen);
   }
 
@@ -123,29 +131,57 @@ export function ModelPicker({
                 <ChevronRight size={14} />
               </button>
             </header>
-            <div
-              className="agent-model-picker__models"
-              role="listbox"
-              aria-label="模型"
-              onKeyDown={moveModelFocus}
-            >
-              {catalog?.providers.map((providerItem) => (
-                <section
-                  key={providerItem.id}
-                  role="group"
-                  aria-label={providerItem.displayName}
+            <div className="agent-model-picker__browser">
+              <div
+                className="agent-model-picker__providers"
+                role="tablist"
+                aria-label="模型服务"
+              >
+                {catalog?.providers.map((providerItem) => (
+                  <button
+                    type="button"
+                    role="tab"
+                    key={providerItem.id}
+                    aria-selected={providerItem.id === activeProvider?.id}
+                    aria-controls={`agent-model-provider-${safeId(providerItem.id)}`}
+                    aria-label={`查看 ${providerItem.displayName} 的 ${providerItem.models.length} 个模型`}
+                    onClick={() => setActiveProviderId(providerItem.id)}
+                  >
+                    <span>{providerItem.displayName}</span>
+                    <small>{providerItem.models.length}</small>
+                  </button>
+                ))}
+              </div>
+              <section
+                key={activeProvider?.id ?? 'empty'}
+                id={`agent-model-provider-${safeId(activeProvider?.id ?? 'empty')}`}
+                className="agent-model-picker__provider-panel"
+                role="tabpanel"
+                aria-label={activeProvider?.displayName ?? '当前模型服务'}
+              >
+                <header>
+                  <strong>{activeProvider?.displayName ?? '模型'}</strong>
+                  <small>{models.length} 个模型</small>
+                </header>
+                <div
+                  className="agent-model-picker__models"
+                  role="listbox"
+                  aria-label={`${activeProvider?.displayName ?? ''} 模型`}
+                  onKeyDown={moveModelFocus}
                 >
-                  <small>{providerItem.displayName}</small>
-                  {providerItem.models.map((modelItem) => {
+                  {models.map((modelItem) => {
                     const selected = (
-                      providerItem.id === selection?.provider
-                      && modelItem.id === selection.modelId
+                      activeProvider?.id === selection?.provider
+                      && modelItem.id === selection?.modelId
                     );
                     return (
                       <button
                         type="button"
                         role="option"
-                        id={modelOptionId(providerItem.id, modelItem.id)}
+                        id={modelOptionId(
+                          activeProvider?.id ?? modelItem.provider,
+                          modelItem.id,
+                        )}
                         key={modelItem.id}
                         aria-selected={selected}
                         aria-label={`选择模型 ${modelItem.name}`}
@@ -155,7 +191,7 @@ export function ModelPicker({
                             return;
                           }
                           choose(
-                            providerItem.id,
+                            activeProvider?.id ?? modelItem.provider,
                             modelItem.id,
                             preferredThinkingLevel(modelItem.thinkingLevels, thinking),
                           );
@@ -163,15 +199,19 @@ export function ModelPicker({
                       >
                         <span>
                           <strong>{modelItem.name}</strong>
-                          <small>{providerItem.displayName}</small>
+                          <small>
+                            {modelItem.reasoning
+                              ? `${modelItem.thinkingLevels.length} 档推理`
+                              : '直接生成'}
+                          </small>
                         </span>
                         {selected ? <Check size={14} /> : <ChevronRight size={14} />}
                       </button>
                     );
                   })}
-                </section>
-              ))}
-              {models.length === 0 ? <p>当前 Provider 没有可用模型</p> : null}
+                  {models.length === 0 ? <p>当前 Provider 没有可用模型</p> : null}
+                </div>
+              </section>
             </div>
           </div>
         ) : (

@@ -2791,6 +2791,43 @@ describe('Agent experience', () => {
     ))).toBe(true));
   });
 
+  it('keeps a large model catalog compact by showing one Provider at a time', async () => {
+    const transport = featureTransport(previewModelCatalog('session-preview'));
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5\.4/ },
+      { timeout: 5_000 },
+    ));
+    const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
+
+    expect(within(picker).getByRole('tab', {
+      name: '查看 OpenAI 的 2 个模型',
+    })).toHaveAttribute('aria-selected', 'true');
+    expect(within(picker).getByRole('option', {
+      name: '选择模型 GPT-5.4',
+    })).toBeInTheDocument();
+    expect(within(picker).queryByRole('option', {
+      name: '选择模型 DeepSeek V4',
+    })).not.toBeInTheDocument();
+
+    await user.click(within(picker).getByRole('tab', {
+      name: '查看 DeepSeek 的 1 个模型',
+    }));
+
+    expect(within(picker).getByRole('tab', {
+      name: '查看 DeepSeek 的 1 个模型',
+    })).toHaveAttribute('aria-selected', 'true');
+    expect(within(picker).getByRole('option', {
+      name: '选择模型 DeepSeek V4',
+    })).toBeInTheDocument();
+    expect(within(picker).queryByRole('option', {
+      name: '选择模型 GPT-5.4',
+    })).not.toBeInTheDocument();
+  });
+
   it('supports arrow-key reasoning selection, Enter, Escape, and trigger focus return', async () => {
     const initial = lunaModelCatalog();
     const confirmed = { ...initial, thinkingLevel: 'high' as ThinkingLevel };
