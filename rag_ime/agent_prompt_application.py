@@ -4,6 +4,14 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
+from .agent_command_receipts import (
+    AgentCommandReceiptFailed,
+    AgentCommandReceiptPending,
+)
+from .agent_prompt_delivery import (
+    AgentPromptAcceptanceUnknown,
+    AgentPromptPostAcceptanceFailure,
+)
 from .agent_prompt_support import (
     bounded_text,
     deep_search_prompt,
@@ -80,13 +88,32 @@ class AgentPromptApplicationService:
             "attachments": request["attachmentIds"],
             "contextSource": request["contextSource"],
             "delivery": request["delivery"],
+            "retryOfClientMessageId": request[
+                "retryOfClientMessageId"
+            ],
         }
-        claim = self.command_receipts.begin(
-            command_scope="session_prompt",
-            scope_id=session_id,
-            client_message_id=client_message_id,
-            payload=receipt_payload,
-        )
+        try:
+            claim = self.command_receipts.begin(
+                command_scope="session_prompt",
+                scope_id=session_id,
+                client_message_id=client_message_id,
+                payload=receipt_payload,
+            )
+        except AgentCommandReceiptPending:
+            recovered = self._recover_accepted_prompt(
+                session_id=session_id,
+                client_message_id=client_message_id,
+                retry_of_client_message_id=str(
+                    request["retryOfClientMessageId"]
+                ),
+                receipt_payload=receipt_payload,
+            )
+            if recovered is None:
+                raise
+            return {
+                **recovered,
+                "idempotentReplay": True,
+            }
         if claim.replay_response is not None:
             return {
                 **claim.replay_response,
@@ -94,24 +121,178 @@ class AgentPromptApplicationService:
             }
         try:
             self.sessions.require_goal_execution(session_id)
+            def record_acceptance(
+                accepted: Mapping[str, object],
+            ) -> None:
+                self.command_receipts.record_acceptance_evidence(
+                    claim,
+                    command_scope="session_prompt",
+                    scope_id=session_id,
+                    client_message_id=client_message_id,
+                    accepted=accepted,
+                    retry_of_client_message_id=str(
+                        request["retryOfClientMessageId"]
+                    ),
+                )
+
             response = dict(self.dispatch_checkpoint(
                 session_id=session_id,
+                on_accepted=record_acceptance,
                 **_checkpoint_arguments(request),
             ))
         except Exception as exc:
-            self.command_receipts.fail(
+            recovered = self._recover_accepted_prompt(
+                session_id=session_id,
+                client_message_id=client_message_id,
+                retry_of_client_message_id=str(
+                    request["retryOfClientMessageId"]
+                ),
+                receipt_payload=receipt_payload,
+            )
+            if recovered is not None:
+                return recovered
+            if isinstance(
+                exc,
+                (
+                    AgentPromptAcceptanceUnknown,
+                    AgentPromptPostAcceptanceFailure,
+                ),
+            ):
+                raise AgentCommandReceiptPending(
+                    str(exc),
+                    client_message_id=client_message_id,
+                    recovery_state="in_flight",
+                ) from exc
+            cause_code = _prompt_failure_code(exc)
+            replay = self.command_receipts.fail(
                 claim,
                 command_scope="session_prompt",
                 scope_id=session_id,
                 client_message_id=client_message_id,
                 error=exc,
+                cause_code=cause_code,
             )
+            if replay is not None:
+                return {
+                    **replay,
+                    "idempotentReplay": True,
+                }
+            raise AgentCommandReceiptFailed(
+                str(exc),
+                client_message_id=client_message_id,
+                cause_code=cause_code,
+            ) from exc
+        command_receipt: dict[str, object] = {
+            "state": "accepted",
+            "clientMessageId": client_message_id,
+        }
+        retry_of_client_message_id = str(
+            request["retryOfClientMessageId"]
+        )
+        if retry_of_client_message_id:
+            command_receipt["retryOfClientMessageId"] = (
+                retry_of_client_message_id
+            )
+        response["commandReceipt"] = command_receipt
+        try:
+            return self.command_receipts.complete(
+                claim,
+                command_scope="session_prompt",
+                scope_id=session_id,
+                client_message_id=client_message_id,
+                response=response,
+            )
+        except Exception:
+            # Pi has already accepted this command and the acceptance evidence
+            # was persisted before local projection/receipt completion. Recover
+            # from that evidence instead of surfacing a failure that invites a
+            # duplicate retry.
+            recovered = self._recover_accepted_prompt(
+                session_id=session_id,
+                client_message_id=client_message_id,
+                retry_of_client_message_id=retry_of_client_message_id,
+                receipt_payload=receipt_payload,
+            )
+            if recovered is not None:
+                return recovered
             raise
-        return self.command_receipts.complete(
-            claim,
+
+    def _recover_accepted_prompt(
+        self,
+        *,
+        session_id: str,
+        client_message_id: str,
+        retry_of_client_message_id: str,
+        receipt_payload: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        evidence = self.command_receipts.pending_acceptance_evidence(
             command_scope="session_prompt",
             scope_id=session_id,
             client_message_id=client_message_id,
+            payload=receipt_payload,
+        )
+        evidence_source = "receipt"
+        if evidence is None:
+            evidence = self.sessions.prompt_acceptance_evidence(
+                session_id,
+                client_message_id,
+            )
+            evidence_source = "event"
+        if evidence is None:
+            return None
+        if str(
+            evidence.get("retryOfClientMessageId") or ""
+        ) != retry_of_client_message_id:
+            # A mismatched lineage cannot prove acceptance of this exact
+            # command. Keep the receipt pending instead of guessing or
+            # executing the command again.
+            return None
+        command_receipt: dict[str, object] = {
+            "state": "accepted",
+            "clientMessageId": client_message_id,
+            "recoveredFromDurableEvidence": True,
+            "projectionState": "partial",
+        }
+        command_receipt[
+            (
+                "recoveredFromDurableReceipt"
+                if evidence_source == "receipt"
+                else "recoveredFromDurableEvent"
+            )
+        ] = True
+        if retry_of_client_message_id:
+            command_receipt["retryOfClientMessageId"] = (
+                retry_of_client_message_id
+            )
+        response: dict[str, object] = {
+            "schemaVersion": (
+                "rag-ime.agent-prompt-accepted.v1"
+            ),
+            "ok": True,
+            "accepted": True,
+            "sessionId": session_id,
+            "turnId": str(evidence.get("turnId") or ""),
+            "piEntryId": str(
+                evidence.get("piEntryId")
+                or evidence.get("messageId")
+                or ""
+            ),
+            "recoveredFromDurableEvidence": True,
+            "projectionState": "partial",
+            "commandReceipt": command_receipt,
+        }
+        response[
+            (
+                "recoveredFromDurableReceipt"
+                if evidence_source == "receipt"
+                else "recoveredFromDurableEvent"
+            )
+        ] = True
+        return self.command_receipts.accept_pending_from_evidence(
+            command_scope="session_prompt",
+            scope_id=session_id,
+            client_message_id=client_message_id,
+            payload=receipt_payload,
             response=response,
         )
 
@@ -216,9 +397,13 @@ class AgentPromptApplicationService:
         checkpoint_text: str,
         attachment_ids: list[str],
         client_message_id: str = "",
+        retry_of_client_message_id: str = "",
         context_source: str = "user",
         delivery: str = "prompt",
         transient_context: str = "",
+        on_accepted: (
+            Callable[[Mapping[str, object]], None] | None
+        ) = None,
     ) -> dict[str, object]:
         session = self.memory_context.ensure_role_book(
             session_id
@@ -232,6 +417,13 @@ class AgentPromptApplicationService:
             session_id,
             attachment_ids,
         )
+        attachments = [
+            self.media.receipt(
+                media_id,
+                session_id=session_id,
+            )
+            for media_id in dict.fromkeys(attachment_ids)
+        ]
         accepted, trace_id, delivered = (
             self.prompt_delivery_service.deliver(
                 session_id,
@@ -241,6 +433,7 @@ class AgentPromptApplicationService:
                 source_kind=context_source,
                 delivery=delivery,
                 transient_context=transient_context,
+                on_accepted=on_accepted,
             )
         )
         self.media.bind_to_pi_entry(
@@ -251,19 +444,15 @@ class AgentPromptApplicationService:
             turn_id=str(accepted.get("turnId") or ""),
             media_ids=attachment_ids,
         )
-        attachments = [
-            self.media.receipt(
-                media_id,
-                session_id=session_id,
-            )
-            for media_id in dict.fromkeys(attachment_ids)
-        ]
         turn_id = str(accepted.get("turnId") or "")
         self._publish_user_message(
             session_id=session_id,
             turn_id=turn_id,
             message=message,
             client_message_id=client_message_id,
+            retry_of_client_message_id=(
+                retry_of_client_message_id
+            ),
             attachments=attachments,
             delivery=delivery,
             accepted=accepted,
@@ -322,10 +511,31 @@ class AgentPromptApplicationService:
             payload.get("_contextSourceToken")
             is self.context_source_token
         )
+        client_message_id = optional_client_message_id(
+            payload.get("clientMessageId")
+        )
+        retry_of_client_message_id = optional_client_message_id(
+            payload.get("retryOfClientMessageId")
+        )
+        if (
+            retry_of_client_message_id
+            and not client_message_id
+        ):
+            raise ValueError(
+                "retryOfClientMessageId requires clientMessageId"
+            )
+        if (
+            retry_of_client_message_id
+            and retry_of_client_message_id == client_message_id
+        ):
+            raise ValueError(
+                "retryOfClientMessageId must identify an earlier command"
+            )
         return {
             "message": message,
-            "clientMessageId": optional_client_message_id(
-                payload.get("clientMessageId")
+            "clientMessageId": client_message_id,
+            "retryOfClientMessageId": (
+                retry_of_client_message_id
             ),
             "delivery": prompt_delivery(
                 payload.get("delivery")
@@ -403,6 +613,7 @@ class AgentPromptApplicationService:
         turn_id: str,
         message: str,
         client_message_id: str,
+        retry_of_client_message_id: str,
         attachments: list[dict[str, object]],
         delivery: str,
         accepted: Mapping[str, object],
@@ -416,6 +627,9 @@ class AgentPromptApplicationService:
             ),
             text=message,
             client_message_id=client_message_id,
+            retry_of_client_message_id=(
+                retry_of_client_message_id
+            ),
             attachments=attachments,
             delivery=delivery,
         )
@@ -425,6 +639,10 @@ class AgentPromptApplicationService:
         if client_message_id:
             event_payload["clientMessageId"] = (
                 client_message_id
+            )
+        if retry_of_client_message_id:
+            event_payload["retryOfClientMessageId"] = (
+                retry_of_client_message_id
             )
         self.events.publish(
             session_id,
@@ -479,12 +697,19 @@ def _checkpoint_arguments(
         "client_message_id": str(
             request["clientMessageId"]
         ),
+        "retry_of_client_message_id": str(
+            request["retryOfClientMessageId"]
+        ),
         "context_source": str(request["contextSource"]),
         "delivery": str(request["delivery"]),
         "transient_context": str(
             request["transientContext"]
         ),
     }
+
+
+def _prompt_failure_code(error: BaseException) -> str:
+    return str(getattr(error, "error_code", "") or "")
 
 
 def _room_evidence_placeholder() -> dict[str, object]:

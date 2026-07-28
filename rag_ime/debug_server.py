@@ -7475,7 +7475,19 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"})
         except Exception as exc:  # pragma: no cover - exercised through browser/manual debugging
             status = getattr(exc, "http_status", HTTPStatus.BAD_REQUEST)
-            self._write_json(HTTPStatus(int(status)), {"ok": False, "error": str(exc)})
+            error_payload: dict[str, object] = {
+                "ok": False,
+                "error": str(exc),
+            }
+            projection = getattr(exc, "response_payload", None)
+            if callable(projection):
+                projected = projection()
+                if isinstance(projected, dict):
+                    error_payload.update(projected)
+            self._write_json(
+                HTTPStatus(int(status)),
+                error_payload,
+            )
 
     def do_PATCH(self) -> None:  # noqa: N802 - stdlib API
         parsed = urlparse(self.path)

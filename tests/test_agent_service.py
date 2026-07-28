@@ -12,11 +12,16 @@ from unittest.mock import patch
 
 from rag_ime.agent_protocol import AgentEventEnvelope
 from rag_ime.agent_blocks import normalize_trusted_agent_blocks, provider_block_projection
+from rag_ime.agent_command_receipts import (
+    AgentCommandReceiptFailed,
+    AgentCommandReceiptPending,
+)
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
 from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
+from rag_ime.pi_runtime_values import PiRuntimeTurnConflict
 
 
 PNG_1X1 = base64.b64decode(
@@ -295,11 +300,15 @@ class AgentServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ValueError,
                 "正在执行 Room 任务",
-            ):
+            ) as conflict:
                 self.service.prompt(
                     session_id,
                     {"message": "从 Agent 页面继续"},
                 )
+            self.assertEqual(
+                conflict.exception.error_code,
+                "AGENT_TURN_CONFLICT",
+            )
 
         runtime_prompt.assert_not_called()
 
@@ -1632,7 +1641,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(repaired[0]["status"], "delivered")
         self.assertEqual(repaired_prompt["memoryBootstrap"]["status"], "ready")
 
-    def test_new_command_after_lost_runtime_response_replays_persistent_bootstrap(self) -> None:
+    def test_lost_runtime_response_stays_pending_without_reexecution(self) -> None:
         session = self.service.create_session({"title": "响应丢失"})["session"]
         session_id = str(session["id"])
         sent_messages: list[str] = []
@@ -1646,7 +1655,9 @@ class AgentServiceTests(unittest.TestCase):
             raise RuntimeError("response lost after dispatch")
 
         with patch.object(self.service.runtime, "prompt", side_effect=lose_response):
-            with self.assertRaisesRegex(RuntimeError, "response lost"):
+            with self.assertRaises(
+                AgentCommandReceiptPending,
+            ) as pending:
                 self.service.prompt(
                     session_id,
                     {
@@ -1654,6 +1665,10 @@ class AgentServiceTests(unittest.TestCase):
                         "clientMessageId": "client-bootstrap-loss",
                     },
                 )
+        self.assertEqual(
+            pending.exception.recovery_state,
+            "in_flight",
+        )
 
         delivered = self.service.context_runtime.list_items(
             session_id,
@@ -1665,27 +1680,20 @@ class AgentServiceTests(unittest.TestCase):
             "dispatch:client:client-bootstrap-loss",
         )
 
-        with patch.object(
-            self.service.runtime,
-            "prompt",
-            return_value={
-                "accepted": True,
-                "turnId": "turn:bootstrap:retry",
-                "piEntryId": "entry:bootstrap:retry",
-                "response": {"success": True},
-            },
-        ) as retried:
-            accepted = self.service.prompt(
-                session_id,
-                {
-                    "message": "第一轮",
-                    "clientMessageId": "client-bootstrap-retry",
-                },
-            )
+        with patch.object(self.service.runtime, "prompt") as replay:
+            with self.assertRaises(
+                AgentCommandReceiptPending,
+            ):
+                self.service.prompt(
+                    session_id,
+                    {
+                        "message": "第一轮",
+                        "clientMessageId": "client-bootstrap-loss",
+                    },
+                )
 
         self.assertEqual(sent_messages[0], "第一轮")
-        self.assertEqual(retried.call_args.args[1], "第一轮")
-        self.assertEqual(accepted["contextItemsDelivered"], 1)
+        replay.assert_not_called()
 
     def test_corrupt_role_book_falls_back_to_base_persona_without_blocking_chat(self) -> None:
         with patch.object(
@@ -2789,7 +2797,18 @@ class AgentServiceTests(unittest.TestCase):
             replay = self.service.prompt(session_id, payload)
         replay_prompt.assert_not_called()
         self.assertNotIn("idempotentReplay", first)
+        self.assertEqual(
+            first["commandReceipt"],
+            {
+                "state": "accepted",
+                "clientMessageId": "device-command-1",
+            },
+        )
         self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(
+            replay["commandReceipt"],
+            first["commandReceipt"],
+        )
         self.assertEqual(replay["turnId"], first["turnId"])
         with self.assertRaisesRegex(ValueError, "different command payload"):
             self.service.prompt(
@@ -2805,6 +2824,376 @@ class AgentServiceTests(unittest.TestCase):
                     "clientMessageId": "device-command-1",
                 },
             )
+
+    def test_prompt_reopens_from_durable_receipt_without_reexecution(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "接受后崩溃恢复"}
+        )["session"]
+        session_id = str(session["id"])
+        payload = {
+            "message": "Pi 只应接受一次",
+            "clientMessageId": "device-crash-after-accept",
+        }
+        with (
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value={
+                    "accepted": True,
+                    "turnId": "turn:durable-acceptance:1",
+                    "piEntryId": "pi-entry:durable-acceptance:1",
+                    "response": {"success": True},
+                },
+            ) as original_prompt,
+            patch.object(
+                self.service.command_receipts,
+                "complete",
+                side_effect=RuntimeError(
+                    "simulated process exit before receipt completion"
+                ),
+            ),
+        ):
+            recovered_first = self.service.prompt(
+                session_id,
+                payload,
+            )
+        original_prompt.assert_called_once()
+        self.assertTrue(
+            recovered_first["recoveredFromDurableReceipt"]
+        )
+        self.assertEqual(
+            recovered_first["projectionState"],
+            "partial",
+        )
+
+        self.service.close()
+        self.service = AgentService(
+            db_path=self.root / "rag-ime.sqlite",
+            runtime_config=PiRuntimeConfig(
+                enabled=False,
+                executable=None,
+                agent_dir=self.root / "agent-config",
+                session_dir=self.root / "sessions",
+                logs_dir=self.root / "logs",
+            ),
+            process_id_provider=lambda: self.process_id,
+        )
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+        ) as replay_prompt:
+            recovered = self.service.prompt(
+                session_id,
+                payload,
+            )
+            replayed_again = self.service.prompt(
+                session_id,
+                payload,
+            )
+
+        replay_prompt.assert_not_called()
+        self.assertTrue(recovered["idempotentReplay"])
+        self.assertTrue(
+            recovered["recoveredFromDurableReceipt"]
+        )
+        self.assertEqual(
+            recovered["turnId"],
+            "turn:durable-acceptance:1",
+        )
+        self.assertEqual(
+            recovered["piEntryId"],
+            "pi-entry:durable-acceptance:1",
+        )
+        self.assertEqual(
+            recovered["commandReceipt"],
+            {
+                "state": "accepted",
+                "clientMessageId": (
+                    "device-crash-after-accept"
+                ),
+                "recoveredFromDurableEvidence": True,
+                "recoveredFromDurableReceipt": True,
+                "projectionState": "partial",
+            },
+        )
+        self.assertTrue(replayed_again["idempotentReplay"])
+        self.assertEqual(
+            replayed_again["commandReceipt"],
+            recovered["commandReceipt"],
+        )
+        self.assertTrue(
+            self.service.prompt(
+                session_id,
+                payload,
+            )["idempotentReplay"]
+        )
+
+    def test_media_projection_failure_recovers_without_reexecution(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "媒体投影失败"}
+        )["session"]
+        session_id = str(session["id"])
+        media = self.service.import_media(
+            session_id=session_id,
+            data=PNG_1X1,
+            mime_type="image/png",
+            file_name="accepted.png",
+        )["media"]
+        payload = {
+            "message": "已接受的图片",
+            "attachments": [media["mediaId"]],
+            "clientMessageId": "media-bind-fault",
+        }
+        accepted = {
+            "accepted": True,
+            "turnId": "turn:media-fault",
+            "piEntryId": "pi:media-fault",
+        }
+        with (
+            patch.object(
+                self.service.runtime,
+                "model_catalog",
+                return_value={
+                    "selected": {"supportsImages": True}
+                },
+            ),
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value=accepted,
+            ) as runtime_prompt,
+            patch.object(
+                self.service.media,
+                "bind_to_pi_entry",
+                side_effect=RuntimeError("media bind failed"),
+            ),
+        ):
+            recovered = self.service.prompt(
+                session_id,
+                payload,
+            )
+        runtime_prompt.assert_called_once()
+        self.assertEqual(recovered["projectionState"], "partial")
+        self.assertTrue(
+            recovered["recoveredFromDurableReceipt"]
+        )
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+        ) as replay_prompt:
+            replay = self.service.prompt(session_id, payload)
+        replay_prompt.assert_not_called()
+        self.assertTrue(replay["idempotentReplay"])
+
+    def test_event_persistence_failure_recovers_from_receipt_evidence(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "事件持久化失败"}
+        )["session"]
+        session_id = str(session["id"])
+        payload = {
+            "message": "事件失败也不能重发",
+            "clientMessageId": "event-persistence-fault",
+        }
+        original_recorder = self.service.events._event_recorder
+
+        def fail_user_message(event: AgentEventEnvelope) -> None:
+            if event.event_type == "message_completed":
+                raise RuntimeError("event persistence failed")
+            if original_recorder is not None:
+                original_recorder(event)
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value={
+                    "accepted": True,
+                    "turnId": "turn:event-fault",
+                    "piEntryId": "pi:event-fault",
+                },
+            ) as runtime_prompt,
+            patch.object(
+                self.service.events,
+                "_event_recorder",
+                side_effect=fail_user_message,
+            ),
+        ):
+            recovered = self.service.prompt(
+                session_id,
+                payload,
+            )
+        runtime_prompt.assert_called_once()
+        self.assertEqual(recovered["projectionState"], "partial")
+        self.assertTrue(
+            recovered["recoveredFromDurableReceipt"]
+        )
+
+    def test_remote_accept_before_local_evidence_is_unresolved(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "接纳证据窗口"}
+        )["session"]
+        session_id = str(session["id"])
+        payload = {
+            "message": "远端可能已经接受",
+            "clientMessageId": "acceptance-ledger-gap",
+        }
+        with (
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value={
+                    "accepted": True,
+                    "turnId": "turn:ledger-gap",
+                    "piEntryId": "pi:ledger-gap",
+                },
+            ) as runtime_prompt,
+            patch.object(
+                self.service.command_receipts,
+                "record_acceptance_evidence",
+                side_effect=RuntimeError(
+                    "process died before local durable evidence"
+                ),
+            ),
+        ):
+            with self.assertRaises(
+                AgentCommandReceiptPending
+            ) as pending:
+                self.service.prompt(session_id, payload)
+        runtime_prompt.assert_called_once()
+        self.assertEqual(
+            pending.exception.recovery_state,
+            "in_flight",
+        )
+        self.service.command_receipts.pending_recovery_grace_ms = 0
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+        ) as replay_prompt:
+            with self.assertRaises(
+                AgentCommandReceiptPending
+            ) as unresolved:
+                self.service.prompt(session_id, payload)
+        replay_prompt.assert_not_called()
+        self.assertEqual(
+            unresolved.exception.recovery_state,
+            "unresolved",
+        )
+
+    def test_prompt_retry_requires_a_failed_equivalent_predecessor(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "终态重试关联"}
+        )["session"]
+        session_id = str(session["id"])
+        first_payload = {
+            "message": "重新执行同一输入",
+            "clientMessageId": "retry-attempt-1",
+        }
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            side_effect=PiRuntimeTurnConflict(
+                "source-proven pre-accept conflict"
+            ),
+        ):
+            with self.assertRaises(AgentCommandReceiptFailed):
+                self.service.prompt(session_id, first_payload)
+
+        payload = {
+            **first_payload,
+            "clientMessageId": "retry-attempt-2",
+            "retryOfClientMessageId": "retry-attempt-1",
+        }
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            return_value={
+                "accepted": True,
+                "turnId": "turn:retry:2",
+                "piEntryId": "pi-entry:retry:2",
+                "response": {"success": True},
+            },
+        ):
+            accepted = self.service.prompt(session_id, payload)
+
+        self.assertEqual(
+            accepted["commandReceipt"],
+            {
+                "state": "accepted",
+                "clientMessageId": "retry-attempt-2",
+                "retryOfClientMessageId": "retry-attempt-1",
+            },
+        )
+        events, _ = self.service.events.replay(session_id)
+        user_event = next(
+            event
+            for event in events
+            if event.event_type == "message_completed"
+        )
+        self.assertEqual(
+            user_event.payload["message"][
+                "retryOfClientMessageId"
+            ],
+            "retry-attempt-1",
+        )
+        replay = self.service.prompt(session_id, payload)
+        self.assertTrue(replay["idempotentReplay"])
+        self.assertEqual(
+            replay["commandReceipt"],
+            accepted["commandReceipt"],
+        )
+
+    def test_prompt_failure_returns_a_typed_durable_receipt(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "失败回执"}
+        )["session"]
+        session_id = str(session["id"])
+        payload = {
+            "message": "与活动回合冲突",
+            "clientMessageId": "failed-command-1",
+        }
+        with patch.object(
+            self.service.runtime,
+            "prompt",
+            side_effect=PiRuntimeTurnConflict(
+                "Pi 正在处理上一轮，请等待结束或停止完成后再发送"
+            ),
+        ):
+            with self.assertRaises(
+                AgentCommandReceiptFailed
+            ) as failed:
+                self.service.prompt(session_id, payload)
+
+        self.assertEqual(
+            failed.exception.response_payload(),
+            {
+                "code": "AGENT_COMMAND_FAILED",
+                "commandReceipt": {
+                    "state": "failed",
+                    "clientMessageId": "failed-command-1",
+                    "causeCode": "AGENT_TURN_CONFLICT",
+                },
+            },
+        )
+        with self.assertRaises(
+            AgentCommandReceiptFailed
+        ) as replay_failed:
+            self.service.prompt(session_id, payload)
+        self.assertEqual(
+            replay_failed.exception.response_payload(),
+            failed.exception.response_payload(),
+        )
 
     def test_text_only_pi_model_rejects_managed_image_before_prompt(self) -> None:
         session = self.service.create_session({"title": "文本模型"})["session"]

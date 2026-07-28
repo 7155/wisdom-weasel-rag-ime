@@ -26,7 +26,13 @@ import { AgentTimeline } from './timeline/AgentTimeline';
 import { AgentSendTimingTracker, monotonicNow } from './send-stage-timing';
 import { toolIntentPrompt } from './tool-presentation';
 import { useProductIdentity } from '@/features/identity/product-identity';
-import { isAgentTurnConflict, publicAgentErrorText } from './public-error';
+import {
+  isAgentCommandPending,
+  isAgentTurnConflict,
+  isAmbiguousAgentPromptFailure,
+  isUnresolvedAgentCommandPending,
+  publicAgentErrorText,
+} from './public-error';
 import { ApprovalReviewDialog, MemoryReviewDialog } from './review/AgentReviewDialogs';
 import {
   activeSessionId,
@@ -695,39 +701,93 @@ function AgentWorkspace() {
     restoreInput?: () => void,
     onAdmissionRolledBack?: () => void,
     startedAt = monotonicNow(),
+    requestedClientMessageId = '',
+    retryOfClientMessageId = '',
+    reuseOptimistic = false,
   ): boolean {
     if (!beginSessionSend(sessionId)) return false;
-    const clientMessageId = `web-${crypto.randomUUID()}`;
+    const clientMessageId = (
+      requestedClientMessageId
+      || `web-${crypto.randomUUID()}`
+    );
     sendTimings.begin(sessionId, clientMessageId, startedAt);
-    useAgentLiveStore.getState().appendOptimistic(sessionId, {
-      clientMessageId,
-      text: message,
-      attachments: attachmentIds,
-      nowMs: Date.now(),
-      ...(delivery === 'prompt' ? {} : { turnId: activeTurnId, delivery }),
-    });
+    if (reuseOptimistic) {
+      useAgentLiveStore.getState().requeueOptimistic(
+        sessionId,
+        clientMessageId,
+        Date.now(),
+      );
+    } else {
+      useAgentLiveStore.getState().appendOptimistic(sessionId, {
+        clientMessageId,
+        ...(retryOfClientMessageId
+          ? { retryOfClientMessageId }
+          : {}),
+        text: message,
+        attachments: attachmentIds,
+        nowMs: Date.now(),
+        ...(delivery === 'prompt' ? {} : { turnId: activeTurnId, delivery }),
+      });
+    }
     sendTimings.optimistic(clientMessageId);
     setSessionError(sessionId, '');
+    const requestBody = {
+      message,
+      attachments: attachmentIds,
+      clientMessageId,
+      ...(retryOfClientMessageId
+        ? { retryOfClientMessageId }
+        : {}),
+      ...(delivery === 'prompt' ? {} : { delivery }),
+    };
+    const requestAdmission = () => (
+      transport.request<Record<string, unknown>>({
+        pathId: 'agent.session.prompt',
+        params: { sessionId },
+        body: requestBody,
+      })
+    );
+    const handlePendingAdmission = (requestError: unknown): boolean => {
+      if (!isAgentCommandPending(requestError)) return false;
+      if (
+        !agentProjection(sessionId)
+          .optimisticByClientMessageId[clientMessageId]
+      ) {
+        return true;
+      }
+      sendTimings.failed(clientMessageId);
+      useAgentLiveStore.getState().failOptimistic(
+        sessionId,
+        clientMessageId,
+        publicAgentErrorText(requestError),
+        Date.now(),
+        isUnresolvedAgentCommandPending(requestError)
+          ? 'unresolved'
+          : 'pending',
+      );
+      setSessionError(sessionId, '');
+      return true;
+    };
     // Admission and the optimistic turn are synchronous. Restoring a Pi
     // Session, refreshing context, or starting a Provider can still make the
     // HTTP receipt slow, but must not make the click itself feel stalled.
     void (async () => {
       try {
-        const response = await transport.request<Record<string, unknown>>({
-          pathId: 'agent.session.prompt',
-          params: { sessionId },
-          // Keep ordinary prompts compatible with an older native route policy.
-          // Queue delivery is sent only when it changes the backend operation.
-          body: {
-            message,
-            attachments: attachmentIds,
-            clientMessageId,
-            ...(delivery === 'prompt' ? {} : { delivery }),
-          },
-        });
+        const response = await requestAdmission();
         sendTimings.accepted(clientMessageId, response);
       } catch (requestError) {
+        if (handlePendingAdmission(requestError)) return;
         sendTimings.failed(clientMessageId);
+        if (isAmbiguousAgentPromptFailure(requestError)) {
+          useAgentLiveStore.getState().failOptimistic(
+            sessionId,
+            clientMessageId,
+            '暂时无法确认是否已接收。系统不会自动重试；手动重试会核对同一条消息。',
+            Date.now(),
+            'ambiguous',
+          );
+          return;
+        }
         if (isAgentTurnConflict(requestError)) {
           useAgentLiveStore.getState().discardOptimistic(sessionId, clientMessageId);
           restoreInput?.();
@@ -759,6 +819,16 @@ function AgentWorkspace() {
     const userMessage = turn?.messageIds
       .map((messageId) => projection.messagesById[messageId])
       .find((message) => message?.role === 'user');
+    if (
+      userMessage?.admissionState === 'pending'
+      || userMessage?.admissionState === 'unresolved'
+    ) {
+      setError(
+        '这条消息仍无法确认是否已执行；为避免重复执行，不能自动重试。'
+        + '请刷新对话检查结果后，再决定是否发送新的请求。',
+      );
+      return false;
+    }
     const message = userMessage?.blocks
       .map((block) => typeof block.data.text === 'string' ? block.data.text : '')
       .filter(Boolean)
@@ -768,6 +838,10 @@ function AgentWorkspace() {
       setError('找不到这轮的原始输入，无法安全重试。');
       return false;
     }
+    const replayAmbiguousAdmission = (
+      userMessage?.admissionState === 'ambiguous'
+      && Boolean(userMessage.clientMessageId)
+    );
     return promptSession(
       session.id,
       message || '请查看附件。',
@@ -776,6 +850,13 @@ function AgentWorkspace() {
       undefined,
       onAdmissionRolledBack,
       sendStartedAt,
+      replayAmbiguousAdmission
+        ? userMessage?.clientMessageId
+        : '',
+      replayAmbiguousAdmission
+        ? ''
+        : userMessage?.clientMessageId ?? '',
+      replayAmbiguousAdmission,
     );
   }
 

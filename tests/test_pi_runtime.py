@@ -959,8 +959,12 @@ class PiRuntimeTests(unittest.TestCase):
         with self.runtime._lock:
             self.runtime._active_turn_id = "turn:still-aborting"
 
-        with self.assertRaisesRegex(PiRuntimeError, "上一轮"):
+        with self.assertRaisesRegex(PiRuntimeError, "上一轮") as conflict:
             self.runtime.prompt(session_id, "不要覆盖旧回合")
+        self.assertEqual(
+            conflict.exception.error_code,
+            "AGENT_TURN_CONFLICT",
+        )
 
     def test_busy_v1_runtime_accepts_steer_and_follow_up_messages(self) -> None:
         session_id = str(self.session["id"])

@@ -8,6 +8,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { StubControlTransport } from '@/test/stub-control-transport';
+import { ControlTransportHttpError } from '@/platform/http-transport';
 import type { ControlRequest, ControlTransport } from '@/platform/transport';
 import { AgentFeature } from './index';
 import { previewAgentEvents, previewAgentSnapshot, previewModelCatalog, previewPersonas, previewSessions } from './preview-data';
@@ -1016,7 +1017,7 @@ describe('Agent experience', () => {
     const retry = await screen.findByRole('button', { name: '重试本轮' });
     await user.click(retry);
 
-    expect(retry).toHaveTextContent('已创建重试轮次');
+    expect(retry).toHaveTextContent('已提交重试');
     const retryProjection = useAgentLiveStore.getState().projections['session-preview'];
     const queuedRetry = Object.values(retryProjection.turnsById)
       .find((turn) => turn.id.startsWith('local-turn:') && turn.status === 'queued');
@@ -1035,6 +1036,218 @@ describe('Agent experience', () => {
     const prompts = transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt');
     expect(prompts[1]?.request.params).toEqual({ sessionId: 'session-preview' });
     expect(prompts[1]?.request.body).toMatchObject({ message: '重试时保留这句话', attachments: [] });
+    const firstClientMessageId = String(
+      (prompts[0]?.request.body as Record<string, unknown>)
+        .clientMessageId,
+    );
+    const retryBody = prompts[1]?.request.body as Record<string, unknown>;
+    expect(retryBody.clientMessageId).not.toBe(firstClientMessageId);
+    expect(retryBody.retryOfClientMessageId).toBe(firstClientMessageId);
+  });
+
+  it('waits for an explicit retry before replaying an ambiguous admission', async () => {
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      () => {
+        throw new TypeError('Failed to fetch');
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+    await user.type(composer, '网络回执丢失也只能执行一次');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    const warning = await screen.findByText(
+      /系统不会自动重试/,
+    );
+    expect(warning).toHaveTextContent(
+      '手动重试会核对同一条消息',
+    );
+    const retry = await screen.findByRole('button', {
+      name: '重试本轮',
+    });
+    const firstAttempt = transport.requests.filter(
+      (call) => call.request.pathId === 'agent.session.prompt',
+    );
+    expect(firstAttempt).toHaveLength(1);
+
+    await user.click(retry);
+    await waitFor(() => expect(
+      transport.requests.filter(
+        (call) => call.request.pathId === 'agent.session.prompt',
+      ),
+    ).toHaveLength(2));
+    const prompts = transport.requests.filter(
+      (call) => call.request.pathId === 'agent.session.prompt',
+    );
+    expect(JSON.stringify(prompts[1]?.request.body)).toBe(
+      JSON.stringify(prompts[0]?.request.body),
+    );
+    const projection = useAgentLiveStore.getState()
+      .projections['session-preview'];
+    const matchingMessages = Object.values(
+      projection.messagesById,
+    ).filter((message) => (
+      message.role === 'user'
+      && message.blocks.some(
+        (block) => (
+          block.data.text
+          === '网络回执丢失也只能执行一次'
+        ),
+      )
+    ));
+    expect(matchingMessages).toHaveLength(1);
+    expect(matchingMessages[0]).toMatchObject({
+      status: 'failed',
+      clientMessageId: (
+        prompts[0]?.request.body as Record<string, unknown>
+      ).clientMessageId,
+      admissionState: 'ambiguous',
+    });
+    expect(
+      projection.turnsById[
+        matchingMessages[0]?.turnId ?? ''
+      ]?.failure,
+    ).toContain('系统不会自动重试');
+  });
+
+  it('terminalizes an unresolved pending receipt without resending or offering retry actions', async () => {
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      (request: ControlRequest) => {
+        const body = request.body as Record<string, unknown>;
+        throw new ControlTransportHttpError(
+          'agent.session.prompt',
+          409,
+          'receipt cannot be reconciled',
+          {
+            ok: false,
+            code: 'AGENT_COMMAND_PENDING',
+            error: 'receipt cannot be reconciled',
+            commandReceipt: {
+              state: 'pending',
+              clientMessageId: body.clientMessageId,
+              recoveryState: 'unresolved',
+            },
+          },
+        );
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', {
+      name: '消息',
+    });
+    await user.type(composer, '这条操作不能重复执行');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    const warning = await screen.findByText(
+      /无法确认这条消息是否已执行/,
+    );
+    const failure = warning.closest('[role="alert"]');
+    expect(failure).not.toBeNull();
+    expect(failure).toHaveTextContent('为避免重复执行');
+    expect(within(failure as HTMLElement).queryByRole(
+      'button',
+      { name: '重试本轮' },
+    )).not.toBeInTheDocument();
+    expect(within(failure as HTMLElement).queryByRole(
+      'button',
+      { name: '切换模型' },
+    )).not.toBeInTheDocument();
+
+    const prompts = transport.requests.filter(
+      (call) => call.request.pathId === 'agent.session.prompt',
+    );
+    expect(prompts).toHaveLength(1);
+    const clientMessageId = String(
+      (prompts[0]?.request.body as Record<string, unknown>)
+        .clientMessageId,
+    );
+    const projection = useAgentLiveStore.getState()
+      .projections['session-preview'];
+    const matchingMessages = Object.values(
+      projection.messagesById,
+    ).filter((message) => (
+      message.clientMessageId === clientMessageId
+    ));
+    expect(matchingMessages).toHaveLength(1);
+    expect(matchingMessages[0]).toMatchObject({
+      status: 'failed',
+      admissionState: 'unresolved',
+    });
+  });
+
+  it('projects an in-flight pending receipt without polling or offering retry actions', async () => {
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      (request: ControlRequest) => {
+        const body = request.body as Record<string, unknown>;
+        throw new ControlTransportHttpError(
+          'agent.session.prompt',
+          409,
+          'receipt is still in flight',
+          {
+            ok: false,
+            code: 'AGENT_COMMAND_PENDING',
+            error: 'receipt is still in flight',
+            commandReceipt: {
+              state: 'pending',
+              clientMessageId: body.clientMessageId,
+              recoveryState: 'in_flight',
+            },
+          },
+        );
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', {
+      name: '消息',
+    });
+    await user.type(composer, '等待服务端确认且不能重复执行');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    const warning = await screen.findByText(
+      /服务端仍在确认这条消息是否已接收/,
+    );
+    const failure = warning.closest('[role="alert"]');
+    expect(failure).not.toBeNull();
+    expect(failure).toHaveTextContent('系统不会自动重试');
+    expect(within(failure as HTMLElement).queryByRole(
+      'button',
+      { name: '重试本轮' },
+    )).not.toBeInTheDocument();
+    expect(within(failure as HTMLElement).queryByRole(
+      'button',
+      { name: '切换模型' },
+    )).not.toBeInTheDocument();
+
+    const prompts = transport.requests.filter(
+      (call) => call.request.pathId === 'agent.session.prompt',
+    );
+    expect(prompts).toHaveLength(1);
+    const clientMessageId = String(
+      (prompts[0]?.request.body as Record<string, unknown>)
+        .clientMessageId,
+    );
+    const projection = useAgentLiveStore.getState()
+      .projections['session-preview'];
+    expect(
+      Object.values(projection.messagesById).find(
+        (message) => message.clientMessageId === clientMessageId,
+      ),
+    ).toMatchObject({
+      status: 'failed',
+      admissionState: 'pending',
+    });
   });
 
   it('does not turn a stale-window active-turn conflict into duplicate chat messages', async () => {
@@ -1043,10 +1256,25 @@ describe('Agent experience', () => {
       previewModelCatalog('session-preview'),
       { ok: true, items: toolCatalog() },
       { ok: true, items: previewSessions },
-      () => {
+      (request: ControlRequest) => {
         attempt += 1;
         if (attempt === 1) throw new Error('model unavailable');
-        throw new Error('Pi 正在处理上一轮，请等待结束或停止完成后再发送');
+        const body = request.body as Record<string, unknown>;
+        throw new ControlTransportHttpError(
+          'agent.session.prompt',
+          409,
+          'Pi 正在处理上一轮，请等待结束或停止完成后再发送',
+          {
+            ok: false,
+            code: 'AGENT_COMMAND_FAILED',
+            error: 'Pi 正在处理上一轮，请等待结束或停止完成后再发送',
+            commandReceipt: {
+              state: 'failed',
+              clientMessageId: body.clientMessageId,
+              causeCode: 'AGENT_TURN_CONFLICT',
+            },
+          },
+        );
       },
     );
     const user = userEvent.setup();

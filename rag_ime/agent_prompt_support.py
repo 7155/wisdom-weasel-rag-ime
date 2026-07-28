@@ -148,6 +148,7 @@ def prompt_user_message_payload(
     text: str,
     client_message_id: str,
     attachments: list[dict[str, object]],
+    retry_of_client_message_id: str = "",
     delivery: str = "prompt",
 ) -> dict[str, object]:
     created_at_ms = int(datetime.now().timestamp() * 1000)
@@ -212,5 +213,9 @@ def prompt_user_message_payload(
     }
     if client_message_id:
         result["clientMessageId"] = client_message_id
+    if retry_of_client_message_id:
+        result["retryOfClientMessageId"] = (
+            retry_of_client_message_id
+        )
     validate_contract(result, "agent-message.v1.json")
     return result

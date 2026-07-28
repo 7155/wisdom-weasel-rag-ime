@@ -8,7 +8,16 @@ from .agent_context_runtime import (
     compose_runtime_prompt,
     render_context_items,
 )
+from .pi_runtime_values import PiRuntimeTurnConflict
 from .text_utils import compact_whitespace
+
+
+class AgentPromptAcceptanceUnknown(RuntimeError):
+    """Pi may have accepted, but the caller did not receive an acceptance."""
+
+
+class AgentPromptPostAcceptanceFailure(RuntimeError):
+    """Pi accepted, but the first local durable projection failed."""
 
 
 class AgentPromptDeliveryService:
@@ -44,6 +53,9 @@ class AgentPromptDeliveryService:
         source_kind: str,
         delivery: str = "prompt",
         transient_context: str = "",
+        on_accepted: (
+            Callable[[Mapping[str, object]], None] | None
+        ) = None,
     ) -> tuple[dict[str, object], str, int]:
         trace_id = self.context_runtime.begin_trace(
             session_id,
@@ -162,6 +174,17 @@ class AgentPromptDeliveryService:
             client_message_id=client_message_id,
             delivery=delivery,
         )
+        if on_accepted is not None:
+            try:
+                on_accepted(accepted)
+            except Exception as exc:
+                # There is no source-proven durable Host ledger between
+                # remote acceptance and this local write. A process death in
+                # that gap is therefore unresolved, never safe to replay.
+                raise AgentPromptPostAcceptanceFailure(
+                    "Pi accepted the command, but durable local acceptance "
+                    "evidence could not be written"
+                ) from exc
         turn_id = str(accepted.get("turnId") or "")
         self.context_runtime.mark_delivered(
             list(materialized["itemIds"]),
@@ -321,15 +344,30 @@ class AgentPromptDeliveryService:
             )
         except Exception as exc:
             duration_ms = _duration_ms(started)
+            known_rejection = isinstance(
+                exc,
+                PiRuntimeTurnConflict,
+            )
             try:
                 self.context_runtime.add_trace_node(
                     trace_id,
                     stage="runtime_result",
-                    label="Pi Runtime 拒绝",
+                    label=(
+                        "Pi Runtime 拒绝"
+                        if known_rejection
+                        else "Pi Runtime 接纳状态未知"
+                    ),
                     source_kind="runtime",
                     disposition="failed",
                     parents=[request_node],
-                    summary="运行时未接受当前回合",
+                    summary=(
+                        "运行时未接受当前回合"
+                        if known_rejection
+                        else (
+                            "调用未返回可证明的接纳结果；"
+                            "禁止自动重新执行"
+                        )
+                    ),
                     duration_ms=duration_ms,
                     reason=_public_error(exc),
                 )
@@ -340,7 +378,12 @@ class AgentPromptDeliveryService:
                 )
             except Exception:
                 pass
-            raise
+            if known_rejection:
+                raise
+            raise AgentPromptAcceptanceUnknown(
+                "Pi acceptance is unknown because the runtime call did not "
+                "return a source-proven result"
+            ) from exc
         return accepted, _duration_ms(started)
 
 

@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { agentEventFixture } from '@/test/fixtures/events';
 
-import { HttpControlTransport } from './http-transport';
+import {
+  ControlTransportHttpError,
+  HttpControlTransport,
+} from './http-transport';
 
 describe('HttpControlTransport', () => {
   it('resolves browser snapshot images against the configured HTTP origin', () => {
@@ -72,6 +75,40 @@ describe('HttpControlTransport', () => {
         responseContract: 'agent-session.v1',
       }),
     ).rejects.toThrow(/Invalid agent-session.v1/);
+  });
+
+  it('preserves typed command receipt payloads on HTTP errors', async () => {
+    const payload = {
+      ok: false,
+      code: 'AGENT_COMMAND_PENDING',
+      error: 'still pending',
+      commandReceipt: {
+        state: 'pending',
+        clientMessageId: 'client-1',
+      },
+    };
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: vi.fn(async () => new Response(
+        JSON.stringify(payload),
+        {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      )) as typeof fetch,
+    });
+
+    await expect(transport.request({
+      pathId: 'agent.session.prompt',
+      params: { sessionId: 'session-1' },
+      body: {
+        message: 'hello',
+        clientMessageId: 'client-1',
+      },
+    })).rejects.toMatchObject({
+      status: 409,
+      payload,
+    } satisfies Partial<ControlTransportHttpError>);
   });
 
   it('falls back to the fixed 8766 route catalog when the facade is not mounted yet', async () => {

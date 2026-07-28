@@ -24,6 +24,7 @@ from .agent_runtime_driver import AgentRuntimeError
 
 __all__ = [
     "PiRuntimeError",
+    "PiRuntimeTurnConflict",
     "as_integer",
     "as_mapping",
     "effective_thinking_level",
@@ -43,6 +44,12 @@ class PiRuntimeError(AgentRuntimeError):
     modules cyclic. `pi_runtime` re-exports it, so existing importers are
     unaffected.
     """
+
+
+class PiRuntimeTurnConflict(PiRuntimeError):
+    """A new prompt cannot start while this runtime owns an active turn."""
+
+    error_code = "AGENT_TURN_CONFLICT"
 
 
 def as_mapping(value: object) -> Mapping[str, object]:

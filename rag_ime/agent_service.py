@@ -22,7 +22,10 @@ from .agent_configuration import (
 )
 from .agent_approval_application import AgentApprovalApplicationService
 from .agent_context_runtime import AgentContextRuntime
-from .agent_command_receipts import AgentCommandReceiptStore
+from .agent_command_receipts import (
+    AgentCommandReceiptStore,
+    AgentTurnConflictError,
+)
 from .agent_events import AgentEventHub
 from .agent_event_projection import AgentEventProjectionService
 from .agent_block_store import AgentBlockStore
@@ -2538,9 +2541,13 @@ class AgentService:
         checkpoint_text: str,
         attachment_ids: list[str],
         client_message_id: str = "",
+        retry_of_client_message_id: str = "",
         context_source: str = "user",
         delivery: str = "prompt",
         transient_context: str = "",
+        on_accepted: (
+            Callable[[Mapping[str, object]], None] | None
+        ) = None,
     ) -> dict[str, object]:
         if context_source == "room":
             return self.prompt_application.prompt_with_checkpoint(
@@ -2549,9 +2556,13 @@ class AgentService:
                 checkpoint_text=checkpoint_text,
                 attachment_ids=attachment_ids,
                 client_message_id=client_message_id,
+                retry_of_client_message_id=(
+                    retry_of_client_message_id
+                ),
                 context_source=context_source,
                 delivery=delivery,
                 transient_context=transient_context,
+                on_accepted=on_accepted,
             )
         with self._direct_agent_entry(session_id):
             return self.prompt_application.prompt_with_checkpoint(
@@ -2560,9 +2571,13 @@ class AgentService:
                 checkpoint_text=checkpoint_text,
                 attachment_ids=attachment_ids,
                 client_message_id=client_message_id,
+                retry_of_client_message_id=(
+                    retry_of_client_message_id
+                ),
                 context_source=context_source,
                 delivery=delivery,
                 transient_context=transient_context,
+                on_accepted=on_accepted,
             )
 
     @contextmanager
@@ -2597,7 +2612,7 @@ class AgentService:
             and not legacy_busy
         ):
             return
-        raise ValueError(
+        raise AgentTurnConflictError(
             "Session 正在执行 Room 任务，不能同时从 Agent 发送；"
             "请等待 Room 结束或先停止该 Room 任务"
         )

@@ -554,6 +554,15 @@ class ControlRoutePolicyTests(unittest.TestCase):
                         body={
                             "message": "继续",
                             "clientMessageId": f"remote-{delivery}",
+                            **(
+                                {
+                                    "retryOfClientMessageId": (
+                                        "remote-original"
+                                    )
+                                }
+                                if delivery == "prompt"
+                                else {}
+                            ),
                             "delivery": delivery,
                         },
                     ),

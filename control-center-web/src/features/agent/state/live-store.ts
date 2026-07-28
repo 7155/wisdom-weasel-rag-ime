@@ -7,6 +7,7 @@ import {
   createAgentProjection,
   discardOptimisticAgentMessage,
   failOptimisticAgentMessage,
+  requeueOptimisticAgentMessage,
   reduceAgentEvents,
   type AgentProjectionState,
   type AgentSnapshot,
@@ -21,10 +22,27 @@ interface AgentLiveStore {
   applyEvents(sessionId: string, events: readonly UiAgentEvent[]): boolean;
   appendOptimistic(
     sessionId: string,
-    input: { clientMessageId: string; text: string; attachments?: string[]; nowMs: number },
+    input: {
+      clientMessageId: string;
+      retryOfClientMessageId?: string;
+      text: string;
+      attachments?: string[];
+      nowMs: number;
+    },
   ): void;
   discardOptimistic(sessionId: string, clientMessageId: string): void;
-  failOptimistic(sessionId: string, clientMessageId: string, error: string, nowMs: number): void;
+  failOptimistic(
+    sessionId: string,
+    clientMessageId: string,
+    error: string,
+    nowMs: number,
+    admissionState?: 'ambiguous' | 'pending' | 'unresolved',
+  ): void;
+  requeueOptimistic(
+    sessionId: string,
+    clientMessageId: string,
+    nowMs: number,
+  ): void;
   abortTurn(sessionId: string, turnId: string, nowMs: number): void;
   clear(sessionId: string): void;
 }
@@ -74,10 +92,34 @@ export const useAgentLiveStore = create<AgentLiveStore>((set, get) => ({
       projections: { ...state.projections, [sessionId]: projection },
     }));
   },
-  failOptimistic(sessionId, clientMessageId, error, nowMs) {
+  failOptimistic(
+    sessionId,
+    clientMessageId,
+    error,
+    nowMs,
+    admissionState,
+  ) {
     const current = get().projections[sessionId];
     if (!current) return;
-    const projection = failOptimisticAgentMessage(current, clientMessageId, error, nowMs);
+    const projection = failOptimisticAgentMessage(
+      current,
+      clientMessageId,
+      error,
+      nowMs,
+      admissionState,
+    );
+    set((state) => ({
+      projections: { ...state.projections, [sessionId]: projection },
+    }));
+  },
+  requeueOptimistic(sessionId, clientMessageId, nowMs) {
+    const current = get().projections[sessionId];
+    if (!current) return;
+    const projection = requeueOptimisticAgentMessage(
+      current,
+      clientMessageId,
+      nowMs,
+    );
     set((state) => ({
       projections: { ...state.projections, [sessionId]: projection },
     }));

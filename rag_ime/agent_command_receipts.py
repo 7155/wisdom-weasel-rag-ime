@@ -13,16 +13,61 @@ from pathlib import Path
 from .db import apply_database_migrations
 
 
-class AgentCommandReceiptConflict(ValueError):
+DEFAULT_PENDING_RECOVERY_GRACE_MS = 30_000
+
+
+class AgentCommandReceiptError(ValueError):
     http_status = 409
+    error_code = "AGENT_COMMAND_RECEIPT_ERROR"
+    receipt_state = "failed"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        client_message_id: str = "",
+        cause_code: str = "",
+        recovery_state: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.client_message_id = client_message_id
+        self.cause_code = cause_code
+        self.recovery_state = recovery_state
+
+    def response_payload(self) -> dict[str, object]:
+        receipt: dict[str, object] = {
+            "state": self.receipt_state,
+            "clientMessageId": self.client_message_id,
+        }
+        if self.cause_code:
+            receipt["causeCode"] = self.cause_code
+        if self.recovery_state:
+            receipt["recoveryState"] = self.recovery_state
+        return {
+            "code": self.error_code,
+            "commandReceipt": receipt,
+        }
 
 
-class AgentCommandReceiptPending(ValueError):
-    http_status = 409
+class AgentCommandReceiptConflict(AgentCommandReceiptError):
+    error_code = "AGENT_COMMAND_CONFLICT"
+    receipt_state = "conflict"
 
 
-class AgentCommandReceiptFailed(ValueError):
-    http_status = 409
+class AgentCommandReceiptPending(AgentCommandReceiptError):
+    error_code = "AGENT_COMMAND_PENDING"
+    receipt_state = "pending"
+
+
+class AgentCommandReceiptFailed(AgentCommandReceiptError):
+    error_code = "AGENT_COMMAND_FAILED"
+    receipt_state = "failed"
+
+
+class AgentTurnConflictError(ValueError):
+    """A direct Agent prompt cannot start while another owner holds the turn."""
+
+    error_code = "AGENT_TURN_CONFLICT"
 
 
 @dataclass(frozen=True)
@@ -38,8 +83,19 @@ class AgentCommandClaim:
 class AgentCommandReceiptStore:
     """Durable idempotency boundary for commands that start Agent turns."""
 
-    def __init__(self, db_path: str | Path):
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        pending_recovery_grace_ms: int = (
+            DEFAULT_PENDING_RECOVERY_GRACE_MS
+        ),
+    ):
         self.db_path = Path(db_path)
+        self.pending_recovery_grace_ms = max(
+            0,
+            int(pending_recovery_grace_ms),
+        )
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -55,6 +111,10 @@ class AgentCommandReceiptStore:
         payload: Mapping[str, object],
     ) -> AgentCommandClaim:
         digest = _sha256_json(payload)
+        semantic_digest = _semantic_payload_sha256(payload)
+        retry_of_client_message_id = str(
+            payload.get("retryOfClientMessageId") or ""
+        ).strip()
         claim_token = str(uuid.uuid4())
         timestamp = _now_ms()
         with self._connect(immediate=True) as conn:
@@ -66,18 +126,35 @@ class AgentCommandReceiptStore:
                 (command_scope, scope_id, client_message_id),
             ).fetchone()
             if row is None:
+                if retry_of_client_message_id:
+                    _validate_retry_lineage(
+                        conn,
+                        command_scope=command_scope,
+                        scope_id=scope_id,
+                        retry_of_client_message_id=(
+                            retry_of_client_message_id
+                        ),
+                        semantic_payload_sha256=(
+                            semantic_digest
+                        ),
+                        client_message_id=client_message_id,
+                    )
                 conn.execute(
                     """
                     INSERT INTO agent_command_receipts(
                         command_scope, scope_id, client_message_id, payload_sha256,
-                        claim_token, state, response_json, error, created_at_ms, updated_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, '', ?, ?)
+                        semantic_payload_sha256, retry_of_client_message_id,
+                        claim_token, state, response_json, error,
+                        created_at_ms, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, '', ?, ?)
                     """,
                     (
                         command_scope,
                         scope_id,
                         client_message_id,
                         digest,
+                        semantic_digest,
+                        retry_of_client_message_id,
                         claim_token,
                         timestamp,
                         timestamp,
@@ -87,7 +164,8 @@ class AgentCommandReceiptStore:
 
             if str(row["payload_sha256"]) != digest:
                 raise AgentCommandReceiptConflict(
-                    "clientMessageId was already used for a different command payload"
+                    "clientMessageId was already used for a different command payload",
+                    client_message_id=client_message_id,
                 )
             state = str(row["state"])
             if state == "accepted":
@@ -99,12 +177,200 @@ class AgentCommandReceiptStore:
                     replay_response=dict(response),
                 )
             if state == "failed":
-                raise AgentCommandReceiptFailed(
-                    str(row["error"] or "the original Agent command failed")
+                message, cause_code = _stored_failure(
+                    str(row["error"] or "")
                 )
-            raise AgentCommandReceiptPending(
-                "the Agent command is already pending; refresh the session snapshot before retrying"
+                raise AgentCommandReceiptFailed(
+                    message,
+                    client_message_id=client_message_id,
+                    cause_code=cause_code,
+                )
+            recovery_state = (
+                "unresolved"
+                if (
+                    timestamp
+                    - int(row["updated_at_ms"])
+                    >= self.pending_recovery_grace_ms
+                )
+                else "in_flight"
             )
+            message = (
+                "the original Agent command may have been accepted, "
+                "but no durable acceptance evidence is available; "
+                "do not execute it again automatically"
+                if recovery_state == "unresolved"
+                else (
+                    "the Agent command is already pending; "
+                    "refresh the session snapshot before retrying"
+                )
+            )
+            raise AgentCommandReceiptPending(
+                message,
+                client_message_id=client_message_id,
+                recovery_state=recovery_state,
+            )
+
+    def accept_pending_from_evidence(
+        self,
+        *,
+        command_scope: str,
+        scope_id: str,
+        client_message_id: str,
+        payload: Mapping[str, object],
+        response: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Terminalize pending only after a durable acceptance proves execution."""
+
+        digest = _sha256_json(payload)
+        accepted = dict(response)
+        encoded = _json(accepted)
+        with self._connect(immediate=True) as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM agent_command_receipts
+                WHERE command_scope = ? AND scope_id = ? AND client_message_id = ?
+                """,
+                (command_scope, scope_id, client_message_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(
+                    "Agent command receipt disappeared before evidence reconciliation"
+                )
+            if str(row["payload_sha256"]) != digest:
+                raise AgentCommandReceiptConflict(
+                    "clientMessageId was already used for a different command payload",
+                    client_message_id=client_message_id,
+                )
+            state = str(row["state"])
+            if state == "accepted":
+                return _accepted_response(row)
+            if state == "failed":
+                message, cause_code = _stored_failure(
+                    str(row["error"] or "")
+                )
+                raise AgentCommandReceiptFailed(
+                    message,
+                    client_message_id=client_message_id,
+                    cause_code=cause_code,
+                )
+            cursor = conn.execute(
+                """
+                UPDATE agent_command_receipts
+                SET state = 'accepted', response_json = ?, error = '',
+                    updated_at_ms = ?
+                WHERE command_scope = ? AND scope_id = ?
+                  AND client_message_id = ? AND state = 'pending'
+                """,
+                (
+                    encoded,
+                    _now_ms(),
+                    command_scope,
+                    scope_id,
+                    client_message_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError(
+                    "Agent command receipt changed during evidence reconciliation"
+                )
+        return accepted
+
+    def record_acceptance_evidence(
+        self,
+        claim: AgentCommandClaim,
+        *,
+        command_scope: str,
+        scope_id: str,
+        client_message_id: str,
+        accepted: Mapping[str, object],
+        retry_of_client_message_id: str = "",
+    ) -> dict[str, object]:
+        """Persist the first local proof immediately after Pi accepts.
+
+        The receipt deliberately remains pending until the remaining local
+        projections complete. If the process dies before this transaction,
+        there is no source-proven Host ledger to establish remote acceptance;
+        the command must therefore remain unresolved rather than be replayed.
+        """
+
+        evidence: dict[str, object] = {
+            "schemaVersion": (
+                "rag-ime.agent-command-acceptance-evidence.v1"
+            ),
+            "accepted": True,
+            "clientMessageId": client_message_id,
+            "turnId": str(accepted.get("turnId") or ""),
+            "piEntryId": str(accepted.get("piEntryId") or ""),
+        }
+        lineage = str(retry_of_client_message_id).strip()
+        if lineage:
+            evidence["retryOfClientMessageId"] = lineage
+        with self._connect(immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE agent_command_receipts
+                SET response_json = ?, updated_at_ms = ?
+                WHERE command_scope = ? AND scope_id = ?
+                  AND client_message_id = ? AND claim_token = ?
+                  AND state = 'pending'
+                """,
+                (
+                    _json(evidence),
+                    _now_ms(),
+                    command_scope,
+                    scope_id,
+                    client_message_id,
+                    claim.claim_token,
+                ),
+            )
+            if cursor.rowcount != 1:
+                row = conn.execute(
+                    """
+                    SELECT * FROM agent_command_receipts
+                    WHERE command_scope = ? AND scope_id = ?
+                      AND client_message_id = ?
+                    """,
+                    (command_scope, scope_id, client_message_id),
+                ).fetchone()
+                if row is not None and str(row["state"]) == "accepted":
+                    return _accepted_response(row)
+                raise RuntimeError(
+                    "Agent command receipt changed before acceptance evidence"
+                )
+        return evidence
+
+    def pending_acceptance_evidence(
+        self,
+        *,
+        command_scope: str,
+        scope_id: str,
+        client_message_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        """Return exact pending acceptance evidence without changing state."""
+
+        digest = _sha256_json(payload)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM agent_command_receipts
+                WHERE command_scope = ? AND scope_id = ?
+                  AND client_message_id = ?
+                """,
+                (command_scope, scope_id, client_message_id),
+            ).fetchone()
+        if row is None:
+            return None
+        if str(row["payload_sha256"]) != digest:
+            raise AgentCommandReceiptConflict(
+                "clientMessageId was already used for a different command payload",
+                client_message_id=client_message_id,
+            )
+        if str(row["state"]) != "pending":
+            return None
+        return _stored_acceptance_evidence(
+            str(row["response_json"] or "")
+        )
 
     def complete(
         self,
@@ -135,7 +401,28 @@ class AgentCommandReceiptStore:
                 ),
             )
             if cursor.rowcount != 1:
-                raise RuntimeError("Agent command receipt changed before completion")
+                row = conn.execute(
+                    """
+                    SELECT * FROM agent_command_receipts
+                    WHERE command_scope = ? AND scope_id = ?
+                      AND client_message_id = ?
+                    """,
+                    (
+                        command_scope,
+                        scope_id,
+                        client_message_id,
+                    ),
+                ).fetchone()
+                if (
+                    row is not None
+                    and str(row["claim_token"])
+                    == claim.claim_token
+                    and str(row["state"]) == "accepted"
+                ):
+                    return _accepted_response(row)
+                raise RuntimeError(
+                    "Agent command receipt changed before completion"
+                )
         return payload
 
     def fail(
@@ -146,10 +433,54 @@ class AgentCommandReceiptStore:
         scope_id: str,
         client_message_id: str,
         error: BaseException,
-    ) -> None:
+        cause_code: str = "",
+    ) -> dict[str, object] | None:
         message = " ".join(str(error).split())[:240] or error.__class__.__name__
+        normalized_cause_code = " ".join(
+            str(cause_code).split()
+        )[:80]
+        stored_error = message
+        if normalized_cause_code:
+            stored_error = _json(
+                {
+                    "schemaVersion": (
+                        "rag-ime.agent-command-failure.v1"
+                    ),
+                    "message": message,
+                    "causeCode": normalized_cause_code,
+                }
+            )
         with self._connect(immediate=True) as conn:
-            conn.execute(
+            row = conn.execute(
+                """
+                SELECT * FROM agent_command_receipts
+                WHERE command_scope = ? AND scope_id = ?
+                  AND client_message_id = ?
+                """,
+                (command_scope, scope_id, client_message_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError(
+                    "Agent command receipt disappeared before failure"
+                )
+            if str(row["claim_token"]) != claim.claim_token:
+                raise RuntimeError(
+                    "Agent command receipt changed before failure"
+                )
+            if str(row["state"]) == "accepted":
+                return _accepted_response(row)
+            if str(row["state"]) == "failed":
+                return None
+            if _stored_acceptance_evidence(
+                str(row["response_json"] or "")
+            ) is not None:
+                raise AgentCommandReceiptPending(
+                    "Pi accepted the Agent command, but local projection is incomplete; "
+                    "do not execute it again automatically",
+                    client_message_id=client_message_id,
+                    recovery_state="in_flight",
+                )
+            cursor = conn.execute(
                 """
                 UPDATE agent_command_receipts
                 SET state = 'failed', response_json = NULL, error = ?, updated_at_ms = ?
@@ -157,7 +488,7 @@ class AgentCommandReceiptStore:
                   AND claim_token = ? AND state = 'pending'
                 """,
                 (
-                    message,
+                    stored_error,
                     _now_ms(),
                     command_scope,
                     scope_id,
@@ -165,6 +496,21 @@ class AgentCommandReceiptStore:
                     claim.claim_token,
                 ),
             )
+            if cursor.rowcount != 1:
+                changed = conn.execute(
+                    """
+                    SELECT * FROM agent_command_receipts
+                    WHERE command_scope = ? AND scope_id = ?
+                      AND client_message_id = ?
+                    """,
+                    (command_scope, scope_id, client_message_id),
+                ).fetchone()
+                if changed is not None and str(changed["state"]) == "accepted":
+                    return _accepted_response(changed)
+                raise RuntimeError(
+                    "Agent command receipt changed during failure"
+                )
+        return None
 
     @contextmanager
     def _connect(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
@@ -187,6 +533,65 @@ def _sha256_json(payload: Mapping[str, object]) -> str:
     return hashlib.sha256(_json(dict(payload)).encode("utf-8")).hexdigest()
 
 
+def _semantic_payload_sha256(payload: Mapping[str, object]) -> str:
+    semantic = dict(payload)
+    semantic.pop("retryOfClientMessageId", None)
+    return _sha256_json(semantic)
+
+
+def _validate_retry_lineage(
+    conn: sqlite3.Connection,
+    *,
+    command_scope: str,
+    scope_id: str,
+    retry_of_client_message_id: str,
+    semantic_payload_sha256: str,
+    client_message_id: str,
+) -> None:
+    prior = conn.execute(
+        """
+        SELECT state, semantic_payload_sha256
+        FROM agent_command_receipts
+        WHERE command_scope = ? AND scope_id = ?
+          AND client_message_id = ?
+        """,
+        (command_scope, scope_id, retry_of_client_message_id),
+    ).fetchone()
+    if prior is None:
+        raise AgentCommandReceiptConflict(
+            "retryOfClientMessageId does not identify a command in this scope",
+            client_message_id=client_message_id,
+        )
+    if str(prior["state"]) != "failed":
+        raise AgentCommandReceiptConflict(
+            "only a durably failed command may have a successor",
+            client_message_id=client_message_id,
+        )
+    prior_digest = str(prior["semantic_payload_sha256"] or "")
+    if (
+        not prior_digest
+        or prior_digest != semantic_payload_sha256
+    ):
+        raise AgentCommandReceiptConflict(
+            "retry payload does not match the failed command",
+            client_message_id=client_message_id,
+        )
+    successor = conn.execute(
+        """
+        SELECT client_message_id
+        FROM agent_command_receipts
+        WHERE command_scope = ? AND scope_id = ?
+          AND retry_of_client_message_id = ?
+        """,
+        (command_scope, scope_id, retry_of_client_message_id),
+    ).fetchone()
+    if successor is not None:
+        raise AgentCommandReceiptConflict(
+            "the failed command already has a retry successor",
+            client_message_id=client_message_id,
+        )
+
+
 def _json(payload: Mapping[str, object]) -> str:
     return json.dumps(
         dict(payload),
@@ -195,6 +600,52 @@ def _json(payload: Mapping[str, object]) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _stored_failure(value: str) -> tuple[str, str]:
+    fallback = value or "the original Agent command failed"
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return fallback, ""
+    if not isinstance(decoded, dict):
+        return fallback, ""
+    if decoded.get("schemaVersion") != (
+        "rag-ime.agent-command-failure.v1"
+    ):
+        return fallback, ""
+    message = " ".join(str(decoded.get("message") or "").split())
+    cause_code = " ".join(
+        str(decoded.get("causeCode") or "").split()
+    )
+    return (
+        message[:240] or "the original Agent command failed",
+        cause_code[:80],
+    )
+
+
+def _accepted_response(row: sqlite3.Row) -> dict[str, object]:
+    response = json.loads(str(row["response_json"] or "{}"))
+    if not isinstance(response, dict):
+        raise RuntimeError("stored Agent command response is invalid")
+    return dict(response)
+
+
+def _stored_acceptance_evidence(
+    value: str,
+) -> dict[str, object] | None:
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    if (
+        not isinstance(decoded, dict)
+        or decoded.get("schemaVersion")
+        != "rag-ime.agent-command-acceptance-evidence.v1"
+        or decoded.get("accepted") is not True
+    ):
+        return None
+    return dict(decoded)
 
 
 def _now_ms() -> int:

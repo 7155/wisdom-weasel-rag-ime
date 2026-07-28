@@ -170,6 +170,8 @@ export interface UiAgentMessage {
   createdAtMs: number;
   completedAtMs?: number | null;
   clientMessageId?: string;
+  retryOfClientMessageId?: string;
+  admissionState?: 'ambiguous' | 'pending' | 'unresolved';
   provider?: string;
   model?: string;
   usage?: {
@@ -233,13 +235,21 @@ export function normalizeObservationEvent(
 }
 
 export function normalizeAgentMessage(value: Record<string, unknown>): UiAgentMessage {
-  const source = value as AgentMessageV1 & { clientMessageId?: unknown };
+  const source = value as AgentMessageV1 & {
+    clientMessageId?: unknown;
+    retryOfClientMessageId?: unknown;
+  };
   const blocks = Array.isArray(source.blocks)
     ? source.blocks.map((block) => normalizeAgentBlock(block as Record<string, unknown>))
     : [];
   const clientMessageId =
     typeof source.clientMessageId === 'string' && source.clientMessageId.length > 0
       ? source.clientMessageId
+      : undefined;
+  const retryOfClientMessageId =
+    typeof source.retryOfClientMessageId === 'string'
+      && source.retryOfClientMessageId.length > 0
+      ? source.retryOfClientMessageId
       : undefined;
   const usage = source.usage
     ? {
@@ -263,6 +273,7 @@ export function normalizeAgentMessage(value: Record<string, unknown>): UiAgentMe
     createdAtMs: source.createdAtMs,
     ...(source.completedAtMs === undefined ? {} : { completedAtMs: source.completedAtMs }),
     ...(clientMessageId ? { clientMessageId } : {}),
+    ...(retryOfClientMessageId ? { retryOfClientMessageId } : {}),
     ...(source.provider ? { provider: source.provider } : {}),
     ...(source.model ? { model: source.model } : {}),
     ...(usage ? { usage } : {}),

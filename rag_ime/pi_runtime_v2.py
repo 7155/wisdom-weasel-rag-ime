@@ -40,6 +40,7 @@ from .pi_runtime_public import (
     ui_confirmation_value,
 )
 from .pi_runtime_values import (
+    PiRuntimeTurnConflict,
     effective_thinking_level,
     as_integer,
     path_is_within,
@@ -960,7 +961,9 @@ class PiRuntimeHostManager:
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
             if state.turn_id:
-                raise PiRuntimeError("Pi 正在处理上一轮，请等待结束或停止完成后再发送")
+                raise PiRuntimeTurnConflict(
+                    "Pi 正在处理上一轮，请等待结束或停止完成后再发送"
+                )
             self._cancel_idle_locked()
             state.stream_pi_message_id = ""
             state.tool_blocks.clear()

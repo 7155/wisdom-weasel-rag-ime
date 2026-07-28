@@ -7,6 +7,7 @@ import {
   createAgentProjection,
   discardOptimisticAgentMessage,
   failOptimisticAgentMessage,
+  requeueOptimisticAgentMessage,
   reduceAgentEvent,
   reduceAgentEvents,
 } from './agent-reducer';
@@ -567,6 +568,124 @@ describe('AgentEventReducer', () => {
       status: 'failed',
       updatedAtMs: 20,
       failure: '当前模型不可用，请切换模型后重试。',
+    });
+  });
+
+  it('requeues an ambiguous admission with the same message identity', () => {
+    const optimistic = appendOptimisticAgentMessage(
+      createAgentProjection('session-1'),
+      {
+        clientMessageId: 'client-ambiguous',
+        text: '只发送一次',
+        nowMs: 10,
+      },
+    );
+    const ambiguous = failOptimisticAgentMessage(
+      optimistic,
+      'client-ambiguous',
+      '暂时无法确认是否已接收',
+      20,
+      'ambiguous',
+    );
+    const requeued = requeueOptimisticAgentMessage(
+      ambiguous,
+      'client-ambiguous',
+      30,
+    );
+
+    expect(requeued.messageOrder).toEqual([
+      'local:client-ambiguous',
+    ]);
+    expect(
+      requeued.messagesById['local:client-ambiguous'],
+    ).toMatchObject({
+      clientMessageId: 'client-ambiguous',
+      status: 'queued',
+      completedAtMs: null,
+    });
+    expect(
+      requeued.messagesById['local:client-ambiguous']
+        .admissionState,
+    ).toBeUndefined();
+    expect(
+      requeued.turnsById['local-turn:client-ambiguous'],
+    ).toMatchObject({ status: 'queued' });
+    expect(
+      requeued.turnsById['local-turn:client-ambiguous']
+        .failure,
+    ).toBeUndefined();
+  });
+
+  it('terminalizes an unresolved admission on the original message', () => {
+    const optimistic = appendOptimisticAgentMessage(
+      createAgentProjection('session-1'),
+      {
+        clientMessageId: 'client-unresolved',
+        text: '只能执行一次',
+        nowMs: 10,
+      },
+    );
+    const unresolved = failOptimisticAgentMessage(
+      optimistic,
+      'client-unresolved',
+      '无法确认是否已执行，不能自动重试。',
+      20,
+      'unresolved',
+    );
+
+    expect(unresolved.messageOrder).toEqual([
+      'local:client-unresolved',
+    ]);
+    expect(
+      unresolved.messagesById['local:client-unresolved'],
+    ).toMatchObject({
+      clientMessageId: 'client-unresolved',
+      status: 'failed',
+      admissionState: 'unresolved',
+    });
+    expect(
+      unresolved.turnsById['local-turn:client-unresolved'],
+    ).toMatchObject({
+      status: 'failed',
+      failure: '无法确认是否已执行，不能自动重试。',
+    });
+  });
+
+  it('preserves a non-retryable pending admission across snapshot refresh', () => {
+    const optimistic = appendOptimisticAgentMessage(
+      createAgentProjection('session-1'),
+      {
+        clientMessageId: 'client-pending',
+        text: '等待服务端确认',
+        nowMs: 10,
+      },
+    );
+    const pending = failOptimisticAgentMessage(
+      optimistic,
+      'client-pending',
+      '服务端仍在确认；系统不会自动重试。',
+      20,
+      'pending',
+    );
+    const restored = applyAgentSnapshot(pending, {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 7,
+      resumeToken: 'session-1:7',
+      status: 'idle',
+    });
+
+    expect(
+      restored.messagesById['local:client-pending'],
+    ).toMatchObject({
+      status: 'failed',
+      admissionState: 'pending',
+    });
+    expect(
+      restored.turnsById['local-turn:client-pending'],
+    ).toMatchObject({
+      status: 'failed',
+      failure: '服务端仍在确认；系统不会自动重试。',
     });
   });
 

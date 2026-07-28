@@ -487,6 +487,37 @@ def runtime_event_metrics(
         and not isinstance(duration, bool)
     ):
         metrics["durationMs"] = max(0, int(duration))
+    if (
+        event.event_type == "message_completed"
+        and str(message.get("role") or "") == "user"
+    ):
+        client_message_id = str(
+            payload.get("clientMessageId")
+            or message.get("clientMessageId")
+            or ""
+        ).strip()[:200]
+        if client_message_id:
+            acceptance: dict[str, object] = {
+                "clientMessageId": client_message_id,
+                "messageId": str(
+                    message.get("id") or ""
+                ).strip()[:200],
+                "turnId": str(event.turn_id).strip()[:200],
+            }
+            retry_of_client_message_id = str(
+                payload.get("retryOfClientMessageId")
+                or message.get("retryOfClientMessageId")
+                or ""
+            ).strip()[:200]
+            if retry_of_client_message_id:
+                acceptance["retryOfClientMessageId"] = (
+                    retry_of_client_message_id
+                )
+            # This is deliberately content-free acceptance evidence. A
+            # process can die after Pi accepted a prompt but before the
+            # command receipt becomes terminal; these IDs let the next
+            # process reconcile that receipt without executing it again.
+            metrics["promptAcceptance"] = acceptance
     return metrics
 
 

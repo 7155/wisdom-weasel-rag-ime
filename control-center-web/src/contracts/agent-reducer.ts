@@ -151,6 +151,7 @@ export interface AgentSnapshot {
 
 export interface OptimisticAgentMessageInput {
   clientMessageId: string;
+  retryOfClientMessageId?: string;
   text: string;
   attachments?: string[];
   nowMs: number;
@@ -432,6 +433,9 @@ export function appendOptimisticAgentMessage(
     createdAtMs: input.nowMs,
     completedAtMs: null,
     clientMessageId: input.clientMessageId,
+    ...(input.retryOfClientMessageId
+      ? { retryOfClientMessageId: input.retryOfClientMessageId }
+      : {}),
   };
   next.messagesById[messageId] = message;
   next.messageOrder.push(messageId);
@@ -447,15 +451,43 @@ export function failOptimisticAgentMessage(
   clientMessageId: string,
   error: string,
   nowMs: number,
+  admissionState?: 'ambiguous' | 'pending' | 'unresolved',
 ): AgentProjectionState {
   const messageId = state.optimisticByClientMessageId[clientMessageId];
   if (!messageId) return state;
   const message = state.messagesById[messageId];
   if (!message) return state;
   const next = cloneState(state);
-  next.messagesById[messageId] = { ...message, status: 'failed' };
+  next.messagesById[messageId] = {
+    ...message,
+    status: 'failed',
+    ...(admissionState ? { admissionState } : {}),
+  };
   completeTurn(next, message.turnId, 'failed', nowMs, error);
   next.status = 'failed';
+  return next;
+}
+
+export function requeueOptimisticAgentMessage(
+  state: AgentProjectionState,
+  clientMessageId: string,
+  nowMs: number,
+): AgentProjectionState {
+  const messageId = state.optimisticByClientMessageId[clientMessageId];
+  if (!messageId) return state;
+  const message = state.messagesById[messageId];
+  if (!message) return state;
+  const next = cloneState(state);
+  const requeued = {
+    ...message,
+    status: 'queued' as const,
+    completedAtMs: null,
+  };
+  delete requeued.admissionState;
+  next.messagesById[messageId] = requeued;
+  touchTurn(next, message.turnId, 'queued', nowMs);
+  delete next.turnsById[message.turnId]?.failure;
+  next.status = 'busy';
   return next;
 }
 

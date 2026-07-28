@@ -396,9 +396,25 @@ export function AgentTurn({
     const projection = state.projections[sessionId];
     return (projection?.turnsById[turnId]?.activityIds ?? []).map((id) => projection?.activitiesById[id]).filter(Boolean);
   }));
-  /* Retrying creates a new optimistic turn, not a successful outcome. The
-     control acknowledges only that local admission happened and stops a second
-     identical submission; the new turn owns its eventual success or failure. */
+  const nonRetryableAdmission = useAgentLiveStore((state) => {
+    const projection = state.projections[sessionId];
+    return (
+      projection?.turnsById[turnId]?.messageIds.some(
+        (messageId) => (
+          projection.messagesById[messageId]?.role === 'user'
+          && (
+            projection.messagesById[messageId]
+              ?.admissionState === 'pending'
+            || projection.messagesById[messageId]
+              ?.admissionState === 'unresolved'
+          )
+        ),
+      ) ?? false
+    );
+  });
+  /* A terminal retry creates a linked attempt; an ambiguous admission reuses
+     the same operation and optimistic turn. The control acknowledges only
+     local submission, never a successful outcome. */
   const [retryRequestedFor, setRetryRequestedFor] = useState('');
   const blockFailure = useAgentLiveStore((state) => {
     const projection = state.projections[sessionId];
@@ -457,7 +473,7 @@ export function AgentTurn({
               <div className="agent-turn__failure" role="alert">
                 <TriangleAlert size={17} />
                 <span><strong>本轮未完成</strong><small>{failure}</small></span>
-                {onRetryTurn && onSwitchModel ? (
+                {onRetryTurn && onSwitchModel && !nonRetryableAdmission ? (
                   <div className="agent-turn__failure-actions">
                     <Button
                       size="small"
@@ -470,7 +486,7 @@ export function AgentTurn({
                         }
                       }}
                     >
-                      {retryRequested ? '已创建重试轮次' : '重试本轮'}
+                      {retryRequested ? '已提交重试' : '重试本轮'}
                     </Button>
                     <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button>
                   </div>

@@ -18,6 +18,11 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from rag_ime.agent_runtime_driver import AgentRuntimeError
+from rag_ime.agent_command_receipts import (
+    AgentCommandReceiptConflict,
+    AgentCommandReceiptFailed,
+    AgentCommandReceiptPending,
+)
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
 from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trace
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
@@ -2701,6 +2706,110 @@ class DebugManagementApiTests(unittest.TestCase):
             },
         )
         self.assertTrue(health["ok"])
+
+    def test_agent_prompt_http_preserves_typed_command_receipts(
+        self,
+    ) -> None:
+        session_id = self.service.agent.create_session(
+            {"title": "命令回执投影"}
+        )["session"]["id"]
+
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            Handler,
+        )
+        thread = threading.Thread(
+            target=server.serve_forever,
+            daemon=True,
+        )
+        thread.start()
+        url = (
+            f"http://127.0.0.1:{server.server_port}"
+            f"/api/agent/sessions/{session_id}/prompt"
+        )
+        failures = (
+            AgentCommandReceiptPending(
+                "still pending",
+                client_message_id="command-pending",
+                recovery_state="unresolved",
+            ),
+            AgentCommandReceiptFailed(
+                "provider failed",
+                client_message_id="command-failed",
+            ),
+            AgentCommandReceiptConflict(
+                "payload changed",
+                client_message_id="command-conflict",
+            ),
+        )
+        try:
+            with patch.object(
+                self.service.agent,
+                "prompt",
+                side_effect=failures,
+            ):
+                payloads: list[dict[str, object]] = []
+                for index in range(len(failures)):
+                    request = Request(
+                        url,
+                        data=json.dumps(
+                            {
+                                "message": "继续",
+                                "clientMessageId": (
+                                    f"command-{index}"
+                                ),
+                            }
+                        ).encode("utf-8"),
+                        headers={
+                            "Content-Type": "application/json"
+                        },
+                        method="POST",
+                    )
+                    with self.assertRaises(HTTPError) as caught:
+                        urlopen(request, timeout=5)
+                    try:
+                        self.assertEqual(
+                            caught.exception.code,
+                            409,
+                        )
+                        payloads.append(
+                            json.loads(
+                                caught.exception.read().decode(
+                                    "utf-8"
+                                )
+                            )
+                        )
+                    finally:
+                        caught.exception.close()
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(
+            [payload["code"] for payload in payloads],
+            [
+                "AGENT_COMMAND_PENDING",
+                "AGENT_COMMAND_FAILED",
+                "AGENT_COMMAND_CONFLICT",
+            ],
+        )
+        self.assertEqual(
+            [
+                payload["commandReceipt"]["state"]
+                for payload in payloads
+            ],
+            ["pending", "failed", "conflict"],
+        )
+        self.assertEqual(
+            payloads[0]["commandReceipt"]["recoveryState"],
+            "unresolved",
+        )
 
     def test_agent_external_result_http_route_finalizes_durable_receipt(self) -> None:
         session = self.service.agent.create_session({"title": "外部监督器回执"})["session"]

@@ -839,6 +839,80 @@ class AgentSessionStore:
             ).fetchone()
         return int(row[0] if row else 0)
 
+    def prompt_acceptance_evidence(
+        self,
+        session_id: str,
+        client_message_id: str,
+    ) -> dict[str, object] | None:
+        """Return durable, content-free proof that Pi accepted one prompt."""
+
+        normalized_client_message_id = str(
+            client_message_id
+        ).strip()
+        if not normalized_client_message_id:
+            return None
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT event_id, turn_id, created_at_ms, metrics_json
+                FROM agent_runtime_events
+                WHERE session_id = ? AND event_type = 'message_completed'
+                ORDER BY sequence DESC
+                """,
+                (session_id,),
+            )
+            # Normal runtime retention bounds this cursor to the latest
+            # events plus acceptance records whose exact command receipt is
+            # still pending. Iterating rather than fetchall keeps lookup
+            # memory bounded while still finding pinned older evidence.
+            for row in rows:
+                try:
+                    metrics = json.loads(
+                        str(row["metrics_json"] or "{}")
+                    )
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(metrics, dict):
+                    continue
+                acceptance = metrics.get(
+                    "promptAcceptance"
+                )
+                if (
+                    not isinstance(acceptance, dict)
+                    or str(
+                        acceptance.get(
+                            "clientMessageId"
+                        )
+                        or ""
+                    )
+                    != normalized_client_message_id
+                ):
+                    continue
+                return {
+                    "eventId": str(row["event_id"] or ""),
+                    "turnId": str(
+                        acceptance.get("turnId")
+                        or row["turn_id"]
+                        or ""
+                    ),
+                    "messageId": str(
+                        acceptance.get("messageId") or ""
+                    ),
+                    "clientMessageId": (
+                        normalized_client_message_id
+                    ),
+                    "retryOfClientMessageId": str(
+                        acceptance.get(
+                            "retryOfClientMessageId"
+                        )
+                        or ""
+                    ),
+                    "createdAtMs": int(
+                        row["created_at_ms"] or 0
+                    ),
+                }
+        return None
+
     def agent_plan(self, session_id: str, *, limit: int = 100) -> dict[str, object]:
         self.get(session_id)
         bounded_limit = max(1, min(int(limit), 100))
@@ -1635,15 +1709,72 @@ class AgentSessionStore:
                     metrics_json,
                 ),
             )
-            conn.execute(
+            stale_rows = conn.execute(
                 """
-                DELETE FROM agent_runtime_events
+                SELECT event_id, metrics_json
+                FROM agent_runtime_events
                 WHERE session_id = ? AND sequence <= (
                     SELECT COALESCE(MAX(sequence), 0) - ?
-                    FROM agent_runtime_events WHERE session_id = ?
+                    FROM agent_runtime_events
+                    WHERE session_id = ?
                 )
                 """,
                 (session_id, max(100, int(retain_per_session)), session_id),
+            ).fetchall()
+            if not stale_rows:
+                return
+            pending_client_message_ids = {
+                str(row[0])
+                for row in conn.execute(
+                    """
+                    SELECT client_message_id
+                    FROM agent_command_receipts
+                    WHERE command_scope = 'session_prompt'
+                      AND scope_id = ? AND state = 'pending'
+                    """,
+                    (session_id,),
+                )
+            }
+            deletable_event_ids: list[str] = []
+            for stale_row in stale_rows:
+                keep_for_pending_receipt = False
+                try:
+                    stale_metrics = json.loads(
+                        str(
+                            stale_row["metrics_json"]
+                            or "{}"
+                        )
+                    )
+                except (TypeError, ValueError):
+                    stale_metrics = {}
+                if isinstance(stale_metrics, dict):
+                    acceptance = stale_metrics.get(
+                        "promptAcceptance"
+                    )
+                    if isinstance(acceptance, dict):
+                        client_message_id = str(
+                            acceptance.get(
+                                "clientMessageId"
+                            )
+                            or ""
+                        )
+                        keep_for_pending_receipt = (
+                            client_message_id
+                            in pending_client_message_ids
+                        )
+                if not keep_for_pending_receipt:
+                    deletable_event_ids.append(
+                        str(stale_row["event_id"])
+                    )
+            conn.executemany(
+                """
+                DELETE FROM agent_runtime_events
+                WHERE session_id = ? AND event_id = ?
+                """,
+                (
+                    (session_id, stale_event_id)
+                    for stale_event_id in deletable_event_ids
+                ),
             )
 
     def create_approval(
