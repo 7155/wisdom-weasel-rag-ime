@@ -24,7 +24,7 @@ POLICY_PATH = REPO_ROOT / "integrations/pi/room-skill-policy.json"
 SKILLS_ROOT = REPO_ROOT / "integrations/pi/skills"
 GENERAL_WORK_SKILLS = (
     "grill-me",
-    "grill-with-docs",
+    "grill-me-docs",
     "improve-codebase-architecture",
     "managed-task-execution",
     "quality-gate",
@@ -90,7 +90,7 @@ class RoomNativeSkillTests(unittest.TestCase):
             encoding="utf-8"
         )
         grilling_with_docs = (
-            SKILLS_ROOT / "grill-with-docs/SKILL.md"
+            SKILLS_ROOT / "grill-me-docs/SKILL.md"
         ).read_text(encoding="utf-8")
         managed = (
             SKILLS_ROOT / "managed-task-execution/SKILL.md"
@@ -129,7 +129,7 @@ class RoomNativeSkillTests(unittest.TestCase):
         expected_keys = {"name", "when", "notFor", "input", "output", "does"}
 
         self.assertEqual(len(policy.skill_ids), 9)
-        self.assertNotIn("grill-with-docs", policy.skill_ids)
+        self.assertNotIn("grill-me-docs", policy.skill_ids)
         for skill_id, routing in zip(policy.skill_ids, policy.catalog(), strict=True):
             with self.subTest(skill_id=skill_id):
                 path = SKILLS_ROOT / skill_id / "SKILL.md"

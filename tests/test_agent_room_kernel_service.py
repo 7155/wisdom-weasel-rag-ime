@@ -271,6 +271,8 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(request["_contextSource"], "room")
         self.assertIn("当前阶段：需求对齐", request["_transientContext"])
         self.assertIn("requirement-alignment", request["_transientContext"])
+        self.assertIn("grill-me-docs", request["_transientContext"])
+        self.assertIn("不是 Room 必经阶段", request["_transientContext"])
         self.assertNotIn("当前受管任务", request["_transientContext"])
 
     def test_kernel_execution_entry_rejects_an_unconfirmed_message(self) -> None:

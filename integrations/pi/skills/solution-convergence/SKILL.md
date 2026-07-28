@@ -36,7 +36,7 @@ and cons.
 4. Inspect source or run a small discriminating experiment when one unknown can
    decide the choice.
 5. Recommend one option. If the remaining difference is a user-owned product
-   tradeoff, use `grill-with-docs` only when the user also wants a durable
+   tradeoff, use `grill-me-docs` only when the user also wants a durable
    glossary, ADR, or decision record; otherwise follow `grill-me`. Load only
    the selected exact Skill for that single decision instead of guessing.
 6. Record the chosen rule, consequences, rejected alternatives, and the

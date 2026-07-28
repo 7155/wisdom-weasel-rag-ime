@@ -1,5 +1,5 @@
 ---
-name: grill-with-docs
+name: grill-me-docs
 description: Resolve one consequential architecture or product decision after source and runtime evidence cannot decide it, then preserve only user-confirmed decisions and genuinely open questions in durable project documentation. Use only when the user wants an ADR, glossary, or durable decision record.
 when:
   - 用户要求 grill with docs，或要把未决重大取舍写成 ADR、术语表或决策文档
@@ -13,7 +13,7 @@ notFor:
   - 面试闲聊、模型猜测、未验证建议、临时进度或工具日志
 ---
 
-# Grill With Docs
+# Grill Me Docs
 
 ## Place in the Existing Workflow
 

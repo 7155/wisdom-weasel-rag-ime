@@ -179,7 +179,7 @@
   },
   "deferredStages": [
     {
-      "id": "grill-with-docs",
+      "id": "grill-me-docs",
       "status": "deferred-not-always-on",
       "activation": "after source investigation has produced a concrete evidence packet and immediately before approval of a high-impact irreversible architecture decision",
       "requiredInputs": [

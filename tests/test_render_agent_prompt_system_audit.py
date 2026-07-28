@@ -379,7 +379,7 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
         self.assertIn("managed-task-execution", skill_names)
         self.assertIn("quality-gate", skill_names)
         self.assertIn("grill-me", skill_names)
-        self.assertIn("grill-with-docs", skill_names)
+        self.assertIn("grill-me-docs", skill_names)
         self.assertTrue(all(item["exists"] for item in reference_rows))
 
         comparisons = {
@@ -422,7 +422,7 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
             comparisons["requirement-alignment"]["decision"],
         )
         self.assertIn(
-            "grill-with-docs",
+            "grill-me-docs",
             comparisons["requirement-alignment"]["localSkillNames"],
         )
         self.assertIn(

@@ -49,7 +49,7 @@ testable. File size, naming taste, and abstract "cleanliness" are not evidence.
      unnecessary afterward;
    - verification that would prove the change.
 6. Recommend an order, but do not implement until the user selects a candidate.
-   If the choice depends on a product tradeoff, use `grill-with-docs` only when
+   If the choice depends on a product tradeoff, use `grill-me-docs` only when
    the user also wants a durable glossary, ADR, or decision record; otherwise
    follow `grill-me`. Load only the selected exact Skill and resolve one
    decision at a time.

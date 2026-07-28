@@ -230,7 +230,7 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
 
         self.assertEqual(len(stages), 1)
         stage = stages[0]
-        self.assertEqual(stage["id"], "grill-with-docs")
+        self.assertEqual(stage["id"], "grill-me-docs")
         self.assertEqual(stage["status"], "deferred-not-always-on")
         self.assertIn("after source investigation", stage["activation"])
         self.assertIn("high-impact irreversible", stage["activation"])
