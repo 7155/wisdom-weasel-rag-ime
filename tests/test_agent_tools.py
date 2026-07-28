@@ -842,6 +842,17 @@ class ControlToolGatewayTests(unittest.TestCase):
             ],
         )
         self.assertEqual(parameters["properties"]["futureUse"]["maxLength"], 300)
+        self.assertIn(
+            "至少两条独立用户证据",
+            parameters["properties"]["basis"]["description"],
+        )
+        self.assertIn(
+            "不要复述 claim",
+            parameters["properties"]["futureUse"]["description"],
+        )
+        self.assertIn("一轮最多三条", parameters["description"])
+        self.assertIn("Room 私有过程", parameters["description"])
+        self.assertIn("失败不循环重试", parameters["description"])
         self.assertEqual(
             by_operation["curation_prepare"]["required"],
             ["op", "trigger"],

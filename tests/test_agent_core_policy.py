@@ -6,68 +6,49 @@ from rag_ime.agent_core_policy import (
     core_agent_policy_prompt,
     durable_memory_policy_prompt,
     managed_goal_policy_prompt,
+    work_policy_prompt,
 )
 
 
 class AgentCorePolicyTests(unittest.TestCase):
-    def test_durable_memory_policy_has_positive_triggers_and_strict_exclusions(self) -> None:
+    def test_durable_memory_policy_keeps_only_the_stable_governance_boundary(self) -> None:
         prompt = durable_memory_policy_prompt()
 
         for expected in (
-            "明确要求记住、以后遵守或不要再犯",
-            "会改变以后协作方式的长期偏好",
-            "用户纠正了你",
-            "用户确认了会影响后续工作的决定",
-            "希望以后能够衔接的重要经历、计划或里程碑",
-            "明确肯定了一个具体、可复用的做法",
-            "未来仍会复用的项目事实或踩坑结论",
+            "稳定且重要信息",
             "memory_capture",
-            "未提供时不要改用其他工具的兼容操作",
-            "调用和回执仍作为正常工具活动记录",
-            "Evidence 保留来源",
-            "不自动成为事实",
-            "捕获动作只提交一条 Candidate",
+            "Evidence 只是来源",
+            "待治理 Candidate",
             "Current Atom",
-            "Topic Book",
-            "关系、标签和纠正沿革形成可检索图",
-            "Timeline 只保留任务连续性",
-            "Role Book 只描述 Agent 自身",
-            "Room 公开交付",
-            "输入法最终输入和语音最终文本",
-            "Room 私有过程不能写成用户事实",
-            "claim：一条可独立理解",
-            "preference、fact、decision、correction 或 pitfall",
-            "未来 Session",
-            "跨项目适用的用户信息选 user",
-            "只属于当前项目的事实与约束选 project",
-            "explicit_user_request",
-            "explicit_user_statement",
-            "user_correction",
-            "repeated_user_signal",
-            "当前可见上下文中至少两条独立用户证据",
-            "verified_outcome",
-            "只有当前上下文给出精确 Evidence ID 时才填写",
-            "supersedes",
-            "不要猜内部 Atom、Book、关系或证据 ID",
-            "同一项目的组织与关系由治理链",
-            "同一事实每轮最多提交一次",
-            "一轮最多提交三条",
-            "已公开且有证据的交付",
-            "待治理候选",
-            "不要宣布“已经记住”",
-            "临时进度",
-            "猜测",
-            "敏感信息",
-            "泛泛表扬",
-            "普通寒暄",
-            "Room 私有过程",
-            "没有指出具体可复用做法的礼貌反馈",
-            "调用失败不循环重试",
+            "字段、证据、作用域、排除项和数量限制",
+            "以该 Tool 当前披露的合同为准",
+            "不要猜内部 ID",
+            "不要把候选说成“已经记住”",
         ):
             self.assertIn(expected, prompt)
         self.assertEqual(prompt.count("<durable-memory-policy>"), 1)
         self.assertEqual(prompt.count("</durable-memory-policy>"), 1)
         self.assertNotIn("ime_memory", prompt)
+        self.assertNotIn("explicit_user_request", prompt)
+        self.assertNotIn("一轮最多提交三条", prompt)
+
+    def test_work_policy_matches_request_type_and_requires_evidence(self) -> None:
+        prompt = work_policy_prompt()
+
+        for expected in (
+            "回答、诊断、修改还是持续执行",
+            "只有请求包含修复时才实施",
+            "先读完整相关调用链",
+            "计划、进度汇报",
+            "不以",
+            "代替完成",
+            "避免无关重构和假想抽象",
+            "实质改变权限、数据、兼容性或用户目标",
+            "真实完成项、验证证据和剩余边界",
+        ):
+            self.assertIn(expected, prompt)
+        self.assertEqual(prompt.count("<work-policy>"), 1)
+        self.assertEqual(prompt.count("</work-policy>"), 1)
 
     def test_managed_goal_policy_is_bounded_and_never_activates_ordinary_chat(self) -> None:
         prompt = managed_goal_policy_prompt()
@@ -107,7 +88,7 @@ class AgentCorePolicyTests(unittest.TestCase):
         self.assertEqual(prompt.count("<managed-work>"), 1)
         self.assertEqual(prompt.count("</managed-work>"), 1)
 
-    def test_core_policy_composes_safety_memory_and_execution_once(self) -> None:
+    def test_ordinary_core_omits_managed_state_machine(self) -> None:
         prompt = core_agent_policy_prompt(
             "SAFETY",
             {
@@ -116,13 +97,32 @@ class AgentCorePolicyTests(unittest.TestCase):
             },
         )
 
-        self.assertLess(prompt.index("SAFETY"), prompt.index("<durable-memory-policy>"))
+        self.assertLess(prompt.index("SAFETY"), prompt.index("<work-policy>"))
+        self.assertLess(
+            prompt.index("</work-policy>"),
+            prompt.index("<durable-memory-policy>"),
+        )
+        self.assertLess(
+            prompt.index("</durable-memory-policy>"),
+            prompt.index("<execution-mode"),
+        )
+        self.assertEqual(prompt.count("<durable-memory-policy>"), 1)
+        self.assertNotIn("<managed-work>", prompt)
+
+    def test_managed_template_includes_state_machine_after_stable_policies(self) -> None:
+        prompt = core_agent_policy_prompt(
+            "SAFETY",
+            {
+                "agentTemplateId": "worker",
+                "executionMode": "per_action",
+            },
+        )
+
         self.assertLess(
             prompt.index("</durable-memory-policy>"),
             prompt.index("<managed-work>"),
         )
         self.assertLess(prompt.index("</managed-work>"), prompt.index("<execution-mode"))
-        self.assertEqual(prompt.count("<durable-memory-policy>"), 1)
         self.assertEqual(prompt.count("<managed-work>"), 1)
 
 

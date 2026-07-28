@@ -6642,11 +6642,29 @@ def _runtime_memory_tool_parameter_schema(
                 ],
             },
             "policy": {"type": "string", "enum": ["conservative"]},
-            "claim": {"type": "string", "minLength": 1, "maxLength": 800},
-            "sourceId": {"type": "string", "maxLength": 240},
+            "claim": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 800,
+                "description": (
+                    "一条脱离当前对话仍可独立理解、未来仍可能有用的陈述；"
+                    "不要复制大段原文。"
+                ),
+            },
+            "sourceId": {
+                "type": "string",
+                "maxLength": 240,
+                "description": (
+                    "只有当前上下文明确给出精确 Evidence ID 时才填写；"
+                    "不得猜测内部 ID。"
+                ),
+            },
             "captureScope": {
                 "type": "string",
                 "enum": ["user", "project"],
+                "description": (
+                    "跨项目适用的用户信息选 user；只属于当前项目的事实与约束选 project。"
+                ),
             },
             "basis": {
                 "type": "string",
@@ -6657,11 +6675,21 @@ def _runtime_memory_tool_parameter_schema(
                     "repeated_user_signal",
                     "verified_outcome",
                 ],
+                "description": (
+                    "explicit_user_request=用户要求记住；"
+                    "explicit_user_statement=用户明确陈述；"
+                    "user_correction=用户纠正；"
+                    "repeated_user_signal=当前可见上下文至少两条独立用户证据；"
+                    "verified_outcome=工具或运行结果已验证。"
+                ),
             },
             "futureUse": {
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 300,
+                "description": (
+                    "说明未来 Session 在什么情形下应怎样使用该候选，不要复述 claim。"
+                ),
             },
             "supersedes": {
                 "type": "string",
@@ -6702,6 +6730,9 @@ def _runtime_memory_tool_parameter_schema(
                         "correction",
                         "pitfall",
                     ],
+                    "description": (
+                        "只选 preference、fact、decision、correction 或 pitfall。"
+                    ),
                 },
                 "captureScope": {
                     "type": "string",
@@ -6749,7 +6780,13 @@ def _runtime_memory_tool_parameter_schema(
     )
     return {
         "type": "object",
-        "description": "Evidence->Atom->Book/Timeline；Role Book 用 agent_role_book。",
+        "description": (
+            "Evidence->Candidate->治理->Atom。capture 只形成候选，不等于正式记忆；"
+            "同一事实每轮最多一次，一轮最多三条。不要捕获一次性请求、临时进度、"
+            "工具日志、短暂故障、猜测、敏感信息、普通寒暄、泛泛表扬、大段原文、"
+            "Room 私有过程或模型未确认建议；Room 仅允许已公开且有证据的交付、决定"
+            "或项目结论。失败不循环重试。Role Book 用 agent_role_book。"
+        ),
         "additionalProperties": False,
         "properties": properties,
         "oneOf": branches,

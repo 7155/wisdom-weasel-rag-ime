@@ -109,6 +109,7 @@ from rag_ime.agent_core_policy import (  # noqa: E402
     core_agent_policy_prompt,
     durable_memory_policy_prompt,
     managed_goal_policy_prompt,
+    work_policy_prompt,
 )
 from rag_ime.agent_definitions import (  # noqa: E402
     collaboration_profile,
@@ -242,7 +243,8 @@ PI_RUNTIME_PROMPT_PRODUCERS = {
 
 PROMPT_TITLE_OVERRIDES = {
     "agent.core.safety": "Agent 安全与权限硬边界",
-    "agent.core.durable-memory": "主动记忆判断与候选写入规则",
+    "agent.core.work": "普通 Agent 请求分类与交付闭环",
+    "agent.core.durable-memory": "长期记忆稳定治理边界",
     "agent.core.managed-work": "Goal、Task 与受管工作闭环",
     "agent.capabilities.progressive": "Skill 与 Tool 渐进披露协议",
     "agent.session.coordinator": "普通协调 Session 边界",
@@ -815,6 +817,7 @@ PROMPT_SYMBOL_CLASSIFICATION = {
     "agent_core_policy.py::core_agent_policy_prompt": "stable-assembler",
     "agent_core_policy.py::durable_memory_policy_prompt": "stable-prompt",
     "agent_core_policy.py::managed_goal_policy_prompt": "stable-prompt",
+    "agent_core_policy.py::work_policy_prompt": "stable-prompt",
     "agent_definitions.py::_MANAGED_ROOM_LIFECYCLE_PROMPT": "stable-prompt",
     "agent_delegation.py::_subagent_prompt": "dynamic-prompt",
     "agent_execution_policy.py::execution_policy_prompt": "dynamic-prompt",
@@ -1010,6 +1013,15 @@ def _ordinary_prompt_records() -> list[PromptRecord]:
             present.safety_policy_prompt,
         ),
         _record(
+            "agent.core.work",
+            "ordinary-agent",
+            "rag_ime/agent_core_policy.py",
+            "work_policy_prompt",
+            "stable system prefix",
+            "every ordinary Agent and Room Session",
+            work_policy_prompt(),
+        ),
+        _record(
             "agent.core.durable-memory",
             "ordinary-agent",
             "rag_ime/agent_core_policy.py",
@@ -1024,7 +1036,7 @@ def _ordinary_prompt_records() -> list[PromptRecord]:
             "rag_ime/agent_core_policy.py",
             "managed_goal_policy_prompt",
             "stable system prefix",
-            "always present; activates only for an explicit Goal, Task, or Room Dispatch",
+            "only an explicit Agent template, coordinator task, Goal, Task, or Room Dispatch",
             managed_goal_policy_prompt(),
         ),
         _record(

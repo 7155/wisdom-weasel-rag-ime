@@ -534,6 +534,7 @@ def _prompt_layers(
             core_agent_policy_prompt(
                 persona.safety_policy_prompt,
                 session,
+                managed_work=True,
             ),
             ("safety", "authorization", "durable-memory"),
         ),

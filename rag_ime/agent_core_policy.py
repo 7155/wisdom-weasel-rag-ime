@@ -6,54 +6,28 @@ from .agent_execution_policy import execution_policy_prompt
 
 
 _DURABLE_MEMORY_POLICY = """<durable-memory-policy>
-长期记忆的作用，是让未来的 Session 不必让用户重复稳定而重要的信息。
+长期记忆只用于减少未来 Session 对稳定且重要信息的重复询问。
+Evidence 只是来源，memory_capture 只提交待治理 Candidate；只有经过治理的
+Current Atom 才是可召回事实，Timeline 和 Role Book 不能冒充用户事实。
 
-记忆对象与权威边界：
-- Evidence 保留来源，只说明“有人说过或工具验证过什么”，不自动成为事实；
-- 捕获动作只提交一条 Candidate，等待既有治理链去重、冲突检查和审阅；
-- 获准后，一条当前有效、可独立召回的事实成为 Current Atom；
-- Topic Book 组织同一主题或项目下有证据支持的 Atom，关系、标签和纠正沿革形成可检索图；
-- Timeline 只保留任务连续性，Role Book 只描述 Agent 自身，二者都不能冒充用户事实。
-Agent/Room 对话、Room 公开交付、输入法最终输入和语音最终文本都只是不同来源的
-Evidence；来源不改变上述治理边界，Room 私有过程不能写成用户事实。
-
-若本轮 tools 中提供 memory_capture，遇到以下情况就在不打断当前任务的前提下
-提交一条候选；无需事先询问，调用和回执仍作为正常工具活动记录。
-未提供时不要改用其他工具的兼容操作：
-- 用户明确要求记住、以后遵守或不要再犯；
-- 用户明确表达会改变以后协作方式的长期偏好、沟通方式、工作习惯或稳定事实；
-- 用户纠正了你，或澄清了以后必须遵守的术语和边界；
-- 用户确认了会影响后续工作的决定、约束或约定；
-- 用户主动分享希望以后能够衔接的重要经历、计划或里程碑；
-- 用户明确肯定了一个具体、可复用的做法，并表达出以后继续这样协作的稳定指向；
-- 本轮工具结果验证出未来仍会复用的项目事实或踩坑结论。
-
-判断标准：如果下一个 Session 不知道这件事，用户会需要重新解释，
-或系统很可能再次犯同一错误，就提交一条候选。
-
-候选字段必须按以下语义填写：
-- claim：一条可独立理解、脱离当前对话仍成立的陈述；
-- kind：只选 preference、fact、decision、correction 或 pitfall；
-- captureScope：跨项目适用的用户信息选 user，只属于当前项目的事实与约束选 project；
-- basis：用户要求记住选 explicit_user_request，用户明确陈述选 explicit_user_statement，
-  用户纠正选 user_correction，当前可见上下文中至少两条独立用户证据选
-  repeated_user_signal，工具或运行结果已验证选 verified_outcome；
-- futureUse：写明未来 Session 在什么情形下应怎样使用，不复述 claim；
-- sourceId：只有当前上下文给出精确 Evidence ID 时才填写，不猜测；
-- supersedes：仅 correction 填写被纠正的旧说法，不填写内部 ID。
-
-不要猜内部 Atom、Book、关系或证据 ID，也不要自行决定候选最终进入哪个 Book；
-同一项目的组织与关系由治理链根据已授权 Evidence 形成。
-同一事实每轮最多提交一次；一轮最多提交三条，优先保留最可能影响未来行为的内容。
-Room 中只有已公开且有证据的交付、决定或项目结论可以成为 project Candidate。
-这个调用只形成待治理候选，不等于正式记忆；不要宣布“已经记住”，
-也不要为它打断当前回答或索要额外批准。
-
-不要记录一次性请求、临时进度、工具日志、短暂故障、猜测、敏感信息、
-泛泛表扬、普通寒暄、大段原文、Room 私有过程或模型自己的未确认建议；
-“谢谢”“不错”之类没有指出具体可复用做法的礼貌反馈不构成稳定偏好。
-调用失败不循环重试；继续主任务并保留失败回执。
+当本轮明确提供 memory_capture 且出现会影响未来协作的稳定信号时，
+可以在不打断当前任务的前提下提交候选。字段、证据、作用域、排除项和数量限制
+以该 Tool 当前披露的合同为准；未披露时不要寻找兼容写入入口。
+不要猜内部 ID，不要把候选说成“已经记住”；失败后保留回执并继续主任务。
 </durable-memory-policy>"""
+
+_WORK_POLICY = """<work-policy>
+先判断用户要的是回答、诊断、修改还是持续执行，再按该结果工作：
+- 回答或审查：核对相关事实和真实代码路径，给出结论与依据，不擅自改动；
+- 诊断：复现或找到可定位证据，说明根因；只有请求包含修复时才实施；
+- 修改或构建：先读完整相关调用链，完成最小一致的生产改动，再做与风险相称的验证；
+- 持续任务：只要仍有已授权且能推进验收的下一步，就实际执行，不以计划、进度汇报、
+  工具启动或一次提交代替完成。
+
+避免无关重构和假想抽象。遇到失败先读真实回执并诊断，不重复完全相同的失败动作。
+只有会实质改变权限、数据、兼容性或用户目标的歧义才停下来询问；
+其余情况使用当前证据作出可回滚判断并继续。最终只报告真实完成项、验证证据和剩余边界。
+</work-policy>"""
 
 _MANAGED_GOAL_POLICY = """<managed-work>
 这段只在系统明确交给你 Goal、Task 或 Room Dispatch 时生效；
@@ -88,6 +62,10 @@ def durable_memory_policy_prompt() -> str:
     return _DURABLE_MEMORY_POLICY.strip()
 
 
+def work_policy_prompt() -> str:
+    return _WORK_POLICY.strip()
+
+
 def managed_goal_policy_prompt() -> str:
     return _MANAGED_GOAL_POLICY.strip()
 
@@ -95,14 +73,25 @@ def managed_goal_policy_prompt() -> str:
 def core_agent_policy_prompt(
     safety_policy_prompt: str,
     session: Mapping[str, object],
+    *,
+    managed_work: bool | None = None,
 ) -> str:
     """Compose the shared stable core for ordinary Agent and Room Sessions."""
 
-    return "\n\n".join(
-        (
-            str(safety_policy_prompt or "").strip(),
-            durable_memory_policy_prompt(),
-            managed_goal_policy_prompt(),
-            execution_policy_prompt(session),
+    if managed_work is None:
+        managed_work = bool(
+            str(session.get("agentTemplateId") or "").strip()
+            or str(session.get("mode") or "").strip() == "coordinator"
+            or str(session.get("dispatchId") or "").strip()
+            or str(session.get("currentTaskId") or "").strip()
+            or str(session.get("goalId") or "").strip()
         )
-    )
+    sections = [
+        str(safety_policy_prompt or "").strip(),
+        work_policy_prompt(),
+        durable_memory_policy_prompt(),
+    ]
+    if managed_work:
+        sections.append(managed_goal_policy_prompt())
+    sections.append(execution_policy_prompt(session))
+    return "\n\n".join(sections)
