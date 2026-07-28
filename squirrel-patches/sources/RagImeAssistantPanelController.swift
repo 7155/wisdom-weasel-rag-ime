@@ -639,7 +639,7 @@ final class RagImeAssistantPanelController {
       ])
       return
     }
-    let fallbackMs = 8_000
+    let fallbackMs = 4_000
     let requestedMs = Int(payload.overlayConfigNumber("expiresAfterMs") ?? Double(payload.expiresAfterMs))
     let hasRealCandidate = payload.candidates.contains(where: RagImeSuggestionCardView.isRealCandidate)
     let pendingWithoutResult = currentState == .pendingPrediction
@@ -648,11 +648,17 @@ final class RagImeAssistantPanelController {
     let maximumMs = hasRealCandidate
       ? 30_000
       : (explicitGeneration ? 30_000 : (pendingWithoutResult && !isNoResultFeedback ? 12_000 : 2_000))
-    let boundedMs = min(max(requestedMs > 0 ? requestedMs : fallbackMs, 500), maximumMs)
-    // A ready completion should not vanish while the user is deciding whether
-    // to press Tab. New typing, focus changes, Escape, and stale guards still
-    // dismiss it immediately.
-    let expiresAfterMs = hasRealCandidate ? max(12_000, boundedMs) : boundedMs
+    let boundedMs = min(
+      max(requestedMs > 0 ? requestedMs : fallbackMs, 500),
+      maximumMs
+    )
+    // The setting controls a ready result, not an in-flight request. Keep the
+    // pending prediction guard alive for its bounded request window so a
+    // 4-second result preference cannot hide work that is still generating.
+    // New typing, focus changes, Escape, and stale guards remain immediate.
+    let expiresAfterMs = pendingWithoutResult && !isNoResultFeedback
+      ? max(12_000, boundedMs)
+      : boundedMs
     let snapshotId = payload.snapshotId
     let generation = ownershipGeneration
     let work = DispatchWorkItem { [weak self] in

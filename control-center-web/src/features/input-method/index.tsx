@@ -73,6 +73,7 @@ const inputModeChanges: Record<InputMode, Record<string, DraftValue>> = {
 const commonInputSettingKeys = new Set([
   'interaction.postCommit.enabled',
   'interaction.postCommit.idleTriggerMs',
+  'interaction.postCommit.panelTtlMs',
   'interaction.postCommit.numberKeys',
   'interaction.postCommit.tabAction',
   'display.maxPostCommitCandidates',
@@ -735,6 +736,7 @@ function inputFieldFallback(key: string): string {
   return ({
     'interaction.postCommit.enabled': '提交后预测',
     'interaction.postCommit.idleTriggerMs': '停顿多久开始预测',
+    'interaction.postCommit.panelTtlMs': '生成结果停留时间',
     'interaction.postCommit.numberKeys': '预测出现时的数字键',
     'interaction.postCommit.tabAction': 'Tab 键行为',
     'display.maxPostCommitCandidates': '续写候选数量',

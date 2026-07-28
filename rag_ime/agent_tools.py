@@ -1145,7 +1145,7 @@ _INPUT_SETTING_FIELDS: dict[str, dict[str, object]] = {
     "interaction.postCommit.maxCallsPer10s": {"label": "10 秒最大调用数", "min": 1, "max": 20},
     "interaction.postCommit.cooldownMs": {"label": "空结果冷却时间", "min": 0, "max": 30_000},
     "interaction.postCommit.pendingStatusDelayMs": {"label": "状态显示延迟", "min": 0, "max": 5_000},
-    "interaction.postCommit.panelTtlMs": {"label": "预测面板停留时间", "min": 1_000, "max": 60_000},
+    "interaction.postCommit.panelTtlMs": {"label": "生成结果停留时间", "min": 500, "max": 30_000},
     "interaction.postCommit.tabAction": {"label": "Tab 行为"},
     "display.showSourceBadge": {"label": "显示来源标记"},
     "display.showDiagnosticsInline": {"label": "候选行内诊断"},

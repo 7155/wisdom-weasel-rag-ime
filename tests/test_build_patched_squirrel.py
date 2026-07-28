@@ -373,6 +373,13 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("assistant_overlay_ttl_expired", controller_text)
         self.assertIn('dismiss(reason: "ttl_expired")', controller_text)
         self.assertIn('"ttlSource": hasRealCandidate', controller_text)
+        self.assertIn("let fallbackMs = 4_000", controller_text)
+        self.assertIn(
+            "let expiresAfterMs = pendingWithoutResult && !isNoResultFeedback",
+            controller_text,
+        )
+        self.assertIn("? max(12_000, boundedMs)", controller_text)
+        self.assertNotIn("hasRealCandidate ? max(12_000, boundedMs)", controller_text)
         self.assertIn("renderedContentSignature", controller_text)
         self.assertIn("scheduleTTL(for: payload)", controller_text)
         self.assertIn("onDismiss: ((String) -> Void)?", controller_text)
@@ -1391,7 +1398,12 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn("let assistantOverlayHasCandidates", patch_text)
         self.assertIn("!assistantOverlayHasCandidates", patch_text)
         self.assertIn("A ready completion must win over a still-pending secondary lane", patch_text)
-        self.assertIn("hasRealCandidate ? max(12_000, boundedMs) : boundedMs", patch_text)
+        self.assertIn(
+            "let expiresAfterMs = pendingWithoutResult && !isNoResultFeedback",
+            patch_text,
+        )
+        self.assertIn("? max(12_000, boundedMs)", patch_text)
+        self.assertNotIn("hasRealCandidate ? max(12_000, boundedMs)", patch_text)
         self.assertIn("scheduleRagImePostCommitContinuation(committedText: insertText, sourceCandidate: candidate)", patch_text)
         self.assertNotIn(
             ") { [weak self] _ in\n+      self?.scheduleRagImePostCommitContinuation",

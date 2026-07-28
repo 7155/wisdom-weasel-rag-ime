@@ -148,7 +148,7 @@ describe('InputMethodFeature', () => {
         'configuration.settings': {
           ok: true,
           settings: {
-            interaction: { postCommit: { enabled: true } },
+            interaction: { postCommit: { enabled: true, panelTtlMs: 4000 } },
             display: { maxPostCommitCandidates: 5 },
             activeRag: { latencyBudgetMs: 8000 },
           },
@@ -156,7 +156,23 @@ describe('InputMethodFeature', () => {
         'configuration.schema': {
           ok: true,
           sections: [
-            schema.sections[0],
+            {
+              ...schema.sections[0],
+              fields: [
+                ...schema.sections[0].fields,
+                {
+                  key: 'interaction.postCommit.panelTtlMs',
+                  type: 'integer',
+                  label: '预测面板 TTL',
+                  description: '生成结果出现后自动关闭前的停留时间；不会缩短正在生成状态',
+                  min: 500,
+                  max: 30000,
+                  step: 500,
+                  unit: 'ms',
+                  applyMode: 'restart_input_method',
+                },
+              ],
+            },
             {
               id: 'display',
               label: '显示',
@@ -194,6 +210,7 @@ describe('InputMethodFeature', () => {
     expect(screen.getByRole('list', { name: '输入法运行链状态' }).children).toHaveLength(4);
     expect(screen.getByText('本机模型已加载')).toBeInTheDocument();
     expect(screen.getByText('降级')).toBeInTheDocument();
+    expect(screen.getByLabelText('生成结果停留时间')).toHaveValue(4000);
     expect(screen.getByLabelText('续写候选数量')).toHaveValue(5);
     expect(screen.getByLabelText('生成框最长等待')).toHaveValue(8000);
     expect(screen.getByLabelText('续写候选数量').closest('.input-setting-editor-row')).not.toBeNull();

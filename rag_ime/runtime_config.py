@@ -369,7 +369,7 @@ class RuntimeConfigResolver:
             pending_status_delay_ms=_bounded_int(
                 post_commit_settings.get("pendingStatusDelayMs"), 150, 0, 3000
             ),
-            panel_ttl_ms=_bounded_int(post_commit_settings.get("panelTtlMs"), 5000, 500, 15000),
+            panel_ttl_ms=_bounded_int(post_commit_settings.get("panelTtlMs"), 4000, 500, 30000),
             max_candidates=max_candidates,
             completion_ttl_ms=profile.post_commit_completion_ttl_ms,
             model_budget_ms=profile.post_commit_model_budget_ms,

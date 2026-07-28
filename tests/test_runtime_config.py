@@ -90,7 +90,7 @@ class RuntimeConfigResolverTests(unittest.TestCase):
         ).resolve()
 
         self.assertEqual(snapshot.post_commit.max_calls_per_10s, 6)
-        self.assertEqual(snapshot.post_commit.panel_ttl_ms, 5000)
+        self.assertEqual(snapshot.post_commit.panel_ttl_ms, 4000)
         self.assertEqual(snapshot.hybrid_rag.lane_weight("bm25_raw"), 1.0)
         self.assertEqual(snapshot.hybrid_rag.lane_weight("vector_raw"), 1.05)
 
