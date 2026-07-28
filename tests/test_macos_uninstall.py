@@ -169,6 +169,45 @@ class MacOSUninstallTests(unittest.TestCase):
                 )
             )
 
+    def test_apply_treats_an_already_unloaded_launch_agent_as_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-uninstall-bootout-absent-") as tmp:
+            home = Path(tmp)
+            self._seed_owned_install(home)
+            calls: list[list[str]] = []
+
+            def runner(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+                command = [str(item) for item in args]
+                calls.append(command)
+                return subprocess.CompletedProcess(
+                    command,
+                    3,
+                    "",
+                    "Boot-out failed: 3: No such process",
+                )
+
+            plan = build_macos_uninstall_plan(
+                home,
+                uid=501,
+                options=MacOSUninstallOptions(component_scope="sidecar"),
+            )
+            report = apply_macos_uninstall_plan(
+                plan,
+                command_runner=runner,
+                platform_name="darwin",
+            )
+
+            self.assertTrue(report["ok"])
+            self.assertEqual(len(calls), 2)
+            self.assertTrue(
+                all(result["status"] == "already_absent" for result in report["results"])
+            )
+            self.assertFalse(
+                (home / "Library" / "LaunchAgents" / "com.rag-ime.agent-gateway.plist").exists()
+            )
+            self.assertFalse(
+                (home / "Library" / "LaunchAgents" / "com.rag-ime.sidecar.plist").exists()
+            )
+
     def test_component_scope_limits_base_removal(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-uninstall-scope-") as tmp:
             home = Path(tmp)

@@ -505,7 +505,11 @@ def _apply_action(action: Mapping[str, object], *, home: Path, runner: CommandRu
                 f"{domain}/{expected}",
             ]
         )
-        if completed.returncode != 0:
+        # launchctl maps ESRCH ("No such process") to exit code 3 when an
+        # owned plist remains on disk but the job is already unloaded. That is
+        # the idempotent state an uninstall is trying to reach, not a reason to
+        # strand every later owned component.
+        if completed.returncode not in {0, 3}:
             raise RuntimeError(
                 f"launch agent bootout failed with exit code {completed.returncode}"
             )
@@ -513,7 +517,7 @@ def _apply_action(action: Mapping[str, object], *, home: Path, runner: CommandRu
         return {
             "kind": kind,
             "target": str(target),
-            "status": "applied",
+            "status": "applied" if completed.returncode == 0 else "already_absent",
             "commandReturnCode": int(completed.returncode),
         }
     if kind == "remove_owned_app":
