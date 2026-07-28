@@ -181,7 +181,14 @@ export function useModelSelectionController({
     nextCatalog: ModelCatalog,
   ) => {
     const state = selectionsRef.current.get(sessionId);
-    if (state?.running) {
+    const pendingDesired = Boolean(
+      state?.desired
+      && !sameModelSelection(
+        state.desired,
+        modelSelectionFromCatalog(state.confirmed),
+      ),
+    );
+    if (state && (state.running || pendingDesired)) {
       state.confirmed = nextCatalog;
       publishCatalog(
         sessionId,

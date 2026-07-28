@@ -72,25 +72,34 @@ export function ModelPicker({
             <summary>{providerItem.displayName}<ChevronRight size={14} /></summary>
             {providerItem.models.map((modelItem) => (
               <details key={modelItem.id} open={modelItem.id === selection?.modelId}>
-                <summary
-                  aria-label={`选择模型 ${modelItem.name}`}
-                  onClick={(event) => {
-                    if (
+                <summary>
+                  <button
+                    type="button"
+                    className="agent-model-tree__model-choice"
+                    aria-current={(
                       providerItem.id === selection?.provider
                       && modelItem.id === selection.modelId
-                    ) return;
-                    event.preventDefault();
-                    choose(
-                      providerItem.id,
-                      modelItem.id,
-                      preferredThinkingLevel(modelItem.thinkingLevels, thinking),
-                    );
-                  }}
-                >
-                  {modelItem.name}
-                  {modelItem.id === selection?.modelId
-                    ? <Check size={14} />
-                    : <ChevronRight size={14} />}
+                    ) || undefined}
+                    aria-label={`选择模型 ${modelItem.name}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      if (
+                        providerItem.id === selection?.provider
+                        && modelItem.id === selection.modelId
+                      ) return;
+                      choose(
+                        providerItem.id,
+                        modelItem.id,
+                        preferredThinkingLevel(modelItem.thinkingLevels, thinking),
+                      );
+                    }}
+                  >
+                    <span>{modelItem.name}</span>
+                    {modelItem.id === selection?.modelId
+                      ? <Check size={14} />
+                      : <ChevronRight size={14} />}
+                  </button>
                 </summary>
                 <div className="agent-model-tree__levels">
                   {modelItem.thinkingLevels.map((level) => (

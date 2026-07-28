@@ -639,20 +639,20 @@ function AgentWorkspace() {
     setSessionDraft(session.id, '');
     setSessionAttachments(session.id, []);
     setSessionError(session.id, '');
-    await promptSession(session.id, message, selectedAttachments.map((item) => item.id), delivery, () => {
+    promptSession(session.id, message, selectedAttachments.map((item) => item.id), delivery, () => {
       setSessionDraft(session.id, value);
       setSessionAttachments(session.id, selectedAttachments);
     });
   }
 
-  async function promptSession(
+  function promptSession(
     sessionId: string,
     message: string,
     attachmentIds: string[],
     delivery: AgentMessageDelivery = 'prompt',
     restoreInput?: () => void,
-  ): Promise<void> {
-    if (!beginSessionSend(sessionId)) return;
+  ): boolean {
+    if (!beginSessionSend(sessionId)) return false;
     const clientMessageId = `web-${crypto.randomUUID()}`;
     useAgentLiveStore.getState().appendOptimistic(sessionId, {
       clientMessageId,
@@ -662,39 +662,45 @@ function AgentWorkspace() {
       ...(delivery === 'prompt' ? {} : { turnId: activeTurnId, delivery }),
     });
     setSessionError(sessionId, '');
-    try {
-      await transport.request({
-        pathId: 'agent.session.prompt',
-        params: { sessionId },
-        // Keep ordinary prompts compatible with an older native route policy.
-        // Queue delivery is sent only when it changes the backend operation.
-        body: {
-          message,
-          attachments: attachmentIds,
-          clientMessageId,
-          ...(delivery === 'prompt' ? {} : { delivery }),
-        },
-      });
-    } catch (requestError) {
-      if (isAgentTurnConflict(requestError)) {
-        useAgentLiveStore.getState().discardOptimistic(sessionId, clientMessageId);
+    // Admission and the optimistic turn are synchronous. Restoring a Pi
+    // Session, refreshing context, or starting a Provider can still make the
+    // HTTP receipt slow, but must not make the click itself feel stalled.
+    void (async () => {
+      try {
+        await transport.request({
+          pathId: 'agent.session.prompt',
+          params: { sessionId },
+          // Keep ordinary prompts compatible with an older native route policy.
+          // Queue delivery is sent only when it changes the backend operation.
+          body: {
+            message,
+            attachments: attachmentIds,
+            clientMessageId,
+            ...(delivery === 'prompt' ? {} : { delivery }),
+          },
+        });
+      } catch (requestError) {
+        if (isAgentTurnConflict(requestError)) {
+          useAgentLiveStore.getState().discardOptimistic(sessionId, clientMessageId);
+          restoreInput?.();
+          setSessionError(sessionId, '上一轮仍在处理，输入已保留；可以继续补充或先停止当前轮。');
+          return;
+        }
+        const failure = publicAgentErrorText(requestError);
+        const projection = agentProjection(sessionId);
+        const hasOptimisticTurn = Boolean(projection.optimisticByClientMessageId[clientMessageId]);
+        useAgentLiveStore.getState().failOptimistic(sessionId, clientMessageId, failure, Date.now());
         restoreInput?.();
-        setSessionError(sessionId, '上一轮仍在处理，输入已保留；可以继续补充或先停止当前轮。');
-        return;
+        setSessionError(sessionId, hasOptimisticTurn ? '' : failure);
+      } finally {
+        endSessionSend(sessionId);
       }
-      const failure = publicAgentErrorText(requestError);
-      const projection = agentProjection(sessionId);
-      const hasOptimisticTurn = Boolean(projection.optimisticByClientMessageId[clientMessageId]);
-      useAgentLiveStore.getState().failOptimistic(sessionId, clientMessageId, failure, Date.now());
-      restoreInput?.();
-      setSessionError(sessionId, hasOptimisticTurn ? '' : failure);
-    } finally {
-      endSessionSend(sessionId);
-    }
+    })();
+    return true;
   }
 
-  async function retryTurn(turnId: string): Promise<void> {
-    if (!session || sending || latestActiveTurnId(agentProjection(session.id))) return;
+  function retryTurn(turnId: string): boolean {
+    if (!session || sending || latestActiveTurnId(agentProjection(session.id))) return false;
     const projection = agentProjection(session.id);
     const turn = projection.turnsById[turnId];
     const userMessage = turn?.messageIds
@@ -707,9 +713,13 @@ function AgentWorkspace() {
       .trim() ?? '';
     if (!message && !userMessage?.attachments.length) {
       setError('找不到这轮的原始输入，无法安全重试。');
-      return;
+      return false;
     }
-    await promptSession(session.id, message || '请查看附件。', userMessage?.attachments ?? []);
+    return promptSession(
+      session.id,
+      message || '请查看附件。',
+      userMessage?.attachments ?? [],
+    );
   }
 
   function openModelPicker(): void {
@@ -1146,7 +1156,7 @@ function AgentWorkspace() {
             <IconButton ref={statusToggleRef} className="agent-status-toggle" label={statusOpen ? '收起状态面板' : '展开状态面板'} icon={statusOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />} onClick={toggleStatus} tooltip />
           </div>
         </header>
-        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={(turnId) => void retryTurn(turnId)} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
+        {selectedId ? <AgentTimeline assistantName={identity.assistantName} sessionId={selectedId} persona={persona} modelSelectionAvailable={Boolean(catalog)} turnRecoveryDisabled={busy || sending || stopping || modelChanging} forkAvailable={conversationForkAvailable && !branchBlocked} rewriteAvailable={!rewriteBlocked} jumpRequest={timelineJumpRequest} scrollToLatestRequest={scrollToLatestRequest} onAtBottomChange={setTimelineAtBottom} onForkFromMessage={openForkDialog} onEditMessage={(messageId) => void beginEditMessage(messageId)} onSuggestion={setSelectedDraft} onRetryTurn={retryTurn} onSwitchModel={openModelPicker} onApprovalDecision={(id, decision, hash) => { void decideApproval(id, decision, hash).catch(() => {}); }} onOpenApproval={setRequestedApproval} onRequestPermission={() => setPermissionPickerRequest((current) => current + 1)} /> : null}
         {session ? (
           <AgentComposer assistantName={identity.assistantName} draft={draft} attachments={attachments} session={session} persona={persona} catalog={catalog} commands={commands} tools={tools} toolCatalogStatus={toolCatalogStatus} busy={busy} stopping={stopping} sending={sending || rewriteResolving} modelChanging={modelChanging} contextResourcesChanging={contextResourcesChanging} editState={editTarget} modelPickerRequest={modelPickerRequest} permissionPickerRequest={permissionPickerRequest} toolPickerRequest={toolPickerRequest} helpRequest={helpRequest} imageSupport={imageSupport} showJumpLatest={!timelineAtBottom} onJumpLatest={() => setScrollToLatestRequest((current) => current + 1)} onDraftChange={persistSelectedDraft} onAttachmentsChange={setSelectedAttachments} onPickAttachments={() => void pickAttachments()} onPasteFromClipboard={() => void pasteImages()} onPasteImages={(files) => void pasteImages(files)} onToolSelect={chooseTool} onProductCommand={runProductCommand} onSend={(delivery, value) => void send(delivery, value)} onStop={() => void stop()} onEditPrevious={() => void beginEditMessage()} onCancelEdit={cancelEdit} onPermissionChange={(selection) => void changePermission(selection)} onWorkspaceRootsChange={() => void manageWorkspaceRoots()} onContextResourcesChange={(selection) => contextResources.select(session, selection)} onModelChange={changeModel} />
         ) : <AgentComposerPending />}

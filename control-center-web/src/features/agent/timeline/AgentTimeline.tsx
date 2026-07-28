@@ -42,7 +42,7 @@ export function AgentTimeline({
   modelSelectionAvailable: boolean;
   turnRecoveryDisabled?: boolean;
   onSuggestion: (value: string) => void;
-  onRetryTurn: (turnId: string) => void;
+  onRetryTurn: (turnId: string) => boolean;
   onSwitchModel: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
@@ -153,12 +153,12 @@ export function AgentTimeline({
         key={sessionId}
         data={turnOrder}
         computeItemKey={(_index, turnId) => turnId}
-        // Short conversations start below the workspace header, as in Pi's
-        // TUI, instead of being pinned to the composer with a blank screen
-        // above them. `followOutput` still keeps an actively followed stream
-        // visible once the conversation grows beyond the viewport.
+        // Open the latest turn below the workspace header, not against the
+        // composer. While the viewport still fits, `followOutput` naturally
+        // moves the transcript upward as output grows; once a user scrolls
+        // away from the bottom, their reading position remains authoritative.
         followOutput={(isAtBottom) => isAtBottom ? 'auto' : false}
-        initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
+        initialTopMostItemIndex={{ index: 'LAST', align: 'start' }}
         increaseViewportBy={{ top: 320, bottom: 520 }}
         components={timelineComponents}
         rangeChanged={setVisibleRange}
@@ -308,7 +308,7 @@ export function AgentTurn({
   persona?: AgentPersonaV1;
   modelSelectionAvailable?: boolean;
   turnRecoveryDisabled?: boolean;
-  onRetryTurn?: (turnId: string) => void;
+  onRetryTurn?: (turnId: string) => boolean;
   onSwitchModel?: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
@@ -334,11 +334,9 @@ export function AgentTurn({
     const projection = state.projections[sessionId];
     return (projection?.turnsById[turnId]?.activityIds ?? []).map((id) => projection?.activitiesById[id]).filter(Boolean);
   }));
-  /* Retrying is a request, not an outcome. The control acknowledges that the
-     request left the UI and stops a second identical submission, but it never
-     claims the turn succeeded — only the turn's own status may say that. Keyed
-     to the turn's status so it releases the moment the backend moves the turn,
-     and so a failed submission cannot strand the button forever. */
+  /* Retrying creates a new optimistic turn, not a successful outcome. The
+     control acknowledges only that local admission happened and stops a second
+     identical submission; the new turn owns its eventual success or failure. */
   const [retryRequestedFor, setRetryRequestedFor] = useState('');
   const blockFailure = useAgentLiveStore((state) => {
     const projection = state.projections[sessionId];
@@ -399,7 +397,19 @@ export function AgentTurn({
                 <span><strong>本轮未完成</strong><small>{failure}</small></span>
                 {onRetryTurn && onSwitchModel ? (
                   <div className="agent-turn__failure-actions">
-                    <Button size="small" variant="primary" leadingIcon={<RefreshCcw size={14} />} disabled={turnRecoveryDisabled || retryRequested} onClick={() => { setRetryRequestedFor(`${turnId}:${turn.status}`); onRetryTurn(turnId); }}>{retryRequested ? '已请求重试' : '重试本轮'}</Button>
+                    <Button
+                      size="small"
+                      variant="primary"
+                      leadingIcon={<RefreshCcw size={14} />}
+                      disabled={turnRecoveryDisabled || retryRequested}
+                      onClick={() => {
+                        if (onRetryTurn(turnId)) {
+                          setRetryRequestedFor(`${turnId}:${turn.status}`);
+                        }
+                      }}
+                    >
+                      {retryRequested ? '已创建重试轮次' : '重试本轮'}
+                    </Button>
                     <Button size="small" variant="quiet" leadingIcon={<BrainCircuit size={14} />} disabled={turnRecoveryDisabled || !modelSelectionAvailable} onClick={onSwitchModel}>切换模型</Button>
                   </div>
                 ) : null}

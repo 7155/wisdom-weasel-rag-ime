@@ -23,13 +23,19 @@ vi.mock('react-virtuoso', () => ({
   Virtuoso: ({
     alignToBottom,
     data,
+    initialTopMostItemIndex,
     itemContent,
   }: {
     alignToBottom?: boolean;
     data: string[];
+    initialTopMostItemIndex?: { index: string | number; align?: string };
     itemContent: (index: number, item: string) => ReactNode;
   }) => (
-    <div data-align-to-bottom={alignToBottom || undefined} data-testid="agent-virtuoso">
+    <div
+      data-align-to-bottom={alignToBottom || undefined}
+      data-initial-align={initialTopMostItemIndex?.align}
+      data-testid="agent-virtuoso"
+    >
       {data.map((item, index) => <div key={item}>{itemContent(index, item)}</div>)}
     </div>
   ),
@@ -907,6 +913,18 @@ describe('Agent experience', () => {
     const retry = await screen.findByRole('button', { name: '重试本轮' });
     await user.click(retry);
 
+    expect(retry).toHaveTextContent('已创建重试轮次');
+    const retryProjection = useAgentLiveStore.getState().projections['session-preview'];
+    const queuedRetry = Object.values(retryProjection.turnsById)
+      .find((turn) => turn.id.startsWith('local-turn:') && turn.status === 'queued');
+    expect(queuedRetry).toBeDefined();
+    expect(
+      queuedRetry?.messageIds
+        .map((messageId) => retryProjection.messagesById[messageId])
+        .some((message) => message?.blocks.some(
+          (block) => block.data.text === '重试时保留这句话',
+        )),
+    ).toBe(true);
     await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt')).toHaveLength(2));
     await waitFor(() => expect(retry).toBeDisabled());
     await user.click(retry);
@@ -967,7 +985,7 @@ describe('Agent experience', () => {
     await user.click(await screen.findByRole('button', { name: '切换模型' }));
 
     expect(await screen.findByText('模型与推理强度')).toBeInTheDocument();
-    expect(screen.getByText('GPT-5.4', { selector: 'summary' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '选择模型 GPT-5.4' })).toBeInTheDocument();
   });
 
   it('unlocks send and retry when projection status is stale working but the latest turn failed', async () => {
@@ -2191,7 +2209,10 @@ describe('Agent experience', () => {
       { name: /模型：GPT-5.6 Luna/ },
       { timeout: 5_000 },
     ));
-    const lunaDetails = screen.getByText('GPT-5.6 Luna', { selector: 'summary' }).closest('details');
+    const lunaDetails = screen.getByRole(
+      'button',
+      { name: '选择模型 GPT-5.6 Luna' },
+    ).closest('details');
     expect(lunaDetails).not.toBeNull();
     for (const level of ['不启用推理', '最小', '低', '中', '高', '极高', 'Max']) {
       expect(within(lunaDetails!).getByRole('button', { name: level })).toBeInTheDocument();
@@ -2209,7 +2230,35 @@ describe('Agent experience', () => {
   });
 
   it('switches models from the model row without requiring a reasoning-level click', async () => {
-    const transport = featureTransport(lunaModelCatalog());
+    const pendingSelection = deferred<{ ok: true }>();
+    const initial = lunaModelCatalog();
+    const confirmed = {
+      ...initial,
+      selected: {
+        provider: 'gpt',
+        id: 'codex-mini-latest',
+        modelId: 'codex-mini-latest',
+        name: 'Codex Mini',
+      },
+      thinkingLevel: 'medium' as ThinkingLevel,
+    };
+    let modelCatalogCalls = 0;
+    const transport = featureTransport(
+      () => {
+        modelCatalogCalls += 1;
+        return modelCatalogCalls === 1 ? initial : confirmed;
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => pendingSelection.promise,
+    );
     const user = userEvent.setup();
     renderAgent(transport);
 
@@ -2220,6 +2269,9 @@ describe('Agent experience', () => {
     ));
     await user.click(screen.getByLabelText('选择模型 Codex Mini'));
 
+    expect(transport.requests.map((call) => call.request.pathId)).toContain(
+      'agent.session.model.select',
+    );
     expect(screen.queryByText('模型与推理强度')).not.toBeInTheDocument();
     expect(screen.getByRole('button', {
       name: '模型：Codex Mini · GPT，思考强度：中',
@@ -2229,18 +2281,26 @@ describe('Agent experience', () => {
         pathId: 'agent.session.model.select',
         body: { provider: 'gpt', modelId: 'codex-mini-latest' },
       }) }),
+    ])));
+    pendingSelection.resolve({ ok: true });
+    await waitFor(() => expect(transport.requests).toEqual(expect.arrayContaining([
       expect.objectContaining({ request: expect.objectContaining({
         pathId: 'agent.session.thinking.select',
         body: { level: 'medium' },
       }) }),
     ])));
+    await waitFor(() => expect(screen.getByRole('button', {
+      name: '模型：Codex Mini · GPT，思考强度：中',
+    })).not.toHaveAttribute('aria-busy'));
   });
 
   it('does not bottom-pin a short conversation before it fills the viewport', async () => {
     renderAgent(productionTransport());
-    expect(await screen.findByTestId('agent-virtuoso')).not.toHaveAttribute(
+    const timeline = await screen.findByTestId('agent-virtuoso');
+    expect(timeline).not.toHaveAttribute(
       'data-align-to-bottom',
     );
+    expect(timeline).toHaveAttribute('data-initial-align', 'start');
   });
 
   it('does not show Max when the Pi model catalog omits max', async () => {
@@ -2327,7 +2387,10 @@ describe('Agent experience', () => {
       { name: /模型：GPT-5.6 Luna/ },
       { timeout: 5_000 },
     ));
-    const codexDetails = screen.getByText('Codex Mini', { selector: 'summary' }).closest('details');
+    const codexDetails = screen.getByRole(
+      'button',
+      { name: '选择模型 Codex Mini' },
+    ).closest('details');
     expect(codexDetails).not.toBeNull();
     codexDetails!.open = true;
     await user.click(within(codexDetails!).getByRole('button', { name: '中' }));
@@ -2391,13 +2454,19 @@ describe('Agent experience', () => {
       { name: /模型：GPT-5.6 Luna/ },
       { timeout: 5_000 },
     ));
-    const codexDetails = screen.getByText('Codex Mini', { selector: 'summary' }).closest('details');
+    const codexDetails = screen.getByRole(
+      'button',
+      { name: '选择模型 Codex Mini' },
+    ).closest('details');
     expect(codexDetails).not.toBeNull();
     codexDetails!.open = true;
     await user.click(within(codexDetails!).getByRole('button', { name: '中' }));
 
     await user.click(screen.getByRole('button', { name: '模型：Codex Mini · GPT，思考强度：中' }));
-    const lunaDetails = screen.getByText('GPT-5.6 Luna', { selector: 'summary' }).closest('details');
+    const lunaDetails = screen.getByRole(
+      'button',
+      { name: '选择模型 GPT-5.6 Luna' },
+    ).closest('details');
     expect(lunaDetails).not.toBeNull();
     lunaDetails!.open = true;
     await user.click(within(lunaDetails!).getByRole('button', { name: '高' }));

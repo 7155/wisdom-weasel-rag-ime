@@ -709,6 +709,9 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-model-tree summary:active { transform: translateY(1px); }
 .agent-model-tree > details > summary { font-weight: 700; }
 .agent-model-tree > details > details { margin-left: 12px; }
+.agent-model-tree > details > details > summary { padding: 0; }
+.agent-model-tree__model-choice { display: flex; width: 100%; min-height: 36px; align-items: center; justify-content: space-between; padding: 5px 8px; border: 0; border-radius: inherit; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.agent-model-tree__model-choice:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .agent-model-tree__levels { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px 8px 8px; }
 .agent-model-tree__levels button { min-height: 28px; padding: 3px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-1); background: transparent; font-size: 13px; cursor: pointer; transition: transform var(--duration-press) var(--ease-press), box-shadow var(--duration-enter) var(--ease-standard); }
 .agent-model-tree__levels button:active { box-shadow: var(--shadow-control-press); transform: translateY(1px); }
