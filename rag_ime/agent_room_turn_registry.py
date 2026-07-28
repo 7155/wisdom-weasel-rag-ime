@@ -9,6 +9,7 @@ from .agent_protocol import AgentEventEnvelope
 # Cancelled-turn receipts kept for late event stamping. The bound lives next to
 # the dict it bounds; it is a memory cap, not a cancellation policy.
 _CANCELLED_TURN_RECEIPT_LIMIT = 2048
+_PRIVATE_INTERCOM_TURN_LIMIT = 2048
 
 
 class RoomSessionBusyError(RuntimeError):
@@ -44,6 +45,14 @@ class RoomTurnRegistry:
         self.cancelled_turns: dict[str, str] = {}
         self.cancelled_root_by_session: dict[str, str] = {}
         self.cancelled_turn_by_session_turn: dict[
+            tuple[str, str],
+            str,
+        ] = {}
+        self.private_intercom_pending_by_session: dict[
+            str,
+            str,
+        ] = {}
+        self.private_intercom_by_session_turn: dict[
             tuple[str, str],
             str,
         ] = {}
@@ -230,10 +239,128 @@ class RoomTurnRegistry:
         with self.lock:
             return (
                 session_id in self.pending_turn_by_session
+                or session_id
+                in self.private_intercom_pending_by_session
                 or any(
                     key[0] == session_id
                     for key in self.turn_by_session_turn
                 )
+                or any(
+                    key[0] == session_id
+                    for key in self.private_intercom_by_session_turn
+                )
+            )
+
+    def begin_private_intercom(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> None:
+        """Fence one notification-only Provider turn from Room projection."""
+
+        with self.lock:
+            self.private_intercom_pending_by_session[
+                session_id
+            ] = message_id
+
+    def accept_private_intercom(
+        self,
+        session_id: str,
+        session_turn_id: str,
+        message_id: str,
+    ) -> None:
+        """Bind the accepted Pi turn unless its terminal event already arrived."""
+
+        if not session_turn_id:
+            return
+        key = (session_id, session_turn_id)
+        with self.lock:
+            if (
+                self.private_intercom_by_session_turn.get(key)
+                == message_id
+            ):
+                return
+            if (
+                self.private_intercom_pending_by_session.get(
+                    session_id
+                )
+                != message_id
+            ):
+                return
+            self.private_intercom_pending_by_session.pop(
+                session_id,
+                None,
+            )
+            self.private_intercom_by_session_turn[key] = (
+                message_id
+            )
+            self._bound_private_intercom_turns()
+
+    def abandon_private_intercom(
+        self,
+        session_id: str,
+        message_id: str,
+    ) -> None:
+        with self.lock:
+            if (
+                self.private_intercom_pending_by_session.get(
+                    session_id
+                )
+                == message_id
+            ):
+                self.private_intercom_pending_by_session.pop(
+                    session_id,
+                    None,
+                )
+
+    def private_intercom_for_event(
+        self,
+        event: AgentEventEnvelope,
+    ) -> str:
+        """Resolve and bind an event to a notification-only private turn."""
+
+        if not event.turn_id:
+            return ""
+        key = (event.session_id, event.turn_id)
+        with self.lock:
+            message_id = (
+                self.private_intercom_by_session_turn.get(key)
+            )
+            if message_id:
+                return message_id
+            message_id = (
+                self.private_intercom_pending_by_session.pop(
+                    event.session_id,
+                    "",
+                )
+            )
+            if not message_id:
+                return ""
+            self.private_intercom_by_session_turn[key] = (
+                message_id
+            )
+            self._bound_private_intercom_turns()
+            return message_id
+
+    def finish_private_intercom_event(
+        self,
+        event: AgentEventEnvelope,
+    ) -> None:
+        if not event.turn_id:
+            return
+        with self.lock:
+            self.private_intercom_by_session_turn.pop(
+                (event.session_id, event.turn_id),
+                None,
+            )
+
+    def _bound_private_intercom_turns(self) -> None:
+        while (
+            len(self.private_intercom_by_session_turn)
+            > _PRIVATE_INTERCOM_TURN_LIMIT
+        ):
+            self.private_intercom_by_session_turn.pop(
+                next(iter(self.private_intercom_by_session_turn))
             )
 
     def turn_targets(

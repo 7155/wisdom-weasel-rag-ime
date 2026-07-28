@@ -20,6 +20,7 @@ from rag_ime.agent_room_turn_registry import (
     RoomSessionBusyError,
     RoomTurnRegistry,
 )
+from rag_ime.agent_protocol import AgentEventEnvelope
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -172,6 +173,77 @@ class TurnTargetSnapshotTests(unittest.TestCase):
 
         self.registry.turn_targets("turn-1", resolve=_resolve)
         self.assertEqual(held, [True])
+
+
+class PrivateIntercomTurnTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.registry = RoomTurnRegistry()
+
+    @staticmethod
+    def _event(event_type: str) -> AgentEventEnvelope:
+        return AgentEventEnvelope(
+            event_id=f"event:{event_type}",
+            session_id="session:target",
+            turn_id="turn:private-notice",
+            sequence=1,
+            created_at_ms=1,
+            event_type=event_type,
+            payload={},
+            resume_token=f"event:{event_type}",
+        )
+
+    def test_private_notice_binds_first_event_and_releases_on_terminal(
+        self,
+    ) -> None:
+        self.registry.begin_private_intercom(
+            "session:target",
+            "intercom:notice",
+        )
+        self.assertTrue(
+            self.registry.session_turn_active("session:target")
+        )
+
+        first = self._event("text_delta")
+        self.assertEqual(
+            self.registry.private_intercom_for_event(first),
+            "intercom:notice",
+        )
+        self.registry.accept_private_intercom(
+            "session:target",
+            "turn:private-notice",
+            "intercom:notice",
+        )
+        self.assertEqual(
+            self.registry.private_intercom_for_event(
+                self._event("turn_completed")
+            ),
+            "intercom:notice",
+        )
+        self.registry.finish_private_intercom_event(
+            self._event("turn_completed")
+        )
+        self.assertFalse(
+            self.registry.session_turn_active("session:target")
+        )
+
+    def test_failed_delivery_releases_pending_private_notice(self) -> None:
+        self.registry.begin_private_intercom(
+            "session:target",
+            "intercom:failed",
+        )
+        self.registry.abandon_private_intercom(
+            "session:target",
+            "intercom:failed",
+        )
+        self.assertFalse(
+            self.registry.session_turn_active("session:target")
+        )
+        self.assertEqual(
+            self.registry.private_intercom_for_event(
+                self._event("turn_completed")
+            ),
+            "",
+        )
 
 
 class CancellationReceiptHistoryTests(unittest.TestCase):

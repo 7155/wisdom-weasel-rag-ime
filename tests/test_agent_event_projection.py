@@ -4,6 +4,7 @@ import unittest
 
 from rag_ime.agent_event_projection import AgentEventProjectionService
 from rag_ime.agent_protocol import AgentEventEnvelope
+from rag_ime.agent_room_turn_registry import RoomTurnRegistry
 
 
 class _KernelWithoutBinding:
@@ -39,6 +40,10 @@ class _Sessions:
 
 
 class _ForbiddenLegacyTurns:
+    @staticmethod
+    def private_intercom_for_event(_event: object) -> str:
+        return ""
+
     @staticmethod
     def turn_for_event(_event: object) -> str:
         raise AssertionError("kernel event fell through to legacy Room mapping")
@@ -114,6 +119,53 @@ class AgentEventProjectionTests(unittest.TestCase):
         service.mirror_to_room(event)
 
         self.assertEqual(observations.count, 0)
+
+    def test_private_intercom_turn_never_reaches_public_projection(
+        self,
+    ) -> None:
+        observations = _Observations()
+        turns = RoomTurnRegistry()
+        notifications: list[str] = []
+        service = AgentEventProjectionService(
+            sessions=None,
+            room_kernel=_KernelWithoutBinding(),
+            rooms=_Rooms(),
+            agent_blocks=None,
+            observations=observations,
+            room_kernel_projection=None,
+            room_events=None,
+            public_timeline=None,  # type: ignore[arg-type]
+            room_turns=turns,
+            append_recent_message=lambda *_args: None,
+            record_assistant_evidence=lambda _event: {},
+            notify_intercom=lambda: notifications.append("wake"),
+        )
+        turns.begin_private_intercom(
+            "session:1",
+            "intercom:notice",
+        )
+        for sequence, event_type in enumerate(
+            ("text_delta", "turn_completed"),
+            start=1,
+        ):
+            service.mirror_to_room(
+                AgentEventEnvelope(
+                    event_id=f"event:{sequence}",
+                    session_id="session:1",
+                    turn_id="turn:private",
+                    sequence=sequence,
+                    created_at_ms=sequence,
+                    event_type=event_type,
+                    payload={},
+                    resume_token=f"event:{sequence}",
+                )
+            )
+
+        self.assertEqual(observations.count, 0)
+        self.assertEqual(notifications, [])
+        self.assertFalse(
+            turns.session_turn_active("session:1")
+        )
 
 
 if __name__ == "__main__":

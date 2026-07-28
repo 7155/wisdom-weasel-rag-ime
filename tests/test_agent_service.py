@@ -2198,6 +2198,124 @@ class AgentServiceTests(unittest.TestCase):
         self.assertNotIn("ime_agents.room_reply", prompt.call_args.args[1])
         checkpoint.assert_not_called()
 
+    def test_plain_room_notice_runs_once_without_public_or_a2a_echo(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "私有通知边界",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-future-v1",
+                        "roleVersion": "1",
+                    },
+                ],
+            }
+        )["room"]
+        source, target = room["participants"]
+        room_id = str(room["id"])
+        target_session_id = str(target["sessionId"])
+        item = {
+            "id": "room-message:private-notice",
+            "roomId": room_id,
+            "kind": "send",
+            "sourceParticipantId": source["id"],
+            "targetParticipantId": target["id"],
+            "sourceSessionId": source["sessionId"],
+            "targetSessionId": target_session_id,
+            "replyTo": "",
+            "workItemId": "",
+            "workAction": "",
+            "content": "状态已同步，无需回复。",
+        }
+        public_before = len(
+            self.service.rooms.list_events(room_id)
+        )
+        intercom_before = len(
+            self.service.room_intercom.list(
+                target_session_id,
+            )
+        )
+        work_before = len(
+            self.service.room_work.list_for_room(room_id)
+        )
+
+        def prompt_once(
+            session_id: str,
+            prompt_text: str,
+            **_kwargs: object,
+        ) -> dict[str, object]:
+            self.assertEqual(session_id, target_session_id)
+            self.assertNotIn("调用 room_post", prompt_text)
+            self.assertIn("不要创建 Intercom 或 WorkItem", prompt_text)
+            self.service.events.publish(
+                session_id,
+                "text_delta",
+                {"delta": "收到"},
+                turn_id="turn:private-notice",
+            )
+            self.service.events.publish(
+                session_id,
+                "turn_completed",
+                {"status": "completed"},
+                turn_id="turn:private-notice",
+            )
+            return {
+                "accepted": True,
+                "turnId": "turn:private-notice",
+            }
+
+        with (
+            patch.object(
+                self.service,
+                "_room_target_idle",
+                return_value=True,
+            ),
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                side_effect=prompt_once,
+            ) as provider_prompt,
+        ):
+            accepted = self.service._deliver_room_intercom(
+                item
+            )
+            self.service._publish_room_intercom_audit(
+                item,
+                "queued",
+            )
+            self.service._publish_room_intercom_audit(
+                {
+                    **item,
+                    "acceptedTurnId": "turn:private-notice",
+                },
+                "delivered",
+            )
+
+        provider_prompt.assert_called_once()
+        self.assertTrue(accepted["privateNotice"])
+        self.assertEqual(
+            len(self.service.rooms.list_events(room_id)),
+            public_before,
+        )
+        self.assertEqual(
+            len(
+                self.service.room_intercom.list(
+                    target_session_id,
+                )
+            ),
+            intercom_before,
+        )
+        self.assertEqual(
+            len(self.service.room_work.list_for_room(room_id)),
+            work_before,
+        )
+
     def test_message_snapshot_returns_event_resume_cursor(self) -> None:
         session = self.service.create_session({"title": "恢复游标"})["session"]
         session_id = str(session["id"])

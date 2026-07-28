@@ -17,6 +17,7 @@ class RoomIntercomApplicationService:
         room_work: Any,
         context_runtime: Any,
         room_events: Any,
+        room_turns: Any,
         runtime_provider: Callable[[], Any],
         user_priority_sessions: set[str],
         turn_lock: Any,
@@ -31,6 +32,7 @@ class RoomIntercomApplicationService:
         self.room_work = room_work
         self.context_runtime = context_runtime
         self.room_events = room_events
+        self.room_turns = room_turns
         self._runtime_provider = runtime_provider
         self.user_priority_sessions = user_priority_sessions
         self.turn_lock = turn_lock
@@ -164,6 +166,7 @@ class RoomIntercomApplicationService:
             else None
         )
         kind = str(item.get("kind") or "send")
+        private_notice = _is_private_notice(item)
         self.context_runtime.enqueue(
             session_id=target_session_id,
             source_kind="room_intercom",
@@ -198,30 +201,62 @@ class RoomIntercomApplicationService:
                 "content": str(item.get("content") or ""),
             },
         )
-        accepted, trace_id, delivered = (
-            self.runtime_prompt_with_context(
+        message_id = str(item.get("id") or "")
+        if private_notice:
+            self.room_turns.begin_private_intercom(
                 target_session_id,
-                self.room_intercom_prompt(
-                    room,
-                    target,
-                    item,
-                    source=source,
-                    work=work,
-                ),
-                source_kind="room",
-                transient_context=(
-                    self.room_participant_prompt(
+                message_id,
+            )
+        try:
+            accepted, trace_id, delivered = (
+                self.runtime_prompt_with_context(
+                    target_session_id,
+                    self.room_intercom_prompt(
                         room,
                         target,
-                        "",
-                    )
-                ),
+                        item,
+                        source=source,
+                        work=work,
+                    ),
+                    source_kind="room",
+                    transient_context=(
+                        self.room_participant_prompt(
+                            room,
+                            target,
+                            "",
+                        )
+                    ),
+                )
             )
-        )
+        except Exception:
+            if private_notice:
+                self.room_turns.abandon_private_intercom(
+                    target_session_id,
+                    message_id,
+                )
+            raise
+        if private_notice:
+            session_turn_id = str(
+                accepted.get("turnId") or ""
+            )
+            if not session_turn_id:
+                self.room_turns.abandon_private_intercom(
+                    target_session_id,
+                    message_id,
+                )
+                raise RuntimeError(
+                    "private Room notification was accepted without a turnId"
+                )
+            self.room_turns.accept_private_intercom(
+                target_session_id,
+                session_turn_id,
+                message_id,
+            )
         return {
             **accepted,
             "contextTraceId": trace_id,
             "contextItemsDelivered": delivered,
+            "privateNotice": private_notice,
         }
 
     def publish_audit(
@@ -229,6 +264,11 @@ class RoomIntercomApplicationService:
         item: Mapping[str, object],
         phase: str,
     ) -> None:
+        if _is_private_notice(item):
+            # The Intercom row is the durable private audit source. Publishing
+            # its lifecycle into the Room would turn a private notice into a
+            # public message and re-open the courtesy-loop path.
+            return
         work_item_id = str(
             item.get("workItemId") or ""
         )
@@ -335,6 +375,8 @@ class RoomIntercomApplicationService:
             phase=activity_phase,
             actor=actor,
         )
+
+
 def _bool(value: object) -> bool:
     if isinstance(value, bool):
         return value
@@ -344,3 +386,14 @@ def _bool(value: object) -> bool:
         "yes",
         "on",
     }
+
+
+def _is_private_notice(
+    item: Mapping[str, object],
+) -> bool:
+    return (
+        str(item.get("kind") or "send") == "send"
+        and not str(item.get("workItemId") or "").strip()
+        and not str(item.get("workAction") or "").strip()
+        and not str(item.get("replyTo") or "").strip()
+    )

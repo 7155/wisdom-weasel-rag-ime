@@ -512,6 +512,7 @@ class AgentService:
                 room_work=self.room_work,
                 context_runtime=self.context_runtime,
                 room_events=self.room_events,
+                room_turns=self.room_turns,
                 runtime_provider=lambda: self.runtime,
                 # Read-only membership checks; the registry stays the only
                 # mutation owner.

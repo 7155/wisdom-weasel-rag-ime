@@ -166,6 +166,12 @@ def room_intercom_prompt(
     del room, target
     kind = str(item.get("kind") or "send")
     action = str(item.get("workAction") or "")
+    private_notice = (
+        kind == "send"
+        and work is None
+        and not action
+        and not str(item.get("replyTo") or "").strip()
+    )
     return (
         f"你刚收到来自 {source.get('displayName')} 的 Room 协作消息。"
         + (
@@ -175,14 +181,20 @@ def room_intercom_prompt(
             else ""
         )
         + (
-            "这是需要答复的问题；请在判断后调用 room_post "
-            "发布答复，不要只在私有 Session 中说已经回复。"
-            if kind == "ask"
+            "这是只进入当前私有 Session 的通知。理解它并继续已有工作；"
+            "不要发布 Room Post，不要创建 Intercom 或 WorkItem，也不要向发送者"
+            "发送“收到、谢谢、辛苦了”等礼貌回声。若无需行动，直接结束私有回合。"
+            if private_notice
             else (
-                "这是对先前问题的答复；将它作为当前任务输入继续，但消息本身不是"
-                "验收 evidenceRef，关键事实仍需用可核对来源或成功工具回执验证。"
-                if kind == "reply"
-            else "仅在当前任务需要时使用，不必机械复述。"
+                "这是需要答复的问题；请在判断后调用 room_post "
+                "发布答复，不要只在私有 Session 中说已经回复。"
+                if kind == "ask"
+                else (
+                    "这是对先前问题的答复；将它作为当前任务输入继续，但消息本身不是"
+                    "验收 evidenceRef，关键事实仍需用可核对来源或成功工具回执验证。"
+                    if kind == "reply"
+                    else "仅在当前任务需要时使用，不必机械复述。"
+                )
             )
         )
     )

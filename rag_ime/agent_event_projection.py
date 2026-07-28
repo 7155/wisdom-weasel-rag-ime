@@ -87,6 +87,21 @@ class AgentEventProjectionService:
         self,
         event: AgentEventEnvelope,
     ) -> None:
+        private_intercom_id = (
+            self.room_turns.private_intercom_for_event(event)
+        )
+        if private_intercom_id:
+            # The private Session transcript remains authoritative via
+            # record(). A notification-only A2A turn must not wake another
+            # Intercom delivery or create any public Room projection.
+            if event.event_type in {
+                "turn_completed",
+                "turn_failed",
+            }:
+                self.room_turns.finish_private_intercom_event(
+                    event
+                )
+            return
         if event.event_type in {
             "turn_completed",
             "turn_failed",

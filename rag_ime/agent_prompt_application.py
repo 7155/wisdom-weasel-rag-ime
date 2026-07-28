@@ -163,7 +163,7 @@ class AgentPromptApplicationService:
                     client_message_id=client_message_id,
                     recovery_state="in_flight",
                 ) from exc
-            cause_code = _prompt_failure_code(exc)
+            cause_code = _delivery_failure_code(exc)
             replay = self.command_receipts.fail(
                 claim,
                 command_scope="session_prompt",
@@ -708,7 +708,7 @@ def _checkpoint_arguments(
     }
 
 
-def _prompt_failure_code(error: BaseException) -> str:
+def _delivery_failure_code(error: BaseException) -> str:
     return str(getattr(error, "error_code", "") or "")
 
 
