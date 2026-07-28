@@ -10,8 +10,8 @@ from pathlib import Path
 from .db import apply_database_migrations, sqlite_connection
 
 
-ROOM_V2_RELEASE_MIGRATION_VERSION = 108
-ROOM_V2_RELEASE_SCHEMA_COUNT = 138
+ROOM_V2_RELEASE_MIGRATION_VERSION = 110
+ROOM_V2_RELEASE_SCHEMA_COUNT = 142
 
 
 def stage_room_v2_canary(*, product_root: str | Path, pi_root: str | Path, source_db: str | Path,
