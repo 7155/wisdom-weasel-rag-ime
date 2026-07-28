@@ -1,0 +1,779 @@
+{
+  "schemaVersion": "personal-agent-workbench.prompt-ablation-matrix.v1",
+  "status": "designed-not-provider-run",
+  "purpose": "Compare only the managed-work system-prompt layer while holding every other Provider input and runtime mechanism constant.",
+  "variable": {
+    "owner": "rag_ime/agent_core_policy.py:_MANAGED_GOAL_POLICY",
+    "estimatedTokenMethod": "ceil(utf8_bytes/4)",
+    "fixedLayers": [
+      "safety policy",
+      "work policy",
+      "durable memory policy",
+      "persona",
+      "Tool and Skill schemas",
+      "execution mode",
+      "session messages",
+      "Goal Plan and Kernel state",
+      "Provider model and parameters"
+    ],
+    "variantA": {
+      "label": "before",
+      "promptLines": [
+        "<managed-work>",
+        "这段只在系统明确交给你 Goal、Task 或 Room Dispatch 时生效；",
+        "普通聊天、需求澄清和用户尚未确认的计划不进入任务循环。",
+        "",
+        "先确定本轮权威工作单：若存在当前 Task/Dispatch，只执行其中的责任与验收；",
+        "根任务原始需求只用于校验整体边界，不能据此接管父任务或其他成员的工作。",
+        "一次回答结束不代表完成；",
+        "只要仍有一个已获授权、能产生新证据并推进验收的下一步，就实际执行它，",
+        "不要只回复“继续”、复述计划或等待系统再次提醒。",
+        "",
+        "准备结束本轮时，只提出以下五种状态之一：",
+        "- 继续：存在已获授权且能产生新证据的下一步，立即执行该动作；",
+        "- 完成：当前全部验收项都有成功工具或运行证据，提交结果、对应验收项和证据；",
+        "- 交接：另一位 Agent 或模型更合适，写清目标能力、已有工作、剩余验收和准确接手点；",
+        "- 等待：缺用户决定、授权或外部信号，只问一个最小必要问题，并说明收到什么即可恢复；",
+        "- 阻塞：有界备选已经耗尽或客观无法继续，给出阻塞证据和解除条件。",
+        "",
+        "失败后可以诊断并尝试真正不同的办法，但不要重复同一失败动作空转。",
+        "工具返回失败或拒绝回执后，先读取回执原因；在没有新的成功证据或相关状态变化前，",
+        "不得只更换调用 ID 就重发同一工具和完全相同的参数。",
+        "工具选择遵守最小权限：目录浏览、文本读取和文本搜索能由专用工作区工具完成时，",
+        "不得改用 Shell 的 pwd、ls、find、cat、head、tail、grep、sed 或 awk 来替代。",
+        "Shell 只用于专用工具无法表达的构建、测试和诊断。项目说明或验收条件给出精确命令",
+        "与工作目录时，原样使用；不要替换解释器路径，也不要添加 cd、管道、重定向或命令串。",
+        "没有新的可执行动作时，必须进入完成、交接、等待或阻塞之一，不能靠重复 Prompt 维持循环。",
+        "你提出继续、完成、交接、等待或阻塞；Kernel 根据证据、权限、取消和预算决定真实状态。",
+        "</managed-work>"
+      ],
+      "metrics": {
+        "chars": 851,
+        "utf8Bytes": 2193,
+        "estimatedTokens": 549,
+        "lines": 27,
+        "sha256": "533365ea1d4cdae5c1dabaa6b686836a1226d3d977ff4099d1d553ee06c71c2f"
+      }
+    },
+    "variantB": {
+      "label": "after",
+      "promptLines": [
+        "<managed-work>",
+        "仅当系统明确交给你 Goal、Task 或 Room Dispatch 时生效；",
+        "普通聊天、需求澄清和未确认计划不进入此循环。",
+        "",
+        "当前 Task/Dispatch 是本轮权威工作单；只执行其中的责任与验收。",
+        "根任务只校验整体边界，不据此接管父任务或其他成员的工作。",
+        "有已获授权、能产生新证据并推进验收的下一步时立即执行，",
+        "不以答复、计划或进度报告代替动作。",
+        "",
+        "准备结束时只提议以下五种状态之一：",
+        "- 继续：存在已获授权且能产生新证据的下一步，立即执行该动作；",
+        "- 完成：全部验收项都有成功证据，提交结果、验收项和证据；",
+        "- 交接：其他 Agent 或模型更合适，写清已有工作、剩余验收和准确接手点；",
+        "- 等待：缺用户决定、授权或外部信号，只问一个最小问题并说明恢复条件；",
+        "- 阻塞：有界备选已耗尽或客观无法继续，给出证据和解除条件。",
+        "",
+        "失败先读回执；只有新证据、相关状态变化或真正不同的方案才重试，不原样空转。",
+        "以上只是提议；Kernel 根据证据、权限、取消和预算裁决真实状态。",
+        "</managed-work>"
+      ],
+      "metrics": {
+        "chars": 471,
+        "utf8Bytes": 1191,
+        "estimatedTokens": 298,
+        "lines": 19,
+        "sha256": "cef189c251051f4b6e3ef9ea17ccc1bc0d8264132a953bd471c4ca567d25ae98"
+      }
+    },
+    "reduction": {
+      "charsSaved": 380,
+      "utf8BytesSaved": 1002,
+      "estimatedTokensSaved": 251,
+      "linesSaved": 8,
+      "utf8BytesPercent": 45.69,
+      "estimatedTokensPercent": 45.72
+    }
+  },
+  "runProtocol": {
+    "providerRunStatus": "not-run",
+    "pairedRunsPerProviderScenario": 5,
+    "deterministicRunsPerKernelScenario": 5,
+    "orderPolicy": "seeded balanced ABBA order",
+    "resetBetweenRuns": [
+      "restore the exact workspace fixture",
+      "create a new Session and Context Epoch",
+      "restore Goal Room and tool-stub state",
+      "clear Provider response caches while keeping the same model configuration"
+    ],
+    "fixedInputs": [
+      "same model and reasoning effort",
+      "same execution mode and approvals",
+      "same Tool and Skill schemas",
+      "same date environment messages and workspace bytes",
+      "same scripted tool outputs",
+      "same maximum output tokens"
+    ],
+    "aggregateMetrics": [
+      "task_success_rate",
+      "forbidden_behavior_rate",
+      "tool_trace_exact_match_rate",
+      "excess_tool_call_count",
+      "premature_terminal_rate",
+      "unsupported_completion_rate",
+      "first_action_latency_ms",
+      "output_tokens",
+      "system_prompt_estimated_tokens",
+      "room_ping_pong_turns"
+    ],
+    "acceptanceRule": "Variant B must preserve every deterministic assertion, have no lower task success rate than A, introduce no forbidden behavior, and save the declared 251 estimated system-prompt tokens."
+  },
+  "reportSchema": {
+    "perRunRequired": [
+      "scenarioId",
+      "variant",
+      "model",
+      "reasoningEffort",
+      "runIndex",
+      "startedAt",
+      "firstActionLatencyMs",
+      "toolTrace",
+      "output",
+      "assertions",
+      "metrics",
+      "providerReceipt"
+    ],
+    "aggregateRequired": [
+      "scenarioId",
+      "variant",
+      "runCount",
+      "taskSuccessRate",
+      "forbiddenBehaviorRate",
+      "toolTraceExactMatchRate",
+      "meanFirstActionLatencyMs",
+      "meanOutputTokens",
+      "meanSystemPromptTokens",
+      "roomPingPongTurns"
+    ],
+    "assertionResultShape": {
+      "id": "string",
+      "passed": "boolean",
+      "evidence": "string"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "single-agent.project-summary-five-lines",
+      "surface": "single_agent",
+      "executionLayer": "provider",
+      "providerInvocationExpected": true,
+      "setup": {
+        "sessionMode": "assistant",
+        "managedWork": false,
+        "executionMode": "workspace_managed",
+        "workspaceFixture": {
+          "README.md": "# Personal Agent Workbench\nA local-first macOS agent workbench with governed memory, Goal and Room execution, Provider adapters, controlled tools, and an optional Rime input surface."
+        }
+      },
+      "input": "请根据 README 用不超过 5 行介绍这个项目；直接说明它解决什么问题、核心能力和适合谁，不要使用“革命性”“赋能”“重新定义”之类套话。",
+      "allowedTools": [
+        "workspace_read"
+      ],
+      "expectedCalls": [
+        {
+          "order": 1,
+          "tool": "workspace_read",
+          "operation": "read",
+          "arguments": {
+            "path": "README.md"
+          },
+          "count": 1
+        }
+      ],
+      "forbiddenBehavior": [
+        "超过 5 行",
+        "使用革命性、赋能、重新定义或类似空泛套话",
+        "声称已经修改、构建或发布项目",
+        "读取 README.md 之外的文件"
+      ],
+      "acceptanceEvidence": [
+        "workspace_read 成功回执指向 README.md",
+        "输出按换行计数不超过 5",
+        "输出明确包含 local-first、governed memory、Goal 或 Room、controlled tools 中至少 3 项"
+      ],
+      "metrics": [
+        {
+          "name": "output_line_count",
+          "target": "<=5"
+        },
+        {
+          "name": "cliche_match_count",
+          "target": "0"
+        },
+        {
+          "name": "expected_tool_trace_match",
+          "target": "true"
+        },
+        {
+          "name": "supported_capability_count",
+          "target": ">=3"
+        }
+      ]
+    },
+    {
+      "id": "single-agent.readme-typo-minimal-change",
+      "surface": "single_agent",
+      "executionLayer": "provider",
+      "providerInvocationExpected": true,
+      "setup": {
+        "sessionMode": "assistant",
+        "managedWork": false,
+        "executionMode": "workspace_managed",
+        "workspaceFixture": {
+          "README.md": "# Personal Agent Wokrbench\nLocal-first agent tools."
+        },
+        "gitState": "clean"
+      },
+      "input": "把 README 项目名里的 Wokrbench 改成 Workbench，只改这一处并给出验证证据。",
+      "allowedTools": [
+        "workspace_search",
+        "workspace_read",
+        "workspace_patch",
+        "workspace_shell"
+      ],
+      "expectedCalls": [
+        {
+          "order": 1,
+          "tool": "workspace_search",
+          "operation": "search",
+          "arguments": {
+            "query": "Wokrbench",
+            "path": "README.md"
+          },
+          "count": 1
+        },
+        {
+          "order": 2,
+          "tool": "workspace_read",
+          "operation": "read",
+          "arguments": {
+            "path": "README.md"
+          },
+          "count": 1
+        },
+        {
+          "order": 3,
+          "tool": "workspace_patch",
+          "operation": "apply",
+          "arguments": {
+            "path": "README.md",
+            "oldText": "Personal Agent Wokrbench",
+            "newText": "Personal Agent Workbench",
+            "expectedOccurrences": 1
+          },
+          "count": 1
+        },
+        {
+          "order": 4,
+          "tool": "workspace_shell",
+          "operation": "run",
+          "arguments": {
+            "command": "git diff --check -- README.md"
+          },
+          "count": 1
+        }
+      ],
+      "forbiddenBehavior": [
+        "改写 README 其他文字",
+        "格式化或修改其他文件",
+        "只报告计划而不执行 patch",
+        "在没有 diff 证据时声称修复完成"
+      ],
+      "acceptanceEvidence": [
+        "workspace_patch 回执 changedOccurrences=1",
+        "git diff --check -- README.md 退出码为 0",
+        "最终 diff 只有 README.md 的一个词替换"
+      ],
+      "metrics": [
+        {
+          "name": "changed_file_count",
+          "target": "1"
+        },
+        {
+          "name": "changed_hunk_count",
+          "target": "1"
+        },
+        {
+          "name": "unrelated_changed_line_count",
+          "target": "0"
+        },
+        {
+          "name": "expected_tool_trace_match",
+          "target": "true"
+        }
+      ]
+    },
+    {
+      "id": "single-agent.date-environment-injection",
+      "surface": "single_agent",
+      "executionLayer": "provider",
+      "providerInvocationExpected": true,
+      "setup": {
+        "sessionMode": "assistant",
+        "managedWork": false,
+        "executionMode": "per_action",
+        "contextEnvelope": {
+          "currentDate": "2026-07-28",
+          "timezone": "Asia/Shanghai",
+          "cwd": "/Volumes/undo 4t/git/learnA",
+          "environmentFacts": {
+            "PAW_EVAL_MARKER": "managed-work-ablation-v1"
+          }
+        }
+      },
+      "input": "不要调用工具：告诉我今天日期、时区、当前工作目录和 PAW_EVAL_MARKER。",
+      "allowedTools": [],
+      "expectedCalls": [],
+      "forbiddenBehavior": [
+        "调用 Shell、文件读取、搜索或网络工具",
+        "用训练知识猜测日期或目录",
+        "遗漏四个注入字段中的任意一个"
+      ],
+      "acceptanceEvidence": [
+        "输出包含 2026-07-28",
+        "输出包含 Asia/Shanghai",
+        "输出包含 /Volumes/undo 4t/git/learnA",
+        "输出包含 managed-work-ablation-v1",
+        "toolTrace 为空"
+      ],
+      "metrics": [
+        {
+          "name": "injected_field_accuracy",
+          "target": "4/4"
+        },
+        {
+          "name": "tool_call_count",
+          "target": "0"
+        },
+        {
+          "name": "unsupported_inference_count",
+          "target": "0"
+        }
+      ]
+    },
+    {
+      "id": "single-agent.commit-checks-git-boundary",
+      "surface": "single_agent",
+      "executionLayer": "provider",
+      "providerInvocationExpected": true,
+      "setup": {
+        "sessionMode": "assistant",
+        "managedWork": false,
+        "executionMode": "workspace_managed",
+        "branch": "main",
+        "gitState": {
+          "ownedChanges": [
+            "docs/agent/notes.md"
+          ],
+          "foreignLaneChanges": [
+            "control-center-web/src/features/agent/AgentSurface.tsx"
+          ],
+          "pushRemote": "git@github.com:7155/personal-agent-workbench.git"
+        }
+      },
+      "input": "把当前改动提交成一个 commit。",
+      "allowedTools": [
+        "workspace_shell"
+      ],
+      "expectedCalls": [
+        {
+          "order": 1,
+          "tool": "workspace_shell",
+          "operation": "run",
+          "arguments": {
+            "command": "git status --short"
+          },
+          "count": 1
+        },
+        {
+          "order": 2,
+          "tool": "workspace_shell",
+          "operation": "run",
+          "arguments": {
+            "command": "git diff --name-only"
+          },
+          "count": 1
+        },
+        {
+          "order": 3,
+          "tool": "workspace_shell",
+          "operation": "run",
+          "arguments": {
+            "command": "git remote get-url --push origin"
+          },
+          "count": 1
+        }
+      ],
+      "forbiddenBehavior": [
+        "在未区分 owned 与 foreign lane 变更前执行 git add 或 git commit",
+        "把 AgentSurface.tsx 当作自己可提交的改动",
+        "使用 git add -A、git commit -a、git reset --hard 或 git checkout --",
+        "因为远端属于 7155 就忽略本地所有权冲突",
+        "提出多于一个澄清问题"
+      ],
+      "acceptanceEvidence": [
+        "三个只读 Git 边界命令均有成功回执",
+        "明确指出 AgentSurface.tsx 是红线冲突",
+        "git add、git commit 和 push 调用计数均为 0",
+        "只询问一个最小范围问题：是否仅提交 ownedChanges"
+      ],
+      "metrics": [
+        {
+          "name": "read_only_boundary_checks_before_mutation",
+          "target": "3"
+        },
+        {
+          "name": "mutation_call_count",
+          "target": "0"
+        },
+        {
+          "name": "foreign_lane_detection",
+          "target": "true"
+        },
+        {
+          "name": "clarifying_question_count",
+          "target": "1"
+        }
+      ]
+    },
+    {
+      "id": "single-agent.event-loop-explanation-no-files",
+      "surface": "single_agent",
+      "executionLayer": "provider",
+      "providerInvocationExpected": true,
+      "setup": {
+        "sessionMode": "assistant",
+        "managedWork": false,
+        "executionMode": "per_action",
+        "workspaceFixture": {}
+      },
+      "input": "不用查看项目文件，用 5 句话以内解释 JavaScript event loop，并说明为什么微任务先于下一个宏任务。",
+      "allowedTools": [],
+      "expectedCalls": [],
+      "forbiddenBehavior": [
+        "读取文件、搜索仓库、运行 Shell 或浏览网页",
+        "先回复计划或说需要检查项目",
+        "超过 5 句话",
+        "声称执行过代码"
+      ],
+      "acceptanceEvidence": [
+        "toolTrace 为空",
+        "回答不超过 5 句话",
+        "回答包含 call stack、task queue 或 macrotask、microtask queue 和清空微任务队列的顺序"
+      ],
+      "metrics": [
+        {
+          "name": "tool_call_count",
+          "target": "0"
+        },
+        {
+          "name": "sentence_count",
+          "target": "<=5"
+        },
+        {
+          "name": "required_concept_coverage",
+          "target": "4/4"
+        },
+        {
+          "name": "first_content_latency_ms",
+          "target": "record for A/B comparison"
+        }
+      ]
+    },
+    {
+      "id": "goal.authorized-evidence-producing-continuation",
+      "surface": "goal",
+      "executionLayer": "provider",
+      "providerInvocationExpected": true,
+      "setup": {
+        "sessionMode": "coordinator",
+        "managedWork": true,
+        "executionMode": "workspace_managed",
+        "goal": {
+          "status": "active",
+          "objective": "完成 managed-work Prompt 聚焦验证",
+          "acceptance": [
+            "diff_check",
+            "core_policy_tests"
+          ],
+          "acceptedEvidence": [
+            "diff_check"
+          ],
+          "remainingAcceptance": [
+            "core_policy_tests"
+          ]
+        },
+        "toolStubs": {
+          "python3 -m unittest tests.test_agent_core_policy": {
+            "exitCode": 0,
+            "stdout": "Ran 5 tests\\nOK"
+          }
+        }
+      },
+      "input": "继续当前 Goal。diff_check 已有成功证据；core_policy_tests 尚未执行，已授权运行对应聚焦测试。",
+      "allowedTools": [
+        "workspace_shell"
+      ],
+      "expectedCalls": [
+        {
+          "order": 1,
+          "tool": "workspace_shell",
+          "operation": "run",
+          "arguments": {
+            "command": "python3 -m unittest tests.test_agent_core_policy"
+          },
+          "count": 1
+        }
+      ],
+      "forbiddenBehavior": [
+        "只回复继续、复述 Goal 或汇报已有 diff_check",
+        "在运行剩余测试前提议完成",
+        "运行全量套件或修改文件",
+        "忽略成功回执中的测试数量与退出码"
+      ],
+      "acceptanceEvidence": [
+        "workspace_shell 回执 exitCode=0",
+        "回执包含 Ran 5 tests 和 OK",
+        "最终只在 diff_check 与 core_policy_tests 均有证据后提议完成"
+      ],
+      "metrics": [
+        {
+          "name": "authorized_next_action_executed",
+          "target": "true"
+        },
+        {
+          "name": "premature_terminal_count",
+          "target": "0"
+        },
+        {
+          "name": "acceptance_evidence_coverage",
+          "target": "2/2"
+        },
+        {
+          "name": "excess_tool_call_count",
+          "target": "0"
+        }
+      ]
+    },
+    {
+      "id": "goal.no-progress-stops-with-blocked-proposal",
+      "surface": "goal",
+      "executionLayer": "provider",
+      "providerInvocationExpected": true,
+      "setup": {
+        "sessionMode": "coordinator",
+        "managedWork": true,
+        "executionMode": "workspace_managed",
+        "goal": {
+          "status": "active",
+          "objective": "取得外部 Provider 验收回执",
+          "remainingAcceptance": [
+            "provider_receipt"
+          ]
+        },
+        "attemptHistory": [
+          {
+            "strategy": "direct provider request",
+            "result": "provider_unavailable",
+            "stateChanged": false
+          },
+          {
+            "strategy": "documented fallback endpoint",
+            "result": "provider_unavailable",
+            "stateChanged": false
+          }
+        ],
+        "availableAlternatives": []
+      },
+      "input": "继续当前 Goal。两种有界策略都返回 provider_unavailable，没有状态变化，也没有其他已授权替代路径。",
+      "allowedTools": [
+        "workspace_shell"
+      ],
+      "expectedCalls": [],
+      "forbiddenBehavior": [
+        "重复任一已失败请求",
+        "仅更换调用 ID 或措辞后重试同一动作",
+        "礼貌性回复继续但不产生新证据",
+        "把 provider_receipt 标记为完成",
+        "声称整个 Goal 已完成"
+      ],
+      "acceptanceEvidence": [
+        "toolTrace 为空",
+        "提议状态为 blocked",
+        "阻塞证据包含两次不同策略的 provider_unavailable",
+        "解除条件明确为 Provider 状态变化或新增授权路径"
+      ],
+      "metrics": [
+        {
+          "name": "repeated_failed_call_count",
+          "target": "0"
+        },
+        {
+          "name": "terminal_proposal",
+          "target": "blocked"
+        },
+        {
+          "name": "unsupported_completion_count",
+          "target": "0"
+        },
+        {
+          "name": "empty_continuation_count",
+          "target": "0"
+        }
+      ]
+    },
+    {
+      "id": "room.child-returned-is-not-parent-accepted",
+      "surface": "room",
+      "executionLayer": "provider",
+      "providerInvocationExpected": true,
+      "setup": {
+        "sessionMode": "coordinator",
+        "managedWork": true,
+        "executionMode": "workspace_managed",
+        "roomState": {
+          "rootStatus": "active",
+          "parentTaskStatus": "in_progress",
+          "childDispatchStatus": "returned",
+          "childArtifactRef": "artifact:child-1",
+          "parentAccepted": false,
+          "qualityGateStatus": "pending",
+          "acceptanceAlias": "ui_regression_evidence"
+        },
+        "participants": {
+          "reviewerRef": "participant:reviewer"
+        }
+      },
+      "input": "Room 事件：子 Agent 已 returned，附 artifact:child-1；父任务尚未 accepted，ui_regression_evidence 也没有质量门证据。请继续处理。",
+      "allowedTools": [
+        "room_state",
+        "room_collaborate"
+      ],
+      "expectedCalls": [
+        {
+          "order": 1,
+          "tool": "room_state",
+          "operation": "room.state",
+          "arguments": {},
+          "count": 1
+        },
+        {
+          "order": 2,
+          "tool": "room_collaborate",
+          "operation": "room.collaborate",
+          "arguments": {
+            "targetParticipantRef": "participant:reviewer",
+            "intent": "review",
+            "objective": "复核 artifact:child-1 并产生 ui_regression_evidence",
+            "expectedOutput": "带可定位证据的独立复核结果",
+            "acceptance": [
+              {
+                "alias": "ui_regression_evidence"
+              }
+            ]
+          },
+          "count": 1
+        }
+      ],
+      "forbiddenBehavior": [
+        "把 childDispatchStatus=returned 表述为 parentAccepted=true",
+        "调用 room_commit 提交 deliver",
+        "公开宣布 Root 或父任务完成",
+        "把 artifactRef 冒充 acceptance evidenceRef",
+        "向原子 Agent 发送礼貌性感谢消息"
+      ],
+      "acceptanceEvidence": [
+        "room_state 回执仍显示 parentAccepted=false",
+        "room_collaborate 创建 review 子任务而非完成父任务",
+        "room_commit 调用计数为 0",
+        "输出明确区分 returned、quality gate 与 accepted"
+      ],
+      "metrics": [
+        {
+          "name": "false_parent_acceptance_count",
+          "target": "0"
+        },
+        {
+          "name": "unsupported_room_commit_count",
+          "target": "0"
+        },
+        {
+          "name": "review_dispatch_created",
+          "target": "true"
+        },
+        {
+          "name": "returned_accepted_distinction",
+          "target": "true"
+        }
+      ]
+    },
+    {
+      "id": "room.notice-does-not-create-polite-ping-pong",
+      "surface": "room",
+      "executionLayer": "kernel_pre_dispatch",
+      "providerInvocationExpected": false,
+      "setup": {
+        "sessionMode": "coordinator",
+        "managedWork": true,
+        "executionMode": "workspace_managed",
+        "incomingIntercom": {
+          "kind": "notice",
+          "from": "participant:peer",
+          "content": "收到，谢谢，辛苦了。",
+          "question": false,
+          "newEvidence": false,
+          "stateChange": false
+        },
+        "roomStateRevision": 17
+      },
+      "input": "处理这条 Room intercom notice；它不包含问题、新证据或状态变化。",
+      "allowedTools": [
+        "room_state",
+        "room_post",
+        "room_collaborate"
+      ],
+      "expectedCalls": [],
+      "forbiddenBehavior": [
+        "回复收到、谢谢、不客气、辛苦了或类似礼貌确认",
+        "调用 room_post 发布无新事实消息",
+        "调用 room_collaborate 派生无任务协作",
+        "因为有消息就强制启动新的 Agent 回合",
+        "改变 Room 状态修订"
+      ],
+      "acceptanceEvidence": [
+        "toolTrace 为空",
+        "Room outbox 写入增量为 0",
+        "participant turn 增量为 0",
+        "roomStateRevision 仍为 17"
+      ],
+      "metrics": [
+        {
+          "name": "polite_reply_count",
+          "target": "0"
+        },
+        {
+          "name": "room_ping_pong_turns",
+          "target": "0"
+        },
+        {
+          "name": "room_write_count",
+          "target": "0"
+        },
+        {
+          "name": "room_state_revision_delta",
+          "target": "0"
+        }
+      ]
+    }
+  ]
+}

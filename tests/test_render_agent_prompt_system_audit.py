@@ -52,11 +52,13 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
         self.assertNotIn("<room-work>", prompt)
         self.assertNotIn("room_commit", prompt)
         self.assertNotIn("<room-context>", prompt)
+        self.assertNotIn("<managed-work>", prompt)
         self.assertIn("<durable-memory-policy>", prompt)
         self.assertIn("<capability-policy>", prompt)
         self.assertIn('<session-mode kind="coordinator">', coordinator)
         self.assertIn("不是 Room", coordinator)
         self.assertNotIn("<room-work>", coordinator)
+        self.assertIn("<managed-work>", coordinator)
 
     def test_conditional_agent_prompt_branches_are_explicit(self) -> None:
         self.assertEqual(
