@@ -355,9 +355,12 @@ def public_code_tool_activity(
         if value:
             result[key] = value
     for key in ("offset", "limit", "context", "timeout"):
-        value = args.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            result[key] = value
+        numeric_value = args.get(key)
+        if isinstance(numeric_value, (int, float)) and not isinstance(
+            numeric_value,
+            bool,
+        ):
+            result[key] = numeric_value
 
     if normalized_tool in command_tools:
         command = _public_tool_text(args.get("command"), maximum=2_000)
