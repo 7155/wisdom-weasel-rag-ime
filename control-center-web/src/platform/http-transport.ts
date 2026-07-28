@@ -12,7 +12,6 @@ import {
   type ControlStreamKind,
 } from './routes';
 import { SseParser, type ParsedSseEvent } from './sse';
-import { ControlTransportHttpError } from './transport-errors';
 import {
   assertBrowserSnapshotId,
   assertControlRequest,
@@ -40,7 +39,19 @@ export interface HttpControlTransportOptions {
   random?: () => number;
 }
 
-export { ControlTransportHttpError } from './transport-errors';
+export class ControlTransportHttpError extends Error {
+  readonly status: number;
+  readonly pathId: ControlPathId;
+  readonly payload: unknown;
+
+  constructor(pathId: ControlPathId, status: number, message: string, payload?: unknown) {
+    super(message);
+    this.name = 'ControlTransportHttpError';
+    this.pathId = pathId;
+    this.status = status;
+    this.payload = payload;
+  }
+}
 
 export class HttpControlTransport implements ControlTransport {
   readonly kind = 'http' as const;

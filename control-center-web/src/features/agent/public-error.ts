@@ -1,5 +1,4 @@
 import { publicErrorText } from '@/features/overview/management-ui';
-import { ControlTransportHttpError } from '@/platform/transport-errors';
 
 const unavailableModelPattern = /(?:model\s+["']?[^"']+["']?\s+is\s+not\s+supported|unsupported\s+model|model_not_supported|模型.*(?:不支持|不可用))/i;
 const providerRequestFailurePattern = /(?:error\s+from\s+provider|upstream\s+request\s+failed|provider[_\s-](?:request|response|error)|模型服务.*(?:失败|异常))/i;
@@ -84,8 +83,9 @@ export function isUnresolvedAgentCommandPending(
 
 export function isAmbiguousAgentPromptFailure(value: unknown): boolean {
   if (agentCommandReceiptFailure(value)) return false;
-  if (value instanceof ControlTransportHttpError) {
-    return value.status >= 500;
+  const responseStatus = transportResponseStatus(value);
+  if (responseStatus !== undefined) {
+    return responseStatus >= 500;
   }
   if (value instanceof DOMException) {
     return (
@@ -141,10 +141,15 @@ export function publicAgentErrorText(
 }
 
 function errorPayload(value: unknown): Record<string, unknown> | undefined {
-  if (value instanceof ControlTransportHttpError) {
-    return record(value.payload);
-  }
   return record(record(value)?.payload);
+}
+
+function transportResponseStatus(value: unknown): number | undefined {
+  if (!(value instanceof Error)) return undefined;
+  const status = record(value)?.status;
+  return typeof status === 'number' && Number.isInteger(status)
+    ? status
+    : undefined;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
