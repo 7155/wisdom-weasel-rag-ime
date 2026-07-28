@@ -374,17 +374,25 @@ function AgentWorkspace() {
     ensure(selectedId);
     let active = true;
     let unsubscribe = () => {};
+    let snapshotRequestId = 0;
+    let snapshotAbort: AbortController | undefined;
     const batcher = createAgentDeltaBatcher((events) => {
       const needsSnapshot = useAgentLiveStore.getState().applyEvents(selectedId, events);
       if (needsSnapshot) void loadSnapshot();
     });
     async function loadSnapshot(): Promise<boolean> {
+      const requestId = snapshotRequestId + 1;
+      snapshotRequestId = requestId;
+      snapshotAbort?.abort();
+      const abort = new AbortController();
+      snapshotAbort = abort;
       try {
         const snapshotResponse = await transport.request({
           pathId: 'agent.session.snapshot',
           params: { sessionId: selectedId },
+          signal: abort.signal,
         });
-        if (!active) return false;
+        if (!active || requestId !== snapshotRequestId) return false;
         if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
           useAgentLiveStore.getState().hydrateSnapshot(selectedId, previewAgentSnapshot(selectedId));
           useAgentLiveStore.getState().applyEvents(selectedId, previewAgentEvents(selectedId));
@@ -398,19 +406,34 @@ function AgentWorkspace() {
           {
             next: (event) => {
               sendTimings.observe(event);
+              // Every transport reports snapshot_required through `next` and
+              // the optional callback. Owning recovery here avoids launching
+              // two snapshots for one gap while still recovering gaps found
+              // locally by the reducer's batched sequence check.
+              if (event.eventType === 'snapshot_required') {
+                const needsSnapshot = useAgentLiveStore.getState().applyEvents(
+                  selectedId,
+                  [event],
+                );
+                if (needsSnapshot) void loadSnapshot();
+                return;
+              }
               batcher.push(event);
               if (event.eventType === 'session_configuration_changed') {
                 modelSelection.applyConfigurationEvent(selectedId, event.payload);
               }
             },
             error: (streamError) => active && setError(errorText(streamError)),
-            snapshotRequired: () => void loadSnapshot(),
           },
         );
         return true;
       } catch (loadError) {
-        if (active) setError(`对话记录暂时无法恢复。${errorText(loadError)}`);
+        if (active && requestId === snapshotRequestId && !abort.signal.aborted) {
+          setError(`对话记录暂时无法恢复。${errorText(loadError)}`);
+        }
         return false;
+      } finally {
+        if (requestId === snapshotRequestId) snapshotAbort = undefined;
       }
     }
     async function loadSessionCatalogs(): Promise<void> {
@@ -479,6 +502,7 @@ function AgentWorkspace() {
     void loadSessionCatalogs();
     return () => {
       active = false;
+      snapshotAbort?.abort();
       batcher.clear();
       unsubscribe();
       sendTimings.clearSession(selectedId);

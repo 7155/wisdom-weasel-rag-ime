@@ -255,6 +255,82 @@ describe('Agent experience', () => {
     expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
   });
 
+  it('keeps only the latest snapshot when gap recovery responses resolve out of order', async () => {
+    const baseline = previewAgentSnapshot('session-preview');
+    const staleSnapshot = deferred<unknown>();
+    const latestSnapshot = deferred<unknown>();
+    let snapshotRequests = 0;
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => {
+        snapshotRequests += 1;
+        if (snapshotRequests === 1) return baseline;
+        if (snapshotRequests === 2) return staleSnapshot.promise;
+        if (snapshotRequests === 3) return latestSnapshot.promise;
+        throw new Error(`unexpected snapshot request ${snapshotRequests}`);
+      },
+    );
+    // Exercise the production hydration path rather than the mock preview
+    // fixture branch while retaining the controllable in-memory transport.
+    Object.defineProperty(transport, 'kind', { value: 'native' });
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+
+    const gapEvent = (sequence: number) => ({
+      schemaVersion: 'rag-ime.agent-event.v1',
+      eventId: `snapshot-required-${sequence}`,
+      sessionId: 'session-preview',
+      turnId: '',
+      sequence,
+      createdAtMs: sequence,
+      streamKind: 'agent',
+      eventType: 'snapshot_required',
+      payload: { reason: 'event_replay_gap' },
+      resumeToken: `session-preview:${sequence}`,
+    });
+    act(() => {
+      transport.emit('agent.session.events', gapEvent(baseline.lastSequence + 1));
+      transport.emit('agent.session.events', gapEvent(baseline.lastSequence + 2));
+    });
+    await waitFor(() => expect(snapshotRequests).toBe(3));
+
+    const latestSequence = baseline.lastSequence + 20;
+    await act(async () => {
+      latestSnapshot.resolve({
+        ...baseline,
+        lastSequence: latestSequence,
+        resumeToken: `session-preview:${latestSequence}`,
+      });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(useAgentLiveStore.getState().projections['session-preview'].resumeToken)
+        .toBe(`session-preview:${latestSequence}`);
+      expect(transport.subscriptionCalls.at(-1)?.request.lastEventId)
+        .toBe(`session-preview:${latestSequence}`);
+    });
+
+    await act(async () => {
+      staleSnapshot.resolve({
+        ...baseline,
+        lastSequence: baseline.lastSequence + 10,
+        resumeToken: `session-preview:${baseline.lastSequence + 10}`,
+      });
+      await Promise.resolve();
+    });
+    expect(useAgentLiveStore.getState().projections['session-preview'].resumeToken)
+      .toBe(`session-preview:${latestSequence}`);
+    expect(snapshotRequests).toBe(3);
+  });
+
   it('creates a real Pi-backed conversation branch and restores the selected message as draft', async () => {
     const transport = featureTransport();
     const user = userEvent.setup();
