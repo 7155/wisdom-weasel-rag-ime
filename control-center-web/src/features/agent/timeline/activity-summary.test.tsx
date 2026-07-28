@@ -23,6 +23,7 @@ describe('Agent tool activity details', () => {
     expect(within(summary).getByText('完成')).toBeInTheDocument();
     expect(summary.querySelector('.agent-activity__inline-icon')).toBeInTheDocument();
     expect(summary.querySelector('.agent-activity__status')).not.toBeInTheDocument();
+    expect(group!.querySelector('.agent-activity-row')).not.toBeInTheDocument();
 
     fireEvent.click(summary);
     expect(group).toHaveAttribute('open');
@@ -30,6 +31,53 @@ describe('Agent tool activity details', () => {
     fireEvent.click(row!.querySelector('summary')!);
     expect(row).toHaveAttribute('open');
     expect(group).toHaveTextContent('运行状态已读取');
+  });
+
+  it('lets a running inline group stay closed while its status keeps updating', () => {
+    const activity = toolActivity('tool_progress', 'running', {
+      toolCallId: 'call-running-disclosure',
+      toolName: 'workspace_search',
+      partialResult: { details: { summary: '正在检索项目内容' } },
+    });
+    const { container, rerender } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+
+    expect(group).toHaveAttribute('open');
+    fireEvent.click(group.querySelector('summary')!);
+    expect(group).not.toHaveAttribute('open');
+    expect(group.querySelector('.agent-activity-row')).not.toBeInTheDocument();
+
+    rerender(
+      <ActivitySummary
+        activities={[{ ...activity, updatedAtMs: activity.updatedAtMs + 1_000 }]}
+        inline
+      />,
+    );
+    expect(group).not.toHaveAttribute('open');
+    expect(group.querySelector('.agent-activity-row')).not.toBeInTheDocument();
+  });
+
+  it('keeps a failed inline group collapsed until the user asks for evidence', () => {
+    const activity = toolActivity('tool_finished', 'failed', {
+      toolCallId: 'call-failed-disclosure',
+      toolName: 'workspace_search',
+      isError: true,
+      result: { details: { error: '搜索参数超出允许范围' } },
+    });
+    const { container, rerender } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    const summary = group.querySelector('summary')!;
+
+    expect(group).not.toHaveAttribute('open');
+    expect(group.querySelector('.agent-activity-row')).not.toBeInTheDocument();
+    fireEvent.click(summary);
+    expect(group).toHaveAttribute('open');
+    expect(group.querySelector('.agent-activity-row')).toBeInTheDocument();
+    fireEvent.click(summary);
+    expect(group).not.toHaveAttribute('open');
+
+    rerender(<ActivitySummary activities={[{ ...activity, updatedAtMs: 3 }]} inline />);
+    expect(group).not.toHaveAttribute('open');
   });
 
   it('keeps the timeline compact and opens full activity details in a dialog', () => {

@@ -2158,6 +2158,12 @@ details.agent-activity--inline > summary > .agent-activity__inline-icon {
   background: color-mix(in srgb, var(--activity-soft) 62%, var(--color-paper));
   color: var(--activity-color);
 }
+details.agent-activity--inline[data-state='running'] > summary > .agent-activity__inline-icon {
+  animation: agent-status-spin 1.2s linear infinite;
+}
+details.agent-activity--inline[data-state='waiting'] > summary > .agent-activity__inline-icon {
+  animation: agent-status-breathe 1.8s ease-in-out infinite;
+}
 details.agent-activity--inline > summary > .agent-activity__inline-status {
   padding: 2px 6px;
   border-radius: var(--radius-1);
@@ -2170,6 +2176,14 @@ details.agent-activity--inline > summary > .agent-activity__inline-status {
   padding: 4px 10px 5px 32px;
   border-top-color: color-mix(in srgb, var(--activity-color) 18%, var(--color-border-soft));
   background: color-mix(in srgb, var(--color-surface) 76%, var(--color-paper));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  details.agent-activity--inline[data-state='running'] > summary > .agent-activity__inline-icon,
+  details.agent-activity--inline[data-state='waiting'] > summary > .agent-activity__inline-icon {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 @media (max-width: 520px) {

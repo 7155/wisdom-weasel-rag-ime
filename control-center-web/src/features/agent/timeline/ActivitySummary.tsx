@@ -15,7 +15,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Button,
   Dialog,
@@ -49,16 +49,28 @@ export function ActivitySummary({
 }) {
   const running = activities.some((activity) => activity.status === 'running');
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running) return undefined;
-    setNowMs(Date.now());
-    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
-    return () => window.clearInterval(timer);
-  }, [running]);
-  if (activities.length === 0) return null;
   const waiting = activities.some((activity) => activity.status === 'waiting');
   const failed = activities.some((activity) => activity.status === 'failed');
+  const automaticInlineOpen = running || waiting;
+  const [inlineOpen, setInlineOpen] = useState(automaticInlineOpen);
+  const inlineOpenWasChosen = useRef(false);
+  const inlineGroupKey = activities.length
+    ? `${activities[0]!.turnId}:${activities[0]!.id}`
+    : '';
+  const previousInlineGroupKey = useRef(inlineGroupKey);
+
+  useEffect(() => {
+    if (!inline) return;
+    if (previousInlineGroupKey.current !== inlineGroupKey) {
+      previousInlineGroupKey.current = inlineGroupKey;
+      inlineOpenWasChosen.current = false;
+      setInlineOpen(automaticInlineOpen);
+      return;
+    }
+    if (!inlineOpenWasChosen.current) setInlineOpen(automaticInlineOpen);
+  }, [automaticInlineOpen, inline, inlineGroupKey]);
+
+  if (activities.length === 0) return null;
   const summary = aggregateSummary(activities);
   const title = running ? '正在处理' : waiting ? '等待你的确认' : failed ? '活动中有失败项' : '活动已完成';
   const inlineTools = compactToolSummary(activities);
@@ -114,31 +126,45 @@ export function ActivitySummary({
       ? TriangleAlert
       : waiting
         ? ShieldAlert
-        : inlineTools.count
-          ? Wrench
-          : activityPresentation(activities[activities.length - 1]!).icon;
+        : running
+          ? CircleDashed
+          : inlineTools.count
+            ? Wrench
+            : activityPresentation(activities[activities.length - 1]!).icon;
     return (
       <div className="agent-activity-group" data-layout="interleaved">
-        <details className="agent-activity agent-activity--inline" open={running || waiting || failed || undefined} data-state={state}>
-          <summary aria-label={`${inlineTitle}，${inlineSummary}，${inlineStatus}`}>
+        <details
+          className="agent-activity agent-activity--inline"
+          data-state={state}
+          open={inlineOpen}
+        >
+          <summary
+            aria-label={`${inlineTitle}，${inlineSummary}，${inlineStatus}`}
+            onClick={(event) => {
+              event.preventDefault();
+              inlineOpenWasChosen.current = true;
+              setInlineOpen((current) => !current);
+            }}
+          >
             <InlineIcon aria-hidden="true" className="agent-activity__inline-icon" size={15} />
             <strong>{inlineTitle}</strong>
             <span className="agent-activity__inline-tools">{inlineSummary}</span>
             <span className="agent-activity__inline-status" data-status={state}>{inlineStatus}</span>
             <ChevronRight aria-hidden="true" size={15} />
           </summary>
-          <div className="agent-activity__inline-timeline">
-            {activities.map((activity) => (
-              <ActivityRow
-                key={activity.id}
-                activity={activity}
-                nowMs={nowMs}
-                onApprovalDecision={onApprovalDecision}
-                onOpenApproval={onOpenApproval}
-                onRequestPermission={onRequestPermission}
-              />
-            ))}
-          </div>
+          {inlineOpen ? (
+            <div className="agent-activity__inline-timeline">
+              {activities.map((activity) => (
+                <ActivityRow
+                  key={activity.id}
+                  activity={activity}
+                  onApprovalDecision={onApprovalDecision}
+                  onOpenApproval={onOpenApproval}
+                  onRequestPermission={onRequestPermission}
+                />
+              ))}
+            </div>
+          ) : null}
         </details>
         {approvals}
       </div>
@@ -167,7 +193,6 @@ export function ActivitySummary({
               <ActivityRow
                 key={activity.id}
                 activity={activity}
-                nowMs={nowMs}
                 onApprovalDecision={onApprovalDecision}
                 onOpenApproval={(selected) => {
                   setDetailsOpen(false);
@@ -188,7 +213,6 @@ export function ActivitySummary({
             <ActivityRow
               key={activity.id}
               activity={activity}
-              nowMs={nowMs}
               onApprovalDecision={onApprovalDecision}
               onOpenApproval={onOpenApproval}
               onRequestPermission={onRequestPermission}
@@ -203,13 +227,11 @@ export function ActivitySummary({
 
 function ActivityRow({
   activity,
-  nowMs,
   onApprovalDecision,
   onOpenApproval,
   onRequestPermission,
 }: {
   activity: AgentActivityProjection;
-  nowMs: number;
   onApprovalDecision?: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
@@ -226,10 +248,22 @@ function ActivityRow({
   const hash = text(payload.payloadSha256);
   const canDecide = activity.status === 'waiting' && approvalId && hash && onApprovalDecision;
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
+  const [rowOpen, setRowOpen] = useState(false);
+  const nowMs = useActivityClock(activity.status === 'running');
   const duration = activityDuration(activity, nowMs);
   return (
-    <details className="agent-activity-row" data-kind={presentation.kind} open={activity.status === 'failed' || activity.status === 'waiting' || undefined}>
-      <summary>
+    <details
+      className="agent-activity-row"
+      data-kind={presentation.kind}
+      data-state={activity.status}
+      open={rowOpen}
+    >
+      <summary
+        onClick={(event) => {
+          event.preventDefault();
+          setRowOpen((current) => !current);
+        }}
+      >
         <span className="agent-activity-row__icon" data-kind={presentation.kind}><Icon size={15} /></span>
         <span>
           <strong>{presentation.title}</strong>
@@ -237,36 +271,51 @@ function ActivityRow({
         </span>
         <i data-status={activity.status}>{toolView?.sources.length ? `来源 ${toolView.sources.length} · ` : ''}{statusLabel(activity.status)}{duration ? ` · ${duration}` : ''}</i>
       </summary>
-      <div className="agent-activity-row__details">
-        {presentation.detail ? <p>{presentation.detail}</p> : null}
-        <ToolProgressTimeline activity={activity} entries={progressHistory} />
-        {toolView?.preview ? <SemanticToolPreview preview={toolView.preview} /> : null}
-        {toolView ? <PublicToolFields view={toolView} /> : <SafeFieldList data={payload} />}
-        {toolView?.error ? <PublicToolError reason={toolView.error} /> : null}
-        <SourceList items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)} />
-        {toolView?.destination ? (
-          <a className="agent-tool-destination" href={toolView.destination.href}>
-            {toolView.destination.label}<ExternalLink size={13} aria-hidden="true" />
-          </a>
-        ) : null}
-        {canDecide ? (
-          <div className="agent-activity-row__approval-actions">
-            <Button size="small" variant="quiet" onClick={() => onApprovalDecision(approvalId, 'rejected', hash)}>拒绝</Button>
-            <Button size="small" variant="primary" onClick={() => onApprovalDecision(approvalId, 'approved', hash)}>批准</Button>
-          </div>
-        ) : null}
-        {toolView?.recovery === 'approval' && onOpenApproval ? (
-          <div className="agent-tool-recovery">
-            <Button size="small" variant="primary" leadingIcon={<ShieldAlert size={14} />} onClick={() => onOpenApproval(activity)}>去审批</Button>
-          </div>
-        ) : toolView?.recovery === 'permission' && onRequestPermission ? (
-          <div className="agent-tool-recovery">
-            <Button size="small" variant="primary" leadingIcon={<ShieldAlert size={14} />} onClick={onRequestPermission}>请求权限</Button>
-          </div>
-        ) : null}
-      </div>
+      {rowOpen ? (
+        <div className="agent-activity-row__details">
+          {presentation.detail ? <p>{presentation.detail}</p> : null}
+          <ToolProgressTimeline activity={activity} entries={progressHistory} />
+          {toolView?.preview ? <SemanticToolPreview preview={toolView.preview} /> : null}
+          {toolView ? <PublicToolFields view={toolView} /> : <SafeFieldList data={payload} />}
+          {toolView?.error ? <PublicToolError reason={toolView.error} /> : null}
+          <SourceList items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)} />
+          {toolView?.destination ? (
+            <a className="agent-tool-destination" href={toolView.destination.href}>
+              {toolView.destination.label}<ExternalLink size={13} aria-hidden="true" />
+            </a>
+          ) : null}
+          {canDecide ? (
+            <div className="agent-activity-row__approval-actions">
+              <Button size="small" variant="quiet" onClick={() => onApprovalDecision(approvalId, 'rejected', hash)}>拒绝</Button>
+              <Button size="small" variant="primary" onClick={() => onApprovalDecision(approvalId, 'approved', hash)}>批准</Button>
+            </div>
+          ) : null}
+          {toolView?.recovery === 'approval' && onOpenApproval ? (
+            <div className="agent-tool-recovery">
+              <Button size="small" variant="primary" leadingIcon={<ShieldAlert size={14} />} onClick={() => onOpenApproval(activity)}>去审批</Button>
+            </div>
+          ) : toolView?.recovery === 'permission' && onRequestPermission ? (
+            <div className="agent-tool-recovery">
+              <Button size="small" variant="primary" leadingIcon={<ShieldAlert size={14} />} onClick={onRequestPermission}>请求权限</Button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </details>
   );
+}
+
+function useActivityClock(running: boolean): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return undefined;
+    setNowMs(Date.now());
+    // The UI displays whole seconds once a call crosses one second. Updating
+    // four times per second only rerendered every row in long tool histories.
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  return nowMs;
 }
 
 function ToolProgressTimeline({
