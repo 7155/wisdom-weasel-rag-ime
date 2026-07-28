@@ -1,5 +1,5 @@
 import { publicErrorText } from '@/features/overview/management-ui';
-import { ControlTransportHttpError } from '@/platform/http-transport';
+import { ControlTransportHttpError } from '@/platform/transport-errors';
 
 const unavailableModelPattern = /(?:model\s+["']?[^"']+["']?\s+is\s+not\s+supported|unsupported\s+model|model_not_supported|模型.*(?:不支持|不可用))/i;
 const providerRequestFailurePattern = /(?:error\s+from\s+provider|upstream\s+request\s+failed|provider[_\s-](?:request|response|error)|模型服务.*(?:失败|异常))/i;
