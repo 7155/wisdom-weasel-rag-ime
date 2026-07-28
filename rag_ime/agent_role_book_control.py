@@ -862,9 +862,26 @@ class AgentRoleBookControlService:
                     "The daily Role Book draft has no source evidence.",
                 )
             proposal_evidence_ids = _draft_proposal_evidence_ids(selected)
-            if not proposal_evidence_ids or not set(
-                proposal_evidence_ids
-            ).issubset(set(evidence_ids)):
+            patch = selected.get("patch")
+            patch = patch if isinstance(patch, Mapping) else {}
+            proposal_count = sum(
+                len(_mapping_list(patch.get(field)))
+                for field in (
+                    "traitProposals",
+                    "capabilityProposals",
+                    "lessonProposals",
+                    "commitmentProposals",
+                )
+            )
+            if (
+                proposal_count > 0
+                and (
+                    not proposal_evidence_ids
+                    or not set(proposal_evidence_ids).issubset(
+                        set(evidence_ids)
+                    )
+                )
+            ):
                 raise ManagementWorkError(
                     "stored_contract_invalid",
                     "A daily Role Book proposal references evidence outside its source window.",

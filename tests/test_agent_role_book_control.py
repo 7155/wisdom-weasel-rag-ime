@@ -268,6 +268,35 @@ class AgentRoleBookControlTests(unittest.TestCase):
             self.seed["revisionId"],
         )
 
+    def test_empty_daily_draft_can_be_deferred_but_not_activated(self) -> None:
+        draft = self._seed_empty_daily_draft()
+
+        result = self.control.decide_daily_draft(
+            {
+                "roleId": "companion-present-v1",
+                "roleVersion": "1",
+                "draftId": draft["draftId"],
+                "decision": "deferred",
+            }
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["decision"]["decision"], "deferred")
+        preview = self.control.activation_preview(
+            {
+                "roleId": "companion-present-v1",
+                "roleVersion": "1",
+                "revisionId": "",
+                "draftId": draft["draftId"],
+                "traitIndexes": [],
+                "capabilityIndexes": [],
+                "lessonIndexes": [],
+                "commitmentIndexes": [],
+            }
+        )
+        self.assertFalse(preview["ok"])
+        self.assertEqual(preview["errorCode"], "domain_not_applicable")
+
     def test_agent_revision_preview_shows_item_diff_and_rejects_stale_base(
         self,
     ) -> None:
@@ -519,6 +548,47 @@ class AgentRoleBookControlTests(unittest.TestCase):
                 """,
                 (
                     json.dumps([evidence_id]),
+                    json.dumps({"roleBookDraft": draft}, ensure_ascii=False),
+                ),
+            )
+        return draft
+
+    def _seed_empty_daily_draft(self) -> dict[str, object]:
+        draft = {
+            **self.daily_draft,
+            "draftId": "role-book-draft:test-empty",
+            "sourceDigestId": "digest:test-empty",
+            "patch": {
+                "recentWork": [],
+                "traitProposals": [],
+                "capabilityProposals": [],
+                "lessonProposals": [],
+                "commitmentProposals": [],
+            },
+            "proposalDiagnostics": {
+                "status": "no_eligible_evidence",
+                "provider": "fixture",
+                "inputChars": 0,
+                "acceptedProposalCount": 0,
+                "rejectedProposalCount": 0,
+            },
+            "createdAtMs": 150,
+        }
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO personal_context_consolidation_runs(
+                    run_id, project, role_id, role_version, idempotency_key,
+                    status, window_start_ms, window_end_ms,
+                    source_evidence_ids_json, output_json, created_at_ms,
+                    completed_at_ms, updated_at_ms
+                ) VALUES (
+                    'run:test-empty', 'rag-ime', 'companion-present-v1', '1',
+                    'daily:test-empty', 'succeeded', 100, 150, ?, ?, 150, 150, 150
+                )
+                """,
+                (
+                    json.dumps(draft["sourceEvidenceIds"]),
                     json.dumps({"roleBookDraft": draft}, ensure_ascii=False),
                 ),
             )
