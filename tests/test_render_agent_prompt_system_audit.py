@@ -379,6 +379,7 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
         self.assertIn("managed-task-execution", skill_names)
         self.assertIn("quality-gate", skill_names)
         self.assertIn("grill-me", skill_names)
+        self.assertIn("grill-with-docs", skill_names)
         self.assertTrue(all(item["exists"] for item in reference_rows))
 
         comparisons = {
@@ -415,6 +416,14 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
         self.assertIn(
             "绝不回写已有 systemPrompt 字节",
             comparisons["progressive-disclosure"]["decision"],
+        )
+        self.assertIn(
+            "同一决策流程的持久记录模式",
+            comparisons["requirement-alignment"]["decision"],
+        )
+        self.assertIn(
+            "grill-with-docs",
+            comparisons["requirement-alignment"]["localSkillNames"],
         )
         self.assertIn(
             "每个新 context epoch 只注入一份结构化恢复包",

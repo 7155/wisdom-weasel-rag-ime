@@ -2574,14 +2574,15 @@ def _reference_comparison(cafe_root: Path, vcp_root: Path) -> dict[str, object]:
             "localSkillNames": [
                 "requirement-alignment",
                 "grill-me",
+                "grill-with-docs",
                 "solution-convergence",
             ],
             "upstreamSnapshotIds": [
                 "cafe.requirement-interview",
                 "vcp.agent-assistant-manifest",
             ],
-            "decision": "采用 Cafe 的采访式一次一问和确认门，并用 requirement-alignment 组织范围、验收与禁区；grill-me 只在高歧义或不可逆决策时加压追问，不能成为每个任务的固定仪式。",
-            "whyBetter": "用户仍在当前 Session 对话中对齐需求；确认后 Kernel 才冻结原始需求、需求目录和 AC，再分派独立任务。VCP 的自由文本委托可以借鉴对象选择，但没有同等强度的确认门。",
+            "decision": "采用 Cafe 和 grill-me 的采访式一次一问与确认门，并用 requirement-alignment 组织范围、验收与禁区；grill-with-docs 只是同一决策流程的持久记录模式，只有用户明确需要术语表、ADR 或决策文档时才按需加载，不能成为固定 Room 阶段。",
+            "whyBetter": "先查源码和运行事实，再由用户决定真实取舍；普通澄清留在 requirement-alignment，无需落盘的挑战留在 grill-me，只有用户确认的重大决定和明确未决问题进入文档。确认不会创建任务或授予实施权限，Kernel 仍独占执行状态。",
             "residualRisk": "当前追问质量仍依赖 Skill 文案；需要用模糊需求、已明确需求和用户拒绝继续澄清三类对话验收。",
         },
         {

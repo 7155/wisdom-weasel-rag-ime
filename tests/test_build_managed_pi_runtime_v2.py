@@ -304,6 +304,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             skill_names,
             sorted({
                 "grill-me",
+                "grill-with-docs",
                 "improve-codebase-architecture",
                 "managed-task-execution",
                 "quality-gate",

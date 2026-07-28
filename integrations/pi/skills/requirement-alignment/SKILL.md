@@ -34,7 +34,9 @@ not create a master Agent.
 3. Ask one material question at a time only when its answer can change scope,
    acceptance, permission, cost, ownership, safety, or an irreversible action.
    Use `grill-me` only for a consequential tradeoff that deserves explicit
-   challenge; routine clarification stays here.
+   challenge. When the user also wants the confirmed result preserved in a
+   glossary, ADR, or decision record, use `grill-with-docs` instead. Routine
+   clarification stays here.
 4. Accept concise answers such as "按建议" or "全部采用". Do not reopen a
    resolved choice in different words.
 5. When no material gap remains, present one compact confirmation packet:

@@ -24,6 +24,7 @@ POLICY_PATH = REPO_ROOT / "integrations/pi/room-skill-policy.json"
 SKILLS_ROOT = REPO_ROOT / "integrations/pi/skills"
 GENERAL_WORK_SKILLS = (
     "grill-me",
+    "grill-with-docs",
     "improve-codebase-architecture",
     "managed-task-execution",
     "quality-gate",
@@ -60,6 +61,20 @@ class RoomNativeSkillTests(unittest.TestCase):
                 self.assertEqual(frontmatter["name"], skill_id)
                 self.assertTrue(frontmatter["when"])
                 self.assertTrue(frontmatter["notFor"])
+                routing = {
+                    key: frontmatter[key]
+                    for key in ("name", "when", "does", "input", "output", "notFor")
+                }
+                encoded_routing = json.dumps(
+                    routing,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                self.assertLessEqual(
+                    len(encoded_routing),
+                    420,
+                    encoded_routing,
+                )
                 # Full bodies arrive only through skill_load Tool Results. They
                 # may be structured enough to guide real work, but stay bounded.
                 self.assertLessEqual(len(body.splitlines()), 120)
@@ -74,6 +89,9 @@ class RoomNativeSkillTests(unittest.TestCase):
         grilling = (SKILLS_ROOT / "grill-me/SKILL.md").read_text(
             encoding="utf-8"
         )
+        grilling_with_docs = (
+            SKILLS_ROOT / "grill-with-docs/SKILL.md"
+        ).read_text(encoding="utf-8")
         managed = (
             SKILLS_ROOT / "managed-task-execution/SKILL.md"
         ).read_text(encoding="utf-8")
@@ -87,6 +105,11 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("**depth**", architecture)
         self.assertIn("**deletion test**", architecture)
         self.assertIn("Ask exactly one decision question", grilling)
+        self.assertIn("durable-output mode of `grill-me`", grilling_with_docs)
+        self.assertIn("A recommendation is not a", grilling_with_docs)
+        self.assertIn("confirmed by user | open question", grilling_with_docs)
+        self.assertIn("Do not write code", grilling_with_docs)
+        self.assertIn("add a\nmandatory Room stage", grilling_with_docs)
         self.assertIn("ordinary chat", managed)
         self.assertIn("materially different legal", managed)
         self.assertIn("another participant or model capability", managed)
@@ -106,6 +129,7 @@ class RoomNativeSkillTests(unittest.TestCase):
         expected_keys = {"name", "when", "notFor", "input", "output", "does"}
 
         self.assertEqual(len(policy.skill_ids), 9)
+        self.assertNotIn("grill-with-docs", policy.skill_ids)
         for skill_id, routing in zip(policy.skill_ids, policy.catalog(), strict=True):
             with self.subTest(skill_id=skill_id):
                 path = SKILLS_ROOT / skill_id / "SKILL.md"
