@@ -377,6 +377,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     },
     {
         "id": "workspace_list",
+        "modelVisible": False,
         "domain": "workspace",
         "displayName": "工作区浏览",
         "description": "浏览当前运行协调 Session 明确授权的工作区",
@@ -391,13 +392,14 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     },
     {
         "id": "workspace_read",
+        "modelVisible": False,
         "domain": "workspace",
         "displayName": "工作区读取",
         "description": "读取授权工作区内的非敏感 UTF-8 文本",
         "when": ("协调 Session 需要读取已知授权文本文件",),
         "notFor": ("二进制、敏感文件、未知位置搜索或未授权路径",),
         "input": "相对文件路径、UTF-8 字节偏移与请求上限",
-        "output": "Pi 50 KiB/2000 行预算内的 UTF-8 文本、续读偏移与文件元数据",
+        "output": "单次最多 50 KiB/2000 行的 UTF-8 文本、续读偏移与文件元数据",
         "does": "读取授权工作区文本。",
         "operations": ("read",),
         "sessionModes": ("coordinator",),
@@ -405,6 +407,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     },
     {
         "id": "workspace_search",
+        "modelVisible": False,
         "domain": "workspace",
         "displayName": "工作区搜索",
         "description": "在授权工作区内有界搜索非敏感文件名与 UTF-8 文本内容",
@@ -419,6 +422,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     },
     {
         "id": "workspace_patch",
+        "modelVisible": False,
         "domain": "workspace",
         "displayName": "精确文件修改",
         "description": "预览精确文本替换，并在原生批准和文件哈希复验后原子写入",
@@ -433,7 +437,40 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
+        "id": "workspace_edit",
+        "modelVisible": False,
+        "domain": "workspace",
+        "displayName": "文件编辑",
+        "description": "在一个文件中执行一组精确文本替换；每段旧文本必须唯一且彼此不重叠",
+        "when": ("Coding Agent 需要在一个授权文本文件中修改一处或多处内容",),
+        "notFor": ("新建文件、完整重写、二进制编辑或未授权路径",),
+        "input": "路径与一组基于原始文件的 oldText/newText 精确替换",
+        "output": "统一差异、审批状态和哈希绑定的原子写入回执",
+        "does": "预览并受控应用一组精确文件修改。",
+        "operations": ("apply",),
+        "operationRisks": {"apply": "R2"},
+        "sessionModes": ("coordinator",),
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "workspace_write",
+        "modelVisible": False,
+        "domain": "workspace",
+        "displayName": "文件写入",
+        "description": "使用完整 UTF-8 内容新建文件或覆盖现有文件",
+        "when": ("Coding Agent 需要新建文件或完整重写授权文本文件",),
+        "notFor": ("局部修改、二进制写入、敏感文件或未授权路径",),
+        "input": "路径与完整 UTF-8 文本内容",
+        "output": "统一差异、审批状态和哈希绑定的原子写入回执",
+        "does": "预览并受控新建或完整覆盖文本文件。",
+        "operations": ("apply",),
+        "operationRisks": {"apply": "R2"},
+        "sessionModes": ("coordinator",),
+        "resultPresentation": "tool_result",
+    },
+    {
         "id": "workspace_shell",
+        "modelVisible": False,
         "domain": "workspace",
         "displayName": "受控命令",
         "description": "经原生批准后，在授权工作区的 macOS 沙箱中运行有界命令",
@@ -916,9 +953,29 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "path": {"type": "string", "minLength": 1, "maxLength": 1_024},
     "depth": {"type": "integer", "minimum": 1, "maximum": 3},
     "offset": {"type": "integer", "minimum": 0, "maximum": 50_000_000},
+    "lineOffset": {"type": "integer", "minimum": 1, "maximum": 50_000_000},
+    "lineLimit": {"type": "integer", "minimum": 1, "maximum": 2_000},
     "mode": {"type": "string", "enum": ["content", "name", "both"]},
+    "patternKind": {"type": "string", "enum": ["literal", "regex", "glob"]},
+    "glob": {"type": "string", "minLength": 1, "maxLength": 500},
+    "context": {"type": "integer", "minimum": 0, "maximum": 20},
     "oldText": {"type": "string", "minLength": 1, "maxLength": 65_536},
     "newText": {"type": "string", "maxLength": 131_072},
+    "edits": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 64,
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "oldText": {"type": "string", "minLength": 1, "maxLength": 65_536},
+                "newText": {"type": "string", "maxLength": 131_072},
+            },
+            "required": ["oldText", "newText"],
+        },
+    },
+    "content": {"type": "string", "maxLength": 2 * 1024 * 1024},
     "expectedOccurrences": {"type": "integer", "minimum": 1, "maximum": 100},
     "command": {"type": "string", "minLength": 1, "maxLength": 2_000},
     "cwd": {"type": "string", "maxLength": 1_024},
@@ -1006,9 +1063,14 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
         "amount", "timeoutMs", "maxChars", "limit",
     ),
     "workspace_list": ("path", "depth", "limit"),
-    "workspace_read": ("path", "offset", "limit"),
-    "workspace_search": ("query", "path", "mode", "caseSensitive", "limit"),
+    "workspace_read": ("path", "offset", "limit", "lineOffset", "lineLimit"),
+    "workspace_search": (
+        "query", "path", "mode", "caseSensitive", "limit",
+        "patternKind", "glob", "context",
+    ),
     "workspace_patch": ("path", "oldText", "newText", "expectedOccurrences"),
+    "workspace_edit": ("path", "edits"),
+    "workspace_write": ("path", "content"),
     "workspace_shell": ("command", "cwd", "timeoutSeconds", "allowNetwork"),
 }
 
@@ -1067,6 +1129,8 @@ _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
     ("workspace_read", "read"): ("path",),
     ("workspace_search", "search"): ("query",),
     ("workspace_patch", "apply"): ("path", "oldText", "newText"),
+    ("workspace_edit", "apply"): ("path", "edits"),
+    ("workspace_write", "apply"): ("path", "content"),
     ("workspace_shell", "run"): ("command",),
 }
 
@@ -1106,6 +1170,15 @@ _RUNTIME_TOOL_USAGE: dict[str, str] = {
 }
 
 _RUNTIME_TOOL_PROJECTIONS: dict[str, tuple[dict[str, str], ...]] = {
+    "workspace_list": ({"name": "ls", "operation": "list"},),
+    "workspace_read": ({"name": "read", "operation": "read"},),
+    "workspace_search": (
+        {"name": "grep", "operation": "search"},
+        {"name": "find", "operation": "search"},
+    ),
+    "workspace_edit": ({"name": "edit", "operation": "apply"},),
+    "workspace_write": ({"name": "write", "operation": "apply"},),
+    "workspace_shell": ({"name": "bash", "operation": "run"},),
     "ime_memory": (
         {
             "name": "memory_capture",
@@ -1308,6 +1381,8 @@ class ControlToolGateway:
                 "profile": session.get("toolProfileVersion") or "control-center-v1",
                 "risk": manifest.get("riskLevel") or "R0",
             }
+            if spec.get("modelVisible") is False:
+                item["modelVisible"] = False
             projections = [
                 dict(projection)
                 for projection in _RUNTIME_TOOL_PROJECTIONS.get(
@@ -1509,8 +1584,10 @@ class ControlToolGateway:
         if not _tool_profile_allows(session, tool=tool, operation=operation, spec=spec):
             raise ValueError("tool operation is not enabled for this session tool profile")
         if (tool, operation) in {
+            ("workspace_edit", "apply"),
             ("workspace_patch", "apply"),
             ("workspace_shell", "run"),
+            ("workspace_write", "apply"),
         }:
             # A preview request is still planning. Prove Act is open here, but
             # transition to executing only when an approved write is applied.
@@ -1995,8 +2072,10 @@ class ControlToolGateway:
                 tool=tool,
             )
         elif (tool, operation) in {
+            ("workspace_edit", "apply"),
             ("workspace_patch", "apply"),
             ("workspace_shell", "run"),
+            ("workspace_write", "apply"),
         }:
             self.sessions.require_workspace_act(session_id)
         result = self._apply_approved_operation(approval)
@@ -2023,6 +2102,14 @@ class ControlToolGateway:
             return result
         if (tool, operation) == ("workspace_patch", "apply"):
             result = self._apply_workspace_patch(approval)
+            self._mark_workspace_execution_started(approval)
+            return result
+        if (tool, operation) == ("workspace_edit", "apply"):
+            result = self._apply_workspace_edit(approval)
+            self._mark_workspace_execution_started(approval)
+            return result
+        if (tool, operation) == ("workspace_write", "apply"):
+            result = self._apply_workspace_write(approval)
             self._mark_workspace_execution_started(approval)
             return result
         if (tool, operation) == ("desktop_semantic", "act"):
@@ -2338,6 +2425,18 @@ class ControlToolGateway:
             )
         if (tool, operation) == ("workspace_patch", "apply"):
             return self._prepare_workspace_patch(
+                session_id=session_id,
+                args=args,
+                risk_level=risk_level,
+            )
+        if (tool, operation) == ("workspace_edit", "apply"):
+            return self._prepare_workspace_edit(
+                session_id=session_id,
+                args=args,
+                risk_level=risk_level,
+            )
+        if (tool, operation) == ("workspace_write", "apply"):
+            return self._prepare_workspace_write(
                 session_id=session_id,
                 args=args,
                 risk_level=risk_level,
@@ -4563,6 +4662,152 @@ class ControlToolGateway:
                 approval_id=str(approval.get("approvalId") or ""),
                 receipt=result,
                 preview=preview,
+            )
+            result.update(projection.receipt_fields())
+        return result
+
+    def _prepare_workspace_edit(
+        self,
+        *,
+        session_id: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        session = self.sessions.get(session_id)
+        prepared = self.workspace_harness.prepare_edit(session, args)
+        preview = self.workspace_harness.edit_preview(prepared)
+        action_payload = preview.get("actionPayload")
+        base_state = preview.get("baseState")
+        assert isinstance(action_payload, Mapping)
+        assert isinstance(base_state, Mapping)
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_edit",
+            operation="apply",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_edit",
+            operation="apply",
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_workspace_edit(self, approval: Mapping[str, object]) -> dict[str, object]:
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        )
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        session_id = str(approval.get("sessionId") or "")
+        expected_digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_edit",
+            operation="apply",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        session = self.sessions.get(session_id)
+        receipt = self.workspace_harness.apply_edit(session, action_payload, base_state)
+        result = {
+            **receipt,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "workspace_edit",
+            "operation": "apply",
+            "auditId": str(approval.get("approvalId") or ""),
+        }
+        if self.artifact_projector is not None:
+            projection = self.artifact_projector.project_workspace_mutation(
+                session=session,
+                approval_id=str(approval.get("approvalId") or ""),
+                receipt=result,
+                preview=preview,
+                origin_tool="workspace_edit",
+            )
+            result.update(projection.receipt_fields())
+        return result
+
+    def _prepare_workspace_write(
+        self,
+        *,
+        session_id: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        session = self.sessions.get(session_id)
+        prepared = self.workspace_harness.prepare_write(session, args)
+        preview = self.workspace_harness.write_preview(prepared)
+        action_payload = preview.get("actionPayload")
+        base_state = preview.get("baseState")
+        assert isinstance(action_payload, Mapping)
+        assert isinstance(base_state, Mapping)
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_write",
+            operation="apply",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_write",
+            operation="apply",
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_workspace_write(self, approval: Mapping[str, object]) -> dict[str, object]:
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload") if isinstance(preview.get("actionPayload"), Mapping) else {}
+        )
+        base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
+        session_id = str(approval.get("sessionId") or "")
+        expected_digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_write",
+            operation="apply",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        session = self.sessions.get(session_id)
+        receipt = self.workspace_harness.apply_write(session, action_payload, base_state)
+        result = {
+            **receipt,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "workspace_write",
+            "operation": "apply",
+            "auditId": str(approval.get("approvalId") or ""),
+        }
+        if self.artifact_projector is not None:
+            projection = self.artifact_projector.project_workspace_mutation(
+                session=session,
+                approval_id=str(approval.get("approvalId") or ""),
+                receipt=result,
+                preview=preview,
+                origin_tool="workspace_write",
             )
             result.update(projection.receipt_fields())
         return result

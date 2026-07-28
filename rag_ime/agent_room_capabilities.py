@@ -635,6 +635,8 @@ class RoomCapabilityManifestStore:
                     projections,
                     name,
                 )
+            if source.get("modelVisible") is False:
+                tool["modelVisible"] = False
             tools.append(tool)
         material = {**identity, "tools": tools}
         manifest = {
@@ -1898,7 +1900,6 @@ def _runtime_projections(
         raise ValueError(f"{tool_name}.runtimeProjections must be an array")
     result: list[dict[str, str]] = []
     names: set[str] = set()
-    operations: set[str] = set()
     for index, item in enumerate(value):
         if not isinstance(item, Mapping):
             raise ValueError(
@@ -1912,12 +1913,11 @@ def _runtime_projections(
             item.get("operation"),
             f"{tool_name}.runtimeProjections[{index}].operation",
         )
-        if name in names or operation in operations:
+        if name in names:
             raise ValueError(
-                f"{tool_name}.runtimeProjections must be unique"
+                f"{tool_name}.runtimeProjections names must be unique"
             )
         names.add(name)
-        operations.add(operation)
         result.append({"name": name, "operation": operation})
     return result
 

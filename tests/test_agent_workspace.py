@@ -137,6 +137,31 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertEqual(str(first["content"]) + str(second["content"]), original)
         self.assertFalse(second["truncated"])
 
+    def test_native_line_read_returns_exact_lines_and_a_continuation_offset(self) -> None:
+        target = self.root / "native-read.txt"
+        target.write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        first = harness.read(
+            self.session,
+            {"path": str(target), "lineOffset": 2, "lineLimit": 2},
+        )
+        second = harness.read(
+            self.session,
+            {
+                "path": str(target),
+                "lineOffset": first["nextLineOffset"],
+                "lineLimit": 2,
+            },
+        )
+
+        self.assertEqual(first["content"], "two\nthree\n")
+        self.assertEqual((first["startLine"], first["endLine"]), (2, 3))
+        self.assertEqual(first["nextLineOffset"], 4)
+        self.assertTrue(first["truncated"])
+        self.assertEqual(second["content"], "four\n")
+        self.assertFalse(second["truncated"])
+
     def test_read_never_splits_utf8_and_rejects_invalid_boundaries(self) -> None:
         target = self.root / "unicode-boundary.txt"
         target.write_text("智智", encoding="utf-8")
@@ -241,6 +266,44 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
         self.assertNotIn("outside-secret-content", str(result))
         with self.assertRaisesRegex(WorkspaceHarnessError, "coordinator"):
             harness.search(self.assistant, {"query": "hello"})
+
+    def test_native_search_supports_regex_glob_and_context_without_shell_round_trips(
+        self,
+    ) -> None:
+        target = self.root / "src" / "worker.py"
+        target.write_text(
+            "before\nclass RuntimeWorker:\n    pass\nafter\n",
+            encoding="utf-8",
+        )
+        (self.root / "src" / "worker.txt").write_text(
+            "class WrongSuffix:\n",
+            encoding="utf-8",
+        )
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        result = harness.search(
+            self.session,
+            {
+                "query": r"^class\s+Runtime",
+                "mode": "content",
+                "patternKind": "regex",
+                "glob": "*.py",
+                "context": 1,
+                "limit": 10,
+            },
+        )
+
+        self.assertEqual(len(result["matches"]), 1)
+        match = result["matches"][0]
+        self.assertEqual(match["relativePath"], "src/worker.py")
+        self.assertEqual(match["lineNumber"], 2)
+        self.assertEqual(match["contextBefore"], ["before"])
+        self.assertEqual(match["contextAfter"], ["    pass"])
+        with self.assertRaisesRegex(WorkspaceHarnessError, "regex is invalid"):
+            harness.search(
+                self.session,
+                {"query": "[", "patternKind": "regex"},
+            )
 
     def test_name_search_checks_shallow_project_files_before_deep_trees(self) -> None:
         search_root = Path(self.temp.name) / "search-project"

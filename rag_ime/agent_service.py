@@ -738,6 +738,11 @@ class AgentService:
                     "profile": "room-kernel-v2",
                     "risk": tool["risk"],
                     **(
+                        {"modelVisible": False}
+                        if tool.get("modelVisible") is False
+                        else {}
+                    ),
+                    **(
                         {
                             "runtimeProjections": [
                                 dict(item)

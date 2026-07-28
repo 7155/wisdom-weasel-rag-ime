@@ -33,8 +33,10 @@ APPROVAL_AUTO = "auto"
 
 _WORKSPACE_EFFECTS = frozenset(
     {
+        ("workspace_edit", "apply"),
         ("workspace_patch", "apply"),
         ("workspace_shell", "run"),
+        ("workspace_write", "apply"),
     }
 )
 

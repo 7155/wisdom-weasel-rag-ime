@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import hashlib
 import json
 import os
@@ -110,6 +111,39 @@ class PreparedWorkspacePatch:
         return hashlib.sha256(str(self.root).encode("utf-8")).hexdigest()
 
 
+@dataclass(frozen=True)
+class PreparedWorkspaceEdit:
+    path: Path
+    root: Path
+    edits: tuple[tuple[str, str], ...]
+    preimage_sha256: str
+    preimage_size: int
+    postimage_sha256: str
+    postimage: bytes
+    diff: str
+
+    @property
+    def roots_digest(self) -> str:
+        return hashlib.sha256(str(self.root).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class PreparedWorkspaceWrite:
+    path: Path
+    root: Path
+    content: str
+    existed_before: bool
+    preimage_sha256: str
+    preimage_size: int
+    postimage_sha256: str
+    postimage: bytes
+    diff: str
+
+    @property
+    def roots_digest(self) -> str:
+        return hashlib.sha256(str(self.root).encode("utf-8")).hexdigest()
+
+
 class WorkspaceHarness:
     """Fail-closed workspace reader and macOS sandboxed command harness."""
 
@@ -165,6 +199,8 @@ class WorkspaceHarness:
             raise WorkspaceHarnessError("sensitive files are not available to coordinator sessions")
         if not target.is_file() or target.is_symlink():
             raise WorkspaceHarnessError("workspace_read requires a regular non-symlink file")
+        if "lineOffset" in args or "lineLimit" in args:
+            return self._read_lines(target=target, root=root, args=args)
         offset = _bounded_integer(args.get("offset"), default=0, minimum=0, maximum=50_000_000)
         requested_limit = _bounded_integer(
             args.get("limit"),
@@ -215,6 +251,15 @@ class WorkspaceHarness:
             raise WorkspaceHarnessError("workspace_search mode must be content, name, or both")
         case_sensitive = _strict_bool(args.get("caseSensitive"))
         limit = _bounded_integer(args.get("limit"), default=50, minimum=1, maximum=100)
+        pattern_kind = str(args.get("patternKind") or "literal").strip().lower()
+        if pattern_kind not in {"literal", "regex", "glob"}:
+            raise WorkspaceHarnessError(
+                "workspace_search patternKind must be literal, regex, or glob"
+            )
+        context = _bounded_integer(args.get("context"), default=0, minimum=0, maximum=20)
+        path_glob = str(args.get("glob") or "").strip()
+        if "\x00" in path_glob or "\n" in path_glob or "\r" in path_glob:
+            raise WorkspaceHarnessError("workspace_search glob must be a single-line pattern")
         raw_path = str(args.get("path") or "").strip()
         targets: list[tuple[Path, Path]] = []
         if raw_path:
@@ -224,6 +269,24 @@ class WorkspaceHarness:
             targets.extend((root, root) for root in roots)
 
         needle = query if case_sensitive else query.casefold()
+        regex: re.Pattern[str] | None = None
+        if pattern_kind == "regex":
+            try:
+                regex = re.compile(query, 0 if case_sensitive else re.IGNORECASE)
+            except re.error as error:
+                raise WorkspaceHarnessError(
+                    f"workspace_search regex is invalid: {error}"
+                ) from error
+
+        def matches_pattern(value: str) -> bool:
+            comparable = value if case_sensitive else value.casefold()
+            if pattern_kind == "regex":
+                assert regex is not None
+                return regex.search(value) is not None
+            if pattern_kind == "glob":
+                return fnmatch.fnmatchcase(comparable, needle)
+            return needle in comparable
+
         matches: list[dict[str, object]] = []
         files_scanned = 0
         truncated = False
@@ -234,8 +297,12 @@ class WorkspaceHarness:
                     break
                 files_scanned += 1
                 relative = str(path.relative_to(root))
-                comparable_name = relative if case_sensitive else relative.casefold()
-                if mode in {"name", "both"} and needle in comparable_name:
+                if path_glob and not (
+                    fnmatch.fnmatch(relative, path_glob)
+                    or fnmatch.fnmatch(path.name, path_glob)
+                ):
+                    continue
+                if mode in {"name", "both"} and matches_pattern(relative):
                     matches.append({"path": str(path), "relativePath": relative, "kind": "name"})
                     if len(matches) >= limit:
                         truncated = True
@@ -251,10 +318,12 @@ class WorkspaceHarness:
                     text = raw.decode("utf-8")
                 except (OSError, UnicodeDecodeError):
                     continue
-                for line_number, line in enumerate(text.splitlines(), start=1):
-                    comparable_line = line if case_sensitive else line.casefold()
-                    if needle not in comparable_line:
+                lines = text.splitlines()
+                for line_number, line in enumerate(lines, start=1):
+                    if not matches_pattern(line):
                         continue
+                    before_start = max(0, line_number - context - 1)
+                    after_end = min(len(lines), line_number + context)
                     matches.append(
                         {
                             "path": str(path),
@@ -262,6 +331,14 @@ class WorkspaceHarness:
                             "kind": "content",
                             "lineNumber": line_number,
                             "preview": line[:500],
+                            **(
+                                {
+                                    "contextBefore": lines[before_start : line_number - 1],
+                                    "contextAfter": lines[line_number:after_end],
+                                }
+                                if context
+                                else {}
+                            ),
                         }
                     )
                     if len(matches) >= limit:
@@ -275,9 +352,84 @@ class WorkspaceHarness:
             "summary": f"在 {files_scanned} 个文件中找到 {len(matches)} 条匹配",
             "query": query,
             "mode": mode,
+            "patternKind": pattern_kind,
             "matches": matches,
             "filesScanned": files_scanned,
             "truncated": truncated,
+        }
+
+    def _read_lines(
+        self,
+        *,
+        target: Path,
+        root: Path,
+        args: Mapping[str, object],
+    ) -> dict[str, object]:
+        start_line = _bounded_integer(
+            args.get("lineOffset"),
+            default=1,
+            minimum=1,
+            maximum=50_000_000,
+        )
+        line_limit = _bounded_integer(
+            args.get("lineLimit"),
+            default=_PI_READ_MAX_LINES,
+            minimum=1,
+            maximum=_PI_READ_MAX_LINES,
+        )
+        chunks: list[str] = []
+        bytes_used = 0
+        end_line = start_line - 1
+        next_line_offset: int | None = None
+        with target.open("rb") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                if line_number < start_line:
+                    continue
+                if len(chunks) >= line_limit:
+                    next_line_offset = line_number
+                    break
+                if b"\x00" in raw_line:
+                    raise WorkspaceHarnessError(
+                        "binary files are not available through workspace_read"
+                    )
+                remaining = _PI_TOOL_RESULT_MAX_BYTES - bytes_used
+                if len(raw_line) > remaining:
+                    if not chunks and remaining > 0:
+                        prefix = _decode_workspace_read_prefix(
+                            raw_line[:remaining],
+                            allow_trailing_partial=True,
+                            offset=0,
+                        )
+                        chunks.append(prefix)
+                        end_line = line_number
+                        next_line_offset = line_number + 1
+                    else:
+                        next_line_offset = line_number
+                    break
+                try:
+                    decoded = raw_line.decode("utf-8")
+                except UnicodeDecodeError as error:
+                    raise WorkspaceHarnessError(
+                        "workspace_read requires valid UTF-8 text"
+                    ) from error
+                chunks.append(decoded)
+                bytes_used += len(raw_line)
+                end_line = line_number
+        if end_line < start_line:
+            raise WorkspaceHarnessError(
+                f"workspace_read lineOffset {start_line} is beyond end of file"
+            )
+        content = "".join(chunks)
+        return {
+            "summary": f"已读取 {target.name} 第 {start_line}-{end_line} 行",
+            "path": str(target),
+            "relativePath": str(target.relative_to(root)),
+            "content": content,
+            "startLine": start_line,
+            "endLine": end_line,
+            "nextLineOffset": next_line_offset,
+            "truncated": next_line_offset is not None,
+            "size": target.stat().st_size,
         }
 
     def prepare_patch(
@@ -412,6 +564,242 @@ class WorkspaceHarness:
             "undoAvailable": False,
         }
 
+    def prepare_edit(
+        self,
+        session: Mapping[str, object],
+        args: Mapping[str, object],
+    ) -> PreparedWorkspaceEdit:
+        roots = self._session_roots(session)
+        raw_path = str(args.get("path") or "").strip()
+        if not raw_path:
+            raise WorkspaceHarnessError("path is required for workspace_edit")
+        target, root = self._resolve_existing_path(roots, raw_path, allow_directory=False)
+        if self._is_sensitive(target, root) or target.is_symlink() or not target.is_file():
+            raise WorkspaceHarnessError("workspace_edit requires a non-sensitive regular file")
+        edits_value = args.get("edits")
+        if not isinstance(edits_value, list) or not 1 <= len(edits_value) <= 64:
+            raise WorkspaceHarnessError("edits must contain between 1 and 64 replacements")
+        edits: list[tuple[str, str]] = []
+        for index, value in enumerate(edits_value):
+            if not isinstance(value, Mapping):
+                raise WorkspaceHarnessError(f"edits[{index}] must be an object")
+            old_text = value.get("oldText")
+            new_text = value.get("newText")
+            if (
+                not isinstance(old_text, str)
+                or not old_text
+                or len(old_text) > 65_536
+                or "\x00" in old_text
+            ):
+                raise WorkspaceHarnessError(
+                    f"edits[{index}].oldText must be 1-65536 UTF-8 characters"
+                )
+            if (
+                not isinstance(new_text, str)
+                or len(new_text) > 131_072
+                or "\x00" in new_text
+            ):
+                raise WorkspaceHarnessError(
+                    f"edits[{index}].newText must be at most 131072 UTF-8 characters"
+                )
+            edits.append((old_text, new_text))
+        raw = target.read_bytes()
+        if len(raw) > 2 * 1024 * 1024 or b"\x00" in raw:
+            raise WorkspaceHarnessError("workspace_edit only accepts UTF-8 files up to 2 MiB")
+        try:
+            before = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise WorkspaceHarnessError("workspace_edit only accepts UTF-8 text") from exc
+        replacements: list[tuple[int, int, str]] = []
+        for index, (old_text, new_text) in enumerate(edits):
+            occurrences = before.count(old_text)
+            if occurrences != 1:
+                raise WorkspaceHarnessError(
+                    f"edits[{index}].oldText must match exactly once in the original file; "
+                    f"found {occurrences}"
+                )
+            start = before.index(old_text)
+            replacements.append((start, start + len(old_text), new_text))
+        ordered = sorted(replacements)
+        for previous, current in zip(ordered, ordered[1:], strict=False):
+            if current[0] < previous[1]:
+                raise WorkspaceHarnessError("workspace_edit replacements may not overlap")
+        after = before
+        for start, end, new_text in reversed(ordered):
+            after = f"{after[:start]}{new_text}{after[end:]}"
+        after_raw = after.encode("utf-8")
+        if len(after_raw) > 2 * 1024 * 1024:
+            raise WorkspaceHarnessError("edited file would exceed 2 MiB")
+        relative = str(target.relative_to(root))
+        diff = _reviewable_diff(before, after, relative)
+        return PreparedWorkspaceEdit(
+            path=target,
+            root=root,
+            edits=tuple(edits),
+            preimage_sha256=hashlib.sha256(raw).hexdigest(),
+            preimage_size=len(raw),
+            postimage_sha256=hashlib.sha256(after_raw).hexdigest(),
+            postimage=after_raw,
+            diff=diff,
+        )
+
+    def edit_preview(self, prepared: PreparedWorkspaceEdit) -> dict[str, object]:
+        return {
+            "title": "确认修改工作区文件",
+            "summary": f"将对 {prepared.path.name} 应用 {len(prepared.edits)} 处精确修改",
+            "operationLabel": "应用精确文件修改",
+            "changes": [
+                {"label": "文件", "before": str(prepared.path), "after": str(prepared.path)},
+                {"label": "修改块", "before": str(len(prepared.edits)), "after": "已替换"},
+                {"label": "差异", "before": "", "after": prepared.diff},
+            ],
+            "actionPayload": {
+                "path": str(prepared.path),
+                "edits": [
+                    {"oldText": old_text, "newText": new_text}
+                    for old_text, new_text in prepared.edits
+                ],
+            },
+            "baseState": {
+                "preimageSha256": prepared.preimage_sha256,
+                "preimageSize": prepared.preimage_size,
+                "postimageSha256": prepared.postimage_sha256,
+                "workspaceRootSha256": prepared.roots_digest,
+            },
+        }
+
+    def apply_edit(
+        self,
+        session: Mapping[str, object],
+        args: Mapping[str, object],
+        base_state: Mapping[str, object],
+    ) -> dict[str, object]:
+        prepared = self.prepare_edit(session, args)
+        self._verify_text_mutation(prepared, base_state, operation="edit")
+        current_raw = prepared.path.read_bytes()
+        if hashlib.sha256(current_raw).hexdigest() != prepared.preimage_sha256:
+            raise WorkspaceHarnessError("workspace file changed immediately before atomic edit")
+        self._atomic_write(prepared.path, prepared.postimage, prepared.path.stat().st_mode & 0o777)
+        return {
+            "schemaVersion": "rag-ime.workspace-edit-receipt.v1",
+            "mutationApplied": True,
+            "summary": f"已修改 {prepared.path.name} 的 {len(prepared.edits)} 处内容",
+            "path": str(prepared.path),
+            "preimageSha256": prepared.preimage_sha256,
+            "postimageSha256": prepared.postimage_sha256,
+            "replacementCount": len(prepared.edits),
+            "undoAvailable": False,
+        }
+
+    def prepare_write(
+        self,
+        session: Mapping[str, object],
+        args: Mapping[str, object],
+    ) -> PreparedWorkspaceWrite:
+        roots = self._session_roots(session)
+        raw_path = str(args.get("path") or "").strip()
+        if not raw_path:
+            raise WorkspaceHarnessError("path is required for workspace_write")
+        content = args.get("content")
+        if not isinstance(content, str) or "\x00" in content:
+            raise WorkspaceHarnessError("content must be UTF-8 text")
+        postimage = content.encode("utf-8")
+        if len(postimage) > 2 * 1024 * 1024:
+            raise WorkspaceHarnessError("workspace_write content may not exceed 2 MiB")
+        target, root = self._resolve_write_path(roots, raw_path)
+        if self._is_sensitive(target, root) or target.is_symlink() or target.is_dir():
+            raise WorkspaceHarnessError("workspace_write requires a non-sensitive file path")
+        existed_before = target.exists()
+        before_raw = target.read_bytes() if existed_before else b""
+        if len(before_raw) > 2 * 1024 * 1024 or b"\x00" in before_raw:
+            raise WorkspaceHarnessError("workspace_write only overwrites UTF-8 files up to 2 MiB")
+        try:
+            before = before_raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise WorkspaceHarnessError("workspace_write only overwrites UTF-8 text") from exc
+        relative = str(target.relative_to(root))
+        diff = _reviewable_diff(before, content, relative, new_file=not existed_before)
+        return PreparedWorkspaceWrite(
+            path=target,
+            root=root,
+            content=content,
+            existed_before=existed_before,
+            preimage_sha256=hashlib.sha256(before_raw).hexdigest(),
+            preimage_size=len(before_raw),
+            postimage_sha256=hashlib.sha256(postimage).hexdigest(),
+            postimage=postimage,
+            diff=diff,
+        )
+
+    def write_preview(self, prepared: PreparedWorkspaceWrite) -> dict[str, object]:
+        action = "覆盖" if prepared.existed_before else "创建"
+        return {
+            "title": f"确认{action}工作区文件",
+            "summary": f"将{action} {prepared.path.name}",
+            "operationLabel": f"{action}文件",
+            "changes": [
+                {
+                    "label": "文件",
+                    "before": str(prepared.path) if prepared.existed_before else "不存在",
+                    "after": str(prepared.path),
+                },
+                {"label": "差异", "before": "", "after": prepared.diff},
+            ],
+            "actionPayload": {
+                "path": str(prepared.path),
+                "content": prepared.content,
+            },
+            "baseState": {
+                "existedBefore": prepared.existed_before,
+                "preimageSha256": prepared.preimage_sha256,
+                "preimageSize": prepared.preimage_size,
+                "postimageSha256": prepared.postimage_sha256,
+                "workspaceRootSha256": prepared.roots_digest,
+            },
+        }
+
+    def apply_write(
+        self,
+        session: Mapping[str, object],
+        args: Mapping[str, object],
+        base_state: Mapping[str, object],
+    ) -> dict[str, object]:
+        prepared = self.prepare_write(session, args)
+        self._verify_text_mutation(prepared, base_state, operation="write")
+        expected_existence = base_state.get("existedBefore") is True
+        if prepared.existed_before != expected_existence:
+            raise WorkspaceHarnessError("workspace file existence changed after approval preview")
+        if prepared.path.exists():
+            if prepared.path.is_symlink() or not prepared.path.is_file():
+                raise WorkspaceHarnessError("workspace path changed before atomic write")
+            current_raw = prepared.path.read_bytes()
+            if hashlib.sha256(current_raw).hexdigest() != prepared.preimage_sha256:
+                raise WorkspaceHarnessError("workspace file changed immediately before atomic write")
+            mode = prepared.path.stat().st_mode & 0o777
+        else:
+            if prepared.existed_before:
+                raise WorkspaceHarnessError("workspace file disappeared after approval preview")
+            mode = 0o644
+        prepared.path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_parent = prepared.path.parent.resolve(strict=True)
+        if not _is_within(resolved_parent, prepared.root):
+            raise WorkspaceHarnessError("workspace parent changed before atomic write")
+        self._atomic_write(prepared.path, prepared.postimage, mode)
+        return {
+            "schemaVersion": "rag-ime.workspace-write-receipt.v1",
+            "mutationApplied": True,
+            "summary": (
+                f"已覆盖 {prepared.path.name}"
+                if prepared.existed_before
+                else f"已创建 {prepared.path.name}"
+            ),
+            "path": str(prepared.path),
+            "preimageSha256": prepared.preimage_sha256,
+            "postimageSha256": prepared.postimage_sha256,
+            "created": not prepared.existed_before,
+            "undoAvailable": False,
+        }
+
     def prepare_command(
         self,
         session: Mapping[str, object],
@@ -533,6 +921,74 @@ class WorkspaceHarness:
                         raise WorkspaceHarnessError("workspace_read path must be a file")
                     return resolved, root
         raise WorkspaceHarnessError("path is outside the authorized workspace or does not exist")
+
+    def _resolve_write_path(
+        self,
+        roots: Sequence[Path],
+        raw_path: str,
+    ) -> tuple[Path, Path]:
+        requested = Path(raw_path).expanduser()
+        candidates = [requested] if requested.is_absolute() else [root / requested for root in roots]
+        for candidate in candidates:
+            if candidate.name in {"", ".", ".."}:
+                continue
+            if candidate.exists() or candidate.is_symlink():
+                if candidate.is_symlink():
+                    raise WorkspaceHarnessError("workspace_write cannot target a symlink")
+                try:
+                    resolved = candidate.resolve(strict=True)
+                except (OSError, RuntimeError):
+                    continue
+                for root in roots:
+                    if _is_within(resolved, root):
+                        return resolved, root
+                continue
+            ancestor = candidate.parent
+            missing_parts = [candidate.name]
+            while not ancestor.exists() and ancestor != ancestor.parent:
+                missing_parts.append(ancestor.name)
+                ancestor = ancestor.parent
+            try:
+                resolved_ancestor = ancestor.resolve(strict=True)
+            except (OSError, RuntimeError):
+                continue
+            target = resolved_ancestor.joinpath(*reversed(missing_parts))
+            for root in roots:
+                if _is_within(target, root):
+                    return target, root
+        raise WorkspaceHarnessError("path is outside the authorized workspace")
+
+    def _verify_text_mutation(
+        self,
+        prepared: PreparedWorkspaceEdit | PreparedWorkspaceWrite,
+        base_state: Mapping[str, object],
+        *,
+        operation: str,
+    ) -> None:
+        if prepared.roots_digest != str(base_state.get("workspaceRootSha256") or ""):
+            raise WorkspaceHarnessError("authorized workspace changed after approval preview")
+        if prepared.preimage_sha256 != str(base_state.get("preimageSha256") or ""):
+            raise WorkspaceHarnessError(f"workspace {operation} preimage changed after approval preview")
+        if prepared.postimage_sha256 != str(base_state.get("postimageSha256") or ""):
+            raise WorkspaceHarnessError(f"workspace {operation} no longer matches approval preview")
+
+    @staticmethod
+    def _atomic_write(path: Path, content: bytes, mode: int) -> None:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{path.name}.",
+            dir=path.parent,
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.chmod(temporary, mode)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _walk(
         self,
@@ -935,6 +1391,27 @@ def _compact_json_size(value: Mapping[str, object]) -> int:
             separators=(",", ":"),
         ).encode("utf-8")
     )
+
+
+def _reviewable_diff(
+    before: str,
+    after: str,
+    relative_path: str,
+    *,
+    new_file: bool = False,
+) -> str:
+    diff = "".join(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile="/dev/null" if new_file else f"a/{relative_path}",
+            tofile=f"b/{relative_path}",
+            n=3,
+        )
+    )
+    if len(diff.encode("utf-8")) > 131_072:
+        raise WorkspaceHarnessError("workspace mutation diff is too large to review safely")
+    return diff
 
 
 def _bounded_integer(

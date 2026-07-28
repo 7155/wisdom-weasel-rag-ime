@@ -86,6 +86,7 @@ class RoomToolCatalogTests(unittest.TestCase):
                 {"name": "memory_capture", "operation": "capture"},
             ),
         )
+        memory["modelVisible"] = False
 
         plan = compose_room_tool_catalog(
             available=(memory,),
@@ -97,6 +98,7 @@ class RoomToolCatalogTests(unittest.TestCase):
             plan.runtime_registry["ime_memory"]["runtimeProjections"],
             [{"name": "memory_capture", "operation": "capture"}],
         )
+        self.assertIs(plan.runtime_registry["ime_memory"]["modelVisible"], False)
 
 
 if __name__ == "__main__":

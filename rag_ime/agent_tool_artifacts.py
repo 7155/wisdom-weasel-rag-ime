@@ -62,23 +62,42 @@ class AgentToolArtifactProjector:
         receipt: Mapping[str, object],
         preview: Mapping[str, object],
     ) -> ToolArtifactProjection:
-        try:
-            return self._project_workspace_patch(
-                session=session,
-                approval_id=approval_id,
-                receipt=receipt,
-                preview=preview,
-            )
-        except (OSError, TypeError, ValueError):
-            return ToolArtifactProjection(status="unavailable", reason="verification_failed")
+        return self.project_workspace_mutation(
+            session=session,
+            approval_id=approval_id,
+            receipt=receipt,
+            preview=preview,
+            origin_tool="workspace_patch",
+        )
 
-    def _project_workspace_patch(
+    def project_workspace_mutation(
         self,
         *,
         session: Mapping[str, object],
         approval_id: str,
         receipt: Mapping[str, object],
         preview: Mapping[str, object],
+        origin_tool: str,
+    ) -> ToolArtifactProjection:
+        try:
+            return self._project_workspace_mutation(
+                session=session,
+                approval_id=approval_id,
+                receipt=receipt,
+                preview=preview,
+                origin_tool=origin_tool,
+            )
+        except (OSError, TypeError, ValueError):
+            return ToolArtifactProjection(status="unavailable", reason="verification_failed")
+
+    def _project_workspace_mutation(
+        self,
+        *,
+        session: Mapping[str, object],
+        approval_id: str,
+        receipt: Mapping[str, object],
+        preview: Mapping[str, object],
+        origin_tool: str,
     ) -> ToolArtifactProjection:
         if receipt.get("mutationApplied") is not True:
             return ToolArtifactProjection(status="unavailable", reason="mutation_not_applied")
@@ -111,7 +130,7 @@ class AgentToolArtifactProjector:
                     mime_type=mime_type,
                     file_name=file_name,
                     origin="tool_result",
-                    origin_tool="workspace_patch",
+                    origin_tool=origin_tool,
                     origin_receipt_id=approval_id,
                 )
             except (OSError, TypeError, ValueError):

@@ -93,6 +93,8 @@ def _registry_entry(value: Mapping[str, object]) -> dict[str, object]:
     projections = _runtime_projections(value.get("runtimeProjections"), name)
     if projections:
         entry["runtimeProjections"] = projections
+    if value.get("modelVisible") is False:
+        entry["modelVisible"] = False
     return entry
 
 
@@ -103,7 +105,6 @@ def _runtime_projections(value: object, tool_name: str) -> list[dict[str, str]]:
         raise ValueError(f"product Tool {tool_name} runtimeProjections must be an array")
     projections: list[dict[str, str]] = []
     seen_names: set[str] = set()
-    seen_operations: set[str] = set()
     for item in value:
         if not isinstance(item, Mapping):
             raise ValueError(
@@ -114,12 +115,11 @@ def _runtime_projections(value: object, tool_name: str) -> list[dict[str, str]]:
             item.get("operation"),
             f"{tool_name}.runtimeProjections.operation",
         )
-        if name in seen_names or operation in seen_operations:
+        if name in seen_names:
             raise ValueError(
-                f"product Tool {tool_name} runtimeProjections must be unique"
+                f"product Tool {tool_name} runtimeProjections names must be unique"
             )
         seen_names.add(name)
-        seen_operations.add(operation)
         projections.append({"name": name, "operation": operation})
     return projections
 

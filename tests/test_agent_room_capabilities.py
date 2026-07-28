@@ -97,6 +97,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         memory["runtimeProjections"] = [
             {"name": "memory_capture", "operation": "capture"},
         ]
+        memory["modelVisible"] = False
         registry = {**self._registry(), "ime_memory": memory}
         names = (*ROOM_TOOLS, "ime_memory")
 
@@ -120,6 +121,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             tool["runtimeProjections"],
             [{"name": "memory_capture", "operation": "capture"}],
         )
+        self.assertIs(tool["modelVisible"], False)
         searched, _ = self.store.tool_search(
             receipt_id="search:memory-projection",
             manifest_id=manifest["manifestId"],

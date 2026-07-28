@@ -983,6 +983,41 @@ class ControlToolGatewayTests(unittest.TestCase):
             self.assertNotIn("minLength", path_schema)
             self.assertIn("空字符串", path_schema["description"])
 
+    def test_workspace_gateway_targets_are_hidden_behind_native_runtime_tools(
+        self,
+    ) -> None:
+        coordinator = self.store.create(
+            title="native workspace projections",
+            mode="coordinator",
+            workspace_roots=[self.tmp.name],
+            created_at_ms=2,
+        )
+        manifests = {
+            item["name"]: item
+            for item in self.gateway.runtime_manifests(coordinator)
+        }
+
+        expected = {
+            "workspace_list": [{"name": "ls", "operation": "list"}],
+            "workspace_read": [{"name": "read", "operation": "read"}],
+            "workspace_search": [
+                {"name": "grep", "operation": "search"},
+                {"name": "find", "operation": "search"},
+            ],
+            "workspace_edit": [{"name": "edit", "operation": "apply"}],
+            "workspace_write": [{"name": "write", "operation": "apply"}],
+            "workspace_shell": [{"name": "bash", "operation": "run"}],
+        }
+        for target, projections in expected.items():
+            with self.subTest(target=target):
+                self.assertIs(manifests[target]["modelVisible"], False)
+                self.assertEqual(
+                    manifests[target]["runtimeProjections"],
+                    projections,
+                )
+        self.assertIs(manifests["workspace_patch"]["modelVisible"], False)
+        self.assertNotIn("runtimeProjections", manifests["workspace_patch"])
+
     def test_memory_capture_is_r0_and_does_not_create_an_approval(self) -> None:
         AgentMemorySourceStore(
             self.store.db_path,
@@ -1116,6 +1151,8 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "workspace_read",
                 "workspace_search",
                 "workspace_patch",
+                "workspace_edit",
+                "workspace_write",
                 "workspace_shell",
             ],
         )
@@ -1197,6 +1234,8 @@ class ControlToolGatewayTests(unittest.TestCase):
                     "ime_browser",
                     "desktop_semantic",
                     "workspace_patch",
+                    "workspace_edit",
+                    "workspace_write",
                     "workspace_shell",
                 }
             )
