@@ -42,7 +42,7 @@ git clone https://github.com/7155/personal-agent-workbench.git
 git clone https://github.com/7155/pi.git
 
 cd pi
-git checkout 07b81139b4e064dc9853f4da0d07bc84f0ea75f6
+git checkout e807fc845a1d4709f61dbd0e37d6f7acb24a4f12
 npm ci
 
 cd ../personal-agent-workbench
@@ -51,8 +51,10 @@ pnpm --dir control-center-web install --frozen-lockfile
 ```
 
 The product contract rejects a Pi source tree that does not contain the pinned
-runtime-host implementation. Do not substitute an arbitrary Pi release just
-because its CLI starts.
+runtime-host implementation. This checkpoint includes the deterministic
+Goal/Room lifecycle, native coding-tool evidence, long-result handles, and the
+pre-dispatch model-context fence. Do not substitute an arbitrary Pi release
+just because its CLI starts.
 
 ## Non-Destructive Build Walkthrough
 

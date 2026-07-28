@@ -195,7 +195,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 self.assertTrue(set(required).issubset(declared_markers[key]))
 
         blockers = {item["id"] for item in product_status["blockers"]}
-        self.assertIn("managed_pi_07b_runtime_acceptance_pending", blockers)
+        self.assertIn("managed_pi_e807_runtime_acceptance_pending", blockers)
         source_contract = next(
             item
             for item in product_status["resolvedBlockers"]
