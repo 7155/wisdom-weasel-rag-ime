@@ -67,7 +67,7 @@
     },
     {
       "id": "managed_pi_v2_source_contract",
-      "evidence": "The public build contract now requires Pi commit e807fc845a1d4709f61dbd0e37d6f7acb24a4f12 and source-contract sha256 37ea18af329508495926310be95bc284c17413c1b8c0f6e09cb8a1b6cbef202d, including deterministic Goal continuation, Session memory-refresh epochs, native read/grep/find/ls/edit/write/bash projections, governed Room target binding, bounded semantic tool-result evidence, and a pre-dispatch model-context fence. Earlier runtime smoke against an older pin is not acceptance evidence for this checkpoint."
+      "evidence": "The public build contract now requires Pi commit e807fc845a1d4709f61dbd0e37d6f7acb24a4f12 and source-contract sha256 37ea18af329508495926310be95bc284c17413c1b8c0f6e09cb8a1b6cbef202d, including deterministic Goal continuation, Session memory-refresh epochs, native read/grep/find/ls/edit/write/bash projections, governed Room target binding, bounded semantic tool-result evidence, and a pre-dispatch model-context fence. Earlier runtime smoke against an older pin is not runtime acceptance evidence for this checkpoint."
     }
   ],
   "blockers": [

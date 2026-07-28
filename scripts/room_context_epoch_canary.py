@@ -1131,20 +1131,17 @@ def progressive_discovery_check(
     # Native approvals may suspend and resume the same Session in a new Pi
     # process. The first captured call of that process can therefore already
     # contain schemas disclosed before suspension. Managed Room bootstrap tools
-    # are also disclosed before the first model call. Provenance, not capture
-    # timing, is the invariant: every visible product schema must be backed by
-    # an earlier model-visible tool_load or an exact governed load receipt.
+    # are also disclosed before the first model call, but their names alone are
+    # not authority. Provenance, not capture timing, is the invariant: every
+    # visible product schema must be backed by an earlier model-visible
+    # tool_load, an exact governed load receipt, or an exact recovered turn
+    # receipt supplied by the caller.
     return all(
         set(item.get("initialProductSchemaNames") or [])
         <= (
             set(item.get("loadedProductSchemasBeforeFirstCapture") or [])
             | set(item.get("governedProductSchemasBeforeFirstCapture") or [])
             | recovered[index]
-            | (
-                set(_ROOM_BOOTSTRAP_TOOL_NAMES)
-                if item.get("stableRoomBootstrapSchemasExact") is True
-                else set()
-            )
         )
         and item.get("catalogBlocksExactlyOnceEveryCall") is True
         and item.get("routingCardFieldContractEveryCall") is True
