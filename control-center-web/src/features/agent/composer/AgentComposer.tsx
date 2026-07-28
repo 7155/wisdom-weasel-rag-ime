@@ -180,7 +180,8 @@ export function AgentComposer({
     session
     && (composerDraft.trim() || attachments.length)
     && !sending
-    && !modelChanging,
+    && !modelChanging
+    && !contextResourcesChanging,
   );
   function publishDraft(value: string): void {
     // The textarea owns keystroke latency; the parent only needs a deferred

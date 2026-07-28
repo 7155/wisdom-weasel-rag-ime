@@ -162,6 +162,20 @@ function AgentWorkspace() {
     if (selectedIdRef.current === sessionId) setAttachments(nextAttachments);
   }
 
+  function restoreSessionInputIfUntouched(
+    sessionId: string,
+    draft: string,
+    attachments: ComposerAttachment[],
+  ): void {
+    const current = inputForSession(sessionId);
+    if (current.draft || current.attachments.length > 0) return;
+    composerInputsRef.current.set(sessionId, { draft, attachments });
+    if (selectedIdRef.current === sessionId) {
+      setDraft(draft);
+      setAttachments(attachments);
+    }
+  }
+
   function setSelectedDraft(value: string | ((current: string) => string)): void {
     setSessionDraft(selectedIdRef.current, value);
   }
@@ -549,7 +563,7 @@ function AgentWorkspace() {
     requestedDelivery: AgentMessageDelivery = busy ? 'steer' : 'prompt',
     composerDraft = draft,
   ): Promise<void> {
-    if (!session || sending || modelChanging) return;
+    if (!session || sending || modelChanging || contextResourcesChanging) return;
     const delivery: AgentMessageDelivery = busy
       ? (requestedDelivery === 'followUp' ? 'followUp' : 'steer')
       : 'prompt';
@@ -582,8 +596,7 @@ function AgentWorkspace() {
         });
         if (selectedIdRef.current === session.id) setEditTarget(undefined);
       } catch (requestError) {
-        setSessionDraft(session.id, value);
-        setSessionAttachments(session.id, selectedAttachments);
+        restoreSessionInputIfUntouched(session.id, value, selectedAttachments);
         setSessionError(session.id, errorText(requestError));
       } finally {
         endSessionSend(session.id);
@@ -640,8 +653,7 @@ function AgentWorkspace() {
     setSessionAttachments(session.id, []);
     setSessionError(session.id, '');
     promptSession(session.id, message, selectedAttachments.map((item) => item.id), delivery, () => {
-      setSessionDraft(session.id, value);
-      setSessionAttachments(session.id, selectedAttachments);
+      restoreSessionInputIfUntouched(session.id, value, selectedAttachments);
     });
   }
 
@@ -651,6 +663,7 @@ function AgentWorkspace() {
     attachmentIds: string[],
     delivery: AgentMessageDelivery = 'prompt',
     restoreInput?: () => void,
+    onAdmissionRolledBack?: () => void,
   ): boolean {
     if (!beginSessionSend(sessionId)) return false;
     const clientMessageId = `web-${crypto.randomUUID()}`;
@@ -683,6 +696,7 @@ function AgentWorkspace() {
         if (isAgentTurnConflict(requestError)) {
           useAgentLiveStore.getState().discardOptimistic(sessionId, clientMessageId);
           restoreInput?.();
+          onAdmissionRolledBack?.();
           setSessionError(sessionId, '上一轮仍在处理，输入已保留；可以继续补充或先停止当前轮。');
           return;
         }
@@ -699,7 +713,10 @@ function AgentWorkspace() {
     return true;
   }
 
-  function retryTurn(turnId: string): boolean {
+  function retryTurn(
+    turnId: string,
+    onAdmissionRolledBack?: () => void,
+  ): boolean {
     if (!session || sending || latestActiveTurnId(agentProjection(session.id))) return false;
     const projection = agentProjection(session.id);
     const turn = projection.turnsById[turnId];
@@ -719,6 +736,9 @@ function AgentWorkspace() {
       session.id,
       message || '请查看附件。',
       userMessage?.attachments ?? [],
+      'prompt',
+      undefined,
+      onAdmissionRolledBack,
     );
   }
 

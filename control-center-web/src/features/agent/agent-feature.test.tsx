@@ -810,6 +810,32 @@ describe('Agent experience', () => {
       .some((turn) => turn.failure === '当前模型不可用，请切换模型后重试。')).toBe(true);
   });
 
+  it('does not replace a newer draft when an earlier prompt fails late in the same Session', async () => {
+    const pendingPrompt = deferred<unknown>();
+    const transport = featureTransport(
+      previewModelCatalog('session-preview'),
+      { ok: true, items: toolCatalog() },
+      { ok: true, items: previewSessions },
+      () => pendingPrompt.promise,
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+    const composer = await screen.findByRole('textbox', { name: '消息' });
+
+    await user.type(composer, '先发送的消息');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(composer).toHaveValue(''));
+    await user.type(composer, '发送期间写下的新草稿');
+
+    await act(async () => pendingPrompt.reject(new Error('late provider failure')));
+
+    expect(composer).toHaveValue('发送期间写下的新草稿');
+    const projection = useAgentLiveStore.getState().projections['session-preview'];
+    expect(Object.values(projection.turnsById).some((turn) => (
+      turn.status === 'failed' && Boolean(turn.failure)
+    ))).toBe(true);
+  });
+
   it('keeps an in-flight stop request and its late failure inside the source Session', async () => {
     const pendingAbort = deferred<unknown>();
     const transport = featureTransport(
@@ -951,11 +977,14 @@ describe('Agent experience', () => {
     const composer = await screen.findByRole('textbox', { name: '消息' });
     await user.type(composer, '避免重复的同一条消息');
     await user.click(screen.getByRole('button', { name: '发送' }));
-    await user.click(await screen.findByRole('button', { name: '重试本轮' }));
+    const retry = await screen.findByRole('button', { name: '重试本轮' });
+    await user.click(retry);
 
     await waitFor(() => expect(
       document.querySelector('.agent-conversation__header [role="alert"]')
     ).toHaveTextContent('上一轮仍在处理，输入已保留'));
+    await waitFor(() => expect(retry).toHaveTextContent('重试本轮'));
+    expect(retry).toBeEnabled();
     const projection = useAgentLiveStore.getState().projections['session-preview'];
     const matchingUserMessages = Object.values(projection.messagesById).filter((message) => (
       message.role === 'user'
@@ -1694,6 +1723,45 @@ describe('Agent experience', () => {
     expect(transport.requests.filter(
       (call) => call.request.pathId === 'agent.session.mode.update',
     )).toHaveLength(1);
+  });
+
+  it('keeps drafting responsive but waits for context resources before sending', async () => {
+    const pendingContextUpdate = deferred<{ ok: true }>();
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      pendingContextUpdate.promise,
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '工作资料：内置' }));
+    await user.click(screen.getByRole('radio', { name: /本机扩展/ }));
+
+    const composer = screen.getByRole('textbox', { name: '消息' });
+    await user.type(composer, '必须使用刚选择的上下文');
+    expect(composer).toHaveValue('必须使用刚选择的上下文');
+    expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
+    expect(transport.requests.some(
+      (call) => call.request.pathId === 'agent.session.prompt',
+    )).toBe(false);
+
+    pendingContextUpdate.resolve({ ok: true });
+    await waitFor(() => expect(screen.getByRole('button', { name: '发送' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(transport.requests.some(
+      (call) => call.request.pathId === 'agent.session.prompt',
+    )).toBe(true));
   });
 
   it('requires a native workspace choice before enabling coordinator mode', async () => {
@@ -2758,6 +2826,7 @@ function featureTransport(
   },
   modelSelectRoute: unknown = { ok: true },
   thinkingSelectRoute: unknown = { ok: true },
+  modeUpdateRoute: unknown = { ok: true },
 ): MockControlTransport {
   return new MockControlTransport({
     pickedFiles: [{
@@ -2806,7 +2875,7 @@ function featureTransport(
       'agent.session.rename': { ok: true },
       'agent.session.compact': { ok: true },
       'agent.session.abort': abortRoute,
-      'agent.session.mode.update': { ok: true },
+      'agent.session.mode.update': modeUpdateRoute,
       'agent.session.model.select': modelSelectRoute,
       'agent.session.thinking.select': thinkingSelectRoute,
       'agent.approval.decide': approvalRoute,

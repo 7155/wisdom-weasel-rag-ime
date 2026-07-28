@@ -42,7 +42,10 @@ export function AgentTimeline({
   modelSelectionAvailable: boolean;
   turnRecoveryDisabled?: boolean;
   onSuggestion: (value: string) => void;
-  onRetryTurn: (turnId: string) => boolean;
+  onRetryTurn: (
+    turnId: string,
+    onAdmissionRolledBack?: () => void,
+  ) => boolean;
   onSwitchModel: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
@@ -308,7 +311,10 @@ export function AgentTurn({
   persona?: AgentPersonaV1;
   modelSelectionAvailable?: boolean;
   turnRecoveryDisabled?: boolean;
-  onRetryTurn?: (turnId: string) => boolean;
+  onRetryTurn?: (
+    turnId: string,
+    onAdmissionRolledBack?: () => void,
+  ) => boolean;
   onSwitchModel?: () => void;
   onApprovalDecision: (approvalId: string, decision: 'approved' | 'rejected', hash: string) => void;
   onOpenApproval?: (activity: AgentActivityProjection) => void;
@@ -403,7 +409,7 @@ export function AgentTurn({
                       leadingIcon={<RefreshCcw size={14} />}
                       disabled={turnRecoveryDisabled || retryRequested}
                       onClick={() => {
-                        if (onRetryTurn(turnId)) {
+                        if (onRetryTurn(turnId, () => setRetryRequestedFor(''))) {
                           setRetryRequestedFor(`${turnId}:${turn.status}`);
                         }
                       }}
