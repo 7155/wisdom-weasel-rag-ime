@@ -83,7 +83,10 @@ export function ActivitySummary({
           ? `正在处理 ${inlineTools.count} 项操作`
           : `已完成 ${inlineTools.count} 项操作`
     : title;
-  const inlineSummary = inlineTools.names || summary;
+  // Closed groups stay cheap to render, but they must still expose the useful
+  // outcome. Hiding the first safe result/error until expansion made completed
+  // calls opaque and made approval/permission recovery impossible to locate.
+  const inlineSummary = inlineTools.highlight || inlineTools.names || summary;
   const inlineStatus = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : '完成';
   const pendingApprovals = activities.flatMap((activity) => {
     const approvalId = text(activity.payload.approvalId);
@@ -267,7 +270,11 @@ function ActivityRow({
         <span className="agent-activity-row__icon" data-kind={presentation.kind}><Icon size={15} /></span>
         <span>
           <strong>{presentation.title}</strong>
-          <small>{activity.kind === 'reasoning_summary' ? '正在整理信息与下一步' : toolView?.summary ?? visibleSummary}</small>
+          <small>
+            {activity.kind === 'reasoning_summary'
+              ? '正在整理信息与下一步'
+              : toolView?.error ?? toolView?.summary ?? visibleSummary}
+          </small>
         </span>
         <i data-status={activity.status}>{toolView?.sources.length ? `来源 ${toolView.sources.length} · ` : ''}{statusLabel(activity.status)}{duration ? ` · ${duration}` : ''}</i>
       </summary>
@@ -508,15 +515,27 @@ function aggregateSummary(activities: AgentActivityProjection[]): string {
 function compactToolSummary(activities: AgentActivityProjection[]) {
   const calls = new Set<string>();
   const names = new Set<string>();
+  let latestResult = '';
+  let latestError = '';
   for (const activity of activities) {
     if (!['tool_started', 'tool_progress', 'tool_finished'].includes(activity.kind)) continue;
     calls.add(text(activity.payload.toolCallId) || activity.id);
     names.add(activityPresentation(activity).title);
+    const view = publicToolResultView(activity);
+    if (view.summary) latestResult = boundedInlineSummary(view.summary);
+    if (view.error) latestError = boundedInlineSummary(view.error);
   }
   return {
     count: calls.size,
     names: [...names].slice(0, 3).join(' · '),
+    highlight: latestError || latestResult,
   };
+}
+
+function boundedInlineSummary(value: string, limit = 180): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= limit) return normalized;
+  return `${normalized.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
 }
 
 function statusLabel(status: AgentActivityProjection['status']): string {

@@ -19,7 +19,7 @@ describe('Agent tool activity details', () => {
     expect(group).not.toHaveAttribute('open');
     const summary = group!.querySelector('summary')!;
     expect(within(summary).getByText('已完成 1 项操作')).toBeInTheDocument();
-    expect(within(summary).getByText('当前状态')).toBeInTheDocument();
+    expect(within(summary).getByText('运行状态已读取')).toBeInTheDocument();
     expect(within(summary).getByText('完成')).toBeInTheDocument();
     expect(summary.querySelector('.agent-activity__inline-icon')).toBeInTheDocument();
     expect(summary.querySelector('.agent-activity__status')).not.toBeInTheDocument();
@@ -70,6 +70,7 @@ describe('Agent tool activity details', () => {
 
     expect(group).not.toHaveAttribute('open');
     expect(group.querySelector('.agent-activity-row')).not.toBeInTheDocument();
+    expect(summary).toHaveTextContent('搜索参数超出允许范围');
     fireEvent.click(summary);
     expect(group).toHaveAttribute('open');
     expect(group.querySelector('.agent-activity-row')).toBeInTheDocument();
