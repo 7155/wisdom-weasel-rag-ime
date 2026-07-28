@@ -20,6 +20,8 @@ import type { AgentEventV1 } from './generated/agent-event.v1';
 import type { AgentFileDescriptorV1 } from './generated/agent-file-descriptor.v1';
 import type { AgentFilePreviewV1 } from './generated/agent-file-preview.v1';
 import type { AgentGoalMutationV1 } from './generated/agent-goal-mutation.v1';
+import type { AgentGoalSettleRequestV1 } from './generated/agent-goal-settle-request.v1';
+import type { AgentGoalSettleResultV1 } from './generated/agent-goal-settle-result.v1';
 import type { AgentGoalUsageV1 } from './generated/agent-goal-usage.v1';
 import type { AgentMediaV1 } from './generated/agent-media.v1';
 import type { AgentMemoryEvidenceV1 } from './generated/agent-memory-evidence.v1';
@@ -162,6 +164,8 @@ export type {
   AgentFileDescriptorV1,
   AgentFilePreviewV1,
   AgentGoalMutationV1,
+  AgentGoalSettleRequestV1,
+  AgentGoalSettleResultV1,
   AgentGoalUsageV1,
   AgentMediaV1,
   AgentMemoryEvidenceV1,
@@ -305,6 +309,8 @@ export interface ContractTypeMap {
   'agent-file-descriptor.v1': AgentFileDescriptorV1;
   'agent-file-preview.v1': AgentFilePreviewV1;
   'agent-goal-mutation.v1': AgentGoalMutationV1;
+  'agent-goal-settle-request.v1': AgentGoalSettleRequestV1;
+  'agent-goal-settle-result.v1': AgentGoalSettleResultV1;
   'agent-goal-usage.v1': AgentGoalUsageV1;
   'agent-media.v1': AgentMediaV1;
   'agent-memory-evidence.v1': AgentMemoryEvidenceV1;

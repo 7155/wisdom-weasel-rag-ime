@@ -11,7 +11,7 @@ export interface SessionMemoryRecallV1 {
   project: string;
   roleId: string;
   generatedAtMs: number;
-  trigger: 'first_user_prompt' | 'compaction' | 'room_task' | 'subagent_task';
+  trigger: 'first_user_prompt' | 'turn_start' | 'compaction' | 'room_task' | 'subagent_task';
   query: {
     preview: string;
     sha256: string;

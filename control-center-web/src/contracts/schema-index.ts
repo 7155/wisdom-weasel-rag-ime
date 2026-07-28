@@ -1910,6 +1910,150 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-goal-settle-request.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-goal-settle-request.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "sessionId",
+      "settleScopeId",
+      "settleAttempt",
+      "freshToolEvidenceCount",
+      "freshToolEvidenceSha256"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.agent-goal-settle-request.v1"
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "settleScopeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "settleAttempt": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "freshToolEvidenceCount": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10000
+      },
+      "freshToolEvidenceSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "agent-goal-settle-result.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-goal-settle-result.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "sessionId",
+      "goalId",
+      "goalRevision",
+      "settleScopeId",
+      "settleAttempt",
+      "freshToolEvidenceCount",
+      "freshToolEvidenceSha256",
+      "continuationEpoch",
+      "continuationCount",
+      "continuationLimit",
+      "continuationRemaining",
+      "state",
+      "reason",
+      "followUpKey",
+      "message"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.agent-goal-settle-result.v1"
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "goalId": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "goalRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "settleScopeId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "settleAttempt": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "freshToolEvidenceCount": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10000
+      },
+      "freshToolEvidenceSha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "continuationEpoch": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "continuationCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "continuationLimit": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "continuationRemaining": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "inactive",
+          "continue",
+          "paused",
+          "completed",
+          "cancelled",
+          "blocked",
+          "stalled",
+          "budget_exhausted"
+        ]
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "followUpKey": {
+        "type": "string",
+        "maxLength": 80
+      },
+      "message": {
+        "type": "string",
+        "maxLength": 2000
+      }
+    }
+  },
   "agent-goal-usage.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-goal-usage.v1",
@@ -16520,6 +16664,7 @@ export const contractSchemas = {
       "trigger": {
         "enum": [
           "first_user_prompt",
+          "turn_start",
           "compaction",
           "room_task",
           "subagent_task"
