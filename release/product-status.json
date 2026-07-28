@@ -67,10 +67,14 @@
     },
     {
       "id": "managed_pi_v2_source_contract",
-      "evidence": "The managed runtime packages Pi 0.80.7 from public commit 0cb10fa18118632b6e3d3233cbc18d7ea6486114, matches source-contract sha256 8470cb3a5266a46c8fe246b8654a28e495189f8da762cdc300b4d954da4fb9e5, and passes the protocol-v2 smoke."
+      "evidence": "The public build contract now requires Pi commit e3e2bb4e2dd98fc8b40f2e886c157f776aa53ea7 and source-contract sha256 5dabf8d30aa3334ec88b77a8bc45a972b7561674767550d324f4650196aeacc8, including ordinary-Goal before_agent_settle continuation, fresh-evidence and attempt-cap guards, and Session memory-refresh epochs. The previously recorded protocol-v2 smoke covered the older 0cb10fa pin and is not runtime acceptance evidence for this newer commit."
     }
   ],
   "blockers": [
+    {
+      "id": "managed_pi_e3_runtime_acceptance_pending",
+      "detail": "The source and packager contract now require Pi e3e2bb4e2dd98fc8b40f2e886c157f776aa53ea7, but a clean managed payload build and deterministic staged Runtime smoke for that exact commit have not yet been recorded."
+    },
     {
       "id": "strict_foreground_soak_not_green",
       "detail": "Current trace does not prove the full Rime composition, delete resync, app-switch invalidation, and follow-up-after-selection matrix."

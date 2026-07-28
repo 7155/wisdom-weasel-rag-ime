@@ -10,6 +10,8 @@ from unittest.mock import patch
 from scripts.build_managed_pi_runtime_v2 import (
     _OAUTH_RUNTIME_MODULES,
     ROOT,
+    REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS,
+    REQUIRED_PI_RUNTIME_BASE_COMMIT,
     _ROOM_RUNTIME_SOURCE_KEYS,
     _copy_product_skills,
     _default_pi_worktree,
@@ -144,6 +146,17 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             with (
                 patch("scripts.build_managed_pi_runtime_v2.ROOM_RUNTIME_CONTRACT", contract_path),
                 patch("scripts.build_managed_pi_runtime_v2.ROOM_RUNTIME_ADAPTER", adapter_path),
+                patch(
+                    "scripts.build_managed_pi_runtime_v2.REQUIRED_PI_RUNTIME_BASE_COMMIT",
+                    commit,
+                ),
+                patch(
+                    "scripts.build_managed_pi_runtime_v2.REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS",
+                    {
+                        key: (f"marker:{key}",)
+                        for key in ("providerContextJournal", "workflowControl", "session")
+                    },
+                ),
             ):
                 contract, digest = _verified_room_runtime_contract(root)
                 (root / relative_sources["skills"]).write_text(
@@ -158,6 +171,34 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
 
         self.assertEqual(contract["minimumHandlersCommit"], commit)
         self.assertEqual(len(digest), 64)
+
+    def test_public_pi_pin_requires_goal_settle_and_memory_refresh_hooks(self) -> None:
+        contract_path = ROOT / "integrations" / "pi" / "room-runtime-host-contract.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        release_guide = (ROOT / "release" / "README.md").read_text(encoding="utf-8")
+        product_status = json.loads(
+            (ROOT / "release" / "product-status.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(
+            contract["minimumHandlersCommit"],
+            REQUIRED_PI_RUNTIME_BASE_COMMIT,
+        )
+        self.assertIn(f"git checkout {REQUIRED_PI_RUNTIME_BASE_COMMIT}", release_guide)
+        declared_markers = contract["requiredSourceMarkers"]
+        for key, required in REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS.items():
+            with self.subTest(source=key):
+                self.assertTrue(set(required).issubset(declared_markers[key]))
+
+        blockers = {item["id"] for item in product_status["blockers"]}
+        self.assertIn("managed_pi_e3_runtime_acceptance_pending", blockers)
+        source_contract = next(
+            item
+            for item in product_status["resolvedBlockers"]
+            if item["id"] == "managed_pi_v2_source_contract"
+        )
+        self.assertIn(REQUIRED_PI_RUNTIME_BASE_COMMIT, source_contract["evidence"])
+        self.assertIn("not runtime acceptance evidence", source_contract["evidence"])
 
     def test_default_pi_worktree_prefers_canonical_main_checkout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-pi-worktree-") as temporary:

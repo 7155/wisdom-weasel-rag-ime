@@ -42,7 +42,7 @@ git clone https://github.com/7155/personal-agent-workbench.git
 git clone https://github.com/7155/pi.git
 
 cd pi
-git checkout 0cb10fa18118632b6e3d3233cbc18d7ea6486114
+git checkout e3e2bb4e2dd98fc8b40f2e886c157f776aa53ea7
 npm ci
 
 cd ../personal-agent-workbench
@@ -84,8 +84,8 @@ python3 -m compileall -q rag_ime scripts tests
 python3 scripts/check_import_boundaries.py
 python3 scripts/check_route_ownership.py
 python3 scripts/check_product_status.py --json
-uvx --offline mypy
-uvx --offline ruff@0.14.2 check rag_ime scripts tests
+uvx --from "mypy==2.3.0" mypy
+uvx --from "ruff==0.14.2" ruff check rag_ime scripts tests
 python3 scripts/check_public_release.py --repository-only
 ```
 
@@ -142,6 +142,68 @@ Apply that plan only when removal is intended:
 ```bash
 python3 scripts/uninstall_rag_ime.py --apply
 ```
+
+### Clean Reinstall Without Deleting User Data
+
+Use this sequence when an older local build must be replaced but databases,
+governed memory, Sessions, Provider authentication, credentials, logs, and
+Rime user configuration must survive.
+
+First verify that the user-installed Squirrel is the single canonical input
+method. The second command is read-only and reports whether a duplicate
+system-wide bundle would be quarantined:
+
+```bash
+python3 scripts/audit_canonical_squirrel_bundles.py
+scripts/quarantine_duplicate_squirrel_app.sh --preflight
+```
+
+If the preflight reports a same-bundle-id duplicate under
+`/Library/Input Methods`, run the quarantine command without `--preflight`.
+It moves that duplicate aside and re-registers the canonical user bundle; it
+does not delete the canonical Squirrel.
+
+Review and then apply the same narrowly scoped uninstall options:
+
+```bash
+python3 scripts/uninstall_rag_ime.py \
+  --purge-runtime-cache \
+  --report /tmp/personal-agent-workbench-uninstall-plan.json
+
+python3 scripts/uninstall_rag_ime.py \
+  --apply \
+  --purge-runtime-cache \
+  --report /tmp/personal-agent-workbench-uninstall-result.json
+```
+
+Do not add `--purge-local-data`, `--purge-credentials`,
+`--remove-rime-managed-config`, or `--remove-patched-squirrel` to a clean
+reinstall. Those flags intentionally cross the preservation boundary.
+
+Reinstall from the clean source checkout, verify that every installed
+component resolves to the new source generation, and only then prune retired
+managed Pi generations:
+
+```bash
+scripts/install_product_stack.sh \
+  --include-pi \
+  --pi-worktree ../pi \
+  --skip-mlx
+
+python3 scripts/check_installed_product_components.py --require-current
+
+python3 scripts/prune_managed_pi_runtime.py \
+  --report /tmp/personal-agent-workbench-pi-retention-plan.json
+
+python3 scripts/prune_managed_pi_runtime.py \
+  --apply \
+  --plan /tmp/personal-agent-workbench-pi-retention-plan.json \
+  --report /tmp/personal-agent-workbench-pi-retention-result.json
+```
+
+Runtime retention keeps the accepted active and immediate previous
+generations for rollback. It removes only digest-bound generations in the
+accepted retired lineage and refuses a changed dry-run plan.
 
 ## Source Publication And Binary Release
 

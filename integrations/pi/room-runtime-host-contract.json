@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "0cb10fa18118632b6e3d3233cbc18d7ea6486114",
+  "minimumHandlersCommit": "e3e2bb4e2dd98fc8b40f2e886c157f776aa53ea7",
   "requiredMethods": [
     "session.control_state",
     "room.dispatch",
@@ -90,7 +90,8 @@
     "providerContextJournal": [
       "export class ProviderContextJournal",
       "Provider context epoch transition is stale or non-monotonic",
-      "<rag-ime-context type=\"${entry.kind}\">"
+      "<rag-ime-context type=\"${entry.kind}\">",
+      "\"session_memory_refresh\""
     ],
     "sessionContextRefresh": [
       "Managed Room compaction is missing compactionEntryId",
@@ -119,7 +120,14 @@
     ],
     "workflowControl": [
       "const showPlan = Boolean(planStatus) && (planStatus !== \"draft\" || planItems.length > 0);",
-      "<workflow-state>"
+      "<workflow-state>",
+      "const MAX_GOAL_SETTLE_ATTEMPTS_PER_SCOPE = 5;",
+      "pi.on(\"before_agent_settle\"",
+      "event.settleAttempt >= MAX_GOAL_SETTLE_ATTEMPTS_PER_SCOPE",
+      "\"goal-settle\"",
+      "freshToolEvidenceSha256: evidenceDigest",
+      "freshToolEvidenceFingerprints.clear();",
+      "origin: \"goal_supervisor\""
     ],
     "lifecycleHooks": [
       "const isManagedRoom = (): boolean => options.isManagedRoom?.() === true;",
@@ -136,7 +144,8 @@
       "SKILL_REVISION_MISMATCH",
       "loadReason: \"stage_required\"",
       "requiredRoomSkill(options.roomSkillPolicy)",
-      "RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS"
+      "RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS",
+      "this.providerContextJournal.beginEpoch(\"session_memory_refresh\""
     ]
   }
 }

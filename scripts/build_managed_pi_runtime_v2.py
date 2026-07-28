@@ -29,6 +29,24 @@ from rag_ime.managed_pi_runtime import (
 
 ROOM_RUNTIME_CONTRACT = ROOT / "integrations" / "pi" / "room-runtime-host-contract.json"
 ROOM_RUNTIME_ADAPTER = ROOT / "integrations" / "pi" / "room-runtime-host.ts"
+REQUIRED_PI_RUNTIME_BASE_COMMIT = "e3e2bb4e2dd98fc8b40f2e886c157f776aa53ea7"
+REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS = {
+    "providerContextJournal": (
+        '"session_memory_refresh"',
+    ),
+    "workflowControl": (
+        'const MAX_GOAL_SETTLE_ATTEMPTS_PER_SCOPE = 5;',
+        'pi.on("before_agent_settle"',
+        'event.settleAttempt >= MAX_GOAL_SETTLE_ATTEMPTS_PER_SCOPE',
+        '"goal-settle"',
+        'freshToolEvidenceSha256: evidenceDigest',
+        'freshToolEvidenceFingerprints.clear();',
+        'origin: "goal_supervisor"',
+    ),
+    "session": (
+        'this.providerContextJournal.beginEpoch("session_memory_refresh"',
+    ),
+}
 _ROOM_RUNTIME_SOURCE_KEYS = (
     "protocol",
     "runtimeHost",
@@ -216,6 +234,11 @@ def _verified_room_runtime_contract(pi_root: Path) -> tuple[dict[str, object], s
         character not in "0123456789abcdef" for character in minimum_commit
     ):
         raise ManagedPiRuntimeError("Room runtime minimum handlers commit is invalid")
+    if minimum_commit != REQUIRED_PI_RUNTIME_BASE_COMMIT:
+        raise ManagedPiRuntimeError(
+            "Room runtime minimum handlers commit does not include the reviewed "
+            "Goal-settlement and Session-memory-refresh hooks"
+        )
     ancestor = subprocess.run(
         ["git", "merge-base", "--is-ancestor", minimum_commit, "HEAD"],
         cwd=pi_root,
@@ -247,6 +270,12 @@ def _verified_room_runtime_contract(pi_root: Path) -> tuple[dict[str, object], s
         _ROOM_RUNTIME_SOURCE_KEYS
     ):
         raise ManagedPiRuntimeError("Room runtime source marker map is incomplete")
+    for key, expected_markers in REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS.items():
+        declared = required_markers.get(key)
+        if not isinstance(declared, list) or not set(expected_markers).issubset(declared):
+            raise ManagedPiRuntimeError(
+                f"Room runtime source contract omits required Goal lifecycle markers: {key}"
+            )
     for key in _ROOM_RUNTIME_SOURCE_KEYS:
         markers = required_markers.get(key)
         if not isinstance(markers, list) or not markers:
