@@ -24,6 +24,8 @@ COORDINATOR_TOOL_IDS = (
     "workspace_read",
     "workspace_search",
     "workspace_patch",
+    "workspace_edit",
+    "workspace_write",
     "workspace_shell",
 )
 

@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from rag_ime import managed_pi_runtime as managed_runtime
+from rag_ime import agent_tools, managed_pi_runtime as managed_runtime
 from rag_ime.agent_tool_ids import ASSISTANT_CONTROL_TOOL_IDS, CONTROL_TOOL_IDS
 from rag_ime.managed_pi_runtime import (
     ACCEPTANCE_SCHEMA_VERSION,
@@ -58,6 +58,41 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertEqual(discovered.extension_path.name, "rag-ime-control.ts")
         self.assertEqual(discovered.tools, CONTROL_TOOL_IDS)
         self.assertTrue((self.app_support / "PiRuntime" / POINTER_NAME).is_file())
+
+    def test_managed_default_reaches_every_coordinator_native_projection(self) -> None:
+        """The managed Pi manifest must expose every native coding projection.
+
+        `workspace_patch` remains a gateway-only R2 approval flow.  This derives
+        only the hidden coordinator tools which declare a native Pi projection,
+        so adding a gateway tool or changing its approval risk cannot silently
+        widen the managed runtime's tool surface.
+        """
+        payload, manifest = self._payload("runtime-native-projections")
+
+        coordinator_native_targets = {
+            str(spec["id"])
+            for spec in agent_tools._TOOL_SPECS
+            if spec.get("modelVisible") is False
+            and tuple(spec.get("sessionModes") or ()) == ("coordinator",)
+            and agent_tools._RUNTIME_TOOL_PROJECTIONS.get(str(spec["id"]))
+        }
+
+        self.assertEqual(
+            coordinator_native_targets,
+            {
+                "workspace_list",
+                "workspace_read",
+                "workspace_search",
+                "workspace_edit",
+                "workspace_write",
+                "workspace_shell",
+            },
+        )
+        self.assertNotIn("workspace_patch", coordinator_native_targets)
+        self.assertTrue(
+            coordinator_native_targets.issubset(set(manifest["tools"])),
+            "managed Pi defaults must reach every coordinator-only native projection",
+        )
 
     def test_discovery_rejects_pointer_and_runtime_file_tampering(self) -> None:
         payload, _ = self._payload("runtime-1")
