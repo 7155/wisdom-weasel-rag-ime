@@ -127,6 +127,48 @@ class MacOSUninstallTests(unittest.TestCase):
             self.assertTrue(target.is_file())
             self.assertEqual(calls, [])
 
+    def test_apply_stops_before_unlink_or_later_removal_when_bootout_fails(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-uninstall-bootout-failure-") as tmp:
+            home = Path(tmp)
+            self._seed_owned_install(home)
+            first_plist = (
+                home
+                / "Library"
+                / "LaunchAgents"
+                / "com.rag-ime.agent-gateway.plist"
+            )
+            control_app = home / "Applications" / "RagImeControl.app"
+            calls: list[list[str]] = []
+
+            def runner(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
+                command = [str(item) for item in args]
+                calls.append(command)
+                return subprocess.CompletedProcess(
+                    command,
+                    5,
+                    "",
+                    "Input/output error",
+                )
+
+            plan = build_macos_uninstall_plan(home, uid=501)
+            report = apply_macos_uninstall_plan(
+                plan,
+                command_runner=runner,
+                platform_name="darwin",
+            )
+
+            self.assertFalse(report["ok"])
+            self.assertEqual(len(calls), 1)
+            self.assertTrue(first_plist.is_file())
+            self.assertTrue(control_app.is_dir())
+            self.assertEqual(report["results"][0]["status"], "failed")
+            self.assertTrue(
+                all(
+                    result["status"] == "not_applied"
+                    for result in report["results"][1:]
+                )
+            )
+
     def test_component_scope_limits_base_removal(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-uninstall-scope-") as tmp:
             home = Path(tmp)
@@ -286,7 +328,16 @@ class MacOSUninstallTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
-                report = apply_macos_uninstall_plan(plan, platform_name="darwin")
+                report = apply_macos_uninstall_plan(
+                    plan,
+                    command_runner=lambda args: subprocess.CompletedProcess(
+                        args,
+                        0,
+                        "",
+                        "",
+                    ),
+                    platform_name="darwin",
+                )
 
                 squirrel_result = next(
                     item for item in report["results"] if item["kind"] == "remove_marked_squirrel"

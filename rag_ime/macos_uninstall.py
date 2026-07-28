@@ -412,6 +412,16 @@ def apply_macos_uninstall_plan(
     for raw_action in plan.get("actions", []):
         if not isinstance(raw_action, Mapping) or raw_action.get("status") != "planned":
             continue
+        if not ok:
+            results.append(
+                {
+                    "kind": str(raw_action.get("kind") or ""),
+                    "target": str(raw_action.get("target") or ""),
+                    "status": "not_applied",
+                    "detail": "a prior uninstall action failed; rerun the dry-run before retrying",
+                }
+            )
+            continue
         action = dict(raw_action)
         try:
             result = _apply_action(action, home=home, runner=runner)
@@ -495,6 +505,10 @@ def _apply_action(action: Mapping[str, object], *, home: Path, runner: CommandRu
                 f"{domain}/{expected}",
             ]
         )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"launch agent bootout failed with exit code {completed.returncode}"
+            )
         target.unlink(missing_ok=True)
         return {
             "kind": kind,
