@@ -569,6 +569,12 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-tool-result-panel[data-tone='error'] > strong, .agent-tool-result-panel[data-tone='error'] > p { color: var(--color-danger); }
 .agent-tool-result-panel > p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
 .agent-tool-result-panel > pre { max-height: 260px; margin: 0; padding: 8px; overflow: auto; border: 1px solid var(--color-border); border-radius: var(--radius-1); background: var(--color-surface); color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-tool-result-panel > small { color: var(--color-text-tertiary); line-height: 1.45; }
+.agent-tool-request { display: grid; gap: 5px; margin: 0; }
+.agent-tool-request > div { display: grid; grid-template-columns: minmax(72px, 0.25fr) minmax(0, 1fr); gap: 10px; align-items: start; }
+.agent-tool-request dt { color: var(--color-text-tertiary); }
+.agent-tool-request dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--color-text-primary); }
+.agent-tool-request code { font-family: var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-tool-recovery { display: flex; justify-content: flex-end; margin-top: 8px; }
 .agent-activity-row__approval-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .agent-activity-live { margin-top: 5px; padding: 3px 8px 2px; border: 1px solid var(--color-border); border-radius: var(--radius-2); background: color-mix(in srgb, var(--color-surface-subtle) 38%, transparent); }

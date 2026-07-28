@@ -12,6 +12,7 @@ from unittest.mock import patch
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
+from rag_ime.pi_runtime_public import public_code_tool_activity
 from rag_ime.pi_runtime_v2 import (
     PiRuntimeHostClient,
     PiRuntimeHostManager,
@@ -1304,6 +1305,112 @@ class PiRuntimeV2Tests(unittest.TestCase):
             ),
             2,
         )
+
+    def test_coding_tool_projection_keeps_useful_request_and_bounded_output(self) -> None:
+        result = public_code_tool_activity(
+            "grep",
+            {
+                "path": "/Users/private/project/rag_ime",
+                "pattern": "rime_lexicon_review",
+                "glob": "*.py",
+                "limit": 100,
+                "context": 2,
+            },
+            {
+                "content": [{
+                    "type": "text",
+                    "text": (
+                        "/Users/private/project/rag_ime/agent_tools.py:41:"
+                        " def rime_lexicon_review(): pass\n"
+                        "OPENAI_API_KEY=sk-never-render-this"
+                    ),
+                }],
+            },
+        )
+
+        self.assertEqual(result["path"], "…/project/rag_ime")
+        self.assertEqual(result["pattern"], "rime_lexicon_review")
+        self.assertEqual(result["glob"], "*.py")
+        self.assertEqual(result["limit"], 100)
+        self.assertEqual(result["context"], 2)
+        self.assertIn("~/project/rag_ime/agent_tools.py:41", result["outputPreview"])
+        self.assertIn("OPENAI_API_KEY=[REDACTED_SECRET]", result["outputPreview"])
+        serialized = json.dumps(result, ensure_ascii=False)
+        self.assertNotIn("/Users/private", serialized)
+        self.assertNotIn("sk-never-render-this", serialized)
+
+    def test_coding_tool_projection_redacts_commands_and_never_previews_secret_files(self) -> None:
+        command = public_code_tool_activity(
+            "bash",
+            {
+                "command": (
+                    "OPENAI_API_KEY=plain-secret python scripts/probe.py "
+                    "--token bearer-secret"
+                ),
+                "timeout": 30,
+            },
+            {"content": [{"type": "text", "text": "probe complete"}]},
+        )
+        secret_file = public_code_tool_activity(
+            "read",
+            {"path": "/Users/private/project/.env", "limit": 100},
+            {"content": [{"type": "text", "text": "DATABASE_PASSWORD=do-not-show"}]},
+        )
+
+        self.assertEqual(command["timeout"], 30)
+        self.assertEqual(
+            command["command"],
+            (
+                "OPENAI_API_KEY=[REDACTED_SECRET] python scripts/probe.py "
+                "--token [REDACTED_SECRET]"
+            ),
+        )
+        self.assertEqual(command["outputPreview"], "probe complete")
+        self.assertNotIn("outputPreview", secret_file)
+        self.assertNotIn("do-not-show", json.dumps(secret_file))
+
+    def test_host_coding_tool_event_sends_one_bounded_result_projection(self) -> None:
+        session_id = str(self.first["id"])
+        turn_id = "turn-grep-projection"
+        self.runtime._handle_host_event(  # noqa: SLF001 - protocol boundary
+            {
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "turnId": turn_id,
+                "payload": {
+                    "type": "tool_execution_end",
+                    "toolCallId": "call-grep-projection",
+                    "toolName": "grep",
+                    "args": {
+                        "path": "/Users/private/project/rag_ime",
+                        "pattern": "provider_payload",
+                        "limit": 100,
+                    },
+                    "result": {
+                        "content": [{
+                            "type": "text",
+                            "text": "rag_ime/pi_runtime.py:100:def provider_payload():",
+                        }],
+                    },
+                    "isError": False,
+                },
+            }
+        )
+
+        events, gap = self.events.replay(session_id)
+        self.assertFalse(gap)
+        event = next(
+            item
+            for item in events
+            if item.event_type == "tool_finished"
+            and item.payload.get("toolCallId") == "call-grep-projection"
+        )
+        self.assertEqual(
+            event.payload["publicResult"]["outputPreview"],
+            "rag_ime/pi_runtime.py:100:def provider_payload():",
+        )
+        self.assertNotIn("result", event.payload)
 
     def test_transcript_tool_messages_rebuild_a_redacted_durable_timeline(self) -> None:
         raw_messages = [

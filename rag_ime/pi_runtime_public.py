@@ -304,20 +304,66 @@ def public_fork_candidate_text(value: object, *, role: str = "user") -> str:
     return visible
 
 
-def public_code_tool_activity(tool_name: str, args: Mapping[str, object]) -> dict[str, object]:
+def public_code_tool_activity(
+    tool_name: str,
+    args: Mapping[str, object],
+    raw_result: object = None,
+) -> dict[str, object]:
+    """Project a bounded, useful coding-tool receipt for the private timeline.
+
+    Tool arguments in the generic event envelope are intentionally redacted,
+    but reducing every path, query and command to a generic label made the
+    timeline useless for debugging. This projection keeps the operational
+    nouns a user needs to audit (target, pattern, command, range) while
+    redacting credentials and bounding returned output. Mutation bodies are
+    never copied into the event.
+    """
+
     normalized_tool = str(tool_name or "").strip().lower()
     file_tools = {
         "read", "read_file", "workspace_read",
         "write", "write_file", "workspace_write_file",
         "edit", "edit_file", "workspace_edit_file",
     }
-    if normalized_tool not in file_tools:
+    search_tools = {"grep", "workspace_search"}
+    list_tools = {"find", "ls", "workspace_list"}
+    command_tools = {"bash", "workspace_shell"}
+    coding_tools = file_tools | search_tools | list_tools | command_tools
+    if normalized_tool not in coding_tools:
         return {}
-    raw_path = str(args.get("relativePath") or args.get("fileName") or args.get("file_path") or args.get("path") or "")
+    raw_path = str(
+        args.get("relativePath")
+        or args.get("fileName")
+        or args.get("file_path")
+        or args.get("path")
+        or ""
+    )
+    workspace_path = _public_workspace_path(raw_path)
     file_name = public_file_name(raw_path)
     result: dict[str, object] = {}
     if file_name:
         result["fileName"] = file_name
+    if workspace_path:
+        result["path"] = workspace_path
+
+    for key in ("op", "mode", "patternKind"):
+        value = _public_tool_text(args.get(key), maximum=120)
+        if value:
+            result[key] = value
+    for key in ("query", "pattern", "glob"):
+        value = _public_tool_text(args.get(key), maximum=500)
+        if value:
+            result[key] = value
+    for key in ("offset", "limit", "context", "timeout"):
+        value = args.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            result[key] = value
+
+    if normalized_tool in command_tools:
+        command = _public_tool_text(args.get("command"), maximum=2_000)
+        if command:
+            result["command"] = command
+
     if normalized_tool in {"write", "write_file", "workspace_write_file"}:
         content = args.get("content")
         if isinstance(content, str) and content:
@@ -329,7 +375,134 @@ def public_code_tool_activity(tool_name: str, args: Mapping[str, object]) -> dic
             result.update({"lineCount": line_count, "additions": line_count})
             if file_name:
                 result["summary"] = f"{file_name} +{line_count}"
+    preview_tools = (
+        file_tools
+        - {
+            "write", "write_file", "workspace_write_file",
+            "edit", "edit_file", "workspace_edit_file",
+        }
+        | search_tools
+        | list_tools
+        | command_tools
+    )
+    if (
+        normalized_tool in preview_tools
+        and _public_tool_output_allowed(normalized_tool, raw_path)
+    ):
+        preview, truncated = _public_tool_output_preview(raw_result)
+        if preview:
+            result["outputPreview"] = preview
+            result["outputTruncated"] = truncated
     return result
+
+
+def _public_workspace_path(value: object) -> str:
+    normalized = str(value or "").replace("\\", "/").strip()
+    normalized = re.sub(r"/{2,}", "/", normalized)
+    if (
+        not normalized
+        or len(normalized) > 1_000
+        or any(ord(character) < 32 for character in normalized)
+        or re.search(
+            r"token|secret|password|api.?key|authorization|cookie",
+            normalized,
+            re.IGNORECASE,
+        )
+    ):
+        return ""
+    parts = [part for part in normalized.split("/") if part]
+    if any(part in {".", ".."} for part in parts):
+        return ""
+    absolute = normalized.startswith("/") or normalized.startswith("~/")
+    if not absolute:
+        return "/".join(parts) or normalized
+    visible_parts = parts
+    if normalized.startswith("/Users/") and len(parts) >= 2:
+        visible_parts = parts[2:]
+    elif normalized.startswith("/Volumes/") and len(parts) >= 2:
+        visible_parts = parts[2:]
+    elif normalized.startswith("/private/var/") and len(parts) >= 2:
+        visible_parts = parts[2:]
+    # Keep enough suffix to identify a concrete target without persisting a
+    # home-directory account name or external-volume label.
+    suffix = "/".join(visible_parts[-4:])
+    return f"…/{suffix}" if suffix else ""
+
+
+def _public_tool_text(value: object, *, maximum: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return ""
+    text = re.sub(r"\bsk-[A-Za-z0-9_-]{6,}\b", "[REDACTED_SECRET]", text)
+    text = re.sub(
+        r"(?i)\b([a-z0-9_]*(?:api[_-]?key|access[_-]?token|password|secret|authorization))"
+        r"(\s*(?:=|:)\s*)([^\s'\";]+|\"[^\"]*\"|'[^']*')",
+        r"\1\2[REDACTED_SECRET]",
+        text,
+    )
+    text = re.sub(
+        r"(?i)(--(?:api[_-]?key|token|password|secret)\s+)"
+        r"([^\s'\";]+|\"[^\"]*\"|'[^']*')",
+        r"\1[REDACTED_SECRET]",
+        text,
+    )
+    # Keep useful path suffixes in commands and grep output, but never persist
+    # the local account or external-volume label. Prefix replacement works for
+    # quoted paths containing spaces, unlike a whitespace-delimited path regex.
+    text = re.sub(r"/Users/[^/\s]+/", "~/", text)
+    text = re.sub(r"/Volumes/[^/]+/", "/…/", text)
+    text = text.replace("/private/var/", "/…/var/")
+    text = text.replace("/var/folders/", "/…/var/folders/")
+    return text[:maximum]
+
+
+def _public_tool_output_allowed(tool_name: str, raw_path: str) -> bool:
+    if tool_name in {"bash", "workspace_shell"}:
+        return True
+    normalized = raw_path.replace("\\", "/").lower()
+    basename = normalized.rsplit("/", 1)[-1]
+    return not (
+        basename in {
+            ".env", ".env.local", ".env.production", ".npmrc", ".pypirc",
+            ".netrc", "auth.json", "credentials", "credentials.json",
+            "id_rsa", "id_ed25519",
+        }
+        or basename.endswith((".pem", ".key", ".p12", ".pfx"))
+    )
+
+
+def _public_tool_output_preview(raw_result: object) -> tuple[str, bool]:
+    result = as_mapping(raw_result)
+    content = result.get("content")
+    chunks: list[str] = []
+    source_truncated = False
+    if isinstance(content, list):
+        source_truncated = len(content) > 16
+        for item in content[:16]:
+            raw_text = as_mapping(item).get("text")
+            if isinstance(raw_text, str) and len(raw_text) > 6_000:
+                source_truncated = True
+            text = _public_tool_text(raw_text, maximum=6_000)
+            if text:
+                chunks.append(text)
+    if not chunks:
+        for key in ("stdout", "output", "text"):
+            raw_text = result.get(key)
+            if isinstance(raw_text, str) and len(raw_text) > 6_000:
+                source_truncated = True
+            text = _public_tool_text(raw_text, maximum=6_000)
+            if text:
+                chunks.append(text)
+                break
+    if not chunks:
+        return "", False
+    joined = "\n".join(chunks)
+    lines = joined.splitlines()
+    truncated = source_truncated or len(joined) > 6_000 or len(lines) > 40
+    preview = "\n".join(lines[:40])[:6_000]
+    return preview, truncated
 
 
 def public_pi_model(raw: Mapping[str, object]) -> dict[str, object]:

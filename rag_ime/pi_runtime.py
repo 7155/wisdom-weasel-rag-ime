@@ -1859,12 +1859,31 @@ class PiRuntimeManager:
                 "args": redact_mapping(raw_args),
                 "isError": bool(raw.get("isError")),
             }
-            public_result = public_code_tool_activity(tool_name, raw_args)
+            result_key = "partialResult" if event_type == "tool_execution_update" else "result"
+            raw_result = raw.get(result_key)
+            public_result = public_code_tool_activity(
+                tool_name,
+                raw_args,
+                raw_result,
+            )
+            if (
+                bool(raw.get("isError"))
+                and public_result.get("outputPreview")
+            ):
+                public_result["error"] = public_result["outputPreview"]
             if public_result:
                 payload["publicResult"] = public_result
-            result_key = "partialResult" if event_type == "tool_execution_update" else "result"
-            if raw.get(result_key) is not None:
-                payload[result_key] = redact_mapping(as_mapping(raw.get(result_key)))
+            if raw_result is not None:
+                # Coding tools already have a bounded semantic projection.
+                # Duplicating their raw carrier made every tool event heavier
+                # and forced the client to retain content it never rendered.
+                # Keep the generic carrier only when projection is unavailable
+                # or a failed mutation has no safe error preview.
+                if not public_result or (
+                    bool(raw.get("isError"))
+                    and not public_result.get("outputPreview")
+                ):
+                    payload[result_key] = redact_mapping(as_mapping(raw_result))
             if event_type == "tool_execution_end" and not bool(raw.get("isError")):
                 captured = self._tool_blocks.capture(
                     raw.get("result"),

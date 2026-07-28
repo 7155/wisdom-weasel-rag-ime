@@ -275,6 +275,8 @@ function ActivityRow({
         <div className="agent-activity-row__details">
           {presentation.detail ? <p>{presentation.detail}</p> : null}
           <ToolProgressTimeline activity={activity} entries={progressHistory} />
+          {toolView?.request.length ? <PublicToolRequest view={toolView} /> : null}
+          {toolView?.output ? <PublicToolOutput view={toolView} /> : null}
           {toolView?.preview ? <SemanticToolPreview preview={toolView.preview} /> : null}
           {toolView ? <PublicToolFields view={toolView} /> : <SafeFieldList data={payload} />}
           {toolView?.error ? <PublicToolError reason={toolView.error} /> : null}
@@ -353,6 +355,35 @@ function PublicToolFields({ view }: { view: PublicToolResultView }) {
         <div key={field.id}><dt>{field.label}</dt><dd>{field.value}</dd></div>
       ))}
     </dl>
+  );
+}
+
+function PublicToolRequest({ view }: { view: PublicToolResultView }) {
+  return (
+    <section className="agent-tool-result-panel" aria-label="工具调用参数">
+      <strong><TerminalSquare size={13} />调用参数</strong>
+      <dl className="agent-tool-request">
+        {view.request.map((field) => (
+          <div key={field.id}>
+            <dt>{field.label}</dt>
+            <dd>{field.code ? <code>{field.value}</code> : field.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+function PublicToolOutput({ view }: { view: PublicToolResultView }) {
+  if (!view.output) return null;
+  return (
+    <section className="agent-tool-result-panel" aria-label="工具返回片段">
+      <strong><TerminalSquare size={13} />返回片段</strong>
+      <pre>{view.output.text}</pre>
+      {view.output.truncated ? (
+        <small>此处显示安全截断片段；完整结果仍由本机工具回执保留。</small>
+      ) : null}
+    </section>
   );
 }
 

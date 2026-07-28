@@ -7,12 +7,21 @@ export interface PublicToolResultField {
   value: string;
 }
 
+export interface PublicToolRequestField extends PublicToolResultField {
+  code?: boolean;
+}
+
 export interface PublicToolResultView {
   toolId: string;
   toolLabel: string;
   operation: string;
   summary: string;
   fields: PublicToolResultField[];
+  request: PublicToolRequestField[];
+  output?: {
+    text: string;
+    truncated: boolean;
+  };
   sources: string[];
   preview?: PublicToolSemanticPreview;
   error?: string;
@@ -281,6 +290,8 @@ export function publicToolResultView(activity: AgentActivityProjection): PublicT
     operation,
     summary: summary || codeResult.summary || `${toolLabel}${activity.status === 'running' ? '正在处理' : activity.status === 'failed' ? '执行失败' : '已完成'}`,
     fields,
+    request: codeResult.request,
+    ...(codeResult.output ? { output: codeResult.output } : {}),
     sources,
     ...(preview ? { preview } : {}),
     ...(error ? { error } : {}),
@@ -491,6 +502,11 @@ function roleBookToolPreview(
 interface PublicCodeToolResult {
   summary: string;
   file: string;
+  request: PublicToolRequestField[];
+  output?: {
+    text: string;
+    truncated: boolean;
+  };
   lines?: number;
   additions?: number;
   deletions?: number;
@@ -508,13 +524,59 @@ function publicCodeToolResult(
     'write', 'write_file', 'workspace_write_file',
     'edit', 'edit_file', 'workspace_edit_file',
   ]);
+  const searchTools = new Set(['grep', 'workspace_search']);
+  const listTools = new Set(['find', 'ls', 'workspace_list']);
+  const commandTools = new Set(['bash', 'workspace_shell']);
+  const codeTools = new Set([...fileTools, ...searchTools, ...listTools, ...commandTools]);
   const rawPath = firstText([publicResult, args, envelope, carrier], ['relativePath', 'fileName', 'file_path', 'path']);
-  const file = fileTools.has(toolId) ? publicWorkspacePath(rawPath) : '';
+  const file = codeTools.has(toolId) ? publicWorkspacePath(rawPath) : '';
+  const request: PublicToolRequestField[] = [];
+  const addRequest = (id: string, label: string, value: string, code = false) => {
+    if (!value || request.some((field) => field.id === id)) return;
+    request.push({ id, label, value, ...(code ? { code: true } : {}) });
+  };
+  if (file) addRequest('path', '目标', file, true);
+
+  const operation = firstText([publicResult], ['op']);
+  const mode = firstText([publicResult], ['mode']);
+  const patternKind = firstText([publicResult], ['patternKind']);
+  const query = firstText([publicResult], ['query']);
+  const pattern = firstText([publicResult], ['pattern']);
+  const glob = firstText([publicResult], ['glob']);
+  const command = firstText([publicResult], ['command']);
+  if (operation) addRequest('op', '动作', operation, true);
+  if (query) addRequest('query', '查询', query, true);
+  if (pattern) addRequest('pattern', '模式', pattern, true);
+  if (glob) addRequest('glob', '文件范围', glob, true);
+  if (mode) addRequest('mode', '搜索方式', mode, true);
+  if (patternKind) addRequest('patternKind', '模式类型', patternKind, true);
+  if (command) addRequest('command', '命令', command, true);
+  for (const [key, label] of [
+    ['offset', '起始行'],
+    ['limit', '上限'],
+    ['context', '上下文行'],
+    ['timeout', '超时'],
+  ] as const) {
+    const value = firstFiniteNumber([publicResult, args], [key]);
+    if (value !== undefined) {
+      addRequest(key, label, key === 'timeout' ? `${value} 秒` : String(value), true);
+    }
+  }
+
+  const outputText = firstText([publicResult], ['outputPreview']);
+  const output = outputText
+    ? {
+        text: outputText,
+        truncated: firstBoolean([publicResult], ['outputTruncated']) === true,
+      }
+    : undefined;
+
   if (['write', 'write_file', 'workspace_write_file'].includes(toolId)) {
     const lines = firstFiniteNumber([publicResult], ['lineCount']) ?? publicLineCount(text(args.content));
     const additions = firstFiniteNumber([publicResult], ['additions']) ?? lines;
     return {
       file,
+      request,
       ...(lines !== undefined ? { lines } : {}),
       ...(additions !== undefined ? { additions } : {}),
       summary: file ? `${file}${lines !== undefined ? ` +${lines}` : ' 已写入'}` : '文件已写入',
@@ -526,7 +588,7 @@ function publicCodeToolResult(
     const changeLabel = changes.additions !== undefined || changes.deletions !== undefined
       ? ` +${changes.additions ?? 0} / -${changes.deletions ?? 0}`
       : ' 已更新';
-    return { file, summary: file ? `${file}${changeLabel}` : '文件已更新', ...changes };
+    return { file, request, summary: file ? `${file}${changeLabel}` : '文件已更新', ...changes };
   }
   if (['read', 'read_file', 'workspace_read'].includes(toolId)) {
     const truncation = firstRecord([envelope, carrier], ['truncation']);
@@ -534,11 +596,46 @@ function publicCodeToolResult(
     const lines = totalLines ?? publicLineCount(publicToolContentText(carrier));
     return {
       file,
+      request,
+      ...(output ? { output } : {}),
       ...(lines !== undefined ? { lines } : {}),
       summary: file ? `${file}${lines !== undefined ? ` · ${lines} 行` : ' 已读取'}` : '文件已读取',
     };
   }
-  return { file: '', summary: '' };
+  if (searchTools.has(toolId)) {
+    const needle = pattern || query;
+    return {
+      file,
+      request,
+      ...(output ? { output } : {}),
+      summary: needle
+        ? `在 ${file || '工作区'} 搜索 “${needle.slice(0, 100)}”`
+        : '搜索项目内容',
+    };
+  }
+  if (listTools.has(toolId)) {
+    const needle = pattern || query;
+    return {
+      file,
+      request,
+      ...(output ? { output } : {}),
+      summary: toolId === 'ls' || toolId === 'workspace_list'
+        ? `列出 ${file || '工作区'}`
+        : needle
+          ? `查找 “${needle.slice(0, 100)}”`
+          : '查找项目文件',
+    };
+  }
+  if (commandTools.has(toolId)) {
+    const firstLine = command.split('\n', 1)[0]?.slice(0, 140) ?? '';
+    return {
+      file,
+      request,
+      ...(output ? { output } : {}),
+      summary: firstLine ? `运行 ${firstLine}` : '运行项目命令',
+    };
+  }
+  return { file: '', request: [], summary: '' };
 }
 
 function publicWorkspacePath(value: string): string {

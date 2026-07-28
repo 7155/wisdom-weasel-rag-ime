@@ -80,6 +80,47 @@ describe('Agent tool activity details', () => {
     expect(group).not.toHaveAttribute('open');
   });
 
+  it('shows the exact safe coding-tool request and meaningful returned lines', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-grep-evidence',
+      toolName: 'grep',
+      args: {
+        path: '[REDACTED_PATH]',
+        pattern: 'rime_lexicon_review',
+      },
+      publicResult: {
+        path: '…/project/rag_ime',
+        pattern: 'rime_lexicon_review',
+        glob: '*.py',
+        limit: 100,
+        context: 2,
+        outputPreview: [
+          'rag_ime/agent_tools.py:41:def rime_lexicon_review(...):',
+          'tests/test_rime_lexicon_review.py:12:class ReviewTests:',
+        ].join('\n'),
+        outputTruncated: true,
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    fireEvent.click(group.querySelector('summary')!);
+    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    const request = within(row).getByLabelText('工具调用参数');
+    expect(request).toHaveTextContent('目标');
+    expect(request).toHaveTextContent('…/project/rag_ime');
+    expect(request).toHaveTextContent('rime_lexicon_review');
+    expect(request).toHaveTextContent('*.py');
+    expect(request).toHaveTextContent('100');
+    expect(request).toHaveTextContent('2');
+    const output = within(row).getByLabelText('工具返回片段');
+    expect(output).toHaveTextContent('rag_ime/agent_tools.py:41');
+    expect(output).toHaveTextContent('tests/test_rime_lexicon_review.py:12');
+    expect(output).toHaveTextContent('完整结果仍由本机工具回执保留');
+  });
+
   it('keeps the timeline compact and opens full activity details in a dialog', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-compact-dialog',
