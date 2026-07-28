@@ -114,21 +114,30 @@ class AgentCorePolicyTests(unittest.TestCase):
         self.assertEqual(prompt.count("<durable-memory-policy>"), 1)
         self.assertNotIn("<managed-work>", prompt)
 
-    def test_managed_template_includes_state_machine_after_stable_policies(self) -> None:
-        prompt = core_agent_policy_prompt(
-            "SAFETY",
-            {
-                "agentTemplateId": "worker",
-                "executionMode": "per_action",
-            },
-        )
+    def test_goal_task_and_managed_template_include_state_machine(self) -> None:
+        for label, managed_session in (
+            ("goal", {"goalId": "goal:1"}),
+            ("task", {"currentTaskId": "task:1"}),
+            ("template", {"agentTemplateId": "worker"}),
+        ):
+            with self.subTest(managed_session=label):
+                prompt = core_agent_policy_prompt(
+                    "SAFETY",
+                    {
+                        **managed_session,
+                        "executionMode": "per_action",
+                    },
+                )
 
-        self.assertLess(
-            prompt.index("</durable-memory-policy>"),
-            prompt.index("<managed-work>"),
-        )
-        self.assertLess(prompt.index("</managed-work>"), prompt.index("<execution-mode"))
-        self.assertEqual(prompt.count("<managed-work>"), 1)
+                self.assertLess(
+                    prompt.index("</durable-memory-policy>"),
+                    prompt.index("<managed-work>"),
+                )
+                self.assertLess(
+                    prompt.index("</managed-work>"),
+                    prompt.index("<execution-mode"),
+                )
+                self.assertEqual(prompt.count("<managed-work>"), 1)
 
 
 if __name__ == "__main__":

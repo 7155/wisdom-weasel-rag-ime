@@ -534,7 +534,11 @@ def _prompt_layers(
             core_agent_policy_prompt(
                 persona.safety_policy_prompt,
                 session,
-                managed_work=True,
+                # Room settlement is owned by the collaboration role's
+                # `<room-work>` contract and the Room Kernel. Injecting the
+                # ordinary Goal/Task state machine here would create a second
+                # lifecycle owner with different terminal-state vocabulary.
+                managed_work=False,
             ),
             ("safety", "authorization", "durable-memory"),
         ),

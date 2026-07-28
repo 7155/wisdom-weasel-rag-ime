@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rag_ime.agent_definitions import collaboration_role
 from rag_ime.agent_prompt_plans import (
     PromptLayer,
     PromptPlanConflict,
@@ -14,6 +15,9 @@ from rag_ime.agent_prompt_plans import (
     RoomPromptPlanStore,
 )
 from rag_ime.agent_room_context import ProviderProjectionJournalStore, RoomContextLedgerStore
+from rag_ime.agent_room_runtime_coordinator import _prompt_layers
+from rag_ime.agent_roles import agent_role
+from rag_ime.agent_templates import agent_template
 
 
 class RoomPromptPlanTests(unittest.TestCase):
@@ -55,6 +59,49 @@ class RoomPromptPlanTests(unittest.TestCase):
             "settle-decision rule belongs to collaboration_role",
         ):
             self._compile("receipt:semantic-owner", layers=layers)
+
+    def test_ordinary_managed_work_is_rejected_from_room_prompt_plan(self) -> None:
+        layers = list(self._layers())
+        layers[0] = PromptLayer(
+            **{
+                **layers[0].__dict__,
+                "content": "CORE\n<managed-work>ordinary lifecycle</managed-work>",
+            }
+        )
+
+        with self.assertRaisesRegex(
+            PromptProducerConflict,
+            "ordinary-managed-work rule is not valid in Room PromptPlan",
+        ):
+            self._compile("receipt:ordinary-managed-work", layers=layers)
+
+    def test_runtime_room_layers_have_one_room_lifecycle_owner(self) -> None:
+        layers = _prompt_layers(
+            persona=agent_role("companion-present-v1", "1"),
+            session={
+                "dispatchId": "dispatch:1",
+                "currentTaskId": "task:1",
+                "executionMode": "workspace_managed",
+            },
+            role_book_prompt="",
+            role=collaboration_role("implementer", "1"),
+            template=agent_template("worker", "1"),
+            profile_pin={"bundleContentHash": "sha256:" + ("a" * 64)},
+            profile_overlay="",
+            journal_id="journal:1",
+            guard_pin=None,
+        )
+
+        self._compile("receipt:runtime-room", layers=layers)
+        prompt = str(
+            self.store.provider_payload("receipt:runtime-room")[
+                "stableSystemPrompt"
+            ]
+        )
+
+        self.assertNotIn("<managed-work>", prompt)
+        self.assertEqual(prompt.count("<room-work>"), 1)
+        self.assertIn("room_commit", prompt)
 
     def test_durable_memory_rule_is_rejected_outside_core_rails(self) -> None:
         layers = list(self._layers())

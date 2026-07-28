@@ -33,6 +33,10 @@ _RULE_OWNER_SIGNATURES = (
     ("progressive-capability", "agent_template_policy", ("skill_load", "tool_load")),
 )
 
+_ROOM_FORBIDDEN_RULE_SIGNATURES = (
+    ("ordinary-managed-work", ("<managed-work>",)),
+)
+
 
 class PromptProducerConflict(RuntimeError):
     """An instruction domain has more than one producer."""
@@ -446,6 +450,12 @@ def _compile_layers(
 
 def _assert_rule_ownership(layer: PromptLayer) -> None:
     content = layer.content
+    for rule, signatures in _ROOM_FORBIDDEN_RULE_SIGNATURES:
+        matched = [signature for signature in signatures if signature in content]
+        if matched:
+            raise PromptProducerConflict(
+                f"{rule} rule is not valid in Room PromptPlan: {matched[0]}"
+            )
     for rule, owner, signatures in _RULE_OWNER_SIGNATURES:
         if layer.layer == owner:
             continue
