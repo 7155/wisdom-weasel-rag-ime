@@ -2,91 +2,70 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PIP_CACHE_DIR="${RAG_IME_PIP_CACHE_DIR:-$ROOT/.pip-cache}"
-PACKAGE="${RAG_IME_MLX_PACKAGE:-mlx-lm==0.31.3}"
+APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
+RUNTIME_ROOT="${RAG_IME_MLX_RUNTIME_ROOT:-$APP_SUPPORT_DIR/components/mlx-predictor}"
+VENV_DIR="${RAG_IME_MLX_VENV:-$RUNTIME_ROOT/.venv}"
+PIP_CACHE_DIR="${RAG_IME_PIP_CACHE_DIR:-$HOME/Library/Caches/RagIme/pip}"
+PYTHON_VERSION="${RAG_IME_MLX_PYTHON_VERSION:-3.13}"
+UV_BIN="${UV_BIN:-$(command -v uv || true)}"
 
-detect_python() {
-  local candidate
-  for candidate in "$(command -v python3.13 2>/dev/null || true)" "$(command -v python3 2>/dev/null || true)"; do
-    if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
-python_has_mlx() {
-  "$1" -c 'import mlx.core' >/dev/null 2>&1
-}
-
-PYTHON="${RAG_IME_MLX_SETUP_PYTHON:-$(detect_python || true)}"
-if [[ -z "$PYTHON" || ! -x "$PYTHON" ]]; then
-  echo "Python executable not found: $PYTHON" >&2
+if [[ -z "$UV_BIN" || ! -x "$UV_BIN" ]]; then
+  echo "uv is required to create the managed MLX predictor runtime" >&2
   exit 1
 fi
 
-"$PYTHON" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' || {
-  echo "Python 3.11+ is required for MLX setup: $PYTHON" >&2
-  exit 1
-}
-
-USE_SYSTEM_SITE_PACKAGES="${RAG_IME_MLX_USE_SYSTEM_SITE_PACKAGES:-auto}"
-if [[ "$USE_SYSTEM_SITE_PACKAGES" == "auto" ]]; then
-  if python_has_mlx "$PYTHON"; then
-    USE_SYSTEM_SITE_PACKAGES=0
-  else
-    USE_SYSTEM_SITE_PACKAGES=0
-  fi
-fi
-
-if [[ -n "${RAG_IME_MLX_VENV:-}" ]]; then
-  VENV_DIR="$RAG_IME_MLX_VENV"
-elif [[ "$USE_SYSTEM_SITE_PACKAGES" == "1" || "$USE_SYSTEM_SITE_PACKAGES" == "true" || "$USE_SYSTEM_SITE_PACKAGES" == "TRUE" ]]; then
-  VENV_DIR="$ROOT/.venv-mlx313"
-else
-  VENV_DIR="$ROOT/.venv-mlx313"
-fi
-
-mkdir -p "$PIP_CACHE_DIR"
+mkdir -p "$RUNTIME_ROOT" "$PIP_CACHE_DIR"
+chmod 700 "$RUNTIME_ROOT"
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-  if [[ "$USE_SYSTEM_SITE_PACKAGES" == "1" || "$USE_SYSTEM_SITE_PACKAGES" == "true" || "$USE_SYSTEM_SITE_PACKAGES" == "TRUE" ]]; then
-    "$PYTHON" -m venv --system-site-packages "$VENV_DIR"
-  else
-    "$PYTHON" -m venv "$VENV_DIR"
-  fi
+  "$UV_BIN" venv --python "$PYTHON_VERSION" "$VENV_DIR"
 fi
 
-pip_no_proxy() {
-  env \
-    -u PIP_PROXY \
-    -u HTTP_PROXY \
-    -u HTTPS_PROXY \
-    -u ALL_PROXY \
-    -u FTP_PROXY \
-    -u WSS_PROXY \
-    -u WS_PROXY \
-    -u http_proxy \
-    -u https_proxy \
-    -u all_proxy \
-    -u ftp_proxy \
-    -u wss_proxy \
-    -u ws_proxy \
-    PIP_CACHE_DIR="$PIP_CACHE_DIR" \
-    "$VENV_DIR/bin/python" -m pip "$@"
-}
+REQUIREMENTS="$RUNTIME_ROOT/mlx-predictor-requirements.txt"
+OVERLAY_REQUIREMENTS="$ROOT/scripts/mlx-predictor-overlay-requirements.txt"
+UV_CACHE_DIR="$PIP_CACHE_DIR" "$UV_BIN" export \
+  --project "$ROOT" \
+  --frozen \
+  --no-dev \
+  --no-emit-project \
+  --extra embedding-mlx \
+  --output-file "$REQUIREMENTS" \
+  >/dev/null
+chmod 600 "$REQUIREMENTS"
+# Converge the managed environment to the frozen base first. Unlike
+# `pip install`, `pip sync` removes packages that disappeared from the lock,
+# so an upgraded installation cannot retain an obsolete MLX dependency.
+UV_CACHE_DIR="$PIP_CACHE_DIR" "$UV_BIN" pip sync \
+  --python "$VENV_DIR/bin/python" \
+  "$REQUIREMENTS"
+UV_CACHE_DIR="$PIP_CACHE_DIR" "$UV_BIN" pip install \
+  --python "$VENV_DIR/bin/python" \
+  --no-deps \
+  --requirement "$OVERLAY_REQUIREMENTS"
+UV_CACHE_DIR="$PIP_CACHE_DIR" "$UV_BIN" pip check \
+  --python "$VENV_DIR/bin/python"
 
-if python_has_mlx "$VENV_DIR/bin/python"; then
-  pip_no_proxy install --no-deps "$PACKAGE"
-  pip_no_proxy install "transformers<5" sentencepiece protobuf pyyaml jinja2
-else
-  pip_no_proxy install --no-deps "$PACKAGE"
-  pip_no_proxy install "mlx>=0.31.2" "transformers<5" sentencepiece protobuf pyyaml jinja2
-fi
+"$VENV_DIR/bin/python" - <<'PY' >&2
+import json
+import sys
 
-"$VENV_DIR/bin/python" - <<'PY'
+import mlx
 import mlx_lm
-print(f"mlx-lm import OK: {getattr(mlx_lm, '__file__', '')}")
+import transformers
+
+if sys.version_info < (3, 12):
+    raise SystemExit(f"managed MLX runtime requires Python 3.12+, got {sys.version}")
+print(
+    json.dumps(
+        {
+            "ok": True,
+            "python": sys.executable,
+            "mlx": getattr(mlx, "__version__", ""),
+            "mlxLm": getattr(mlx_lm, "__version__", ""),
+            "transformers": getattr(transformers, "__version__", ""),
+        },
+        ensure_ascii=False,
+    )
+)
 PY
 
-echo "$VENV_DIR/bin/python"
+printf '%s\n' "$VENV_DIR/bin/python"

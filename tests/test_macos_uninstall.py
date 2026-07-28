@@ -38,6 +38,32 @@ class MacOSUninstallTests(unittest.TestCase):
         self.assertEqual(plan["options"]["componentScope"], "all")
         planned_kinds = {item["kind"] for item in plan["actions"] if item["status"] == "planned"}
         self.assertEqual(planned_kinds, {"remove_launch_agent", "remove_owned_app"})
+        launch_agents = [
+            item for item in plan["actions"] if item["kind"] == "remove_launch_agent"
+        ]
+        active_labels = {
+            item["metadata"]["expectedLabel"]
+            for item in launch_agents
+            if item["metadata"]["lifecycle"] == "active"
+        }
+        legacy_labels = {
+            item["metadata"]["expectedLabel"]
+            for item in launch_agents
+            if item["metadata"]["lifecycle"] == "legacy"
+        }
+        self.assertEqual(
+            active_labels,
+            {
+                "com.rag-ime.agent-gateway",
+                "com.rag-ime.desktop-bridge",
+                "com.rag-ime.memory-book-maintenance",
+                "com.rag-ime.mineru",
+                "com.rag-ime.mlx-predictor",
+                "com.rag-ime.sidecar",
+                "com.rag-ime.voice",
+            },
+        )
+        self.assertEqual(legacy_labels, {"com.rag-ime.frontend"})
         self.assertFalse(plan["options"]["removePatchedSquirrel"])
         self.assertFalse(plan["options"]["removeRimeManagedConfig"])
         self.assertFalse(plan["options"]["purgeLocalData"])

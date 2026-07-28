@@ -14,7 +14,6 @@ from typing import Callable, Mapping, Sequence
 
 SCHEMA_VERSION = "rag-ime.macos-uninstall.v1"
 LAUNCH_AGENT_LABELS = (
-    "com.rag-ime.frontend",
     "com.rag-ime.agent-gateway",
     "com.rag-ime.desktop-bridge",
     "com.rag-ime.memory-book-maintenance",
@@ -23,6 +22,10 @@ LAUNCH_AGENT_LABELS = (
     "com.rag-ime.sidecar",
     "com.rag-ime.voice",
 )
+LEGACY_LAUNCH_AGENT_LABELS = (
+    "com.rag-ime.frontend",
+)
+OWNED_LAUNCH_AGENT_LABELS = LAUNCH_AGENT_LABELS + LEGACY_LAUNCH_AGENT_LABELS
 APP_BUNDLES = (
     ("RagImeControl.app", "com.rag-ime.control"),
     ("RagImeDesktopBridge.app", "com.rag-ime.desktop-bridge"),
@@ -112,6 +115,9 @@ def build_macos_uninstall_plan(
                         "expectedLabel": label,
                         "actualLabel": actual_label,
                         "domain": domain,
+                        "lifecycle": (
+                            "legacy" if label in LEGACY_LAUNCH_AGENT_LABELS else "active"
+                        ),
                     },
                 ),
                 "status": "planned" if verified else ("absent" if not exists else "skipped_unverified"),
@@ -475,7 +481,7 @@ def _apply_action(action: Mapping[str, object], *, home: Path, runner: CommandRu
         expected_target = home / "Library" / "LaunchAgents" / f"{expected}.plist"
         domain = str(metadata.get("domain") or "")
         if (
-            expected not in LAUNCH_AGENT_LABELS
+            expected not in OWNED_LAUNCH_AGENT_LABELS
             or target != expected_target
             or not domain.startswith("gui/")
             or not domain.removeprefix("gui/").isdigit()
@@ -600,7 +606,7 @@ def _launch_agent_labels_for_scope(scope: str) -> tuple[str, ...]:
         return ("com.rag-ime.voice",)
     if scope == "sidecar":
         return ("com.rag-ime.sidecar", "com.rag-ime.agent-gateway")
-    return LAUNCH_AGENT_LABELS
+    return OWNED_LAUNCH_AGENT_LABELS
 
 
 def _app_bundles_for_scope(scope: str) -> tuple[tuple[str, str], ...]:
@@ -763,7 +769,8 @@ def _descendant_is_safe(path: Path, root: Path, *, allow_target_symlink: bool) -
 def _require_allowlisted_target(kind: str, target: Path, home: Path) -> None:
     allowed: dict[str, set[Path]] = {
         "remove_launch_agent": {
-            home / "Library" / "LaunchAgents" / f"{label}.plist" for label in LAUNCH_AGENT_LABELS
+            home / "Library" / "LaunchAgents" / f"{label}.plist"
+            for label in OWNED_LAUNCH_AGENT_LABELS
         },
         "remove_owned_app": {home / "Applications" / name for name, _ in APP_BUNDLES},
         "remove_marked_squirrel": {home / "Library" / "Input Methods" / "Squirrel.app"},

@@ -8,6 +8,8 @@ PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/RagIme"
 APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
 APP_CODE_DIR="$APP_SUPPORT_DIR/components/mlx-predictor"
+MLX_RUNTIME_ROOT="${RAG_IME_MLX_RUNTIME_ROOT:-$APP_CODE_DIR}"
+MANAGED_MLX_PYTHON="${RAG_IME_MLX_VENV:-$MLX_RUNTIME_ROOT/.venv}/bin/python"
 INSTALL_MARKER="$APP_CODE_DIR/rag-ime-install-marker.json"
 MODEL_REGISTRY_EXPLICIT="${RAG_IME_MODEL_REGISTRY+x}"
 MODEL_REGISTRY_ORIGIN="${RAG_IME_MODEL_REGISTRY_ORIGIN:-$([[ -n "$MODEL_REGISTRY_EXPLICIT" ]] && printf explicit || printf default)}"
@@ -39,35 +41,16 @@ if [[ "$MODEL_REGISTRY_ORIGIN" == "explicit" && ! -f "$MODEL_REGISTRY_PATH" ]]; 
   exit 1
 fi
 
-detect_python() {
-  local candidate
-  local candidates=()
-  if [[ -f "$PLIST_PATH" ]]; then
-    candidates+=("$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$PLIST_PATH" 2>/dev/null || true)")
-  fi
-  candidates+=("$ROOT/.venv-mlx313/bin/python")
-  candidates+=("$ROOT/.venv-mlx314sys/bin/python")
-  candidates+=("$ROOT/.venv-mlx/bin/python")
-  candidates+=("$ROOT/.venv/bin/python")
-  candidates+=("/opt/homebrew/bin/python3.13")
-  candidates+=("/opt/homebrew/bin/python3")
-  candidates+=("$(command -v python3 2>/dev/null || true)")
-
-  for candidate in "${candidates[@]}"; do
-    if [[ -n "$candidate" && -x "$candidate" ]] && "$candidate" - <<'PY' >/dev/null 2>&1; then
+python_has_required_stdlib() {
+  [[ -n "$1" && -x "$1" ]] && "$1" - <<'PY' >/dev/null 2>&1
 import hashlib
 import sqlite3
 import ssl
 import sys
 
 hashlib.md5(b"rag-ime").hexdigest()
-raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
 PY
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
 }
 
 detect_model_profile() {
@@ -79,24 +62,38 @@ detect_model_profile() {
   esac
 }
 
-PYTHON_EXECUTABLE="${RAG_IME_MLX_PYTHON:-${RAG_IME_PYTHON:-$(detect_python || true)}}"
-
-if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
-  echo "python executable not found or not executable: $PYTHON_EXECUTABLE" >&2
-  exit 1
+PYTHON_EXECUTABLE="${RAG_IME_MLX_PYTHON:-}"
+PYTHON_ORIGIN="explicit"
+if [[ -z "$PYTHON_EXECUTABLE" ]]; then
+  PYTHON_EXECUTABLE="$MANAGED_MLX_PYTHON"
+  PYTHON_ORIGIN="managed"
 fi
 
-if ! "$PYTHON_EXECUTABLE" - <<'PY' >/dev/null 2>&1; then
-import hashlib
-import sqlite3
-import ssl
-import sys
+if [[ "$PYTHON_ORIGIN" == "managed" ]] && ! python_has_required_stdlib "$PYTHON_EXECUTABLE"; then
+  if [[ "$DRY_RUN" == "1" || "$DRY_RUN" == "true" || "$DRY_RUN" == "TRUE" ]]; then
+    echo "managed MLX runtime is not ready for dry-run: $PYTHON_EXECUTABLE" >&2
+    echo "Run scripts/setup_mlx_predictor_env.sh first or set RAG_IME_MLX_PYTHON explicitly." >&2
+    exit 1
+  fi
+  PYTHON_EXECUTABLE="$(
+    RAG_IME_APP_SUPPORT_DIR="$APP_SUPPORT_DIR" \
+    RAG_IME_MLX_RUNTIME_ROOT="$MLX_RUNTIME_ROOT" \
+      "$ROOT/scripts/setup_mlx_predictor_env.sh"
+  )"
+fi
+if [[ "$PYTHON_ORIGIN" == "managed" ]] \
+  && [[ "$DRY_RUN" != "1" && "$DRY_RUN" != "true" && "$DRY_RUN" != "TRUE" ]] \
+  && ! "$PYTHON_EXECUTABLE" -c 'import mlx_lm' >/dev/null 2>&1; then
+  PYTHON_EXECUTABLE="$(
+    RAG_IME_APP_SUPPORT_DIR="$APP_SUPPORT_DIR" \
+    RAG_IME_MLX_RUNTIME_ROOT="$MLX_RUNTIME_ROOT" \
+      "$ROOT/scripts/setup_mlx_predictor_env.sh"
+  )"
+fi
 
-hashlib.md5(b"rag-ime").hexdigest()
-raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
-PY
+if ! python_has_required_stdlib "$PYTHON_EXECUTABLE"; then
   echo "python executable cannot import required stdlib modules (sqlite3/hashlib/ssl): $PYTHON_EXECUTABLE" >&2
-  echo "Set RAG_IME_MLX_PYTHON or RAG_IME_PYTHON to a healthy Python." >&2
+  echo "Set RAG_IME_MLX_PYTHON to a healthy Python 3.12+." >&2
   exit 1
 fi
 
@@ -184,7 +181,6 @@ Path(sys.argv[1]).write_text(
 )
 PY
 
-ROOT="$ROOT" \
 LABEL="$LABEL" \
 PLIST_PATH="$PLIST_PATH" \
 LOG_DIR="$LOG_DIR" \
@@ -215,7 +211,6 @@ import os
 import plistlib
 from pathlib import Path
 
-root = os.environ["ROOT"]
 app_support_dir = os.environ["APP_SUPPORT_DIR"]
 app_code_dir = os.environ["APP_CODE_DIR"]
 label = os.environ["LABEL"]
@@ -249,7 +244,6 @@ env_vars = {
     "PYTHONUNBUFFERED": "1",
     "RAG_IME_ROOT": app_code_dir,
     "RAG_IME_INSTALL_MARKER": str(Path(app_code_dir) / "rag-ime-install-marker.json"),
-    "RAG_IME_SOURCE_ROOT": root,
     "RAG_IME_MLX_MODEL": os.environ["MODEL"],
     "RAG_IME_MODEL_ID": os.environ["MODEL_ID"],
     "RAG_IME_MODEL_FINGERPRINT": os.environ["MODEL_FINGERPRINT"],

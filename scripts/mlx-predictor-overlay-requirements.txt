@@ -1,0 +1,8 @@
+# The base MLX/Transformers stack comes from uv.lock via the embedding-mlx
+# extra. mlx-lm adds these prediction-only packages. They are exact-pinned so
+# rebuilding the installed runtime cannot silently select a newer API surface.
+mlx-lm==0.31.3
+protobuf==7.35.1
+sentencepiece==0.2.1
+jinja2==3.1.6
+markupsafe==3.0.3

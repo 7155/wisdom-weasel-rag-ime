@@ -948,8 +948,10 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(marker["component"], "mlx-predictor")
         self.assertEqual(marker["sourceRoot"], str(root))
         self.assertTrue(marker["sourceCommit"])
+        self.assertEqual(marker["pythonExecutable"], sys.executable)
         self.assertEqual(payload["Label"], "com.rag-ime.mlx-predictor")
         self.assertFalse(payload["KeepAlive"])
+        self.assertEqual(payload["ProgramArguments"][0], sys.executable)
         self.assertIn("mlx-predictor-server", payload["ProgramArguments"])
         self.assertIn("18767", payload["ProgramArguments"])
         self.assertIn("/Volumes/undo 4t/models/mlx-community-Qwen3.5-0.8B-text-4bit-local", payload["ProgramArguments"])
@@ -969,6 +971,7 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertEqual(env_vars["HTTPS_PROXY"], "")
         self.assertEqual(env_vars["ALL_PROXY"], "")
         self.assertEqual(env_vars["HF_HOME"], str(Path(tmp) / "hf-cache"))
+        self.assertNotIn("RAG_IME_SOURCE_ROOT", env_vars)
         self.assertTrue(payload["WorkingDirectory"].endswith("RagIme"))
         script_source = (root / "scripts" / "install_mlx_predictor_launch_agent.sh").read_text(encoding="utf-8")
         self.assertIn("kill_stale_mlx_predictor_processes", script_source)
@@ -978,14 +981,30 @@ class LaunchAgentScriptTests(unittest.TestCase):
         self.assertIn("matching_sha256", script_source)
         self.assertNotIn('launchctl kickstart -k "$DOMAIN/$LABEL"', script_source)
 
-    def test_mlx_installer_reuses_verified_python_from_existing_launch_agent(self) -> None:
+    def test_mlx_installer_ignores_checkout_python_from_existing_launch_agent(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        with tempfile.TemporaryDirectory(prefix="rag-ime-mlx-python-reuse-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-mlx-managed-python-") as tmp:
             home = Path(tmp)
             plist_path = home / "Library" / "LaunchAgents" / "com.rag-ime.mlx-predictor.plist"
             plist_path.parent.mkdir(parents=True)
+            checkout_python = home / "source-checkout" / ".venv" / "bin" / "python"
+            checkout_python.parent.mkdir(parents=True)
+            checkout_python.symlink_to(sys.executable)
             with plist_path.open("wb") as handle:
-                plistlib.dump({"ProgramArguments": [sys.executable]}, handle)
+                plistlib.dump({"ProgramArguments": [str(checkout_python)]}, handle)
+            managed_python = (
+                home
+                / "Library"
+                / "Application Support"
+                / "RagIme"
+                / "components"
+                / "mlx-predictor"
+                / ".venv"
+                / "bin"
+                / "python"
+            )
+            managed_python.parent.mkdir(parents=True)
+            managed_python.symlink_to(sys.executable)
             env = {key: value for key, value in os.environ.items() if not key.startswith("RAG_IME_")}
             env.update(
                 {
@@ -1005,8 +1024,69 @@ class LaunchAgentScriptTests(unittest.TestCase):
             )
             with plist_path.open("rb") as handle:
                 payload = plistlib.load(handle)
+            marker = json.loads(
+                (
+                    home
+                    / "Library"
+                    / "Application Support"
+                    / "RagIme"
+                    / "components"
+                    / "mlx-predictor"
+                    / "rag-ime-install-marker.json"
+                ).read_text(encoding="utf-8")
+            )
 
-        self.assertEqual(payload["ProgramArguments"][0], sys.executable)
+        self.assertEqual(payload["ProgramArguments"][0], str(managed_python))
+        self.assertEqual(marker["pythonExecutable"], str(managed_python))
+        self.assertNotEqual(payload["ProgramArguments"][0], str(checkout_python))
+        self.assertNotIn("RAG_IME_SOURCE_ROOT", payload["EnvironmentVariables"])
+
+    def test_mlx_setup_uses_managed_locked_runtime(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        setup_source = (root / "scripts" / "setup_mlx_predictor_env.sh").read_text(
+            encoding="utf-8"
+        )
+        restart_source = (root / "scripts" / "restart_rag_ime_runtime.sh").read_text(
+            encoding="utf-8"
+        )
+        overlay = (
+            root / "scripts" / "mlx-predictor-overlay-requirements.txt"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('components/mlx-predictor}"', setup_source)
+        self.assertIn('VENV_DIR="${RAG_IME_MLX_VENV:-$RUNTIME_ROOT/.venv}"', setup_source)
+        self.assertIn("--frozen", setup_source)
+        self.assertIn("--extra embedding-mlx", setup_source)
+        self.assertIn('"$UV_BIN" pip sync', setup_source)
+        self.assertIn("--no-deps", setup_source)
+        self.assertIn('"$UV_BIN" pip check', setup_source)
+        self.assertLess(
+            setup_source.index('"$UV_BIN" pip sync'),
+            setup_source.index('"$UV_BIN" pip install'),
+        )
+        self.assertLess(
+            setup_source.index('"$UV_BIN" pip install'),
+            setup_source.index('"$UV_BIN" pip check'),
+        )
+        self.assertNotIn("$ROOT/.venv-mlx", setup_source)
+        self.assertNotIn("transformers<5", setup_source)
+        self.assertEqual(
+            {
+                line
+                for line in overlay.splitlines()
+                if line and not line.startswith("#")
+            },
+            {
+                "mlx-lm==0.31.3",
+                "protobuf==7.35.1",
+                "sentencepiece==0.2.1",
+                "jinja2==3.1.6",
+                "markupsafe==3.0.3",
+            },
+        )
+        self.assertIn('MLX_PYTHON="${RAG_IME_MLX_PYTHON:-}"', restart_source)
+        self.assertNotIn('MLX_PYTHON="$ROOT/.venv-mlx', restart_source)
+        self.assertNotIn('MLX_PYTHON="$ROOT/.venv/bin/python"', restart_source)
 
     def test_standalone_mlx_installer_infers_qwen_profile_and_model_id(self) -> None:
         root = Path(__file__).resolve().parents[1]

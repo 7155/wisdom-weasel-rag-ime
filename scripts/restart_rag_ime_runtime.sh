@@ -134,18 +134,7 @@ else
 fi
 LEGACY_MODEL_PROFILE="$(detect_mlx_profile "$MODEL_DIR")"
 LEGACY_MODEL_ID="$(basename "${MODEL_DIR:-local-model}")"
-MLX_PYTHON=""
-if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
-  if [[ -n "${RAG_IME_MLX_PYTHON:-}" ]]; then
-    MLX_PYTHON="$RAG_IME_MLX_PYTHON"
-  elif [[ -x "$ROOT/.venv-mlx313/bin/python" ]]; then
-    MLX_PYTHON="$ROOT/.venv-mlx313/bin/python"
-  elif [[ -x "$ROOT/.venv/bin/python" ]]; then
-    MLX_PYTHON="$ROOT/.venv/bin/python"
-  elif [[ -x "$ROOT/.venv-mlx314sys/bin/python" ]]; then
-    MLX_PYTHON="$ROOT/.venv-mlx314sys/bin/python"
-  fi
-fi
+MLX_PYTHON="${RAG_IME_MLX_PYTHON:-}"
 
 if [[ "$MODEL_RUNTIME" == "mlx" && ! -d "$MODEL_DIR" ]]; then
   echo "MLX model directory not found: $MODEL_DIR" >&2
@@ -153,9 +142,9 @@ if [[ "$MODEL_RUNTIME" == "mlx" && ! -d "$MODEL_DIR" ]]; then
   exit 1
 fi
 
-if [[ "$MODEL_RUNTIME" == "mlx" && ! -x "$MLX_PYTHON" ]]; then
+if [[ "$MODEL_RUNTIME" == "mlx" && -n "$MLX_PYTHON" && ! -x "$MLX_PYTHON" ]]; then
   echo "MLX python is not executable: $MLX_PYTHON" >&2
-  echo "Set RAG_IME_MLX_PYTHON to a Python that can import mlx_lm." >&2
+  echo "Unset RAG_IME_MLX_PYTHON to use the managed runtime, or set it to a Python that can import mlx_lm." >&2
   exit 1
 fi
 
@@ -173,7 +162,11 @@ export RAG_IME_MODEL_ID="${RAG_IME_MODEL_ID:-${RAG_IME_REGISTERED_MODEL_ID:-$LEG
 export RAG_IME_MODEL_FINGERPRINT="${RAG_IME_MODEL_FINGERPRINT:-$RAG_IME_REGISTERED_MODEL_FINGERPRINT}"
 if [[ "$MODEL_RUNTIME" == "mlx" ]]; then
   export RAG_IME_MLX_MODEL="$MODEL_DIR"
-  export RAG_IME_MLX_PYTHON="$MLX_PYTHON"
+  if [[ -n "$MLX_PYTHON" ]]; then
+    export RAG_IME_MLX_PYTHON="$MLX_PYTHON"
+  else
+    unset RAG_IME_MLX_PYTHON
+  fi
   export RAG_IME_MLX_HOST="${RAG_IME_MLX_HOST:-127.0.0.1}"
   export RAG_IME_MLX_PORT="${RAG_IME_MLX_PORT:-8767}"
 fi
