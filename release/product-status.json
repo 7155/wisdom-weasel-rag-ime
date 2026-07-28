@@ -67,13 +67,13 @@
     },
     {
       "id": "managed_pi_v2_source_contract",
-      "evidence": "The public build contract now requires Pi commit e3e2bb4e2dd98fc8b40f2e886c157f776aa53ea7 and source-contract sha256 5dabf8d30aa3334ec88b77a8bc45a972b7561674767550d324f4650196aeacc8, including ordinary-Goal before_agent_settle continuation, fresh-evidence and attempt-cap guards, and Session memory-refresh epochs. The previously recorded protocol-v2 smoke covered the older 0cb10fa pin and is not runtime acceptance evidence for this newer commit."
+      "evidence": "The public build contract now requires Pi commit 07b81139b4e064dc9853f4da0d07bc84f0ea75f6 and source-contract sha256 75476e9b5cc3b1ea0761f6126f9e5bd94376fa3e10d65920328f37656f67e61d, including ordinary-Goal before_agent_settle continuation, fresh-evidence and attempt-cap guards, Session memory-refresh epochs, replaceable per-turn context, and exact continuation-lease prompt ownership. The previously recorded protocol-v2 smoke covered the older 0cb10fa pin and is not runtime acceptance evidence for this newer commit."
     }
   ],
   "blockers": [
     {
-      "id": "managed_pi_e3_runtime_acceptance_pending",
-      "detail": "The source and packager contract now require Pi e3e2bb4e2dd98fc8b40f2e886c157f776aa53ea7, but a clean managed payload build and deterministic staged Runtime smoke for that exact commit have not yet been recorded."
+      "id": "managed_pi_07b_runtime_acceptance_pending",
+      "detail": "The source and packager contract now require Pi 07b81139b4e064dc9853f4da0d07bc84f0ea75f6, but a clean managed payload build and deterministic staged Runtime smoke for that exact commit have not yet been recorded."
     },
     {
       "id": "strict_foreground_soak_not_green",

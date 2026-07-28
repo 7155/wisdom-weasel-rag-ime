@@ -30,6 +30,10 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 "protocol": Path("packages/rag-ime-runtime-host/src/protocol.ts"),
                 "runtimeHost": Path("packages/rag-ime-runtime-host/src/runtime-host.ts"),
                 "providerContextHook": Path("packages/coding-agent/src/core/sdk.ts"),
+                "agentLoop": Path("packages/agent/src/agent-loop.ts"),
+                "agentCore": Path("packages/agent/src/agent.ts"),
+                "agentTypes": Path("packages/agent/src/types.ts"),
+                "agentSession": Path("packages/coding-agent/src/core/agent-session.ts"),
                 "contextInspection": Path("packages/rag-ime-runtime-host/src/debug-context.ts"),
                 "skills": Path("packages/coding-agent/src/core/skills.ts"),
                 "discoveryTools": Path("packages/rag-ime-runtime-host/src/discovery-tools.ts"),
@@ -191,7 +195,7 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
                 self.assertTrue(set(required).issubset(declared_markers[key]))
 
         blockers = {item["id"] for item in product_status["blockers"]}
-        self.assertIn("managed_pi_e3_runtime_acceptance_pending", blockers)
+        self.assertIn("managed_pi_07b_runtime_acceptance_pending", blockers)
         source_contract = next(
             item
             for item in product_status["resolvedBlockers"]

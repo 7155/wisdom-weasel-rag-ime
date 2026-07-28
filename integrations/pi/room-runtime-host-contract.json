@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "e3e2bb4e2dd98fc8b40f2e886c157f776aa53ea7",
+  "minimumHandlersCommit": "07b81139b4e064dc9853f4da0d07bc84f0ea75f6",
   "requiredMethods": [
     "session.control_state",
     "room.dispatch",
@@ -13,6 +13,10 @@
     "protocol": "packages/rag-ime-runtime-host/src/protocol.ts",
     "runtimeHost": "packages/rag-ime-runtime-host/src/runtime-host.ts",
     "providerContextHook": "packages/coding-agent/src/core/sdk.ts",
+    "agentLoop": "packages/agent/src/agent-loop.ts",
+    "agentCore": "packages/agent/src/agent.ts",
+    "agentTypes": "packages/agent/src/types.ts",
+    "agentSession": "packages/coding-agent/src/core/agent-session.ts",
     "contextInspection": "packages/rag-ime-runtime-host/src/debug-context.ts",
     "skills": "packages/coding-agent/src/core/skills.ts",
     "discoveryTools": "packages/rag-ime-runtime-host/src/discovery-tools.ts",
@@ -41,6 +45,20 @@
       "roomSkillLoad: opened.session.roomSkillLoadReceipt()"
     ],
     "providerContextHook": ["before_provider_request"],
+    "agentLoop": [
+      "applyTurnUpdate(await config.prepareQueuedTurn?.(currentContext));"
+    ],
+    "agentCore": [
+      "public onContinuationsLeased?: (continuations: AgentContinuation[]) => void;",
+      "prepareQueuedTurn: (context) => ({"
+    ],
+    "agentTypes": [
+      "prepareQueuedTurn?: ("
+    ],
+    "agentSession": [
+      "this.agent.onContinuationsLeased = (continuations) => {",
+      "async followUpWithSystemPrompt("
+    ],
     "contextInspection": [
       "pi.on(\"before_provider_request\"",
       "return record ? structuredClone(record) : undefined;",
@@ -90,6 +108,8 @@
     "providerContextJournal": [
       "export class ProviderContextJournal",
       "Provider context epoch transition is stale or non-monotonic",
+      "clearTurnContext(): void",
+      "this.turnContext = {",
       "<rag-ime-context type=\"${entry.kind}\">",
       "\"session_memory_refresh\""
     ],
@@ -145,7 +165,8 @@
       "loadReason: \"stage_required\"",
       "requiredRoomSkill(options.roomSkillPolicy)",
       "RAG_IME_PI_DEBUG_CONTEXT_MAX_CALLS",
-      "this.providerContextJournal.beginEpoch(\"session_memory_refresh\""
+      "this.providerContextJournal.beginEpoch(\"session_memory_refresh\"",
+      "this.session.followUpWithSystemPrompt("
     ]
   }
 }
