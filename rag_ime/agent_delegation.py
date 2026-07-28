@@ -914,6 +914,9 @@ class AgentDelegationStore:
                     "message": last_message,
                     "childSessionId": run["childSessionId"],
                     "templateId": run["templateId"],
+                    "deliveryStatus": "returned",
+                    "verificationStatus": "unverified",
+                    "authority": "evidence_only",
                     "recovered": True,
                 }
                 final_state = "completed"
@@ -1363,6 +1366,10 @@ class AgentDelegationCoordinator:
             "schemaVersion": "rag-ime.agent-delegation.v1",
             "ok": True,
             "accepted": True,
+            # This acknowledges only that the bounded delegation request was
+            # accepted for execution.  It is not evidence that any child
+            # result has satisfied the parent task's acceptance criteria.
+            "acceptanceScope": "delegation_request",
             "waited": wait,
             "batch": batch,
         }
@@ -1981,7 +1988,7 @@ class AgentDelegationCoordinator:
                             turn_count=turn_count,
                             tool_count=base_tool_count + len(tool_ids),
                             total_tokens=total_tokens,
-                            summary="子 Agent 已完成一个阶段",
+                            summary="子 Agent 已返回一个阶段输出",
                             updated_at_ms=event.created_at_ms,
                         )
                 elif event.event_type == "turn_completed":
@@ -2110,6 +2117,12 @@ class AgentDelegationCoordinator:
                         "messages": conversation,
                         "childSessionId": child_session_id,
                         "templateId": run["templateId"],
+                        # `turn_completed` means the delegated runtime stopped
+                        # normally.  Only the parent/Room quality gate can
+                        # decide whether its claims satisfy the parent task.
+                        "deliveryStatus": "returned",
+                        "verificationStatus": "unverified",
+                        "authority": "evidence_only",
                     }
                 else:
                     error = "delegated Pi turn ended without a terminal event"
@@ -2140,7 +2153,11 @@ class AgentDelegationCoordinator:
                 parent_session_id,
                 self.store.get_batch(str(batch["id"])),
                 final,
-                "子 Agent 已完成" if state == "completed" else "子 Agent 已停止",
+                (
+                    "子 Agent 已返回结果，待主持会话核验"
+                    if state == "completed"
+                    else "子 Agent 已停止"
+                ),
             )
             self._record_retained_child_session(run_id, child_session_id)
             self.collect_expired_sessions(force=False)
@@ -2508,7 +2525,10 @@ def _unsafe_fork_thinking(record: Mapping[str, object]) -> bool:
 def _subagent_prompt(run: Mapping[str, object], batch: Mapping[str, object]) -> str:
     return (
         "请完成下面这一项有界委派任务。只返回可交给主持会话使用的结果；"
-        "不要把自己描述成长期群聊成员，也不要扩大工具或权限。\n\n"
+        "不要把自己描述成长期群聊成员，也不要扩大工具或权限。"
+        "最终输出必须区分已经观察到的事实与由此推断的结论，列出可核验的 claims、"
+        "实际取得的工具回执或产物引用，以及仍未消除的不确定性；"
+        "没有真实回执时不要虚构引用，也不要宣称父任务已经验收通过。\n\n"
         f"任务：\n{run['task']}\n\n"
         f"上下文模式：{batch['contextMode']}\n"
         f"委派深度：{batch['depth']}/{batch['maxDepth']}"

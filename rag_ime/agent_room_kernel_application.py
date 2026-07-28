@@ -1271,13 +1271,17 @@ def _collaboration_tool_result(
         if isinstance(command, Mapping)
         else {}
     )
+    deduplicated = (
+        kernel_receipt.get("receiptKind") == "duplicate"
+        or kernel_receipt.get("status") == "noop"
+    )
     return {
         "accepted": True,
-        "enqueued": True,
-        "deduplicated": (
-            kernel_receipt.get("receiptKind") == "duplicate"
-            or kernel_receipt.get("status") == "noop"
-        ),
+        # `accepted` describes the canonical command; `enqueued` describes the
+        # Kernel side effect. An equivalent invocation can be accepted as an
+        # idempotent no-op without creating a second Dispatch.
+        "enqueued": not deduplicated,
+        "deduplicated": deduplicated,
         "targetParticipantRef": (
             arguments.get("targetParticipantRef")
             if isinstance(arguments, Mapping)

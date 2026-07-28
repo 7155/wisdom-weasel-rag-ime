@@ -54,6 +54,33 @@ class _CompletingRuntime:
         self.stopped = True
 
 
+class _ClaimingWithoutEvidenceRuntime(_CompletingRuntime):
+    """A normal model ending is not proof that the parent task succeeded."""
+
+    def prompt(self, session_id, _message):
+        turn_id = "turn:unsupported-claim"
+        self.events.publish(
+            session_id,
+            "message_completed",
+            {
+                "message": _assistant_message(
+                    session_id,
+                    turn_id,
+                    "已修复并通过验收。",
+                ),
+                "usage": {"totalTokens": 12},
+            },
+            turn_id=turn_id,
+        )
+        self.events.publish(
+            session_id,
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=turn_id,
+        )
+        return {"accepted": True, "turnId": turn_id}
+
+
 class _HangingRuntime(_CompletingRuntime):
     def prompt(self, session_id, _message):
         self.session_id = session_id
@@ -304,11 +331,24 @@ class AgentDelegationTests(unittest.TestCase):
             },
         )
         batch = response["batch"]
+        self.assertEqual(response["acceptanceScope"], "delegation_request")
         self.assertEqual(batch["state"], "completed")
         self.assertEqual(batch["depth"], 1)
         self.assertEqual(len(batch["runs"]), 2)
         self.assertEqual({run["usage"]["totalTokens"] for run in batch["runs"]}, {321})
         self.assertTrue(all(run["result"]["summary"] for run in batch["runs"]))
+        self.assertTrue(
+            all(run["result"]["deliveryStatus"] == "returned" for run in batch["runs"])
+        )
+        self.assertTrue(
+            all(
+                run["result"]["verificationStatus"] == "unverified"
+                for run in batch["runs"]
+            )
+        )
+        self.assertTrue(
+            all(run["result"]["authority"] == "evidence_only" for run in batch["runs"])
+        )
         self.assertTrue(all(run["artifact"]["recordCount"] >= 4 for run in batch["runs"]))
         self.assertNotIn(str(self.root), json.dumps(batch["runs"][0]["artifact"]))
         self.assertEqual([item["id"] for item in self.sessions.list()], [self.parent["id"]])
@@ -343,6 +383,46 @@ class AgentDelegationTests(unittest.TestCase):
                 {"agent": "market-shell-agent", "task": "执行任意命令"},
             )
         coordinator.close()
+
+    def test_model_claim_without_receipts_is_returned_but_never_accepted(self) -> None:
+        coordinator = self.coordinator(_ClaimingWithoutEvidenceRuntime)
+        try:
+            response = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "agent": "worker",
+                    "task": "声称完成但不提供任何工具证据",
+                },
+            )
+
+            self.assertEqual(response["acceptanceScope"], "delegation_request")
+            run = response["batch"]["runs"][0]
+            self.assertEqual(run["state"], "completed")
+            self.assertEqual(run["result"]["deliveryStatus"], "returned")
+            self.assertEqual(run["result"]["verificationStatus"], "unverified")
+            self.assertEqual(run["result"]["authority"], "evidence_only")
+            self.assertIn("已修复并通过验收", run["result"]["summary"])
+            self.assertNotIn("evidenceRefs", run["result"])
+            self.assertNotIn("artifactRefs", run["result"])
+
+            def progress_summaries() -> list[str]:
+                parent_events, gap = self.events.replay(str(self.parent["id"]))
+                self.assertFalse(gap)
+                return [
+                    str(event.payload.get("summary") or "")
+                    for event in parent_events
+                    if event.event_type == "tool_progress"
+                ]
+
+            _wait_until(
+                lambda: "子 Agent 已返回结果，待主持会话核验"
+                in progress_summaries()
+            )
+            summaries = progress_summaries()
+            self.assertIn("子 Agent 已返回结果，待主持会话核验", summaries)
+            self.assertNotIn("子 Agent 已完成", summaries)
+        finally:
+            coordinator.close()
 
     def test_paused_or_exhausted_parent_goal_blocks_new_delegation(self) -> None:
         goal = self.sessions.mutate_agent_goal(
@@ -883,6 +963,9 @@ class AgentDelegationTests(unittest.TestCase):
         run = recovered["runs"][0]
         self.assertEqual(recovered["state"], "completed")
         self.assertTrue(run["result"]["recovered"])
+        self.assertEqual(run["result"]["deliveryStatus"], "returned")
+        self.assertEqual(run["result"]["verificationStatus"], "unverified")
+        self.assertEqual(run["result"]["authority"], "evidence_only")
         self.assertEqual(run["usage"]["totalTokens"], 42)
         self.assertNotIn(run_id, coordinator._threads)
         retained = self.sessions.get(str(child["id"]))

@@ -22,6 +22,7 @@ from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_room_skills import RoomSkillEpochRevoked
 from rag_ime.agent_blocks import normalize_trusted_agent_blocks
 from rag_ime.agent_room_capabilities import ToolAuthorizationError
+from rag_ime.agent_room_kernel_application import _collaboration_tool_result
 from rag_ime.agent_room_kernel_contracts import (
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     KERNEL_COMMAND_SCHEMA_VERSION,
@@ -2297,6 +2298,9 @@ class RoomKernelServiceTests(unittest.TestCase):
             )
 
         result = first["result"]
+        self.assertTrue(result["accepted"])
+        self.assertTrue(result["enqueued"])
+        self.assertFalse(result["deduplicated"])
         self.assertTrue(result["currentResponsibilityContinues"])
         self.assertEqual(result, replay["result"])
         self.assertEqual(first["executionReceipt"], replay["executionReceipt"])
@@ -2349,6 +2353,57 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(
             self.service.room_kernel.dispatch("dispatch:service")["state"],
             "cancelled",
+        )
+
+    def test_room_collaborate_result_distinguishes_enqueue_from_duplicate(self) -> None:
+        invocation = {
+            "canonicalCommand": {
+                "arguments": {
+                    "targetParticipantRef": "participant:reviewer",
+                },
+            },
+        }
+        details = {
+            "childTaskId": "task:child",
+            "childDispatchId": "dispatch:child",
+        }
+
+        applied = _collaboration_tool_result(
+            invocation,
+            {
+                "receiptKind": "accepted",
+                "status": "applied",
+                "details": details,
+            },
+        )
+        duplicate = _collaboration_tool_result(
+            invocation,
+            {
+                "receiptKind": "duplicate",
+                "status": "noop",
+                "details": details,
+            },
+        )
+
+        self.assertEqual(
+            applied,
+            {
+                "accepted": True,
+                "enqueued": True,
+                "deduplicated": False,
+                "targetParticipantRef": "participant:reviewer",
+                "currentResponsibilityContinues": True,
+            },
+        )
+        self.assertEqual(
+            duplicate,
+            {
+                "accepted": True,
+                "enqueued": False,
+                "deduplicated": True,
+                "targetParticipantRef": "participant:reviewer",
+                "currentResponsibilityContinues": True,
+            },
         )
 
     def test_room_collaborate_replay_repairs_missing_execution_receipt(self) -> None:
