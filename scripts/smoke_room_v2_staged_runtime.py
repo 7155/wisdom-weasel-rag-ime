@@ -21,6 +21,63 @@ def _skill_body(content: str) -> str:
     return (normalized if end_index < 0 else normalized[end_index + 4 :]).strip()
 
 
+def _operation_schema(
+    operation: str,
+    *,
+    properties: dict[str, object] | None = None,
+    required: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Build the same discriminated operation shape the Runtime Host validates."""
+
+    return {
+        "type": "object",
+        "oneOf": [
+            {
+                "type": "object",
+                "required": ["op", *required],
+                "properties": {
+                    "op": {"type": "string", "const": operation},
+                    **(properties or {}),
+                },
+                "additionalProperties": False,
+            }
+        ],
+    }
+
+
+def _native_target_manifest(
+    name: str,
+    operation: str,
+    projections: tuple[str, ...],
+    *,
+    properties: dict[str, object] | None = None,
+    required: tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Describe one hidden product target behind Pi's resident coding tools."""
+
+    return {
+        "name": name,
+        "description": "Execute one authorized workspace operation.",
+        "when": ["The corresponding resident coding tool needs this backend target."],
+        "notFor": ["Direct Provider disclosure or deferred tool discovery."],
+        "input": "Validated arguments from the resident coding tool.",
+        "output": "A bounded result, approval receipt, or durable evidence handle.",
+        "does": "Execute one governed workspace operation.",
+        "parameters": _operation_schema(
+            operation,
+            properties=properties,
+            required=required,
+        ),
+        "profile": "room-kernel-v2",
+        "risk": "R1",
+        "modelVisible": False,
+        "runtimeProjections": [
+            {"name": projection, "operation": operation}
+            for projection in projections
+        ],
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Exercise a staged Room V2 payload with the explicit offline test Provider"
@@ -102,6 +159,113 @@ def main() -> int:
         try:
             hello = request("hello", "hello", {})
             prompt_hash = hashlib.sha256(b"room-v2-staged-prompt").hexdigest()
+            native_manifests = [
+                _native_target_manifest(
+                    "workspace_list",
+                    "list",
+                    ("ls",),
+                    properties={
+                        "path": {"type": "string"},
+                        "depth": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                    },
+                ),
+                _native_target_manifest(
+                    "workspace_read",
+                    "read",
+                    ("read",),
+                    properties={
+                        "path": {"type": "string"},
+                        "lineOffset": {"type": "integer"},
+                        "lineLimit": {"type": "integer"},
+                    },
+                    required=("path",),
+                ),
+                _native_target_manifest(
+                    "workspace_search",
+                    "search",
+                    ("grep", "find"),
+                    properties={
+                        "query": {"type": "string"},
+                        "path": {"type": "string"},
+                        "mode": {"type": "string"},
+                        "caseSensitive": {"type": "boolean"},
+                        "patternKind": {"type": "string"},
+                        "glob": {"type": "string"},
+                        "context": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                    },
+                    required=("query",),
+                ),
+                _native_target_manifest(
+                    "workspace_edit",
+                    "apply",
+                    ("edit",),
+                    properties={
+                        "path": {"type": "string"},
+                        "edits": {"type": "array"},
+                    },
+                    required=("path", "edits"),
+                ),
+                _native_target_manifest(
+                    "workspace_write",
+                    "apply",
+                    ("write",),
+                    properties={
+                        "path": {"type": "string"},
+                        "content": {"type": "string"},
+                    },
+                    required=("path", "content"),
+                ),
+                _native_target_manifest(
+                    "workspace_shell",
+                    "run",
+                    ("bash",),
+                    properties={
+                        "command": {"type": "string"},
+                        "cwd": {"type": "string"},
+                        "timeoutSeconds": {"type": "integer"},
+                        "allowNetwork": {"type": "boolean"},
+                    },
+                    required=("command",),
+                ),
+            ]
+            deferred_tool = {
+                "name": "room_collaborate",
+                "description": "Delegate one bounded subtask while retaining the current Room responsibility.",
+                "when": ["A second Room member can independently execute, verify, or review a bounded subtask."],
+                "notFor": ["Ordinary code work, responsibility transfer, or a public status message."],
+                "input": "A target participant, intent, bounded objective, expected output, and current acceptance aliases.",
+                "output": "A deduplicated child-dispatch receipt while the current responsibility continues.",
+                "does": "Create one cancellable, budgeted Room collaboration task.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "targetParticipantRef": {"type": "string"},
+                        "intent": {"enum": ["execute", "review", "revise"]},
+                        "objective": {"type": "string"},
+                        "expectedOutput": {"type": "string"},
+                        "acceptance": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": [
+                        "targetParticipantRef",
+                        "intent",
+                        "objective",
+                        "expectedOutput",
+                        "acceptance",
+                    ],
+                    "additionalProperties": False,
+                },
+                "profile": "room-kernel-v2",
+                "risk": "R1",
+            }
+            authorized_tool_names = [
+                *(str(item["name"]) for item in native_manifests),
+                str(deferred_tool["name"]),
+            ]
             opened = request("open", "session.open", {
                 "sessionId": "session:staged-e2e",
                 "cwd": str(args.workspace_root.resolve()),
@@ -114,30 +278,14 @@ def main() -> int:
                     "skillId": skill_name,
                     "skillHash": skill_hash,
                 },
-                "toolManifest": [{
-                    "name": "workspace_read",
-                    "description": "Read one file from the authorized workspace.",
-                    "when": ["需要读取授权工作区中的一个文件"],
-                    "notFor": ["写入、执行命令或工作区外路径"],
-                    "input": "授权工作区内的相对路径",
-                    "output": "文件内容",
-                    "does": "读取授权工作区内的一个文本文件。",
-                    "parameters": {
-                        "type": "object",
-                        "required": ["path"],
-                        "properties": {"path": {"type": "string"}},
-                        "additionalProperties": False,
-                    },
-                    "profile": "room-kernel-v2",
-                    "risk": "R1",
-                }],
+                "toolManifest": [*native_manifests, deferred_tool],
                 "roomCapability": {
                     "manifestId": "manifest:staged-e2e",
                     "manifestHash": prompt_hash,
                     "capabilityEpoch": 1,
                     "promptCompileReceiptId": "prompt-receipt:staged-e2e",
                     "promptPlanHash": prompt_hash,
-                    "toolNames": ["workspace_read"],
+                    "toolNames": authorized_tool_names,
                 },
                 "roomResourceLimits": {
                     "deadlineAtMs": int(time.time() * 1000) + 60_000,
@@ -191,21 +339,43 @@ def main() -> int:
                 if line.strip().startswith("{")
             ]
             deferred_tool = next(
-                (item for item in tool_lines if item.get("name") == "workspace_read"),
+                (item for item in tool_lines if item.get("name") == "room_collaborate"),
                 None,
             )
             six_fields = {"name", "when", "notFor", "input", "output", "does"}
             if not isinstance(deferred_tool, dict) or set(deferred_tool) != six_fields:
                 raise RuntimeError(
-                    "staged Runtime Host did not expose the exact six-field Tool route"
+                    "staged Runtime Host did not expose the exact six-field Tool route; "
+                    f"catalog names={[item.get('name') for item in tool_lines]}, "
+                    f"selected keys={sorted(deferred_tool) if isinstance(deferred_tool, dict) else None}"
                 )
             active_schemas = debug_context.get("toolSchemas")
-            if not isinstance(active_schemas, list) or any(
-                isinstance(item, dict) and item.get("name") == "workspace_read"
+            active_schema_names = {
+                str(item.get("name"))
                 for item in active_schemas
+                if isinstance(item, dict) and isinstance(item.get("name"), str)
+            } if isinstance(active_schemas, list) else set()
+            native_schema_names = {
+                "read",
+                "grep",
+                "find",
+                "ls",
+                "edit",
+                "write",
+                "bash",
+            }
+            hidden_target_names = {
+                str(item["name"])
+                for item in native_manifests
+            }
+            if (
+                not native_schema_names.issubset(active_schema_names)
+                or "room_collaborate" in active_schema_names
+                or active_schema_names & hidden_target_names
             ):
                 raise RuntimeError(
-                    "deferred Tool schema entered Provider tools before tool_load"
+                    "staged Runtime Host did not expose resident coding tools "
+                    "while keeping deferred and backend schemas hidden"
                 )
             if system_prompt.count('<loaded_skill name="test-driven-implementation"') != 1:
                 raise RuntimeError("required Room Skill was not injected exactly once")
@@ -253,6 +423,8 @@ def main() -> int:
                 "roomSkillLoad": room_skill_load,
                 "toolCatalogFields": sorted(six_fields),
                 "toolSchemaInitiallyHidden": True,
+                "nativeCodingToolSchemas": sorted(native_schema_names),
+                "hiddenBackendTargets": sorted(hidden_target_names),
                 "loadedSkillCount": 1,
                 "firstDelivery": first.get("delivery"),
                 "secondDelivery": second.get("delivery"),
