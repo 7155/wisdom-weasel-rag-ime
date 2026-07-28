@@ -34,15 +34,10 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / "project"
             CANARY.seed_project_workspace(workspace)
-            patch = self._approval(
+            edit = self._approval(
                 workspace,
-                tool_id="workspace_patch",
-                action={
-                    "path": str(workspace / "calculator.py"),
-                    "oldText": CANARY.PATCH_OLD_TEXT,
-                    "newText": CANARY.PATCH_NEW_TEXT,
-                    "expectedOccurrences": 1,
-                },
+                tool_id="workspace_edit",
+                action=self._edit_action(workspace),
             )
             shell = self._approval(
                 workspace,
@@ -55,8 +50,8 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
                 },
             )
 
-            parsed_patch = CANARY.validate_project_approval(
-                patch,
+            parsed_edit = CANARY.validate_project_approval(
+                edit,
                 session_id="agent:project",
                 workspace=workspace,
             )
@@ -66,7 +61,7 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
                 workspace=workspace,
             )
 
-        self.assertEqual(parsed_patch["toolId"], "workspace_patch")
+        self.assertEqual(parsed_edit["toolId"], "workspace_edit")
         self.assertEqual(parsed_shell["toolId"], "workspace_shell")
 
     def test_native_approval_allowlist_accepts_local_identifier_renames(self) -> None:
@@ -75,18 +70,16 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
             CANARY.seed_project_workspace(workspace)
             approval = self._approval(
                 workspace,
-                tool_id="workspace_patch",
-                action={
-                    "path": str(workspace / "calculator.py"),
-                    "oldText": CANARY.PATCH_OLD_TEXT,
-                    "newText": (
+                tool_id="workspace_edit",
+                action=self._edit_action(
+                    workspace,
+                    new_text=(
                         "    if not values:\n"
                         "        return []\n"
                         "    min_val = min(values)\n"
                         "    return [v - min_val for v in values]"
                     ),
-                    "expectedOccurrences": 1,
-                },
+                ),
             )
 
             parsed = CANARY.validate_project_approval(
@@ -95,7 +88,7 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
                 workspace=workspace,
             )
 
-        self.assertEqual(parsed["toolId"], "workspace_patch")
+        self.assertEqual(parsed["toolId"], "workspace_edit")
 
     def test_native_approval_allowlist_accepts_safe_inline_luna_implementation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -103,16 +96,14 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
             CANARY.seed_project_workspace(workspace)
             approval = self._approval(
                 workspace,
-                tool_id="workspace_patch",
-                action={
-                    "path": str(workspace / "calculator.py"),
-                    "oldText": CANARY.PATCH_OLD_TEXT,
-                    "newText": (
+                tool_id="workspace_edit",
+                action=self._edit_action(
+                    workspace,
+                    new_text=(
                         "    return [value - min(values) for value in values] "
                         "if values else []"
                     ),
-                    "expectedOccurrences": 1,
-                },
+                ),
             )
 
             parsed = CANARY.validate_project_approval(
@@ -121,7 +112,7 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
                 workspace=workspace,
             )
 
-        self.assertEqual(parsed["toolId"], "workspace_patch")
+        self.assertEqual(parsed["toolId"], "workspace_edit")
 
     def test_native_approval_allowlist_rejects_inline_side_effects(self) -> None:
         self.assertFalse(
@@ -136,18 +127,17 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
             CANARY.seed_project_workspace(workspace)
             approval = self._approval(
                 workspace,
-                tool_id="workspace_patch",
-                action={
-                    "path": str(workspace / "calculator.py"),
-                    "oldText": f"{CANARY.PATCH_OLD_TEXT}\n",
-                    "newText": (
+                tool_id="workspace_edit",
+                action=self._edit_action(
+                    workspace,
+                    old_text=f"{CANARY.PATCH_OLD_TEXT}\n",
+                    new_text=(
                         "    if not values:\n"
                         "        return []\n\n"
                         "    minimum = min(values)\n"
                         "    return [value - minimum for value in values]\n"
                     ),
-                    "expectedOccurrences": 1,
-                },
+                ),
             )
 
             parsed = CANARY.validate_project_approval(
@@ -156,7 +146,7 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
                 workspace=workspace,
             )
 
-        self.assertEqual(parsed["toolId"], "workspace_patch")
+        self.assertEqual(parsed["toolId"], "workspace_edit")
 
     def test_native_approval_allowlist_accepts_exact_function_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -177,13 +167,12 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
             )
             approval = self._approval(
                 workspace,
-                tool_id="workspace_patch",
-                action={
-                    "path": str(workspace / "calculator.py"),
-                    "oldText": old_function,
-                    "newText": new_function,
-                    "expectedOccurrences": 1,
-                },
+                tool_id="workspace_edit",
+                action=self._edit_action(
+                    workspace,
+                    old_text=old_function,
+                    new_text=new_function,
+                ),
             )
 
             parsed = CANARY.validate_project_approval(
@@ -192,24 +181,42 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
                 workspace=workspace,
             )
 
-        self.assertEqual(parsed["toolId"], "workspace_patch")
+        self.assertEqual(parsed["toolId"], "workspace_edit")
 
-    def test_native_approval_allowlist_rejects_extra_patch_behavior(self) -> None:
+    def test_native_approval_allowlist_rejects_extra_edit_behavior(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / "project"
             CANARY.seed_project_workspace(workspace)
             approval = self._approval(
                 workspace,
-                tool_id="workspace_patch",
-                action={
-                    "path": str(workspace / "calculator.py"),
-                    "oldText": CANARY.PATCH_OLD_TEXT,
-                    "newText": (
+                tool_id="workspace_edit",
+                action=self._edit_action(
+                    workspace,
+                    new_text=(
                         "    print(values)\n"
                         "    minimum = min(values)\n"
                         "    return [value - minimum for value in values]"
                     ),
-                    "expectedOccurrences": 1,
+                ),
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "approved implementation shape"):
+                CANARY.validate_project_approval(
+                    approval,
+                    session_id="agent:project",
+                    workspace=workspace,
+                )
+
+    def test_native_approval_allowlist_rejects_malformed_edit_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "project"
+            CANARY.seed_project_workspace(workspace)
+            approval = self._approval(
+                workspace,
+                tool_id="workspace_edit",
+                action={
+                    "path": str(workspace / "calculator.py"),
+                    "edits": [{"oldText": CANARY.PATCH_OLD_TEXT}],
                 },
             )
 
@@ -220,27 +227,82 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
                     workspace=workspace,
                 )
 
-    def test_reviewer_approval_allowlist_rejects_every_patch(self) -> None:
+    def test_native_approval_allowlist_rejects_extra_action_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "project"
+            CANARY.seed_project_workspace(workspace)
+            action = self._edit_action(workspace)
+            action["unexpected"] = True
+            approval = self._approval(
+                workspace,
+                tool_id="workspace_edit",
+                action=action,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "approved implementation shape"):
+                CANARY.validate_project_approval(
+                    approval,
+                    session_id="agent:project",
+                    workspace=workspace,
+                )
+
+    def test_native_approval_allowlist_rejects_multiple_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "project"
+            CANARY.seed_project_workspace(workspace)
+            one_edit = {
+                "oldText": CANARY.PATCH_OLD_TEXT,
+                "newText": CANARY.PATCH_NEW_TEXT,
+            }
+            approval = self._approval(
+                workspace,
+                tool_id="workspace_edit",
+                action={
+                    "path": str(workspace / "calculator.py"),
+                    "edits": [one_edit, one_edit],
+                },
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "approved implementation shape"):
+                CANARY.validate_project_approval(
+                    approval,
+                    session_id="agent:project",
+                    workspace=workspace,
+                )
+
+    def test_native_approval_allowlist_rejects_nonunique_old_text(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / "project"
             CANARY.seed_project_workspace(workspace)
             approval = self._approval(
                 workspace,
-                tool_id="workspace_patch",
-                action={
-                    "path": str(workspace / "calculator.py"),
-                    "oldText": CANARY.PATCH_OLD_TEXT,
-                    "newText": CANARY.PATCH_NEW_TEXT,
-                    "expectedOccurrences": 1,
-                },
+                tool_id="workspace_edit",
+                action=self._edit_action(workspace, old_text="    "),
             )
 
-            with self.assertRaisesRegex(RuntimeError, "forbidden patch"):
+            with self.assertRaisesRegex(RuntimeError, "approved implementation shape"):
                 CANARY.validate_project_approval(
                     approval,
                     session_id="agent:project",
                     workspace=workspace,
-                    allow_patch=False,
+                )
+
+    def test_reviewer_approval_allowlist_rejects_every_edit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "project"
+            CANARY.seed_project_workspace(workspace)
+            approval = self._approval(
+                workspace,
+                tool_id="workspace_edit",
+                action=self._edit_action(workspace),
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "forbidden edit"):
+                CANARY.validate_project_approval(
+                    approval,
+                    session_id="agent:project",
+                    workspace=workspace,
+                    allow_edit=False,
                 )
 
     def test_native_approval_allowlist_rejects_extra_command(self) -> None:
@@ -294,13 +356,8 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
             CANARY.seed_project_workspace(workspace)
             approval = self._approval(
                 workspace,
-                tool_id="workspace_patch",
-                action={
-                    "path": str(workspace / "calculator.py"),
-                    "oldText": CANARY.PATCH_OLD_TEXT,
-                    "newText": CANARY.PATCH_NEW_TEXT,
-                    "expectedOccurrences": 1,
-                },
+                tool_id="workspace_edit",
+                action=self._edit_action(workspace),
             )
             approval["preview"]["baseState"].pop(
                 "roomInvocationReceiptId"
@@ -386,6 +443,18 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
         self.assertEqual(decisions[0]["exitCode"], 1)
         self.assertFalse(decisions[0]["mutationApplied"])
         self.assertEqual(decisions[0]["roomExecutionStatus"], "failed")
+
+    @staticmethod
+    def _edit_action(
+        workspace: Path,
+        *,
+        old_text: str = CANARY.PATCH_OLD_TEXT,
+        new_text: str = CANARY.PATCH_NEW_TEXT,
+    ) -> dict[str, object]:
+        return {
+            "path": str(workspace / "calculator.py"),
+            "edits": [{"oldText": old_text, "newText": new_text}],
+        }
 
     @staticmethod
     def _approval(

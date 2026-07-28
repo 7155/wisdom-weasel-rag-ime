@@ -371,11 +371,17 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
             copied = _copy_product_skills(source_root, runtime_root)
             skill_root = runtime_root / "memory-curation"
             skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+            grill_me_docs = (runtime_root / "grill-me-docs" / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
             agent_prompt = (skill_root / "agents" / "openai.yaml").read_text(
                 encoding="utf-8"
             )
 
         self.assertIn("memory-curation", copied)
+        self.assertIn("grill-me-docs", copied)
+        self.assertIn("name: grill-me-docs", grill_me_docs)
+        self.assertIn("Do not write code, start implementation", grill_me_docs)
         for required in (
             "authorized Evidence -> one Current Atom",
             "Task Timeline for continuity only",

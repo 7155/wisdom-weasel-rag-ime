@@ -79,9 +79,9 @@ The placeholder marker is `{PROJECT_MARKER}` and the required verification is:
 '''
 _EXPECTED_TOOL_COUNTS = {
     "workspace_list": 1,
-    "workspace_search": 1,
+    "workspace_search": 2,
     "workspace_read": 2,
-    "workspace_patch": 1,
+    "workspace_edit": 1,
     "workspace_shell": 1,
     "room_post": 1,
 }
@@ -241,7 +241,7 @@ def validate_project_approval(
     *,
     session_id: str,
     workspace: Path,
-    allow_patch: bool = True,
+    allow_edit: bool = True,
 ) -> dict[str, Any]:
     if approval.get("state") != "pending":
         raise RuntimeError("Room project approval is no longer pending")
@@ -254,29 +254,42 @@ def validate_project_approval(
     parsed = _approval_action(approval)
     action = parsed["action"]
     tool_id = parsed["toolId"]
-    if tool_id == "workspace_patch":
-        if not allow_patch:
+    if tool_id == "workspace_edit":
+        if not allow_edit:
             raise RuntimeError(
-                "Room project reviewer or closer attempted a forbidden patch"
+                "Room project reviewer or closer attempted a forbidden edit"
+            )
+        if set(action) != {"path", "edits"}:
+            raise RuntimeError(
+                "Room project edit is outside the approved implementation shape"
             )
         target = Path(str(action.get("path") or "")).resolve(strict=True)
         if target != resolved_workspace / "calculator.py":
-            raise RuntimeError("Room project attempted to patch an unexpected file")
-        old_text = action.get("oldText")
-        new_text = action.get("newText")
+            raise RuntimeError("Room project attempted to edit an unexpected file")
+        edits = action.get("edits")
         current_source = target.read_text(encoding="utf-8")
-        candidate_source = (
-            current_source.replace(old_text, new_text, 1)
-            if isinstance(old_text, str)
-            and isinstance(new_text, str)
-            and current_source.count(old_text) == 1
-            else ""
-        )
-        if (
-            action.get("expectedOccurrences") != 1
-            or not _approved_project_source(candidate_source)
-        ):
-            raise RuntimeError("Room project patch is outside the approved implementation shape")
+        shape_valid = isinstance(edits, list) and len(edits) == 1
+        candidate_source = ""
+        if shape_valid:
+            edit = edits[0]
+            shape_valid = (
+                isinstance(edit, dict)
+                and set(edit) == {"oldText", "newText"}
+                and isinstance(edit.get("oldText"), str)
+                and bool(edit["oldText"])
+                and isinstance(edit.get("newText"), str)
+                and current_source.count(edit["oldText"]) == 1
+            )
+            if shape_valid:
+                candidate_source = current_source.replace(
+                    edit["oldText"],
+                    edit["newText"],
+                    1,
+                )
+        if not shape_valid or not _approved_project_source(candidate_source):
+            raise RuntimeError(
+                "Room project edit is outside the approved implementation shape"
+            )
     elif tool_id == "workspace_shell":
         cwd = Path(str(action.get("cwd") or "")).resolve(strict=True)
         timeout_seconds = action.get("timeoutSeconds")
@@ -307,7 +320,7 @@ def approve_pending_project_actions(
     workspace: Path,
     decided_ids: set[str],
     allow_expected_shell_failure: bool = False,
-    allow_patch: bool = True,
+    allow_edit: bool = True,
 ) -> list[dict[str, Any]]:
     listed = requester(
         base_url,
@@ -341,7 +354,7 @@ def approve_pending_project_actions(
             raw,
             session_id=session_id,
             workspace=workspace,
-            allow_patch=allow_patch,
+            allow_edit=allow_edit,
         )
         registration_started = time.monotonic()
         while True:
@@ -525,14 +538,14 @@ def run(
     acceptance_criteria = (
         [
             (
-                f"workspace_read 先读取不存在的 {MISSING_READ_PATH} 一次并失败，"
+                f"常驻 read 先读取不存在的 {MISSING_READ_PATH} 一次并失败，"
                 "不得同参数重试；随后正确读取两份项目文件"
             ),
             (
                 f"修改前运行 {TEST_COMMAND} 一次并保留非零退出回执，"
                 "不得把预期失败冒充通过"
             ),
-            "workspace_patch 只修改 calculator.py，且必须经过哈希绑定的原生批准",
+            "常驻 edit 只修改 calculator.py，且必须经过哈希绑定的原生批准",
             (
                 f"修改后再次运行 {TEST_COMMAND}，无网络且退出码为 0；"
                 f"公开 {PUBLIC_MARKER} 并提交全部验收条件"
@@ -540,9 +553,9 @@ def run(
         ]
         if failure_probe
         else [
-            "渐进加载并实际调用 workspace_list、workspace_search 和 workspace_read",
-            "workspace_patch 只修改 calculator.py，且必须经过哈希绑定的原生批准",
-            f"workspace_shell 只运行 {TEST_COMMAND}，无网络且退出码为 0",
+            "直接调用常驻 ls、find、grep 和 read；不得为这些基础工具调用 tool_search 或 tool_load",
+            "常驻 edit 只修改 calculator.py，且必须经过哈希绑定的原生批准",
+            f"常驻 bash 只运行 {TEST_COMMAND}，无网络且退出码为 0",
             f"公开 {PUBLIC_MARKER}，并用 room_commit 覆盖全部验收条件",
         ]
     )
@@ -567,21 +580,24 @@ def run(
     )["workItem"]
     message = (
         (
-            f"@{target['displayName']} 执行 {marker}。先精确加载 workspace_read，"
+            f"@{target['displayName']} 执行 {marker}。基础编程工具已常驻，"
+            "不得用 tool_search 或 tool_load 查找它们。先直接用 read "
             f"只读取一次 {workspace / MISSING_READ_PATH}；这个文件不存在，收到失败回执后"
-            "不要用相同参数重试。随后查看目录并搜索 ROOM_PROJECT_TASK，再读取 "
-            "calculator.py 与 test_calculator.py。修改前先加载 workspace_shell 并运行 "
+            "不要用相同参数重试。随后用 ls 查看目录、find 定位 Python 文件、grep 搜索 "
+            "ROOM_PROJECT_TASK，并并行 read calculator.py 与 test_calculator.py。"
+            "修改前直接用 bash 运行 "
             f"{TEST_COMMAND}，等待原生批准；这次应非零退出，必须如实识别为预期失败。"
-            "然后只用 workspace_patch 实现 normalize_scores，等待原生批准；"
-            f"最后再次运行 {TEST_COMMAND}，等待原生批准且禁止网络。只有第二次测试"
+            "然后只用 edit 实现 normalize_scores，等待原生批准；"
+            f"最后再次用 bash 运行 {TEST_COMMAND}，等待原生批准且禁止网络。只有第二次测试"
             f"退出码为 0 后，才发布 {PUBLIC_MARKER} 和一句恢复说明，提交全部验收条件并收工。"
         )
         if failure_probe
         else (
-            f"@{target['displayName']} 执行 {marker}。先查看目录并搜索 "
-            "ROOM_PROJECT_TASK，再读取 calculator.py 与 test_calculator.py；"
-            "只用 workspace_patch 实现 normalize_scores，等待原生批准；"
-            f"然后只运行 {TEST_COMMAND}，等待原生批准且禁止网络。测试通过后"
+            f"@{target['displayName']} 执行 {marker}。基础编程工具已常驻，"
+            "不得用 tool_search 或 tool_load 查找它们。直接用 ls 查看目录、"
+            "find 定位 Python 文件、grep 搜索 ROOM_PROJECT_TASK，再并行 read "
+            "calculator.py 与 test_calculator.py；只用 edit 实现 normalize_scores，"
+            f"等待原生批准；然后只用 bash 运行 {TEST_COMMAND}，等待原生批准且禁止网络。测试通过后"
             f"发布 {PUBLIC_MARKER} 和一句结果，最后提交全部验收条件并收工。"
         )
     )
@@ -733,7 +749,7 @@ def run(
         "nativeApprovalsApplied": (
             (
                 [item["toolId"] for item in approvals]
-                == ["workspace_shell", "workspace_patch", "workspace_shell"]
+                == ["workspace_shell", "workspace_edit", "workspace_shell"]
                 and [item["state"] for item in approvals]
                 == ["failed", "applied", "applied"]
                 and approvals[0]["mutationApplied"] is False
@@ -749,7 +765,7 @@ def run(
             if failure_probe
             else (
                 [item["toolId"] for item in approvals]
-                == ["workspace_patch", "workspace_shell"]
+                == ["workspace_edit", "workspace_shell"]
                 and all(item["state"] == "applied" for item in approvals)
                 and all(item["runtimeNotified"] for item in approvals)
                 and all(
