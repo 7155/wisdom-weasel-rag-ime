@@ -121,7 +121,7 @@ class MacOSUninstallTests(unittest.TestCase):
         )
         self.assertEqual(
             {Path(item["target"]).name for item in sidecar["actions"]},
-            {"com.rag-ime.sidecar.plist"},
+            {"com.rag-ime.sidecar.plist", "com.rag-ime.agent-gateway.plist"},
         )
 
     def test_apply_removes_only_owned_components_and_managed_rime_blocks(self) -> None:
@@ -157,8 +157,116 @@ class MacOSUninstallTests(unittest.TestCase):
                 self.assertNotIn("RAG-IME", text)
                 self.assertTrue(target.with_name(target.name + ".rag-ime-uninstall.bak").is_file())
 
-            self.assertEqual(len([call for call in calls if call[0] == "launchctl"]), 6)
+            self.assertEqual(len([call for call in calls if call[0] == "launchctl"]), 8)
         self.assertFalse(any(call[0] == "security" for call in calls))
+
+    def test_runtime_cache_purge_removes_only_owned_runtime_paths(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-uninstall-runtime-cache-") as tmp:
+            home = Path(tmp)
+            self._seed_owned_install(home)
+            app_support = home / "Library" / "Application Support" / "RagIme"
+            removable = (
+                app_support / "app",
+                app_support / "components",
+                app_support / "BrowserCopilot" / "extension",
+                app_support / "disabled-input-method-backups",
+                home
+                / "Library"
+                / "Caches"
+                / "RagIme"
+                / "BrowserCopilot"
+                / "managed-profile"
+                / "Default"
+                / "Cache",
+                home
+                / "Library"
+                / "Caches"
+                / "RagIme"
+                / "BrowserCopilot"
+                / "managed-profile"
+                / "Default"
+                / "Code Cache",
+            )
+            for target in removable:
+                target.mkdir(parents=True, exist_ok=True)
+                (target / "owned-cache").write_text("remove\n", encoding="utf-8")
+            preserved = (
+                app_support / "rag-ime.sqlite",
+                app_support / "config.json",
+                app_support / "Agent" / "settings.json",
+                app_support / "curated-memory" / "atom.json",
+                app_support / "backups" / "rag-ime.sqlite",
+                app_support / "PiRuntime" / "current.json",
+                app_support / "KnowledgeRuntime" / "current.json",
+                app_support / "BrowserCopilot" / "managed-profile" / "Preferences",
+                app_support / "MinerU" / "config.json",
+            )
+            for target in preserved[1:]:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("keep\n", encoding="utf-8")
+
+            plan = build_macos_uninstall_plan(
+                home,
+                options=MacOSUninstallOptions(purge_runtime_cache=True),
+            )
+            report = apply_macos_uninstall_plan(
+                plan,
+                command_runner=lambda args: subprocess.CompletedProcess(args, 0, "", ""),
+                platform_name="darwin",
+            )
+
+            self.assertTrue(report["ok"])
+            self.assertTrue(all(not target.exists() for target in removable))
+            self.assertTrue(all(target.is_file() for target in preserved))
+            self.assertFalse(plan["options"]["purgeLocalData"])
+            self.assertTrue(plan["options"]["purgeRuntimeCache"])
+
+    def test_squirrel_marker_v1_and_v2_are_owned_but_rechecked_on_apply(self) -> None:
+        for schema in (
+            "rag-ime.squirrel-build-marker.v1",
+            "rag-ime.squirrel-build-marker.v2",
+        ):
+            with self.subTest(schema=schema), tempfile.TemporaryDirectory(
+                prefix="rag-ime-uninstall-squirrel-schema-"
+            ) as tmp:
+                home = Path(tmp)
+                self._seed_owned_install(home)
+                squirrel = home / "Library" / "Input Methods" / "Squirrel.app"
+                marker = squirrel / "Contents" / "Resources" / "rag-ime-build-marker.json"
+                marker.write_text(
+                    json.dumps(
+                        {
+                            "schemaVersion": schema,
+                            "bundleId": "im.rime.inputmethod.Squirrel",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                plan = build_macos_uninstall_plan(
+                    home,
+                    options=MacOSUninstallOptions(remove_patched_squirrel=True),
+                )
+                action = next(
+                    item for item in plan["actions"] if item["kind"] == "remove_marked_squirrel"
+                )
+                self.assertEqual(action["status"], "planned")
+
+                marker.write_text(
+                    json.dumps(
+                        {
+                            "schemaVersion": "rag-ime.squirrel-build-marker.v3",
+                            "bundleId": "im.rime.inputmethod.Squirrel",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                report = apply_macos_uninstall_plan(plan, platform_name="darwin")
+
+                squirrel_result = next(
+                    item for item in report["results"] if item["kind"] == "remove_marked_squirrel"
+                )
+                self.assertEqual(squirrel_result["status"], "failed")
+                self.assertTrue(squirrel.is_dir())
 
     def test_explicit_purge_removes_local_data_logs_and_keychain_items(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-uninstall-purge-") as tmp:
@@ -454,6 +562,10 @@ class MacOSUninstallTests(unittest.TestCase):
             self.assertEqual(payload["mode"], "dry-run")
             self.assertEqual(payload["options"]["componentScope"], "sidecar")
             self.assertEqual(payload["plannedActionCount"], 1)
+            self.assertEqual(
+                {Path(item["target"]).name for item in payload["actions"]},
+                {"com.rag-ime.sidecar.plist", "com.rag-ime.agent-gateway.plist"},
+            )
             self.assertTrue(plist.is_file())
 
     def _seed_owned_install(self, home: Path) -> None:
@@ -461,8 +573,10 @@ class MacOSUninstallTests(unittest.TestCase):
         launch_agents.mkdir(parents=True, exist_ok=True)
         for label in (
             "com.rag-ime.frontend",
+            "com.rag-ime.agent-gateway",
             "com.rag-ime.desktop-bridge",
             "com.rag-ime.memory-book-maintenance",
+            "com.rag-ime.mineru",
             "com.rag-ime.mlx-predictor",
             "com.rag-ime.sidecar",
             "com.rag-ime.voice",
@@ -481,7 +595,7 @@ class MacOSUninstallTests(unittest.TestCase):
         marker.write_text(
             json.dumps(
                 {
-                    "schemaVersion": "rag-ime.squirrel-build-marker.v1",
+                    "schemaVersion": "rag-ime.squirrel-build-marker.v2",
                     "bundleId": "im.rime.inputmethod.Squirrel",
                 }
             ),

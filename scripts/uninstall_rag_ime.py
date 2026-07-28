@@ -33,6 +33,11 @@ def main() -> int:
     )
     parser.add_argument("--remove-patched-squirrel", action="store_true")
     parser.add_argument("--remove-rime-managed-config", action="store_true")
+    parser.add_argument(
+        "--purge-runtime-cache",
+        action="store_true",
+        help="Remove only generated application code and allowlisted caches; preserve user data",
+    )
     parser.add_argument("--purge-local-data", action="store_true")
     parser.add_argument("--purge-credentials", action="store_true")
     parser.add_argument("--purge-voice-config", action="store_true")
@@ -45,6 +50,7 @@ def main() -> int:
             component_scope=str(args.component),
             remove_patched_squirrel=bool(args.remove_patched_squirrel),
             remove_rime_managed_config=bool(args.remove_rime_managed_config),
+            purge_runtime_cache=bool(args.purge_runtime_cache),
             purge_local_data=bool(args.purge_local_data),
             purge_credentials=bool(args.purge_credentials),
             purge_voice_config=bool(args.purge_voice_config),

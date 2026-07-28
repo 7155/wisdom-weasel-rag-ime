@@ -15,8 +15,10 @@ from typing import Callable, Mapping, Sequence
 SCHEMA_VERSION = "rag-ime.macos-uninstall.v1"
 LAUNCH_AGENT_LABELS = (
     "com.rag-ime.frontend",
+    "com.rag-ime.agent-gateway",
     "com.rag-ime.desktop-bridge",
     "com.rag-ime.memory-book-maintenance",
+    "com.rag-ime.mineru",
     "com.rag-ime.mlx-predictor",
     "com.rag-ime.sidecar",
     "com.rag-ime.voice",
@@ -46,6 +48,18 @@ RIME_MANAGED_BLOCKS = (
 VOICE_KEYCHAIN_SERVICE = "com.rag-ime.voice.volcengine"
 VOICE_KEYCHAIN_ACCOUNTS = ("app-id", "access-token", "resource-id")
 COMPONENT_SCOPES = ("all", "sidecar", "voice")
+SQUIRREL_MARKER_SCHEMAS = (
+    "rag-ime.squirrel-build-marker.v1",
+    "rag-ime.squirrel-build-marker.v2",
+)
+RUNTIME_CACHE_RELATIVE_PATHS = (
+    Path("Library/Application Support/RagIme/app"),
+    Path("Library/Application Support/RagIme/components"),
+    Path("Library/Application Support/RagIme/BrowserCopilot/extension"),
+    Path("Library/Application Support/RagIme/disabled-input-method-backups"),
+    Path("Library/Caches/RagIme/BrowserCopilot/managed-profile/Default/Cache"),
+    Path("Library/Caches/RagIme/BrowserCopilot/managed-profile/Default/Code Cache"),
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +67,7 @@ class MacOSUninstallOptions:
     component_scope: str = "all"
     remove_patched_squirrel: bool = False
     remove_rime_managed_config: bool = False
+    purge_runtime_cache: bool = False
     purge_local_data: bool = False
     purge_credentials: bool = False
     purge_voice_config: bool = False
@@ -186,7 +201,7 @@ def build_macos_uninstall_plan(
         marker_valid = (
             marker_safe
             and squirrel.is_dir()
-            and marker_payload.get("schemaVersion") == "rag-ime.squirrel-build-marker.v1"
+            and marker_payload.get("schemaVersion") in SQUIRREL_MARKER_SCHEMAS
             and str(marker_payload.get("bundleId") or "").startswith("im.rime.inputmethod.Squirrel")
         )
         actions.append(
@@ -198,7 +213,7 @@ def build_macos_uninstall_plan(
                     reason="explicit option plus RAG-IME build marker",
                     metadata={
                         "markerPath": str(marker),
-                        "expectedMarkerSchema": "rag-ime.squirrel-build-marker.v1",
+                        "expectedMarkerSchemas": list(SQUIRREL_MARKER_SCHEMAS),
                         "actualMarkerSchema": str(marker_payload.get("schemaVersion") or ""),
                         "markerBundleId": str(marker_payload.get("bundleId") or ""),
                     },
@@ -271,6 +286,17 @@ def build_macos_uninstall_plan(
                     }
                 )
 
+    if selected.purge_runtime_cache:
+        for relative in RUNTIME_CACHE_RELATIVE_PATHS:
+            _append_safe_purge_action(
+                actions,
+                warnings,
+                kind="purge_owned_runtime_cache",
+                target=home_path / relative,
+                home=home_path,
+                reason="explicit generated-code or allowlisted-cache purge before a clean reinstall",
+            )
+
     if selected.purge_local_data:
         for target, reason in (
             (home_path / "Library" / "Application Support" / "RagIme", "explicit local data purge"),
@@ -324,6 +350,10 @@ def build_macos_uninstall_plan(
         preserved_by_default.append(str(home_path / "Library" / "Rime"))
     if not selected.remove_patched_squirrel:
         preserved_by_default.append(str(home_path / "Library" / "Input Methods" / "Squirrel.app"))
+    if not selected.purge_runtime_cache:
+        preserved_by_default.extend(
+            str(home_path / relative) for relative in RUNTIME_CACHE_RELATIVE_PATHS
+        )
 
     return {
         "schemaVersion": SCHEMA_VERSION,
@@ -336,6 +366,7 @@ def build_macos_uninstall_plan(
             "componentScope": selected.component_scope,
             "removePatchedSquirrel": selected.remove_patched_squirrel,
             "removeRimeManagedConfig": selected.remove_rime_managed_config,
+            "purgeRuntimeCache": selected.purge_runtime_cache,
             "purgeLocalData": selected.purge_local_data,
             "purgeCredentials": selected.purge_credentials,
             "purgeVoiceConfig": selected.purge_voice_config,
@@ -482,7 +513,7 @@ def _apply_action(action: Mapping[str, object], *, home: Path, runner: CommandRu
             raise RuntimeError("Squirrel build marker escapes the owned app bundle")
         payload = _load_json(marker)
         if (
-            payload.get("schemaVersion") != "rag-ime.squirrel-build-marker.v1"
+            payload.get("schemaVersion") not in SQUIRREL_MARKER_SCHEMAS
             or not str(payload.get("bundleId") or "").startswith("im.rime.inputmethod.Squirrel")
         ):
             raise RuntimeError("Squirrel ownership changed after planning")
@@ -505,7 +536,7 @@ def _apply_action(action: Mapping[str, object], *, home: Path, runner: CommandRu
             "status": "applied",
             "backupPath": str(backup),
         }
-    if kind in {"purge_owned_data", "purge_owned_file"}:
+    if kind in {"purge_owned_data", "purge_owned_file", "purge_owned_runtime_cache"}:
         _remove_path(target)
         return {"kind": kind, "target": str(target), "status": "applied"}
     raise ValueError(f"unsupported uninstall action: {kind}")
@@ -568,7 +599,7 @@ def _launch_agent_labels_for_scope(scope: str) -> tuple[str, ...]:
     if scope == "voice":
         return ("com.rag-ime.voice",)
     if scope == "sidecar":
-        return ("com.rag-ime.sidecar",)
+        return ("com.rag-ime.sidecar", "com.rag-ime.agent-gateway")
     return LAUNCH_AGENT_LABELS
 
 
@@ -745,6 +776,9 @@ def _require_allowlisted_target(kind: str, target: Path, home: Path) -> None:
         },
         "purge_owned_file": {
             home / "Library" / "Application Support" / "RagIme" / "voice-hotwords.json"
+        },
+        "purge_owned_runtime_cache": {
+            home / relative for relative in RUNTIME_CACHE_RELATIVE_PATHS
         },
     }
     if kind not in allowed or target not in allowed[kind]:
