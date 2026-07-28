@@ -12,7 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rag_ime.managed_pi_runtime import ManagedPiRuntimeError, install_managed_pi_runtime
+from rag_ime.managed_pi_runtime import (
+    ManagedPiRuntimeError,
+    install_managed_pi_runtime,
+    read_managed_pi_runtime_acceptance_report,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,12 +30,28 @@ def main(argv: list[str] | None = None) -> int:
         or str(Path.home() / "Library" / "Application Support" / "RagIme"),
     )
     parser.add_argument("--no-activate", action="store_true")
+    parser.add_argument(
+        "--acceptance-report",
+        default="",
+        help=(
+            "Mode-600 deterministic installed-payload smoke receipt required to "
+            "create accepted lifecycle and retired lineage"
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.no_activate and args.acceptance_report:
+        parser.error("--acceptance-report cannot be combined with --no-activate")
     try:
+        acceptance = (
+            read_managed_pi_runtime_acceptance_report(args.acceptance_report)
+            if args.acceptance_report
+            else None
+        )
         installation = install_managed_pi_runtime(
             args.payload,
             args.app_support,
             activate=not args.no_activate,
+            acceptance=acceptance,
         )
     except (OSError, ManagedPiRuntimeError) as exc:
         print(f"managed Pi runtime installation failed: {exc}", file=sys.stderr)
@@ -45,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
                 "runtimeDir": str(installation.runtime_dir),
                 "manifestSha256": installation.manifest_sha256,
                 "activated": not args.no_activate,
+                "accepted": bool(args.acceptance_report),
             },
             ensure_ascii=False,
             indent=2,

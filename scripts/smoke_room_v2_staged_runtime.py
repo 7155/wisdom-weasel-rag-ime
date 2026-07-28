@@ -33,7 +33,10 @@ def main() -> int:
     payload = args.payload.resolve()
     node = payload / "bin" / "node"
     entrypoint = payload / "runtime-host" / "cli.mjs"
-    manifest = json.loads((payload / "manifest.json").read_text(encoding="utf-8"))
+    manifest_path = payload / "manifest.json"
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes)
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
     if not node.is_file() or not entrypoint.is_file():
         raise SystemExit("staged Runtime Host payload is incomplete")
     skill_name = "test-driven-implementation"
@@ -106,22 +109,23 @@ def main() -> int:
                 "modelId": "room-v2-test",
                 "noContextFiles": True,
                 "roomSkillPolicy": {
+                    "stage": "implementation",
                     "selection": "required",
                     "skillId": skill_name,
                     "skillHash": skill_hash,
                 },
                 "toolManifest": [{
-                    "name": "room_post",
-                    "description": "Publish one explicit Room Post.",
-                    "when": ["需要公开事实、进度或证据"],
-                    "notFor": ["私有推理或任务完成提议"],
-                    "input": "公开内容",
-                    "output": "Room Post 回执",
-                    "does": "发布一条受管 Room 消息。",
+                    "name": "workspace_read",
+                    "description": "Read one file from the authorized workspace.",
+                    "when": ["需要读取授权工作区中的一个文件"],
+                    "notFor": ["写入、执行命令或工作区外路径"],
+                    "input": "授权工作区内的相对路径",
+                    "output": "文件内容",
+                    "does": "读取授权工作区内的一个文本文件。",
                     "parameters": {
                         "type": "object",
-                        "required": ["content"],
-                        "properties": {"content": {"type": "string"}},
+                        "required": ["path"],
+                        "properties": {"path": {"type": "string"}},
                         "additionalProperties": False,
                     },
                     "profile": "room-kernel-v2",
@@ -133,7 +137,7 @@ def main() -> int:
                     "capabilityEpoch": 1,
                     "promptCompileReceiptId": "prompt-receipt:staged-e2e",
                     "promptPlanHash": prompt_hash,
-                    "toolNames": ["room_post"],
+                    "toolNames": ["workspace_read"],
                 },
                 "roomResourceLimits": {
                     "deadlineAtMs": int(time.time() * 1000) + 60_000,
@@ -186,16 +190,23 @@ def main() -> int:
                 for line in tool_catalog.splitlines()
                 if line.strip().startswith("{")
             ]
-            room_tool = next((item for item in tool_lines if item.get("name") == "room_post"), None)
+            deferred_tool = next(
+                (item for item in tool_lines if item.get("name") == "workspace_read"),
+                None,
+            )
             six_fields = {"name", "when", "notFor", "input", "output", "does"}
-            if not isinstance(room_tool, dict) or set(room_tool) != six_fields:
-                raise RuntimeError("staged Runtime Host did not expose the exact six-field Tool route")
+            if not isinstance(deferred_tool, dict) or set(deferred_tool) != six_fields:
+                raise RuntimeError(
+                    "staged Runtime Host did not expose the exact six-field Tool route"
+                )
             active_schemas = debug_context.get("toolSchemas")
             if not isinstance(active_schemas, list) or any(
-                isinstance(item, dict) and item.get("name") == "room_post"
+                isinstance(item, dict) and item.get("name") == "workspace_read"
                 for item in active_schemas
             ):
-                raise RuntimeError("Room tool schema entered Provider tools before tool_load")
+                raise RuntimeError(
+                    "deferred Tool schema entered Provider tools before tool_load"
+                )
             if system_prompt.count('<loaded_skill name="test-driven-implementation"') != 1:
                 raise RuntimeError("required Room Skill was not injected exactly once")
             if skill_body not in system_prompt:
@@ -206,6 +217,10 @@ def main() -> int:
                 "idempotencyKey": "root:staged-e2e/continuation-b", "leaseToken": "lease:a",
                 "message": "Continue the same bounded run.",
             })
+            if first.get("delivery") != "prompt" or second.get("delivery") != "followUp":
+                raise RuntimeError(
+                    "staged Runtime Host did not preserve prompt/follow-up delivery"
+                )
             cancelled = request("cancel", "room.cancel", {
                 "sessionId": "session:staged-e2e", "rootId": "root:staged-e2e", "generation": 2,
             })
@@ -225,8 +240,15 @@ def main() -> int:
                 "status": "passed_not_installed",
                 "productionEnabled": False,
                 "runtimeVersion": manifest.get("runtimeVersion"),
+                "manifestSha256": manifest_sha256,
                 "sourceCommit": manifest.get("source", {}).get("commit"),
                 "protocolVersion": hello.get("protocolVersion"),
+                "verifiedMethods": [
+                    "session.open",
+                    "room.dispatch",
+                    "session.debug.context",
+                    "room.cancel",
+                ],
                 "cachePrefixHash": prompt_hash,
                 "roomSkillLoad": room_skill_load,
                 "toolCatalogFields": sorted(six_fields),
@@ -235,6 +257,8 @@ def main() -> int:
                 "firstDelivery": first.get("delivery"),
                 "secondDelivery": second.get("delivery"),
                 "cancelledSurfaceCount": len(surfaces),
+                "pendingTargets": cancelled.get("pendingTargets"),
+                "cancellationSurfaces": surfaces,
             }, ensure_ascii=False, indent=2, sort_keys=True))
         finally:
             process.stdin.close()

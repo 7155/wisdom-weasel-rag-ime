@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from .managed_pi_runtime import (
+    ManagedPiRuntimeError,
+    inspect_managed_pi_runtime,
+)
+
 
 CONTROL_MARKER_SCHEMA = "rag-ime.control-build-marker.v1"
 DESKTOP_BRIDGE_MARKER_SCHEMA = "rag-ime.desktop-bridge-build-marker.v1"
@@ -397,25 +402,36 @@ def _pi_component(
     expected_product_commit: str,
 ) -> dict[str, Any]:
     pointer_path = runtime_root / "current.json"
-    pointer = _mapping(load_json(pointer_path))
-    version = _text(pointer.get("version"))
-    manifest_path = runtime_root / version / "manifest.json" if version else runtime_root / "missing-manifest.json"
-    manifest = _mapping(load_json(manifest_path))
-    manifest_hash = sha256_file(manifest_path)
-    pointer_valid = pointer.get("schemaVersion") == PI_POINTER_SCHEMA
-    manifest_valid = bool(
-        manifest.get("schemaVersion") == PI_MANIFEST_SCHEMA
-        and manifest.get("runtimeVersion") == version
-        and str(manifest.get("runtimeProtocolVersion")) == "2"
-        and manifest_hash
-        and manifest_hash == pointer.get("manifestSha256")
-    )
-    files_valid = _pi_files_valid(runtime_root / version, manifest) if verify_files and manifest_valid else manifest_valid
+    installed = pointer_path.is_file() and not pointer_path.is_symlink()
+    try:
+        installation, pointer, manifest = inspect_managed_pi_runtime(
+            runtime_root.parent,
+            verify_all_files=verify_files,
+        )
+        version = installation.runtime_version
+        manifest_path = installation.runtime_dir / "manifest.json"
+        pointer_valid = pointer.get("schemaVersion") == PI_POINTER_SCHEMA
+        manifest_valid = bool(
+            manifest.get("schemaVersion") == PI_MANIFEST_SCHEMA
+            and manifest.get("runtimeVersion") == version
+            and str(manifest.get("runtimeProtocolVersion")) == "2"
+            and installation.manifest_sha256 == pointer.get("manifestSha256")
+        )
+        files_valid = manifest_valid
+        inspection_error = ""
+    except (OSError, ManagedPiRuntimeError) as exc:
+        pointer = {}
+        manifest = {}
+        version = ""
+        manifest_path = runtime_root / "missing-manifest.json"
+        pointer_valid = False
+        manifest_valid = False
+        files_valid = False
+        inspection_error = str(exc)
     product_commit = _text(_mapping(manifest.get("source")).get("productCommit"))
     product_current = bool(
         expected_product_commit and product_commit == expected_product_commit
     )
-    installed = bool(pointer)
     if not installed:
         ok = not required
         code = "not_installed"
@@ -423,7 +439,10 @@ def _pi_component(
     elif not pointer_valid or not manifest_valid:
         ok = False
         code = "invalid_manifest"
-        detail = "piRuntime pointer and manifest do not describe the same verified protocol-v2 payload."
+        detail = (
+            "piRuntime pointer and manifest do not describe the same verified "
+            f"protocol-v2 payload: {inspection_error or 'invalid snapshot'}"
+        )
     elif not files_valid:
         ok = False
         code = "payload_mismatch"
@@ -455,21 +474,6 @@ def _pi_component(
         "expectedProductCommit": expected_product_commit,
         "marker": dict(pointer),
     }
-
-
-def _pi_files_valid(runtime_dir: Path, manifest: Mapping[str, Any]) -> bool:
-    files = manifest.get("files")
-    if not isinstance(files, list) or not files:
-        return False
-    for item in files:
-        if not isinstance(item, Mapping):
-            return False
-        relative = Path(_text(item.get("path")))
-        if not relative.parts or relative.is_absolute() or ".." in relative.parts:
-            return False
-        if sha256_file(runtime_dir / relative) != _text(item.get("sha256")):
-            return False
-    return True
 
 
 def _pi_skills_component(

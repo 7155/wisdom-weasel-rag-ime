@@ -98,9 +98,37 @@ if [[ "$INCLUDE_PI" == "1" ]]; then
     pi_build_args+=(--pi-worktree "$PI_WORKTREE")
   fi
   "$PI_PYTHON" "$ROOT/scripts/build_managed_pi_runtime_v2.py" "${pi_build_args[@]}"
+  PI_STAGE_REPORT="$PI_BUILD_DIR.install-stage.json"
+  PI_ACCEPTANCE_REPORT="$PI_BUILD_DIR.acceptance.json"
+  : > "$PI_STAGE_REPORT"
+  chmod 600 "$PI_STAGE_REPORT"
   "$PI_PYTHON" "$ROOT/scripts/install_managed_pi_runtime.py" \
     --payload "$PI_BUILD_DIR" \
-    --app-support "$APP_SUPPORT_DIR"
+    --app-support "$APP_SUPPORT_DIR" \
+    --no-activate > "$PI_STAGE_REPORT"
+  PI_RUNTIME_VERSION="$("$PI_PYTHON" - "$PI_STAGE_REPORT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+version = str(report.get("runtimeVersion") or "")
+if not report.get("ok") or not version:
+    raise SystemExit("managed Pi staging did not return a runtime version")
+print(version)
+PY
+  )"
+  PI_INSTALLED_PAYLOAD="$APP_SUPPORT_DIR/PiRuntime/$PI_RUNTIME_VERSION"
+  : > "$PI_ACCEPTANCE_REPORT"
+  chmod 600 "$PI_ACCEPTANCE_REPORT"
+  "$PI_PYTHON" "$ROOT/scripts/smoke_room_v2_staged_runtime.py" \
+    --payload "$PI_INSTALLED_PAYLOAD" \
+    --workspace-root "$ROOT" \
+    --deterministic-test-gate > "$PI_ACCEPTANCE_REPORT"
+  "$PI_PYTHON" "$ROOT/scripts/install_managed_pi_runtime.py" \
+    --payload "$PI_BUILD_DIR" \
+    --app-support "$APP_SUPPORT_DIR" \
+    --acceptance-report "$PI_ACCEPTANCE_REPORT"
   required+=(--require piRuntime --require piSkills)
 fi
 
@@ -162,3 +190,22 @@ fi
   --expected-commit "$SOURCE_COMMIT" \
   "${required[@]}" \
   --require-current
+
+# Runtime retention is deliberately after deterministic session.open,
+# room.dispatch, Provider-context inspection and room.cancel exercised the
+# installed payload before activation. The component audit above is additional
+# provenance/live-process evidence; HTTP 200 alone never authorizes retirement.
+if [[ "$INCLUDE_PI" == "1" ]]; then
+  PI_RETENTION_PLAN="$PI_BUILD_DIR.retention-plan.json"
+  PI_RETENTION_REPORT="$PI_BUILD_DIR.retention-result.json"
+  "$PI_PYTHON" "$ROOT/scripts/prune_managed_pi_runtime.py" \
+    --app-support "$APP_SUPPORT_DIR" \
+    --retain-generations 2 \
+    --report "$PI_RETENTION_PLAN"
+  "$PI_PYTHON" "$ROOT/scripts/prune_managed_pi_runtime.py" \
+    --app-support "$APP_SUPPORT_DIR" \
+    --retain-generations 2 \
+    --apply \
+    --plan "$PI_RETENTION_PLAN" \
+    --report "$PI_RETENTION_REPORT"
+fi

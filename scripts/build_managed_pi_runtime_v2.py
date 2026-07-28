@@ -108,21 +108,10 @@ def _default_node() -> str:
     )
     if codex_runtime.is_file():
         return str(codex_runtime)
-    managed_root = (
-        Path.home()
-        / "Library"
-        / "Application Support"
-        / "RagIme"
-        / "PiRuntime"
-    )
-    pointer = managed_root / "current.json"
-    try:
-        version = str(json.loads(pointer.read_text(encoding="utf-8"))["version"])
-    except (KeyError, json.JSONDecodeError, OSError):
-        version = ""
-    managed_node = managed_root / version / "bin" / "node"
-    if version and managed_node.is_file():
-        return str(managed_node)
+    # Do not bypass discover_managed_pi_runtime with a raw pointer read: a
+    # digest-invalid generation must never supply the Node used to build its
+    # replacement, and every authoritative pointer read shares the lifecycle
+    # lock.
     return shutil.which("node") or ""
 
 

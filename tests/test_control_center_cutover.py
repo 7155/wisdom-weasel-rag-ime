@@ -59,6 +59,18 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("RAG_IME_PI_WORKTREE", installer)
         self.assertIn("../pi/packages/rag-ime-runtime-host", installer)
         self.assertIn("install_managed_pi_runtime.py", installer)
+        self.assertIn("--no-activate", installer)
+        self.assertIn("smoke_room_v2_staged_runtime.py", installer)
+        self.assertIn("--deterministic-test-gate", installer)
+        self.assertIn("--acceptance-report", installer)
+        self.assertLess(
+            installer.index("--no-activate"),
+            installer.index("smoke_room_v2_staged_runtime.py"),
+        )
+        self.assertLess(
+            installer.index("smoke_room_v2_staged_runtime.py"),
+            installer.index("--acceptance-report"),
+        )
         self.assertIn("--require piSkills", installer)
         self.assertIn("--require roomKernelMode", installer)
         self.assertIn("RAG_IME_INSTALL_AGENT_GATEWAY=0", installer)
@@ -67,6 +79,13 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("install_voice_input_launch_agent.sh", installer)
         self.assertIn("check_installed_product_components.py", installer)
         self.assertIn("--require-current", installer)
+        self.assertIn("prune_managed_pi_runtime.py", installer)
+        self.assertIn("--retain-generations 2", installer)
+        self.assertIn("--plan \"$PI_RETENTION_PLAN\"", installer)
+        self.assertLess(
+            installer.index("check_installed_product_components.py"),
+            installer.index("prune_managed_pi_runtime.py"),
+        )
 
         gateway_installer = (
             ROOT / "scripts" / "install_agent_gateway_launch_agent.sh"

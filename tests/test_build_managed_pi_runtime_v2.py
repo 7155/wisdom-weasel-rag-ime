@@ -233,6 +233,17 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertEqual(script.count('"capabilityEpoch": 1,'), 3)
         self.assertEqual(script.count('"dispatchId": "dispatch:a"'), 2)
         self.assertIn('"idempotencyKey": "root:staged-e2e/continuation-b"', script)
+        self.assertIn('"manifestSha256": manifest_sha256', script)
+        self.assertIn('"stage": "implementation"', script)
+        self.assertIn('"name": "workspace_read"', script)
+        self.assertNotIn('"name": "room_post"', script)
+        for method in (
+            "session.open",
+            "room.dispatch",
+            "session.debug.context",
+            "room.cancel",
+        ):
+            self.assertIn(f'"{method}"', script)
 
     def test_product_owns_all_managed_skills(self) -> None:
         skills_root = ROOT / "integrations" / "pi" / "skills"
