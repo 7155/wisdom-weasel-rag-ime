@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
-import json
 import sys
 import tempfile
 import unittest
@@ -26,55 +25,57 @@ from room_project_task_canary import (  # noqa: E402
 
 def boundary_read_executions(workspace: Path) -> list[dict[str, object]]:
     path = workspace / CANARY.READ_BOUNDARY_PATH
-    chunks = (
-        (0, 4, "甲\n", True),
-        (4, 8, "乙\n", True),
-        (8, 11, "终", False),
-    )
-    path.write_text(
-        "".join(content for _, _, content, _ in chunks),
-        encoding="utf-8",
-    )
+    source = CANARY.READ_BOUNDARY_SOURCE
+    path.write_text(source, encoding="utf-8")
+    lines = source.splitlines(keepends=True)
+    chunks = [
+        (
+            index + 1,
+            index + len(lines[index : index + 1_000]),
+            "".join(lines[index : index + 1_000]),
+            (
+                index + len(lines[index : index + 1_000]) + 1
+                if index + 1_000 < len(lines)
+                else None
+            ),
+        )
+        for index in range(0, len(lines), 1_000)
+    ]
     return [
         {
-            "toolName": "workspace_read",
+            "toolName": "read",
             "args": {
                 "path": str(path),
-                "offset": offset,
-                "limit": 65_536,
+                "offset": start_line,
+                "limit": 1_000,
             },
             "isError": False,
             "result": {
                 "content": [
                     {
                         "type": "text",
-                        "text": json.dumps(
-                            {
-                                "content": content,
-                                "contentBytes": len(content.encode("utf-8")),
-                                "contentChars": len(content),
-                                "contentLines": 1,
-                                "nextOffset": next_offset,
-                                "byteSize": 11,
-                                "truncated": truncated,
-                            },
-                            ensure_ascii=False,
-                            separators=(",", ":"),
+                        "text": (
+                            content
+                            + (
+                                f"\n\n[Showing lines {start_line}-{end_line}. "
+                                f"Continue with offset={next_line}.]"
+                                if next_line is not None
+                                else ""
+                            )
                         ),
                     }
                 ],
                 "details": {
                     "content": content,
-                    "contentBytes": len(content.encode("utf-8")),
-                    "contentChars": len(content),
-                    "contentLines": 1,
-                    "nextOffset": next_offset,
-                    "byteSize": 11,
-                    "truncated": truncated,
+                    "startLine": start_line,
+                    "endLine": end_line,
+                    "nextLineOffset": next_line,
+                    "size": len(source.encode("utf-8")),
+                    "truncated": next_line is not None,
                 },
             },
         }
-        for offset, next_offset, content, truncated in chunks
+        for start_line, end_line, content, next_line in chunks
     ]
 
 
@@ -195,10 +196,10 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
             [
                 context(
                     "turn:read",
-                    "workspace_read",
+                    "read",
                     "代码任务使用真实测试和证据化交付",
                 ),
-                context("turn:write", "workspace_patch", "当前任务继续"),
+                context("turn:write", "edit", "当前任务继续"),
             ]
         )
 
@@ -209,7 +210,7 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
         self.assertEqual(aggregated["modelCallCount"], 4)
         self.assertEqual(
             [item["toolName"] for item in aggregated["toolExecutions"]],
-            ["workspace_read", "workspace_patch"],
+            ["read", "edit"],
         )
         self.assertTrue(aggregated["memory"]["usefulProjectPreference"])
         self.assertTrue(aggregated["providerPrefix"]["passed"])
@@ -237,7 +238,7 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
         )
         self.assertEqual(CANARY._assistant_texts(snapshot), [])
 
-    def test_agent_approval_accepts_exact_project_patch_without_room_binding(self) -> None:
+    def test_agent_approval_accepts_exact_native_edit_without_room_binding(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
             target = workspace / "calculator.py"
@@ -246,14 +247,17 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
                 "approvalId": "approval:1",
                 "sessionId": "session:1",
                 "state": "pending",
-                "toolId": "workspace_patch",
+                "toolId": "workspace_edit",
                 "payloadSha256": hashlib.sha256(b"approval").hexdigest(),
                 "preview": {
                     "actionPayload": {
                         "path": str(target),
-                        "oldText": PATCH_OLD_TEXT,
-                        "newText": PATCH_NEW_TEXT,
-                        "expectedOccurrences": 1,
+                        "edits": [
+                            {
+                                "oldText": PATCH_OLD_TEXT,
+                                "newText": PATCH_NEW_TEXT,
+                            }
+                        ],
                     },
                     "baseState": {},
                 },
@@ -265,9 +269,9 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
                 workspace=workspace,
             )
 
-            self.assertEqual(parsed["toolId"], "workspace_patch")
+            self.assertEqual(parsed["toolId"], "workspace_edit")
 
-    def test_agent_approval_rejects_valid_but_unapproved_patch_shape(self) -> None:
+    def test_agent_approval_rejects_valid_but_unapproved_edit_shape(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
             target = workspace / "calculator.py"
@@ -276,14 +280,19 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
                 "approvalId": "approval:wrong-shape",
                 "sessionId": "session:1",
                 "state": "pending",
-                "toolId": "workspace_patch",
+                "toolId": "workspace_edit",
                 "payloadSha256": hashlib.sha256(b"wrong-shape").hexdigest(),
                 "preview": {
                     "actionPayload": {
                         "path": str(target),
-                        "oldText": PATCH_OLD_TEXT,
-                        "newText": "    return [value for value in values]",
-                        "expectedOccurrences": 1,
+                        "edits": [
+                            {
+                                "oldText": PATCH_OLD_TEXT,
+                                "newText": (
+                                    "    return [value for value in values]"
+                                ),
+                            }
+                        ],
                     },
                     "baseState": {},
                 },
@@ -296,177 +305,129 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
                     workspace=workspace,
                 )
 
-    def test_tool_checks_reject_room_calls_and_duplicate_missing_read(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            workspace = Path(directory)
-            executions = [
-                {"toolName": "skill_load", "args": {"name": CANARY.EXPECTED_SKILL}, "isError": False},
-                *[
-                    {"toolName": "tool_load", "args": {"name": name}, "isError": False}
-                    for name in CANARY.EXPECTED_TOOLS
-                ],
-                {"toolName": "workspace_read", "args": {"op": "read", "path": str(workspace / CANARY.MISSING_READ_PATH)}, "isError": True},
-                {"toolName": "workspace_read", "args": {"op": "read", "path": str(workspace / "calculator.py")}, "isError": False},
-                {"toolName": "workspace_read", "args": {"op": "read", "path": str(workspace / "test_calculator.py")}, "isError": False},
-                *boundary_read_executions(workspace),
-                {"toolName": "workspace_list", "args": {"op": "list", "path": "."}, "isError": False},
-                {"toolName": "workspace_search", "args": {"op": "search", "path": "."}, "isError": False},
-                {"toolName": "workspace_patch", "args": {}, "isError": False},
-                {"toolName": "workspace_shell", "args": {}, "isError": True},
-                {"toolName": "workspace_shell", "args": {}, "isError": False},
-            ]
-            evidence = {"toolExecutions": executions}
+    def _valid_native_evidence(
+        self,
+        workspace: Path,
+        *,
+        relative_reads: bool = False,
+    ) -> dict[str, object]:
+        read_path = (
+            (lambda name: name)
+            if relative_reads
+            else (lambda name: str(workspace / name))
+        )
+        executions = [
+            {
+                "toolName": "skill_load",
+                "args": {"name": CANARY.EXPECTED_SKILL},
+                "isError": False,
+            },
+            {
+                "toolName": "read",
+                "args": {"path": str(workspace / CANARY.MISSING_READ_PATH)},
+                "isError": True,
+            },
+            {"toolName": "ls", "args": {"path": "."}, "isError": False},
+            {
+                "toolName": "grep",
+                "args": {"path": ".", "pattern": "ROOM_PROJECT_TASK"},
+                "isError": False,
+            },
+            {
+                "toolName": "read",
+                "args": {"path": read_path("calculator.py")},
+                "isError": False,
+            },
+            {
+                "toolName": "read",
+                "args": {"path": read_path("test_calculator.py")},
+                "isError": False,
+            },
+            *boundary_read_executions(workspace),
+            {
+                "toolName": "tool_load",
+                "args": {"name": CANARY.EXPECTED_DEFERRED_TOOL},
+                "isError": False,
+            },
+            {"toolName": "bash", "args": {}, "isError": True},
+            {"toolName": "edit", "args": {}, "isError": False},
+            {"toolName": "bash", "args": {}, "isError": False},
+        ]
+        return {
+            "toolExecutions": executions,
+            "activeTools": sorted(CANARY.EXPECTED_TOOLS),
+        }
 
-            self.assertTrue(all(CANARY._tool_checks(evidence, workspace).values()))
-            executions.append({"toolName": "room_post", "args": {}, "isError": False})
-            self.assertFalse(
-                CANARY._tool_checks(evidence, workspace)["noRoomOrDelegationCalls"]
-            )
-
-            executions.pop()
-            executions.insert(
-                -3,
-                {"toolName": "workspace_patch", "args": {}, "isError": True},
-            )
-            self.assertTrue(
-                CANARY._tool_checks(evidence, workspace)["patchOnce"]
-            )
-
-    def test_tool_checks_accept_relative_project_reads(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            workspace = Path(directory)
-            executions = [
-                {"toolName": "skill_load", "args": {"name": CANARY.EXPECTED_SKILL}, "isError": False},
-                *[
-                    {"toolName": "tool_load", "args": {"name": name}, "isError": False}
-                    for name in CANARY.EXPECTED_TOOLS
-                ],
-                {"toolName": "workspace_read", "args": {"op": "read", "path": str(workspace / CANARY.MISSING_READ_PATH)}, "isError": True},
-                {"toolName": "workspace_read", "args": {"op": "read", "path": "calculator.py"}, "isError": False},
-                {"toolName": "workspace_read", "args": {"op": "read", "path": "test_calculator.py"}, "isError": False},
-                *boundary_read_executions(workspace),
-                {"toolName": "workspace_list", "args": {"op": "list", "path": "."}, "isError": False},
-                {"toolName": "workspace_search", "args": {"op": "search", "path": "."}, "isError": False},
-                {"toolName": "workspace_patch", "args": {}, "isError": False},
-                {"toolName": "workspace_shell", "args": {}, "isError": True},
-                {"toolName": "workspace_shell", "args": {}, "isError": False},
-            ]
-
-            self.assertTrue(
-                CANARY._tool_checks(
-                    {"toolExecutions": executions}, workspace
-                )["projectFilesReadWithBoundedVerification"]
-            )
-
-    def test_tool_checks_accept_bounded_pre_disclosure_repair_and_reread(
+    def test_tool_checks_accept_native_tools_without_discovery_round_trips(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
-            executions = [
-                {
-                    "toolName": "skill_load",
-                    "args": {"name": CANARY.EXPECTED_SKILL},
-                    "isError": False,
-                },
-                {
-                    "toolName": "workspace_read",
-                    "args": {"path": str(workspace / CANARY.MISSING_READ_PATH)},
-                    "isError": True,
-                },
-                {
-                    "toolName": "tool_load",
-                    "args": {"name": "workspace_read"},
-                    "isError": False,
-                },
-                {
-                    "toolName": "workspace_read",
-                    "args": {
-                        "op": "read",
-                        "path": CANARY.MISSING_READ_PATH,
-                    },
-                    "isError": True,
-                },
-                {
-                    "toolName": "workspace_list",
-                    "args": {"path": "."},
-                    "isError": True,
-                },
-                {
-                    "toolName": "tool_load",
-                    "args": {"name": "workspace_list"},
-                    "isError": False,
-                },
-                {
-                    "toolName": "workspace_list",
-                    "args": {"op": "list", "path": "."},
-                    "isError": False,
-                },
-                *[
-                    {
-                        "toolName": "tool_load",
-                        "args": {"name": name},
-                        "isError": False,
-                    }
-                    for name in CANARY.EXPECTED_TOOLS
-                    if name not in {"workspace_read", "workspace_list"}
-                ],
-                {
-                    "toolName": "workspace_search",
-                    "args": {"op": "search", "path": "."},
-                    "isError": False,
-                },
-                {
-                    "toolName": "workspace_read",
-                    "args": {"op": "read", "path": "calculator.py"},
-                    "isError": False,
-                },
-                {
-                    "toolName": "workspace_read",
-                    "args": {"op": "read", "path": "test_calculator.py"},
-                    "isError": False,
-                },
-                *boundary_read_executions(workspace),
-                {
-                    "toolName": "workspace_patch",
-                    "args": {},
-                    "isError": False,
-                },
-                {
-                    "toolName": "workspace_read",
-                    "args": {"op": "read", "path": "calculator.py"},
-                    "isError": False,
-                },
-                {
-                    "toolName": "workspace_shell",
-                    "args": {},
-                    "isError": True,
-                },
-                {
-                    "toolName": "workspace_shell",
-                    "args": {},
-                    "isError": False,
-                },
-            ]
+            evidence = self._valid_native_evidence(workspace)
 
-            checks = CANARY._tool_checks(
-                {"toolExecutions": executions}, workspace
+            self.assertTrue(
+                all(CANARY._tool_checks(evidence, workspace).values())
             )
 
-            self.assertTrue(all(checks.values()))
-            executions.insert(
-                2,
-                {
-                    "toolName": "workspace_read",
-                    "args": {"path": CANARY.MISSING_READ_PATH},
-                    "isError": True,
-                },
+    def test_tool_checks_reject_room_calls_and_native_tool_loading(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            evidence = self._valid_native_evidence(workspace)
+            executions = evidence["toolExecutions"]
+            assert isinstance(executions, list)
+            executions.append(
+                {"toolName": "room_post", "args": {}, "isError": False}
             )
             self.assertFalse(
                 CANARY._tool_checks(
-                    {"toolExecutions": executions}, workspace
-                )["preDisclosureCallsFailClosedWithoutRepeat"]
+                    evidence, workspace
+                )["noRoomOrDelegationCalls"]
             )
+
+            executions.pop()
+            executions.append(
+                {
+                    "toolName": "tool_load",
+                    "args": {"name": "read"},
+                    "isError": True,
+                }
+            )
+            self.assertFalse(
+                CANARY._tool_checks(
+                    evidence, workspace
+                )["nativeToolsNeverSearchedOrLoaded"]
+            )
+
+    def test_tool_checks_accept_relative_native_project_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            evidence = self._valid_native_evidence(
+                workspace,
+                relative_reads=True,
+            )
+
+            self.assertTrue(
+                CANARY._tool_checks(
+                    evidence, workspace
+                )["projectFilesReadWithBoundedVerification"]
+            )
+
+    def test_real_canary_prompt_uses_resident_native_tool_contract(self) -> None:
+        workspace = Path("/tmp/agent-session-native-tools")
+        prompt = CANARY.agent_session_task_message(workspace)
+
+        for name in CANARY.EXPECTED_TOOLS:
+            self.assertIn(name, prompt)
+        for hidden_name in (
+            "workspace_list",
+            "workspace_search",
+            "workspace_read",
+            "workspace_patch",
+            "workspace_edit",
+            "workspace_shell",
+        ):
+            self.assertNotIn(hidden_name, prompt)
+        self.assertIn("不得把它们交给 tool_search 或 tool_load", prompt)
 
 
 if __name__ == "__main__":

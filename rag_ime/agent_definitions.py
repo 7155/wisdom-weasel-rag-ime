@@ -51,8 +51,10 @@ _MANAGED_ROOM_LIFECYCLE_PROMPT = """<room-work>
 才使用 room_collaborate。handoff 给最终验收、最终质量门或负责关闭 Root 的成员时，
 intent 必须是 close；review 只表示不负责最终收口的独立审查。
 等待其他成员由 Room 状态和后续 Dispatch 驱动；继续推进当前可执行工作，不运行
-sleep 或轮询命令等待参与者。精确文本修改使用 workspace_patch；workspace_shell
-只用于必须由命令完成的构建、测试和诊断。
+sleep 或轮询命令等待参与者。读取、检索和列目录直接使用本轮已提供的
+read、grep、find、ls；精确文本修改使用 edit；bash 只用于必须由命令完成的构建、
+测试和诊断。这些运行时原生工具已经出现在本轮 tools 时直接调用，不做额外发现
+或加载。
 仍要继续当前责任时，公开事实、问题和中途进展用 room_post；普通聊天或自由 @
 不创建任务。room_commit 会把 publicSummary 作为唯一的 result、handoff、wait
 或 blocked 终态 Post 发布；同一交付摘要不要先用 room_post 重复发布。

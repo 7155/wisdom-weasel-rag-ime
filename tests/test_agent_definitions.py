@@ -39,8 +39,16 @@ class AgentDefinitionCompatibilityTests(unittest.TestCase):
         self.assertIn("每个 AC 只提交直接支撑它的最小引用集合", prompt)
         self.assertIn("不得重写、拼接、猜测", prompt)
         self.assertIn("不运行\nsleep 或轮询命令等待参与者", prompt)
-        self.assertIn("精确文本修改使用 workspace_patch", prompt)
-        self.assertIn("workspace_shell\n只用于必须由命令完成的构建、测试和诊断", prompt)
+        self.assertIn("read、grep、find、ls", prompt)
+        self.assertIn("精确文本修改使用 edit", prompt)
+        self.assertIn("bash 只用于必须由命令完成的构建", prompt)
+        self.assertIn("不做额外发现\n或加载", prompt)
+        for hidden_name in (
+            "workspace_read",
+            "workspace_patch",
+            "workspace_shell",
+        ):
+            self.assertNotIn(hidden_name, prompt)
         self.assertIn(
             "同一交付摘要不要先用 room_post 重复发布",
             prompt,
