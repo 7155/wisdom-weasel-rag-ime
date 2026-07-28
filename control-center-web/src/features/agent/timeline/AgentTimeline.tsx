@@ -1,5 +1,5 @@
 import { ArrowUpRight, BrainCircuit, CircleDashed, GitBranch, PencilLine, RefreshCcw, Sparkles, TriangleAlert } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   Virtuoso,
   type ScrollSeekConfiguration,
@@ -8,11 +8,16 @@ import {
 } from 'react-virtuoso';
 import { useShallow } from 'zustand/react/shallow';
 import { Button, IconButton } from '@/components/primitives';
-import type { AgentActivityProjection, AgentMessageProjection } from '@/contracts/agent-reducer';
+import type {
+  AgentActivityProjection,
+  AgentMessageProjection,
+  AgentProjectionState,
+} from '@/contracts/agent-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { ActivitySummary } from './ActivitySummary';
 import { AgentBlocks } from './BlockRenderer';
 import { PersonaAvatar, type PersonaPresence } from './PersonaAvatar';
+import { conversationMarkerIndexes } from './conversation-markers';
 import { useAgentLiveStore } from '../state/live-store';
 import { publicAgentErrorText } from '../public-error';
 
@@ -59,6 +64,8 @@ export function AgentTimeline({
   onEditMessage?: (messageId: string) => void;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const atBottomRef = useRef(true);
+  const followFrameRef = useRef(0);
   const [activeTargetId, setActiveTargetId] = useState('');
   const [visibleRange, setVisibleRange] = useState({ startIndex: 0, endIndex: 0 });
   /* -1 means "follow the active marker"; a real value pins the roving stop
@@ -72,8 +79,16 @@ export function AgentTimeline({
       return Boolean(turn && (turn.messageIds.length > 0 || turn.activityIds.length > 0));
     });
   }));
-  const markerKinds = useAgentLiveStore(useShallow((state) => turnOrder.map((turnId) => {
+  const activeTurnIndex = Math.floor(
+    (visibleRange.startIndex + visibleRange.endIndex) / 2,
+  );
+  const markerIndexes = useMemo(
+    () => conversationMarkerIndexes(turnOrder.length, activeTurnIndex),
+    [activeTurnIndex, turnOrder.length],
+  );
+  const markerKinds = useAgentLiveStore(useShallow((state) => markerIndexes.map((index) => {
     const projection = state.projections[sessionId];
+    const turnId = turnOrder[index];
     const turn = projection?.turnsById[turnId];
     if (!turn) return 'complete';
     if (turn.status === 'failed') return 'failed';
@@ -81,16 +96,18 @@ export function AgentTimeline({
     const hasAssistant = turn.messageIds.some((messageId) => projection?.messagesById[messageId]?.role === 'assistant');
     return hasAssistant ? 'complete' : 'user';
   })));
-  const markerUserPreviews = useAgentLiveStore(useShallow((state) => turnOrder.map((turnId) => {
+  const markerUserPreviews = useAgentLiveStore(useShallow((state) => markerIndexes.map((index) => {
     const projection = state.projections[sessionId];
+    const turnId = turnOrder[index];
     const turn = projection?.turnsById[turnId];
     const message = turn?.messageIds
       .map((messageId) => projection?.messagesById[messageId])
       .find((item) => item?.role === 'user');
     return messagePreview(message);
   })));
-  const markerAssistantPreviews = useAgentLiveStore(useShallow((state) => turnOrder.map((turnId) => {
+  const markerAssistantPreviews = useAgentLiveStore(useShallow((state) => markerIndexes.map((index) => {
     const projection = state.projections[sessionId];
+    const turnId = turnOrder[index];
     const turn = projection?.turnsById[turnId];
     const messages = turn?.messageIds
       .map((messageId) => projection?.messagesById[messageId])
@@ -99,6 +116,9 @@ export function AgentTimeline({
       )) ?? [];
     return messagePreview(messages.at(-1));
   })));
+  const rovingTurnIndex = navFocusIndex >= 0 && markerIndexes.includes(navFocusIndex)
+    ? navFocusIndex
+    : activeTurnIndex;
   const timelineComponents = useMemo(() => ({
     ScrollSeekPlaceholder: AgentTurnTombstone,
     Header: AgentTimelineScrollHeader,
@@ -108,6 +128,41 @@ export function AgentTimeline({
     const lastIndex = Math.max(0, turnOrder.length - 1);
     setVisibleRange({ startIndex: lastIndex, endIndex: lastIndex });
   }, [sessionId]);
+  useEffect(() => {
+    atBottomRef.current = true;
+    const unsubscribe = useAgentLiveStore.subscribe((state, previousState) => {
+      const projection = state.projections[sessionId];
+      const previous = previousState.projections[sessionId];
+      if (
+        !atBottomRef.current
+        || !projection
+        || projection.lastSequence <= (previous?.lastSequence ?? 0)
+      ) {
+        return;
+      }
+      const index = streamingFollowIndex(projection);
+      if (index < 0) return;
+      const frame = window.requestAnimationFrame(() => {
+        followFrameRef.current = 0;
+        virtuosoRef.current?.scrollToIndex({
+          index,
+          align: 'end',
+          behavior: 'auto',
+        });
+      });
+      if (followFrameRef.current) window.cancelAnimationFrame(followFrameRef.current);
+      followFrameRef.current = frame;
+    });
+    return () => {
+      unsubscribe();
+      if (followFrameRef.current) window.cancelAnimationFrame(followFrameRef.current);
+      followFrameRef.current = 0;
+    };
+  }, [sessionId]);
+  const handleAtBottomChange = useCallback((atBottom: boolean) => {
+    atBottomRef.current = atBottom;
+    onAtBottomChange?.(atBottom);
+  }, [onAtBottomChange]);
   useEffect(() => {
     if (scrollToLatestRequest <= 0 || turnOrder.length === 0) return;
     virtuosoRef.current?.scrollToIndex({
@@ -165,7 +220,7 @@ export function AgentTimeline({
         increaseViewportBy={{ top: 320, bottom: 520 }}
         components={timelineComponents}
         rangeChanged={setVisibleRange}
-        atBottomStateChange={onAtBottomChange}
+        atBottomStateChange={handleAtBottomChange}
         atBottomThreshold={120}
         scrollSeekConfiguration={agentScrollSeekConfiguration}
         itemContent={(_index, turnId) => (
@@ -207,7 +262,8 @@ export function AgentTimeline({
             if (markers.length === 0) return;
             event.preventDefault();
             const current = markers.findIndex((marker) => marker === document.activeElement);
-            const from = current === -1 ? navFocusIndex : current;
+            const remembered = markerIndexes.indexOf(rovingTurnIndex);
+            const from = current === -1 ? Math.max(0, remembered) : current;
             const next = event.key === 'Home'
               ? 0
               : event.key === 'End'
@@ -215,23 +271,23 @@ export function AgentTimeline({
                 : event.key === 'ArrowUp' || event.key === 'ArrowLeft'
                   ? Math.max(0, from - 1)
                   : Math.min(markers.length - 1, from + 1);
-            setNavFocusIndex(next);
+            setNavFocusIndex(markerIndexes[next] ?? activeTurnIndex);
             markers[next]?.focus();
           }}
         >
           <span aria-hidden="true" />
-          {turnOrder.map((turnId, index) => {
-            const activeIndex = Math.floor((visibleRange.startIndex + visibleRange.endIndex) / 2);
+          {markerIndexes.map((index, markerPosition) => {
+            const turnId = turnOrder[index]!;
             const position = turnOrder.length === 1 ? 50 : (index / (turnOrder.length - 1)) * 100;
-            const userPreview = markerUserPreviews[index];
-            const assistantPreview = markerAssistantPreviews[index];
-            const markerKind = markerKinds[index];
+            const userPreview = markerUserPreviews[markerPosition];
+            const assistantPreview = markerAssistantPreviews[markerPosition];
+            const markerKind = markerKinds[markerPosition];
             return (
               <button
-                aria-current={index === activeIndex ? 'location' : undefined}
+                aria-current={index === activeTurnIndex ? 'location' : undefined}
                 aria-label={`跳到第 ${index + 1} 轮`}
                 data-marker="true"
-                tabIndex={index === (navFocusIndex >= 0 ? navFocusIndex : activeIndex) ? 0 : -1}
+                tabIndex={index === rovingTurnIndex ? 0 : -1}
                 onFocus={() => setNavFocusIndex(index)}
                 data-edge={index === 0 ? 'start' : index === turnOrder.length - 1 ? 'end' : undefined}
                 data-kind={markerKind}
@@ -766,6 +822,25 @@ function messagePreview(message?: AgentMessageProjection): string {
 }
 
 const emptyIds: string[] = [];
+
+export function streamingFollowIndex(projection: AgentProjectionState): number {
+  const visibleTurnIds = projection.turnOrder.filter((turnId) => {
+    const turn = projection.turnsById[turnId];
+    return Boolean(turn && (turn.messageIds.length > 0 || turn.activityIds.length > 0));
+  });
+  const lastTurn = projection.turnsById[visibleTurnIds.at(-1) ?? ''];
+  if (
+    !lastTurn
+    || (
+      lastTurn.status !== 'queued'
+      && lastTurn.status !== 'running'
+      && lastTurn.status !== 'waiting'
+    )
+  ) {
+    return -1;
+  }
+  return visibleTurnIds.length - 1;
+}
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : '';

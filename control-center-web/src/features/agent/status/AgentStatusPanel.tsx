@@ -34,6 +34,12 @@ import { ContextRuntimeSections } from './ContextRuntimePanel';
 import { AgentWorkflowPanel } from './AgentWorkflowPanel';
 import { ContextXraySections } from './ContextXrayPanel';
 import { SubagentConsoleDialog } from './SubagentConsole';
+import {
+  isUnverifiedReturn,
+  subagentPresentationState,
+  subagentStateLabel,
+  UNVERIFIED_SUBAGENT_NOTICE,
+} from './subagent-presentation';
 
 type IdleWindow = Window & typeof globalThis & {
   requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
@@ -135,7 +141,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           {view.artifacts.length || runs.some((run) => run.artifact) ? (
             <div className="agent-status-files">
               {view.artifacts.map((artifact) => <StatusRow key={artifact.id} icon={FolderKanban} title={artifact.name} detail={artifact.kind} />)}
-              {runs.filter((run) => run.artifact).map((run) => <StatusRow key={`artifact:${run.id}`} icon={FolderKanban} title={`${templateLabel(run.templateId)}协作产物`} detail={stateLabel(run.state)} />)}
+              {runs.filter((run) => run.artifact).map((run) => <StatusRow key={`artifact:${run.id}`} icon={FolderKanban} title={`${templateLabel(run.templateId)}协作产物`} detail={subagentStateLabel(run, 'result')} />)}
             </div>
           ) : <EmptyLine>本轮还没有可交付产物</EmptyLine>}
         </StatusSection>
@@ -345,11 +351,15 @@ function ToolStep({ activity }: { activity: AgentActivityProjection }) {
 function SubagentRow({ run, sessionId }: { run: AgentSubagentRunV1; sessionId: string }) {
   const active = run.state === 'queued' || run.state === 'running';
   const elapsed = useRunElapsed(run);
+  const presentationState = subagentPresentationState(run);
   return (
-    <div className="agent-status-subagent" data-state={run.state}>
-      <span className="agent-status-subagent__state"><SubagentStateIcon state={run.state} /></span>
+    <div className="agent-status-subagent" data-state={presentationState}>
+      <span className="agent-status-subagent__state"><SubagentStateIcon state={presentationState} /></span>
       <span><strong>{templateLabel(run.templateId)}</strong><small>{publicText(run.task, '协作任务')}</small></span>
-      <i><span>{stateLabel(run.state)}</span>{elapsed ? <time>{elapsed}</time> : null}</i>
+      <i><span>{subagentStateLabel(run)}</span>{elapsed ? <time>{elapsed}</time> : null}</i>
+      {isUnverifiedReturn(run) ? (
+        <small className="agent-status-subagent__verification">{UNVERIFIED_SUBAGENT_NOTICE}</small>
+      ) : null}
       <SubagentConsoleDialog run={run} sessionId={sessionId} triggerLabel={active ? '查看进度' : '查看结果'} />
     </div>
   );
@@ -377,10 +387,11 @@ function TaskStateIcon({ status }: { status: string }) {
   return <CircleDashed size={13} />;
 }
 
-function SubagentStateIcon({ state }: { state: AgentSubagentRunV1['state'] }) {
+function SubagentStateIcon({ state }: { state: ReturnType<typeof subagentPresentationState> }) {
   if (state === 'running') return <LoaderCircle size={15} />;
   if (state === 'queued') return <CircleDashed size={15} />;
   if (state === 'completed') return <Check size={15} />;
+  if (state === 'returned') return <CircleDashed size={15} />;
   return <TriangleAlert size={15} />;
 }
 
@@ -537,10 +548,6 @@ function activityStatusLabel(status: AgentActivityProjection['status']): string 
 
 function templateLabel(value: AgentSubagentRunV1['templateId']): string {
   return ({ researcher: '研究员', planner: '规划员', worker: '执行者', reviewer: '审阅者', delegate: '协作者' })[value];
-}
-
-function stateLabel(value: AgentSubagentRunV1['state']): string {
-  return ({ queued: '排队中', running: '进行中', completed: '已完成', failed: '失败', aborted: '已停止', timed_out: '已超时' })[value];
 }
 
 function publicText(value: unknown, fallback: string): string {

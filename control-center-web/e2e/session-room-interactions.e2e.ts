@@ -9,8 +9,9 @@ test('model changes close immediately and the composer publishes an optimistic t
   await modelButton.click();
   const picker = page.getByRole('dialog');
   await expect(picker).toContainText('模型与推理强度');
+  await picker.getByRole('button', { name: /推理/ }).click();
   const modelSelectionStartedAt = Date.now();
-  await picker.getByRole('button', { name: '高', exact: true }).click();
+  await picker.getByRole('radio', { name: '高', exact: true }).click();
   await expect(picker).toBeHidden();
   expect(Date.now() - modelSelectionStartedAt).toBeLessThan(500);
   await expect(modelButton).toHaveAccessibleName(/思考强度：高/);

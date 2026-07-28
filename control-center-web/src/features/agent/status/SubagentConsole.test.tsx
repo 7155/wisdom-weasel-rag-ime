@@ -109,6 +109,38 @@ describe('SubagentConsoleDialog', () => {
     expect(transport.requests.filter((request) => request.pathId === 'agent.subagent.control')).toHaveLength(1);
     expect(confirm).toHaveBeenCalledTimes(2);
   });
+
+  it('labels an ordinary returned result as unverified instead of completed', async () => {
+    const run: AgentSubagentRunV1 = {
+      ...sampleRun(),
+      state: 'completed',
+      result: {
+        deliveryStatus: 'returned',
+        verificationStatus: 'unverified',
+        summary: '子 Agent 已返回实现结果。',
+      },
+      completedAtMs: 4,
+    };
+    const transport = new StubControlTransport('mock', {
+      'agent.subagent.console': consoleSnapshot(run),
+      'agent.subagent.control': { ok: true },
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={queryClient}>
+          <SubagentConsoleDialog run={run} sessionId="session-parent" triggerLabel="查看返回结果" />
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: '查看返回结果' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getAllByText('结果已返回').length).toBeGreaterThan(0);
+    expect(within(dialog).getByText('该结果未经主持会话核验，不代表父任务验收通过')).toBeVisible();
+    expect(within(dialog).queryByText('已完成')).not.toBeInTheDocument();
+  });
 });
 
 function consoleSnapshot(run: AgentSubagentRunV1): Record<string, unknown> {

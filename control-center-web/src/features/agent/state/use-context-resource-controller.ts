@@ -11,7 +11,7 @@ import {
   sessionWithContextResources,
   type ContextResourceSelection,
 } from '../context-resource-profile';
-import type { SessionSummary } from '../types';
+import { sessionItems, type SessionSummary } from '../types';
 
 interface PendingContextResources {
   confirmed: SessionSummary;
@@ -87,9 +87,8 @@ export function useContextResourceController({
               ...target,
             },
           });
-          const confirmed = isRecord(response.session)
-            ? response.session as unknown as SessionSummary
-            : sessionWithContextResources(base, target);
+          const confirmed = sessionFromUpdateResponse(response, base)
+            ?? sessionWithContextResources(base, target);
           state.confirmed = confirmed;
           if (
             sameContextResourceSelection(state.desired, target)
@@ -114,12 +113,25 @@ export function useContextResourceController({
           callbacksRef.current.setSessionError(sessionId, '');
         } catch (requestError) {
           if (sameContextResourceSelection(state.desired, target)) {
+            const refreshed = await readAuthoritativeSession(transport, sessionId);
+            if (!sameContextResourceSelection(state.desired, target)) continue;
+            if (refreshed) state.confirmed = refreshed;
+            if (
+              refreshed
+              && sameContextResourceSelection(
+                contextResourceSelection(refreshed),
+                target,
+              )
+            ) {
+              callbacksRef.current.updateSession(refreshed);
+              callbacksRef.current.setSessionError(sessionId, '');
+              continue;
+            }
             state.desired = contextResourceSelection(state.confirmed);
             callbacksRef.current.updateSession(state.confirmed);
-            callbacksRef.current.setSessionError(
-              sessionId,
-              `上下文资源没有更新。${callbacksRef.current.errorText(requestError)}`,
-            );
+            callbacksRef.current.setSessionError(sessionId, refreshed
+              ? `上下文资源未生效，已恢复到服务端状态。${callbacksRef.current.errorText(requestError)}`
+              : `上下文资源未确认，已恢复到最近确认状态。${callbacksRef.current.errorText(requestError)}`);
             break;
           }
         }
@@ -163,4 +175,29 @@ export function useContextResourceController({
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function sessionFromUpdateResponse(
+  response: Record<string, unknown>,
+  base: SessionSummary,
+): SessionSummary | undefined {
+  const candidate = sessionItems({
+    items: [isRecord(response.session) ? response.session : response],
+  })[0];
+  return candidate?.id === base.id ? { ...base, ...candidate } : undefined;
+}
+
+async function readAuthoritativeSession(
+  transport: ControlTransport,
+  sessionId: string,
+): Promise<SessionSummary | undefined> {
+  try {
+    const response = await transport.request({
+      pathId: 'agent.sessions.list',
+      query: { limit: 100, includeArchived: true },
+    });
+    return sessionItems(response).find((item) => item.id === sessionId);
+  } catch {
+    return undefined;
+  }
 }

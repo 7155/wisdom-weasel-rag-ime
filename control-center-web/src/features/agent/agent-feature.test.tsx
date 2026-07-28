@@ -19,31 +19,49 @@ import { AgentTurn } from './timeline/AgentTimeline';
 import { sessionItems, type ModelCatalog, type ThinkingLevel } from './types';
 import type { UiAgentMessage } from '@/contracts/ui-events';
 
-vi.mock('react-virtuoso', () => ({
-  Virtuoso: ({
+const virtuosoMock = vi.hoisted(() => ({
+  scrollToIndex: vi.fn(),
+  atBottomStateChange: undefined as ((atBottom: boolean) => void) | undefined,
+}));
+
+vi.mock('react-virtuoso', async () => {
+  const React = await import('react');
+  return {
+    Virtuoso: React.forwardRef(({
     alignToBottom,
+    atBottomStateChange,
     data,
     initialTopMostItemIndex,
     itemContent,
   }: {
     alignToBottom?: boolean;
+    atBottomStateChange?: (atBottom: boolean) => void;
     data: string[];
     initialTopMostItemIndex?: { index: string | number; align?: string };
     itemContent: (index: number, item: string) => ReactNode;
-  }) => (
-    <div
-      data-align-to-bottom={alignToBottom || undefined}
-      data-initial-align={initialTopMostItemIndex?.align}
-      data-testid="agent-virtuoso"
-    >
-      {data.map((item, index) => <div key={item}>{itemContent(index, item)}</div>)}
-    </div>
-  ),
-}));
+  }, ref) => {
+    React.useImperativeHandle(ref, () => ({
+      scrollToIndex: virtuosoMock.scrollToIndex,
+    }));
+    virtuosoMock.atBottomStateChange = atBottomStateChange;
+    return (
+      <div
+        data-align-to-bottom={alignToBottom || undefined}
+        data-initial-align={initialTopMostItemIndex?.align}
+        data-testid="agent-virtuoso"
+      >
+        {data.map((item, index) => <div key={item}>{itemContent(index, item)}</div>)}
+      </div>
+    );
+  }),
+  };
+});
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  virtuosoMock.scrollToIndex.mockReset();
+  virtuosoMock.atBottomStateChange = undefined;
   for (const session of previewSessions) useAgentLiveStore.getState().clear(session.id);
   useAgentLiveStore.getState().clear('session-history');
 });
@@ -175,6 +193,63 @@ describe('Agent experience', () => {
     expect(markers[0]).toHaveTextContent('第 1 轮');
     expect(navigator).toHaveTextContent('读取输入法工具书');
     expect(navigator).toHaveTextContent('澄');
+  });
+
+  it('follows an in-place streaming turn only while the reader remains at the bottom', async () => {
+    let nextFrame = 1;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const frame = nextFrame;
+      nextFrame += 1;
+      window.setTimeout(() => callback(0), 0);
+      return frame;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const transport = featureTransport();
+    renderAgent(transport);
+    await screen.findByRole('textbox', { name: '消息' });
+    await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
+    virtuosoMock.scrollToIndex.mockClear();
+
+    const current = useAgentLiveStore.getState().projections['session-preview'];
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'stream-follow-1',
+        sessionId: 'session-preview',
+        turnId: 'turn-stream-follow',
+        sequence: current.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'text_delta',
+        payload: { delta: 'first' },
+        resumeToken: `session-preview:${current.lastSequence + 1}`,
+      }]);
+    });
+
+    await waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith(
+      expect.objectContaining({ align: 'end', behavior: 'auto' }),
+    ));
+    virtuosoMock.scrollToIndex.mockClear();
+    act(() => virtuosoMock.atBottomStateChange?.(false));
+    const afterFirst = useAgentLiveStore.getState().projections['session-preview'];
+    act(() => {
+      useAgentLiveStore.getState().applyEvents('session-preview', [{
+        schemaVersion: 'rag-ime.agent-event.v1',
+        eventId: 'stream-follow-2',
+        sessionId: 'session-preview',
+        turnId: 'turn-stream-follow',
+        sequence: afterFirst.lastSequence + 1,
+        createdAtMs: Date.now(),
+        streamKind: 'agent',
+        eventType: 'text_delta',
+        payload: { delta: ' second' },
+        resumeToken: `session-preview:${afterFirst.lastSequence + 1}`,
+      }]);
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+    });
+    expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
   });
 
   it('creates a real Pi-backed conversation branch and restores the selected message as draft', async () => {
@@ -1014,7 +1089,7 @@ describe('Agent experience', () => {
     await user.click(await screen.findByRole('button', { name: '切换模型' }));
 
     expect(await screen.findByText('模型与推理强度')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '选择模型 GPT-5.4' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: '选择模型 GPT-5.4' })).toBeInTheDocument();
   });
 
   it('unlocks send and retry when projection status is stale working but the latest turn failed', async () => {
@@ -1725,6 +1800,81 @@ describe('Agent experience', () => {
     )).toHaveLength(1);
   });
 
+  it('accepts the backend top-level Session as the context-resource receipt', async () => {
+    const updatedSession = {
+      ...previewSessions[0]!,
+      title: '服务端确认的对话',
+      projectContextEnabled: true,
+      piSkillsEnabled: true,
+      codexSkillsEnabled: true,
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      updatedSession,
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '工作资料：内置' }));
+    await user.click(screen.getByRole('radio', { name: /本机扩展/ }));
+
+    expect((await screen.findAllByText('服务端确认的对话')).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: '工作资料：本机扩展' })).toBeEnabled();
+  });
+
+  it('reconciles a lost context-resource response before reporting failure', async () => {
+    const confirmed = {
+      ...previewSessions[0]!,
+      projectContextEnabled: true,
+      piSkillsEnabled: true,
+      codexSkillsEnabled: true,
+    };
+    let sessionReads = 0;
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      () => {
+        sessionReads += 1;
+        return {
+          ok: true,
+          items: [sessionReads === 1 ? previewSessions[0]! : confirmed],
+        };
+      },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => {
+        throw new Error('connection reset after apply');
+      },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '工作资料：内置' }));
+    await user.click(screen.getByRole('radio', { name: /本机扩展/ }));
+
+    await waitFor(() => expect(sessionReads).toBe(2));
+    expect(screen.getByRole('button', { name: '工作资料：本机扩展' })).toBeEnabled();
+    expect(screen.queryByText(/上下文资源未确认|上下文资源未生效/)).not.toBeInTheDocument();
+  });
+
   it('keeps drafting responsive but waits for context resources before sending', async () => {
     const pendingContextUpdate = deferred<{ ok: true }>();
     const transport = featureTransport(
@@ -2173,6 +2323,47 @@ describe('Agent experience', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('模型目录暂时不可用，对话记录仍可查看');
   });
 
+  it('keeps the last Pi-confirmed model catalog visible while a returning Session refreshes', async () => {
+    const user = userEvent.setup();
+    const returningRefresh = deferred<ModelCatalog>();
+    const memoryCatalog = previewModelCatalog('session-memory');
+    memoryCatalog.selected = { provider: 'deepseek', id: 'deepseek-v4' };
+    memoryCatalog.thinkingLevel = 'off';
+    let previewCatalogRequests = 0;
+    const transport = productionTransport({
+      'agent.session.models': (request: ControlRequest) => {
+        const sessionId = String(request.params?.sessionId ?? '');
+        if (sessionId === 'session-preview') {
+          previewCatalogRequests += 1;
+          return previewCatalogRequests === 1
+            ? previewModelCatalog(sessionId)
+            : returningRefresh.promise;
+        }
+        return memoryCatalog;
+      },
+      'agent.session.snapshot': (request: ControlRequest) => (
+        previewAgentSnapshot(String(request.params?.sessionId ?? 'session-preview'))
+      ),
+    });
+    renderAgent(transport);
+
+    await screen.findByRole('button', { name: /模型：GPT-5\.4/ });
+    await user.click(screen.getByRole('button', { name: /记忆整理/ }));
+    await screen.findByRole('button', { name: /模型：DeepSeek V4/ });
+
+    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: /控制中心迁移/ }),
+    ).toHaveAttribute('aria-current', 'true'));
+    expect(screen.getByRole('button', { name: /模型：GPT-5\.4/ })).toBeEnabled();
+
+    await act(async () => returningRefresh.reject(new Error('provider probe failed')));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '模型目录刷新失败，正在继续使用这段对话上次由 Pi 确认的模型状态',
+    );
+    expect(screen.getByRole('button', { name: /模型：GPT-5\.4/ })).toBeEnabled();
+  });
+
   it('identifies an expired Session workspace separately from Provider availability', async () => {
     const transport = productionTransport({
       'agent.session.models': () => {
@@ -2277,15 +2468,12 @@ describe('Agent experience', () => {
       { name: /模型：GPT-5.6 Luna/ },
       { timeout: 5_000 },
     ));
-    const lunaDetails = screen.getByRole(
-      'button',
-      { name: '选择模型 GPT-5.6 Luna' },
-    ).closest('details');
-    expect(lunaDetails).not.toBeNull();
+    const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
+    await user.click(within(picker).getByRole('button', { name: /推理/ }));
     for (const level of ['不启用推理', '最小', '低', '中', '高', '极高', 'Max']) {
-      expect(within(lunaDetails!).getByRole('button', { name: level })).toBeInTheDocument();
+      expect(within(picker).getByRole('radio', { name: level })).toBeInTheDocument();
     }
-    const max = within(lunaDetails!).getByRole('button', { name: 'Max' });
+    const max = within(picker).getByRole('radio', { name: 'Max' });
     await user.click(max);
 
     await waitFor(() => expect(transport.requests.some((call) => (
@@ -2295,6 +2483,40 @@ describe('Agent experience', () => {
       && !Array.isArray(call.request.body)
       && call.request.body.level === 'max'
     ))).toBe(true));
+  });
+
+  it('supports arrow-key reasoning selection, Enter, Escape, and trigger focus return', async () => {
+    const initial = lunaModelCatalog();
+    const confirmed = { ...initial, thinkingLevel: 'high' as ThinkingLevel };
+    let catalogCalls = 0;
+    const transport = featureTransport(() => {
+      catalogCalls += 1;
+      return catalogCalls === 1 ? initial : confirmed;
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    const trigger = await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5.6 Luna/ },
+      { timeout: 5_000 },
+    );
+    await user.click(trigger);
+    let picker = screen.getByRole('dialog', { name: '模型与推理强度' });
+    await user.click(within(picker).getByRole('button', { name: /推理/ }));
+    const medium = within(picker).getByRole('radio', { name: '中' });
+    await waitFor(() => expect(medium).toHaveFocus());
+    await user.keyboard('{ArrowRight}{Enter}');
+
+    await waitFor(() => expect(picker).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+    await waitFor(() => expect(trigger).toHaveAccessibleName(/思考强度：高/));
+
+    await user.click(trigger);
+    picker = screen.getByRole('dialog', { name: '模型与推理强度' });
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(picker).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
   });
 
   it('switches models from the model row without requiring a reasoning-level click', async () => {
@@ -2386,7 +2608,9 @@ describe('Agent experience', () => {
       { name: /模型：GPT-5.6 Luna/ },
       { timeout: 5_000 },
     ));
-    expect(screen.queryByRole('button', { name: 'Max' })).not.toBeInTheDocument();
+    const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
+    await user.click(within(picker).getByRole('button', { name: /推理/ }));
+    expect(within(picker).queryByRole('radio', { name: 'Max' })).not.toBeInTheDocument();
   });
 
   it('uses the real model and thinking selection routes then reloads Pi state', async () => {
@@ -2399,10 +2623,7 @@ describe('Agent experience', () => {
       { name: /模型：GPT-5.6 Luna/ },
       { timeout: 5_000 },
     ));
-    const codexDetails = screen.getByText('Codex Mini').closest('details');
-    expect(codexDetails).not.toBeNull();
-    codexDetails!.open = true;
-    await user.click(within(codexDetails!).getByRole('button', { name: '中' }));
+    await user.click(screen.getByRole('option', { name: '选择模型 Codex Mini' }));
 
     await waitFor(() => expect(transport.requests).toEqual(expect.arrayContaining([
       expect.objectContaining({ request: expect.objectContaining({
@@ -2455,13 +2676,7 @@ describe('Agent experience', () => {
       { name: /模型：GPT-5.6 Luna/ },
       { timeout: 5_000 },
     ));
-    const codexDetails = screen.getByRole(
-      'button',
-      { name: '选择模型 Codex Mini' },
-    ).closest('details');
-    expect(codexDetails).not.toBeNull();
-    codexDetails!.open = true;
-    await user.click(within(codexDetails!).getByRole('button', { name: '中' }));
+    await user.click(screen.getByRole('option', { name: '选择模型 Codex Mini' }));
 
     expect(screen.queryByText('模型与推理强度')).not.toBeInTheDocument();
     const optimistic = screen.getByRole('button', {
@@ -2522,22 +2737,14 @@ describe('Agent experience', () => {
       { name: /模型：GPT-5.6 Luna/ },
       { timeout: 5_000 },
     ));
-    const codexDetails = screen.getByRole(
-      'button',
-      { name: '选择模型 Codex Mini' },
-    ).closest('details');
-    expect(codexDetails).not.toBeNull();
-    codexDetails!.open = true;
-    await user.click(within(codexDetails!).getByRole('button', { name: '中' }));
+    await user.click(screen.getByRole('option', { name: '选择模型 Codex Mini' }));
 
     await user.click(screen.getByRole('button', { name: '模型：Codex Mini · GPT，思考强度：中' }));
-    const lunaDetails = screen.getByRole(
-      'button',
-      { name: '选择模型 GPT-5.6 Luna' },
-    ).closest('details');
-    expect(lunaDetails).not.toBeNull();
-    lunaDetails!.open = true;
-    await user.click(within(lunaDetails!).getByRole('button', { name: '高' }));
+    await user.click(screen.getByRole('option', { name: '选择模型 GPT-5.6 Luna' }));
+    await user.click(screen.getByRole('button', { name: '模型：GPT-5.6 Luna · GPT，思考强度：中' }));
+    const picker = screen.getByRole('dialog', { name: '模型与推理强度' });
+    await user.click(within(picker).getByRole('button', { name: /推理/ }));
+    await user.click(within(picker).getByRole('radio', { name: '高' }));
     expect(screen.getByRole('button', {
       name: '模型：GPT-5.6 Luna · GPT，思考强度：高',
     })).toHaveAttribute('aria-busy', 'true');

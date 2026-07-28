@@ -186,6 +186,16 @@
   border-left: 3px solid var(--color-accent);
 }
 
+.subagent-console__overview .subagent-console__verification {
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--color-warning);
+  background: var(--color-warning-soft);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .subagent-console textarea {
   width: 100%;
   min-height: 74px;
@@ -243,6 +253,10 @@
 
 .subagent-console__state[data-state="running"] {
   color: var(--color-accent);
+}
+
+.subagent-console__state[data-state="returned"] {
+  color: var(--color-info);
 }
 
 .subagent-console__state[data-state="failed"],

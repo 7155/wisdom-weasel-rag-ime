@@ -27,6 +27,12 @@ import {
 } from '@/components/primitives';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
 import './SubagentConsole.css';
+import {
+  isUnverifiedReturn,
+  subagentPresentationState,
+  subagentStateLabel,
+  UNVERIFIED_SUBAGENT_NOTICE,
+} from './subagent-presentation';
 
 type ConsoleTab = 'overview' | 'conversation' | 'activity' | 'inbox';
 type ControlAction = 'steer' | 'retry' | 'resume' | 'abort' | 'reply';
@@ -150,7 +156,7 @@ export function SubagentConsoleDialog({
             <DialogTitle>{templateLabel(current.templateId)}控制台</DialogTitle>
             <DialogDescription>{current.task}</DialogDescription>
           </span>
-          <RunState state={current.state} />
+          <RunState run={current} />
         </DialogHeader>
 
         <div className="subagent-console__summary">
@@ -218,8 +224,13 @@ function Overview({
   return (
     <div className="subagent-console__overview">
       <section>
-        <header><strong>当前任务</strong><RunState state={run.state} /></header>
+        <header><strong>当前任务</strong><RunState run={run} /></header>
         <p>{run.task}</p>
+        {isUnverifiedReturn(run) ? (
+          <p className="subagent-console__verification" role="note">
+            {UNVERIFIED_SUBAGENT_NOTICE}
+          </p>
+        ) : null}
         {run.error ? <small className="subagent-console__failure">{run.error}</small> : null}
         {resultSummary(run.result) ? <blockquote>{resultSummary(run.result)}</blockquote> : null}
       </section>
@@ -407,15 +418,16 @@ function confirmDestructive(message: string): boolean {
   return typeof window === 'undefined' || window.confirm(message);
 }
 
-function RunState({ state }: { state: AgentSubagentRunV1['state'] }) {
+function RunState({ run }: { run: AgentSubagentRunV1 }) {
+  const state = subagentPresentationState(run);
   const icon = state === 'running'
     ? <LoaderCircle size={13} />
     : state === 'completed'
       ? <Check size={13} />
-      : state === 'queued'
+      : state === 'queued' || state === 'returned'
         ? <CircleDashed size={13} />
         : <TriangleAlert size={13} />;
-  return <span className="subagent-console__state" data-state={state}>{icon}{runStateLabel(state)}</span>;
+  return <span className="subagent-console__state" data-state={state}>{icon}{subagentStateLabel(run, 'console')}</span>;
 }
 
 function Metric({ label, value, emphasis = false }: { label: string; value: string | number; emphasis?: boolean }) {
@@ -558,17 +570,6 @@ function inboxKindLabel(value: ConsoleInboxItem['kind']): string {
 
 function messageRole(value: string): string {
   return value === 'user' ? '任务输入' : value === 'tool' ? '工具' : value === 'system' ? '系统' : '子 Agent';
-}
-
-function runStateLabel(value: AgentSubagentRunV1['state']): string {
-  return ({
-    queued: '排队中',
-    running: '执行中',
-    completed: '已完成',
-    failed: '失败',
-    aborted: '已停止',
-    timed_out: '已超时',
-  })[value];
 }
 
 function templateLabel(value: AgentSubagentRunV1['templateId']): string {

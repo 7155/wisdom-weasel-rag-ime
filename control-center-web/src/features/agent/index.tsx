@@ -23,6 +23,7 @@ import { agentProjection, useAgentLiveStore } from './state/live-store';
 import { useContextResourceController } from './state/use-context-resource-controller';
 import { useModelSelectionController } from './state/use-model-selection-controller';
 import { AgentTimeline } from './timeline/AgentTimeline';
+import { AgentSendTimingTracker, monotonicNow } from './send-stage-timing';
 import { toolIntentPrompt } from './tool-presentation';
 import { useProductIdentity } from '@/features/identity/product-identity';
 import { isAgentTurnConflict, publicAgentErrorText } from './public-error';
@@ -90,6 +91,7 @@ function AgentWorkspace() {
   const [railOpen, setRailOpen] = useState(() => !isMobileViewport());
   const [statusOpen, setStatusOpen] = useState(false);
   const [error, setVisibleError] = useState('');
+  const [sendTimings] = useState(() => new AgentSendTimingTracker());
   const railToggleRef = useRef<HTMLButtonElement>(null);
   const railRef = useRef<HTMLElement>(null);
   const statusToggleRef = useRef<HTMLButtonElement>(null);
@@ -100,6 +102,7 @@ function AgentWorkspace() {
   const composerInputsRef = useRef(sessionComposerStore);
   const sessionErrorsRef = useRef(new Map<string, string>());
   const sessionSendLocksRef = useRef(new Set<string>());
+  const modelCatalogCacheRef = useRef(new Map<string, ModelCatalog>());
   selectedIdRef.current = selectedId;
   const sending = sendingSessionIds.has(selectedId);
   const modelSelection = useModelSelectionController({
@@ -336,7 +339,10 @@ function AgentWorkspace() {
     setDraft(input.draft);
     setAttachments(input.attachments);
     setVisibleError(sessionErrorsRef.current.get(selectedId) ?? '');
-    setCatalog(undefined);
+    // A Session's last Pi-confirmed catalog is safe to render while the
+    // background refresh runs. Clearing it here caused a visible dead window
+    // every time the user returned to a conversation.
+    setCatalog(modelCatalogCacheRef.current.get(selectedId));
     setCommands([]);
     setConversationForkAvailable(false);
     setConversationRewriteAvailable(false);
@@ -346,6 +352,9 @@ function AgentWorkspace() {
     setForkDialogInitialEntryId('');
     setTimelineJumpRequest(undefined);
   }, [selectedId]);
+  useEffect(() => {
+    if (catalog) modelCatalogCacheRef.current.set(catalog.sessionId, catalog);
+  }, [catalog]);
   useEffect(() => {
     if (!requestedDraft || !selectedId) return;
     setSessionDraft(selectedId, (current) => current.trim() ? current : requestedDraft);
@@ -382,6 +391,7 @@ function AgentWorkspace() {
           { pathId: 'agent.session.events', params: { sessionId: selectedId }, lastEventId: cursor },
           {
             next: (event) => {
+              sendTimings.observe(event);
               batcher.push(event);
               if (event.eventType === 'session_configuration_changed') {
                 modelSelection.applyConfigurationEvent(selectedId, event.payload);
@@ -430,9 +440,15 @@ function AgentWorkspace() {
       } else if (__CONTROL_PREVIEW__ && transport.kind === 'mock') {
         modelSelection.acceptConfirmedCatalog(selectedId, previewModelCatalog(selectedId));
       } else {
-        setCatalog(undefined);
+        const cachedCatalog = modelCatalogCacheRef.current.get(selectedId);
+        if (cachedCatalog) {
+          modelSelection.acceptConfirmedCatalog(selectedId, cachedCatalog);
+        } else {
+          setCatalog(undefined);
+        }
         notices.push(modelCatalogNotice(
           modelResult.status === 'rejected' ? modelResult.reason : undefined,
+          Boolean(cachedCatalog),
         ));
       }
       if (commandResult.status === 'fulfilled') {
@@ -455,8 +471,13 @@ function AgentWorkspace() {
     // catalogs are independent and should become interactive immediately.
     void loadSnapshot();
     void loadSessionCatalogs();
-    return () => { active = false; batcher.clear(); unsubscribe(); };
-  }, [ensure, selectedId, transport]);
+    return () => {
+      active = false;
+      batcher.clear();
+      unsubscribe();
+      sendTimings.clearSession(selectedId);
+    };
+  }, [ensure, selectedId, sendTimings, transport]);
 
   const session = sessions.find((item) => item.id === selectedId);
   const defaultPersona = personas.find((item) => item.runtimeCharacteristics.isDefault)
@@ -564,6 +585,7 @@ function AgentWorkspace() {
     composerDraft = draft,
   ): Promise<void> {
     if (!session || sending || modelChanging || contextResourcesChanging) return;
+    const sendStartedAt = monotonicNow();
     const delivery: AgentMessageDelivery = busy
       ? (requestedDelivery === 'followUp' ? 'followUp' : 'steer')
       : 'prompt';
@@ -652,9 +674,17 @@ function AgentWorkspace() {
     setSessionDraft(session.id, '');
     setSessionAttachments(session.id, []);
     setSessionError(session.id, '');
-    promptSession(session.id, message, selectedAttachments.map((item) => item.id), delivery, () => {
-      restoreSessionInputIfUntouched(session.id, value, selectedAttachments);
-    });
+    promptSession(
+      session.id,
+      message,
+      selectedAttachments.map((item) => item.id),
+      delivery,
+      () => {
+        restoreSessionInputIfUntouched(session.id, value, selectedAttachments);
+      },
+      undefined,
+      sendStartedAt,
+    );
   }
 
   function promptSession(
@@ -664,9 +694,11 @@ function AgentWorkspace() {
     delivery: AgentMessageDelivery = 'prompt',
     restoreInput?: () => void,
     onAdmissionRolledBack?: () => void,
+    startedAt = monotonicNow(),
   ): boolean {
     if (!beginSessionSend(sessionId)) return false;
     const clientMessageId = `web-${crypto.randomUUID()}`;
+    sendTimings.begin(sessionId, clientMessageId, startedAt);
     useAgentLiveStore.getState().appendOptimistic(sessionId, {
       clientMessageId,
       text: message,
@@ -674,13 +706,14 @@ function AgentWorkspace() {
       nowMs: Date.now(),
       ...(delivery === 'prompt' ? {} : { turnId: activeTurnId, delivery }),
     });
+    sendTimings.optimistic(clientMessageId);
     setSessionError(sessionId, '');
     // Admission and the optimistic turn are synchronous. Restoring a Pi
     // Session, refreshing context, or starting a Provider can still make the
     // HTTP receipt slow, but must not make the click itself feel stalled.
     void (async () => {
       try {
-        await transport.request({
+        const response = await transport.request<Record<string, unknown>>({
           pathId: 'agent.session.prompt',
           params: { sessionId },
           // Keep ordinary prompts compatible with an older native route policy.
@@ -692,7 +725,9 @@ function AgentWorkspace() {
             ...(delivery === 'prompt' ? {} : { delivery }),
           },
         });
+        sendTimings.accepted(clientMessageId, response);
       } catch (requestError) {
+        sendTimings.failed(clientMessageId);
         if (isAgentTurnConflict(requestError)) {
           useAgentLiveStore.getState().discardOptimistic(sessionId, clientMessageId);
           restoreInput?.();
@@ -718,6 +753,7 @@ function AgentWorkspace() {
     onAdmissionRolledBack?: () => void,
   ): boolean {
     if (!session || sending || latestActiveTurnId(agentProjection(session.id))) return false;
+    const sendStartedAt = monotonicNow();
     const projection = agentProjection(session.id);
     const turn = projection.turnsById[turnId];
     const userMessage = turn?.messageIds
@@ -739,6 +775,7 @@ function AgentWorkspace() {
       'prompt',
       undefined,
       onAdmissionRolledBack,
+      sendStartedAt,
     );
   }
 
@@ -1278,10 +1315,13 @@ function errorText(value: unknown): string {
   if (/invalid route parameter:\s*limit/i.test(message)) return '对话列表暂时无法加载，请刷新后重试。';
   return publicAgentErrorText(value, '操作未完成，请刷新状态后重试。');
 }
-function modelCatalogNotice(value: unknown): string {
+function modelCatalogNotice(value: unknown, usingCachedCatalog = false): string {
   const message = value instanceof Error ? value.message : String(value ?? '');
   if (/session runtime is unavailable|workspace (?:does not exist|no longer exists)/i.test(message)) {
     return '这段对话的工作目录已不可用；对话记录仍保留，可以归档后选择其他对话。';
+  }
+  if (usingCachedCatalog) {
+    return '模型目录刷新失败，正在继续使用这段对话上次由 Pi 确认的模型状态。';
   }
   return '模型目录暂时不可用，对话记录仍可查看。';
 }
