@@ -12,7 +12,11 @@ from unittest.mock import patch
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
-from rag_ime.pi_runtime_v2 import PiRuntimeHostManager, _pi_tool_history_events
+from rag_ime.pi_runtime_v2 import (
+    PiRuntimeHostClient,
+    PiRuntimeHostManager,
+    _pi_tool_history_events,
+)
 
 
 FAKE_HOST = r'''#!/usr/bin/env python3
@@ -1549,6 +1553,78 @@ class PiRuntimeV2Tests(unittest.TestCase):
             )
         finally:
             peer.stop()
+
+    def test_concurrent_catalog_reads_admit_exactly_one_runtime_host(self) -> None:
+        workers = 6
+        start_barrier = threading.Barrier(workers)
+        state_lock = threading.Lock()
+        active_starts = 0
+        maximum_active_starts = 0
+        errors: list[BaseException] = []
+        catalogs: list[list[dict[str, object]]] = []
+        original_start = PiRuntimeHostClient.start
+
+        def delayed_start(client: PiRuntimeHostClient) -> dict[str, object]:
+            nonlocal active_starts, maximum_active_starts
+            with state_lock:
+                active_starts += 1
+                maximum_active_starts = max(
+                    maximum_active_starts,
+                    active_starts,
+                )
+            try:
+                # Widen the admission window enough that the old unlocked
+                # implementation deterministically started competing Hosts.
+                time.sleep(0.05)
+                return original_start(client)
+            finally:
+                with state_lock:
+                    active_starts -= 1
+
+        def read_catalog() -> None:
+            start_barrier.wait()
+            try:
+                catalog = self.runtime.available_models()
+                with state_lock:
+                    catalogs.append(catalog)
+            except BaseException as exc:
+                with state_lock:
+                    errors.append(exc)
+
+        with patch.object(
+            PiRuntimeHostClient,
+            "start",
+            autospec=True,
+            side_effect=delayed_start,
+        ):
+            threads = [
+                threading.Thread(target=read_catalog)
+                for _ in range(workers)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(catalogs), workers)
+        self.assertEqual(maximum_active_starts, 1)
+        self.assertTrue(all(catalog for catalog in catalogs))
+        requests = [
+            json.loads(line)
+            for line in (
+                self.root / "agent" / "host-requests.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            sum(request["method"] == "hello" for request in requests),
+            1,
+        )
+        self.assertEqual(
+            sum(request["method"] == "models.list" for request in requests),
+            workers,
+        )
 
     def test_close_session_keeps_other_hosted_sessions_ready(self) -> None:
         first_id = str(self.first["id"])

@@ -612,6 +612,18 @@ class PiRuntimeHostManager:
         return receipts
 
     def _host(self) -> PiRuntimeHostClient:
+        # Host admission is a lifecycle transition, not a cache lookup. Model
+        # catalogs, Session restore, and role settings can all request the Host
+        # concurrently when the UI opens. Without this lock, two callers can
+        # both observe `_client is None`, start two child processes, and let the
+        # second registration fault on the first one's durable kill-gate row.
+        # The losing caller can then clear `_client`, leaving the successfully
+        # started Host registered but unreachable. The lifecycle lock is an
+        # RLock because ensure/stop paths already hold it before reaching here.
+        with self._lifecycle_lock:
+            return self._host_locked()
+
+    def _host_locked(self) -> PiRuntimeHostClient:
         with self._lock:
             if self._client is not None and self._client.running:
                 return self._client
