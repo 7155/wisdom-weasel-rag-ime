@@ -71,7 +71,7 @@ describe('Agent experience', () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();
     render(<TooltipProvider><SessionRail sessions={previewSessions} selectedId="session-preview" loading={false} onSelect={onSelect} onCreate={() => {}} /></TooltipProvider>);
-    expect(screen.getByText('learnA')).toBeInTheDocument();
+    expect(screen.getByText('personal-agent-workbench')).toBeInTheDocument();
     expect(screen.getByText('未指定项目')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /记忆整理/ }));
     expect(onSelect).toHaveBeenCalledWith('session-memory');
@@ -91,7 +91,9 @@ describe('Agent experience', () => {
       </TooltipProvider>,
     );
 
-    const project = screen.getByRole('button', { name: /learnA/ });
+    const project = screen.getByRole('button', {
+      name: /personal-agent-workbench/,
+    });
     expect(project).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('button', { name: /控制中心迁移/ })).toBeInTheDocument();
 
@@ -1732,7 +1734,7 @@ describe('Agent experience', () => {
         body: {
           mode: 'coordinator',
           executionMode: 'read_only',
-          workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+          workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
           toolProfileVersion: 'subagent-readonly-v1',
           toolAllowlistMode: 'profile',
         },
@@ -1931,7 +1933,7 @@ describe('Agent experience', () => {
       name: 'learnA',
       mimeType: 'application/octet-stream',
       byteSize: 0,
-      path: '/Volumes/undo 4t/git/learnA',
+      path: '/Users/example/Projects/personal-agent-workbench',
     }]);
     const user = userEvent.setup();
     renderAgent(transport);
@@ -1953,7 +1955,7 @@ describe('Agent experience', () => {
         body: expect.objectContaining({
           mode: 'coordinator',
           executionMode: 'workspace_managed',
-          workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+          workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
           workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
           toolAllowlistMode: 'profile',
         }),
@@ -1979,7 +1981,7 @@ describe('Agent experience', () => {
       name: 'learnA',
       mimeType: 'application/octet-stream',
       byteSize: 0,
-      path: '/Volumes/undo 4t/git/learnA',
+      path: '/Users/example/Projects/personal-agent-workbench',
     }]);
     const user = userEvent.setup();
     renderAgent(transport);
@@ -2009,7 +2011,7 @@ describe('Agent experience', () => {
         body: {
           mode: 'coordinator',
           executionMode: 'full_trust',
-          workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+          workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
           toolProfileVersion: 'control-center-v1',
           toolAllowlistMode: 'profile',
           dangerousModeConfirmation: 'ENABLE_FULL_TRUST',

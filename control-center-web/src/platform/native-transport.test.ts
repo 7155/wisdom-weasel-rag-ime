@@ -313,7 +313,7 @@ describe('NativeControlTransport', () => {
           name: 'Backups',
           mimeType: 'application/octet-stream',
           byteSize: 0,
-          path: '/Users/undo/Backups',
+          path: '/Users/example/Backups',
         }],
       }));
     });
@@ -321,7 +321,7 @@ describe('NativeControlTransport', () => {
     await expect(transport.pickFiles({
       purpose: 'export-destination',
       maxFiles: 1,
-    })).resolves.toEqual([expect.objectContaining({ path: '/Users/undo/Backups' })]);
+    })).resolves.toEqual([expect.objectContaining({ path: '/Users/example/Backups' })]);
     transport.dispose();
   });
 
@@ -337,7 +337,7 @@ describe('NativeControlTransport', () => {
           name: 'learnA',
           mimeType: 'application/octet-stream',
           byteSize: 0,
-          path: '/Volumes/undo 4t/git/learnA',
+          path: '/Users/example/Projects/personal-agent-workbench',
         }],
       }));
     });
@@ -347,7 +347,11 @@ describe('NativeControlTransport', () => {
       purpose: 'workspace-root',
       multiple: true,
       maxFiles: 4,
-    })).resolves.toEqual([expect.objectContaining({ path: '/Volumes/undo 4t/git/learnA' })]);
+    })).resolves.toEqual([
+      expect.objectContaining({
+        path: '/Users/example/Projects/personal-agent-workbench',
+      }),
+    ]);
     expect(sent).toEqual([{
       id: 'workspace-call',
       method: 'pickFiles',
@@ -368,7 +372,7 @@ describe('NativeControlTransport', () => {
           name: 'guided-plugin',
           mimeType: 'application/octet-stream',
           byteSize: 0,
-          path: '/Users/undo/Plugins/guided-plugin',
+          path: '/Users/example/Plugins/guided-plugin',
         }],
       }));
     });
@@ -378,7 +382,11 @@ describe('NativeControlTransport', () => {
       purpose: 'plugin-source',
       selection: 'directory',
       maxFiles: 1,
-    })).resolves.toEqual([expect.objectContaining({ path: '/Users/undo/Plugins/guided-plugin' })]);
+    })).resolves.toEqual([
+      expect.objectContaining({
+        path: '/Users/example/Plugins/guided-plugin',
+      }),
+    ]);
     expect(sent[0]?.payload).toEqual({
       purpose: 'plugin-source',
       selection: 'directory',

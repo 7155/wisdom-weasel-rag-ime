@@ -117,7 +117,7 @@ describe('DebugContextInspector', () => {
         },
         storage: {
           persistent: true,
-          directory: '/Volumes/undo 4t/Archives/RagIme/debug-context',
+          directory: '/Users/example/Archives/PersonalAgentWorkbench/debug-context',
           usedBytes: 1024,
           maxBytes: 1073741824,
         },
@@ -137,7 +137,11 @@ describe('DebugContextInspector', () => {
 
     expect(await screen.findByText('System 基础指令')).toBeVisible();
     expect(screen.getByLabelText('本轮上下文与缓存指标')).toHaveTextContent('75%');
-    expect(screen.getByText('/Volumes/undo 4t/Archives/RagIme/debug-context')).toBeVisible();
+    expect(
+      screen.getByText(
+        '/Users/example/Archives/PersonalAgentWorkbench/debug-context',
+      ),
+    ).toBeVisible();
     const pipeline = screen.getByRole('list', { name: '模型上下文注入顺序' });
     const stages = within(pipeline).getAllByRole('button').map((item) => item.textContent ?? '');
     expect(stages).toEqual(expect.arrayContaining([

@@ -147,7 +147,7 @@ export const previewSessions: SessionSummary[] = [
     piSkillsEnabled: false,
     codexSkillsEnabled: false,
     updatedAtMs: previewNow,
-    workspaceRoots: ['/Volumes/undo 4t/git/learnA'],
+    workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
     messageCount: 4,
     lastMessagePreview: '三条 Lane 已经收束到同一个 ControlTransport。',
     modelProfile: 'openai/gpt-5.4',
