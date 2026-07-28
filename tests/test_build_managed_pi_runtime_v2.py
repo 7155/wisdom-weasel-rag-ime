@@ -280,7 +280,9 @@ class ManagedPiRuntimeV2BuildTests(unittest.TestCase):
         self.assertIn('"idempotencyKey": "root:staged-e2e/continuation-b"', script)
         self.assertIn('"manifestSha256": manifest_sha256', script)
         self.assertIn('"stage": "implementation"', script)
-        self.assertIn('"name": "workspace_read"', script)
+        self.assertIn('"workspace_read",', script)
+        self.assertIn('"modelVisible": False', script)
+        self.assertIn('"nativeCodingToolSchemas": sorted(native_schema_names)', script)
         self.assertNotIn('"name": "room_post"', script)
         for method in (
             "session.open",
