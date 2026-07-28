@@ -86,7 +86,10 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             if item["enabled"] is True
         }
 
-        self.assertEqual(len(manifests), 21)
+        self.assertEqual(
+            {str(manifest["name"]) for manifest in manifests},
+            set(effective),
+        )
         for manifest in manifests:
             with self.subTest(tool=manifest["name"]):
                 self.assertEqual(
@@ -157,8 +160,11 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         ).encode("utf-8")
 
         # The full registry is an internal Product -> Pi handshake and includes
-        # every deferred JSON Schema. Only the compact cards enter the prompt.
-        self.assertLess(len(encoded), 40_000)
+        # every deferred JSON Schema plus the hidden native-tool execution
+        # targets. Only the compact cards enter the prompt, so keep their
+        # tighter Provider-facing budget independent from this transport
+        # envelope.
+        self.assertLess(len(encoded), 44_000)
         self.assertLess(len(public_encoded), 12_000)
 
     def test_runtime_contracts_require_tool_specific_identifiers_and_payloads(self) -> None:
