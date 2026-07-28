@@ -283,6 +283,103 @@ describe('AgentEventReducer', () => {
     expect(recovered.status).toBe('waiting');
   });
 
+  it('keeps Pi transcript anchors once when the bounded event journal replays the same turn', () => {
+    const question = '昨天做到哪里了？';
+    const answer = '已经完成按需加载边界。';
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        {
+          ...serverMessage('pi-user', 'user', 'history:pi-user', question),
+          createdAtMs: 1_000,
+          completedAtMs: 1_000,
+        },
+        {
+          ...serverMessage('pi-assistant', 'assistant', 'history:pi-user', answer),
+          createdAtMs: 1_100,
+          completedAtMs: 1_100,
+          provider: 'gpt',
+          model: 'gpt-5.6-sol',
+        },
+      ],
+      liveEvents: [
+        {
+          ...rawAgentEvent(41, 'message_completed', {
+            clientMessageId: 'web-rewrite-1',
+            message: {
+              ...serverMessage('event-user', 'user', 'turn-rewrite', question),
+              createdAtMs: 1_500,
+              completedAtMs: 1_500,
+              clientMessageId: 'web-rewrite-1',
+            },
+          }),
+          turnId: 'turn-rewrite',
+        },
+        {
+          ...rawAgentEvent(42, 'text_delta', {
+            messageId: 'event-assistant',
+            blockId: 'event-assistant:text',
+            delta: answer,
+            replaceBlock: true,
+          }),
+          turnId: 'turn-rewrite',
+        },
+        {
+          ...rawAgentEvent(43, 'message_completed', {
+            message: {
+              ...serverMessage('event-assistant', 'assistant', 'turn-rewrite', answer),
+              createdAtMs: 1_100,
+              completedAtMs: 1_100,
+            },
+          }),
+          turnId: 'turn-rewrite',
+        },
+        {
+          ...rawAgentEvent(44, 'tool_finished', {
+            toolCallId: 'tool-proof',
+            toolName: 'workspace_search',
+            summary: '检索完成',
+          }),
+          turnId: 'turn-rewrite',
+        },
+        {
+          ...rawAgentEvent(45, 'turn_completed', { status: 'completed' }),
+          turnId: 'turn-rewrite',
+        },
+      ],
+      lastSequence: 45,
+      resumeToken: 'session-1:45',
+      status: 'idle',
+    });
+
+    expect(recovered.messageOrder).toEqual(['pi-user', 'pi-assistant']);
+    expect(recovered.messagesById['event-user']).toBeUndefined();
+    expect(recovered.messagesById['event-assistant']).toBeUndefined();
+    expect(recovered.messagesById['pi-user'].clientMessageId).toBe('web-rewrite-1');
+    expect(recovered.activitiesById['tool-proof']).toMatchObject({
+      status: 'completed',
+      turnId: 'turn-rewrite',
+    });
+  });
+
+  it('retains an in-flight replay delta when Pi has no completed transcript message for it', () => {
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [serverMessage('pi-user', 'user', 'history:pi-user', '继续')],
+      liveEvents: [
+        rawAgentEvent(41, 'text_delta', {
+          messageId: 'turn-1:assistant',
+          delta: '仍在生成',
+          replaceBlock: true,
+        }),
+      ],
+      lastSequence: 41,
+      resumeToken: 'session-1:41',
+      status: 'responding',
+    });
+
+    expect(recovered.messageOrder).toEqual(['pi-user', 'turn-1:assistant']);
+    expect(textOf(recovered.messagesById['turn-1:assistant'])).toBe('仍在生成');
+  });
+
   it('restores the durable plan and advances it from live agent_plan results', () => {
     const restored = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [],

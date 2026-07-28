@@ -240,6 +240,64 @@ describe('Agent experience', () => {
     expect(screen.queryByRole('button', { name: '打开命令面板' })).not.toBeInTheDocument();
   });
 
+  it('keeps a replayed Pi prompt singular and edits through its authoritative transcript anchor', async () => {
+    const snapshot = previewAgentSnapshot('session-preview');
+    const canonical = snapshot.messages.find((message) => message.id === 'session-preview:user-media');
+    expect(canonical).toBeDefined();
+    const prompt = '读取输入法工具书，并把结果作为可展开卡片保留。';
+    const replayTurnId = 'turn-rewrite-replay';
+    const replayMessage = {
+      ...canonical!,
+      id: 'event:user-media',
+      turnId: replayTurnId,
+      clientMessageId: 'web-rewrite-replay',
+      createdAtMs: canonical!.createdAtMs + 400,
+      completedAtMs: canonical!.completedAtMs + 400,
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        ...snapshot,
+        lastSequence: 13,
+        resumeToken: 'session-preview:13',
+        liveEvents: [{
+          schemaVersion: 'rag-ime.agent-event.v1',
+          eventId: 'event:rewrite-replay',
+          sessionId: 'session-preview',
+          turnId: replayTurnId,
+          sequence: 13,
+          createdAtMs: replayMessage.createdAtMs,
+          eventType: 'message_completed',
+          payload: { clientMessageId: replayMessage.clientMessageId, message: replayMessage },
+          resumeToken: 'session-preview:13',
+        }],
+      },
+    );
+    const user = userEvent.setup();
+    const { container } = renderAgent(transport);
+
+    await screen.findAllByText(prompt, { exact: true });
+    let messageShell: HTMLElement | undefined;
+    await waitFor(() => {
+      const matchingShells = [...container.querySelectorAll<HTMLElement>('.agent-user-message-shell')]
+        .filter((item) => item.textContent?.includes(prompt));
+      expect(matchingShells).toHaveLength(1);
+      [messageShell] = matchingShells;
+    });
+    await user.click(within(messageShell!).getByRole('button', { name: '修改这条消息' }));
+
+    expect(await screen.findByText('正在修改这条消息')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue(prompt);
+    expect(screen.queryByText('Pi 没有返回这条公开消息对应的可回溯锚点。')).not.toBeInTheDocument();
+  });
+
   it('creates a branch after an assistant message and keeps the new composer empty', async () => {
     const forkCreate = (request: { body?: unknown }) => {
       const body = request.body as { entryId?: string };

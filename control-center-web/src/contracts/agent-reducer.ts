@@ -510,6 +510,7 @@ export function applyAgentSnapshot(
   next.actGate = parseActGate(snapshot.actGate) ?? state.actGate;
 
   const serverClientIds = new Set<string>();
+  const transcriptMessageIds = new Set<string>();
   for (const rawMessage of snapshot.messages) {
     const parsed = tryParseAgentMessage(rawMessage);
     if (!parsed.ok || parsed.value.sessionId !== state.sessionId) {
@@ -524,6 +525,7 @@ export function applyAgentSnapshot(
       continue;
     }
     upsertMessage(next, parsed.value);
+    transcriptMessageIds.add(parsed.value.id);
     if (parsed.value.clientMessageId) serverClientIds.add(parsed.value.clientMessageId);
   }
 
@@ -552,6 +554,16 @@ export function applyAgentSnapshot(
       });
     }
   }
+
+  // A restored snapshot carries two views of the same completed turn:
+  // `messages` is Pi's authoritative transcript, while `liveEvents` is the
+  // bounded product journal needed to rebuild Tool/approval/telemetry state.
+  // Pi transcript ids and product event ids intentionally differ, so replaying
+  // message events verbatim used to render one user/assistant pair twice. Keep
+  // the Pi message as the public anchor, absorb event-only metadata such as the
+  // clientMessageId, and remove only a narrowly matched replay copy. In-flight
+  // deltas remain untouched because they have no completed transcript match.
+  reconcileTranscriptReplayMessages(next, transcriptMessageIds, serverClientIds);
 
   // liveEvents is a bounded journal and may end with an old busy/aborting
   // marker after a runtime restart. `active` means the persisted Pi transcript
@@ -600,6 +612,81 @@ export function applyAgentSnapshot(
   next.needsSnapshot = false;
   next.gap = undefined;
   return next;
+}
+
+function reconcileTranscriptReplayMessages(
+  state: AgentProjectionState,
+  transcriptMessageIds: ReadonlySet<string>,
+  serverClientIds: Set<string>,
+): void {
+  const transcriptByFingerprint = new Map<string, AgentMessageProjection[]>();
+  for (const messageId of transcriptMessageIds) {
+    const message = state.messagesById[messageId];
+    const fingerprint = message ? replayFingerprint(message) : '';
+    if (!message || !fingerprint) continue;
+    transcriptByFingerprint.set(
+      fingerprint,
+      [...(transcriptByFingerprint.get(fingerprint) ?? []), message],
+    );
+  }
+
+  const claimedTranscriptIds = new Set<string>();
+  for (const messageId of [...state.messageOrder]) {
+    if (transcriptMessageIds.has(messageId)) continue;
+    const replay = state.messagesById[messageId];
+    if (!replay || replay.status !== 'completed' || replay.timelineSequence === undefined) continue;
+    const fingerprint = replayFingerprint(replay);
+    if (!fingerprint) continue;
+    const candidate = (transcriptByFingerprint.get(fingerprint) ?? [])
+      .filter((message) => !claimedTranscriptIds.has(message.id))
+      .map((message) => ({
+        message,
+        distance: Math.abs(message.createdAtMs - replay.createdAtMs),
+      }))
+      .filter(({ distance }) => distance <= 5_000)
+      .sort((left, right) => left.distance - right.distance)[0]?.message;
+    if (!candidate) continue;
+
+    claimedTranscriptIds.add(candidate.id);
+    const clientMessageId = candidate.clientMessageId || replay.clientMessageId;
+    state.messagesById[candidate.id] = {
+      ...candidate,
+      ...(clientMessageId ? { clientMessageId } : {}),
+      ...(candidate.provider || !replay.provider ? {} : { provider: replay.provider }),
+      ...(candidate.model || !replay.model ? {} : { model: replay.model }),
+      ...(candidate.usage || !replay.usage ? {} : { usage: replay.usage }),
+    };
+    if (clientMessageId) serverClientIds.add(clientMessageId);
+    removeProjectedMessage(state, replay);
+  }
+}
+
+function replayFingerprint(message: AgentMessageProjection): string {
+  const visibleText = message.blocks
+    .map((block) => text(record(block.data).text))
+    .filter(Boolean)
+    .join('\n')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  if (!visibleText) return '';
+  return JSON.stringify([
+    message.role,
+    visibleText,
+    [...message.attachments],
+  ]);
+}
+
+function removeProjectedMessage(
+  state: AgentProjectionState,
+  message: AgentMessageProjection,
+): void {
+  delete state.messagesById[message.id];
+  state.messageOrder = state.messageOrder.filter((messageId) => messageId !== message.id);
+  detachMessageFromTurn(state, message);
+  const turn = state.turnsById[message.turnId];
+  if (!turn || turn.messageIds.length > 0 || turn.activityIds.length > 0) return;
+  delete state.turnsById[message.turnId];
+  state.turnOrder = state.turnOrder.filter((turnId) => turnId !== message.turnId);
 }
 
 export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
