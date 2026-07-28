@@ -203,6 +203,58 @@ describe('Roles experience', () => {
     expect(await screen.findByRole('button', { name: '撤销本次采用' })).toBeInTheDocument();
   });
 
+  it('explains and dismisses an empty Role Book draft without opening a fake diff', async () => {
+    const user = userEvent.setup();
+    const persona = previewPersonas[0]!;
+    const transport = new MockControlTransport({ routes: {
+      'agent.roles.list': { ok: true, items: [persona] },
+      'agent.roleBook.get': {
+        ok: true,
+        active: null,
+        history: [],
+        dailyDrafts: [{
+          draftId: 'role-book-draft:empty',
+          createdAtMs: 1_800_000_000_000,
+          traitProposals: [],
+          capabilityProposals: [],
+          lessonProposals: [],
+          commitmentProposals: [],
+          proposalDiagnostics: {
+            status: 'no_eligible_evidence',
+            provider: 'openai-codex',
+            inputChars: 0,
+            acceptedProposalCount: 0,
+            rejectedProposalCount: 0,
+          },
+          decision: null,
+        }],
+      },
+      'agent.roleBook.draft.decision': { ok: true },
+    } });
+    render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
+
+    await screen.findByText(persona.tagline);
+    await user.click(screen.getByRole('button', { name: '她记住的成长' }));
+    expect(await screen.findByText(/没有符合长期成长档案条件的变化/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看改动' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '忽略' }));
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({
+        pathId: 'agent.roleBook.draft.decision',
+        body: {
+          roleId: persona.roleId,
+          roleVersion: persona.version,
+          draftId: 'role-book-draft:empty',
+          decision: 'rejected',
+        },
+      }),
+    })));
+    expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.roleBook.activation.preview'
+    ))).toBe(false);
+  });
+
   it('lets builtin partners choose a reasoning model and non-off thinking level', async () => {
     const user = userEvent.setup();
     const configured = {

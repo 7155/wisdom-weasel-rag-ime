@@ -685,6 +685,12 @@ function PersonaGrowthInspector({ persona, onBack }: { persona: AgentPersonaV1; 
     + capabilityIndexes.length
     + lessonIndexes.length
     + commitmentIndexes.length;
+  const availableProposalCount = selectedDraft
+    ? selectedDraft.traitProposals.length
+      + selectedDraft.capabilityProposals.length
+      + selectedDraft.lessonProposals.length
+      + selectedDraft.commitmentProposals.length
+    : 0;
   const previewSummary = record(pendingPreview?.summary);
   const previewDiff = roleBookDiffSections(previewSummary.diff);
   return <aside className="role-inspector role-book-inspector" data-accent={persona.visualProfile.accentToken}>
@@ -710,6 +716,7 @@ function PersonaGrowthInspector({ persona, onBack }: { persona: AgentPersonaV1; 
             {selectedDraft.capabilityProposals.length ? <fieldset><legend>能力画像</legend>{selectedDraft.capabilityProposals.map((proposal, index) => <label key={`${proposal.text}:${index}`}><input type="checkbox" checked={capabilityIndexes.includes(index)} onChange={() => setCapabilityIndexes(toggleIndex(capabilityIndexes, index))} /><span>{proposal.text}</span><small>{Math.round(proposal.confidence * 100)}%</small></label>)}</fieldset> : null}
             {selectedDraft.lessonProposals.length ? <fieldset><legend>经验与边界</legend>{selectedDraft.lessonProposals.map((proposal, index) => <label key={`${proposal.text}:${index}`}><input type="checkbox" checked={lessonIndexes.includes(index)} onChange={() => setLessonIndexes(toggleIndex(lessonIndexes, index))} /><span>{proposal.text}</span><small>{Math.round(proposal.confidence * 100)}%</small></label>)}</fieldset> : null}
             {selectedDraft.commitmentProposals.length ? <fieldset><legend>当前承诺</legend>{selectedDraft.commitmentProposals.map((proposal, index) => <label key={`${proposal.text}:${index}`}><input type="checkbox" checked={commitmentIndexes.includes(index)} onChange={() => setCommitmentIndexes(toggleIndex(commitmentIndexes, index))} /><span>{proposal.text}</span><small>{Math.round(proposal.confidence * 100)}%</small></label>)}</fieldset> : null}
+            {!availableProposalCount ? <p className="roles-empty">{roleBookDraftEmptyText(selectedDraft.proposalStatus)}</p> : null}
             <div className="role-book-actions"><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void decideDraft('deferred')}>稍后</Button><Button variant="quiet" size="small" disabled={mutationPending} onClick={() => void decideDraft('rejected')}>忽略</Button><Button variant="primary" size="small" leadingIcon={<Check size={14} />} loading={mutationPending} disabled={!selectedCount} onClick={() => void previewActivation({ roleId: persona.roleId, roleVersion: persona.version, revisionId: '', draftId: selectedDraft.draftId, traitIndexes, capabilityIndexes, lessonIndexes, commitmentIndexes })}>查看改动</Button></div>
           </div> : null}
         </> : <p className="roles-empty">当前没有待审草案。</p>}
@@ -733,6 +740,16 @@ function PersonaGrowthInspector({ persona, onBack }: { persona: AgentPersonaV1; 
       </DialogContent>
     </Dialog>
   </aside>;
+}
+
+function roleBookDraftEmptyText(status: string): string {
+  return {
+    no_conversation_evidence: '这段时间没有可用于成长档案的对话证据；可以稍后处理或忽略这份空草案。',
+    no_eligible_evidence: '这段时间没有符合长期成长档案条件的变化；可以稍后处理或忽略这份空草案。',
+    not_configured: '成长整理尚未配置，因此没有生成可审阅的变化。',
+    unsupported: '当前模型不支持成长整理，因此没有生成可审阅的变化。',
+    failed: '这次成长整理没有完成；原有成长档案未被修改。',
+  }[status] ?? '这份草案没有可采用的变化；原有成长档案未被修改。';
 }
 
 function DefinitionAudit({ kind, source, summary, version }: { kind: string; source: string; summary: string; version: string }) {

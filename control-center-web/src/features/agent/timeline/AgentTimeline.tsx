@@ -151,9 +151,12 @@ export function AgentTimeline({
       <Virtuoso
         ref={virtuosoRef}
         key={sessionId}
-        alignToBottom
         data={turnOrder}
         computeItemKey={(_index, turnId) => turnId}
+        // Short conversations start below the workspace header, as in Pi's
+        // TUI, instead of being pinned to the composer with a blank screen
+        // above them. `followOutput` still keeps an actively followed stream
+        // visible once the conversation grows beyond the viewport.
         followOutput={(isAtBottom) => isAtBottom ? 'auto' : false}
         initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
         increaseViewportBy={{ top: 320, bottom: 520 }}

@@ -12,6 +12,7 @@ export type RoleBookProposal = {
 export type RoleBookDailyDraft = {
   draftId: string;
   createdAtMs: number;
+  proposalStatus: string;
   traitProposals: RoleBookProposal[];
   capabilityProposals: RoleBookProposal[];
   lessonProposals: RoleBookProposal[];
@@ -133,9 +134,11 @@ export function roleBookDailyDrafts(value: unknown): RoleBookDailyDraft[] {
     const draftId = textValue(draft.draftId);
     if (!draftId) return [];
     const decision = record(draft.decision);
+    const diagnostics = record(draft.proposalDiagnostics);
     return [{
       draftId,
       createdAtMs: numberValue(draft.createdAtMs),
+      proposalStatus: textValue(diagnostics.status),
       traitProposals: roleBookProposals(draft.traitProposals),
       capabilityProposals: roleBookProposals(draft.capabilityProposals),
       lessonProposals: roleBookProposals(draft.lessonProposals),

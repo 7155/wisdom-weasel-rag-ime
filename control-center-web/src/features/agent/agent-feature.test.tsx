@@ -17,10 +17,21 @@ import { useAgentLiveStore } from './state/live-store';
 import { projectStatusPanel } from './status/AgentStatusPanel';
 import { AgentTurn } from './timeline/AgentTimeline';
 import { sessionItems, type ModelCatalog, type ThinkingLevel } from './types';
+import type { UiAgentMessage } from '@/contracts/ui-events';
 
 vi.mock('react-virtuoso', () => ({
-  Virtuoso: ({ data, itemContent }: { data: string[]; itemContent: (index: number, item: string) => ReactNode }) => (
-    <div>{data.map((item, index) => <div key={item}>{itemContent(index, item)}</div>)}</div>
+  Virtuoso: ({
+    alignToBottom,
+    data,
+    itemContent,
+  }: {
+    alignToBottom?: boolean;
+    data: string[];
+    itemContent: (index: number, item: string) => ReactNode;
+  }) => (
+    <div data-align-to-bottom={alignToBottom || undefined} data-testid="agent-virtuoso">
+      {data.map((item, index) => <div key={item}>{itemContent(index, item)}</div>)}
+    </div>
   ),
 }));
 
@@ -242,7 +253,12 @@ describe('Agent experience', () => {
 
   it('keeps a replayed Pi prompt singular and edits through its authoritative transcript anchor', async () => {
     const snapshot = previewAgentSnapshot('session-preview');
-    const canonical = snapshot.messages.find((message) => message.id === 'session-preview:user-media');
+    const canonical = snapshot.messages.find((message) => (
+      typeof message === 'object'
+      && message !== null
+      && 'id' in message
+      && message.id === 'session-preview:user-media'
+    )) as UiAgentMessage | undefined;
     expect(canonical).toBeDefined();
     const prompt = '读取输入法工具书，并把结果作为可展开卡片保留。';
     const replayTurnId = 'turn-rewrite-replay';
@@ -252,7 +268,7 @@ describe('Agent experience', () => {
       turnId: replayTurnId,
       clientMessageId: 'web-rewrite-replay',
       createdAtMs: canonical!.createdAtMs + 400,
-      completedAtMs: canonical!.completedAtMs + 400,
+      completedAtMs: (canonical!.completedAtMs ?? canonical!.createdAtMs) + 400,
     };
     const transport = featureTransport(
       undefined,
@@ -2190,6 +2206,41 @@ describe('Agent experience', () => {
       && !Array.isArray(call.request.body)
       && call.request.body.level === 'max'
     ))).toBe(true));
+  });
+
+  it('switches models from the model row without requiring a reasoning-level click', async () => {
+    const transport = featureTransport(lunaModelCatalog());
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5.6 Luna/ },
+      { timeout: 5_000 },
+    ));
+    await user.click(screen.getByLabelText('选择模型 Codex Mini'));
+
+    expect(screen.queryByText('模型与推理强度')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', {
+      name: '模型：Codex Mini · GPT，思考强度：中',
+    })).toHaveAttribute('aria-busy', 'true');
+    await waitFor(() => expect(transport.requests).toEqual(expect.arrayContaining([
+      expect.objectContaining({ request: expect.objectContaining({
+        pathId: 'agent.session.model.select',
+        body: { provider: 'gpt', modelId: 'codex-mini-latest' },
+      }) }),
+      expect.objectContaining({ request: expect.objectContaining({
+        pathId: 'agent.session.thinking.select',
+        body: { level: 'medium' },
+      }) }),
+    ])));
+  });
+
+  it('does not bottom-pin a short conversation before it fills the viewport', async () => {
+    renderAgent(productionTransport());
+    expect(await screen.findByTestId('agent-virtuoso')).not.toHaveAttribute(
+      'data-align-to-bottom',
+    );
   });
 
   it('does not show Max when the Pi model catalog omits max', async () => {

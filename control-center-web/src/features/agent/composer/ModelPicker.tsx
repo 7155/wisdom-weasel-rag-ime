@@ -72,7 +72,21 @@ export function ModelPicker({
             <summary>{providerItem.displayName}<ChevronRight size={14} /></summary>
             {providerItem.models.map((modelItem) => (
               <details key={modelItem.id} open={modelItem.id === selection?.modelId}>
-                <summary>
+                <summary
+                  aria-label={`选择模型 ${modelItem.name}`}
+                  onClick={(event) => {
+                    if (
+                      providerItem.id === selection?.provider
+                      && modelItem.id === selection.modelId
+                    ) return;
+                    event.preventDefault();
+                    choose(
+                      providerItem.id,
+                      modelItem.id,
+                      preferredThinkingLevel(modelItem.thinkingLevels, thinking),
+                    );
+                  }}
+                >
                   {modelItem.name}
                   {modelItem.id === selection?.modelId
                     ? <Check size={14} />
@@ -113,4 +127,14 @@ function thinkingLabel(value: string): string {
     xhigh: '极高',
     max: 'Max',
   } as Record<string, string>)[value] ?? value;
+}
+
+function preferredThinkingLevel(
+  levels: ThinkingLevel[],
+  current: ThinkingLevel,
+): ThinkingLevel {
+  if (levels.includes(current)) return current;
+  if (levels.includes('medium')) return 'medium';
+  if (levels.includes('off')) return 'off';
+  return levels[0] ?? 'off';
 }

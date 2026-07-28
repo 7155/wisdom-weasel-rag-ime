@@ -539,9 +539,11 @@ struct NativeRoutePolicyTests {
             query: [:],
             body: [
                 "mode": "coordinator",
+                "executionMode": "workspace_managed",
                 "toolProfileVersion": "control-center-auto-approve-v1",
                 "toolAllowlistMode": "profile",
                 "workspaceRoots": ["/tmp/project"],
+                "workspaceScopeConfirmation": "APPROVE_WORKSPACE_SCOPE",
                 "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
                 "projectContextEnabled": false,
                 "piSkillsEnabled": true,
