@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-goal-settle-request.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "sessionId",
+    "settleScopeId",
+    "settleAttempt",
+    "freshToolEvidenceCount",
+    "freshToolEvidenceSha256"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "rag-ime.agent-goal-settle-request.v1"
+    },
+    "sessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "settleScopeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "settleAttempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "freshToolEvidenceCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "freshToolEvidenceSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

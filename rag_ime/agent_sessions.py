@@ -1103,6 +1103,14 @@ class AgentSessionStore:
                 actor=normalized_actor,
                 created_at_ms=timestamp,
             )
+            if action != "update":
+                _reset_agent_goal_continuation_budget(
+                    conn,
+                    session_id=session_id,
+                    goal_id=goal_id,
+                    reset_existing=action != "set",
+                    updated_at_ms=timestamp,
+                )
             conn.execute(
                 "UPDATE agent_sessions SET updated_at_ms = ? WHERE id = ?",
                 (timestamp, session_id),
@@ -1123,6 +1131,160 @@ class AgentSessionStore:
                 "actGate": _agent_act_gate(plan, goal),
             },
         }
+
+    def agent_goal_continuation_budget(
+        self,
+        session_id: str,
+        *,
+        goal_id: str,
+        limit: int,
+    ) -> dict[str, int]:
+        normalized_goal_id = str(goal_id or "").strip()
+        normalized_limit = int(limit)
+        if normalized_limit < 1:
+            raise ValueError("goal continuation limit must be positive")
+        with self._connect() as conn:
+            return _agent_goal_continuation_budget(
+                conn,
+                session_id=session_id,
+                goal_id=normalized_goal_id,
+                limit=normalized_limit,
+            )
+
+    def claim_agent_goal_continuation(
+        self,
+        session_id: str,
+        *,
+        goal_id: str,
+        request_key: str,
+        limit: int,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Atomically claim one durable automatic continuation for this Goal.
+
+        The counter is scoped to a Goal lifecycle epoch, not a Pi cancel scope.
+        A new user turn or runtime restart therefore cannot replenish it.
+        Goal set/pause/resume/complete/clear transitions reset the epoch
+        explicitly in ``mutate_agent_goal``.
+        """
+
+        normalized_goal_id = str(goal_id or "").strip()
+        normalized_request_key = str(request_key or "").strip()
+        normalized_limit = int(limit)
+        if not normalized_goal_id or len(normalized_goal_id) > 240:
+            raise ValueError("goal continuation goalId is invalid")
+        if (
+            not normalized_request_key
+            or len(normalized_request_key) > 160
+            or "\x00" in normalized_request_key
+        ):
+            raise ValueError("goal continuation request key is invalid")
+        if normalized_limit < 1 or normalized_limit > 100:
+            raise ValueError("goal continuation limit is invalid")
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            goal = _agent_goal_projection(conn, session_id)
+            plan = _agent_plan_projection(conn, session_id, limit=100)
+            gate = _agent_act_gate(plan, goal)
+            budget = _ensure_agent_goal_continuation_budget(
+                conn,
+                session_id=session_id,
+                goal_id=normalized_goal_id,
+                limit=normalized_limit,
+                updated_at_ms=timestamp,
+            )
+            if (
+                goal.get("configured") is not True
+                or str(goal.get("goalId") or "") != normalized_goal_id
+                or str(goal.get("status") or "") != "active"
+                or gate.get("allowed") is not True
+            ):
+                return {
+                    **budget,
+                    "claimed": False,
+                    "replayed": False,
+                    "reason": str(gate.get("reason") or "goal_not_active"),
+                    "goal": goal,
+                    "actGate": gate,
+                }
+            receipt = conn.execute(
+                """
+                SELECT goal_id, epoch
+                FROM agent_goal_continuation_receipts
+                WHERE session_id = ? AND request_key = ?
+                """,
+                (session_id, normalized_request_key),
+            ).fetchone()
+            if receipt is not None:
+                if str(receipt["goal_id"]) != normalized_goal_id:
+                    raise ValueError(
+                        "goal continuation request key was reused for another goal"
+                    )
+                if int(receipt["epoch"]) != int(budget["epoch"]):
+                    raise ValueError(
+                        "goal continuation request key belongs to another lifecycle epoch"
+                    )
+                return {
+                    **budget,
+                    "claimed": True,
+                    "replayed": True,
+                    "reason": "replay",
+                    "goal": goal,
+                    "actGate": gate,
+                }
+            if int(budget["issuedCount"]) >= normalized_limit:
+                return {
+                    **budget,
+                    "claimed": False,
+                    "replayed": False,
+                    "reason": "goal_continuation_limit",
+                    "goal": goal,
+                    "actGate": gate,
+                }
+            issued_index = int(budget["issuedCount"]) + 1
+            conn.execute(
+                """
+                UPDATE agent_goal_continuation_budgets
+                SET issued_count = ?, updated_at_ms = ?
+                WHERE session_id = ? AND goal_id = ? AND epoch = ?
+                """,
+                (
+                    issued_index,
+                    timestamp,
+                    session_id,
+                    normalized_goal_id,
+                    int(budget["epoch"]),
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO agent_goal_continuation_receipts(
+                    receipt_id, session_id, goal_id, request_key, epoch,
+                    issued_index, created_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"goal-continuation:{uuid.uuid4()}",
+                    session_id,
+                    normalized_goal_id,
+                    normalized_request_key,
+                    int(budget["epoch"]),
+                    issued_index,
+                    timestamp,
+                ),
+            )
+            return {
+                "epoch": int(budget["epoch"]),
+                "issuedCount": issued_index,
+                "limit": normalized_limit,
+                "remaining": max(0, normalized_limit - issued_index),
+                "claimed": True,
+                "replayed": False,
+                "reason": "claimed",
+                "goal": goal,
+                "actGate": gate,
+            }
 
     def record_agent_goal_usage(
         self,
@@ -2354,6 +2516,86 @@ def _agent_goal_projection(
         "completionAudit": audit,
         "updatedAtMs": int(row["created_at_ms"]),
     }
+
+
+def _agent_goal_continuation_budget(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    goal_id: str,
+    limit: int,
+) -> dict[str, int]:
+    row = conn.execute(
+        """
+        SELECT epoch, issued_count
+        FROM agent_goal_continuation_budgets
+        WHERE session_id = ? AND goal_id = ?
+        """,
+        (session_id, goal_id),
+    ).fetchone()
+    epoch = int(row["epoch"]) if row is not None else 1
+    issued_count = int(row["issued_count"]) if row is not None else 0
+    return {
+        "epoch": epoch,
+        "issuedCount": issued_count,
+        "limit": int(limit),
+        "remaining": max(0, int(limit) - issued_count),
+    }
+
+
+def _ensure_agent_goal_continuation_budget(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    goal_id: str,
+    limit: int,
+    updated_at_ms: int,
+) -> dict[str, int]:
+    conn.execute(
+        """
+        INSERT INTO agent_goal_continuation_budgets(
+            session_id, goal_id, epoch, issued_count, updated_at_ms
+        ) VALUES (?, ?, 1, 0, ?)
+        ON CONFLICT(session_id, goal_id) DO NOTHING
+        """,
+        (session_id, goal_id, updated_at_ms),
+    )
+    return _agent_goal_continuation_budget(
+        conn,
+        session_id=session_id,
+        goal_id=goal_id,
+        limit=limit,
+    )
+
+
+def _reset_agent_goal_continuation_budget(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    goal_id: str,
+    reset_existing: bool,
+    updated_at_ms: int,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO agent_goal_continuation_budgets(
+            session_id, goal_id, epoch, issued_count, updated_at_ms
+        ) VALUES (?, ?, 1, 0, ?)
+        ON CONFLICT(session_id, goal_id) DO UPDATE SET
+            epoch = CASE
+                WHEN ? THEN agent_goal_continuation_budgets.epoch + 1
+                ELSE agent_goal_continuation_budgets.epoch
+            END,
+            issued_count = 0,
+            updated_at_ms = excluded.updated_at_ms
+        """,
+        (
+            session_id,
+            goal_id,
+            updated_at_ms,
+            1 if reset_existing else 0,
+        ),
+    )
 
 
 def _append_agent_goal_event(

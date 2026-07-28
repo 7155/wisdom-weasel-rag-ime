@@ -1927,6 +1927,28 @@ class DebugManagementApiTests(unittest.TestCase):
                 goal_usage = json.loads(response.read().decode("utf-8"))
             with urlopen(goal_usage_request, timeout=5) as response:
                 duplicate_goal_usage = json.loads(response.read().decode("utf-8"))
+            goal_settle_request = Request(
+                f"{base_url}/tool/goal-settle",
+                data=json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.agent-goal-settle-request.v1",
+                        "sessionId": session_id,
+                        "settleScopeId": "scope:http:goal-settle",
+                        "settleAttempt": 1,
+                        "freshToolEvidenceCount": 0,
+                        "freshToolEvidenceSha256": hashlib.sha256(
+                            b""
+                        ).hexdigest(),
+                    }
+                ).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "X-RAG-IME-Agent-Token": self.service.agent.tool_token,
+                },
+                method="POST",
+            )
+            with urlopen(goal_settle_request, timeout=5) as response:
+                goal_settle = json.loads(response.read().decode("utf-8"))
 
             context_refresh_body = json.dumps(
                 {
@@ -2119,6 +2141,11 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(set(workflow_state["result"]), {"plan", "goal", "actGate"})
         self.assertEqual(goal_usage["result"]["goal"]["usage"]["tokens"], 120)
         self.assertEqual(duplicate_goal_usage["result"]["goal"]["usage"]["tokens"], 120)
+        self.assertEqual(goal_settle["result"]["state"], "blocked")
+        self.assertEqual(
+            goal_settle["result"]["reason"],
+            "plan_required",
+        )
         self.assertTrue(context_refresh["ok"])
         self.assertEqual(context_refresh["result"]["trigger"], "first_user_prompt")
         self.assertEqual(context_refresh["result"]["sourceCount"], 0)

@@ -131,6 +131,11 @@ ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT = 12
 ROOM_CONTEXT_HISTORY_CHAR_BUDGET = 3_600
 ROOM_CONTEXT_PROMPT_CHAR_BUDGET = 24_000
 ROOM_MESSAGE_CHAR_LIMIT = 8_000
+# Ordinary Goal recovery uses the same bounded-repair posture as the managed
+# Room Kernel (`SYSTEM_MAX_REPAIRS = 4`): four native follow-up opportunities,
+# followed by one final settle decision that must stop the cancel scope.
+GOAL_SETTLE_ATTEMPT_LIMIT = 5
+GOAL_CONTINUATION_LIMIT = 4
 
 
 class AgentService:
@@ -1144,6 +1149,176 @@ class AgentService:
                 "actGate": state["actGate"],
             },
         }
+
+    def settle_goal_runtime(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Decide whether one ordinary Goal turn needs one native continuation.
+
+        Pi owns turn scheduling; this method owns the product decision.  A
+        continuation claim is persisted atomically against the Goal lifecycle
+        epoch, so replay is idempotent and a new Pi cancel scope or process
+        cannot replenish the global allowance. Paused, completed, exhausted,
+        or stalled Goals and closed Act Gates terminate without asking another
+        model to judge its own completion.
+        """
+
+        request = dict(payload)
+        validate_contract(request, "agent-goal-settle-request.v1.json")
+        session_id = str(request["sessionId"])
+        settle_scope_id = str(request["settleScopeId"])
+        settle_attempt = int(request["settleAttempt"])
+        fresh_tool_evidence_count = int(
+            request["freshToolEvidenceCount"]
+        )
+        fresh_tool_evidence_sha256 = str(
+            request["freshToolEvidenceSha256"]
+        )
+        state = self.workflow_state(session_id)
+        goal = (
+            state["goal"]
+            if isinstance(state.get("goal"), Mapping)
+            else {}
+        )
+        gate = (
+            state["actGate"]
+            if isinstance(state.get("actGate"), Mapping)
+            else {}
+        )
+        goal_id = str(goal.get("goalId") or "")
+        goal_status = str(goal.get("status") or "cleared")
+        gate_reason = str(gate.get("reason") or "plan_not_approved")
+        continuation = self.sessions.agent_goal_continuation_budget(
+            session_id,
+            goal_id=goal_id,
+            limit=GOAL_CONTINUATION_LIMIT,
+        )
+
+        decision = "inactive"
+        reason = "goal_not_active"
+        if goal.get("configured") is True:
+            if goal_status == "paused":
+                decision = "paused"
+                reason = "goal_paused"
+            elif goal_status == "completed":
+                decision = "completed"
+                reason = "goal_completed"
+            elif goal_status != "active":
+                decision = "inactive"
+                reason = f"goal_{goal_status or 'not_active'}"
+            elif goal.get("budgetExceeded") is True:
+                decision = "budget_exhausted"
+                reason = "goal_budget_exhausted"
+            elif gate.get("allowed") is not True:
+                decision = (
+                    "cancelled"
+                    if gate_reason == "plan_cancelled"
+                    else "blocked"
+                )
+                reason = gate_reason
+            elif settle_attempt >= GOAL_SETTLE_ATTEMPT_LIMIT:
+                decision = "stalled"
+                reason = "settle_attempt_limit"
+            elif (
+                settle_attempt > 1
+                and fresh_tool_evidence_count == 0
+            ):
+                decision = "stalled"
+                reason = "no_progress"
+            else:
+                decision = "continue"
+                reason = "goal_active"
+
+        material = "\x1f".join(
+            (
+                session_id,
+                goal_id,
+                str(int(goal.get("revision") or 0)),
+                settle_scope_id,
+                str(settle_attempt),
+                str(fresh_tool_evidence_count),
+                fresh_tool_evidence_sha256,
+            )
+        )
+        request_key = hashlib.sha256(material.encode("utf-8")).hexdigest()
+        if decision == "continue":
+            claim = self.sessions.claim_agent_goal_continuation(
+                session_id,
+                goal_id=goal_id,
+                request_key=request_key,
+                limit=GOAL_CONTINUATION_LIMIT,
+            )
+            continuation = {
+                key: int(claim[key])
+                for key in ("epoch", "issuedCount", "limit", "remaining")
+            }
+            current_goal = (
+                claim["goal"]
+                if isinstance(claim.get("goal"), Mapping)
+                else goal
+            )
+            current_gate = (
+                claim["actGate"]
+                if isinstance(claim.get("actGate"), Mapping)
+                else gate
+            )
+            goal = current_goal
+            goal_id = str(goal.get("goalId") or "")
+            if claim.get("claimed") is not True:
+                claim_reason = str(claim.get("reason") or "goal_not_active")
+                if claim_reason == "goal_continuation_limit":
+                    decision = "stalled"
+                elif str(goal.get("status") or "") == "paused":
+                    decision = "paused"
+                    claim_reason = "goal_paused"
+                elif str(goal.get("status") or "") == "completed":
+                    decision = "completed"
+                    claim_reason = "goal_completed"
+                elif goal.get("budgetExceeded") is True:
+                    decision = "budget_exhausted"
+                    claim_reason = "goal_budget_exhausted"
+                elif str(current_gate.get("reason") or "") == "plan_cancelled":
+                    decision = "cancelled"
+                    claim_reason = "plan_cancelled"
+                else:
+                    decision = "blocked"
+                reason = claim_reason
+
+        result: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-goal-settle-result.v1",
+            "sessionId": session_id,
+            "goalId": goal_id,
+            "goalRevision": int(goal.get("revision") or 0),
+            "settleScopeId": settle_scope_id,
+            "settleAttempt": settle_attempt,
+            "freshToolEvidenceCount": fresh_tool_evidence_count,
+            "freshToolEvidenceSha256": fresh_tool_evidence_sha256,
+            "continuationEpoch": int(continuation["epoch"]),
+            "continuationCount": int(continuation["issuedCount"]),
+            "continuationLimit": int(continuation["limit"]),
+            "continuationRemaining": int(continuation["remaining"]),
+            "state": decision,
+            "reason": reason,
+            "followUpKey": "",
+            "message": "",
+        }
+        if decision == "continue":
+            result["followUpKey"] = (
+                "goal-settle:"
+                + request_key[:32]
+            )
+            result["message"] = (
+                '<managed-goal-follow-up origin="goal-supervisor">'
+                "当前 Goal 仍处于 active，且计划授权和预算允许继续。"
+                "一次回答结束不代表 Goal 完成；立即选择一个尚未完成、已获授权、"
+                "能够产生新验收证据的下一步并实际执行。不要只汇报进度或复述计划。"
+                "若已经没有这种下一步，使用现有 Goal/Plan 生命周期把状态更新为"
+                "完成、暂停或取消，而不是继续空转。"
+                "</managed-goal-follow-up>"
+            )
+        validate_contract(result, "agent-goal-settle-result.v1.json")
+        return {"ok": True, "result": result}
 
     def record_goal_usage(self, payload: Mapping[str, object]) -> dict[str, object]:
         request = dict(payload)

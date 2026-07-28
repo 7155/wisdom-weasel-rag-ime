@@ -264,6 +264,29 @@ class AgentContextRuntime:
             ).fetchone()
         return _public_item(row) if row is not None else None
 
+    def active_dedupe_key(
+        self,
+        session_id: str,
+        *,
+        source_kind: str,
+    ) -> str:
+        """Return the exact key of the active derived item for internal receipts."""
+
+        session = _required_text(session_id, "sessionId", 240)
+        source = _required_text(source_kind, "sourceKind", 80)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT dedupe_key FROM agent_context_items
+                WHERE session_id = ? AND source_kind = ?
+                  AND status IN ('pending', 'delivered')
+                ORDER BY created_at_ms DESC, item_id DESC
+                LIMIT 1
+                """,
+                (session, source),
+            ).fetchone()
+        return str(row["dedupe_key"] or "") if row is not None else ""
+
     def materialize(
         self,
         session_id: str,

@@ -7059,6 +7059,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             if path in {
                 "/api/agent/tool/workflow-state",
                 "/api/agent/tool/goal-usage",
+                "/api/agent/tool/goal-settle",
             }:
                 provided = self.headers.get("X-RAG-IME-Agent-Token", "")
                 expected = self.service.agent.tool_token
@@ -7076,7 +7077,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 response = (
                     self.service.agent.internal_workflow_state(internal_payload)
                     if path.endswith("/workflow-state")
-                    else self.service.agent.record_goal_usage(internal_payload)
+                    else (
+                        self.service.agent.record_goal_usage(internal_payload)
+                        if path.endswith("/goal-usage")
+                        else self.service.agent.settle_goal_runtime(
+                            internal_payload
+                        )
+                    )
                 )
                 self._write_json(HTTPStatus.OK, response)
                 return

@@ -647,10 +647,272 @@ class AgentServiceTests(unittest.TestCase):
                 self.service.prompt(session_id, {"message": "继续执行"})
             provider.assert_not_called()
 
+    def test_goal_settle_continuation_is_deterministic_for_one_active_revision(
+        self,
+    ) -> None:
+        session_id = str(
+            self.service.create_session(
+                {"title": "goal settle continuation"}
+            )["session"]["id"]
+        )
+        review = self.service.sessions.mutate_agent_plan(
+            session_id,
+            {
+                "action": "submit_review",
+                "title": "继续完成当前 Goal",
+                "items": [{"title": "完成剩余验收", "status": "in_progress"}],
+            },
+        )["plan"]
+        self.service.sessions.mutate_agent_plan(
+            session_id,
+            {
+                "action": "approve",
+                "expectedRevision": review["revision"],
+            },
+        )
+        goal = self.service.sessions.mutate_agent_goal(
+            session_id,
+            {
+                "action": "set",
+                "objective": "完成剩余验收并提供证据",
+                "tokenBudget": 10_000,
+            },
+        )["workflow"]["goal"]
+        request = {
+            "schemaVersion": "rag-ime.agent-goal-settle-request.v1",
+            "sessionId": session_id,
+            "settleScopeId": "scope:goal-settle:1",
+            "settleAttempt": 1,
+            "freshToolEvidenceCount": 0,
+            "freshToolEvidenceSha256": hashlib.sha256(b"").hexdigest(),
+        }
+        first_evidence_sha256 = hashlib.sha256(b"evidence:first").hexdigest()
+        second_evidence_sha256 = hashlib.sha256(b"evidence:second").hexdigest()
+
+        first = self.service.settle_goal_runtime(request)["result"]
+        replay = self.service.settle_goal_runtime(request)["result"]
+        stalled = self.service.settle_goal_runtime(
+            {**request, "settleAttempt": 2}
+        )["result"]
+        progressed = self.service.settle_goal_runtime(
+            {
+                **request,
+                "settleAttempt": 2,
+                "freshToolEvidenceCount": 1,
+                "freshToolEvidenceSha256": first_evidence_sha256,
+            }
+        )["result"]
+        progressed_replay = self.service.settle_goal_runtime(
+            {
+                **request,
+                "settleAttempt": 2,
+                "freshToolEvidenceCount": 1,
+                "freshToolEvidenceSha256": first_evidence_sha256,
+            }
+        )["result"]
+        progressed_with_different_evidence = self.service.settle_goal_runtime(
+            {
+                **request,
+                "settleAttempt": 2,
+                "freshToolEvidenceCount": 1,
+                "freshToolEvidenceSha256": second_evidence_sha256,
+            }
+        )["result"]
+        capped = self.service.settle_goal_runtime(
+            {
+                **request,
+                "settleAttempt": 5,
+                "freshToolEvidenceCount": 1,
+                "freshToolEvidenceSha256": second_evidence_sha256,
+            }
+        )["result"]
+        fourth = self.service.settle_goal_runtime(
+            {
+                **request,
+                "settleScopeId": "scope:goal-settle:2",
+                "settleAttempt": 1,
+            }
+        )["result"]
+        globally_capped = self.service.settle_goal_runtime(
+            {
+                **request,
+                "settleScopeId": "scope:goal-settle:3",
+                "settleAttempt": 1,
+            }
+        )["result"]
+        goal_after_settle = self.service.workflow_state(session_id)["goal"]
+
+        self.assertEqual(first, replay)
+        self.assertEqual(first["state"], "continue")
+        self.assertEqual(first["freshToolEvidenceCount"], 0)
+        self.assertEqual(
+            first["freshToolEvidenceSha256"],
+            hashlib.sha256(b"").hexdigest(),
+        )
+        self.assertEqual(first["goalId"], goal["goalId"])
+        self.assertEqual(first["goalRevision"], goal["revision"])
+        self.assertTrue(str(first["followUpKey"]).startswith("goal-settle:"))
+        self.assertIn("<managed-goal-follow-up", str(first["message"]))
+        self.assertEqual(stalled["state"], "stalled")
+        self.assertEqual(stalled["reason"], "no_progress")
+        self.assertEqual(stalled["followUpKey"], "")
+        self.assertEqual(progressed, progressed_replay)
+        self.assertEqual(progressed["state"], "continue")
+        self.assertEqual(progressed["freshToolEvidenceCount"], 1)
+        self.assertNotEqual(first["followUpKey"], progressed["followUpKey"])
+        self.assertNotEqual(
+            progressed["followUpKey"],
+            progressed_with_different_evidence["followUpKey"],
+        )
+        self.assertEqual(capped["state"], "stalled")
+        self.assertEqual(capped["reason"], "settle_attempt_limit")
+        self.assertEqual(capped["followUpKey"], "")
+        self.assertEqual(fourth["state"], "continue")
+        self.assertEqual(fourth["continuationCount"], 4)
+        self.assertEqual(fourth["continuationRemaining"], 0)
+        self.assertEqual(globally_capped["state"], "stalled")
+        self.assertEqual(
+            globally_capped["reason"],
+            "goal_continuation_limit",
+        )
+        self.assertEqual(globally_capped["continuationCount"], 4)
+        self.assertEqual(goal_after_settle["status"], "active")
+        self.assertEqual(goal_after_settle["revision"], goal["revision"])
+
+    def test_goal_settle_never_continues_terminal_or_blocked_states(self) -> None:
+        session_id = str(
+            self.service.create_session(
+                {"title": "goal settle terminal states"}
+            )["session"]["id"]
+        )
+        request = {
+            "schemaVersion": "rag-ime.agent-goal-settle-request.v1",
+            "sessionId": session_id,
+            "settleScopeId": "scope:goal-settle:terminal",
+            "settleAttempt": 1,
+            "freshToolEvidenceCount": 0,
+            "freshToolEvidenceSha256": hashlib.sha256(b"").hexdigest(),
+        }
+        cases = [
+            (
+                "inactive",
+                {
+                    "configured": False,
+                    "goalId": "",
+                    "revision": 0,
+                    "status": "cleared",
+                    "budgetExceeded": False,
+                },
+                {"allowed": False, "reason": "plan_required"},
+            ),
+            (
+                "paused",
+                {
+                    "configured": True,
+                    "goalId": "goal:paused",
+                    "revision": 2,
+                    "status": "paused",
+                    "budgetExceeded": False,
+                },
+                {"allowed": False, "reason": "goal_paused"},
+            ),
+            (
+                "completed",
+                {
+                    "configured": True,
+                    "goalId": "goal:completed",
+                    "revision": 3,
+                    "status": "completed",
+                    "budgetExceeded": False,
+                },
+                {"allowed": False, "reason": "goal_completed"},
+            ),
+            (
+                "budget_exhausted",
+                {
+                    "configured": True,
+                    "goalId": "goal:exhausted",
+                    "revision": 4,
+                    "status": "active",
+                    "budgetExceeded": True,
+                },
+                {"allowed": False, "reason": "goal_budget_exhausted"},
+            ),
+            (
+                "cancelled",
+                {
+                    "configured": True,
+                    "goalId": "goal:cancelled-plan",
+                    "revision": 5,
+                    "status": "active",
+                    "budgetExceeded": False,
+                },
+                {"allowed": False, "reason": "plan_cancelled"},
+            ),
+            (
+                "blocked",
+                {
+                    "configured": True,
+                    "goalId": "goal:blocked",
+                    "revision": 6,
+                    "status": "active",
+                    "budgetExceeded": False,
+                },
+                {"allowed": False, "reason": "plan_not_approved"},
+            ),
+        ]
+        for expected, goal, gate in cases:
+            with self.subTest(state=expected):
+                with patch.object(
+                    self.service,
+                    "workflow_state",
+                    return_value={
+                        "plan": {},
+                        "goal": goal,
+                        "actGate": gate,
+                    },
+                ):
+                    result = self.service.settle_goal_runtime(request)["result"]
+                self.assertEqual(result["state"], expected)
+                self.assertEqual(result["followUpKey"], "")
+                self.assertEqual(result["message"], "")
+
     def test_new_session_keeps_query_aware_bootstrap_without_empty_provider_envelope(self) -> None:
         created = self.service.create_session({"title": "个人上下文"})
         session = created["session"]
         session_id = str(session["id"])
+        real_memory_build = self.service.memory_bootstrap.build
+
+        def build_memory_with_turn_marker(*args, **kwargs):
+            specification = real_memory_build(*args, **kwargs)
+            query_text = str(kwargs["query_text"])
+            marker = (
+                "MEMORY_A_ONLY"
+                if "第一轮" in query_text
+                else "MEMORY_B_ONLY"
+            )
+            payload = dict(specification["payload"])
+            payload["items"] = [
+                {
+                    "rank": 1,
+                    "sourceType": "memory_atom",
+                    "sourceId": f"atom:{marker}",
+                    "title": "project_fact",
+                    "text": marker,
+                    "score": 1.0,
+                    "confidence": 1.0,
+                    "lanes": ["bm25_raw"],
+                    "rawScores": {},
+                    "tags": [],
+                    "ownerKind": "project",
+                    "ownerId": "test",
+                    "evidenceEventIds": [1],
+                }
+            ]
+            payload["sourceIds"] = [f"atom:{marker}"]
+            specification["payload"] = payload
+            specification["source_id"] = str(payload["recallId"])
+            return specification
 
         self.assertTrue(session["roleBookRevisionId"])
         self.assertTrue(created["memoryBootstrap"]["ok"])
@@ -684,7 +946,7 @@ class AgentServiceTests(unittest.TestCase):
             patch.object(
                 self.service.memory_bootstrap,
                 "build",
-                wraps=self.service.memory_bootstrap.build,
+                side_effect=build_memory_with_turn_marker,
             ) as build_memory,
         ):
             first = self.service.prompt(session_id, {"message": "第一轮"})
@@ -694,6 +956,14 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(
             first["memoryBootstrap"]["dedupeKey"],
             f"memory-bootstrap:{session_id}:v3",
+        )
+        self.assertRegex(
+            second["memoryBootstrap"]["dedupeKey"],
+            rf"^memory-bootstrap:{session_id}:v4:[0-9a-f]{{24}}$",
+        )
+        self.assertNotEqual(
+            first["memoryBootstrap"]["dedupeKey"],
+            second["memoryBootstrap"]["dedupeKey"],
         )
         self.assertEqual(second["contextItemsDelivered"], 1)
         self.assertTrue(
@@ -711,8 +981,39 @@ class AgentServiceTests(unittest.TestCase):
             "第二轮",
             build_memory.call_args_list[1].kwargs["query_text"],
         )
-        self.assertEqual(runtime_prompt.call_args_list[0].args[1], "第一轮")
-        self.assertEqual(runtime_prompt.call_args_list[1].args[1], "第二轮")
+        self.assertEqual(
+            build_memory.call_args_list[0].kwargs["trigger"],
+            "first_user_prompt",
+        )
+        self.assertEqual(
+            build_memory.call_args_list[1].kwargs["trigger"],
+            "turn_start",
+        )
+        runtime_envelopes = []
+        for call in runtime_prompt.call_args_list:
+            sent = str(call.args[1])
+            self.assertTrue(sent.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX))
+            runtime_envelopes.append(
+                json.loads(sent[len(RUNTIME_PROMPT_ENVELOPE_PREFIX):])
+            )
+        self.assertEqual(runtime_envelopes[0]["message"], "第一轮")
+        self.assertIn(
+            "MEMORY_A_ONLY",
+            runtime_envelopes[0]["sessionContext"],
+        )
+        self.assertNotIn(
+            "MEMORY_B_ONLY",
+            runtime_envelopes[0]["sessionContext"],
+        )
+        self.assertEqual(runtime_envelopes[1]["message"], "第二轮")
+        self.assertIn(
+            "MEMORY_B_ONLY",
+            runtime_envelopes[1]["sessionContext"],
+        )
+        self.assertNotIn(
+            "MEMORY_A_ONLY",
+            runtime_envelopes[1]["sessionContext"],
+        )
         self.assertTrue(first["memoryEvidence"]["stored"])
         self.assertTrue(second["memoryEvidence"]["stored"])
         delivered = self.service.context_runtime.list_items(
@@ -721,6 +1022,11 @@ class AgentServiceTests(unittest.TestCase):
         )
         self.assertEqual(len(delivered), 1)
         self.assertEqual(delivered[0]["lifecycle"], "persistent")
+        expired = self.service.context_runtime.list_items(
+            session_id,
+            status="expired",
+        )
+        self.assertEqual(len(expired), 1)
 
         self.service.events.publish(
             session_id,

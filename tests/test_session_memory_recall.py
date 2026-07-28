@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 from rag_ime.agent_context_runtime import AgentContextRuntime
 from rag_ime.agent_sessions import AgentSessionStore
@@ -139,6 +140,63 @@ class SessionMemoryRecallTests(unittest.TestCase):
         )
         self.assertFalse(role_a_payload["retrieval"]["activityTimelineIncluded"])
         self.assertEqual(role_a["lifecycle"], "persistent")
+
+    def test_corrected_content_with_same_source_id_changes_refresh_identity(self) -> None:
+        def retrieval(text: str) -> dict[str, object]:
+            return {
+                "query": {
+                    "primary": "同一查询",
+                    "matchedAliases": [],
+                    "activatedTags": [],
+                    "vectorFusion": {
+                        "applied": False,
+                        "queryWeight": 1.0,
+                        "contextWeight": 0.0,
+                    },
+                },
+                "memoryHits": [
+                    {
+                        "doc_type": "atom",
+                        "source_id": "atom:stable-source",
+                        "text": text,
+                        "score": 1.0,
+                        "confidence": 1.0,
+                        "tags": [],
+                        "metadata": {"lanes": ["bm25_raw"]},
+                    }
+                ],
+            }
+
+        with patch(
+            "rag_ime.session_memory_recall.retrieve_hybrid_rag_candidates",
+            return_value=retrieval("旧的项目事实"),
+        ):
+            before = self.builder.build(
+                self.session_id,
+                role_id="role-a",
+                query_text="同一查询",
+                trigger="turn_start",
+            )
+        with patch(
+            "rag_ime.session_memory_recall.retrieve_hybrid_rag_candidates",
+            return_value=retrieval("纠正后的项目事实"),
+        ):
+            after = self.builder.build(
+                self.session_id,
+                role_id="role-a",
+                query_text="同一查询",
+                trigger="turn_start",
+            )
+
+        self.assertEqual(
+            before["payload"]["sourceIds"],
+            after["payload"]["sourceIds"],
+        )
+        self.assertNotEqual(
+            before["payload"]["recallId"],
+            after["payload"]["recallId"],
+        )
+        self.assertNotEqual(before["dedupe_key"], after["dedupe_key"])
 
     def test_daily_activity_book_requires_temporal_or_continuation_intent(self) -> None:
         hits = [

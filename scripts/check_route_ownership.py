@@ -47,6 +47,14 @@ TABLE_SOURCE = Path("rag_ime/control_api/route_table.py")
 # exposure explicitly; a rise means a route appeared with no policy decision.
 UNDECLARED_DISPATCH_BUDGET = 40
 
+# Runtime-only capability routes are not Control API surfaces: they are
+# authenticated with the Pi runtime capability token and intentionally have
+# no `/control/v1` facade.  Listing them here makes that exposure decision
+# explicit without pretending they are ordinary remote routes.
+DECLARED_INTERNAL_CAPABILITY_ROUTES = {
+    "/api/agent/tool/goal-settle",
+}
+
 
 def dispatched_routes(root: Path) -> dict[str, list[tuple[str, int]]]:
     """Map path literal -> [(verb handler, line), ...] from the dispatch chains."""
@@ -104,7 +112,15 @@ def table_route_pairs(root: Path) -> tuple[set[tuple[str, str]], list[str]]:
 
 
 def declared_routes(root: Path) -> set[str]:
-    return set(re.findall(r'"(/api/[^"]*)"', (root / POLICY_SOURCE).read_text(encoding="utf-8")))
+    return (
+        set(
+            re.findall(
+                r'"(/api/[^"]*)"',
+                (root / POLICY_SOURCE).read_text(encoding="utf-8"),
+            )
+        )
+        | DECLARED_INTERNAL_CAPABILITY_ROUTES
+    )
 
 
 def _template_to_regex(template: str) -> re.Pattern[str]:

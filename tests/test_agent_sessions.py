@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 
@@ -657,6 +658,225 @@ class AgentSessionStoreTests(unittest.TestCase):
         )["workflow"]
         self.assertFalse(cleared["goal"]["configured"])
         self.assertTrue(cleared["actGate"]["allowed"])
+
+    def test_goal_continuation_budget_persists_and_resets_only_on_lifecycle(
+        self,
+    ) -> None:
+        session = self.store.create(title="goal continuation", created_at_ms=100)
+        session_id = str(session["id"])
+        review = self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "submit_review",
+                "title": "完成持久 Goal",
+                "items": [{"title": "收集验收证据", "status": "in_progress"}],
+            },
+        )["plan"]
+        self.store.mutate_agent_plan(
+            session_id,
+            {"action": "approve", "expectedRevision": review["revision"]},
+        )
+        goal = self.store.mutate_agent_goal(
+            session_id,
+            {"action": "set", "objective": "跨运行时保持续投上限"},
+        )["workflow"]["goal"]
+        goal_id = str(goal["goalId"])
+
+        for index in range(1, 3):
+            claim = self.store.claim_agent_goal_continuation(
+                session_id,
+                goal_id=goal_id,
+                request_key=f"scope:{index}:attempt:1",
+                limit=4,
+                updated_at_ms=100 + index,
+            )
+            self.assertTrue(claim["claimed"])
+            self.assertEqual(claim["issuedCount"], index)
+        replay_first = self.store.claim_agent_goal_continuation(
+            session_id,
+            goal_id=goal_id,
+            request_key="scope:1:attempt:1",
+            limit=4,
+            updated_at_ms=103,
+        )
+        self.assertTrue(replay_first["claimed"])
+        self.assertTrue(replay_first["replayed"])
+        self.assertEqual(replay_first["issuedCount"], 2)
+        self.assertEqual(replay_first["remaining"], 2)
+        for index in range(3, 5):
+            claim = self.store.claim_agent_goal_continuation(
+                session_id,
+                goal_id=goal_id,
+                request_key=f"scope:{index}:attempt:1",
+                limit=4,
+                updated_at_ms=100 + index,
+            )
+            self.assertTrue(claim["claimed"])
+            self.assertEqual(claim["issuedCount"], index)
+        replay = self.store.claim_agent_goal_continuation(
+            session_id,
+            goal_id=goal_id,
+            request_key="scope:4:attempt:1",
+            limit=4,
+            updated_at_ms=200,
+        )
+        blocked = self.store.claim_agent_goal_continuation(
+            session_id,
+            goal_id=goal_id,
+            request_key="new-process-scope:attempt:1",
+            limit=4,
+            updated_at_ms=201,
+        )
+        self.assertTrue(replay["replayed"])
+        self.assertEqual(replay["issuedCount"], 4)
+        self.assertFalse(blocked["claimed"])
+        self.assertEqual(blocked["reason"], "goal_continuation_limit")
+
+        paused = self.store.mutate_agent_goal(
+            session_id,
+            {"action": "pause", "expectedRevision": goal["revision"]},
+            updated_at_ms=300,
+        )["workflow"]["goal"]
+        paused_budget = self.store.agent_goal_continuation_budget(
+            session_id,
+            goal_id=goal_id,
+            limit=4,
+        )
+        self.assertEqual(paused_budget["issuedCount"], 0)
+        self.assertEqual(paused_budget["epoch"], 2)
+        resumed = self.store.mutate_agent_goal(
+            session_id,
+            {"action": "resume", "expectedRevision": paused["revision"]},
+            updated_at_ms=301,
+        )["workflow"]["goal"]
+        with self.assertRaisesRegex(ValueError, "another lifecycle epoch"):
+            self.store.claim_agent_goal_continuation(
+                session_id,
+                goal_id=goal_id,
+                request_key="scope:1:attempt:1",
+                limit=4,
+                updated_at_ms=302,
+            )
+        resumed_claim = self.store.claim_agent_goal_continuation(
+            session_id,
+            goal_id=goal_id,
+            request_key="after-resume:attempt:1",
+            limit=4,
+            updated_at_ms=303,
+        )
+        self.assertTrue(resumed_claim["claimed"])
+        self.assertEqual(resumed_claim["issuedCount"], 1)
+        self.assertEqual(resumed_claim["epoch"], 3)
+
+        completed = self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "complete",
+                "expectedRevision": resumed["revision"],
+                "summary": "持久续投上限已验证",
+                "evidence": [
+                    {
+                        "kind": "test",
+                        "summary": "聚焦测试通过",
+                        "reference": "tests.test_agent_sessions",
+                    }
+                ],
+            },
+            updated_at_ms=400,
+        )["workflow"]["goal"]
+        completed_budget = self.store.agent_goal_continuation_budget(
+            session_id,
+            goal_id=goal_id,
+            limit=4,
+        )
+        self.assertEqual(completed_budget["issuedCount"], 0)
+        self.assertEqual(completed_budget["epoch"], 4)
+        cleared = self.store.mutate_agent_goal(
+            session_id,
+            {"action": "clear", "expectedRevision": completed["revision"]},
+            updated_at_ms=401,
+        )["workflow"]["goal"]
+        replacement = self.store.mutate_agent_goal(
+            session_id,
+            {"action": "set", "objective": "新的持久 Goal"},
+            updated_at_ms=402,
+        )["workflow"]["goal"]
+        replacement_budget = self.store.agent_goal_continuation_budget(
+            session_id,
+            goal_id=str(replacement["goalId"]),
+            limit=4,
+        )
+        with self.assertRaisesRegex(ValueError, "another goal"):
+            self.store.claim_agent_goal_continuation(
+                session_id,
+                goal_id=str(replacement["goalId"]),
+                request_key="scope:1:attempt:1",
+                limit=4,
+                updated_at_ms=403,
+            )
+        self.assertFalse(cleared["configured"])
+        self.assertNotEqual(replacement["goalId"], goal_id)
+        self.assertEqual(
+            replacement_budget,
+            {"epoch": 1, "issuedCount": 0, "limit": 4, "remaining": 4},
+        )
+
+    def test_goal_continuation_budget_serializes_concurrent_claims(self) -> None:
+        session_id = str(
+            self.store.create(title="concurrent continuation")["id"]
+        )
+        review = self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "submit_review",
+                "title": "并发续投上限",
+                "items": [{"title": "验证原子上限", "status": "in_progress"}],
+            },
+        )["plan"]
+        self.store.mutate_agent_plan(
+            session_id,
+            {"action": "approve", "expectedRevision": review["revision"]},
+        )
+        goal_id = str(
+            self.store.mutate_agent_goal(
+                session_id,
+                {"action": "set", "objective": "并发请求最多续投四次"},
+            )["workflow"]["goal"]["goalId"]
+        )
+
+        def claim(index: int) -> dict[str, object]:
+            return self.store.claim_agent_goal_continuation(
+                session_id,
+                goal_id=goal_id,
+                request_key=f"concurrent-scope:{index}",
+                limit=4,
+                updated_at_ms=500 + index,
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(claim, range(8)))
+
+        claimed = [result for result in results if result["claimed"] is True]
+        blocked = [result for result in results if result["claimed"] is False]
+        self.assertEqual(
+            sorted(int(result["issuedCount"]) for result in claimed),
+            [1, 2, 3, 4],
+        )
+        self.assertEqual(len(blocked), 4)
+        self.assertTrue(
+            all(
+                result["reason"] == "goal_continuation_limit"
+                for result in blocked
+            )
+        )
+        self.assertEqual(
+            self.store.agent_goal_continuation_budget(
+                session_id,
+                goal_id=goal_id,
+                limit=4,
+            ),
+            {"epoch": 1, "issuedCount": 4, "limit": 4, "remaining": 0},
+        )
 
     def test_unknown_mode_and_status_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "assistant or coordinator"):

@@ -127,6 +127,7 @@ class SessionMemoryRecallBuilder:
         normalized_trigger = compact_whitespace(trigger).lower()
         if normalized_trigger not in {
             "first_user_prompt",
+            "turn_start",
             "compaction",
             "room_task",
             "subagent_task",
@@ -237,6 +238,14 @@ class SessionMemoryRecallBuilder:
             for item in selected
         )
         source_ids = [str(item["sourceId"]) for item in selected]
+        selected_content_sha256 = hashlib.sha256(
+            json.dumps(
+                selected,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
         query_sha256 = hashlib.sha256(query.encode("utf-8")).hexdigest()
         vector_context = _tail_text(vector_context_text, 6_000)
         conversation = _normalized_recent_messages(recent_messages)
@@ -258,6 +267,11 @@ class SessionMemoryRecallBuilder:
                     else ""
                 ),
                 "sourceIds": source_ids,
+                # A governed Atom can be corrected in place while retaining
+                # its source id.  The recall identity therefore includes the
+                # selected content, not only the list of source ids, so the
+                # Provider context can invalidate superseded text.
+                "selectedContentSha256": selected_content_sha256,
                 "compactionRecovery": recovery,
             },
             ensure_ascii=False,

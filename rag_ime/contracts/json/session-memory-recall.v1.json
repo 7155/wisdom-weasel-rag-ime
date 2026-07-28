@@ -26,7 +26,13 @@
     "roleId": {"type": "string"},
     "generatedAtMs": {"type": "integer", "minimum": 0},
     "trigger": {
-      "enum": ["first_user_prompt", "compaction", "room_task", "subagent_task"]
+      "enum": [
+        "first_user_prompt",
+        "turn_start",
+        "compaction",
+        "room_task",
+        "subagent_task"
+      ]
     },
     "query": {
       "type": "object",

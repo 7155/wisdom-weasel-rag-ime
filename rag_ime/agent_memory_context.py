@@ -137,6 +137,10 @@ class AgentMemoryContextService:
                 return _ready_existing(
                     session_id,
                     existing,
+                    dedupe_key=self.context_runtime.active_dedupe_key(
+                        session_id,
+                        source_kind="memory_bootstrap",
+                    ),
                     expired_legacy=expired_legacy,
                 )
             recent = self.recent_messages(session_id)
@@ -251,6 +255,10 @@ class AgentMemoryContextService:
                 receipt = _ready_existing(
                     session_id,
                     existing,
+                    dedupe_key=self.context_runtime.active_dedupe_key(
+                        session_id,
+                        source_kind="memory_bootstrap",
+                    ),
                     expired_legacy=expired_legacy,
                 )
                 receipt["status"] = "ready_stale"
@@ -267,9 +275,7 @@ class AgentMemoryContextService:
             "sessionId": session_id,
             "status": "ready",
             "itemId": str(result.get("itemId") or ""),
-            "dedupeKey": self.memory_bootstrap.dedupe_key(
-                session_id
-            ),
+            "dedupeKey": str(result.get("dedupeKey") or ""),
             "sourceCount": int(result.get("sourceCount") or 0),
             "queryAware": True,
             "refreshedForCurrentTurn": True,
@@ -317,11 +323,26 @@ class AgentMemoryContextService:
             task_aware_recall_query(query, objective)
             or "继续当前 Session 的任务"
         )
-        trigger = (
-            "compaction"
-            if is_compaction
-            else self.task_context.trigger(session_id)
-        )
+        task_trigger = self.task_context.trigger(session_id)
+        if is_compaction:
+            trigger = "compaction"
+        elif task_trigger != "first_user_prompt":
+            trigger = task_trigger
+        elif (
+            trigger_value == "turn_start"
+            and self.context_runtime.active_item(
+                session_id,
+                source_kind="memory_bootstrap",
+            )
+            is not None
+        ):
+            # Ordinary Sessions bootstrap once, then replace their query-aware
+            # memory pack on every later user turn.  Reusing
+            # `first_user_prompt` would reuse the static v3 dedupe key and
+            # silently retain the previous turn's recall.
+            trigger = "turn_start"
+        else:
+            trigger = "first_user_prompt"
         before = self.room_capabilities.runtime_binding(
             session_id,
             active_only=False,
@@ -459,6 +480,9 @@ class AgentMemoryContextService:
                 "trigger": trigger,
                 "sessionContext": rendered,
                 "itemId": str(item.get("itemId") or ""),
+                "dedupeKey": str(
+                    specification.get("dedupe_key") or ""
+                ),
                 "recallId": str(
                     recall_payload.get("recallId") or ""
                 ),
@@ -926,6 +950,7 @@ def _ready_existing(
     session_id: str,
     existing: Mapping[str, object],
     *,
+    dedupe_key: str,
     expired_legacy: int,
 ) -> dict[str, object]:
     return {
@@ -936,7 +961,7 @@ def _ready_existing(
         "sessionId": session_id,
         "status": "ready",
         "itemId": str(existing.get("itemId") or ""),
-        "dedupeKey": "active-memory-context",
+        "dedupeKey": str(dedupe_key or ""),
         "queryAware": True,
         "priority": "developer",
         "lifecycle": "session",
