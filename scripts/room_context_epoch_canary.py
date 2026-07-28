@@ -1140,6 +1140,11 @@ def progressive_discovery_check(
             set(item.get("loadedProductSchemasBeforeFirstCapture") or [])
             | set(item.get("governedProductSchemasBeforeFirstCapture") or [])
             | recovered[index]
+            | (
+                set(_ROOM_BOOTSTRAP_TOOL_NAMES)
+                if item.get("stableRoomBootstrapSchemasExact") is True
+                else set()
+            )
         )
         and item.get("catalogBlocksExactlyOnceEveryCall") is True
         and item.get("routingCardFieldContractEveryCall") is True

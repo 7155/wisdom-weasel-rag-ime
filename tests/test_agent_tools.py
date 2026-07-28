@@ -12,6 +12,7 @@ from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_tool_artifacts import AgentToolArtifactProjector
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness, WorkspaceHarnessError
+from rag_ime.contracts.json_schema import validate_contract
 
 
 class _Management:
@@ -1014,6 +1015,28 @@ class ControlToolGatewayTests(unittest.TestCase):
                 self.assertEqual(
                     manifests[target]["runtimeProjections"],
                     projections,
+                )
+        for target in ("workspace_edit", "workspace_write"):
+            with self.subTest(contract_target=target):
+                validate_contract(
+                    {
+                        "schemaVersion": "rag-ime.agent-tool-call.v1",
+                        "sessionId": coordinator["id"],
+                        "tool": target,
+                        "toolCallId": f"tool:{target}",
+                        "args": {},
+                    },
+                    "agent-tool-call.v1.json",
+                )
+                validate_contract(
+                    {
+                        "schemaVersion": "rag-ime.agent-tool-result.v1",
+                        "ok": True,
+                        "tool": target,
+                        "operation": "apply",
+                        "result": {},
+                    },
+                    "agent-tool-result.v1.json",
                 )
         self.assertIs(manifests["workspace_patch"]["modelVisible"], False)
         self.assertNotIn("runtimeProjections", manifests["workspace_patch"])

@@ -519,6 +519,8 @@ def run(
     target = room["participants"][1]
     room_id = str(room["id"])
     session_id = str(target["sessionId"])
+    execution_mode = str(room.get("executionMode") or "")
+    managed_execution = execution_mode == "workspace_managed"
     if args.model_provider and args.model_id:
         requester(
             args.base_url,
@@ -545,7 +547,11 @@ def run(
                 f"修改前运行 {TEST_COMMAND} 一次并保留非零退出回执，"
                 "不得把预期失败冒充通过"
             ),
-            "常驻 edit 只修改 calculator.py，且必须经过哈希绑定的原生批准",
+            (
+                "常驻 edit 只修改 calculator.py，且必须留下哈希绑定的 Room 执行回执"
+                if managed_execution
+                else "常驻 edit 只修改 calculator.py，且必须经过哈希绑定的原生批准"
+            ),
             (
                 f"修改后再次运行 {TEST_COMMAND}，无网络且退出码为 0；"
                 f"公开 {PUBLIC_MARKER} 并提交全部验收条件"
@@ -554,7 +560,11 @@ def run(
         if failure_probe
         else [
             "直接调用常驻 ls、find、grep 和 read；不得为这些基础工具调用 tool_search 或 tool_load",
-            "常驻 edit 只修改 calculator.py，且必须经过哈希绑定的原生批准",
+            (
+                "常驻 edit 只修改 calculator.py，且必须留下哈希绑定的 Room 执行回执"
+                if managed_execution
+                else "常驻 edit 只修改 calculator.py，且必须经过哈希绑定的原生批准"
+            ),
             f"常驻 bash 只运行 {TEST_COMMAND}，无网络且退出码为 0",
             f"公开 {PUBLIC_MARKER}，并用 room_commit 覆盖全部验收条件",
         ]
@@ -586,9 +596,12 @@ def run(
             "不要用相同参数重试。随后用 ls 查看目录、find 定位 Python 文件、grep 搜索 "
             "ROOM_PROJECT_TASK，并并行 read calculator.py 与 test_calculator.py。"
             "修改前直接用 bash 运行 "
-            f"{TEST_COMMAND}，等待原生批准；这次应非零退出，必须如实识别为预期失败。"
-            "然后只用 edit 实现 normalize_scores，等待原生批准；"
-            f"最后再次用 bash 运行 {TEST_COMMAND}，等待原生批准且禁止网络。只有第二次测试"
+            f"{TEST_COMMAND}，{'由 Room 工作区托管策略执行' if managed_execution else '等待原生批准'}；"
+            "这次应非零退出，必须如实识别为预期失败。"
+            "然后只用 edit 实现 normalize_scores，"
+            f"{'保留哈希绑定的 Room 执行回执' if managed_execution else '等待原生批准'}；"
+            f"最后再次用 bash 运行 {TEST_COMMAND}，"
+            f"{'保留 Room 执行回执' if managed_execution else '等待原生批准'}且禁止网络。只有第二次测试"
             f"退出码为 0 后，才发布 {PUBLIC_MARKER} 和一句恢复说明，提交全部验收条件并收工。"
         )
         if failure_probe
@@ -597,7 +610,9 @@ def run(
             "不得用 tool_search 或 tool_load 查找它们。直接用 ls 查看目录、"
             "find 定位 Python 文件、grep 搜索 ROOM_PROJECT_TASK，再并行 read "
             "calculator.py 与 test_calculator.py；只用 edit 实现 normalize_scores，"
-            f"等待原生批准；然后只用 bash 运行 {TEST_COMMAND}，等待原生批准且禁止网络。测试通过后"
+            f"{'保留哈希绑定的 Room 执行回执' if managed_execution else '等待原生批准'}；"
+            f"然后只用 bash 运行 {TEST_COMMAND}，"
+            f"{'保留 Room 执行回执' if managed_execution else '等待原生批准'}且禁止网络。测试通过后"
             f"发布 {PUBLIC_MARKER} 和一句结果，最后提交全部验收条件并收工。"
         )
     )
@@ -775,6 +790,16 @@ def run(
                 and approvals[0]["mutationApplied"] is True
                 and approvals[1]["exitCode"] == 0
             )
+        )
+        or (
+            managed_execution
+            and not approvals
+            and tool_receipts["workspace_edit"]["invocationCount"] == 1
+            and tool_receipts["workspace_edit"]["appliedExecutionCount"] == 1
+            and tool_receipts["workspace_shell"]["invocationCount"]
+            == (2 if failure_probe else 1)
+            and tool_receipts["workspace_shell"]["appliedExecutionCount"]
+            == (1 if failure_probe else 1)
         ),
         "actualToolWorkloadExact": all(
             tool_receipts[name]["invocationCount"] == expected
@@ -876,6 +901,7 @@ def run(
         },
         "project": {
             "workspace": str(workspace),
+            "executionMode": execution_mode,
             "calculatorSha256": hashlib.sha256(final_source.encode("utf-8")).hexdigest(),
             "calculatorBytes": len(final_source.encode("utf-8")),
             "independentTest": independent,

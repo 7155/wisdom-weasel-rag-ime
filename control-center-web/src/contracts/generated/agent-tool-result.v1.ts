@@ -28,6 +28,8 @@ export interface AgentToolResultV1 {
     | 'workspace_read'
     | 'workspace_search'
     | 'workspace_patch'
+    | 'workspace_edit'
+    | 'workspace_write'
     | 'workspace_shell';
   operation:
     | 'status'

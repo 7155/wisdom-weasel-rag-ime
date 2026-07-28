@@ -6326,6 +6326,8 @@ export const contractSchemas = {
           "workspace_read",
           "workspace_search",
           "workspace_patch",
+          "workspace_edit",
+          "workspace_write",
           "workspace_shell",
           "room_state",
           "room_collaborate",
@@ -6448,6 +6450,8 @@ export const contractSchemas = {
           "workspace_read",
           "workspace_search",
           "workspace_patch",
+          "workspace_edit",
+          "workspace_write",
           "workspace_shell"
         ]
       },
