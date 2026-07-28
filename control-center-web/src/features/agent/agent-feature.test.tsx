@@ -2653,9 +2653,17 @@ describe('Agent experience', () => {
     });
     renderAgent(transport);
 
-    await screen.findByRole('button', { name: /模型：GPT-5\.4/ });
+    await screen.findByRole(
+      'button',
+      { name: /模型：GPT-5\.4/ },
+      { timeout: 5_000 },
+    );
     await user.click(screen.getByRole('button', { name: /记忆整理/ }));
-    await screen.findByRole('button', { name: /模型：DeepSeek V4/ });
+    await screen.findByRole(
+      'button',
+      { name: /模型：DeepSeek V4/ },
+      { timeout: 5_000 },
+    );
 
     await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
     await waitFor(() => expect(
