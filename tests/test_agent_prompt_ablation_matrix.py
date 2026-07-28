@@ -56,28 +56,28 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
         self.assertEqual(variable["reduction"]["estimatedTokensSaved"], 251)
         self.assertEqual(len(variable["fixedLayers"]), 9)
 
-    def test_matrix_covers_five_agent_two_goal_and_two_room_scenarios(self) -> None:
+    def test_matrix_covers_project_native_session_goal_and_room_regressions(self) -> None:
         scenarios = self.matrix["scenarios"]
         by_surface = {
             surface: [item for item in scenarios if item["surface"] == surface]
             for surface in ("single_agent", "goal", "room")
         }
 
-        self.assertEqual(len(by_surface["single_agent"]), 5)
+        self.assertEqual(len(by_surface["single_agent"]), 4)
         self.assertEqual(len(by_surface["goal"]), 2)
-        self.assertEqual(len(by_surface["room"]), 2)
+        self.assertEqual(len(by_surface["room"]), 3)
         self.assertEqual(
             {item["id"] for item in scenarios},
             {
-                "single-agent.project-summary-five-lines",
-                "single-agent.readme-typo-minimal-change",
-                "single-agent.date-environment-injection",
-                "single-agent.commit-checks-git-boundary",
-                "single-agent.event-loop-explanation-no-files",
+                "session.authorized-action-produces-evidence",
+                "session.progressive-disclosure-loads-exact-skill-and-tools",
+                "session.memory-candidate-on-demand-excludes-transient-noise",
+                "session.memory-refresh-starts-new-context-epoch",
                 "goal.authorized-evidence-producing-continuation",
-                "goal.no-progress-stops-with-blocked-proposal",
+                "goal.stale-evidence-cannot-settle-current-revision",
                 "room.child-returned-is-not-parent-accepted",
                 "room.notice-does-not-create-polite-ping-pong",
+                "room.cancelled-generation-rejects-late-write",
             },
         )
         self.assertTrue(
@@ -97,6 +97,11 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
             "room_collaborate",
             "room_post",
             "room_commit",
+            "skill_search",
+            "skill_load",
+            "tool_search",
+            "tool_load",
+            "memory_capture",
         }
         required = {
             "id",
@@ -118,6 +123,7 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
                 self.assertTrue(scenario["forbiddenBehavior"])
                 self.assertTrue(scenario["acceptanceEvidence"])
                 self.assertTrue(scenario["metrics"])
+                self.assertTrue(scenario["nativeEvidence"])
                 self.assertIn(
                     scenario["executionLayer"],
                     {"provider", "kernel_pre_dispatch"},
@@ -137,14 +143,31 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
                     self.assertGreaterEqual(int(call["count"]), 1)
                     self.assertIsInstance(call["arguments"], dict)
 
-    def test_no_tool_explanation_and_room_interaction_invariants_are_explicit(self) -> None:
+    def test_provider_and_kernel_regressions_are_explicitly_separated(self) -> None:
         scenarios = {item["id"]: item for item in self.matrix["scenarios"]}
-        explanation = scenarios["single-agent.event-loop-explanation-no-files"]
+        memory_capture = scenarios[
+            "session.memory-candidate-on-demand-excludes-transient-noise"
+        ]
+        memory_refresh = scenarios[
+            "session.memory-refresh-starts-new-context-epoch"
+        ]
+        stale_evidence = scenarios[
+            "goal.stale-evidence-cannot-settle-current-revision"
+        ]
         returned = scenarios["room.child-returned-is-not-parent-accepted"]
         no_ping_pong = scenarios["room.notice-does-not-create-polite-ping-pong"]
+        late_write = scenarios["room.cancelled-generation-rejects-late-write"]
 
-        self.assertEqual(explanation["allowedTools"], [])
-        self.assertEqual(explanation["expectedCalls"], [])
+        self.assertEqual(
+            [call["tool"] for call in memory_capture["expectedCalls"]],
+            ["memory_capture"],
+        )
+        self.assertTrue(
+            any(
+                "Provider 超时" in behavior
+                for behavior in memory_capture["forbiddenBehavior"]
+            )
+        )
         self.assertNotIn(
             "room_commit",
             [call["tool"] for call in returned["expectedCalls"]],
@@ -155,15 +178,37 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
                 for behavior in returned["forbiddenBehavior"]
             )
         )
-        self.assertEqual(no_ping_pong["expectedCalls"], [])
-        self.assertEqual(no_ping_pong["executionLayer"], "kernel_pre_dispatch")
-        self.assertFalse(no_ping_pong["providerInvocationExpected"])
-        self.assertTrue(
-            all(
-                scenario["providerInvocationExpected"]
-                for scenario in scenarios.values()
-                if scenario is not no_ping_pong
+        for deterministic in (
+            memory_refresh,
+            stale_evidence,
+            late_write,
+        ):
+            self.assertEqual(deterministic["expectedCalls"], [])
+            self.assertEqual(
+                deterministic["executionLayer"],
+                "kernel_pre_dispatch",
             )
+            self.assertFalse(deterministic["providerInvocationExpected"])
+            self.assertTrue(deterministic["deterministicKernelPhase"])
+        self.assertEqual(no_ping_pong["expectedCalls"], [])
+        self.assertEqual(no_ping_pong["executionLayer"], "provider")
+        self.assertTrue(no_ping_pong["providerInvocationExpected"])
+        classification = self.matrix["scenarioClassification"]
+        self.assertEqual(
+            set(classification["providerScored"]),
+            {
+                scenario_id
+                for scenario_id, scenario in scenarios.items()
+                if scenario["providerInvocationExpected"]
+            },
+        )
+        self.assertEqual(
+            set(classification["deterministicKernel"]),
+            {
+                scenario_id
+                for scenario_id, scenario in scenarios.items()
+                if not scenario["providerInvocationExpected"]
+            },
         )
         self.assertTrue(
             any(
@@ -172,11 +217,33 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
                 for metric in no_ping_pong["metrics"]
             )
         )
+        self.assertTrue(
+            any(
+                metric["name"] == "late_write_applied_count"
+                and metric["target"] == "0"
+                for metric in late_write["metrics"]
+            )
+        )
+
+    def test_grill_with_docs_is_deferred_to_irreversible_design_approval(self) -> None:
+        stages = self.matrix["deferredStages"]
+
+        self.assertEqual(len(stages), 1)
+        stage = stages[0]
+        self.assertEqual(stage["id"], "grill-with-docs")
+        self.assertEqual(stage["status"], "deferred-not-always-on")
+        self.assertIn("after source investigation", stage["activation"])
+        self.assertIn("high-impact irreversible", stage["activation"])
+        self.assertIn(
+            "as an always-on system-prompt layer",
+            stage["forbiddenActivation"],
+        )
 
     def test_report_schema_is_sufficient_for_paired_provider_runs(self) -> None:
         report = self.matrix["reportSchema"]
         self.assertIn("toolTrace", report["perRunRequired"])
         self.assertIn("providerReceipt", report["perRunRequired"])
+        self.assertIn("promptReceipt", report["perRunRequired"])
         self.assertIn("taskSuccessRate", report["aggregateRequired"])
         self.assertIn("forbiddenBehaviorRate", report["aggregateRequired"])
         self.assertIn("roomPingPongTurns", report["aggregateRequired"])
@@ -187,6 +254,10 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
         self.assertEqual(
             self.matrix["runProtocol"]["deterministicRunsPerKernelScenario"],
             5,
+        )
+        self.assertIn(
+            "kernel scenarios use one K track",
+            self.matrix["runProtocol"]["orderPolicy"],
         )
 
 

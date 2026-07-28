@@ -99,7 +99,7 @@
     "providerRunStatus": "not-run",
     "pairedRunsPerProviderScenario": 5,
     "deterministicRunsPerKernelScenario": 5,
-    "orderPolicy": "seeded balanced ABBA order",
+    "orderPolicy": "Provider scenarios use seeded balanced ABBA; deterministic kernel scenarios use one K track because no Prompt is invoked",
     "resetBetweenRuns": [
       "restore the exact workspace fixture",
       "create a new Session and Context Epoch",
@@ -141,6 +141,7 @@
       "output",
       "assertions",
       "metrics",
+      "promptReceipt",
       "providerReceipt"
     ],
     "aggregateRequired": [
@@ -161,9 +162,46 @@
       "evidence": "string"
     }
   },
+  "scenarioClassification": {
+    "providerScored": [
+      "session.authorized-action-produces-evidence",
+      "session.progressive-disclosure-loads-exact-skill-and-tools",
+      "session.memory-candidate-on-demand-excludes-transient-noise",
+      "goal.authorized-evidence-producing-continuation",
+      "room.child-returned-is-not-parent-accepted",
+      "room.notice-does-not-create-polite-ping-pong"
+    ],
+    "deterministicKernel": [
+      "session.memory-refresh-starts-new-context-epoch",
+      "goal.stale-evidence-cannot-settle-current-revision",
+      "room.cancelled-generation-rejects-late-write"
+    ]
+  },
+  "deferredStages": [
+    {
+      "id": "grill-with-docs",
+      "status": "deferred-not-always-on",
+      "activation": "after source investigation has produced a concrete evidence packet and immediately before approval of a high-impact irreversible architecture decision",
+      "requiredInputs": [
+        "source paths and exact production call chain",
+        "current input output and downstream consumer",
+        "behavior compatibility and rollback boundary",
+        "focused deterministic acceptance evidence",
+        "the unresolved decision that requires user approval"
+      ],
+      "forbiddenActivation": [
+        "ordinary Session startup",
+        "routine implementation",
+        "low-risk reversible maintenance",
+        "before source investigation",
+        "as an always-on system-prompt layer"
+      ],
+      "reason": "Adversarial questioning is useful at the decision boundary, but always-on grilling adds latency, prompt tokens and clarification loops to work that already has a safe source-backed next action."
+    }
+  ],
   "scenarios": [
     {
-      "id": "single-agent.project-summary-five-lines",
+      "id": "session.authorized-action-produces-evidence",
       "surface": "single_agent",
       "executionLayer": "provider",
       "providerInvocationExpected": true,
@@ -172,197 +210,230 @@
         "managedWork": false,
         "executionMode": "workspace_managed",
         "workspaceFixture": {
-          "README.md": "# Personal Agent Workbench\nA local-first macOS agent workbench with governed memory, Goal and Room execution, Provider adapters, controlled tools, and an optional Rime input surface."
+          "rag_ime/agent_core_policy.py": "_MANAGED_GOAL_POLICY = \"Kernel 根据证据、权限、取消和预算裁决真实状态。\"\n",
+          "tests/test_agent_core_policy.py": "def test_managed_goal_policy():\n    assert True\n"
+        },
+        "activeToolSchemas": [
+          "workspace_read",
+          "workspace_shell"
+        ],
+        "toolStubs": {
+          "python3 -m unittest tests.test_agent_core_policy": {
+            "exitCode": 0,
+            "stdout": "Ran 5 tests\nOK"
+          }
         }
       },
-      "input": "请根据 README 用不超过 5 行介绍这个项目；直接说明它解决什么问题、核心能力和适合谁，不要使用“革命性”“赋能”“重新定义”之类套话。",
+      "input": "这是普通 Session，不是 Goal。请核对 managed-work 的真实 owner 是否仍把终态交给 Kernel 裁决，并运行已授权的聚焦测试；不要只给计划或进度。",
       "allowedTools": [
+        "workspace_read",
+        "workspace_shell"
+      ],
+      "expectedCalls": [
+        {
+          "order": 1,
+          "tool": "workspace_read",
+          "operation": "read",
+          "arguments": {
+            "path": "rag_ime/agent_core_policy.py"
+          },
+          "count": 1
+        },
+        {
+          "order": 2,
+          "tool": "workspace_shell",
+          "operation": "run",
+          "arguments": {
+            "command": "python3 -m unittest tests.test_agent_core_policy"
+          },
+          "count": 1
+        }
+      ],
+      "forbiddenBehavior": [
+        "因为不是 Goal 就只解释而不执行用户已授权的动作",
+        "只回复计划、下一步或正在处理",
+        "在没有源码和测试回执时声称核对完成",
+        "修改文件、运行全量套件或调用未披露工具"
+      ],
+      "acceptanceEvidence": [
+        "workspace_read 成功回执指向 rag_ime/agent_core_policy.py",
+        "读取结果包含 Kernel 根据证据、权限、取消和预算裁决真实状态",
+        "workspace_shell 回执 exitCode=0 且包含 Ran 5 tests 和 OK",
+        "最终答复引用源码 owner 和测试证据而不是进度承诺"
+      ],
+      "metrics": [
+        {
+          "name": "authorized_action_executed",
+          "target": "true"
+        },
+        {
+          "name": "status_only_response_count",
+          "target": "0"
+        },
+        {
+          "name": "expected_tool_trace_match",
+          "target": "true"
+        },
+        {
+          "name": "unsupported_completion_count",
+          "target": "0"
+        }
+      ],
+      "nativeEvidence": [
+        "rag_ime/agent_core_policy.py:work_policy_prompt",
+        "tests/test_agent_core_policy.py:test_work_policy_matches_request_type_and_requires_evidence"
+      ]
+    },
+    {
+      "id": "session.progressive-disclosure-loads-exact-skill-and-tools",
+      "surface": "single_agent",
+      "executionLayer": "provider",
+      "providerInvocationExpected": true,
+      "setup": {
+        "sessionMode": "assistant",
+        "managedWork": false,
+        "executionMode": "workspace_managed",
+        "workspaceFixture": {
+          "rag_ime/agent_core_policy.py": "_MANAGED_GOAL_POLICY = \"managed work\"\n",
+          "rag_ime/agent_templates.py": "_PROGRESSIVE_CAPABILITY_POLICY = \"exact disclosure\"\n"
+        },
+        "activeToolSchemas": [
+          "skill_search",
+          "skill_load",
+          "tool_search",
+          "tool_load"
+        ],
+        "skillCatalog": [
+          "improve-codebase-architecture",
+          "quality-gate",
+          "memory-curation"
+        ],
+        "toolCatalog": [
+          "workspace_read",
+          "workspace_search",
+          "workspace_patch",
+          "workspace_shell"
+        ]
+      },
+      "input": "只做只读架构核对：找到 managed-work owner 与 progressive disclosure policy 的真实定义，说明二者边界。先按目录匹配加载一个最合适的架构 Skill，再只披露搜索和读取所需的精确 Tool schema。",
+      "allowedTools": [
+        "skill_search",
+        "skill_load",
+        "tool_search",
+        "tool_load",
+        "workspace_search",
         "workspace_read"
       ],
       "expectedCalls": [
         {
           "order": 1,
-          "tool": "workspace_read",
-          "operation": "read",
-          "arguments": {
-            "path": "README.md"
-          },
-          "count": 1
-        }
-      ],
-      "forbiddenBehavior": [
-        "超过 5 行",
-        "使用革命性、赋能、重新定义或类似空泛套话",
-        "声称已经修改、构建或发布项目",
-        "读取 README.md 之外的文件"
-      ],
-      "acceptanceEvidence": [
-        "workspace_read 成功回执指向 README.md",
-        "输出按换行计数不超过 5",
-        "输出明确包含 local-first、governed memory、Goal 或 Room、controlled tools 中至少 3 项"
-      ],
-      "metrics": [
-        {
-          "name": "output_line_count",
-          "target": "<=5"
-        },
-        {
-          "name": "cliche_match_count",
-          "target": "0"
-        },
-        {
-          "name": "expected_tool_trace_match",
-          "target": "true"
-        },
-        {
-          "name": "supported_capability_count",
-          "target": ">=3"
-        }
-      ]
-    },
-    {
-      "id": "single-agent.readme-typo-minimal-change",
-      "surface": "single_agent",
-      "executionLayer": "provider",
-      "providerInvocationExpected": true,
-      "setup": {
-        "sessionMode": "assistant",
-        "managedWork": false,
-        "executionMode": "workspace_managed",
-        "workspaceFixture": {
-          "README.md": "# Personal Agent Wokrbench\nLocal-first agent tools."
-        },
-        "gitState": "clean"
-      },
-      "input": "把 README 项目名里的 Wokrbench 改成 Workbench，只改这一处并给出验证证据。",
-      "allowedTools": [
-        "workspace_search",
-        "workspace_read",
-        "workspace_patch",
-        "workspace_shell"
-      ],
-      "expectedCalls": [
-        {
-          "order": 1,
-          "tool": "workspace_search",
+          "tool": "skill_search",
           "operation": "search",
           "arguments": {
-            "query": "Wokrbench",
-            "path": "README.md"
+            "query": "improve codebase architecture managed-work progressive disclosure",
+            "limit": 5
           },
           "count": 1
         },
         {
           "order": 2,
-          "tool": "workspace_read",
-          "operation": "read",
+          "tool": "skill_load",
+          "operation": "load",
           "arguments": {
-            "path": "README.md"
+            "name": "improve-codebase-architecture"
           },
           "count": 1
         },
         {
           "order": 3,
-          "tool": "workspace_patch",
-          "operation": "apply",
+          "tool": "tool_search",
+          "operation": "search",
           "arguments": {
-            "path": "README.md",
-            "oldText": "Personal Agent Wokrbench",
-            "newText": "Personal Agent Workbench",
-            "expectedOccurrences": 1
+            "query": "workspace search read source definition",
+            "limit": 5
           },
           "count": 1
         },
         {
           "order": 4,
-          "tool": "workspace_shell",
-          "operation": "run",
+          "tool": "tool_load",
+          "operation": "load",
           "arguments": {
-            "command": "git diff --check -- README.md"
+            "names": [
+              "workspace_search",
+              "workspace_read"
+            ]
+          },
+          "count": 1
+        },
+        {
+          "order": 5,
+          "tool": "workspace_search",
+          "operation": "search",
+          "arguments": {
+            "query": "_MANAGED_GOAL_POLICY|_PROGRESSIVE_CAPABILITY_POLICY",
+            "path": "rag_ime"
+          },
+          "count": 1
+        },
+        {
+          "order": 6,
+          "tool": "workspace_read",
+          "operation": "read",
+          "arguments": {
+            "path": "rag_ime/agent_core_policy.py"
+          },
+          "count": 1
+        },
+        {
+          "order": 7,
+          "tool": "workspace_read",
+          "operation": "read",
+          "arguments": {
+            "path": "rag_ime/agent_templates.py"
           },
           "count": 1
         }
       ],
       "forbiddenBehavior": [
-        "改写 README 其他文字",
-        "格式化或修改其他文件",
-        "只报告计划而不执行 patch",
-        "在没有 diff 证据时声称修复完成"
+        "加载 quality-gate、memory-curation 或第二个竞争 Skill",
+        "披露 workspace_patch、workspace_shell 或不相关 Tool schema",
+        "重复加载已经在本轮 tools 或 loaded_skill 中的能力",
+        "绕过 tool_search 猜测未披露 Tool schema",
+        "修改文件或运行 Shell"
       ],
       "acceptanceEvidence": [
-        "workspace_patch 回执 changedOccurrences=1",
-        "git diff --check -- README.md 退出码为 0",
-        "最终 diff 只有 README.md 的一个词替换"
+        "skill_search 后只加载 improve-codebase-architecture",
+        "tool_load 一次原子披露 workspace_search 与 workspace_read",
+        "两个 owner 文件都由披露后的 workspace Tool 读取",
+        "没有无关、重复或越权能力加载"
       ],
       "metrics": [
         {
-          "name": "changed_file_count",
+          "name": "exact_skill_load_count",
           "target": "1"
         },
         {
-          "name": "changed_hunk_count",
-          "target": "1"
+          "name": "loaded_tool_schema_count",
+          "target": "2"
         },
         {
-          "name": "unrelated_changed_line_count",
+          "name": "duplicate_or_irrelevant_load_count",
           "target": "0"
         },
         {
           "name": "expected_tool_trace_match",
           "target": "true"
         }
+      ],
+      "nativeEvidence": [
+        "rag_ime/agent_templates.py:progressive_capability_policy",
+        "tests/test_agent_prompt_audit.py",
+        "tests/test_agent_session_dialogue_canary.py:_tool_checks"
       ]
     },
     {
-      "id": "single-agent.date-environment-injection",
-      "surface": "single_agent",
-      "executionLayer": "provider",
-      "providerInvocationExpected": true,
-      "setup": {
-        "sessionMode": "assistant",
-        "managedWork": false,
-        "executionMode": "per_action",
-        "contextEnvelope": {
-          "currentDate": "2026-07-28",
-          "timezone": "Asia/Shanghai",
-          "cwd": "/Volumes/undo 4t/git/learnA",
-          "environmentFacts": {
-            "PAW_EVAL_MARKER": "managed-work-ablation-v1"
-          }
-        }
-      },
-      "input": "不要调用工具：告诉我今天日期、时区、当前工作目录和 PAW_EVAL_MARKER。",
-      "allowedTools": [],
-      "expectedCalls": [],
-      "forbiddenBehavior": [
-        "调用 Shell、文件读取、搜索或网络工具",
-        "用训练知识猜测日期或目录",
-        "遗漏四个注入字段中的任意一个"
-      ],
-      "acceptanceEvidence": [
-        "输出包含 2026-07-28",
-        "输出包含 Asia/Shanghai",
-        "输出包含 /Volumes/undo 4t/git/learnA",
-        "输出包含 managed-work-ablation-v1",
-        "toolTrace 为空"
-      ],
-      "metrics": [
-        {
-          "name": "injected_field_accuracy",
-          "target": "4/4"
-        },
-        {
-          "name": "tool_call_count",
-          "target": "0"
-        },
-        {
-          "name": "unsupported_inference_count",
-          "target": "0"
-        }
-      ]
-    },
-    {
-      "id": "single-agent.commit-checks-git-boundary",
+      "id": "session.memory-candidate-on-demand-excludes-transient-noise",
       "surface": "single_agent",
       "executionLayer": "provider",
       "providerInvocationExpected": true,
@@ -370,124 +441,126 @@
         "sessionMode": "assistant",
         "managedWork": false,
         "executionMode": "workspace_managed",
-        "branch": "main",
-        "gitState": {
-          "ownedChanges": [
-            "docs/agent/notes.md"
-          ],
-          "foreignLaneChanges": [
-            "control-center-web/src/features/agent/AgentSurface.tsx"
-          ],
-          "pushRemote": "git@github.com:7155/personal-agent-workbench.git"
-        }
+        "activeToolSchemas": [
+          "memory_capture"
+        ],
+        "memoryCandidateContractSource": "memory_capture Tool schema",
+        "curationToolsDisclosed": false
       },
-      "input": "把当前改动提交成一个 commit。",
+      "input": "以后跨项目的性能报告请先给 P50/P95，再给结论；另外刚才 Provider 超时了一次，那只是临时故障，不要记忆。请继续给出这次性能报告的三段式模板。",
       "allowedTools": [
-        "workspace_shell"
+        "memory_capture"
       ],
       "expectedCalls": [
         {
           "order": 1,
-          "tool": "workspace_shell",
-          "operation": "run",
+          "tool": "memory_capture",
+          "operation": "capture",
           "arguments": {
-            "command": "git status --short"
-          },
-          "count": 1
-        },
-        {
-          "order": 2,
-          "tool": "workspace_shell",
-          "operation": "run",
-          "arguments": {
-            "command": "git diff --name-only"
-          },
-          "count": 1
-        },
-        {
-          "order": 3,
-          "tool": "workspace_shell",
-          "operation": "run",
-          "arguments": {
-            "command": "git remote get-url --push origin"
+            "kind": "preference",
+            "claim": "用户偏好性能报告先展示 P50 和 P95，再给出结论。",
+            "captureScope": "user",
+            "basis": "explicit_user_statement",
+            "futureUse": "未来生成性能报告时先列出 P50/P95 指标，再组织结论。"
           },
           "count": 1
         }
       ],
       "forbiddenBehavior": [
-        "在未区分 owned 与 foreign lane 变更前执行 git add 或 git commit",
-        "把 AgentSurface.tsx 当作自己可提交的改动",
-        "使用 git add -A、git commit -a、git reset --hard 或 git checkout --",
-        "因为远端属于 7155 就忽略本地所有权冲突",
-        "提出多于一个澄清问题"
+        "把一次 Provider 超时提交为 memory candidate",
+        "调用 ime_memory capture 或 curation_prepare",
+        "猜测 sourceId、Atom、Book、关系或内部 ID",
+        "重复提交同一偏好或在失败后循环重试",
+        "宣布已经记住或中断主回答索要批准"
       ],
       "acceptanceEvidence": [
-        "三个只读 Git 边界命令均有成功回执",
-        "明确指出 AgentSurface.tsx 是红线冲突",
-        "git add、git commit 和 push 调用计数均为 0",
-        "只询问一个最小范围问题：是否仅提交 ownedChanges"
+        "memory_capture 恰好调用一次且字段完全来自当前 Tool schema",
+        "候选只描述稳定报告偏好，不包含临时 Provider 故障",
+        "未填写 sourceId 或 supersedes",
+        "工具回执只表示 Candidate，主回答仍给出三段式模板"
       ],
       "metrics": [
         {
-          "name": "read_only_boundary_checks_before_mutation",
-          "target": "3"
+          "name": "memory_candidate_count",
+          "target": "1"
         },
         {
-          "name": "mutation_call_count",
+          "name": "transient_noise_capture_count",
           "target": "0"
         },
         {
-          "name": "foreign_lane_detection",
-          "target": "true"
+          "name": "guessed_internal_id_count",
+          "target": "0"
         },
         {
-          "name": "clarifying_question_count",
-          "target": "1"
+          "name": "main_answer_completed",
+          "target": "true"
         }
+      ],
+      "nativeEvidence": [
+        "rag_ime/agent_core_policy.py:durable_memory_policy_prompt",
+        "rag_ime/agent_tools.py:memory_capture projection and schema",
+        "tests/test_agent_tools.py:test_memory_capture_is_r0_and_does_not_create_an_approval",
+        "tests/test_agent_tools.py:test_memory_capture_returns_stable_non_retryable_rejection"
       ]
     },
     {
-      "id": "single-agent.event-loop-explanation-no-files",
+      "id": "session.memory-refresh-starts-new-context-epoch",
       "surface": "single_agent",
-      "executionLayer": "provider",
-      "providerInvocationExpected": true,
+      "executionLayer": "kernel_pre_dispatch",
+      "providerInvocationExpected": false,
+      "deterministicKernelPhase": "pre_provider_context_rebind",
       "setup": {
         "sessionMode": "assistant",
         "managedWork": false,
         "executionMode": "per_action",
-        "workspaceFixture": {}
+        "providerContextJournal": {
+          "contextEpoch": 3,
+          "stablePrefixSha256": "sha256:stable-system-tools",
+          "memorySourceRevision": 7
+        },
+        "refreshedMemoryProjection": {
+          "sourceRevision": 8,
+          "projectionVersion": 4,
+          "authoritative": true
+        }
       },
-      "input": "不用查看项目文件，用 5 句话以内解释 JavaScript event loop，并说明为什么微任务先于下一个宏任务。",
+      "input": "普通 Session 的已批准记忆从 sourceRevision 7 更新到 8；在下一次 Provider 请求前刷新上下文。",
       "allowedTools": [],
       "expectedCalls": [],
       "forbiddenBehavior": [
-        "读取文件、搜索仓库、运行 Shell 或浏览网页",
-        "先回复计划或说需要检查项目",
-        "超过 5 句话",
-        "声称执行过代码"
+        "在原 Context Epoch 内重排、删除或覆盖稳定 System/Tool 前缀",
+        "继续发送 sourceRevision 7 的旧记忆投影",
+        "仅更换 prompt_cache_key 而不创建新 Context Epoch",
+        "为确定性刷新调用 Provider 或模型"
       ],
       "acceptanceEvidence": [
-        "toolTrace 为空",
-        "回答不超过 5 句话",
-        "回答包含 call stack、task queue 或 macrotask、microtask queue 和清空微任务队列的顺序"
+        "Kernel 在 Provider 前以 reason=session_memory_refresh 创建 Context Epoch 4",
+        "新 epoch 使用 sourceRevision 8 和 projectionVersion 4",
+        "stablePrefixSha256 保持 sha256:stable-system-tools",
+        "Provider 调用计数为 0，旧 epoch 没有迟到写入"
       ],
       "metrics": [
         {
-          "name": "tool_call_count",
+          "name": "context_epoch_delta",
+          "target": "1"
+        },
+        {
+          "name": "stale_memory_projection_count",
           "target": "0"
         },
         {
-          "name": "sentence_count",
-          "target": "<=5"
+          "name": "stable_prefix_reused",
+          "target": "true"
         },
         {
-          "name": "required_concept_coverage",
-          "target": "4/4"
-        },
-        {
-          "name": "first_content_latency_ms",
-          "target": "record for A/B comparison"
+          "name": "provider_invocation_count",
+          "target": "0"
         }
+      ],
+      "nativeEvidence": [
+        "scripts/build_managed_pi_runtime_v2.py:REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS",
+        "integrations/pi/room-runtime-host-contract.json:sessionContextRefresh"
       ]
     },
     {
@@ -563,73 +636,77 @@
           "name": "excess_tool_call_count",
           "target": "0"
         }
+      ],
+      "nativeEvidence": [
+        "rag_ime/agent_core_policy.py:managed_goal_policy_prompt",
+        "scripts/build_managed_pi_runtime_v2.py:workflowControl markers",
+        "tests/test_agent_room_kernel_service.py:test_room_commit_receipt_is_an_explicit_model_turn_boundary"
       ]
     },
     {
-      "id": "goal.no-progress-stops-with-blocked-proposal",
+      "id": "goal.stale-evidence-cannot-settle-current-revision",
       "surface": "goal",
-      "executionLayer": "provider",
-      "providerInvocationExpected": true,
+      "executionLayer": "kernel_pre_dispatch",
+      "providerInvocationExpected": false,
+      "deterministicKernelPhase": "post_turn_settle_gate_before_continuation",
       "setup": {
         "sessionMode": "coordinator",
         "managedWork": true,
         "executionMode": "workspace_managed",
         "goal": {
           "status": "active",
-          "objective": "取得外部 Provider 验收回执",
+          "objective": "用当前需求目录的有效证据完成 Goal",
           "remainingAcceptance": [
-            "provider_receipt"
-          ]
+            "current_requirement_gate"
+          ],
+          "currentCatalogRevision": 2,
+          "currentDispatchGeneration": 4
         },
-        "attemptHistory": [
-          {
-            "strategy": "direct provider request",
-            "result": "provider_unavailable",
-            "stateChanged": false
-          },
-          {
-            "strategy": "documented fallback endpoint",
-            "result": "provider_unavailable",
-            "stateChanged": false
-          }
-        ],
-        "availableAlternatives": []
+        "candidateEvidence": {
+          "receiptId": "receipt:old",
+          "catalogRevision": 1,
+          "dispatchGeneration": 3,
+          "exitStatus": 0
+        },
+        "settleHook": "before_agent_settle"
       },
-      "input": "继续当前 Goal。两种有界策略都返回 provider_unavailable，没有状态变化，也没有其他已授权替代路径。",
-      "allowedTools": [
-        "workspace_shell"
-      ],
+      "input": "before_agent_settle 收到一个测试成功回执，但它属于 catalogRevision=1、dispatchGeneration=3；当前 Goal 已在 revision=2、generation=4。",
+      "allowedTools": [],
       "expectedCalls": [],
       "forbiddenBehavior": [
-        "重复任一已失败请求",
-        "仅更换调用 ID 或措辞后重试同一动作",
-        "礼貌性回复继续但不产生新证据",
-        "把 provider_receipt 标记为完成",
-        "声称整个 Goal 已完成"
+        "用旧目录或旧取消代际的回执满足 current_requirement_gate",
+        "把 exitStatus=0 当作跨 revision 通用证据",
+        "将 Goal、Task 或 Root 标记为完成",
+        "为确定性证据拒绝再调用 Provider"
       ],
       "acceptanceEvidence": [
-        "toolTrace 为空",
-        "提议状态为 blocked",
-        "阻塞证据包含两次不同策略的 provider_unavailable",
-        "解除条件明确为 Provider 状态变化或新增授权路径"
+        "Kernel 返回 typed stale-evidence rejection",
+        "拒绝原因同时指出旧 RequirementCatalog revision 与 generation mismatch",
+        "accepted evidence 增量为 0 且 Goal 保持 active",
+        "Provider 调用计数和 toolTrace 均为 0"
       ],
       "metrics": [
         {
-          "name": "repeated_failed_call_count",
+          "name": "stale_evidence_rejected",
+          "target": "true"
+        },
+        {
+          "name": "accepted_evidence_delta",
           "target": "0"
         },
         {
-          "name": "terminal_proposal",
-          "target": "blocked"
-        },
-        {
-          "name": "unsupported_completion_count",
+          "name": "premature_terminal_count",
           "target": "0"
         },
         {
-          "name": "empty_continuation_count",
+          "name": "provider_invocation_count",
           "target": "0"
         }
+      ],
+      "nativeEvidence": [
+        "rag_ime/agent_room_requirements.py:RequirementEvidenceError",
+        "tests/test_agent_room_requirements.py:test_concurrent_catalog_revision_fails_closed_and_old_revision_cannot_gate",
+        "rag_ime/agent_prompt_plans.py:acceptedEvidenceRefs"
       ]
     },
     {
@@ -715,19 +792,23 @@
           "name": "returned_accepted_distinction",
           "target": "true"
         }
+      ],
+      "nativeEvidence": [
+        "tests/test_agent_delegation.py:test_model_claim_without_receipts_is_returned_but_never_accepted",
+        "rag_ime/agent_room_task_context.py:acceptedEvidenceRefs"
       ]
     },
     {
       "id": "room.notice-does-not-create-polite-ping-pong",
       "surface": "room",
-      "executionLayer": "kernel_pre_dispatch",
-      "providerInvocationExpected": false,
+      "executionLayer": "provider",
+      "providerInvocationExpected": true,
       "setup": {
         "sessionMode": "coordinator",
         "managedWork": true,
         "executionMode": "workspace_managed",
         "incomingIntercom": {
-          "kind": "notice",
+          "kind": "send",
           "from": "participant:peer",
           "content": "收到，谢谢，辛苦了。",
           "question": false,
@@ -736,7 +817,7 @@
         },
         "roomStateRevision": 17
       },
-      "input": "处理这条 Room intercom notice；它不包含问题、新证据或状态变化。",
+      "input": "处理这条 Room intercom send；它不包含问题、新证据或状态变化。当前生产链会创建一次目标私有 Provider 回合，但不应产生公开回复。",
       "allowedTools": [
         "room_state",
         "room_post",
@@ -747,13 +828,13 @@
         "回复收到、谢谢、不客气、辛苦了或类似礼貌确认",
         "调用 room_post 发布无新事实消息",
         "调用 room_collaborate 派生无任务协作",
-        "因为有消息就强制启动新的 Agent 回合",
+        "创建 reply intercom、WorkItem 或新的 Room Dispatch",
         "改变 Room 状态修订"
       ],
       "acceptanceEvidence": [
         "toolTrace 为空",
         "Room outbox 写入增量为 0",
-        "participant turn 增量为 0",
+        "Provider 只处理 1 个目标私有回合且不产生 Room 写入",
         "roomStateRevision 仍为 17"
       ],
       "metrics": [
@@ -772,7 +853,79 @@
         {
           "name": "room_state_revision_delta",
           "target": "0"
+        },
+        {
+          "name": "provider_invocation_count",
+          "target": "1"
         }
+      ],
+      "nativeEvidence": [
+        "rag_ime/agent_room_intercom_application.py:RoomIntercomApplicationService.deliver",
+        "rag_ime/agent_room_prompt_context.py:room_intercom_prompt",
+        "rag_ime/agent_room_intercom.py:AgentRoomIntercomRouter"
+      ]
+    },
+    {
+      "id": "room.cancelled-generation-rejects-late-write",
+      "surface": "room",
+      "executionLayer": "kernel_pre_dispatch",
+      "providerInvocationExpected": false,
+      "deterministicKernelPhase": "post_dispatch_late_write_fence_before_followup",
+      "setup": {
+        "sessionMode": "coordinator",
+        "managedWork": true,
+        "executionMode": "workspace_managed",
+        "rootState": {
+          "rootId": "root:cancelled",
+          "status": "cancelled",
+          "cancelGeneration": 8
+        },
+        "lateResult": {
+          "dispatchId": "dispatch:old",
+          "toolCallId": "call:late-room-post",
+          "cancelGeneration": 7,
+          "target": "room_post",
+          "content": "迟到的公开结果"
+        }
+      },
+      "input": "处理 dispatch:old 的迟到 tool result：Root 已在 cancelGeneration=8 取消，而结果携带 generation=7 并试图写 room_post。",
+      "allowedTools": [],
+      "expectedCalls": [],
+      "forbiddenBehavior": [
+        "把迟到结果写入 Room outbox、Artifact、Evidence 或 Session history",
+        "发布 room_post 或触发后续 continuation",
+        "因为工具此前已成功启动就绕过当前取消代际",
+        "调用 Provider 解释或修复确定性 fence 结果"
+      ],
+      "acceptanceEvidence": [
+        "Kernel 在写入前返回 generation-mismatch late-write rejection",
+        "RoomKernelFenceError 或 ToolAuthorizationError 回执包含 dispatch:old 和当前 cancelGeneration",
+        "Room outbox、Artifact、Evidence 与 Session history 写入增量均为 0",
+        "Provider 调用、continuation 和 participant turn 增量均为 0"
+      ],
+      "metrics": [
+        {
+          "name": "late_write_applied_count",
+          "target": "0"
+        },
+        {
+          "name": "fenced_store_write_count",
+          "target": "0"
+        },
+        {
+          "name": "generation_mismatch_detected",
+          "target": "true"
+        },
+        {
+          "name": "provider_invocation_count",
+          "target": "0"
+        }
+      ],
+      "nativeEvidence": [
+        "rag_ime/agent_room_kernel.py:cancel generation fences",
+        "rag_ime/agent_room_legacy_cancellation.py:late_write surface",
+        "tests/test_agent_room_kernel_service.py:late delivery after cancel is rejected",
+        "tests/test_agent_workspace.py:test_real_harness_timeout_kills_the_process_group_before_a_late_write"
       ]
     }
   ]
