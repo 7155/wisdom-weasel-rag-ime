@@ -303,7 +303,7 @@ describe('management features', () => {
     });
 
     expect(await screen.findByText('浏览器预览不能启动听写或打开系统授权；请回到已安装的澄。')).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '火山引擎' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '流式 ASR' })).toBeInTheDocument();
     expect(screen.queryByText(/middle-mouse/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
     expect(screen.queryByText('unavailable')).not.toBeInTheDocument();

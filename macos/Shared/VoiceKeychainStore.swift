@@ -10,7 +10,7 @@ enum VoiceASRProvider: String, Codable, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .nativeStreaming: return "火山引擎流式 API"
+        case .nativeStreaming: return "流式 ASR"
         case .realtimeWebSocket: return "Realtime 兼容 API"
         case .httpTranscription: return "HTTP 转写 API"
         }

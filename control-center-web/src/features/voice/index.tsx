@@ -41,8 +41,8 @@ import './voice.css';
 const providers = [
   {
     value: 'native_streaming',
-    label: '火山引擎',
-    description: '火山引擎专用流式 API：边说边显示，支持热词和服务端最终稿。',
+    label: '流式 ASR',
+    description: '低延迟双向流式 ASR：边说边显示；当前内置适配器支持请求级热词和服务端最终稿。',
     supportsHotwords: true,
   },
   {
@@ -382,7 +382,7 @@ export function VoiceFeature() {
           </div>
         </ManagementSection>
 
-        <ManagementSection title="按住说话与专有词" description="专有词只会随火山引擎请求发送；切换其他 API 时保留词表但不发送。">
+        <ManagementSection title="按住说话与专有词" description="专有词只会随支持请求级热词的流式 ASR 发送；切换其他 API 时保留词表但不发送。">
           <div className="mgmt-grid-2">
             <OperationalList items={[
               { id: 'push-to-talk', title: '按住说话', detail: '按下开始、松开后形成最终文字', meta: hotkeyLabel(stringValue(valueAt(voiceControl, 'agent.hotkeyMode'), stringValue(voiceSettings.hotkey))), status: <StatusBadge label={booleanValue(voiceAgent.ok) ? '已就绪' : '待检查'} tone={booleanValue(voiceAgent.ok) ? 'success' : 'warning'} /> },
@@ -393,7 +393,7 @@ export function VoiceFeature() {
                 checked={hotwordsEnabled}
                 description={hotwordsSupported
                   ? '关闭时保留词表，但不会随识别请求发送。'
-                  : '当前转写引擎不支持请求级热词；切回火山引擎后可继续使用现有词表。'}
+                  : '当前转写引擎不支持请求级热词；切回支持热词的流式 ASR 后可继续使用现有词表。'}
                 disabled={!hotwordsSupported}
                 label="启用热词"
                 onCheckedChange={setHotwordsEnabled}
@@ -487,7 +487,7 @@ export function VoiceFeature() {
               />
               {!hotwordsSupported ? (
                 <InlineNotice title={`${activeProvider.label} 不发送热词`} tone="info">
-                  词表仍保存在本机；只有火山引擎适配器会把它写入识别请求。
+                  词表仍保存在本机；只有支持请求级热词的流式 ASR 适配器会把它写入识别请求。
                 </InlineNotice>
               ) : null}
             </div>
@@ -695,7 +695,7 @@ function validateCredentialDraft(
   ) as unknown as VoiceCredentialDraft;
   if (provider === 'native_streaming') {
     if (!normalized.appId || !normalized.resourceId) {
-      throw new Error('火山引擎需要 App ID 和 Resource ID。');
+      throw new Error('当前流式 ASR 适配器需要 App ID 和 Resource ID。');
     }
   } else {
     let endpoint: URL;

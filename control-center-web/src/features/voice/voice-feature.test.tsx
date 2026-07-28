@@ -31,8 +31,8 @@ describe('VoiceFeature', () => {
     const transport = renderVoiceWithHotwordWrites();
 
     await screen.findByRole('heading', { name: '语音输入', level: 1 });
-    expect(await screen.findByText('当前：火山引擎')).toBeInTheDocument();
-    expect(screen.getByText(/火山引擎专用流式 API/)).toBeInTheDocument();
+    expect(await screen.findByText('当前：流式 ASR')).toBeInTheDocument();
+    expect(screen.getByText(/低延迟双向流式 ASR/)).toBeInTheDocument();
     expect(screen.queryByText(/让澄确认切换|provider_apply/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', { name: 'Realtime API' }));
@@ -167,7 +167,7 @@ describe('VoiceFeature', () => {
     renderVoice(false, 'http_transcription');
 
     expect(await screen.findByText('当前：HTTP 转写 API')).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '火山引擎' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '流式 ASR' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'Realtime API' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'HTTP 转写 API' })).toBeChecked();
     expect(screen.getByText(/松开按键后上传整段音频/)).toBeInTheDocument();
