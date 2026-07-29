@@ -522,7 +522,22 @@ class LaunchAgentScriptTests(unittest.TestCase):
             )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("sqlite3/hashlib/ssl", result.stderr)
+        self.assertIn("Python 3.12+", result.stderr)
+        self.assertIn("pypdf/yaml", result.stderr)
+
+    def test_sidecar_python_probe_covers_the_production_import_floor(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "scripts" / "install_sidecar_launch_agent.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("import pypdf", source)
+        self.assertIn("import yaml", source)
+        self.assertIn("sys.version_info >= (3, 12)", source)
+        self.assertLess(
+            source.index('$APP_SUPPORT_DIR/KnowledgeRuntime/.venv/bin/python'),
+            source.index('$ROOT/.venv/bin/python'),
+        )
 
     def test_install_sidecar_launch_agent_uses_mlx_capable_knowledge_python(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -553,6 +568,8 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 package_dir = stubs / package
                 package_dir.mkdir(parents=True)
                 (package_dir / "__init__.py").write_text("", encoding="utf-8")
+            for module in ("pypdf", "yaml"):
+                (stubs / f"{module}.py").write_text("", encoding="utf-8")
 
             env = {
                 **os.environ,
@@ -608,9 +625,14 @@ class LaunchAgentScriptTests(unittest.TestCase):
                 )
             sidecar_python = Path(tmp) / "sidecar-python"
             sidecar_python.symlink_to(sys.executable)
+            stubs = Path(tmp) / "stubs"
+            stubs.mkdir()
+            for module in ("pypdf", "yaml"):
+                (stubs / f"{module}.py").write_text("", encoding="utf-8")
             env = {
                 **os.environ,
                 "HOME": str(home),
+                "PYTHONPATH": str(stubs),
                 "RAG_IME_PYTHON": str(sidecar_python),
                 "RAG_IME_LAUNCH_AGENT_DRY_RUN": "1",
             }

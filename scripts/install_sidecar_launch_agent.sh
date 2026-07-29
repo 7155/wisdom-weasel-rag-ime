@@ -72,6 +72,7 @@ detect_python() {
     candidates+=("$ROOT/.venv-mlx314sys/bin/python")
     candidates+=("$ROOT/.venv/bin/python")
   else
+    candidates+=("$APP_SUPPORT_DIR/KnowledgeRuntime/.venv/bin/python")
     candidates+=("$ROOT/.venv/bin/python")
     candidates+=("$ROOT/.venv-mlx313/bin/python")
     candidates+=("$ROOT/.venv-mlx314sys/bin/python")
@@ -87,15 +88,17 @@ detect_python() {
         "$candidate" - <<'PY' >/dev/null 2>&1; then
 import hashlib
 import os
+import pypdf
 import sqlite3
 import ssl
 import sys
+import yaml
 
 hashlib.md5(b"rag-ime").hexdigest()
 if os.environ.get("RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING") == "1":
     import mlx
     import transformers
-raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
 PY
       printf '%s\n' "$candidate"
       return 0
@@ -144,21 +147,23 @@ if ! RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING="$REQUIRE_MLX_EMBEDDING" \
   "$PYTHON_EXECUTABLE" - <<'PY' >/dev/null 2>&1; then
 import hashlib
 import os
+import pypdf
 import sqlite3
 import ssl
 import sys
+import yaml
 
 hashlib.md5(b"rag-ime").hexdigest()
 if os.environ.get("RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING") == "1":
     import mlx
     import transformers
-raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
 PY
   if [[ "$REQUIRE_MLX_EMBEDDING" == "1" ]]; then
-    echo "python executable cannot import required MLX embedding modules (mlx/transformers): $PYTHON_EXECUTABLE" >&2
+    echo "python executable must be Python 3.12+ and import the project runtime plus MLX modules (pypdf/yaml/mlx/transformers): $PYTHON_EXECUTABLE" >&2
     echo "Run scripts/setup_knowledge_worker_env.sh or set RAG_IME_PYTHON to a compatible Python." >&2
   else
-    echo "python executable cannot import required stdlib modules (sqlite3/hashlib/ssl): $PYTHON_EXECUTABLE" >&2
+    echo "python executable must be Python 3.12+ and import the project runtime modules (pypdf/yaml) plus stdlib (sqlite3/hashlib/ssl): $PYTHON_EXECUTABLE" >&2
   fi
   echo "Set RAG_IME_PYTHON to a healthy Homebrew or project virtualenv Python." >&2
   exit 1
