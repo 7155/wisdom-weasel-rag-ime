@@ -414,6 +414,65 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("images", params)
         self.assertTrue(self.runtime.runtime_status()["capabilities"]["statelessCompletion"])
 
+    def test_stateless_completion_timeout_retires_host_before_retry(self) -> None:
+        first_client = self.runtime._host()
+        first_host_identity = first_client.host_identity
+        original_send = first_client.send
+
+        def timeout_completion(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> dict[str, object]:
+            if method == "completion.once":
+                raise PiRuntimeError(
+                    "Pi Runtime Host command timed out: completion.once"
+                )
+            return original_send(method, params, timeout=timeout)
+
+        with patch.object(first_client, "send", side_effect=timeout_completion):
+            with self.assertRaisesRegex(
+                PiRuntimeError,
+                "command timed out: completion.once",
+            ):
+                self.runtime.complete_once(
+                    request_id="surface-timeout-1",
+                    provider="deepseek",
+                    model_id="deepseek-v4-flash",
+                    thinking_level="high",
+                    message="这一次模拟无响应",
+                    timeout_seconds=15,
+                )
+
+        timed_out_status = self.runtime.runtime_status()
+        receipt = timed_out_status["runtimeHostKillGate"]["lastKillReceipt"]
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertEqual(receipt["hostIdentity"], first_host_identity)
+        self.assertEqual(receipt["requestKind"], "cancel_timeout")
+        self.assertEqual(receipt["requestedBy"], "completion:surface-timeout-1")
+        self.assertEqual(receipt["state"], "terminated")
+        self.assertEqual(timed_out_status["status"], "faulted")
+        self.assertFalse(first_client.running)
+
+        retried = self.runtime.complete_once(
+            request_id="surface-timeout-retry",
+            provider="deepseek",
+            model_id="deepseek-v4-flash",
+            thinking_level="high",
+            message="新 Host 应该正常完成",
+            timeout_seconds=15,
+        )
+
+        self.assertEqual(retried["text"], "one-shot reply")
+        self.assertIsNot(self.runtime._client, first_client)
+        assert self.runtime._client is not None
+        self.assertNotEqual(
+            self.runtime._client.host_identity,
+            first_host_identity,
+        )
+
     def test_plugin_mutations_use_a_dedicated_approval_capability(self) -> None:
         self.runtime.stop()
         self.runtime = PiRuntimeHostManager(

@@ -1476,6 +1476,7 @@ class PiRuntimeHostManager:
                 if on_text_delta is not None:
                     self._completion_sinks[normalized_request_id] = on_text_delta
                 self._status = "busy"
+        host_retired = False
         try:
             result = client.send(
                 "completion.once",
@@ -1483,13 +1484,81 @@ class PiRuntimeHostManager:
                 timeout=bounded_timeout + 5.0,
             )
             return result
+        except PiRuntimeError as exc:
+            if str(exc) == "Pi Runtime Host command timed out: completion.once":
+                host_retired = True
+                self._retire_timed_out_completion_host(
+                    client,
+                    request_id=normalized_request_id,
+                    error=exc,
+                )
+            raise
         finally:
             with self._lock:
                 self._active_completion_ids.discard(normalized_request_id)
                 self._completion_sinks.pop(normalized_request_id, None)
-                if not any(state.turn_id for state in self._states.values()):
+                if (
+                    not host_retired
+                    and self._client is client
+                    and client.running
+                    and not any(state.turn_id for state in self._states.values())
+                ):
                     self._status = "ready"
-                self._schedule_idle_locked()
+                    self._schedule_idle_locked()
+
+    def _retire_timed_out_completion_host(
+        self,
+        client: PiRuntimeHostClient,
+        *,
+        request_id: str,
+        error: PiRuntimeError,
+    ) -> None:
+        """Fence a Host that stopped answering the stateless completion RPC.
+
+        A timed-out RPC has no trustworthy completion boundary: the Host may
+        still be generating and can emit a late response after the caller has
+        returned. Reusing it also leaves its durable process row registered,
+        so the next request either hangs behind the same process or cannot
+        admit a replacement. The existing cancellation kill gate gives this
+        failure a durable receipt; stopping the client then drains its reader
+        threads and lets the normal Host-exit path fault resident Sessions.
+        """
+
+        message = redact_runtime_text(str(error))
+        with self._lifecycle_lock:
+            with self._lock:
+                if self._client is not client:
+                    return
+                self._status = "stopping"
+                self._last_error = message
+            receipt: dict[str, object] | None = None
+            kill_error = ""
+            try:
+                receipt = self._kill_gate.request_kill(
+                    client.host_identity,
+                    request_kind="cancel_timeout",
+                    requested_by=f"completion:{request_id}",
+                    reason=message,
+                    now_ms=int(time.time() * 1000),
+                )
+            except Exception as exc:  # pragma: no cover - defensive local cleanup
+                kill_error = redact_runtime_text(str(exc))
+            finally:
+                # request_kill is bounded and may return while the process is
+                # only acknowledged. stop() completes the local teardown and
+                # marks both the process row and any receipt terminal.
+                client.stop()
+            with self._lock:
+                if receipt is not None:
+                    self._last_kill_receipt = dict(
+                        self._kill_gate.receipt(str(receipt["killReceiptId"]))
+                    )
+                self._status = "faulted"
+                self._last_error = (
+                    message
+                    if not kill_error
+                    else f"{message}; Runtime Host kill receipt failed: {kill_error}"
+                )
 
     def cancel_completion(self, request_id: str) -> bool:
         try:
