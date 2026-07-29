@@ -3,7 +3,7 @@
   "sourceRepository": "https://github.com/7155/pi.git",
   "sourcePackage": "@earendil-works/pi-rag-ime-runtime-host",
   "protocolVersion": "2",
-  "minimumHandlersCommit": "e807fc845a1d4709f61dbd0e37d6f7acb24a4f12",
+  "minimumHandlersCommit": "0fd0564af34cb40bbcd6b8903c01b36191c4f90d",
   "requiredMethods": [
     "session.control_state",
     "room.dispatch",
@@ -157,7 +157,10 @@
       "export function projectTaskCanaryResponse",
       "PROJECT_TASK_SCENARIO = \"project-task\"",
       "export function projectCollaborationCanaryResponse",
-      "export function agentSessionCanaryResponse"
+      "export function agentSessionCanaryResponse",
+      "record.toolName === \"workspace_read\"",
+      "nextLineOffset",
+      "offset: 1, limit: 1_000"
     ],
     "session": [
       "rag-ime.pi-session-control-state.v1",

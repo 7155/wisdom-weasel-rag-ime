@@ -29,7 +29,7 @@ from rag_ime.managed_pi_runtime import (
 
 ROOM_RUNTIME_CONTRACT = ROOT / "integrations" / "pi" / "room-runtime-host-contract.json"
 ROOM_RUNTIME_ADAPTER = ROOT / "integrations" / "pi" / "room-runtime-host.ts"
-REQUIRED_PI_RUNTIME_BASE_COMMIT = "e807fc845a1d4709f61dbd0e37d6f7acb24a4f12"
+REQUIRED_PI_RUNTIME_BASE_COMMIT = "0fd0564af34cb40bbcd6b8903c01b36191c4f90d"
 REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS = {
     "providerContextJournal": (
         '"session_memory_refresh"',
