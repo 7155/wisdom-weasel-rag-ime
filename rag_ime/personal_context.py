@@ -268,10 +268,16 @@ def load_activity_timeline_context(
             dict.fromkeys(str(item["app"]) for item in segment_events)
         )[:12]
         app = "multiple" if len(apps) > 1 else apps[0]
-        title = max(snippets, key=lambda value: (len(value), value))
-        detail = [value for value in snippets if value != title]
+        title_source = max(snippets, key=lambda value: (len(value), value))
+        # Input snippets may retain up to 180 characters for the richer
+        # segment summary, while the public timeline contract limits titles
+        # to 160. Bound the derived display field at its owning projection
+        # boundary instead of letting one long input poison every curation
+        # prepare/preview attempt for the same frozen evidence batch.
+        title = _truncate(title_source, 160)
+        detail = [value for value in snippets if value != title_source]
         summary = _truncate(
-            title + (f"：{'；'.join(detail)}" if detail else ""),
+            title_source + (f"：{'；'.join(detail)}" if detail else ""),
             min(760, remaining_chars),
         )
         if not summary:

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Activity,
+  Brain,
   CheckCircle2,
   ChevronRight,
   CircleDashed,
@@ -13,9 +14,13 @@ import {
 import type { ReactNode } from 'react';
 import { Button } from '@/components/primitives';
 import type { UiAgentBlock } from '@/contracts/ui-events';
+import {
+  approvalDecisionView,
+  approvalNeedsHumanDecision,
+} from '@/contracts/approval-decision';
 import { publicAgentErrorText } from '../public-error';
-import { useProductIdentity } from '@/features/identity/product-identity';
 import { MarkdownBody } from './MarkdownRenderer';
+import { toggleDisclosurePreservingAnchor } from './disclosure-anchor';
 import { publicToolLabel } from './public-tool-result';
 import type { AgentBlockRenderProps } from './renderer-contract';
 import {
@@ -219,6 +224,8 @@ export function ApprovalBlockRenderer({
   const hash = text(data.payloadSha256);
   const state = text(data.state);
   const pending = !['approved', 'rejected', 'applied'].includes(state);
+  const approvalDecision = approvalDecisionView(data);
+  const DecisionIcon = approvalDecision.mode === 'model' ? Brain : ShieldAlert;
   /* One decision per approval: the projection may take a moment to echo the
      new state back, and a second click in that window would submit twice.
      The latch is keyed to the approval itself — React reuses this component
@@ -233,12 +240,12 @@ export function ApprovalBlockRenderer({
   };
   return (
     <section className="agent-approval-block">
-      <ShieldAlert size={18} />
+      <DecisionIcon size={18} />
       <span>
-        <strong>{text(data.title ?? data.summary) || '需要批准'}</strong>
-        <small>{text(data.detail ?? data.action)}</small>
+        <strong>{text(data.title ?? data.summary) || (approvalDecision.mode === 'model' ? 'Luna Max 正在评估' : '需要批准')}</strong>
+        <small>{text(data.detail ?? data.action) || (approvalDecision.mode === 'model' ? '审批模型不能扩大工具、目录或系统权限。' : '')}</small>
       </span>
-      {pending && onApprovalDecision && approvalId && hash ? (
+      {pending && approvalNeedsHumanDecision(data) && onApprovalDecision && approvalId && hash ? (
         <span className="agent-approval-block__actions">
           <Button
             size="small"
@@ -272,17 +279,25 @@ export function ErrorBlockRenderer({ block }: AgentBlockRenderProps) {
   );
 }
 
-export function ReasoningSummaryBlockRenderer() {
-  const identity = useProductIdentity();
+export function ReasoningSummaryBlockRenderer({ block }: AgentBlockRenderProps) {
+  const values = Array.isArray(block.data.items) ? block.data.items : [];
+  const items = values
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.replace(/\s+/gu, ' ').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  const fallback = text(block.data.summary ?? block.data.text ?? block.data.detail)
+    || '正在整理信息与下一步。';
+  const state = text(block.data.state ?? block.status) || 'completed';
   return (
     <details className="agent-rich-collapsible agent-reasoning-summary" data-tone="info">
       <summary>
         <span className="agent-insert-icon"><CircleDashed size={16} /></span>
-        <span>处理进度</span>
-        <small>思考中</small>
+        <span>思考摘要</span>
+        <small>{state === 'running' ? '思考中' : `${items.length || 1} 项`}</small>
         <ChevronRight className="agent-rich-collapsible__chevron" size={14} />
       </summary>
-      <p>{identity.assistantName}正在整理信息与下一步。</p>
+      {items.length ? <ol>{items.map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ol> : <p>{fallback}</p>}
     </details>
   );
 }
@@ -338,6 +353,10 @@ function ToolActivityBlock({
     : ['waiting', 'pending', 'paused'].includes(status)
       ? 'warning'
       : running ? 'info' : 'success';
+  const [open, setOpen] = useState(running);
+  useEffect(() => {
+    if (running) setOpen(true);
+  }, [running]);
   const summary = text(data.summary ?? data.title)
     || (type === 'tool_call' ? `${label}正在处理` : `${label}已返回`);
   return (
@@ -345,9 +364,12 @@ function ToolActivityBlock({
       className="agent-tool-activity agent-structured-block"
       data-state={status}
       data-tone={tone}
-      open={running}
+      open={open}
     >
-      <summary>
+      <summary
+        aria-expanded={open}
+        onClick={(event) => toggleDisclosurePreservingAnchor(event, setOpen)}
+      >
         <span className="agent-insert-icon">
           {running ? <CircleDashed className="agent-tool-activity__spinner" size={15} /> : <Wrench size={15} />}
         </span>

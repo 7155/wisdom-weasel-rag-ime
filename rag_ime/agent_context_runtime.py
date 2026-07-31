@@ -147,6 +147,86 @@ class AgentContextRuntime:
             raise RuntimeError("context item was not persisted")
         return _public_item(row)
 
+    def enqueue_delegated_result(
+        self,
+        *,
+        parent_session_id: str,
+        batch: Mapping[str, object],
+        run: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Schedule one terminal child result on the existing highest-priority lane."""
+
+        state = _required_text(run.get("state"), "state", 24).lower()
+        if state not in {"completed", "failed", "aborted", "timed_out"}:
+            raise ValueError("delegated result context requires a terminal run")
+        run_id = _required_text(run.get("id"), "runId", 240)
+        batch_id = _required_text(batch.get("id"), "batchId", 240)
+        result = run.get("result")
+        result_payload = dict(result) if isinstance(result, Mapping) else {}
+        result_summary = _bounded_text(
+            result_payload.get("summary") or run.get("error"),
+            12_000,
+        )
+        expected_output = _bounded_text(run.get("expectedOutput"), 2_000)
+        criteria = [
+            _bounded_text(item, 1_000)
+            for item in run.get("acceptanceCriteria", [])
+            if isinstance(item, str) and _bounded_text(item, 1_000)
+        ][:8]
+        payload: dict[str, object] = {
+            "schemaVersion": "rag-ime.agent-delegation-result-context.v1",
+            "batchId": batch_id,
+            "runId": run_id,
+            "childSessionId": _bounded_text(run.get("childSessionId"), 240),
+            "agent": _bounded_text(run.get("templateId"), 80),
+            "agentVersion": _bounded_text(run.get("templateVersion"), 40),
+            "task": _bounded_text(run.get("task"), 8_000),
+            "expectedOutput": expected_output,
+            "acceptanceCriteria": criteria,
+            "planItemId": _bounded_text(run.get("planItemId"), 160),
+            "planItemTitle": _bounded_text(run.get("planItemTitle"), 240),
+            "state": state,
+            "result": result_summary,
+            "error": _bounded_text(run.get("error"), 500),
+            "deliveryStatus": "returned",
+            "verificationStatus": "unverified",
+            "authority": "evidence_only",
+            "artifact": (
+                dict(run["artifact"])
+                if isinstance(run.get("artifact"), Mapping)
+                else {}
+            ),
+            "instruction": (
+                f"Expected output: {expected_output}. "
+                f"Acceptance criteria: {'; '.join(criteria)}. "
+                "Treat this child return as evidence only, then explicitly update the "
+                "linked parent Plan item; do not auto-accept or auto-complete it."
+            ),
+        }
+        output_schema = run.get("outputSchema")
+        if isinstance(output_schema, Mapping):
+            payload["policy"] = (
+                "Delegated output JSON Schema: "
+                + json.dumps(
+                    dict(output_schema),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            payload["outputSchema"] = dict(output_schema)
+        return self.enqueue(
+            session_id=parent_session_id,
+            source_kind="subagent_result",
+            source_id=run_id,
+            lane="result",
+            lifecycle="once",
+            dedupe_key=f"subagent_result:{run_id}:{run.get('completedAtMs')}",
+            title=f"{payload['agent'] or '子 Agent'} 结果待主持会话核验",
+            summary="子 Agent 已终止；该返回仍未核验，只能作为证据。",
+            payload=payload,
+        )
+
     def replace_active(
         self,
         *,
@@ -949,9 +1029,10 @@ def render_context_items(items: Sequence[Mapping[str, object]]) -> str:
                     "",
                     "## Room 压缩恢复包（本 Session 最近一次）",
                     (
-                        "以下是压缩后保留的原始需求、当前任务、"
-                        "验收、阻塞、交接与加载回执。它只恢复事实，"
-                        "不授予工具或操作权限。"
+                        "以下只保留压缩点尚未完成的验收、阻塞、"
+                        "下一动作提示与证据引用。当前 Kernel 投影是"
+                        "任务状态的唯一权威；本包不授予权限，也不能"
+                        "恢复、重开或完成任何任务。"
                     ),
                     json.dumps(
                         payload["recovery"],
@@ -979,6 +1060,8 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
         else {}
     )
     lines: list[str] = []
+    task = payload.get("task") if isinstance(payload.get("task"), Mapping) else {}
+    plan = payload.get("plan") if isinstance(payload.get("plan"), list) else []
     recovery = (
         payload.get("compactionRecovery")
         if isinstance(payload.get("compactionRecovery"), Mapping)
@@ -986,9 +1069,8 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
     )
     if recovery:
         lines.extend(_render_compaction_recovery(recovery))
-    task = payload.get("task") if isinstance(payload.get("task"), Mapping) else {}
     if task:
-        lines.extend(["", "## 当前任务"])
+        lines.extend(["", "## 当前任务（本轮权威投影）"])
         objective = compact_whitespace(str(task.get("objective") or ""))
         expected = compact_whitespace(str(task.get("expectedOutput") or ""))
         criteria = _context_string_list(task.get("acceptanceCriteria"))
@@ -1003,9 +1085,8 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
         if criteria:
             lines.append("验收条件：" + "；".join(criteria))
 
-    plan = payload.get("plan") if isinstance(payload.get("plan"), list) else []
     if plan:
-        lines.extend(["", "## 当前计划"])
+        lines.extend(["", "## 当前计划（本轮权威投影）"])
         for item in plan:
             if not isinstance(item, Mapping):
                 continue
@@ -1081,47 +1162,26 @@ def _render_session_memory_recall(payload: Mapping[str, object]) -> list[str]:
 def _render_compaction_recovery(
     recovery: Mapping[str, object],
 ) -> list[str]:
-    original = compact_whitespace(
-        str(recovery.get("originalRequirement") or "")
-    )
-    current_task = compact_whitespace(
-        str(recovery.get("currentTask") or "")
-    )
-    criteria = _context_string_list(
-        recovery.get("acceptanceCriteria")
-    )
-    blockers = _context_string_list(recovery.get("blockers"))
-    handoff = compact_whitespace(
-        str(recovery.get("handoff") or "")
-    )
-    progress = compact_whitespace(
-        str(recovery.get("latestProgress") or "")
-    )
-    plan_status = compact_whitespace(
-        str(recovery.get("planStatus") or "")
-    )
+    summary_sha256 = str(recovery.get("summarySha256") or "")
+    summary_chars = int(recovery.get("summaryChars") or 0)
+    summary_present = recovery.get("summaryPresent") is True
     lines = [
         "",
-        "## 压缩恢复包（本 epoch 唯一）",
-        "这份恢复包只恢复事实，不授予新权限，也不替代工具审批。",
-        f"- 原始需求（原文）：{original}",
-        f"- 当前任务：{current_task}",
-        "- 验收：" + (
-            "；".join(criteria)
-            if criteria
-            else "以原始需求原文中的验收要求为准，不另行改写。"
+        "## 压缩恢复回执（非任务状态）",
+        (
+            "Pi 的压缩摘要已经作为会话历史消息提供，这里不重复正文。"
+            "当前用户消息、本轮 workflow_control、当前任务与当前计划"
+            "是执行状态的唯一权威来源；本回执不得启动、恢复或重复任务。"
         ),
-        "- 阻塞：" + (
-            "；".join(blockers)
-            if blockers
-            else "无已登记阻塞。"
+        (
+            "- 摘要回执："
+            + (
+                f"sha256:{summary_sha256}；{summary_chars} 字符。"
+                if summary_present and len(summary_sha256) == 64
+                else "本次刷新未收到可识别摘要；不得猜测丢失内容。"
+            )
         ),
-        f"- 交接：{handoff}",
     ]
-    if progress:
-        lines.append(f"- 最新进展：{progress}")
-    if plan_status:
-        lines.append(f"- 计划状态：{plan_status}")
     for label, key, revision_key in (
         ("Skill", "skills", "contentRevision"),
         ("Tool", "tools", "schemaRevision"),

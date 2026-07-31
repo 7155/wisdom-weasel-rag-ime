@@ -11,6 +11,10 @@ enum RagImeAssistantTypography {
   static let resultHeader = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
   static let resultBody = NSFont.systemFont(ofSize: 14, weight: .regular)
   static let confirmation = NSFont.systemFont(ofSize: 13.5, weight: .medium)
+  static let inspectorTitle = NSFont.systemFont(ofSize: 15, weight: .semibold)
+  static let inspectorSubtitle = NSFont.systemFont(ofSize: 11.5, weight: .regular)
+  static let inspectorSection = NSFont.systemFont(ofSize: 12, weight: .semibold)
+  static let inspectorBody = NSFont.systemFont(ofSize: 13.5, weight: .regular)
 
   static func candidate(pointSize: CGFloat = defaultCandidateSize, primary: Bool) -> NSFont {
     .systemFont(ofSize: pointSize, weight: primary ? .medium : .regular)
@@ -30,6 +34,14 @@ enum RagImeAssistantTypography {
       .paragraphStyle: resultParagraphStyle(),
     ]
   }
+}
+
+enum RagImeAssistantMetrics {
+  static let spacingS: CGFloat = 8
+  static let spacingL: CGFloat = 16
+  static let minimumHitTarget: CGFloat = 44
+  static let panelCornerRadius: CGFloat = 8
+  static let inspectorCornerRadius: CGFloat = 10
 }
 
 enum RagImeAssistantMarkdownRenderer {
@@ -287,6 +299,10 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
   static let explicitResultBodyBottom: CGFloat = 48
   static let explicitResultDiagnosticBottomInset: CGFloat = 54
 
+  struct ResultViewportSnapshot {
+    let selectedRange: NSRange
+    let scrollOrigin: NSPoint
+  }
   private let rows = (0..<RagImeSuggestionCardView.maximumPredictionCandidates).map {
     _ in RagImeSuggestionRowView(frame: .zero)
   }
@@ -344,7 +360,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     blendingMode = .withinWindow
     state = .inactive
     wantsLayer = true
-    layer?.cornerRadius = 8
+    layer?.cornerRadius = RagImeAssistantMetrics.panelCornerRadius
     layer?.borderWidth = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
     layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.72).cgColor
     layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.96).cgColor
@@ -460,6 +476,9 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     configureActionButton(replaceButton, action: #selector(replace), symbol: "arrow.triangle.2.circlepath", toolTip: "替换选中文本")
     configureActionButton(retryButton, action: #selector(retry), symbol: "arrow.clockwise", toolTip: "重新生成")
     configureActionButton(moreButton, action: #selector(more), symbol: "ellipsis", toolTip: "更多操作")
+    moreButton.identifier = NSUserInterfaceItemIdentifier("ragIme.assistant.more")
+    moreButton.toolTip = "更多操作，包括查看输入与依据"
+    moreButton.setAccessibilityLabel("更多操作，包括查看输入与依据")
     confirmationLabel.font = RagImeAssistantTypography.confirmation
     confirmationLabel.textColor = .secondaryLabelColor
     confirmationLabel.alignment = .center
@@ -506,8 +525,13 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
         layoutActionBar(frame: NSRect(x: 12, y: 5, width: max(0, bounds.width - 24), height: 30), compact: false)
       }
     case .explicitGenerating:
-      progressTitleLabel.frame = NSRect(x: 16, y: bounds.height - 35, width: max(120, bounds.width - 66), height: 20)
-      stopButton.frame = NSRect(x: bounds.width - 42, y: bounds.height - 41, width: 30, height: 30)
+      progressTitleLabel.frame = NSRect(x: 16, y: bounds.height - 35, width: max(120, bounds.width - 76), height: 20)
+      stopButton.frame = NSRect(
+        x: bounds.width - 54,
+        y: bounds.height - 50,
+        width: RagImeAssistantMetrics.minimumHitTarget,
+        height: RagImeAssistantMetrics.minimumHitTarget
+      )
       progressContainer.frame = NSRect(x: 12, y: 10, width: max(0, bounds.width - 24), height: bounds.height - 52)
       layoutProgressRows()
     case .explicitNoSuggestion, .explicitError:
@@ -516,13 +540,23 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       statusLabel.frame = NSRect(x: 57, y: 44, width: max(60, bounds.width - 103), height: 24)
       diagnosticLabel.frame = NSRect(x: 57, y: 24, width: max(60, bounds.width - 71), height: 18)
       retryButton.frame = NSRect(x: 40, y: 2, width: 64, height: 26)
-      closeButton.frame = NSRect(x: bounds.width - 38, y: 42, width: 30, height: 30)
+      closeButton.frame = NSRect(
+        x: bounds.width - 52,
+        y: bounds.height - 48,
+        width: RagImeAssistantMetrics.minimumHitTarget,
+        height: RagImeAssistantMetrics.minimumHitTarget
+      )
     case .explicitResult:
       let headerX: CGFloat = isStreamingResult ? 14 : 98
       resultHeader.frame = NSRect(x: headerX, y: bounds.height - 31, width: max(80, bounds.width - headerX - 46), height: 19)
       resultShortcutPlate.frame = NSRect(x: 14, y: bounds.height - 36, width: 74, height: 24)
       resultShortcutLabel.frame = NSRect(x: 18, y: bounds.height - 34, width: 66, height: 20)
-      closeButton.frame = NSRect(x: bounds.width - 38, y: bounds.height - 39, width: 30, height: 30)
+      closeButton.frame = NSRect(
+        x: bounds.width - 52,
+        y: bounds.height - 50,
+        width: RagImeAssistantMetrics.minimumHitTarget,
+        height: RagImeAssistantMetrics.minimumHitTarget
+      )
       diagnosticLabel.frame = NSRect(
         x: 14,
         y: bounds.height - Self.explicitResultDiagnosticBottomInset,
@@ -544,12 +578,27 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
       )
       layoutResultText()
       if isStreamingResult {
-        stopButton.frame = NSRect(x: 10, y: 8, width: 32, height: 30)
+        stopButton.frame = NSRect(
+          x: 8,
+          y: 2,
+          width: RagImeAssistantMetrics.minimumHitTarget,
+          height: RagImeAssistantMetrics.minimumHitTarget
+        )
       } else {
-        insertButton.frame = NSRect(x: 10, y: 8, width: 60, height: 30)
-        replaceButton.frame = NSRect(x: 74, y: 8, width: 60, height: 30)
-        retryButton.frame = NSRect(x: canReplaceSelection ? 138 : 74, y: 8, width: 60, height: 30)
-        moreButton.frame = NSRect(x: bounds.width - 50, y: 8, width: 40, height: 30)
+        insertButton.frame = NSRect(x: 8, y: 2, width: 60, height: RagImeAssistantMetrics.minimumHitTarget)
+        replaceButton.frame = NSRect(x: 72, y: 2, width: 60, height: RagImeAssistantMetrics.minimumHitTarget)
+        retryButton.frame = NSRect(
+          x: canReplaceSelection ? 136 : 72,
+          y: 2,
+          width: 60,
+          height: RagImeAssistantMetrics.minimumHitTarget
+        )
+        moreButton.frame = NSRect(
+          x: bounds.width - 52,
+          y: 2,
+          width: RagImeAssistantMetrics.minimumHitTarget,
+          height: RagImeAssistantMetrics.minimumHitTarget
+        )
       }
     case .transientConfirmation: confirmationLabel.frame = bounds
     case .hidden: break
@@ -676,6 +725,30 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
     guard abs(clamped - self.candidateFontSize) > 0.01 else { return }
     self.candidateFontSize = clamped
     rows.forEach { $0.applyCandidateFontSize(clamped) }
+  }
+
+  func captureResultViewport() -> ResultViewportSnapshot? {
+    guard surfaceState == .explicitResult, !resultScroll.isHidden else { return nil }
+    return ResultViewportSnapshot(
+      selectedRange: resultText.selectedRange(),
+      scrollOrigin: resultScroll.contentView.bounds.origin
+    )
+  }
+
+  func restoreResultViewport(_ snapshot: ResultViewportSnapshot?) {
+    guard let snapshot, surfaceState == .explicitResult, !resultScroll.isHidden else { return }
+    let textLength = (resultText.string as NSString).length
+    let location = min(max(0, snapshot.selectedRange.location), textLength)
+    let length = min(max(0, snapshot.selectedRange.length), textLength - location)
+    resultText.setSelectedRange(NSRange(location: location, length: length))
+    let documentHeight = resultScroll.documentView?.frame.height ?? 0
+    let maximumY = max(0, documentHeight - resultScroll.contentSize.height)
+    let origin = NSPoint(
+      x: 0,
+      y: min(max(0, snapshot.scrollOrigin.y), maximumY)
+    )
+    resultScroll.contentView.scroll(to: origin)
+    resultScroll.reflectScrolledClipView(resultScroll.contentView)
   }
 
   func updateGeneratingFrame(_ frame: Int, reduceMotion: Bool) {
@@ -1142,7 +1215,7 @@ final class RagImeSuggestionCardView: NSVisualEffectView {
 
   private func configureActionButton(_ button: NSButton, action: Selector, symbol: String, toolTip: String) {
     button.isBordered = false
-    button.font = RagImeAssistantTypography.action
+    button.focusRingType = .exterior
     button.contentTintColor = .controlAccentColor
     button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: toolTip)
     button.imagePosition = button.title.isEmpty ? .imageOnly : .imageLeading

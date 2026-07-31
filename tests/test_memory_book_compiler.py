@@ -31,6 +31,14 @@ from rag_ime.rime_rank_export import record_rime_rank_feedback
 from rag_ime.text_utils import now_ms
 
 
+
+class FakeManagedMemoryExecutor:
+    provider = "deepseek"
+    model_id = "deepseek-v4-flash"
+
+    def close(self) -> None:
+        return None
+
 class FakeMemoryBookOrganizer:
     def __init__(self, config) -> None:
         self.config = config
@@ -38,6 +46,9 @@ class FakeMemoryBookOrganizer:
     @property
     def provider_name(self) -> str:
         return "deepseek"
+
+    def close(self) -> None:
+        return None
 
     def compile_memory_curation(
         self,
@@ -116,26 +127,40 @@ class MemoryBookCompilerTests(unittest.TestCase):
         self.assertEqual(len(collapsed["sourceEventIds"]), 300)
 
     def test_memory_book_preview_is_dry_run(self) -> None:
-        original = cli_module.DeepSeekMemoryOrganizer
-        cli_module.DeepSeekMemoryOrganizer = FakeMemoryBookOrganizer
+        builder_calls: list[
+            tuple[tuple[object, ...], dict[str, object]]
+        ] = []
+
+        def build_executor(
+            *args: object,
+            **kwargs: object,
+        ) -> FakeManagedMemoryExecutor:
+            builder_calls.append((args, kwargs))
+            return FakeManagedMemoryExecutor()
+
+        original_builder = cli_module.build_managed_pi_memory_model_executor
+        original_organizer = cli_module.ManagedPiMemoryOrganizer
+        cli_module.build_managed_pi_memory_model_executor = build_executor
+        cli_module.ManagedPiMemoryOrganizer = FakeMemoryBookOrganizer
         try:
-            env_path = Path(self.tmp.name) / "deepseek.env"
-            env_path.write_text("DEEPSEEK_API_KEY=fake\nRAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash\n", encoding="utf-8")
             output = Path(self.tmp.name) / "memory-book-preview.json"
 
             code, payload = self._run_cli_json(
                 "memory-book-preview",
                 "--project",
                 "wisdom-weasel-rag-ime",
-                "--model-env-path",
-                str(env_path),
                 "--output",
                 str(output),
             )
         finally:
-            cli_module.DeepSeekMemoryOrganizer = original
+            cli_module.build_managed_pi_memory_model_executor = original_builder
+            cli_module.ManagedPiMemoryOrganizer = original_organizer
 
         self.assertEqual(code, 0)
+        self.assertEqual(
+            builder_calls,
+            [((self.db_path, "gpt/gpt-5.6-luna", "max"), {})],
+        )
         self.assertTrue(payload["dryRun"])
         self.assertTrue(payload["validation"]["ok"])
         self.assertTrue(output.exists())
@@ -166,18 +191,20 @@ class MemoryBookCompilerTests(unittest.TestCase):
                     policy=policy,
                 )
 
-        original = cli_module.DeepSeekMemoryOrganizer
-        cli_module.DeepSeekMemoryOrganizer = CountingOrganizer
+        original_builder = cli_module.build_managed_pi_memory_model_executor
+        original_organizer = cli_module.ManagedPiMemoryOrganizer
+        cli_module.build_managed_pi_memory_model_executor = (
+            lambda *args, **kwargs: FakeManagedMemoryExecutor()
+        )
+        cli_module.ManagedPiMemoryOrganizer = CountingOrganizer
         try:
-            env_path = Path(self.tmp.name) / "deepseek.env"
-            env_path.write_text("DEEPSEEK_API_KEY=fake\nRAG_IME_DEEPSEEK_MODEL=deepseek-v4-flash\n", encoding="utf-8")
             output = Path(self.tmp.name) / "memory-book-review.json"
             arguments = (
                 "memory-book-preview",
                 "--project",
                 "wisdom-weasel-rag-ime",
-                "--model-env-path",
-                str(env_path),
+                "--model",
+                "deepseek/deepseek-v4-flash",
                 "--output",
                 str(output),
                 "--save-draft",
@@ -185,7 +212,8 @@ class MemoryBookCompilerTests(unittest.TestCase):
             first_code, first = self._run_cli_json(*arguments)
             second_code, second = self._run_cli_json(*arguments)
         finally:
-            cli_module.DeepSeekMemoryOrganizer = original
+            cli_module.build_managed_pi_memory_model_executor = original_builder
+            cli_module.ManagedPiMemoryOrganizer = original_organizer
 
         self.assertEqual((first_code, second_code), (0, 0))
         self.assertTrue(first["storedDraft"])

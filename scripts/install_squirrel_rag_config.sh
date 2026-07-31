@@ -20,6 +20,13 @@ SQUIRREL_APP="${RAG_IME_SQUIRREL_APP:-$HOME/Library/Input Methods/Squirrel.app}"
 DEPLOY="${RAG_IME_SQUIRREL_DEPLOY:-0}"
 DEPLOY_WAIT_SECONDS="${RAG_IME_SQUIRREL_DEPLOY_WAIT_SECONDS:-20}"
 DRY_RUN="${RAG_IME_SQUIRREL_CONFIG_DRY_RUN:-0}"
+if [[ -n "${RAG_IME_DB_PATH:-}" ]]; then
+  SETTINGS_DB_PATH="$RAG_IME_DB_PATH"
+elif [[ -z "${RAG_IME_SQUIRREL_CONFIG_SNIPPET+x}" ]]; then
+  SETTINGS_DB_PATH="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}/rag-ime.sqlite"
+else
+  SETTINGS_DB_PATH=""
+fi
 
 if [[ ! -f "$SNIPPET_PATH" ]]; then
   echo "RAG-IME Squirrel config snippet not found: $SNIPPET_PATH" >&2
@@ -38,11 +45,14 @@ DEFAULT_CONFIG_PATH="$DEFAULT_CONFIG_PATH" \
 DEFAULT_PRIMARY_SCHEMA="$DEFAULT_PRIMARY_SCHEMA" \
 DEFAULT_FALLBACK_SCHEMAS="$DEFAULT_FALLBACK_SCHEMAS" \
 DEFAULT_PAGE_SIZE="$DEFAULT_PAGE_SIZE" \
+SETTINGS_DB_PATH="$SETTINGS_DB_PATH" \
 DRY_RUN="$DRY_RUN" \
 python3 - <<'PY'
 from __future__ import annotations
 
+import json
 import os
+import sqlite3
 from pathlib import Path
 
 start = "# >>> RAG-IME managed block"
@@ -89,6 +99,35 @@ required = ("enabled", "sidecar_url", "repo_root", "db_path", "project")
 missing = [key for key in required if key not in values]
 if missing:
     raise SystemExit(f"config snippet is missing required rag_ime keys: {', '.join(missing)}")
+
+settings_db_path = Path(os.environ["SETTINGS_DB_PATH"]).expanduser() if os.environ.get("SETTINGS_DB_PATH") else None
+if settings_db_path is not None and settings_db_path.is_file():
+    try:
+        with sqlite3.connect(f"file:{settings_db_path}?mode=ro", uri=True) as connection:
+            rows = connection.execute(
+                "SELECT key, value_json FROM management_settings WHERE key IN ('display', 'interaction')"
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" not in str(exc).lower():
+            raise SystemExit(f"unable to read input settings database: {exc}") from exc
+        rows = []
+    sections: dict[str, object] = {}
+    for key, value_json in rows:
+        try:
+            payload = json.loads(value_json)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"invalid persisted input setting section: {key}") from exc
+        if isinstance(payload, dict):
+            sections[str(key)] = payload
+    display = sections.get("display") if isinstance(sections.get("display"), dict) else {}
+    interaction = sections.get("interaction") if isinstance(sections.get("interaction"), dict) else {}
+    post_commit = interaction.get("postCommit") if isinstance(interaction.get("postCommit"), dict) else {}
+    max_side_candidates = display.get("maxPostCommitCandidates")
+    idle_trigger_ms = post_commit.get("idleTriggerMs")
+    if isinstance(max_side_candidates, int) and not isinstance(max_side_candidates, bool) and 1 <= max_side_candidates <= 8:
+        values["max_side_candidates"] = str(max_side_candidates)
+    if isinstance(idle_trigger_ms, int) and not isinstance(idle_trigger_ms, bool) and 40 <= idle_trigger_ms <= 1000:
+        values["post_commit_idle_ms"] = str(idle_trigger_ms)
 
 def render_value(value: str) -> str:
     lowered = value.lower()

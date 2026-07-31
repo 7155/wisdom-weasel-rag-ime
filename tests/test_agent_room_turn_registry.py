@@ -125,6 +125,105 @@ class PriorityReservationTests(unittest.TestCase):
         self.assertTrue(self.registry.session_turn_active("reg"))
 
 
+class RuntimeTurnBindingTests(unittest.TestCase):
+    @staticmethod
+    def _event(turn_id: str, event_type: str) -> AgentEventEnvelope:
+        return AgentEventEnvelope(
+            event_id=f"event:{turn_id}:{event_type}",
+            session_id="session:target",
+            turn_id=turn_id,
+            sequence=1,
+            created_at_ms=1,
+            event_type=event_type,
+            payload={},
+            resume_token=f"event:{turn_id}:{event_type}",
+        )
+
+    def test_pending_root_binds_only_the_runtime_turn_passed_to_accept(
+        self,
+    ) -> None:
+        registry = RoomTurnRegistry()
+        prior = self._event("runtime-turn:prior", "turn_completed")
+        current = self._event("runtime-turn:current", "text_delta")
+        registry.begin(
+            "session:target",
+            "room-root:current",
+            dispatch_id="dispatch:current",
+        )
+
+        self.assertFalse(registry.allows_room_event(prior))
+        self.assertEqual(registry.registered_turn_for_event(prior), "")
+        self.assertEqual(registry.dispatch_for_event(prior), "")
+        self.assertEqual(
+            registry.pending_turn_by_session.get("session:target"),
+            "room-root:current",
+        )
+        self.assertNotIn(
+            ("session:target", "runtime-turn:prior"),
+            registry.turn_by_session_turn,
+        )
+
+        self.assertEqual(
+            registry.accept(
+                "session:target",
+                "runtime-turn:current",
+                "room-root:current",
+            ),
+            (),
+        )
+
+        self.assertFalse(registry.allows_room_event(prior))
+        self.assertTrue(registry.allows_room_event(current))
+        self.assertEqual(
+            registry.registered_turn_for_event(current),
+            "room-root:current",
+        )
+        self.assertEqual(
+            registry.dispatch_for_event(current),
+            "dispatch:current",
+        )
+
+    def test_accept_replays_current_terminal_buffered_before_runtime_ack(
+        self,
+    ) -> None:
+        registry = RoomTurnRegistry()
+        delta = self._event("runtime-turn:current", "text_delta")
+        terminal = self._event(
+            "runtime-turn:current",
+            "turn_completed",
+        )
+        registry.begin(
+            "session:target",
+            "room-root:current",
+            dispatch_id="dispatch:current",
+        )
+
+        self.assertFalse(registry.allows_room_event(delta))
+        self.assertFalse(registry.allows_room_event(terminal))
+        self.assertTrue(registry.session_turn_active("session:target"))
+
+        buffered = registry.accept(
+            "session:target",
+            "runtime-turn:current",
+            "room-root:current",
+        )
+
+        self.assertEqual(buffered, (delta, terminal))
+        self.assertEqual(registry.pending_events_by_session_turn, {})
+        for event in buffered:
+            self.assertEqual(
+                registry.registered_turn_for_event(event),
+                "room-root:current",
+            )
+            if event.event_type == "turn_completed":
+                registry.finish(
+                    event.session_id,
+                    event.turn_id,
+                    "room-root:current",
+                )
+        self.assertFalse(registry.session_turn_active("session:target"))
+
+
 class TurnTargetSnapshotTests(unittest.TestCase):
     def setUp(self) -> None:
         self.registry = RoomTurnRegistry()

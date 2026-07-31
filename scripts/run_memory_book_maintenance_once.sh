@@ -13,7 +13,6 @@ SINCE_DAYS="${RAG_IME_MEMORY_BOOK_MAINTENANCE_SINCE_DAYS:-7}"
 RECENT_LIMIT="${RAG_IME_MEMORY_BOOK_MAINTENANCE_RECENT_LIMIT:-48}"
 APPLY="${RAG_IME_MEMORY_BOOK_MAINTENANCE_APPLY:-0}"
 LEGACY_MAINTENANCE="${RAG_IME_LEGACY_MEMORY_BOOK_MAINTENANCE:-0}"
-MODEL_ENV_PATH="${RAG_IME_DEEPSEEK_ENV:-${RAG_IME_MODEL_ENV:-}}"
 TRIGGER="${RAG_IME_MEMORY_BOOK_MAINTENANCE_TRIGGER:-manual}"
 
 detect_python() {
@@ -188,9 +187,6 @@ owner_cmd=(
 if [[ "$TRIGGER" == "manual" ]]; then
   owner_cmd+=(--manual)
 fi
-if [[ -n "$MODEL_ENV_PATH" ]]; then
-  owner_cmd+=(--model-env-path "$MODEL_ENV_PATH")
-fi
 set +e
 "${owner_cmd[@]}" >"$OWNER_CURATION_LOG"
 OWNER_CURATION_STATUS=$?
@@ -357,9 +353,6 @@ preview_cmd=(
   --output "$PLAN_PATH"
   --save-draft
 )
-if [[ -n "$MODEL_ENV_PATH" ]]; then
-  preview_cmd+=(--model-env-path "$MODEL_ENV_PATH")
-fi
 
 "${preview_cmd[@]}" >"$PREVIEW_LOG"
 "$PYTHON_EXECUTABLE" -m rag_ime.cli memory-book-validate --run "$PLAN_PATH" >"$VALIDATE_LOG"

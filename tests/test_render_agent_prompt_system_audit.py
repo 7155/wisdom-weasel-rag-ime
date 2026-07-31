@@ -82,7 +82,7 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
             self.records["agent.execution.full_trust"]["content"],
         )
         self.assertIn(
-            "当前工作区内符合策略的动作可以直接完成",
+            "所有原本需要审批的操作都由独立的 Luna Max 模型判定",
             self.records["agent.execution.full_trust.granted"]["content"],
         )
         for prompt_id in (
@@ -324,25 +324,24 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
         self.assertEqual(
             set(packet),
             {
-                "originalRequirements",
-                "requirementDirectory",
-                "currentTask",
-                "acceptance",
+                "authoritativeProjectionRef",
                 "blockers",
-                "handoff",
+                "nextAction",
+                "pendingAcceptance",
                 "skillReceipt",
                 "toolReceipt",
             },
         )
-        self.assertEqual(raw.count('"originalRequirements"'), 1)
+        self.assertEqual(raw.count('"authoritativeProjectionRef"'), 1)
         self.assertEqual(raw.count('"skillReceipt"'), 1)
         self.assertEqual(raw.count('"toolReceipt"'), 1)
         self.assertEqual(
-            [item["alias"] for item in packet["acceptance"]],
-            ["AC-1", "AC-2"],
+            [item["alias"] for item in packet["pendingAcceptance"]],
+            ["AC-2"],
         )
-        self.assertNotIn("criterion-a", raw)
-        self.assertNotIn("criterion-b", raw)
+        self.assertEqual(packet["nextAction"]["acceptanceAlias"], "AC-2")
+        self.assertNotIn("originalRequirements", packet)
+        self.assertNotIn("handoff", packet)
 
     def test_tool_inventory_has_one_public_memory_capture_projection(self) -> None:
         tools = self.audit["tools"]
@@ -356,12 +355,12 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
         }
 
         self.assertEqual(
-            product["ime_memory"]["runtimeProjections"],
+            product["memory"]["runtimeProjections"],
             [{"name": "memory_capture", "operation": "capture"}],
         )
         self.assertEqual(
             tools["modelVisibleMemoryCapture"]["projectionTarget"],
-            {"name": "ime_memory", "operation": "capture"},
+            {"name": "memory", "operation": "capture"},
         )
         self.assertTrue(room["room_state"]["bootstrap"])
         self.assertTrue(room["room_post"]["bootstrap"])
@@ -375,11 +374,11 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
         }
         reference_rows = self.audit["references"]["references"]
 
-        self.assertIn("requirement-alignment", skill_names)
-        self.assertIn("managed-task-execution", skill_names)
+        self.assertIn("alignment-and-decision", skill_names)
+        self.assertIn("implementation-execution", skill_names)
         self.assertIn("quality-gate", skill_names)
-        self.assertIn("grill-me", skill_names)
-        self.assertIn("grill-me-docs", skill_names)
+        self.assertNotIn("grill-me", skill_names)
+        self.assertNotIn("grill-me-docs", skill_names)
         self.assertTrue(all(item["exists"] for item in reference_rows))
 
         comparisons = {
@@ -395,7 +394,7 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
             {
                 "identity-and-rails",
                 "prompt-layering",
-                "requirement-alignment",
+                "alignment-and-decision",
                 "progressive-disclosure",
                 "durable-memory",
                 "review-separation",
@@ -418,12 +417,12 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
             comparisons["progressive-disclosure"]["decision"],
         )
         self.assertIn(
-            "同一决策流程的持久记录模式",
-            comparisons["requirement-alignment"]["decision"],
+            "采用单一 alignment-and-decision",
+            comparisons["alignment-and-decision"]["decision"],
         )
         self.assertIn(
-            "grill-me-docs",
-            comparisons["requirement-alignment"]["localSkillNames"],
+            "alignment-and-decision",
+            comparisons["alignment-and-decision"]["localSkillNames"],
         )
         self.assertIn(
             "每个新 context epoch 只注入一份结构化恢复包",

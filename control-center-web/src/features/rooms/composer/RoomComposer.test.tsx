@@ -1,9 +1,11 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/primitives';
 import { RoomComposer } from './RoomComposer';
+
+afterEach(cleanup);
 
 describe('RoomComposer macOS input methods', () => {
   it('keeps marked text local and does not send the IME commit key', () => {
@@ -30,11 +32,16 @@ describe('RoomComposer macOS input methods', () => {
             }}
             personas={[]}
             draft={draft}
+            attachments={[]}
             sending={false}
             onDraftChange={(value) => {
               onDraftChange(value);
               setDraft(value);
             }}
+            onAttachmentsChange={vi.fn()}
+            onPasteImages={vi.fn()}
+            onPasteFromClipboard={vi.fn()}
+            onPickAttachments={vi.fn()}
             onSend={onSend}
           />
         </TooltipProvider>
@@ -69,5 +76,67 @@ describe('RoomComposer macOS input methods', () => {
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend).toHaveBeenLastCalledWith('对齐');
+  });
+
+  it('imports a clipboard File and invokes native fallback for an empty WebKit paste', () => {
+    const onPasteImages = vi.fn();
+    const onPasteFromClipboard = vi.fn();
+    const image = new File(['png'], 'diagram.png', { type: 'image/png' });
+    render(
+      <TooltipProvider>
+        <RoomComposer
+          room={{ id: 'room-1', status: 'active', participants: [] }}
+          personas={[]}
+          draft=""
+          attachments={[]}
+          sending={false}
+          onDraftChange={vi.fn()}
+          onAttachmentsChange={vi.fn()}
+          onPasteImages={onPasteImages}
+          onPasteFromClipboard={onPasteFromClipboard}
+          onPickAttachments={vi.fn()}
+          onSend={vi.fn()}
+        />
+      </TooltipProvider>,
+    );
+    const composer = screen.getByRole('textbox', { name: '协作消息' });
+    expect(fireEvent.paste(composer, {
+      clipboardData: { files: [image], items: [], getData: () => '' },
+    })).toBe(false);
+    expect(onPasteImages).toHaveBeenCalledWith([image]);
+    expect(fireEvent.paste(composer, {
+      clipboardData: { files: [], items: [], getData: () => '' },
+    })).toBe(false);
+    expect(onPasteFromClipboard).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a removable managed attachment chip', () => {
+    const onAttachmentsChange = vi.fn();
+    render(
+      <TooltipProvider>
+        <RoomComposer
+          room={{ id: 'room-1', status: 'active', participants: [] }}
+          personas={[]}
+          draft=""
+          attachments={[{
+            mediaId: 'media_room_attachment01',
+            roomId: 'room-1',
+            fileName: 'diagram.png',
+            mimeType: 'image/png',
+            byteSize: 128,
+            sha256: 'a'.repeat(64),
+          }]}
+          sending={false}
+          onDraftChange={vi.fn()}
+          onAttachmentsChange={onAttachmentsChange}
+          onPasteImages={vi.fn()}
+          onPasteFromClipboard={vi.fn()}
+          onPickAttachments={vi.fn()}
+          onSend={vi.fn()}
+        />
+      </TooltipProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '移除图片：diagram.png' }));
+    expect(onAttachmentsChange).toHaveBeenCalledWith([]);
   });
 });

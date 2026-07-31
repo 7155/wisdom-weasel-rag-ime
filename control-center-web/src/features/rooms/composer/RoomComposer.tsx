@@ -1,14 +1,17 @@
-import { AtSign, Send } from 'lucide-react';
+import { AtSign, Paperclip, Send, X } from 'lucide-react';
 import {
   startTransition,
+  useCallback,
   useEffect,
   useRef,
   useState,
   type CompositionEvent,
+  type ClipboardEvent,
 } from 'react';
 
 import { IconButton } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import type { RoomAttachmentReceipt } from '@/contracts/room-reducer';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
 import { roomCollaborationRoleLabel } from '../room-copy';
 
@@ -39,19 +42,35 @@ export function RoomComposer({
   room,
   personas,
   draft,
+  attachments,
   sending,
+  inputRef,
   onDraftChange,
   onSend,
+  onAttachmentsChange,
+  onPasteImages,
+  onPasteFromClipboard,
+  onPickAttachments,
 }: {
   room?: ComposerRoom;
   personas: AgentPersonaV1[];
   draft: string;
+  attachments: RoomAttachmentReceipt[];
   sending: boolean;
+  inputRef?: { current: HTMLTextAreaElement | null };
   onDraftChange: (value: string) => void;
+  onAttachmentsChange: (value: RoomAttachmentReceipt[]) => void;
+  onPasteImages: (files: File[]) => void;
+  onPasteFromClipboard: () => void;
+  onPickAttachments: () => void;
   onSend: (value: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composingRef = useRef(false);
+  const setTextareaRef = useCallback((node: HTMLTextAreaElement | null) => {
+    textareaRef.current = node;
+    if (inputRef) inputRef.current = node;
+  }, [inputRef]);
   const [composerDraft, setComposerDraft] = useState(draft);
   const [mention, setMention] = useState<RoomMentionDraft>();
   const [activeIndex, setActiveIndex] = useState(0);
@@ -66,7 +85,7 @@ export function RoomComposer({
     participants,
     composerDraft,
   )[0]?.id ?? '';
-  const canSend = Boolean(roomCanSend && composerDraft.trim() && !sending);
+  const canSend = Boolean(roomCanSend && (composerDraft.trim() || attachments.length) && !sending);
 
   useEffect(() => {
     setComposerDraft(draft);
@@ -131,6 +150,29 @@ export function RoomComposer({
     });
   }
 
+  function paste(event: ClipboardEvent<HTMLTextAreaElement>): void {
+    const files = [...event.clipboardData.files];
+    let hasImageItem = files.some((file) => file.type.toLowerCase().startsWith('image/'));
+    if (!files.length) {
+      for (const item of event.clipboardData.items ?? []) {
+        if (item.kind !== 'file') continue;
+        hasImageItem = hasImageItem || item.type.toLowerCase().startsWith('image/');
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (!files.length && !hasImageItem) {
+      const text = event.clipboardData.getData?.('text/plain') ?? '';
+      if (text) return;
+      event.preventDefault();
+      onPasteFromClipboard();
+      return;
+    }
+    event.preventDefault();
+    if (files.length) onPasteImages(files);
+    else onPasteFromClipboard();
+  }
+
   function submit(): void {
     if (!canSend) return;
     const value = composerDraft;
@@ -172,9 +214,22 @@ export function RoomComposer({
           <kbd>{index === activeIndex ? 'Enter' : `@${participant.displayName}`}</kbd>
         </button>)}
       </div> : null}
+      {attachments.length ? <div className="room-composer__attachments" aria-label="待发送图片">
+        {attachments.map((attachment) => <span key={attachment.mediaId}>
+          <Paperclip size={13} aria-hidden="true" />
+          <span title={attachment.fileName}>{attachment.fileName}</span>
+          <button
+            type="button"
+            aria-label={`移除图片：${attachment.fileName}`}
+            onClick={() => onAttachmentsChange(
+              attachments.filter((item) => item.mediaId !== attachment.mediaId),
+            )}
+          ><X size={12} /></button>
+        </span>)}
+      </div> : null}
       <div className="room-composer">
         <textarea
-          ref={textareaRef}
+          ref={setTextareaRef}
           rows={1}
           maxLength={8_000}
           value={composerDraft}
@@ -183,6 +238,7 @@ export function RoomComposer({
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
+          onPaste={paste}
           onChange={(event) => {
             setComposerDraft(event.target.value);
             if (!composingRef.current) publishDraft(event.target.value);
@@ -240,6 +296,14 @@ export function RoomComposer({
         />
         <div className="room-composer__toolbar">
           <div className="room-composer__controls">
+            <IconButton
+              className="room-composer__attachment"
+              label="添加图片"
+              icon={<Paperclip size={16} />}
+              disabled={!roomCanSend || sending || attachments.length >= 8}
+              onClick={onPickAttachments}
+              tooltip
+            />
             {roomCanSend && participants.length ? <IconButton
               className="room-composer__mention"
               label="点名一位伙伴"

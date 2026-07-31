@@ -17,6 +17,7 @@ import {
   assertControlRequest,
   assertControlSubscription,
   browserCapabilities,
+  type AgentImagePasteOptions,
   type ControlEventObserver,
   type ControlQueryValue,
   type ControlRequest,
@@ -29,6 +30,7 @@ import {
   type KnowledgeAssetReadInput,
   type KnowledgeDocumentSourcePayload,
   type KnowledgeDocumentSourceReadInput,
+  type PickedFile,
 } from './transport';
 
 export interface HttpControlTransportOptions {
@@ -120,6 +122,38 @@ export class HttpControlTransport implements ControlTransport {
   browserSnapshotImageUrl(snapshotId: string): string {
     assertBrowserSnapshotId(snapshotId);
     return this.url('browser.snapshot.image', { snapshotId }, undefined).toString();
+  }
+
+  async pasteImages(options: AgentImagePasteOptions): Promise<PickedFile[]> {
+    const { files, maxFiles, ownerKey, ownerId } = assertHttpImagePasteOptions(options);
+    const receipts: PickedFile[] = [];
+    for (const file of files.slice(0, maxFiles)) {
+      const url = new URL('/api/agent/media/import', this.baseUrl);
+      url.searchParams.set(ownerKey, ownerId);
+      url.searchParams.set('fileName', file.name);
+      const response = await this.fetchImpl(url, {
+        method: 'POST',
+        headers: new Headers({
+          Accept: 'application/json',
+          'Content-Type': file.type.toLowerCase(),
+          'Cache-Control': 'no-store',
+        }),
+        body: file,
+      });
+      const payload = await responsePayload(response);
+      if (!response.ok) {
+        const message = isRecord(payload) && typeof payload.error === 'string'
+          ? payload.error
+          : `Agent media import returned HTTP ${response.status}`;
+        throw new Error(message);
+      }
+      receipts.push(parseAgentMediaImportResponse(payload, {
+        ownerKey,
+        ownerId,
+        file,
+      }));
+    }
+    return receipts;
   }
 
   async importKnowledgeDocuments(
@@ -441,6 +475,101 @@ function isSnapshotRequired(event: unknown): boolean {
     event.eventType === 'snapshot_required'
     || event.reason === 'event_replay_gap'
   );
+}
+
+const HTTP_IMAGE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+const MAX_HTTP_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function assertHttpImagePasteOptions(options: AgentImagePasteOptions): {
+  files: File[];
+  maxFiles: number;
+  ownerKey: 'sessionId' | 'roomId';
+  ownerId: string;
+} {
+  const ownerKey = options.roomId ? 'roomId' : 'sessionId';
+  const ownerId = options.roomId ?? options.sessionId;
+  if (
+    !ownerId
+    || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(ownerId)
+    || (options.roomId !== undefined && options.sessionId !== undefined)
+  ) {
+    throw new TypeError('HTTP image paste requires exactly one bounded sessionId or roomId');
+  }
+  const files = Array.from(options.files ?? []);
+  if (!files.length) {
+    throw new TypeError('Browser image paste requires clipboard File objects; use the native app when WebKit hides clipboard files');
+  }
+  const maxFiles = options.maxFiles ?? files.length;
+  if (!Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 8 || files.length > maxFiles) {
+    throw new TypeError('HTTP image paste requires between 1 and 8 files within maxFiles');
+  }
+  for (const file of files) {
+    if (
+      !(file instanceof File)
+      || !file.name
+      || file.name.length > 512
+      || file.name.includes('\u0000')
+      || !HTTP_IMAGE_MIME_TYPES.has(file.type.toLowerCase())
+      || file.size <= 0
+      || file.size > MAX_HTTP_IMAGE_BYTES
+    ) {
+      throw new TypeError('HTTP image paste received an invalid PNG, JPEG, GIF, or WebP file');
+    }
+  }
+  return { files, maxFiles, ownerKey, ownerId };
+}
+
+function parseAgentMediaImportResponse(
+  payload: unknown,
+  expected: {
+    ownerKey: 'sessionId' | 'roomId';
+    ownerId: string;
+    file: File;
+  },
+): PickedFile {
+  if (
+    !isRecord(payload)
+    || payload.schemaVersion !== 'rag-ime.agent-media-import.v1'
+    || payload.ok !== true
+    || !isRecord(payload.media)
+  ) {
+    throw new TypeError('Agent media import returned an invalid envelope');
+  }
+  const media = payload.media;
+  const oppositeOwnerKey = expected.ownerKey === 'sessionId' ? 'roomId' : 'sessionId';
+  if (
+    media.schemaVersion !== 'rag-ime.agent-media.v1'
+    || typeof media.mediaId !== 'string'
+    || !/^media_[A-Za-z0-9_-]{12,80}$/.test(media.mediaId)
+    || media[expected.ownerKey] !== expected.ownerId
+    || media[oppositeOwnerKey] !== undefined
+    || media.ownerType !== (expected.ownerKey === 'roomId' ? 'room' : 'session')
+    || media.ownerId !== expected.ownerId
+    || media.mimeType !== expected.file.type.toLowerCase()
+    || media.byteSize !== expected.file.size
+    || media.origin !== 'user_attachment'
+    || typeof media.sha256 !== 'string'
+    || !/^[a-f0-9]{64}$/.test(media.sha256)
+    || typeof media.fileName !== 'string'
+    || !media.fileName
+    || media.fileName.length > 160
+    || 'path' in media
+  ) {
+    throw new TypeError('Agent media import returned an invalid managed receipt');
+  }
+  return {
+    id: media.mediaId,
+    name: media.fileName,
+    mimeType: expected.file.type.toLowerCase(),
+    byteSize: expected.file.size,
+    [expected.ownerKey]: expected.ownerId,
+    sha256: media.sha256,
+  };
 }
 
 function assertKnowledgeDocumentImportInput(

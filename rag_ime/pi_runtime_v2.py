@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from .agent_events import AgentEventHub
 from .agent_protocol import AgentEventEnvelope
+from .agent_runtime_failure import classify_runtime_failure
 from .agent_tool_block_bridge import AgentToolBlockBuffer
 from .agent_runtime_driver import AgentRuntimeError, CompactionObserver
 from .agent_sessions import AgentSessionStore
@@ -30,11 +32,13 @@ from .pi_runtime_public import (
     last_assistant_error,
     last_assistant_preview,
     pi_message_id,
+    pi_message_completes_public_turn,
     pi_message_is_public,
     provider_retry_status,
     public_code_tool_activity,
     public_fork_candidate_text,
     public_pi_model,
+    public_reasoning_summaries,
     public_usage,
     redact_mapping,
     ui_confirmation_value,
@@ -62,6 +66,7 @@ _CANCELLATION_SURFACES = (
     "branch_summary", "timer", "continuation", "session",
 )
 _CANCELLATION_SURFACE_STATES = {"requested", "acknowledged", "terminated", "unknown"}
+_MODEL_CATALOG_CACHE_SECONDS = 1_800.0
 
 
 def _room_generation(value: object) -> int:
@@ -69,6 +74,31 @@ def _room_generation(value: object) -> int:
     if generation < 0:
         raise ValueError("Room generation must be non-negative")
     return generation
+
+
+def _room_runtime_idempotency_key(
+    logical_key: str,
+    *,
+    attempt: int,
+) -> str:
+    """Keep logical Dispatch identity while fencing each durable delivery.
+
+    Pi Runtime Host deduplicates ``room.dispatch`` for the life of the Host
+    process by ``rootId + idempotencyKey``. Replaying a failed Provider turn
+    with the logical key would therefore return the first acceptance receipt
+    without starting another turn. The Kernel persists ``attempt`` before
+    delivery, so process-crash replays of one attempt retain the same key while
+    a confirmed final failure advances to a new one.
+    """
+
+    if attempt <= 0:
+        return logical_key
+    suffix = f":runtime-attempt:{attempt}"
+    if len(logical_key) + len(suffix) <= 512:
+        return f"{logical_key}{suffix}"
+    digest = hashlib.sha256(logical_key.encode("utf-8")).hexdigest()[:24]
+    prefix_limit = max(0, 512 - len(suffix) - len(digest) - 1)
+    return f"{logical_key[:prefix_limit]}:{digest}{suffix}"
 
 
 def _room_context_rebind(
@@ -433,10 +463,12 @@ class _HostedSessionState:
     tool_blocks: AgentToolBlockBuffer = field(default_factory=AgentToolBlockBuffer)
     last_agent_messages: list[object] = field(default_factory=list)
     final_error: str = ""
+    had_tool_activity: bool = False
     pending_approvals: dict[str, str] = field(default_factory=dict)
     pending_reviews: dict[str, str] = field(default_factory=dict)
     pending_ui_requests: dict[str, dict[str, object]] = field(default_factory=dict)
     abort_timer: threading.Timer | None = field(default=None, repr=False)
+    settle_timer: threading.Timer | None = field(default=None, repr=False)
     abort_requested_turn_id: str = ""
     retired_turn_ids: set[str] = field(default_factory=set)
 
@@ -483,6 +515,9 @@ class PiRuntimeHostManager:
         )
         self._last_kill_receipt: dict[str, object] | None = None
         self._retired_host_turns: set[tuple[str, str]] = set()
+        self._available_models_cache: tuple[dict[str, object], ...] = ()
+        self._available_models_cached_at = 0.0
+        self._available_models_cache_ready = False
 
     @property
     def runtime_kind(self) -> str:
@@ -734,9 +769,16 @@ class PiRuntimeHostManager:
                 current_room = _live_room_capability(
                     snapshot.get("roomCapability")
                 )
+                active_room = as_mapping(snapshot.get("activeRoom"))
+                stale_active_room = bool(active_room) and (
+                    str(active_room.get("dispatchId") or "")
+                    != str(desired_room.get("dispatchId") or "")
+                )
                 rebind = (
                     _room_context_rebind(current_room, desired_room)
-                    if current_room and desired_room
+                    if current_room
+                    and desired_room
+                    and not stale_active_room
                     else None
                 )
                 current_binding_hash = str(
@@ -748,10 +790,10 @@ class PiRuntimeHostManager:
                 same_mode_binding = (
                     current_room
                     and desired_room
+                    and not stale_active_room
                     and (
                         not bool(rebind and rebind["contextEpochChanged"])
-                        and
-                        (
+                        and (
                             (
                                 bool(desired_binding_hash)
                                 and current_binding_hash
@@ -782,7 +824,12 @@ class PiRuntimeHostManager:
                     raise PiRuntimeError(
                         "managed Room Session must settle before rebinding PromptPlan"
                     )
-                if current_room and desired_room and rebind is not None:
+                if (
+                    current_room
+                    and desired_room
+                    and rebind is not None
+                    and not stale_active_room
+                ):
                     self._sync_idle_snapshot(session_id, snapshot)
                     with self._lock:
                         self._schedule_idle_locked()
@@ -880,8 +927,11 @@ class PiRuntimeHostManager:
                 if evicted:
                     self._open_sessions.discard(evicted)
                     evicted_state = self._states.pop(evicted, None)
-                    if evicted_state is not None and evicted_state.abort_timer is not None:
-                        evicted_state.abort_timer.cancel()
+                    if evicted_state is not None:
+                        if evicted_state.abort_timer is not None:
+                            evicted_state.abort_timer.cancel()
+                        if evicted_state.settle_timer is not None:
+                            evicted_state.settle_timer.cancel()
                 self._status = "ready"
                 self._schedule_idle_locked()
             self.events.publish(session_id, "status_changed", {"status": "ready"})
@@ -906,11 +956,14 @@ class PiRuntimeHostManager:
             state = self._states.get(session_id)
             if state is not None and state.turn_id:
                 return None
-        return self.sessions.set_status(
-            session_id,
-            "idle",
-            message_count=len(snapshot.get("messages") or []),
-        )
+        session = self.sessions.get(session_id)
+        if str(session.get("status") or "") == "idle":
+            return session
+        # Pi's snapshot count includes Provider-loop and Tool protocol entries.
+        # The public message snapshot owner reconciles the durable human
+        # transcript count after projection; writing the Provider count here
+        # caused two competing SQLite updates on every history poll.
+        return self.sessions.set_status(session_id, "idle")
 
     def prompt(
         self,
@@ -969,6 +1022,7 @@ class PiRuntimeHostManager:
             state.tool_blocks.clear()
             state.last_agent_messages = []
             state.final_error = ""
+            state.had_tool_activity = False
             state.abort_requested_turn_id = ""
         try:
             accepted = client.send("session.prompt", params)
@@ -996,40 +1050,190 @@ class PiRuntimeHostManager:
     def messages(self, session_id: str) -> list[dict[str, object]]:
         return list(self.session_snapshot(session_id).get("messages") or [])
 
-    def session_snapshot(self, session_id: str) -> dict[str, object]:
+    def _durable_history_snapshot(
+        self,
+        session_id: str,
+    ) -> dict[str, object] | None:
+        """Read an idle managed Pi transcript without opening Provider context."""
+
         try:
+            session = self.sessions.get(session_id)
+            binding = self.sessions.runtime_binding(session_id) or {}
+            raw_path = str(
+                binding.get("transcriptRef")
+                or session.get("sessionFile")
+                or ""
+            ).strip()
+            if not raw_path:
+                return None
+            candidate = Path(raw_path).expanduser()
+            if candidate.is_symlink():
+                return None
+            transcript = candidate.resolve(strict=True)
+            session_root = self.config.session_dir.expanduser().resolve(
+                strict=False
+            )
+            if not path_is_within(transcript, session_root):
+                return None
+            stat = transcript.stat()
+            if not transcript.is_file() or stat.st_size > 64 * 1024 * 1024:
+                return None
+            entries: list[dict[str, object]] = []
+            with transcript.open("r", encoding="utf-8") as source:
+                for index, line in enumerate(source):
+                    if index >= 200_000 or len(line) > 8 * 1024 * 1024:
+                        return None
+                    try:
+                        value = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(value, Mapping):
+                        entries.append(dict(value))
+            if not entries:
+                return None
+            external_session_id = str(
+                binding.get("externalSessionId")
+                or session.get("piSessionId")
+                or ""
+            )
+            header = entries[0]
+            if (
+                str(header.get("type") or "") == "session"
+                and external_session_id
+                and str(header.get("id") or "") != external_session_id
+            ):
+                return None
+            leaf_id = str(binding.get("branchAnchor") or "")
+            binding_updated_at_ms = as_integer(binding.get("updatedAtMs"))
+            # The binding is refreshed when the Session opens or rewinds. If
+            # Pi appended newer entries after that point, the append-only
+            # transcript's final entry is the current selected leaf and avoids
+            # projecting a stale pre-turn anchor.
+            if stat.st_mtime_ns // 1_000_000 > binding_updated_at_ms:
+                leaf_id = next(
+                    (
+                        str(entry.get("id") or "")
+                        for entry in reversed(entries)
+                        if str(entry.get("id") or "")
+                    ),
+                    leaf_id,
+                )
+            messages, _selected_entries = _pi_durable_branch_messages(
+                entries,
+                leaf_id=leaf_id,
+            )
+            return {
+                "sessionId": session_id,
+                "piSessionId": external_session_id,
+                "sessionFile": transcript.as_posix(),
+                "leafId": leaf_id,
+                "isIdle": True,
+                "activeTurn": None,
+                "messages": messages,
+                "entries": entries,
+                "messageQueue": {
+                    "steering": [],
+                    "followUp": [],
+                    "steeringMode": "",
+                    "followUpMode": "",
+                },
+            }
+        except (KeyError, OSError, ValueError):
+            return None
+
+    def _inspection_snapshot(
+        self,
+        session_id: str,
+        *,
+        durable_fallback: bool = True,
+    ) -> dict[str, object]:
+        """Read one Session without rebuilding context when it is resident.
+
+        Dynamic memory and Room projections are compiled when a Session opens
+        or rebinds. Historical display is instead reconstructed from Pi's
+        managed durable JSONL before taking the Host lifecycle lock, so a slow
+        command/context open cannot hold the conversation rail behind it.
+        """
+
+        with self._lock:
+            active_turn = self._states.get(session_id)
+            turn_id = active_turn.turn_id if active_turn is not None else ""
+            already_open = session_id in self._open_sessions
+        # The append-only transcript is the cheap authority for idle history,
+        # including an already resident Session. Large live snapshots may need
+        # to rebuild Pi's Provider context and can otherwise hold the timeline
+        # blank for several seconds. A resident header-only transcript is the
+        # exception: its just-settled messages may still exist only in the Host,
+        # so an empty durable projection must not erase that live body.
+        if durable_fallback and not turn_id:
+            durable = self._durable_history_snapshot(session_id)
+            if durable is not None and (
+                not already_open or bool(durable.get("messages"))
+            ):
+                return durable
+
+        with self._lifecycle_lock:
+            client = self._host()
+            with self._lock:
+                already_open = session_id in self._open_sessions
+            if already_open:
+                snapshot = dict(
+                    client.send(
+                        "session.snapshot",
+                        {"sessionId": session_id},
+                    )
+                )
+                self._sync_idle_snapshot(session_id, snapshot)
+                with self._lock:
+                    self._schedule_idle_locked()
+                return snapshot
             prepared = self._ensure_for_sealed_room_operation(
                 session_id,
                 operation="message inspection",
                 ordinary_fallback=True,
             )
             prepared_state = prepared.get("state")
-            snapshot = (
-                dict(prepared_state)
-                if isinstance(prepared_state, Mapping)
-                else self._require_client().send(
+            if isinstance(prepared_state, Mapping):
+                return dict(prepared_state)
+            return dict(
+                self._require_client().send(
                     "session.snapshot",
                     {"sessionId": session_id},
                 )
             )
+
+    def session_snapshot(self, session_id: str) -> dict[str, object]:
+        try:
+            snapshot = self._inspection_snapshot(session_id)
         except AgentRuntimeError:
             return {"messages": [], "telemetry": None, "messageQueue": None}
         raw_messages = snapshot.get("messages") if isinstance(snapshot.get("messages"), list) else []
         raw_entries = snapshot.get("entries") if isinstance(snapshot.get("entries"), list) else []
+        durable_messages, durable_entries = _pi_durable_branch_messages(
+            raw_entries,
+            leaf_id=str(snapshot.get("leafId") or ""),
+        )
+        # `snapshot.messages` is Pi's current Provider context.  After
+        # compaction or branch restoration it may omit older human messages,
+        # even though the durable entries still contain the selected branch.
+        # The conversation UI must project that durable branch rather than
+        # turning a populated Session into the welcome screen.
+        projection_messages = durable_messages or raw_messages
+        projection_entries = durable_entries or raw_entries
         tool_history_events = _pi_tool_history_events(
-            raw_messages,
+            projection_messages,
             session_id=session_id,
-            raw_entries=raw_entries,
+            raw_entries=projection_entries,
         )
         result: list[dict[str, object]] = []
         current_turn_id = ""
         last_assistant_fingerprint: tuple[str, str] | None = None
         durable_assistant_counts = _durable_public_assistant_counts(
-            raw_entries,
+            projection_entries,
             session_id=session_id,
         )
         emitted_assistant_counts: dict[str, int] = {}
-        for raw in raw_messages:
+        for raw in projection_messages:
             if not isinstance(raw, Mapping) or not pi_message_is_public(raw):
                 continue
             role = str(raw.get("role") or "assistant").lower()
@@ -1277,8 +1481,11 @@ class PiRuntimeHostManager:
                     if evicted:
                         self._open_sessions.discard(evicted)
                         evicted_state = self._states.pop(evicted, None)
-                        if evicted_state is not None and evicted_state.abort_timer is not None:
-                            evicted_state.abort_timer.cancel()
+                        if evicted_state is not None:
+                            if evicted_state.abort_timer is not None:
+                                evicted_state.abort_timer.cancel()
+                            if evicted_state.settle_timer is not None:
+                                evicted_state.settle_timer.cancel()
                     self._status = "ready"
                     self._schedule_idle_locked()
                 self.sessions.set_status(source_session_id, "idle")
@@ -1311,8 +1518,11 @@ class PiRuntimeHostManager:
                     with self._lock:
                         self._open_sessions.discard(target_session_id)
                         target_state = self._states.pop(target_session_id, None)
-                        if target_state is not None and target_state.abort_timer is not None:
-                            target_state.abort_timer.cancel()
+                        if target_state is not None:
+                            if target_state.abort_timer is not None:
+                                target_state.abort_timer.cancel()
+                            if target_state.settle_timer is not None:
+                                target_state.settle_timer.cancel()
                 if (
                     branch_transcript is not None
                     and branch_cleanup_safe
@@ -1376,7 +1586,10 @@ class PiRuntimeHostManager:
         return candidates
 
     def command_catalog(self, session_id: str) -> list[dict[str, object]]:
-        self.ensure(session_id)
+        # Catalog inspection must not rebuild generic RAG/memory context for an
+        # already resident Session. That projection is needed when opening or
+        # rebinding a Provider turn, not when listing slash commands.
+        self._inspection_snapshot(session_id, durable_fallback=False)
         response = self._require_client().send("session.commands", {"sessionId": session_id})
         raw_commands = response.get("commands")
         if not isinstance(raw_commands, list):
@@ -1407,31 +1620,85 @@ class PiRuntimeHostManager:
         return commands
 
     def model_catalog(self, session_id: str) -> dict[str, object]:
-        self.ensure(session_id)
-        client = self._require_client()
-        snapshot = client.send("session.snapshot", {"sessionId": session_id})
-        selected = public_pi_model(as_mapping(snapshot.get("model")))
+        # Model selection and thinking level are persisted after every Pi-owned
+        # change. Reading that desired Session state avoids opening a large
+        # transcript merely to render the picker; Pi still owns and supplies
+        # the live capability catalog below.
+        session = self.sessions.get(session_id)
         models = self.available_models()
+        provider, model_id = self.config.resolved_model_reference(session)
+        selected = next(
+            (
+                dict(model)
+                for model in models
+                if model.get("provider") == provider
+                and model.get("id") == model_id
+            ),
+            None,
+        )
         return {
-            "selected": selected or None,
+            "selected": selected,
             "models": models,
-            "thinkingLevel": effective_thinking_level(snapshot.get("thinkingLevel"), selected),
+            "thinkingLevel": effective_thinking_level(
+                session.get("thinkingLevel"),
+                selected or {},
+            ),
         }
 
     def available_models(self) -> list[dict[str, object]]:
-        catalog = self._host().send(
-            "models.list",
-            timeout=max(30.0, self.config.command_timeout_seconds),
-        )
-        models = [
-            model
-            for value in catalog.get("models") or []
-            if isinstance(value, Mapping)
-            for model in [public_pi_model(value)]
-            if model
-        ]
-        models.sort(key=lambda item: (str(item["provider"]).lower(), str(item["name"]).lower()))
-        return models
+        # Opening the Agent page requests roles and the selected Session model
+        # concurrently. Pi's catalog refresh may perform Provider discovery, so
+        # coalesce those reads and keep one short-lived Pi-confirmed snapshot.
+        # This cache never selects a model or fabricates capabilities.
+        with self._lifecycle_lock:
+            now = time.monotonic()
+            with self._lock:
+                if (
+                    self._available_models_cache_ready
+                    and now - self._available_models_cached_at
+                    < _MODEL_CATALOG_CACHE_SECONDS
+                ):
+                    return [
+                        dict(model)
+                        for model in self._available_models_cache
+                    ]
+            try:
+                catalog = self._host_locked().send(
+                    "models.list",
+                    timeout=max(30.0, self.config.command_timeout_seconds),
+                )
+            except Exception:
+                # A previously Pi-confirmed catalog is safer and more useful
+                # than turning a transient Provider-discovery failure into an
+                # empty picker. It never changes the selected Session model;
+                # a process with no confirmed cache still fails explicitly.
+                with self._lock:
+                    if self._available_models_cache_ready:
+                        return [
+                            dict(model)
+                            for model in self._available_models_cache
+                        ]
+                raise
+            models = [
+                model
+                for value in catalog.get("models") or []
+                if isinstance(value, Mapping)
+                for model in [public_pi_model(value)]
+                if model
+            ]
+            models.sort(
+                key=lambda item: (
+                    str(item["provider"]).lower(),
+                    str(item["name"]).lower(),
+                )
+            )
+            with self._lock:
+                self._available_models_cache = tuple(
+                    dict(model) for model in models
+                )
+                self._available_models_cached_at = time.monotonic()
+                self._available_models_cache_ready = True
+            return [dict(model) for model in models]
 
     def complete_once(
         self,
@@ -1692,6 +1959,7 @@ class PiRuntimeHostManager:
         payload: Mapping[str, object],
         *,
         message: str,
+        images: list[Mapping[str, str]] | None = None,
         lease_token: str,
     ) -> dict[str, object]:
         """Deliver one Kernel-leased Dispatch through Pi's typed Room RPC."""
@@ -1708,6 +1976,14 @@ class PiRuntimeHostManager:
         capability_epoch = as_integer(payload.get("capabilityEpoch"))
         if capability_epoch < 0:
             raise ValueError("Room dispatch capabilityEpoch must be non-negative")
+        dispatch_attempt_value = payload.get("attempt")
+        if (
+            isinstance(dispatch_attempt_value, bool)
+            or not isinstance(dispatch_attempt_value, int)
+            or dispatch_attempt_value < 0
+        ):
+            raise ValueError("Room dispatch attempt must be a non-negative integer")
+        dispatch_attempt = dispatch_attempt_value
         opened = self._ensure_room_dispatch(session_id)
         client = self._require_client()
         session = dict(self.sessions.get(session_id))
@@ -1727,10 +2003,16 @@ class PiRuntimeHostManager:
             "dispatchId": dispatch_id,
             "generation": generation,
             "capabilityEpoch": capability_epoch,
-            "idempotencyKey": idempotency_key,
+            "dispatchAttempt": dispatch_attempt,
+            "idempotencyKey": _room_runtime_idempotency_key(
+                idempotency_key,
+                attempt=dispatch_attempt,
+            ),
             "leaseToken": lease_token,
             "message": message,
         }
+        if images:
+            dispatch_params["images"] = [dict(image) for image in images]
         session_context = str(
             session.get("sessionContext") or ""
         ).strip()
@@ -1781,12 +2063,14 @@ class PiRuntimeHostManager:
             or result.get("dispatchId") != dispatch_id
             or int(result.get("generation", -1)) != generation
             or int(result.get("capabilityEpoch", -1)) != capability_epoch
+            or not str(result.get("turnId") or "").strip()
             or result.get("status") != "accepted"
         ):
             raise PiRuntimeError("Pi Runtime Host returned an invalid Room dispatch receipt")
         if "roomSkillLoad" not in result and isinstance(opened.get("roomSkillLoad"), Mapping):
             result["roomSkillLoad"] = dict(opened["roomSkillLoad"])
         return dict(result)
+
 
     def cancel_room(
         self,
@@ -1861,11 +2145,15 @@ class PiRuntimeHostManager:
         return dict(result)
 
     def compact(self, session_id: str, instructions: str = "") -> dict[str, object]:
-        self._ensure_for_sealed_room_operation(session_id, operation="compaction")
+        self._ensure_for_sealed_room_operation(
+            session_id,
+            operation="compaction",
+            ordinary_fallback=True,
+        )
         result = self._require_client().send(
             "session.compact",
             {"sessionId": session_id, "instructions": str(instructions).strip()[:2000]},
-            timeout=max(60.0, self.config.command_timeout_seconds),
+            timeout=max(300.0, self.config.command_timeout_seconds),
         )
         checkpoint = self._observe_compaction(session_id, result, "manual")
         if checkpoint:
@@ -1919,9 +2207,28 @@ class PiRuntimeHostManager:
                     "settled managed Room Session is no longer resident; "
                     f"its sealed {operation} context cannot be reopened as a live capability"
                 )
-            snapshot = dict(
-                client.send("session.snapshot", {"sessionId": session_id})
+            use_control_state = bool(
+                self._host_capabilities.get("sessionControlState")
             )
+            snapshot = dict(
+                client.send(
+                    (
+                        "session.control_state"
+                        if use_control_state
+                        else "session.snapshot"
+                    ),
+                    {"sessionId": session_id},
+                )
+            )
+            if use_control_state and (
+                snapshot.get("schemaVersion")
+                != "rag-ime.pi-session-control-state.v1"
+                or snapshot.get("sessionId") != session_id
+                or not isinstance(snapshot.get("isIdle"), bool)
+            ):
+                raise PiRuntimeError(
+                    "Pi Runtime Host returned an invalid Session control state"
+                )
             current_room = as_mapping(snapshot.get("roomCapability"))
             same_manifest = (
                 current_room.get("manifestId") == desired_room.get("manifestId")
@@ -1938,6 +2245,8 @@ class PiRuntimeHostManager:
                     "ordinaryAfterRoom": True,
                 }
             if not same_manifest:
+                if ordinary_fallback:
+                    return self.ensure(session_id)
                 raise PiRuntimeError(
                     f"settled managed Room Session {operation} fence changed"
                 )
@@ -1960,6 +2269,37 @@ class PiRuntimeHostManager:
     def has_pending_review(self, session_id: str, run_id: str) -> bool:
         with self._lock:
             return run_id in self._states.get(session_id, _HostedSessionState()).pending_reviews
+
+    def pending_ui_requests(self, session_id: str) -> list[dict[str, object]]:
+        with self._lock:
+            state = self._states.get(session_id)
+            if state is None:
+                return []
+            return [
+                {
+                    **{
+                        key: value
+                        for key, value in request.items()
+                        if not key.startswith("_")
+                    },
+                    "turnId": str(request.get("_turnId") or state.turn_id),
+                    "createdAtMs": int(request.get("_createdAtMs") or 0),
+                }
+                for request in state.pending_ui_requests.values()
+            ]
+
+    def _expire_ui_request(self, session_id: str, request_id: str) -> None:
+        try:
+            self.resolve_ui_request(
+                session_id,
+                request_id,
+                response={
+                    "cancelled": True,
+                    "resolutionSource": "timeout",
+                },
+            )
+        except (PiRuntimeError, ValueError):
+            return
 
     def resolve_review(self, session_id: str, run_id: str, *, reviewed: bool) -> None:
         with self._lock:
@@ -2043,12 +2383,34 @@ class PiRuntimeHostManager:
                 else ""
             )
             if request is None and review_run_id:
-                request = {"requestId": normalized_request_id, "method": "confirm"}
-        if request is None:
-            raise PiRuntimeError("UI request is no longer pending")
+                request = {
+                    "requestId": normalized_request_id,
+                    "method": "confirm",
+                    "_turnId": state.turn_id if state else "",
+                }
+            if request is None or request.get("_resolving") is True:
+                raise PiRuntimeError("UI request is no longer pending")
+            request["_resolving"] = True
         method = str(request.get("method") or "")
+        cancelled = response.get("cancelled") is True
+        resolution_source = str(response.get("resolutionSource") or "").strip() or (
+            "user_cancelled" if cancelled else "direct_user"
+        )
+        if resolution_source not in {
+            "direct_user",
+            "user_cancelled",
+            "timeout",
+            "runtime_cancelled",
+        }:
+            with self._lock:
+                request.pop("_resolving", None)
+            raise ValueError("unsupported UI response provenance")
+        if resolution_source in {"timeout", "runtime_cancelled"} and not cancelled:
+            with self._lock:
+                request.pop("_resolving", None)
+            raise ValueError("automatic UI resolution must be a cancellation")
         resolved: dict[str, object] = {"cancelled": True}
-        if response.get("cancelled") is not True:
+        if not cancelled:
             value = str(response.get("value") or "")
             if method == "confirm":
                 confirmed = response.get("confirmed")
@@ -2059,25 +2421,49 @@ class PiRuntimeHostManager:
                 if method == "select":
                     options = [str(item) for item in request.get("options") or []]
                     if options and value not in options:
+                        with self._lock:
+                            request.pop("_resolving", None)
                         raise PiRuntimeError("UI response is not one of the offered options")
                 resolved = {"value": value}
-        result = self._require_client().send(
-            "ui.resolve",
-            {
-                "sessionId": session_id,
-                "requestId": normalized_request_id,
-                "response": resolved,
-            },
-        )
+        try:
+            result = self._require_client().send(
+                "ui.resolve",
+                {
+                    "sessionId": session_id,
+                    "requestId": normalized_request_id,
+                    "response": resolved,
+                },
+            )
+        except Exception:
+            with self._lock:
+                request.pop("_resolving", None)
+            raise
+        timeout_timer = request.get("_timeoutTimer")
+        if isinstance(timeout_timer, threading.Timer):
+            timeout_timer.cancel()
+        turn_id = str(request.get("_turnId") or (state.turn_id if state else ""))
         with self._lock:
             if state:
                 state.pending_ui_requests.pop(normalized_request_id, None)
                 if review_run_id:
                     state.pending_reviews.pop(review_run_id, None)
+        self.events.publish(
+            session_id,
+            "user_input_required",
+            {
+                "requestId": normalized_request_id,
+                "method": method,
+                "resolutionState": "cancelled" if cancelled else "resolved",
+                "resolutionSource": resolution_source,
+            },
+            turn_id=turn_id,
+        )
         return {
             "requestId": normalized_request_id,
             "resolved": True,
             "method": method,
+            "resolutionState": "cancelled" if cancelled else "resolved",
+            "resolutionSource": resolution_source,
             "host": dict(result),
         }
 
@@ -2150,6 +2536,8 @@ class PiRuntimeHostManager:
                 for state in self._states.values():
                     if state.abort_timer is not None:
                         state.abort_timer.cancel()
+                    if state.settle_timer is not None:
+                        state.settle_timer.cancel()
                 self._open_sessions.clear()
                 self._active_completion_ids.clear()
                 self._completion_sinks.clear()
@@ -2190,8 +2578,11 @@ class PiRuntimeHostManager:
             with self._lock:
                 self._open_sessions.discard(normalized)
                 retired = self._states.pop(normalized, None)
-                if retired is not None and retired.abort_timer is not None:
-                    retired.abort_timer.cancel()
+                if retired is not None:
+                    if retired.abort_timer is not None:
+                        retired.abort_timer.cancel()
+                    if retired.settle_timer is not None:
+                        retired.settle_timer.cancel()
                 self._schedule_idle_locked()
             try:
                 self.sessions.set_status(normalized, "idle")
@@ -2264,13 +2655,66 @@ class PiRuntimeHostManager:
                     turn_id=turn_id,
                 )
             elif update_type == "thinking_start":
-                self.events.publish(session_id, "status_changed", {"status": "analyzing"}, turn_id=turn_id)
+                raw_message = as_mapping(raw.get("message"))
+                message_id = pi_message_id(raw_message, turn_id)
+                content_index = as_integer(update.get("contentIndex"))
+                reasoning_id = f"reasoning:{message_id}:{content_index}"
+                self.events.publish(
+                    session_id,
+                    "status_changed",
+                    {
+                        "status": "analyzing",
+                        "phase": "reasoning",
+                        "summary": "正在分析问题与下一步",
+                    },
+                    turn_id=turn_id,
+                )
+                self.events.publish(
+                    session_id,
+                    "reasoning_summary",
+                    {
+                        "requestId": reasoning_id,
+                        "sourceMessageId": message_id,
+                        "summary": "正在分析问题与下一步",
+                        "items": [],
+                        "source": "runtime_status",
+                        "state": "running",
+                    },
+                    turn_id=turn_id,
+                )
+            elif update_type == "thinking_end":
+                raw_message = as_mapping(raw.get("message"))
+                summaries = public_reasoning_summaries(raw_message)
+                message_id = pi_message_id(raw_message, turn_id)
+                content_index = as_integer(update.get("contentIndex"))
+                reasoning_id = f"reasoning:{message_id}:{content_index}"
+                self.events.publish(
+                    session_id,
+                    "reasoning_summary",
+                    {
+                        "requestId": reasoning_id,
+                        "sourceMessageId": message_id,
+                        "summary": (
+                            summaries[-1]
+                            if summaries
+                            else "分析阶段已完成"
+                        ),
+                        "items": summaries,
+                        "source": (
+                            "provider_reasoning_summary"
+                            if summaries
+                            else "runtime_status"
+                        ),
+                        "state": "completed",
+                    },
+                    turn_id=turn_id,
+                )
             return
         if event_type == "message_end":
             raw_message = as_mapping(raw.get("message"))
-            if not pi_message_is_public(raw_message) or str(raw_message.get("role") or "").lower() == "user":
-                return
             role = str(raw_message.get("role") or "assistant").lower()
+            if role == "user" or not pi_message_is_public(raw_message):
+                return
             trusted_blocks = raw.get("agentBlocks")
             if role == "assistant":
                 trusted_blocks = state.tool_blocks.blocks_for_message(
@@ -2285,6 +2729,32 @@ class PiRuntimeHostManager:
                 message_id=f"{turn_id}:assistant" if role == "assistant" else None,
                 trusted_blocks=trusted_blocks,
             )
+            if not pi_message_completes_public_turn(raw_message):
+                # Some Providers return a complete public explanation together
+                # with another Tool call but emit no text_delta events. Hiding
+                # that mixed message leaves the UI blank until Stop forces a
+                # snapshot. Project its public text into one replaceable live
+                # bubble; a later mixed/final message updates the same bubble.
+                progress_text = "\n\n".join(
+                    str(as_mapping(block.get("data")).get("text") or "").strip()
+                    for block in message.to_payload().get("blocks") or []
+                    if isinstance(block, Mapping)
+                    and str(block.get("type") or "") == "text"
+                    and str(as_mapping(block.get("data")).get("text") or "").strip()
+                )
+                if progress_text:
+                    self.events.publish(
+                        session_id,
+                        "text_delta",
+                        {
+                            "messageId": f"{turn_id}:assistant",
+                            "blockId": f"{turn_id}:assistant:text",
+                            "delta": progress_text,
+                            "replaceContent": True,
+                        },
+                        turn_id=turn_id,
+                    )
+                return
             self.events.publish(
                 session_id,
                 "message_completed",
@@ -2354,6 +2824,8 @@ class PiRuntimeHostManager:
             )
             return
         if event_type in {"tool_execution_start", "tool_execution_update", "tool_execution_end"}:
+            with self._lock:
+                state.had_tool_activity = True
             mapped_type = {
                 "tool_execution_start": "tool_started",
                 "tool_execution_update": "tool_progress",
@@ -2404,11 +2876,64 @@ class PiRuntimeHostManager:
         if event_type == "extension_ui_request":
             self._handle_ui_request(session_id, turn_id, raw)
             return
+        if event_type == "tool_loop_no_progress":
+            message = redact_runtime_text(
+                str(raw.get("message") or "Tool Loop 未产生新进展，已停止。")
+            )
+            with self._lock:
+                state.final_error = message
+            self.events.publish(
+                session_id,
+                "status_changed",
+                {
+                    "status": "working",
+                    "phase": "tool_loop_no_progress",
+                    "activityState": "failed",
+                    "message": message,
+                    "reason": str(raw.get("reason") or "no_progress"),
+                    "consecutiveAllErrorTurns": as_integer(
+                        raw.get("consecutiveAllErrorTurns")
+                    ),
+                    "repeatedFailureSignature": as_integer(
+                        raw.get("repeatedFailureSignature")
+                    ),
+                    "toolNames": [
+                        redact_runtime_text(str(name))
+                        for name in (
+                            raw.get("toolNames")
+                            if isinstance(raw.get("toolNames"), list)
+                            else []
+                        )
+                        if isinstance(name, str)
+                    ][:16],
+                },
+                turn_id=turn_id,
+            )
+            return
         if event_type == "agent_end":
             messages = raw.get("messages") if isinstance(raw.get("messages"), list) else []
             with self._lock:
                 state.last_agent_messages = list(messages)
-                state.final_error = "" if raw.get("willRetry") is True else last_assistant_error(messages)
+                state.final_error = (
+                    ""
+                    if raw.get("willRetry") is True
+                    else last_assistant_error(messages) or state.final_error
+                )
+                if state.settle_timer is not None:
+                    state.settle_timer.cancel()
+                # agent_end is normally followed by agent_settled. Probe the
+                # lightweight Host control state once after a grace period so
+                # a lost terminal event cannot leave a Tool-complete turn
+                # permanently busy. An actually active retry/follow-up keeps
+                # activeTurn populated and is never retired by this probe.
+                settle_timer = threading.Timer(
+                    1.0,
+                    self._settle_fallback_probe,
+                    args=(session_id, turn_id),
+                )
+                settle_timer.daemon = True
+                state.settle_timer = settle_timer
+                settle_timer.start()
             # agent_end is not terminal: retries, follow-ups, and extension work can continue.
             return
         if event_type == "agent_settled":
@@ -2421,6 +2946,9 @@ class PiRuntimeHostManager:
                 if state.abort_timer is not None:
                     state.abort_timer.cancel()
                     state.abort_timer = None
+                if state.settle_timer is not None:
+                    state.settle_timer.cancel()
+                    state.settle_timer = None
                 if aborted or not final_error:
                     if aborted:
                         if len(state.retired_turn_ids) >= 64:
@@ -2432,6 +2960,7 @@ class PiRuntimeHostManager:
                     state.tool_blocks.clear()
                     state.last_agent_messages = []
                     state.final_error = ""
+                    state.had_tool_activity = False
                     state.abort_requested_turn_id = ""
                     state.pending_approvals.clear()
                     state.pending_reviews.clear()
@@ -2450,16 +2979,24 @@ class PiRuntimeHostManager:
             if final_error:
                 self._turn_failed(session_id, turn_id, PiRuntimeError(final_error))
                 return
+            public_message_count = sum(
+                isinstance(message, Mapping)
+                and pi_message_is_public(message)
+                for message in messages
+            )
             self.sessions.set_status(
                 session_id,
                 "idle",
-                message_count=len(messages),
+                message_count=public_message_count,
                 last_message_preview=last_assistant_preview(messages),
             )
             self.events.publish(
                 session_id,
                 "turn_completed",
-                {"messageCount": len(messages), "terminalEvent": "agent_settled"},
+                {
+                    "messageCount": public_message_count,
+                    "terminalEvent": "agent_settled",
+                },
                 turn_id=turn_id,
             )
             return
@@ -2573,26 +3110,159 @@ class PiRuntimeHostManager:
                     safe["timeout"] = max(0, int(raw["timeout"]))
                 except (TypeError, ValueError):
                     pass
+            timeout_timer: threading.Timer | None = None
+            stored_request = {
+                **safe,
+                "_turnId": turn_id,
+                "_createdAtMs": int(time.time() * 1000),
+            }
+            timeout_ms = int(safe.get("timeout") or 0)
+            if timeout_ms > 0:
+                timeout_timer = threading.Timer(
+                    timeout_ms / 1000,
+                    self._expire_ui_request,
+                    args=(session_id, request_id),
+                )
+                timeout_timer.daemon = True
+                stored_request["_timeoutTimer"] = timeout_timer
             with self._lock:
-                state.pending_ui_requests[request_id] = dict(safe)
+                state.pending_ui_requests[request_id] = stored_request
             self.events.publish(
                 session_id,
                 "user_input_required",
                 safe,
                 turn_id=turn_id,
             )
+            if timeout_timer is not None:
+                timeout_timer.start()
+
+    def _settle_fallback_probe(self, session_id: str, turn_id: str) -> None:
+        """Retire a turn only when the Host confirms it has no active work."""
+
+        with self._lock:
+            state = self._states.get(session_id)
+            if state is None or state.turn_id != turn_id:
+                return
+            state.settle_timer = None
+            client = self._client
+        if client is None or not client.running:
+            return
+        try:
+            control = client.send(
+                "session.control_state",
+                {"sessionId": session_id},
+                timeout=min(
+                    2.0,
+                    max(1.0, self.config.command_timeout_seconds),
+                ),
+            )
+        except Exception:
+            # This is a recovery probe, not the owner of Host lifecycle. A
+            # later Stop or Host-exit path remains authoritative on failure.
+            return
+        if (
+            control.get("isIdle") is not True
+            or "activeTurn" not in control
+            or control.get("activeTurn")
+        ):
+            return
+
+        with self._lock:
+            state = self._states.get(session_id)
+            if state is None or state.turn_id != turn_id:
+                return
+            messages = list(state.last_agent_messages)
+            final_error = state.final_error
+            had_tool_activity = state.had_tool_activity
+            aborted = state.abort_requested_turn_id == turn_id
+            if state.abort_timer is not None:
+                state.abort_timer.cancel()
+                state.abort_timer = None
+            if len(state.retired_turn_ids) >= 64:
+                state.retired_turn_ids.pop()
+            state.retired_turn_ids.add(turn_id)
+            if len(self._retired_host_turns) >= 256:
+                self._retired_host_turns.pop()
+            self._retired_host_turns.add((session_id, turn_id))
+            state.turn_id = ""
+            state.client_message_id = ""
+            state.stream_pi_message_id = ""
+            state.tool_blocks.clear()
+            state.last_agent_messages = []
+            state.final_error = ""
+            state.had_tool_activity = False
+            state.abort_requested_turn_id = ""
+            state.pending_approvals.clear()
+            state.pending_reviews.clear()
+            state.pending_ui_requests.clear()
+            self._status = "ready"
+            self._schedule_idle_locked()
+
+        if final_error and not aborted:
+            message = redact_runtime_text(final_error)
+            classification = classify_runtime_failure(
+                final_error,
+                had_tool_activity=had_tool_activity,
+            )
+            self.sessions.set_status(
+                session_id,
+                "faulted",
+                last_message_preview=message,
+            )
+            self.events.publish(
+                session_id,
+                "turn_failed",
+                {
+                    "error": message,
+                    **classification.event_payload(),
+                    "terminalEvent": "idle_control_reconciliation",
+                },
+                turn_id=turn_id,
+            )
+            return
+        public_message_count = sum(
+            isinstance(message, Mapping) and pi_message_is_public(message)
+            for message in messages
+        )
+        self.sessions.set_status(
+            session_id,
+            "idle",
+            message_count=public_message_count,
+            last_message_preview=last_assistant_preview(messages),
+        )
+        self.events.publish(
+            session_id,
+            "turn_completed",
+            {
+                "status": "aborted" if aborted else "completed",
+                "aborted": aborted,
+                "messageCount": public_message_count,
+                "terminalEvent": "idle_control_reconciliation",
+            },
+            turn_id=turn_id,
+        )
 
     def _turn_failed(self, session_id: str, turn_id: str, error: BaseException) -> None:
         message = redact_runtime_text(str(error))
         with self._lock:
             state = self._states.setdefault(session_id, _HostedSessionState())
+            classification = classify_runtime_failure(
+                error,
+                had_tool_activity=state.had_tool_activity,
+            )
             if state.abort_timer is not None:
                 state.abort_timer.cancel()
                 state.abort_timer = None
+            if state.settle_timer is not None:
+                state.settle_timer.cancel()
+                state.settle_timer = None
             state.turn_id = ""
             state.client_message_id = ""
             state.stream_pi_message_id = ""
             state.tool_blocks.clear()
+            state.last_agent_messages = []
+            state.final_error = ""
+            state.had_tool_activity = False
             state.abort_requested_turn_id = ""
             state.pending_approvals.clear()
             state.pending_reviews.clear()
@@ -2601,7 +3271,15 @@ class PiRuntimeHostManager:
             self._status = "ready" if self._client is not None and self._client.running else "faulted"
             self._schedule_idle_locked()
         self.sessions.set_status(session_id, "faulted", last_message_preview=message)
-        self.events.publish(session_id, "turn_failed", {"error": message}, turn_id=turn_id)
+        self.events.publish(
+            session_id,
+            "turn_failed",
+            {
+                "error": message,
+                **classification.event_payload(),
+            },
+            turn_id=turn_id,
+        )
 
     def _handle_host_exit(self, exit_code: int | None, error: str) -> None:
         with self._lock:
@@ -2612,6 +3290,8 @@ class PiRuntimeHostManager:
             for state in self._states.values():
                 if state.abort_timer is not None:
                     state.abort_timer.cancel()
+                if state.settle_timer is not None:
+                    state.settle_timer.cancel()
             self._client = None
             self._open_sessions.clear()
             self._states.clear()
@@ -2646,6 +3326,9 @@ class PiRuntimeHostManager:
         with self._lock:
             state = self._states.get(session_id)
             if state is not None and state.turn_id == turn_id:
+                if state.settle_timer is not None:
+                    state.settle_timer.cancel()
+                    state.settle_timer = None
                 if len(state.retired_turn_ids) >= 64:
                     state.retired_turn_ids.pop()
                 state.retired_turn_ids.add(turn_id)
@@ -2684,7 +3367,13 @@ class PiRuntimeHostManager:
             session_id,
             "status_changed",
             {
-                "status": "aborting",
+                # The Session turn is already durably terminal above. The
+                # Runtime Host process may still be stopping, but projecting
+                # that process state as Session "aborting" would reopen the
+                # completed turn in the frontend reducer and recreate the
+                # permanent busy/unstoppable UI this fallback exists to fix.
+                "status": "idle",
+                "runtimeStatus": "stopping",
                 "escalated": True,
                 "killReceiptId": receipt["killReceiptId"],
                 "pendingTargets": receipt["pendingTargets"],
@@ -2712,6 +3401,80 @@ class PiRuntimeHostManager:
             timer.cancel()
 
 
+def _pi_durable_branch_messages(
+    raw_entries: list[object],
+    *,
+    leaf_id: str = "",
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Return ordered message values from Pi's selected durable branch.
+
+    Modern Pi snapshots expose the complete append-only entry tree alongside
+    a compacted Provider message window.  Parent links and ``leafId`` select
+    one branch.  Older test/runtime payloads were flat, so they retain their
+    append order instead of being reduced to the last entry.
+    """
+
+    entries = [
+        dict(value)
+        for value in raw_entries
+        if isinstance(value, Mapping)
+    ]
+    if not entries:
+        return [], []
+    by_id = {
+        str(entry.get("id") or ""): entry
+        for entry in entries
+        if str(entry.get("id") or "")
+    }
+    has_parent_links = any(
+        str(entry.get("parentId") or "")
+        for entry in entries
+    )
+    selected_entries = entries
+    selected_leaf = str(leaf_id or "").strip()
+    if has_parent_links:
+        if selected_leaf not in by_id:
+            selected_leaf = next(
+                (
+                    str(entry.get("id") or "")
+                    for entry in reversed(entries)
+                    if str(entry.get("id") or "")
+                ),
+                "",
+            )
+        branch: list[dict[str, object]] = []
+        visited: set[str] = set()
+        cursor = selected_leaf
+        while cursor and cursor not in visited:
+            visited.add(cursor)
+            entry = by_id.get(cursor)
+            if entry is None:
+                break
+            branch.append(entry)
+            cursor = str(entry.get("parentId") or "")
+        if branch:
+            selected_entries = list(reversed(branch))
+
+    messages: list[dict[str, object]] = []
+    message_entries: list[dict[str, object]] = []
+    for entry in selected_entries:
+        if str(entry.get("type") or "") != "message":
+            continue
+        raw_message = entry.get("message")
+        if not isinstance(raw_message, Mapping):
+            continue
+        message = dict(raw_message)
+        if not str(message.get("id") or "") and str(entry.get("id") or ""):
+            message["id"] = str(entry["id"])
+        if as_integer(message.get("timestamp")) <= 0:
+            timestamp = _pi_history_entry_timestamp_ms(entry.get("timestamp"))
+            if timestamp > 0:
+                message["timestamp"] = timestamp
+        messages.append(message)
+        message_entries.append(entry)
+    return messages, message_entries
+
+
 def _pi_tool_history_events(
     raw_messages: list[object],
     *,
@@ -2731,7 +3494,7 @@ def _pi_tool_history_events(
     events: list[tuple[str, str, str, int, dict[str, object]]] = []
     entry_timestamps = _pi_history_entry_timestamps(raw_entries or [])
     current_turn_id = ""
-    tool_order: list[str] = []
+    activity_order: list[str] = []
     tool_names: dict[str, str] = {}
     for raw_value in raw_messages:
         if not isinstance(raw_value, Mapping):
@@ -2751,6 +3514,26 @@ def _pi_tool_history_events(
             else as_integer(raw.get("timestamp"))
         )
         if role == "assistant":
+            summaries = public_reasoning_summaries(raw)
+            if summaries:
+                reasoning_id = f"reasoning:{message_id}:0"
+                events.append(
+                    (
+                        reasoning_id,
+                        "reasoning_summary",
+                        turn_id,
+                        created_at_ms,
+                        {
+                            "requestId": reasoning_id,
+                            "sourceMessageId": message_id,
+                            "summary": summaries[-1],
+                            "items": summaries,
+                            "source": "provider_reasoning_summary",
+                            "state": "completed",
+                        },
+                    )
+                )
+                activity_order.append(reasoning_id)
             content = raw.get("content") if isinstance(raw.get("content"), list) else []
             for item_index, item_value in enumerate(content):
                 item = as_mapping(item_value)
@@ -2780,7 +3563,7 @@ def _pi_tool_history_events(
                     )
                 )
                 if tool_call_id not in tool_names:
-                    tool_order.append(tool_call_id)
+                    activity_order.append(tool_call_id)
                 tool_names[tool_call_id] = tool_name
             continue
         if role not in {"toolresult", "tool_result"}:
@@ -2790,7 +3573,7 @@ def _pi_tool_history_events(
             continue
         tool_name = str(raw.get("toolName") or raw.get("tool_name") or tool_names.get(tool_call_id) or "tool").strip()
         if tool_call_id not in tool_names:
-            tool_order.append(tool_call_id)
+            activity_order.append(tool_call_id)
         tool_names[tool_call_id] = tool_name
         payload = {
             "toolCallId": tool_call_id,
@@ -2801,7 +3584,7 @@ def _pi_tool_history_events(
         }
         events.append((tool_call_id, "tool_finished", turn_id, created_at_ms, payload))
 
-    allowed_ids = set(tool_order[-max(1, maximum_tools) :])
+    allowed_ids = set(activity_order[-max(1, maximum_tools) :])
     selected = [event for event in events if event[0] in allowed_ids]
     result: list[dict[str, object]] = []
     for sequence, (tool_call_id, event_type, turn_id, created_at_ms, payload) in enumerate(selected, start=1):

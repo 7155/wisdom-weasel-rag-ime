@@ -64,7 +64,11 @@ The optional input frontend is a single patched Squirrel/InputMethodKit route.
 Rime continues to own Pinyin parsing, fuzzy Pinyin, paging, native candidates,
 and the user dictionary. 澄 adds a source-aware assistant surface rather than
 replacing Rime's decoder. Ordinary number keys stay with Rime/the host; `Tab`
-and `Option+number` select assistant candidates.
+and `Option+number` select assistant candidates. The Control Center can set
+post-commit enablement, trigger/cooldown limits, candidate count, Tab policy,
+and Option+number policy. Candidate count and trigger delay are projected only
+into the application-owned Rime YAML block before an attended Squirrel reload;
+user dictionaries and user-owned YAML remain outside that write boundary.
 
 ### Local LLM Prediction
 
@@ -76,6 +80,14 @@ loopback OpenAI-compatible server. It emits short continuations without sending
 every keystroke to a remote model. The final prompt prioritizes the live input,
 today's plan, complete recent inputs, and then budgeted RAG evidence; it asks for
 bare continuation instead of an explanation or a copy of retrieved text.
+
+The Control Center input page exposes the governed local-prediction settings:
+registered hot model, local path, runtime profile, prompt mode, token cap,
+sampling values, and post-commit latency budget. Saving records desired state;
+the installed native host must then run the fixed `restart_predictor` action,
+which updates the model registry, reinstalls MLX and Sidecar, and accepts the
+change only after both health payloads agree. A browser build can edit through
+the approved settings contract but cannot execute this local helper.
 
 Current development-machine timing is split into two different measurements:
 
@@ -101,7 +113,7 @@ Each consumer owns a bounded projection instead of receiving one shared text
 dump. Explicit generation prioritizes the current field, up to six planning
 items, two approved Timeline tasks, four recent complete inputs, and six
 governed Atom/Book grounding items. A new Agent Session receives one compact
-bootstrap; later turns rely on Session history and on-demand `ime_memory` calls.
+bootstrap; later turns rely on Session history and on-demand `memory` calls.
 Diagnostics report the number and estimated tokens actually injected for each
 source.
 
@@ -164,7 +176,7 @@ document structure, topics, entities, terms, and evidence-bearing chunks into
 its own SQLite tables, with source navigation and rebuild status, without
 touching the personal-memory relationship graph.
 
-Agent access remains one explicit, read-only `ime_knowledge` tool. The graph is
+Agent access remains one explicit, read-only `knowledge` tool. The graph is
 currently a Knowledge Worker retrieval and control-plane feature, not a second
 agent tool, so graph expansion cannot silently increase the agent's authority.
 
@@ -243,7 +255,7 @@ Atoms, recent cross-application timeline Books, and a small One Ring
 conversation tail.
 One-shot context is reserved before Runtime dispatch and is not reinjected on a
 retry. Later turns use Pi's native Session history; long-term memory is read
-only when the Agent explicitly calls `ime_memory` in `current`, `historical`,
+only when the Agent explicitly calls `memory` in `current`, `historical`,
 or `change` mode.
 
 Chats, applied tool receipts, and accepted Room work are recorded as Evidence,
@@ -531,7 +543,7 @@ prompt:
 
 - the extension keeps compact multi-frame page snapshots in the existing local
   SQLite control plane;
-- `ime_browser` reads snapshots or screenshots on demand and sends write
+- `browser` reads snapshots or screenshots on demand and sends write
   actions through the existing Agent approval flow;
 - the Control Center exposes browser selection, visual and structured page
   views, site permissions, execution traces, pairing, and an isolated managed

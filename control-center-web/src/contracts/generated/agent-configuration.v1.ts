@@ -21,6 +21,9 @@ export interface AgentConfigurationV1 {
       roleVersion: string;
       modelProfile: string;
       toolProfileVersion: string;
+      capabilityDisclosurePreferences: {
+        [k: string]: 'inherit' | 'enabled' | 'disabled';
+      };
       [k: string]: unknown;
     };
     coordination: {

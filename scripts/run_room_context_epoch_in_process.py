@@ -8,11 +8,12 @@ import os
 import plistlib
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Iterator, Mapping
@@ -39,6 +40,8 @@ from room_project_task_canary import (
 from room_three_member_canary import run as run_three_member_canary
 
 from rag_ime.agent_configuration import default_agent_configuration
+from rag_ime import agent_room_runtime_coordinator
+from rag_ime.agent_core_policy import work_policy_prompt
 from rag_ime.agent_service import AgentService
 from rag_ime.agent_workspace import PreparedWorkspaceCommand, WorkspaceHarness
 from rag_ime.debug_server import DebugImeService, DebugServerConfig
@@ -59,6 +62,19 @@ WORKSPACE_SCENARIOS = PROJECT_SCENARIOS | {AGENT_SESSION_SCENARIO}
 BRIDGE_URL = "http://rag-ime-file-bridge.invalid/api/agent/tool/execute"
 DETERMINISTIC_PROVIDER = "rag-ime-deterministic"
 DETERMINISTIC_MODEL = "room-v2-test"
+_PI_BUILTIN_MODEL_PROVIDERS = frozenset({"openai-codex"})
+_OPENAI_CODEX_PROXY_ENV = frozenset(
+    {
+        "ALL_PROXY",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NO_PROXY",
+        "all_proxy",
+        "https_proxy",
+        "http_proxy",
+        "no_proxy",
+    }
+)
 _EXCLUDED_LAUNCH_ENV = {
     "RAG_IME_AGENT_GATEWAY_WEB_DIST",
     "RAG_IME_AGENT_TOOL_URL",
@@ -82,16 +98,100 @@ class _NoopPredictionProvider:
         return []
 
 
-def _launch_environment(path: Path) -> dict[str, str]:
+def _launch_environment_variables(path: Path) -> dict[str, str]:
     payload = plistlib.loads(path.expanduser().read_bytes())
     raw = payload.get("EnvironmentVariables")
     if not isinstance(raw, dict):
         raise RuntimeError("Agent Gateway LaunchAgent has no EnvironmentVariables")
+    return {str(key): str(value) for key, value in raw.items()}
+
+
+def _launch_environment(path: Path) -> dict[str, str]:
     return {
-        str(key): str(value)
-        for key, value in raw.items()
-        if str(key) not in _EXCLUDED_LAUNCH_ENV
+        key: value
+        for key, value in _launch_environment_variables(path).items()
+        if key not in _EXCLUDED_LAUNCH_ENV
     }
+
+
+def _installed_agent_config_dir(launch_agent_plist: Path) -> Path:
+    app_support = _launch_environment_variables(launch_agent_plist).get(
+        "RAG_IME_APP_SUPPORT_DIR", ""
+    )
+    path = Path(app_support).expanduser()
+    if not app_support or not path.is_absolute():
+        raise RuntimeError(
+            "Agent Gateway LaunchAgent has no absolute RAG_IME_APP_SUPPORT_DIR"
+        )
+    return path / "Agent" / "config"
+
+
+def _stage_openai_codex_oauth(
+    source_agent_dir: Path,
+    target_agent_dir: Path,
+) -> Path:
+    """Stage only the installed Codex OAuth credential in private ephemeral state."""
+
+    target = target_agent_dir / "auth.json"
+    if target.resolve(strict=False).is_relative_to(PRODUCT_ROOT.resolve()):
+        raise RuntimeError("OAuth acceptance state must stay outside the product repository")
+
+    source = source_agent_dir / "auth.json"
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(source, flags)
+    except OSError as exc:
+        raise RuntimeError("installed openai-codex OAuth credential is unavailable") from exc
+    with os.fdopen(descriptor, encoding="utf-8") as handle:
+        source_stat = os.fstat(handle.fileno())
+        if (
+            not stat.S_ISREG(source_stat.st_mode)
+            or source_stat.st_uid != os.getuid()
+            or stat.S_IMODE(source_stat.st_mode) & 0o077
+        ):
+            raise RuntimeError(
+                "installed openai-codex OAuth credential must be a private owned file"
+            )
+        try:
+            payload = json.load(handle)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "installed openai-codex OAuth credential is invalid"
+            ) from exc
+
+    credential = payload.get("openai-codex") if isinstance(payload, Mapping) else None
+    if (
+        not isinstance(credential, Mapping)
+        or str(credential.get("type") or "") != "oauth"
+        or not str(credential.get("access") or "")
+        or not str(credential.get("refresh") or "")
+    ):
+        raise RuntimeError("installed openai-codex OAuth credential is incomplete")
+
+    target_agent_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(target_agent_dir, 0o700)
+    encoded = (
+        json.dumps(
+            {"openai-codex": dict(credential)},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    target_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    target_flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        target_descriptor = os.open(target, target_flags, 0o600)
+    except OSError as exc:
+        raise RuntimeError("isolated openai-codex OAuth staging failed") from exc
+    try:
+        with os.fdopen(target_descriptor, "w", encoding="utf-8") as handle:
+            handle.write(encoded)
+    except BaseException:
+        target.unlink(missing_ok=True)
+        raise
+    return target
 
 
 @contextmanager
@@ -166,6 +266,78 @@ def _configure_compaction_for_audit(
         + "\n",
         encoding="utf-8",
     )
+
+
+@contextmanager
+def _room_work_policy_override(
+    policy_file: Path | None,
+    *,
+    variant_label: str,
+) -> Iterator[dict[str, object] | None]:
+    """Replace only Room PromptPlan's work-policy inside this canary process."""
+
+    if policy_file is None:
+        if not variant_label:
+            yield None
+            return
+        current = work_policy_prompt()
+        yield {
+            "variant": variant_label,
+            "policySource": "canonical-current",
+            "policyFile": "",
+            "policyBytes": len(current.encode("utf-8")),
+            "policySha256": hashlib.sha256(
+                current.encode("utf-8")
+            ).hexdigest(),
+            "_replacement": current,
+        }
+        return
+    policy_path = policy_file.expanduser().resolve(strict=True)
+    replacement = policy_path.read_text(encoding="utf-8").strip()
+    if (
+        not replacement.startswith("<work-policy>")
+        or not replacement.endswith("</work-policy>")
+        or "<managed-work>" in replacement
+    ):
+        raise RuntimeError(
+            "Room work-policy override must be one <work-policy> block"
+        )
+    current = work_policy_prompt()
+    original = agent_room_runtime_coordinator.core_agent_policy_prompt
+
+    def compile_with_override(
+        safety_policy_prompt: str,
+        session: Mapping[str, object],
+        *,
+        managed_work: bool | None = None,
+    ) -> str:
+        prompt = original(
+            safety_policy_prompt,
+            session,
+            managed_work=managed_work,
+        )
+        if prompt.count(current) != 1:
+            raise RuntimeError(
+                "Room work-policy override did not match the canonical policy"
+            )
+        return prompt.replace(current, replacement, 1)
+
+    agent_room_runtime_coordinator.core_agent_policy_prompt = (
+        compile_with_override
+    )
+    try:
+        yield {
+            "variant": variant_label or policy_path.stem,
+            "policySource": "isolated-file-override",
+            "policyFile": str(policy_path),
+            "policyBytes": len(replacement.encode("utf-8")),
+            "policySha256": hashlib.sha256(
+                replacement.encode("utf-8")
+            ).hexdigest(),
+            "_replacement": replacement,
+        }
+    finally:
+        agent_room_runtime_coordinator.core_agent_policy_prompt = original
 
 
 def _seed_relevant_memory(
@@ -348,8 +520,8 @@ def _room_tool_surface_evidence(
         "workspace_search",
         "workspace_patch",
         "workspace_shell",
-        "ime_memory",
-        "ime_browser",
+        "memory",
+        "browser",
         "desktop_semantic",
     }
     return {
@@ -387,8 +559,8 @@ def _agent_tool_surface_evidence(
         "workspace_search",
         "workspace_patch",
         "workspace_shell",
-        "ime_memory",
-        "ime_browser",
+        "memory",
+        "browser",
         "desktop_semantic",
     }
     material = "\n".join(sorted(tools)).encode("utf-8")
@@ -507,6 +679,10 @@ def _configured_model_available(
 ) -> bool:
     """Mirror Pi's model validation for built-in and imported providers."""
 
+    if provider in _PI_BUILTIN_MODEL_PROVIDERS:
+        # The managed Pi catalog is authoritative for built-in OAuth providers
+        # and rejects an unknown model before issuing a network request.
+        return bool(model)
     configured = runtime.model_providers.get(provider)
     if not isinstance(configured, Mapping):
         return False
@@ -542,11 +718,15 @@ def _external_network_audit(
     matching = [
         item
         for item in entries
-        if str(item.get("protocol") or "") == "https:"
+        if str(item.get("protocol") or "") in {"https:", "wss:"}
         and str(item.get("host") or "") == expected_host
     ]
     matching_success = [
-        200 <= int(item.get("status") or 0) < 300
+        (
+            int(item.get("status") or 0) == 101
+            if str(item.get("transport") or "") == "websocket"
+            else 200 <= int(item.get("status") or 0) < 300
+        )
         for item in matching
     ]
     first_failed_index = next(
@@ -574,6 +754,7 @@ def _external_network_audit(
                 "host": str(item.get("host") or ""),
                 "pathname": str(item.get("pathname") or ""),
                 "method": str(item.get("method") or ""),
+                "transport": str(item.get("transport") or "fetch"),
                 "status": int(item.get("status") or 0),
                 "durationMs": max(
                     0,
@@ -630,7 +811,7 @@ def _create_deterministic_canary_roles(
     return roles
 
 
-def run(args: argparse.Namespace) -> dict[str, object]:
+def _run(args: argparse.Namespace) -> dict[str, object]:
     product_root = PRODUCT_ROOT
     source_workspace = args.workspace.expanduser().resolve(strict=True)
     payload = args.pi_payload.expanduser().resolve(strict=True)
@@ -642,7 +823,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             raise RuntimeError(f"managed Pi payload is incomplete: {required}")
     pi_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     launch_environment = _launch_environment(args.launch_agent_plist)
-    with _state_directory(args.temp_root, keep=args.keep_state) as state:
+    with (
+        _state_directory(args.temp_root, keep=args.keep_state) as state,
+        ExitStack() as sensitive_cleanup,
+    ):
         project_seed: dict[str, object] = {}
         if args.scenario in WORKSPACE_SCENARIOS:
             workspace = state / "project-workspace"
@@ -700,10 +884,21 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         }
         with _temporary_environment(environment):
             base_runtime = PiRuntimeConfig.from_environment(enabled_default=True)
-            if args.provider_mode == "configured" and not base_runtime.model_configured:
+            override_provider = str(args.model_provider or "").strip()
+            override_model = str(args.model_id or "").strip()
+            if bool(override_provider) != bool(override_model):
+                raise RuntimeError(
+                    "--model-provider and --model-id must be provided together"
+                )
+            explicit_model_override = bool(override_provider and override_model)
+            if (
+                args.provider_mode == "configured"
+                and not base_runtime.model_configured
+                and not explicit_model_override
+            ):
                 raise RuntimeError(base_runtime.model_configuration_error)
-            selected_provider = str(args.model_provider or "").strip() or base_runtime.provider
-            selected_model = str(args.model_id or "").strip() or base_runtime.model
+            selected_provider = override_provider or base_runtime.provider
+            selected_model = override_model or base_runtime.model
             if args.provider_mode == "configured" and not _configured_model_available(
                 base_runtime,
                 provider=selected_provider,
@@ -712,8 +907,31 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 raise RuntimeError(
                     f"configured model is unavailable: {selected_provider}/{selected_model}"
                 )
+            if (
+                args.provider_mode == "configured"
+                and selected_provider == "openai-codex"
+            ):
+                _stage_openai_codex_oauth(
+                    _installed_agent_config_dir(args.launch_agent_plist),
+                    agent_dir,
+                )
+                # OAuth refresh may rewrite auth.json. Remove the entire
+                # isolated config directory even when --keep-state is used.
+                sensitive_cleanup.callback(
+                    shutil.rmtree,
+                    agent_dir,
+                    ignore_errors=True,
+                )
             model_environment = (
-                dict(base_runtime.provider_environment)
+                (
+                    {
+                        key: value
+                        for key, value in base_runtime.provider_environment.items()
+                        if key in _OPENAI_CODEX_PROXY_ENV
+                    }
+                    if selected_provider == "openai-codex"
+                    else dict(base_runtime.provider_environment)
+                )
                 if args.provider_mode == "configured"
                 else {
                     "NODE_ENV": "test",
@@ -924,9 +1142,6 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                             **common_canary_args,
                             workload_file=list(args.workload_file or []),
                             epochs=args.epochs,
-                            require_cache_evidence=(
-                                args.provider_mode == "configured"
-                            ),
                         ),
                         requester=api.request_json,
                     )
@@ -1049,6 +1264,53 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _room_work_policy_prompts(
+    report: Mapping[str, object],
+) -> list[str]:
+    prompts: list[str] = []
+    for epoch in report.get("epochs") or []:
+        if not isinstance(epoch, Mapping):
+            continue
+        before = epoch.get("beforeCompaction")
+        if not isinstance(before, Mapping):
+            continue
+        current = before.get("currentProviderContext")
+        if not isinstance(current, Mapping):
+            continue
+        prompt = str(current.get("systemPrompt") or "")
+        if prompt:
+            prompts.append(prompt)
+    return prompts
+
+
+def run(args: argparse.Namespace) -> dict[str, object]:
+    with _room_work_policy_override(
+        getattr(args, "room_work_policy_file", None),
+        variant_label=str(
+            getattr(args, "prompt_variant_label", "") or ""
+        ).strip(),
+    ) as experiment:
+        report = _run(args)
+    if experiment is None:
+        return report
+    replacement = str(experiment.pop("_replacement"))
+    prompts = _room_work_policy_prompts(report)
+    applied = bool(prompts) and all(
+        prompt.count(replacement) == 1 for prompt in prompts
+    )
+    checks = dict(report.get("checks") or {})
+    checks["roomWorkPolicyOverrideApplied"] = applied
+    return {
+        **report,
+        "checks": checks,
+        "promptExperiment": {
+            **experiment,
+            "providerPromptCount": len(prompts),
+            "appliedExactlyOnceEveryPrompt": applied,
+        },
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -1162,6 +1424,19 @@ def parse_args() -> argparse.Namespace:
             "Use the installed embedding backend, or the deterministic local "
             "hashing backend when Metal is unavailable in a sandbox"
         ),
+    )
+    parser.add_argument(
+        "--room-work-policy-file",
+        type=Path,
+        help=(
+            "Isolated A/B only: replace the Room core <work-policy> block "
+            "without changing production configuration."
+        ),
+    )
+    parser.add_argument(
+        "--prompt-variant-label",
+        default="",
+        help="Human-readable A/B label recorded with the isolated run.",
     )
     return parser.parse_args()
 

@@ -1,0 +1,3 @@
+-- Active Tool policy, configuration, approval, and hash-fenced Room state is
+-- migrated transactionally by the versioned Python hook. Immutable receipts,
+-- manifests, events, transcripts, and external Pi JSONL files remain unchanged.

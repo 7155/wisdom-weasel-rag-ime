@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { ComponentType } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -51,8 +52,41 @@ const routeFixtures: Partial<Record<ControlPathId, MockRouteHandler>> = {
     capabilities: {},
   },
   'agent.tools.list': {
+    schemaVersion: 'rag-ime.capability-catalog.v1',
     ok: true,
-    items: [{ id: 'memory.search', displayName: '记忆检索', description: '搜索本地记忆', domain: 'memory', category: 'memory', riskLevel: 'R0', operations: ['search'], availability: 'online' }],
+    revision: `sha256:${'a'.repeat(64)}`,
+    effectiveAtMs: 1,
+    projectScope: {
+      supported: false,
+      identityKind: 'none',
+      reason: 'stable_project_identity_unavailable',
+    },
+    items: [{
+      id: 'memory.search',
+      canonicalId: 'tool:memory.search',
+      kind: 'tool',
+      displayName: '记忆检索',
+      description: '搜索本地记忆',
+      source: { kind: 'product', label: 'Personal Agent Workbench' },
+      status: 'online',
+      risk: 'R0',
+      requiredPermissions: [],
+      authorization: { state: 'not_applicable', reason: 'session_context_required' },
+      disclosure: {
+        preference: 'inherit',
+        effective: 'enabled',
+        state: 'disclosed',
+        reason: 'inherited_built_in_default',
+      },
+      effectiveScope: 'built_in_default',
+      reasons: ['inherited_built_in_default'],
+      revision: 'tool-spec:1',
+      effectiveAtMs: 1,
+      domain: 'memory',
+      category: 'memory',
+      operations: ['search'],
+      availability: 'online',
+    }],
   },
   'input.source.get': {
     ok: true,
@@ -146,7 +180,7 @@ const routeFixtures: Partial<Record<ControlPathId, MockRouteHandler>> = {
 const pages: readonly [string, ComponentType, string, ControlPathId][] = [
   ['overview', OverviewFeature, '概览', 'overview.get'],
   ['input', InputMethodFeature, '输入法与词库', 'input.source.get'],
-  ['plugins', PluginsFeature, '技能与工具', 'agent.tools.list'],
+  ['plugins', PluginsFeature, '工具、技能与扩展', 'agent.tools.list'],
   ['voice', VoiceFeature, '语音输入', 'configuration.settings'],
   ['planning', PlanningFeature, '任务', 'planning.dashboard'],
   ['memory', MemoryFeature, '我的记忆', 'memory.pages'],
@@ -196,6 +230,20 @@ describe('management features', () => {
     expect(await screen.findByRole('heading', { name: heading, level: 1 })).toBeInTheDocument();
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === expectedPathId)).toBe(true));
     expect(screen.queryByText('top-secret-must-not-render')).not.toBeInTheDocument();
+  });
+
+  it('confirms when the Overview snapshot refresh finishes', async () => {
+    const user = userEvent.setup();
+    const transport = renderFeature(OverviewFeature);
+    await screen.findByRole('heading', { name: '概览', level: 1 });
+    await waitFor(() => expect(
+      transport.requests.filter((call) => call.request.pathId === 'overview.get'),
+    ).toHaveLength(1));
+
+    await user.click(screen.getByRole('button', { name: '刷新' }));
+
+    expect(await screen.findByRole('button', { name: '已刷新' })).toBeInTheDocument();
+    expect(transport.requests.filter((call) => call.request.pathId === 'overview.get')).toHaveLength(2);
   });
 
   it('uses the live runtime revision without exposing internal hashes', async () => {

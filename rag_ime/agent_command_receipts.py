@@ -177,13 +177,9 @@ class AgentCommandReceiptStore:
                     replay_response=dict(response),
                 )
             if state == "failed":
-                message, cause_code = _stored_failure(
-                    str(row["error"] or "")
-                )
-                raise AgentCommandReceiptFailed(
-                    message,
+                raise _failed_receipt(
                     client_message_id=client_message_id,
-                    cause_code=cause_code,
+                    stored_error=str(row["error"] or ""),
                 )
             recovery_state = (
                 "unresolved"
@@ -245,13 +241,9 @@ class AgentCommandReceiptStore:
             if state == "accepted":
                 return _accepted_response(row)
             if state == "failed":
-                message, cause_code = _stored_failure(
-                    str(row["error"] or "")
-                )
-                raise AgentCommandReceiptFailed(
-                    message,
+                raise _failed_receipt(
                     client_message_id=client_message_id,
-                    cause_code=cause_code,
+                    stored_error=str(row["error"] or ""),
                 )
             cursor = conn.execute(
                 """
@@ -512,6 +504,33 @@ class AgentCommandReceiptStore:
                 )
         return None
 
+    def failed_receipt(
+        self,
+        *,
+        command_scope: str,
+        scope_id: str,
+        client_message_id: str,
+    ) -> AgentCommandReceiptFailed:
+        """Project a typed public failure from the durable terminal receipt."""
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT state, error FROM agent_command_receipts
+                WHERE command_scope = ? AND scope_id = ?
+                  AND client_message_id = ?
+                """,
+                (command_scope, scope_id, client_message_id),
+            ).fetchone()
+        if row is None or str(row["state"]) != "failed":
+            raise RuntimeError(
+                "Agent command receipt is not durably failed"
+            )
+        return _failed_receipt(
+            client_message_id=client_message_id,
+            stored_error=str(row["error"] or ""),
+        )
+
     @contextmanager
     def _connect(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path, timeout=10)
@@ -621,6 +640,19 @@ def _stored_failure(value: str) -> tuple[str, str]:
     return (
         message[:240] or "the original Agent command failed",
         cause_code[:80],
+    )
+
+
+def _failed_receipt(
+    *,
+    client_message_id: str,
+    stored_error: str,
+) -> AgentCommandReceiptFailed:
+    _, cause_code = _stored_failure(stored_error)
+    return AgentCommandReceiptFailed(
+        "The Agent command failed before acceptance",
+        client_message_id=client_message_id,
+        cause_code=cause_code,
     )
 
 

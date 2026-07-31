@@ -6,7 +6,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,9 +14,15 @@ from typing import Any
 from .activity_timeline import DailyActivityTimelineStore
 from .agent_role_book import AgentRoleBookStore
 from .db import apply_database_migrations
-from .deepseek_config import load_deepseek_config
-from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
-from .memory_maintenance_settings import DEFAULT_MAINTENANCE_MODEL
+from .memory_maintenance_settings import (
+    DEFAULT_MAINTENANCE_MODEL,
+    DEFAULT_MAINTENANCE_THINKING_LEVEL,
+)
+from .deepseek_memory_organizer import ManagedPiMemoryOrganizer
+from .memory_model_executor import (
+    MemoryModelUnavailable,
+    build_managed_pi_memory_model_executor,
+)
 from .personal_context import (
     DEFAULT_CONSOLIDATION_INTERVAL_MS,
     PersonalContextConsolidator,
@@ -47,7 +53,7 @@ class PersonalContextMaintenanceConfig:
     auto_publish_timelines: bool = False
     batch_limit: int = 500
     model: str = DEFAULT_MAINTENANCE_MODEL
-
+    thinking_level: str = DEFAULT_MAINTENANCE_THINKING_LEVEL
     def normalized(self) -> "PersonalContextMaintenanceConfig":
         project = compact_whitespace(self.project)
         role_id = compact_whitespace(self.role_id)
@@ -68,6 +74,10 @@ class PersonalContextMaintenanceConfig:
             model=(
                 compact_whitespace(self.model)
                 or DEFAULT_MAINTENANCE_MODEL
+            ),
+            thinking_level=(
+                compact_whitespace(self.thinking_level).lower()
+                or DEFAULT_MAINTENANCE_THINKING_LEVEL
             ),
         )
 
@@ -130,7 +140,12 @@ class PersonalContextMaintenanceConfig:
                 "RAG_IME_MEMORY_DREAMING_MODEL",
                 DEFAULT_MAINTENANCE_MODEL,
             ),
+            thinking_level=values.get(
+                "RAG_IME_MEMORY_DREAMING_THINKING_LEVEL",
+                DEFAULT_MAINTENANCE_THINKING_LEVEL,
+            ),
         ).normalized()
+
 
 
 class PersonalContextMaintenanceRunner:
@@ -218,6 +233,7 @@ class PersonalContextMaintenanceRunner:
                 entry["error"] = "role_version_unresolved"
                 targets.append(entry)
                 continue
+            run_error = ""
             try:
                 target_timeline_id = (
                     self._timeline_id_for_target(
@@ -244,20 +260,22 @@ class PersonalContextMaintenanceRunner:
                 entry["resultReason"] = str(result.get("reason") or "")
                 entry["artifacts"] = _artifact_refs(result)
                 if result.get("error"):
-                    entry["error"] = str(result["error"])
+                    run_error = str(result["error"])
             except Exception as exc:
                 entry["runStatus"] = "failed"
-                entry["error"] = _public_error(exc)
-            try:
-                entry.update(
-                    self._latest_run_fields(
-                        project,
-                        role_id,
-                        preserve_run_status=str(entry.get("runStatus") or ""),
-                    )
-                )
-            except Exception as exc:
-                entry["statusRefreshError"] = _public_error(exc)
+                run_error = _public_error(exc)
+            outcome = {
+                key: entry[key]
+                for key in ("runStatus", "runId", "resultReason", "artifacts")
+                if key in entry
+            }
+            refreshed = self._safe_target_status(project, role_id, now_ms=timestamp)
+            entry.update(refreshed)
+            entry.update(outcome)
+            if run_error:
+                entry["error"] = run_error
+            if refreshed.get("probeError"):
+                entry["statusRefreshError"] = str(refreshed["probeError"])
             targets.append(entry)
 
         failed_count = sum(
@@ -723,12 +741,15 @@ class PersonalContextMaintenanceRunner:
             return self._default_role_book_organizer
         self._default_role_book_organizer_resolved = True
         try:
-            config = load_deepseek_config()
-        except (OSError, ValueError):
-            return None
-        config = replace(config, model=self.config.model)
-        if config.api_key:
-            self._default_role_book_organizer = DeepSeekMemoryOrganizer(config)
+            executor = build_managed_pi_memory_model_executor(
+                self.db_path,
+                self.config.model,
+                self.config.thinking_level,
+            )
+        except MemoryModelUnavailable:
+            self._default_role_book_organizer = None
+        else:
+            self._default_role_book_organizer = ManagedPiMemoryOrganizer(executor)
         return self._default_role_book_organizer
 
     @contextmanager

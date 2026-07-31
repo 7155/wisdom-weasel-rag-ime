@@ -22,6 +22,19 @@ export interface RoomDispatchEnvelopeV2 {
   attempt: number;
   capabilityEpoch: number;
   runtimeProfileRevision: string;
+  /**
+   * @maxItems 8
+   */
+  attachmentIds?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string];
   state:
     | 'pending'
     | 'leased'

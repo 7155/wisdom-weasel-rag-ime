@@ -4,6 +4,7 @@ import {
   Check,
   ChevronRight,
   CircleDashed,
+  Code2,
   FileText,
   FolderKanban,
   Gauge,
@@ -15,6 +16,8 @@ import {
   PanelRightClose,
   Radar,
   Search,
+  Sparkles,
+  SquareTerminal,
   TriangleAlert,
   Wrench,
   type LucideIcon,
@@ -28,11 +31,20 @@ import {
 } from '@/components/primitives';
 import type { AgentActivityProjection, AgentProjectionState, AgentTurnStatus } from '@/contracts/agent-reducer';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
+import type {
+  CapabilityCatalog,
+  CapabilityMutationOutcome,
+  CapabilityPreference,
+} from '@/features/plugins/capability-policy';
 import { useAgentLiveStore } from '../state/live-store';
+import type { AgentCommand, ToolManifest } from '../types';
 import { publicToolResultView } from '../timeline/public-tool-result';
 import { ContextRuntimeSections } from './ContextRuntimePanel';
+import { AgentBackgroundJobsView } from './AgentBackgroundJobsView';
 import { AgentWorkflowPanel } from './AgentWorkflowPanel';
 import { ContextXraySections } from './ContextXrayPanel';
+import { CapabilitySessionView } from './CapabilitySessionView';
+import { WorkspaceLspStatusView } from './WorkspaceLspStatusView';
 import { SubagentConsoleDialog } from './SubagentConsole';
 import {
   isUnverifiedReturn,
@@ -51,17 +63,48 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   open: boolean;
   modal?: boolean;
   onClose: () => void;
+  commands: AgentCommand[];
+  tools: ToolManifest[];
+  toolCatalogStatus: 'loading' | 'ready' | 'failed';
+  capabilityCatalog?: CapabilityCatalog;
+  capabilityCatalogError?: string;
+  capabilityPolicyMutation?: CapabilityMutationOutcome;
+  busy: boolean;
+  onCapabilityPreferenceChange: (canonicalId: string, preference: CapabilityPreference) => void;
+  onCapabilityPolicyRetry: () => void;
+  onCapabilityCatalogRetry: () => void;
 }>(function AgentStatusPanel({
   sessionId,
   open,
   modal = false,
   onClose,
+  tools,
+  toolCatalogStatus,
+  capabilityCatalog,
+  capabilityCatalogError,
+  capabilityPolicyMutation,
+  busy,
+  onCapabilityPreferenceChange,
+  onCapabilityPolicyRetry,
+  onCapabilityCatalogRetry,
 }, ref) {
   const transport = useControlTransport();
   const contentReady = useDeferredStatusContent(open);
   const projection = useAgentLiveStore((state) => state.projections[sessionId]);
   const view = useMemo(() => projectStatusPanel(projection), [projection]);
   const panelStatus = statusPanelLabel(projection, view);
+  const backgroundJobs = useMemo(
+    () => (projection?.backgroundJobOrder ?? [])
+      .map((jobId) => projection?.backgroundJobsById[jobId])
+      .filter((job) => job !== undefined),
+    [projection],
+  );
+  const lifecycleCancellationAudits = useMemo(
+    () => (projection?.lifecycleCancellationAuditOrder ?? [])
+      .map((requestId) => projection?.lifecycleCancellationAuditsById?.[requestId])
+      .filter((audit) => audit !== undefined),
+    [projection],
+  );
   const subagents = useQuery({
     queryKey: ['agent', 'status-panel', 'subagents', sessionId],
     queryFn: ({ signal }) => transport.request({
@@ -79,6 +122,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
 
   return (
     <aside
+      id="agent-status-panel"
       ref={ref}
       className="agent-status-panel"
       data-open={open}
@@ -99,7 +143,13 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           fallbackPlan={projection?.plan}
           fallbackGoal={projection?.goal}
           fallbackActGate={projection?.actGate}
+          currentTurnStartedAtMs={view.turn?.createdAtMs}
         />
+        {lifecycleCancellationAudits.length ? (
+          <StatusSection icon={CircleDashed} title="取消与暂停回执" count={lifecycleCancellationAudits.length}>
+            <LifecycleCancellationView audits={lifecycleCancellationAudits} />
+          </StatusSection>
+        ) : null}
         {view.turn ? (
           <div className="agent-status-turn agent-plan-turn-summary" data-state={view.turn.status}>
             <TurnStateIcon status={view.turn.status} />
@@ -111,6 +161,10 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           </StatusSection>
         ) : null}
 
+        <StatusSection icon={SquareTerminal} title="后台任务" count={backgroundJobs.length}>
+          <AgentBackgroundJobsView sessionId={sessionId} jobs={backgroundJobs} />
+        </StatusSection>
+
         <StatusSection icon={MessagesSquare} title="消息队列" count={(projection?.messageQueue.steering.length ?? 0) + (projection?.messageQueue.followUp.length ?? 0)}>
           <MessageQueueView projection={projection} />
         </StatusSection>
@@ -119,6 +173,38 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           <SessionTelemetryView projection={projection} />
         </StatusSection>
         <ContextXraySections sessionId={sessionId} open={open} />
+
+        <StatusSection
+          icon={Sparkles}
+          title="当前对话工具与技能"
+          count={capabilityCatalog?.items.length ?? 0}
+          defaultOpen={false}
+        >
+          <CapabilitySessionView
+            busy={busy}
+            catalog={capabilityCatalog}
+            error={capabilityCatalogError}
+            mutation={capabilityPolicyMutation}
+            status={toolCatalogStatus}
+            onPreferenceChange={onCapabilityPreferenceChange}
+            onRetryCatalog={onCapabilityCatalogRetry}
+            onRetryMutation={onCapabilityPolicyRetry}
+          />
+        </StatusSection>
+
+        <StatusSection
+          icon={Code2}
+          title="代码智能"
+          count={tools.some((tool) => tool.id === 'workspace_lsp') ? 1 : 0}
+          defaultOpen={false}
+        >
+          <WorkspaceLspStatusView
+            capabilityCatalog={capabilityCatalog}
+            catalogStatus={toolCatalogStatus}
+            projection={projection}
+            tools={tools}
+          />
+        </StatusSection>
 
         <StatusSection icon={Wrench} title="关键步骤" count={view.tools.length}>
           {view.tools.length ? (
@@ -148,11 +234,27 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
 
         <StatusSection icon={Bot} title="子智能体" count={runs.length}>
           {subagents.isPending ? <EmptyLine animated>正在读取协作状态</EmptyLine> : null}
-          {subagents.error ? <EmptyLine tone="danger">子智能体状态暂时不可用</EmptyLine> : null}
+          {subagents.error ? (
+            <div className="agent-status-query-error" role="alert">
+              <span>
+                <strong>子智能体状态读取失败</strong>
+                <small>当前列表没有被当作空结果；重新读取只会刷新这段对话的委派状态。</small>
+              </span>
+              <Button
+                size="small"
+                loading={subagents.isFetching}
+                onClick={() => void subagents.refetch()}
+              >
+                重新读取子智能体
+              </Button>
+            </div>
+          ) : null}
           {!subagents.isPending && !subagents.error && runs.length === 0 ? <EmptyLine>当前会话没有委派任务</EmptyLine> : null}
           {runs.length ? (
             <div className="agent-status-subagents">
-              {runs.map((run) => <SubagentRow key={run.id} run={run} sessionId={sessionId} />)}
+              {runs.map((run) => (
+                <SubagentRow key={run.id} run={run} sessionId={sessionId} />
+              ))}
             </div>
           ) : null}
         </StatusSection>
@@ -274,18 +376,107 @@ function formatTokenCount(value: number): string {
   return String(Math.max(0, Math.round(value)));
 }
 
+
+type LifecycleCancellationAudit = AgentProjectionState['lifecycleCancellationAuditsById'][string];
+
+function LifecycleCancellationView({ audits }: { audits: LifecycleCancellationAudit[] }) {
+  return (
+    <ol className="agent-lifecycle-audits" aria-label="取消与暂停收束回执">
+      {audits.map((audit) => (
+        <li key={audit.requestId} data-state={audit.state}>
+          <header>
+            <span>
+              <strong>{audit.scopeKind === 'plan' ? '计划' : '目标'}{audit.action === 'pause' ? '暂停' : '取消'}</strong>
+              <small>版本 {audit.sourceRevision} → {audit.transitionRevision} · {formatLifecycleTime(audit.updatedAtMs)}</small>
+            </span>
+            <i>{lifecycleStateLabel(audit.state)}</i>
+          </header>
+          {audit.reason ? <p>{audit.reason}</p> : null}
+          <dl>
+            {(Object.entries(audit.owners) as Array<[keyof LifecycleCancellationAudit['owners'], LifecycleCancellationAudit['owners'][keyof LifecycleCancellationAudit['owners']]]>).map(([owner, outcome]) => (
+              <div key={owner}>
+                <dt>{lifecycleOwnerLabel(owner)}</dt>
+                <dd data-state={outcome.status}>
+                  <strong>{lifecycleOwnerStatusLabel(outcome.status)}</strong>
+                  <small>{lifecycleReceiptSummary(outcome.receipt)}</small>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function lifecycleStateLabel(state: LifecycleCancellationAudit['state']): string {
+  return {
+    pending: '正在收束',
+    completed: '已完成',
+    partial: '部分完成',
+    unknown: '需要核对',
+  }[state];
+}
+
+function lifecycleOwnerStatusLabel(
+  status: LifecycleCancellationAudit['owners']['runtime']['status'],
+): string {
+  return {
+    pending: '等待回执',
+    succeeded: '已收束',
+    excluded: '不在此次范围',
+    partial: '部分收束',
+    unknown: '状态未知',
+  }[status];
+}
+
+function lifecycleOwnerLabel(owner: keyof LifecycleCancellationAudit['owners']): string {
+  return {
+    runtime: 'Runtime',
+    approval: '审批',
+    job: '后台任务',
+    delegation: '委派',
+  }[owner];
+}
+
+function lifecycleReceiptSummary(receipt: Record<string, unknown>): string {
+  const entries = Object.entries(receipt);
+  if (!entries.length) return '无额外回执';
+  const visible = entries.flatMap(([key, value]) => {
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return [`${key}: ${String(value).replace(/\s+/gu, ' ').slice(0, 80)}`];
+    }
+    if (Array.isArray(value)) return [`${key}: ${value.length} 项`];
+    if (value && typeof value === 'object') return [`${key}: ${Object.keys(value).length} 项`];
+    return [];
+  });
+  return visible.slice(0, 3).join(' · ') || `${entries.length} 项公开回执`;
+}
+
+function formatLifecycleTime(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '时间未记录';
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(value));
+}
+
 function StatusSection({
   icon: Icon,
   title,
   count,
   children,
+  defaultOpen = true,
 }: {
   icon: LucideIcon;
   title: string;
   count: number;
   children: ReactNode;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(defaultOpen);
   const contentId = useId();
   return (
     <section className="agent-status-section" data-open={open}>
@@ -355,7 +546,15 @@ function SubagentRow({ run, sessionId }: { run: AgentSubagentRunV1; sessionId: s
   return (
     <div className="agent-status-subagent" data-state={presentationState}>
       <span className="agent-status-subagent__state"><SubagentStateIcon state={presentationState} /></span>
-      <span><strong>{templateLabel(run.templateId)}</strong><small>{publicText(run.task, '协作任务')}</small></span>
+      <span>
+        <strong>{templateLabel(run.templateId)}</strong>
+        <small>{publicText(run.task, '协作任务')}</small>
+        {run.planItemId ? (
+          <small className="agent-status-subagent__plan">
+            关联计划：{publicText(run.planItemTitle || run.planItemId, '未知计划项')}
+          </small>
+        ) : null}
+      </span>
       <i><span>{subagentStateLabel(run)}</span>{elapsed ? <time>{elapsed}</time> : null}</i>
       {isUnverifiedReturn(run) ? (
         <small className="agent-status-subagent__verification">{UNVERIFIED_SUBAGENT_NOTICE}</small>
@@ -424,21 +623,19 @@ export function projectStatusPanel(projection?: AgentProjectionState): StatusPan
   const turn = [...projection.turnOrder].reverse()
     .map((id) => projection.turnsById[id])
     .find((item) => item && (item.messageIds.length > 0 || item.activityIds.length > 0));
-  const durableTasks: StatusPanelProjection['tasks'] = projection.plan.items.slice(0, 100).map((item) => ({
-    id: `agent-plan:${item.id}`,
-    label: item.title,
-    status: taskStatus(item.status),
-  }));
-  if (!turn) return { tasks: durableTasks, tools: [], files: [], artifacts: [], attachmentCount: 0 };
+  // The durable Session plan has its own governed workflow panel above. Do
+  // not copy it into the current-turn progress projection: an approved plan
+  // from an earlier goal otherwise masquerades as this turn's 0/N checklist.
+  if (!turn) return { tasks: [], tools: [], files: [], artifacts: [], attachmentCount: 0 };
   const messages = turn.messageIds.map((id) => projection.messagesById[id]).filter(Boolean);
-  const tasks: StatusPanelProjection['tasks'] = [...durableTasks];
+  const tasks: StatusPanelProjection['tasks'] = [];
   const files: StatusPanelProjection['files'] = [];
   const artifacts: StatusPanelProjection['artifacts'] = [];
   const attachmentIds = new Set<string>();
   for (const message of messages) {
     message.attachments.forEach((id) => attachmentIds.add(id));
     for (const block of message.blocks) {
-      if (block.type === 'task_plan' && tasks.length === 0) {
+      if (block.type === 'task_plan') {
         const items = Array.isArray(block.data.items) ? block.data.items : Array.isArray(block.data.tasks) ? block.data.tasks : [];
         items.slice(0, 12).forEach((item, index) => {
           const value = record(item);
@@ -509,6 +706,12 @@ function statusPanelLabel(
   projection: AgentProjectionState | undefined,
   view: StatusPanelProjection,
 ): string {
+  if (
+    view.turn
+    && ['queued', 'running', 'waiting', 'failed', 'aborted'].includes(view.turn.status)
+  ) {
+    return `当前回合 · ${turnStatusLabel(view.turn.status)}`;
+  }
   const plan = projection?.plan;
   if (plan?.items.length) {
     if (plan.counts.completed === plan.counts.total) return '计划已完成';

@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from rag_ime.agent_room_public_timeline import RoomPublicTimelineProjector
+from rag_ime.agent_room_public_timeline import (
+    assert_public_room_report_claims,
+    RoomPublicTimelineProjector,
+    public_room_report_content,
+)
 
 
 class _RecordingEventHub:
@@ -57,6 +61,76 @@ class RoomPublicTimelineProjectorTests(unittest.TestCase):
         self.assertNotIn("contentHash", projected)
         self.assertNotIn("contextEntry", projected)
 
+    def test_structured_question_is_preserved_for_live_and_replay_projection(
+        self,
+    ) -> None:
+        question = {
+            "prompt": "采用哪个方案？",
+            "options": [
+                {
+                    "value": "safe",
+                    "label": "稳妥方案",
+                    "recommended": True,
+                },
+                {
+                    "value": "fast",
+                    "label": "快速方案",
+                },
+            ],
+        }
+        post = {
+            "schemaVersion": "wisdom-weasel.room-post.v2",
+            "postId": "post:question",
+            "roomId": self.room_id,
+            "rootId": "root:1",
+            "generation": 0,
+            "taskId": "task:1",
+            "dispatchId": "dispatch:1",
+            "authorActorRef": "participant:1",
+            "kind": "wait",
+            "visibility": "room",
+            "content": "需要用户澄清",
+            "question": question,
+            "idempotencyKey": "post:question",
+            "publicationSource": {
+                "kind": "room_commit",
+                "ref": "commit:question",
+            },
+            "createdAtMs": 2,
+        }
+
+        live = self.projector.publish_post(
+            post,
+            participant_id="participant:1",
+            source_session_id="session:1",
+        )
+
+        self.assertIsNotNone(live)
+        assert live is not None
+        self.assertEqual(live["payload"]["post"]["question"], question)
+        replay_payload = self.events.calls[-1]["payload"]
+        assert isinstance(replay_payload, dict)
+        self.assertEqual(replay_payload["post"]["question"], question)
+
+        legacy_post = {
+            **post,
+            "postId": "post:legacy",
+            "idempotencyKey": "post:legacy",
+            "publicationSource": {
+                "kind": "room_commit",
+                "ref": "commit:legacy",
+            },
+        }
+        legacy_post.pop("question")
+        legacy = self.projector.publish_post(
+            legacy_post,
+            participant_id="participant:1",
+            source_session_id="session:1",
+        )
+        self.assertIsNotNone(legacy)
+        assert legacy is not None
+        self.assertNotIn("question", legacy["payload"]["post"])
+
     def test_post_after_root_terminal_is_not_projected(self) -> None:
         projector = RoomPublicTimelineProjector(  # type: ignore[arg-type]
             self.events,
@@ -88,6 +162,93 @@ class RoomPublicTimelineProjectorTests(unittest.TestCase):
         self.assertIsNone(event)
         self.assertEqual(self.events.calls, [])
 
+    def test_public_report_rejects_internal_protocol_artifacts(self) -> None:
+        self.assertEqual(
+            public_room_report_content(
+                "审查已经完成；主要风险与下一步均已向用户说明。",
+                field_name="publicSummary",
+            ),
+            "审查已经完成；主要风险与下一步均已向用户说明。",
+        )
+        internal_reports = (
+            "检查完成，rootId 为 root:private。",
+            "证据 evidenceRef 来自 proof:settle。",
+            "回执是 4fd950e8-712e-4708-bcb0-ba2c1c211bf4。",
+            "详情位于 /Volumes/private/project/report.json。",
+            f"结果哈希为 {'a' * 64}。",
+            "qualityGateReceipt 已经通过。",
+            "executionReceipt 已返回。",
+            "内部 root_id=root-private。",
+            "内部 evidence_ref=proof-private。",
+            r"详情位于 C:\Users\private\report.json。",
+            "详情位于 ../private/report.json。",
+        )
+        for report in internal_reports:
+            with self.subTest(report=report), self.assertRaisesRegex(
+                ValueError,
+                "must be rewritten for users",
+            ):
+                public_room_report_content(
+                    report,
+                    field_name="publicSummary",
+                )
+
+
+    def test_public_report_rejects_protocol_placeholders(self) -> None:
+        for report in (
+            "public:deliver",
+            "done",
+            "已完成",
+            "等待。",
+        ):
+            with self.subTest(report=report), self.assertRaisesRegex(
+                ValueError,
+                "meaningful user-facing report",
+            ):
+                public_room_report_content(
+                    report,
+                    field_name="publicSummary",
+                )
+
+    def test_non_delivery_report_cannot_overstate_kernel_evidence(self) -> None:
+        cases = (
+            (
+                "handoff",
+                True,
+                "整个任务已经完成并交付。",
+                "whole request is complete",
+            ),
+            (
+                "wait",
+                False,
+                "测试全部通过，只需等待部署窗口。",
+                "authoritative evidence",
+            ),
+            (
+                "blocked",
+                False,
+                "所有验收标准均已满足，但外部服务不可用。",
+                "authoritative evidence",
+            ),
+        )
+        for decision, all_verified, report, message in cases:
+            with self.subTest(decision=decision), self.assertRaisesRegex(
+                ValueError,
+                message,
+            ):
+                assert_public_room_report_claims(
+                    report,
+                    field_name="publicSummary",
+                    decision=decision,
+                    all_criteria_verified=all_verified,
+                )
+
+        assert_public_room_report_claims(
+            "当前阶段检查已经完成；另一位伙伴将独立复核后再给出结论。",
+            field_name="publicSummary",
+            decision="handoff",
+            all_criteria_verified=True,
+        )
 
 if __name__ == "__main__":
     unittest.main()

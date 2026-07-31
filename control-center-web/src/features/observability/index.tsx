@@ -145,7 +145,7 @@ export function ObservabilityFeature() {
         onRetry={() => void feed.refresh()}
       >
         <InlineNotice title="隐私边界" tone="info">
-          运行记录只保存状态、耗时、数量和脱敏后的标识。开启“本机上下文快照”后，上下文检查可从你指定的目录恢复经凭证与隐藏推理脱敏的内容；未开启时只读取当前 Runtime。
+          运行记录只保存状态、耗时、数量和脱敏后的标识。开启“本机上下文快照”后，上下文检查可从你指定的目录恢复经凭证与隐藏推理脱敏的内容；未开启时只读取当前运行中的内容。
         </InlineNotice>
 
         {feed.streamError ? (

@@ -36,14 +36,22 @@
             "roleId",
             "roleVersion",
             "modelProfile",
-            "toolProfileVersion"
+            "toolProfileVersion",
+            "capabilityDisclosurePreferences"
           ],
           "properties": {
             "resumeLastSession": {"type": "boolean"},
             "roleId": {"type": "string", "minLength": 1},
             "roleVersion": {"type": "string", "minLength": 1},
             "modelProfile": {"type": "string", "minLength": 1},
-            "toolProfileVersion": {"type": "string", "minLength": 1}
+            "toolProfileVersion": {"type": "string", "minLength": 1},
+            "capabilityDisclosurePreferences": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "enum": ["inherit", "enabled", "disabled"]
+              }
+            }
           }
         },
         "coordination": {

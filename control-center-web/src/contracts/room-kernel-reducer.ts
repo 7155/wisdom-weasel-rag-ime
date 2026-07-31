@@ -2,8 +2,8 @@ import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.
 import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
 import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
 import type { RoomPostV2 } from './generated/room-post.v2';
-import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
-import type { RoomTaskV2 } from './generated/room-task.v2';
+import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
+import type { RoomTaskV3 } from './generated/room-task.v3';
 import { parseContract } from './validators';
 
 export type SessionState = 'idle' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -38,7 +38,7 @@ export type PrivateSessionProjection = {
   };
 };
 
-export type RootProjection = RoomRootExecutionV2 & {
+export type RootProjection = RoomRootExecutionV3 & {
   /** Computed by the adapter from an authoritative, matching terminal receipt. */
   isFinal: boolean;
   updatedAtMs: number;
@@ -68,7 +68,7 @@ export type RoomKernelProjection = {
   needsSnapshot: boolean;
   gap: { expectedSequence: number; receivedSequence: number } | null;
   rootsById: Record<string, RootProjection>;
-  tasksById: Record<string, RoomTaskV2>;
+  tasksById: Record<string, RoomTaskV3>;
   dispatchesById: Record<string, RoomDispatchEnvelopeV2>;
   postsById: Record<string, RoomPostV2>;
   postOrder: string[];
@@ -84,8 +84,8 @@ export type RoomKernelSnapshot = {
   roomId: string;
   lastSequence: number;
   snapshotHash: string;
-  roots: RoomRootExecutionV2[];
-  tasks: RoomTaskV2[];
+  roots: RoomRootExecutionV3[];
+  tasks: RoomTaskV3[];
   dispatches: RoomDispatchEnvelopeV2[];
   posts: RoomPostV2[];
   sessions: PrivateSessionProjection[];
@@ -199,7 +199,7 @@ function applyCanonicalEvent(state: RoomKernelProjection, event: RoomEventEnvelo
 }
 
 function applyRoot(state: RoomKernelProjection, value: unknown, updatedAtMs: number, eventId: string): void {
-  const root = parseContract('room-root-execution.v2', value);
+  const root = parseContract('room-root-execution.v3', value);
   if (root.roomId !== state.roomId) throw new TypeError('Root belongs to another Room');
   const current = state.rootsById[root.rootId];
   if (current && root.generation < current.generation) {
@@ -219,7 +219,7 @@ function applyRoot(state: RoomKernelProjection, value: unknown, updatedAtMs: num
 }
 
 function applyTask(state: RoomKernelProjection, value: unknown, eventId: string): void {
-  const task = parseContract('room-task.v2', value);
+  const task = parseContract('room-task.v3', value);
   const root = state.rootsById[task.rootId];
   if (!root) throw new TypeError('Task has no projected Root');
   const current = state.tasksById[task.taskId];

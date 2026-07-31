@@ -96,7 +96,7 @@ def main() -> int:
     manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
     if not node.is_file() or not entrypoint.is_file():
         raise SystemExit("staged Runtime Host payload is incomplete")
-    skill_name = "test-driven-implementation"
+    skill_name = "implementation-execution"
     skill_source = payload / "runtime-host" / "skills" / skill_name / "SKILL.md"
     skill_body = _skill_body(skill_source.read_text(encoding="utf-8"))
     skill_hash = hashlib.sha256(skill_body.encode("utf-8")).hexdigest()
@@ -312,6 +312,7 @@ def main() -> int:
             first = request("dispatch-a", "room.dispatch", {
                 "sessionId": "session:staged-e2e", "rootId": "root:staged-e2e",
                 "dispatchId": "dispatch:a", "generation": 1, "capabilityEpoch": 1,
+                "dispatchAttempt": 0,
                 "idempotencyKey": "root:staged-e2e/a", "leaseToken": "lease:a",
                 "message": "Inspect package.json and keep the bounded run active.",
             })
@@ -377,13 +378,14 @@ def main() -> int:
                     "staged Runtime Host did not expose resident coding tools "
                     "while keeping deferred and backend schemas hidden"
                 )
-            if system_prompt.count('<loaded_skill name="test-driven-implementation"') != 1:
+            if system_prompt.count('<loaded_skill name="implementation-execution"') != 1:
                 raise RuntimeError("required Room Skill was not injected exactly once")
             if skill_body not in system_prompt:
                 raise RuntimeError("required Room Skill body did not enter the real system prompt")
             second = request("dispatch-b", "room.dispatch", {
                 "sessionId": "session:staged-e2e", "rootId": "root:staged-e2e",
                 "dispatchId": "dispatch:a", "generation": 1, "capabilityEpoch": 1,
+                "dispatchAttempt": 0,
                 "idempotencyKey": "root:staged-e2e/continuation-b", "leaseToken": "lease:a",
                 "message": "Continue the same bounded run.",
             })

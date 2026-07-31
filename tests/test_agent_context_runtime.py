@@ -104,6 +104,75 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertEqual(item["deliveredTurnId"], "turn-1")
         self.assertNotIn("privateToken", json.dumps(item))
 
+    def test_delegated_terminal_result_uses_deduplicated_result_lane(self) -> None:
+        notification = self.runtime.enqueue(
+            session_id=self.session_id,
+            source_kind="schedule",
+            lane="notification",
+            lifecycle="once",
+            dedupe_key="schedule:one",
+            title="普通提醒",
+        )
+        batch = {"id": "subagent-batch:one"}
+        run = {
+            "id": "subagent-run:one",
+            "batchId": "subagent-batch:one",
+            "childSessionId": "session:child",
+            "templateId": "reviewer",
+            "templateVersion": "1",
+            "task": "核对结果",
+            "expectedOutput": "一份可复核报告",
+            "acceptanceCriteria": ["引用真实产物", "列出未决风险"],
+            "outputSchema": {
+                "type": "object",
+                "required": ["summary"],
+                "properties": {"summary": {"type": "string"}},
+            },
+            "planItemId": "plan-item:one",
+            "planItemTitle": "核对子 Agent 证据",
+            "state": "completed",
+            "result": {
+                "summary": "已取得 artifact://one",
+                "deliveryStatus": "returned",
+                "verificationStatus": "unverified",
+                "authority": "evidence_only",
+            },
+            "error": "",
+            "artifact": {"artifactId": "artifact:one"},
+            "completedAtMs": 42,
+        }
+
+        first = self.runtime.enqueue_delegated_result(
+            parent_session_id=self.session_id,
+            batch=batch,
+            run=run,
+        )
+        repeated = self.runtime.enqueue_delegated_result(
+            parent_session_id=self.session_id,
+            batch=batch,
+            run=run,
+        )
+        materialized = self.runtime.materialize(self.session_id)
+
+        self.assertEqual(first["itemId"], repeated["itemId"])
+        self.assertEqual(
+            materialized["itemIds"],
+            [first["itemId"], notification["itemId"]],
+        )
+        result_item = materialized["items"][0]
+        self.assertEqual(result_item["lane"], "result")
+        self.assertEqual(result_item["payload"]["deliveryStatus"], "returned")
+        self.assertEqual(
+            result_item["payload"]["verificationStatus"],
+            "unverified",
+        )
+        self.assertEqual(result_item["payload"]["authority"], "evidence_only")
+        self.assertEqual(
+            result_item["payload"]["acceptanceCriteria"],
+            ["引用真实产物", "列出未决风险"],
+        )
+        self.assertIn("do not auto-accept", materialized["prompt"])
+
     def test_until_ack_items_reappear_without_duplicate_storage(self) -> None:
         item = self.runtime.enqueue(
             session_id=self.session_id,
@@ -321,6 +390,54 @@ class AgentContextRuntimeTests(unittest.TestCase):
         self.assertIn("#### 代码任务交付偏好", rendered)
         self.assertIn("先读测试，再做最小改动。", rendered)
         self.assertEqual(rendered.count("代码任务交付偏好"), 1)
+
+    def test_compaction_history_cannot_override_current_task_or_plan(self) -> None:
+        rendered = render_context_items(
+            [
+                {
+                    "sourceKind": "memory_bootstrap",
+                    "payload": {
+                        "schemaVersion": "rag-ime.session-memory-recall.v1",
+                        "retrieval": {"temporalIntent": False},
+                        "compactionRecovery": {
+                            "schemaVersion": (
+                                "rag-ime.agent-compaction-recovery.v2"
+                            ),
+                            "summaryPresent": True,
+                            "summarySha256": "d" * 64,
+                            "summaryChars": 321,
+                            "skills": [],
+                            "tools": [],
+                        },
+                        "task": {
+                            "objective": "只执行当前修复",
+                            "acceptanceCriteria": ["CURRENT-AC"],
+                        },
+                        "plan": [
+                            {
+                                "status": "completed",
+                                "title": "CURRENT-PLAN",
+                            }
+                        ],
+                        "items": [],
+                    },
+                }
+            ]
+        )
+
+        self.assertIn(
+            "## 压缩恢复回执（非任务状态）",
+            rendered,
+        )
+        self.assertIn("Pi 的压缩摘要已经作为会话历史消息提供", rendered)
+        self.assertIn("sha256:" + "d" * 64, rendered)
+        self.assertIn("321 字符", rendered)
+        self.assertIn("## 当前任务（本轮权威投影）", rendered)
+        self.assertIn("只执行当前修复", rendered)
+        self.assertIn("CURRENT-AC", rendered)
+        self.assertIn("## 当前计划（本轮权威投影）", rendered)
+        self.assertIn("- [已完成] CURRENT-PLAN", rendered)
+        self.assertNotIn("OLD-STATE", rendered)
 
     def test_empty_session_memory_does_not_consume_provider_context(self) -> None:
         rendered = render_context_items(

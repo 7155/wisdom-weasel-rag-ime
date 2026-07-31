@@ -49,6 +49,7 @@ class _FakeOrganizer:
                 "ownerKind": owner_kind,
                 "ownerId": owner_id,
                 "inputs": list(bundle.get("inputs") or []),
+                "recentEvents": list(bundle.get("recentEvents") or []),
             }
         )
         inputs = [dict(item) for item in bundle.get("inputs") or []]
@@ -714,6 +715,12 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         self.assertEqual(inputs[0]["text"], "目前BM25这些真实实现")
         self.assertEqual(inputs[0]["sourceEventIds"], project_a_ids)
         self.assertEqual(len(inputs[0]["sourceIds"]), 4)
+        recent_events = organizer.calls[0]["recentEvents"]
+        self.assertEqual(recent_events[0]["sourceEventIds"], project_a_ids)
+        self.assertEqual(recent_events[0]["sourceIds"], inputs[0]["sourceIds"])
+        self.assertEqual(recent_events[0]["source"], "reconstructed_user_input")
+        self.assertEqual(recent_events[0]["app"], "com.openai.codex")
+        self.assertEqual(recent_events[0]["contextGroupId"], "app:codex")
         self.assertEqual(report["results"][0]["sourceCount"], 4)
         self.assertEqual(report["results"][0]["logicalInputCount"], 1)
         with closing(sqlite3.connect(self.db_path)) as conn:
@@ -725,6 +732,27 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
                 ORDER BY e.id
                 """
             ).fetchall()
+            metadata_row = conn.execute(
+                """
+                SELECT metadata_json
+                FROM memory_cleanup_runs
+                WHERE run_id = ?
+                """,
+                (report["results"][0]["runId"],),
+            ).fetchone()
+            conn.row_factory = sqlite3.Row
+            apply_stored_memory_book_run(
+                conn,
+                run_id=report["results"][0]["runId"],
+            )
+            atom_row = conn.execute(
+                """
+                SELECT source_event_ids_json
+                FROM memory_atoms
+                WHERE status = 'active'
+                LIMIT 1
+                """
+            ).fetchone()
         self.assertEqual(
             rows,
             [
@@ -735,6 +763,13 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
                 ("project-b", "pending"),
             ],
         )
+        metadata = json.loads(metadata_row[0])
+        source_ref = metadata["sourceInputRefs"][0]
+        self.assertEqual(source_ref["sourceEventIds"], project_a_ids)
+        self.assertEqual(source_ref["sourceIds"], inputs[0]["sourceIds"])
+        self.assertEqual(source_ref["app"], "com.openai.codex")
+        self.assertEqual(source_ref["contextGroupId"], "app:codex")
+        self.assertEqual(json.loads(atom_row[0]), project_a_ids)
 
     def test_owner_curation_builds_independent_thematic_topic_books(self) -> None:
         for index, text in enumerate(
@@ -794,6 +829,77 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             set.union(*member_sets),
             {str(row["id"]) for row in atoms},
         )
+
+    def test_initial_settle_window_tracks_the_latest_source(self) -> None:
+        self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:first-settle",
+            turn_id="turn:first-settle",
+            text="项目长期使用本地 SQLite。",
+            created_at_ms=100,
+        )
+        last_source_ms = 1_199_900
+        self.sources.checkpoint_user_message(
+            session_id=str(self.user_session["id"]),
+            pi_entry_id="entry:latest-settle",
+            turn_id="turn:latest-settle",
+            text="刚刚补充的分钟级上下文。",
+            created_at_ms=last_source_ms,
+        )
+        settle_ms = 20 * 60 * 1_000
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_FakeOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=settle_ms,
+        )
+        curator.initialize()
+
+        status = curator.status(current_ms=settle_ms + 100)
+        scope = status["scopes"][0]
+
+        self.assertFalse(scope["due"])
+        self.assertEqual(scope["nextDueAtMs"], last_source_ms + settle_ms)
+        self.assertEqual(scope["dueReason"], "not_due")
+
+
+    def test_minute_scale_compaction_cannot_become_durable_memory(self) -> None:
+        compaction = self.sources.checkpoint_compaction(
+            session_id=str(self.other_session["id"]),
+            result={
+                "summary": "刚刚检查了页面，当前操作已经结束。",
+                "firstKeptEntryId": "entry:kept",
+            },
+            trigger="automatic",
+            created_at_ms=1_000,
+        )
+        curator = OwnerMemoryCurator(
+            self.db_path,
+            organizer=_FakeOrganizer(),
+            project="wisdom-weasel-rag-ime",
+            initial_settle_ms=0,
+            auto_apply=True,
+        )
+        curator.initialize()
+
+        report = curator.run_due(
+            owner_kind="agent",
+            owner_id="librarian-v1",
+            current_ms=2_000,
+        )
+
+        self.assertEqual(
+            self.sources.get(str(compaction["source"]["sourceId"]))[
+                "disposition"
+            ],
+            "not_for_memory",
+        )
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            atom_count = int(
+                conn.execute("SELECT COUNT(*) FROM memory_atoms").fetchone()[0]
+            )
+        self.assertEqual(atom_count, 0)
+
 
     def test_daily_run_separates_user_and_role_books_and_forgets_noise_reversibly(self) -> None:
         noise = self.sources.checkpoint_user_message(
@@ -1141,7 +1247,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
             pi_entry_id="evidence:user:workflow-noise",
             turn_id="turn:workflow-noise",
             role_id="companion-present-v1",
-            text="请调用 ime_memory 的 curation_prepare 并返回 runId。",
+            text="请调用 memory 的 curation_prepare 并返回 runId。",
             occurred_at_ms=timestamp + 5_500,
         )
         evidence.record_assistant_message(
@@ -1388,7 +1494,7 @@ class OwnerMemoryCuratorTests(unittest.TestCase):
         texts = [
             "Pi Runtime 的新 Session 个人记忆应该如何注入？",
             "Pi Runtime 的新 Session 个人记忆应该如何注入？",
-            "请调用 ime_memory Tool 的 curation_prepare，只生成草案并返回 runId。",
+            "请调用 memory Tool 的 curation_prepare，只生成草案并返回 runId。",
             "合并分支并记录改动",
         ]
         sources = [

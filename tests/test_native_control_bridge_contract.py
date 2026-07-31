@@ -124,7 +124,7 @@ class NativeControlBridgeContractTests(unittest.TestCase):
         )
         for value in ("image/png", "image/jpeg", "image/gif", "image/webp"):
             self.assertIn(f'"{value}"', pick_files_block)
-        self.assertIn('requiredString("sessionId", in: payload)', pick_files_block)
+        self.assertIn("managedMediaOwner(in: payload)", pick_files_block)
         self.assertIn('components.host = "127.0.0.1"', pick_files_block)
         self.assertIn('components.port = 8766', pick_files_block)
         self.assertIn('components.path = "/api/agent/media/import"', pick_files_block)
@@ -139,6 +139,57 @@ class NativeControlBridgeContractTests(unittest.TestCase):
             r"private func validatedAgentMediaResponse\(.*?\n    \}",
             self.native_bridge,
         )
+        self.assertNotIn('"path"', receipt_block)
+
+    def test_clipboard_image_paste_is_typed_owner_bound_and_reuses_managed_import(self) -> None:
+        paste_block = _required_match(
+            r"private func pasteImages\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn('["sessionId", "roomId", "maxFiles"]', paste_block)
+        self.assertIn("managedMediaOwner(in: payload)", paste_block)
+        self.assertIn("CFGetTypeID(number) != CFBooleanGetTypeID()", paste_block)
+        self.assertIn("pastedAgentImages(maxFiles: number.intValue)", paste_block)
+        self.assertIn(
+            "uploadAgentImages(id: id, ownerKey: owner.key, ownerId: owner.id, files: selected)",
+            paste_block,
+        )
+        self.assertIn('"agent_media_paste_rejected"', paste_block)
+
+        pasteboard_block = _required_match(
+            r"private func pastedAgentImages\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn("NSPasteboard.general", pasteboard_block)
+        self.assertIn(".urlReadingFileURLsOnly: true", pasteboard_block)
+        self.assertIn("pasteboard.pasteboardItems", pasteboard_block)
+        self.assertIn("selected.count < maxFiles", pasteboard_block)
+
+        pasteboard_item_block = _required_match(
+            r"private func pastedAgentImage\(.*?\n    \}",
+            self.native_bridge,
+        )
+        for value in ("public.png", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp"):
+            self.assertIn(value, pasteboard_item_block)
+        self.assertIn("item.data(forType: .tiff)", pasteboard_item_block)
+        self.assertIn("bitmap.representation(using: .png", pasteboard_item_block)
+
+        request_block = _required_match(
+            r"private func agentMediaImportRequest\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn('components.host = "127.0.0.1"', request_block)
+        self.assertIn("components.port = 8766", request_block)
+        self.assertIn('components.path = "/api/agent/media/import"', request_block)
+        self.assertIn('URLQueryItem(name: ownerKey, value: ownerId)', request_block)
+
+        receipt_block = _required_match(
+            r"private func validatedAgentMediaResponse\(.*?\n    \}",
+            self.native_bridge,
+        )
+        self.assertIn('media[ownerKey] as? String == ownerId', receipt_block)
+        self.assertIn('media["ownerId"] as? String == ownerId', receipt_block)
+        self.assertIn('ownerKey: ownerId', receipt_block)
         self.assertNotIn('"path"', receipt_block)
 
     def test_knowledge_picker_streams_only_validated_files_to_the_fixed_loopback_route(self) -> None:
@@ -257,6 +308,15 @@ class NativeControlBridgeContractTests(unittest.TestCase):
         self.assertIn("expectedRuntimeActionCommandSha256", external_block)
         self.assertNotIn('requiredString("path"', external_block)
         self.assertNotIn('requiredString("command"', external_block)
+        self.assertIn('trustedDiagnosticsHelper(named: "apply_predictor_configuration.sh")', external_block)
+        self.assertIn('trustedDiagnosticsHelper(named: "apply_input_method_configuration.sh")', external_block)
+        self.assertIn('"apply_predictor_configuration.sh"', external_block)
+        self.assertIn('"apply_input_method_configuration.sh"', external_block)
+        self.assertIn('action == "restart_predictor" ? 115 : 90', external_block)
+        self.assertIn(
+            "this.call('runApprovedExternalAction', request, undefined, 120_000)",
+            self.native_transport,
+        )
 
     def test_capabilities_keep_native_features_nested_and_route_ids_explicit(self) -> None:
         capability_block = _required_match(

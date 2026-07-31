@@ -63,6 +63,9 @@ class RoomApplicationService:
         session_mode_gate: AgentSessionModeGate,
         wake_worker: Callable[[], None],
         restore_participant_sessions: Callable[[Mapping[str, object]], None],
+        resolve_attachments: Callable[
+            [str, Sequence[str], Sequence[str]], list[dict[str, object]]
+        ],
         clock_ms: Callable[[], int] | None = None,
     ) -> None:
         self.rooms = rooms
@@ -80,6 +83,7 @@ class RoomApplicationService:
         self.session_mode_gate = session_mode_gate
         self.wake_worker = wake_worker
         self.restore_participant_sessions = restore_participant_sessions
+        self.resolve_attachments = resolve_attachments
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
 
     def post_message(
@@ -90,6 +94,7 @@ class RoomApplicationService:
         client_message_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
+        attachment_ids: Sequence[str] = (),
     ) -> dict[str, object]:
         room = self.rooms.get(room_id)
         self.restore_participant_sessions(room)
@@ -110,6 +115,7 @@ class RoomApplicationService:
                 client_message_id=client_message_id,
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
+                attachment_ids=attachment_ids,
             )
 
     def _post_message_claimed(
@@ -120,6 +126,7 @@ class RoomApplicationService:
         client_message_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
+        attachment_ids: Sequence[str],
     ) -> dict[str, object]:
         if not kernel_owns_room_execution(self.kernel.mode):
             raise RoomKernelFenceError("canonical Room ingress requires a managed Kernel")
@@ -152,13 +159,19 @@ class RoomApplicationService:
             for decision in decisions
         ]
         self._assert_targets_available(targets)
+        attachment_receipts = self.resolve_attachments(
+            room_id,
+            [str(target["sessionId"]) for target in targets],
+            attachment_ids,
+        )
         timestamp = self.clock_ms()
         identity = _message_identity(room_id, client_message_id)
         root_id = f"room-root:{identity}"
         task_id = f"room-task:{identity}"
         anchor_id = f"requirement-anchor:{identity}"
         post_id = f"room-post:user:{identity}"
-        owner_participant_id = _root_owner(room, targets)
+        facilitator_participant_id = _root_facilitator(room, targets)
+        task_owner_participant_id = str(targets[0]["id"])
         requirement_item_id = (
             f"work-item:{work_item['id']}:revision:{work_item['revision']}"
             if work_item is not None
@@ -193,7 +206,9 @@ class RoomApplicationService:
             "roomId": room_id,
             "generation": 0,
             "state": "running",
-            "owner": owner_participant_id,
+            "facilitatorParticipantId": facilitator_participant_id,
+            "reporterParticipantId": None,
+            "reporterSelectionReceiptId": None,
             "requirementAnchorRef": anchor_ref,
             "createdByActorRef": "user:local",
             "terminalReceiptId": None,
@@ -206,10 +221,15 @@ class RoomApplicationService:
             "taskId": task_id,
             "rootId": root_id,
             "parentTaskId": None,
-            "ownerParticipantId": owner_participant_id,
-            "assigneeParticipantId": (
-                str(targets[0]["id"]) if len(targets) == 1 else None
-            ),
+            "taskKind": "work",
+            "currentOwnerParticipantId": task_owner_participant_id,
+            "ownershipRevision": 0,
+            "ownershipReceiptId": None,
+            "invitationId": None,
+            "reviewState": "not_required",
+            "reviewOfTaskIds": [],
+            "reviewAuthorParticipantIds": [],
+            "contextEvidenceRefs": [],
             "objective": task_objective,
             "expectedOutput": task_expected_output,
             "requirementItemIds": [requirement_item_id],
@@ -226,6 +246,22 @@ class RoomApplicationService:
             acceptance_criteria=acceptance_ids,
             now_ms=timestamp,
         )
+        target_task_ids = [task_id]
+        for target in targets[1:]:
+            child_task_id = (
+                f"{task_id}:branch:"
+                f"{_stable_digest(str(target['id']))}"
+            )
+            self.commands.create_task(
+                {
+                    **task,
+                    "taskId": child_task_id,
+                    "parentTaskId": task_id,
+                    "currentOwnerParticipantId": str(target["id"]),
+                },
+                now_ms=timestamp,
+            )
+            target_task_ids.append(child_task_id)
 
         work_claimed = False
         timeline_events: list[dict[str, object]] = []
@@ -340,6 +376,8 @@ class RoomApplicationService:
                 },
                 "createdAtMs": timestamp,
             }
+            if attachment_receipts:
+                user_post["attachments"] = attachment_receipts
             self.projection.publish_post(user_post)
             self.context.publish_post(user_post)
 
@@ -361,24 +399,31 @@ class RoomApplicationService:
                 self._dispatch_envelope(
                     identity=identity,
                     root_id=root_id,
-                    task_id=task_id,
+                    task_id=target_task_id,
                     post_id=post_id,
                     target=target,
                     ordinal=ordinal,
+                    attachment_ids=attachment_ids,
                 )
-                for ordinal, target in enumerate(targets)
+                for ordinal, (target, target_task_id) in enumerate(
+                    zip(targets, target_task_ids, strict=True)
+                )
             ]
             queued = self.commands.dispatch_many(envelopes, now_ms=timestamp)
             dispatch_results = []
-            for decision, target, (dispatch, was_created) in zip(
+            for decision, target, target_task_id, (
+                dispatch,
+                was_created,
+            ) in zip(
                 decisions,
                 targets,
+                target_task_ids,
                 queued,
                 strict=True,
             ):
                 decision.update(
                     rootId=root_id,
-                    taskId=task_id,
+                    taskId=target_task_id,
                     dispatchId=dispatch["dispatchId"],
                     targetSessionId=target["sessionId"],
                 )
@@ -521,8 +566,10 @@ class RoomApplicationService:
                 raise ValueError("selected Room participant is no longer active")
             binding = self.kernel.session_binding(session_id)
             session = self.sessions.get(session_id)
-            if binding is not None or str(session.get("status") or "") not in {
+            session_status = str(session.get("status") or "")
+            if binding is not None or session_status not in {
                 "idle",
+                "faulted",
             }:
                 raise ValueError(
                     f"{target.get('displayName') or 'selected Room participant'} "
@@ -538,6 +585,7 @@ class RoomApplicationService:
         post_id: str,
         target: Mapping[str, object],
         ordinal: int,
+        attachment_ids: Sequence[str],
     ) -> dict[str, object]:
         participant_id = str(target["id"])
         session_id = str(target["sessionId"])
@@ -566,6 +614,7 @@ class RoomApplicationService:
                 f"{DEFAULT_RUNTIME_PROFILE_REVISION}:"
                 f"{target.get('roleId')}@{target.get('roleVersion') or '1'}"
             ),
+            "attachmentIds": list(attachment_ids),
             "state": "pending",
         }
 
@@ -593,7 +642,7 @@ def _stable_digest(*values: str) -> str:
     return hashlib.sha256(encoded).hexdigest()[:32]
 
 
-def _root_owner(
+def _root_facilitator(
     room: Mapping[str, object],
     targets: Sequence[Mapping[str, object]],
 ) -> str:

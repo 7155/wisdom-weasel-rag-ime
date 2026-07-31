@@ -136,7 +136,8 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
             preference_enabled = source.get("preferenceEnabled")
     processes = running_processes(app_path) if args.check_process else []
     preference_ready = (
-        preference_enabled is True
+        not args.check_input_source
+        or preference_enabled is True
         or (preference_enabled is None and (hitoolbox_enabled is True or third_party_enabled is True))
     )
     ok = installed_latest and selected is not False and preference_ready
@@ -157,6 +158,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "bundleIdInstalled": marker_bundle_id,
         "inputSourceIdExpected": args.input_source_id,
         "inputSourceIdInstalled": marker_input_source_id,
+        "inputSourceCheckEnabled": bool(args.check_input_source),
         "selected": selected,
         "hitoolboxEnabled": hitoolbox_enabled,
         "thirdPartyEnabled": third_party_enabled,

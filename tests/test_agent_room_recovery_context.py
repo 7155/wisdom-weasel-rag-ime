@@ -9,47 +9,60 @@ from rag_ime.agent_room_recovery_context import (
 
 
 class RoomCompactionRecoveryContextTests(unittest.TestCase):
-    def test_packet_deduplicates_originals_and_preserves_exact_receipts(self) -> None:
+    def test_packet_keeps_only_unfinished_continuity_and_exact_receipts(self) -> None:
         original = "原始需求：完成 Room 压缩恢复"
         rendered = room_compaction_recovery_context(
             json.dumps(
                 {
+                    "rootId": "root:recovery",
+                    "dispatchId": "dispatch:recovery",
+                    "generation": 4,
                     "requirements": {
-                        "original": [
-                            {"text": original},
-                            {"text": original},
-                        ],
+                        "original": [{"text": original}],
                         "items": [
-                            {"statement": original},
                             {"statement": "补充需求：保留精确回执"},
                         ],
                     },
                     "task": {
+                        "taskId": "task:recovery",
                         "objective": "当前任务：验证一份恢复包",
                         "expectedOutput": "恢复证据",
                         "revision": 2,
                         "state": "active",
                     },
                     "responsibility": {
-                        "ownerParticipantId": "participant:owner",
+                        "currentOwnerParticipantId": "participant:owner",
+                        "ownershipRevision": 2,
+                        "ownershipReceiptId": "receipt:ownership:2",
                         "currentParticipantId": "participant:worker",
                     },
                     "acceptance": {
                         "criteria": [
                             {
-                                "criterionId": "criterion:exact",
-                                "statement": "验收：每项只出现一次",
+                                "criterionId": "criterion:covered",
+                                "statement": "已由 Kernel 覆盖",
                             },
                             {
-                                "criterionId": "criterion:exact",
-                                "statement": "验收：每项只出现一次",
+                                "criterionId": "criterion:pending",
+                                "statement": "仍待完成的验收",
+                                "acceptedEvidenceRefs": [
+                                    "evidence:pending"
+                                ],
                             },
                         ]
                     },
                     "blockers": {
                         "obstacles": [
-                            {"kind": "blocker", "statement": "阻塞：等待环境"},
-                            {"kind": "blocker", "statement": "阻塞：等待环境"},
+                            {
+                                "obstacleId": "blocker:compaction",
+                                "kind": "blocker",
+                                "statement": "阻塞：等待环境",
+                            },
+                            {
+                                "obstacleId": "blocker:duplicate",
+                                "kind": "blocker",
+                                "statement": "阻塞：等待环境",
+                            },
                         ]
                     },
                     "continuation": {
@@ -58,6 +71,7 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
                         "hopCount": 1,
                         "depth": 1,
                     },
+                    "sharedEvidenceRefs": ["evidence:shared"],
                 },
                 ensure_ascii=False,
             ),
@@ -70,39 +84,41 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
                     {"name": "room_state", "receiptId": "tool:exact"}
                 ]
             },
-            covered_criterion_ids=("criterion:exact",),
+            covered_criterion_ids=("criterion:covered",),
         )
 
         packet = json.loads(rendered)
-        self.assertEqual(packet["originalRequirements"], [original])
         self.assertEqual(
-            packet["requirementDirectory"],
-            ["补充需求：保留精确回执"],
+            packet["authoritativeProjectionRef"],
+            {
+                "dispatchId": "dispatch:recovery",
+                "generation": 4,
+                "rootId": "root:recovery",
+                "taskId": "task:recovery",
+                "taskRevision": 2,
+            },
         )
-        for fact in (
-            original,
-            "当前任务：验证一份恢复包",
-            "验收：每项只出现一次",
-            "阻塞：等待环境",
-            "skill:exact",
-            "tool:exact",
-        ):
-            self.assertEqual(rendered.count(fact), 1)
-        self.assertNotIn("criterion:exact", rendered)
-
         self.assertEqual(
-            packet["acceptance"],
+            packet["pendingAcceptance"],
             [
                 {
-                    "alias": "AC-1",
-                    "statement": "验收：每项只出现一次",
-                    "status": "evidence_available",
+                    "alias": "AC-2",
+                    "evidenceRefs": ["evidence:pending"],
+                    "statement": "仍待完成的验收",
                 }
             ],
         )
         self.assertEqual(
-            packet["handoff"],
-            {"intentKind": "handoff"},
+            packet["nextAction"],
+            {
+                "acceptanceAlias": "AC-2",
+                "blockerRef": "blocker:compaction",
+                "intentKind": "handoff",
+            },
+        )
+        self.assertEqual(
+            packet["evidenceRefs"],
+            ["evidence:shared"],
         )
         self.assertEqual(
             packet["skillReceipt"],
@@ -122,12 +138,30 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
                 ]
             },
         )
+        for fact in (
+            "仍待完成的验收",
+            "阻塞：等待环境",
+            "skill:exact",
+            "tool:exact",
+        ):
+            self.assertEqual(rendered.count(fact), 1)
         for forbidden in (
+            original,
+            "补充需求：保留精确回执",
+            "当前任务：验证一份恢复包",
+            "恢复证据",
+            "已由 Kernel 覆盖",
+            "originalRequirements",
+            "requirementDirectory",
+            "currentTask",
+            '"acceptance":',
+            '"handoff":',
             "schemaVersion",
             "participant:owner",
             "participant:worker",
             "dispatch:parent",
-            "criterion:exact",
+            "criterion:covered",
+            "criterion:pending",
             "hopCount",
             "depth",
         ):
@@ -137,14 +171,19 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "valid JSON"):
             room_compaction_recovery_context("not-json")
 
-    def test_acceptance_uses_public_aliases_and_compact_statuses(self) -> None:
+    def test_terminal_task_cannot_reactivate_uncovered_acceptance(self) -> None:
         rendered = room_compaction_recovery_context(
             json.dumps(
                 {
+                    "rootId": "root:terminal",
+                    "dispatchId": "dispatch:terminal",
+                    "generation": 1,
                     "requirements": {"original": [], "items": []},
                     "task": {
+                        "taskId": "task:terminal",
                         "objective": "恢复当前任务",
                         "expectedOutput": "恢复包",
+                        "revision": 3,
                         "state": "completed",
                     },
                     "acceptance": {
@@ -170,21 +209,12 @@ class RoomCompactionRecoveryContextTests(unittest.TestCase):
         )
 
         packet = json.loads(rendered)
-        self.assertEqual(
-            packet["acceptance"],
-            [
-                {
-                    "alias": "AC-1",
-                    "statement": "已由 Kernel 验证",
-                    "status": "verified",
-                },
-                {
-                    "alias": "AC-2",
-                    "statement": "仍待证据",
-                    "status": "pending",
-                },
-            ],
-        )
+        self.assertEqual(packet["pendingAcceptance"], [])
+        self.assertNotIn("nextAction", packet)
+        self.assertNotIn("恢复当前任务", rendered)
+        self.assertNotIn("恢复包", rendered)
+        self.assertNotIn("已由 Kernel 验证", rendered)
+        self.assertNotIn("仍待证据", rendered)
         self.assertNotIn("criterion:", rendered)
 
 

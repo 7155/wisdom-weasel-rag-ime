@@ -338,7 +338,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
     def test_dispatch_chain_requires_collaboration_and_handoff_siblings(self) -> None:
         tasks = [
             self._task("t1", None, "pa"),
-            self._task("t2", "t1", "pb", owner_participant_id="pa"),
+            self._task("t2", "t1", "pb"),
             self._task("t3", "t1", "pc"),
         ]
         dispatches = [
@@ -422,7 +422,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                 workspace_list=["applied"],
                 workspace_search=["applied"],
                 workspace_read=["failed", "applied", "applied", "applied"],
-                workspace_patch=["failed", "applied"],
+                workspace_edit=["failed", "applied"],
                 workspace_shell=["failed", "applied"],
                 room_post=["applied"],
                 room_commit=["applied"],
@@ -445,7 +445,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         checks = CANARY.tool_workload_checks(receipts)
 
         self.assertTrue(all(checks.values()))
-        receipts["B"]["workspace_patch"] = self._receipt(["applied"])
+        receipts["B"]["workspace_edit"] = self._receipt(["applied"])
         self.assertFalse(CANARY.tool_workload_checks(receipts)["bStayedReadOnly"])
         receipts["B"]["room_collaborate"] = self._receipt(["failed"])
         self.assertFalse(
@@ -468,7 +468,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                     "applied",
                     "applied",
                 ],
-                workspace_patch=["failed", "failed", "applied"],
+                workspace_edit=["failed", "failed", "applied"],
                 workspace_shell=["failed", "applied"],
                 room_post=["applied"],
                 room_commit=["applied"],
@@ -500,7 +500,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                 workspace_list=["applied"],
                 workspace_search=["applied"],
                 workspace_read=["failed", "applied", "applied"],
-                workspace_patch=["applied"],
+                workspace_edit=["applied"],
                 workspace_shell=["failed", "applied"],
                 room_post=["applied"],
                 room_commit=["applied"],
@@ -543,7 +543,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         approvals = {
             "A": [
                 self._approval("workspace_shell", "failed", 1),
-                self._approval("workspace_patch", "applied", 2),
+                self._approval("workspace_edit", "applied", 2),
                 self._approval("workspace_shell", "applied", 3),
             ],
             "B": [],
@@ -573,7 +573,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                     2,
                     command=CANARY.TEST_COMMAND,
                 ),
-                self._approval("workspace_patch", "applied", 3),
+                self._approval("workspace_edit", "applied", 3),
                 self._approval(
                     "workspace_shell",
                     "failed",
@@ -662,7 +662,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                 room_state=["applied"],
                 room_collaborate=["applied"],
                 workspace_read=["applied", "applied"],
-                workspace_patch=["applied"],
+                workspace_edit=["applied"],
                 workspace_shell=["applied", "failed", "applied"],
                 room_commit=["applied"],
             ),
@@ -687,7 +687,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
                     1,
                     command=CANARY.TEST_COMMAND,
                 ),
-                self._approval("workspace_patch", "applied", 2),
+                self._approval("workspace_edit", "applied", 2),
                 self._approval(
                     "workspace_shell",
                     "applied",
@@ -768,6 +768,28 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         )
         self.assertNotIn(request.message, json.dumps(snapshot, ensure_ascii=False))
         self.assertNotIn("最终验收结论", json.dumps(snapshot, ensure_ascii=False))
+
+        tool_only_snapshot = {
+            "items": [{"role": "user", "blocks": []}],
+            "liveEvents": [
+                {
+                    "eventType": "tool_finished",
+                    "payload": {
+                        "toolName": "room_commit",
+                        "toolCallId": "call-1",
+                    },
+                }
+            ],
+        }
+        self.assertTrue(
+            CANARY._room_session_turn_visible(tool_only_snapshot, request)
+        )
+        tool_only_snapshot["liveEvents"][0]["payload"]["toolName"] = (
+            "workspace_read"
+        )
+        self.assertFalse(
+            CANARY._room_session_turn_visible(tool_only_snapshot, request)
+        )
 
     def test_repeated_failed_invocations_group_by_exact_command_hash(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -971,7 +993,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
     ) -> None:
         loaded = [
             {"receiptId": "bootstrap-state", "toolName": "room_state"},
-            {"receiptId": "bootstrap-memory", "toolName": "ime_memory"},
+            {"receiptId": "bootstrap-memory", "toolName": "memory"},
             {"receiptId": "rebind-state", "toolName": "room_state"},
             {"receiptId": "load-read", "toolName": "workspace_read"},
             {"receiptId": "load-hidden", "toolName": "workspace_shell"},
@@ -1170,14 +1192,14 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
         parent_id: str | None,
         participant_id: str,
         *,
-        owner_participant_id: str | None = None,
         acceptance_criterion_ids: list[str] | None = None,
     ) -> dict[str, object]:
         return {
             "taskId": task_id,
             "parentTaskId": parent_id,
-            "ownerParticipantId": owner_participant_id or participant_id,
-            "assigneeParticipantId": participant_id,
+            "currentOwnerParticipantId": participant_id,
+            "ownershipRevision": 0,
+            "ownershipReceiptId": None,
             "acceptanceCriterionIds": acceptance_criterion_ids or [],
             "state": "completed",
         }
@@ -1260,7 +1282,7 @@ class RoomThreeMemberCanaryTest(unittest.TestCase):
             "workspace_list",
             "workspace_search",
             "workspace_read",
-            "workspace_patch",
+            "workspace_edit",
             "workspace_shell",
             "room_post",
             "room_commit",

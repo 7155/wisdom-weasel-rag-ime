@@ -129,6 +129,9 @@ INFERRED_PROFILE="$(detect_model_profile "$MODEL")"
 INFERRED_MODEL_ID="$(basename "${MODEL:-local-model}")"
 PROFILE="${RAG_IME_MLX_PROFILE:-${RAG_IME_PREDICTOR_PROFILE:-${REGISTERED_MODEL_PROFILE:-$INFERRED_PROFILE}}}"
 PROMPT_MODE="${RAG_IME_MLX_PROMPT_MODE:-$REGISTERED_MODEL_PROMPT_MODE}"
+MAX_TOKENS="${RAG_IME_MLX_MAX_TOKENS:-$MAX_TOKENS}"
+TEMPERATURE="${RAG_IME_MLX_TEMPERATURE:-$TEMPERATURE}"
+TOP_P="${RAG_IME_MLX_TOP_P:-$TOP_P}"
 MODEL_ID="${RAG_IME_MODEL_ID:-${REGISTERED_MODEL_ID:-$INFERRED_MODEL_ID}}"
 MODEL_FINGERPRINT="${RAG_IME_MODEL_FINGERPRINT:-$REGISTERED_MODEL_FINGERPRINT}"
 
@@ -376,7 +379,16 @@ echo "http://$DISPLAY_HOST:$PORT/"
 echo "Logs: $LOG_DIR/mlx-predictor.out.log and $LOG_DIR/mlx-predictor.err.log"
 
 for _attempt in {1..120}; do
-  if "$PYTHON_EXECUTABLE" - "$HOST" "$PORT" "$MODEL" "$MODEL_FINGERPRINT" >/dev/null 2>&1 <<'PY'
+  if "$PYTHON_EXECUTABLE" - \
+    "$HOST" \
+    "$PORT" \
+    "$MODEL" \
+    "$MODEL_FINGERPRINT" \
+    "$PROFILE" \
+    "$PROMPT_MODE" \
+    "$MAX_TOKENS" \
+    "$TEMPERATURE" \
+    "$TOP_P" >/dev/null 2>&1 <<'PY'
 import json
 import sys
 import urllib.request
@@ -386,11 +398,44 @@ host = sys.argv[1]
 port = sys.argv[2]
 expected_model = Path(sys.argv[3]).expanduser().resolve()
 expected_fingerprint = sys.argv[4].strip().lower()
+expected_profile = sys.argv[5]
+expected_prompt_mode = sys.argv[6]
+expected_max_tokens = sys.argv[7]
+expected_temperature = sys.argv[8]
+expected_top_p = sys.argv[9]
 url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 with opener.open(f"http://{url_host}:{port}/health", timeout=1.0) as response:
     payload = json.loads(response.read().decode("utf-8"))
 if not payload.get("ok") or not payload.get("modelLoaded"):
+    raise SystemExit(1)
+model_profile = payload.get("modelProfile")
+if not isinstance(model_profile, dict):
+    raise SystemExit(1)
+if str(model_profile.get("id") or "") != expected_profile:
+    raise SystemExit(1)
+if str(payload.get("promptMode") or "") != expected_prompt_mode:
+    raise SystemExit(1)
+try:
+    runtime_max_tokens = int(model_profile.get("maxTokens"))
+    configured_max_tokens = int(expected_max_tokens)
+except (TypeError, ValueError):
+    raise SystemExit(1)
+if runtime_max_tokens != configured_max_tokens:
+    raise SystemExit(1)
+runtime_config = payload.get("runtimeConfig")
+if not isinstance(runtime_config, dict):
+    raise SystemExit(1)
+try:
+    runtime_temperature = float(runtime_config.get("temperature"))
+    runtime_top_p = float(runtime_config.get("topP"))
+    configured_temperature = float(expected_temperature)
+    configured_top_p = float(expected_top_p)
+except (TypeError, ValueError):
+    raise SystemExit(1)
+if abs(runtime_temperature - configured_temperature) > 1e-9:
+    raise SystemExit(1)
+if abs(runtime_top_p - configured_top_p) > 1e-9:
     raise SystemExit(1)
 runtime_model = Path(str(payload.get("model") or "")).expanduser().resolve()
 runtime_fingerprint = str(payload.get("modelFingerprint") or "").strip().lower()

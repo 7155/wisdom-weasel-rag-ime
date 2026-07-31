@@ -295,7 +295,7 @@ class VoiceInputTests(unittest.TestCase):
         self.assertIn("Color(nsColor: .windowBackgroundColor).opacity(0.98)", overlay)
         self.assertIn("scheduleDismiss(after: 1.4)", overlay)
         self.assertIn("overlay.showRecording()", coordinator)
-        self.assertIn("API 凭据", page)
+        self.assertIn("服务凭据", page)
         self.assertIn("页面不会显示已保存的密钥或请求头", page)
 
         with tempfile.TemporaryDirectory(prefix="rag-ime-voice-hotkey-") as directory:

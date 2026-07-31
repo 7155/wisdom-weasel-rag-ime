@@ -460,7 +460,6 @@
   }
 }
 
-.shell-topbar__mobile-brand,
 .shell-mobile-nav {
   display: none;
 }
@@ -594,11 +593,6 @@
     padding-inline: 12px;
   }
 
-  .shell-topbar__mobile-brand {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
 
   .shell-mobile-menu__trigger {
     display: inline-flex;

@@ -8,6 +8,7 @@ import {
   reduceRoomEvents,
   replayRoomEventSnapshot,
   type RoomEventSnapshot,
+  type OptimisticRoomMessageInput,
   type RoomProjectionState,
 } from '@/contracts/room-reducer';
 import type { UiRoomEvent } from '@/contracts/ui-events';
@@ -22,7 +23,7 @@ interface RoomLiveStore {
   applyEvents(roomId: string, events: readonly UiRoomEvent[]): boolean;
   appendOptimistic(
     roomId: string,
-    input: { clientMessageId: string; text: string; nowMs: number },
+    input: OptimisticRoomMessageInput,
   ): void;
   acceptMessage(roomId: string, response: Record<string, unknown>): void;
   discardOptimistic(roomId: string, clientMessageId: string): void;

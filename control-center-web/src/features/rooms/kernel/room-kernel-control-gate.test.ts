@@ -10,6 +10,36 @@ describe('Room Kernel production control gate', () => {
     expect(gate.commandRouteHash).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
 
+  it('trusts the app-bundled native route policy without HTTP route manifests', async () => {
+    const value = capabilities();
+    const native = {
+      ...value,
+      transport: 'native' as const,
+      raw: {
+        routeIds: value.routeIds,
+        features: {},
+      },
+    };
+
+    expect(await evaluateRoomKernelControlGate(native)).toMatchObject({
+      readEnabled: true,
+      commandEnabled: true,
+      reason: '任务控制已连接',
+    });
+
+    expect(await evaluateRoomKernelControlGate({
+      ...native,
+      routeIds: [
+        'agent.room.kernel.snapshot',
+        'agent.room.kernel.events',
+      ],
+    })).toMatchObject({
+      readEnabled: true,
+      commandEnabled: false,
+      reason: '当前连接暂不支持停止任务',
+    });
+  });
+
   it('fails closed when the server command manifest changes', async () => {
     const value = capabilities();
     const raw = value.raw as { routes: Array<Record<string, unknown>> };

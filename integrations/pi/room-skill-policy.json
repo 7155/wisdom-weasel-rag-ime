@@ -1,18 +1,12 @@
 {
   "schemaVersion": "wisdom-weasel.room-skill-policy.v1",
   "policyId": "room-core-v2",
-  "version": 2,
+  "version": 5,
   "hashRule": "sha256-skill-body-utf8-v1",
   "skills": [
     {
-      "skillId": "requirement-alignment",
-      "stages": ["requirements"],
-      "risk": "medium",
-      "nextCandidates": ["solution-convergence"]
-    },
-    {
-      "skillId": "solution-convergence",
-      "stages": ["solution"],
+      "skillId": "alignment-and-decision",
+      "stages": ["requirements", "solution"],
       "risk": "medium",
       "nextCandidates": ["implementation-planning"]
     },
@@ -20,37 +14,37 @@
       "skillId": "implementation-planning",
       "stages": ["planning"],
       "risk": "medium",
-      "nextCandidates": ["test-driven-implementation"]
+      "nextCandidates": ["implementation-execution"]
+    },
+    {
+      "skillId": "implementation-execution",
+      "stages": ["implementation", "debugging", "feedback"],
+      "risk": "medium",
+      "nextCandidates": ["test-driven-implementation", "systematic-debugging", "quality-gate"]
     },
     {
       "skillId": "test-driven-implementation",
-      "stages": ["implementation"],
+      "stages": [],
       "risk": "medium",
-      "nextCandidates": ["quality-gate"]
+      "nextCandidates": ["implementation-execution"]
     },
     {
       "skillId": "systematic-debugging",
-      "stages": ["debugging"],
+      "stages": [],
       "risk": "high",
-      "nextCandidates": ["test-driven-implementation", "quality-gate"]
+      "nextCandidates": ["implementation-execution"]
     },
     {
       "skillId": "quality-gate",
       "stages": ["self-check", "closure"],
       "risk": "medium",
-      "nextCandidates": ["independent-review", "structured-handoff"]
+      "nextCandidates": ["independent-review"]
     },
     {
       "skillId": "independent-review",
       "stages": ["vision-review", "review"],
       "risk": "high",
-      "nextCandidates": ["review-feedback-resolution", "structured-handoff"]
-    },
-    {
-      "skillId": "review-feedback-resolution",
-      "stages": ["feedback"],
-      "risk": "high",
-      "nextCandidates": ["independent-review"]
+      "nextCandidates": ["implementation-execution"]
     },
     {
       "skillId": "structured-handoff",

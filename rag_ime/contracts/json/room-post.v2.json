@@ -29,6 +29,20 @@
     "kind": {"type": "string", "minLength": 1},
     "visibility": {"enum": ["room", "root"]},
     "content": {"type": "string", "minLength": 1},
+    "question": {
+      "type": "object",
+      "required": ["prompt", "options"],
+      "properties": {
+        "prompt": {"type": "string", "minLength": 1},
+        "options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 5,
+          "items": {"$ref": "#/$defs/questionOption"}
+        }
+      },
+      "additionalProperties": false
+    },
     "mentions": {
       "type": "array",
       "maxItems": 16,
@@ -55,6 +69,34 @@
         }
       }
     },
+    "attachments": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "mediaId", "ownerType", "ownerId", "roomId", "fileName", "mimeType", "byteSize", "sha256", "origin", "createdAtMs"],
+        "properties": {
+          "schemaVersion": {"const": "rag-ime.agent-media.v1"},
+          "mediaId": {"type": "string", "pattern": "^media_[A-Za-z0-9_-]{12,80}$"},
+          "ownerType": {"const": "room"},
+          "ownerId": {"type": "string", "minLength": 1},
+          "roomId": {"type": "string", "minLength": 1},
+          "fileName": {"type": "string", "maxLength": 160},
+          "mimeType": {"enum": ["image/png", "image/jpeg", "image/gif", "image/webp"]},
+          "byteSize": {"type": "integer", "minimum": 1, "maximum": 20971520},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "width": {"type": ["integer", "null"]},
+          "height": {"type": ["integer", "null"]},
+          "durationMs": {"type": ["integer", "null"]},
+          "thumbnailMediaId": {"type": ["string", "null"]},
+          "origin": {"const": "user_attachment"},
+          "originTool": {"type": "string"},
+          "originReceiptId": {"type": "string"},
+          "createdAtMs": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
     "idempotencyKey": {"type": "string", "minLength": 1},
     "publicationSource": {
       "type": "object",
@@ -66,6 +108,31 @@
       "additionalProperties": false
     },
     "createdAtMs": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "questionOption": {
+      "type": "object",
+      "required": ["value", "label"],
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "recommended": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

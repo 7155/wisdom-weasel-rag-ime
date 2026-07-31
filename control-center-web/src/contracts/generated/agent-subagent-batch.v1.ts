@@ -10,10 +10,18 @@ export interface AgentSubagentBatchV1 {
   parentSessionId: string;
   parentRunId: string;
   contextMode: 'fresh' | 'fork';
+  resultDeliveryMode: 'inline' | 'next_turn';
   state: 'queued' | 'running' | 'completed' | 'failed' | 'aborted' | 'timed_out';
   depth: number;
   maxDepth: number;
   abortRequested: boolean;
+  causalMetadata: {
+    planId: string;
+    planRevision: number;
+    goalId: string;
+    goalRevision: number;
+    roomBound: boolean;
+  };
   createdAtMs: number;
   updatedAtMs: number;
   completedAtMs: number | null;

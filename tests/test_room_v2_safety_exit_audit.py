@@ -34,6 +34,7 @@ class _AcceptedRuntime:
             "rootId": payload["rootId"],
             "dispatchId": payload["dispatchId"],
             "generation": payload["generation"],
+            "turnId": f"turn:{payload['dispatchId']}",
         }
 
     def cancel_room(self, *, session_id: str, root_id: str, generation: int):
@@ -184,12 +185,14 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
 
     def test_system_ceilings_cannot_be_relaxed_by_a_root_request(self) -> None:
         root = {
-            "schemaVersion": "wisdom-weasel.room-root-execution.v2",
+            "schemaVersion": "wisdom-weasel.room-root-execution.v3",
             "rootId": "root:over-limit",
             "roomId": "room:1",
             "generation": 0,
             "state": "running",
-            "owner": "user:1",
+            "facilitatorParticipantId": "participant:a",
+            "reporterParticipantId": None,
+            "reporterSelectionReceiptId": None,
             "requirementAnchorRef": "requirement:limits",
             "createdByActorRef": "user:1",
             "terminalReceiptId": None,
@@ -271,8 +274,8 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         self.assertIn('"git", "merge-base", "--is-ancestor"', build)
         self.assertIn("Pi source does not contain the reviewed Room runtime handler commit", build)
 
-    def test_residual_gate_cancel_dead_letter_blocks_false_terminal_state(self) -> None:
-        """Fail closed today, while proving why administrator kill remains a gate."""
+    def test_cancel_dead_letter_finalizes_with_visible_unknown_surfaces(self) -> None:
+        """Exhausted runtime cancellation is terminal without hiding uncertainty."""
 
         runtime = _CancelUnavailableRuntime()
         worker = RoomKernelWorker(
@@ -293,19 +296,64 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
             ).fetchone()
         root = self.store.root("root:1")
         self.assertEqual((state, attempts), ("dead_letter", 5))
-        self.assertEqual(root["state"], "cancelling")
-        self.assertIsNone(root["terminalReceiptId"])
-        self.assertEqual(self.store.abort_scope("dispatch:1")["state"], "cancelling")
+        self.assertEqual(root["state"], "cancelled")
+        self.assertIsNotNone(root["terminalReceiptId"])
+        terminal = self.store.receipt(str(root["terminalReceiptId"]))
+        self.assertEqual(
+            terminal["details"],
+            {"terminalState": "cancelled_with_unknowns", "quiescent": True},
+        )
+        self.assertEqual(self.store.abort_scope("dispatch:1")["state"], "unknown")
+        self.assertEqual(
+            {
+                item["state"]
+                for item in self.store.cancellation_surface_projection("room:1")
+            },
+            {"unknown"},
+        )
+
+    def test_reconcile_recovers_existing_exhausted_cancel_dead_letter(self) -> None:
+        self.worker.run_once()
+        self.store.cancel_root("root:1", now_ms=self.clock)
+        with sqlite3.connect(self.store.db_path) as conn:
+            conn.execute(
+                """UPDATE room_kernel_cancel_outbox
+                   SET state='dead_letter',attempt_count=5,last_error='session failed'"""
+            )
+            conn.execute(
+                """UPDATE room_v2_runtime_cancel_surface_receipts
+                   SET state='unknown'"""
+            )
+            conn.execute(
+                """UPDATE room_kernel_dispatches
+                   SET state='unknown' WHERE dispatch_id='dispatch:1'"""
+            )
+
+        self.assertIsNone(self.store.root("root:1")["terminalReceiptId"])
+        receipts = self.worker.reconcile()
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]["receiptKind"], "terminal")
+
+        root = self.store.root("root:1")
+        self.assertEqual(root["state"], "cancelled")
+        terminal = self.store.receipt(str(root["terminalReceiptId"]))
+        self.assertEqual(
+            terminal["details"],
+            {"terminalState": "cancelled_with_unknowns", "quiescent": True},
+        )
+        self.assertEqual(self.store.abort_scope("dispatch:1")["state"], "unknown")
 
     def _seed_dispatch(self) -> None:
         self.store.create_root(
             {
-                "schemaVersion": "wisdom-weasel.room-root-execution.v2",
+                "schemaVersion": "wisdom-weasel.room-root-execution.v3",
                 "rootId": "root:1",
                 "roomId": "room:1",
                 "generation": 0,
                 "state": "running",
-                "owner": "user:1",
+                "facilitatorParticipantId": "participant:a",
+                "reporterParticipantId": None,
+                "reporterSelectionReceiptId": None,
                 "requirementAnchorRef": "requirement:1",
                 "createdByActorRef": "user:1",
                 "terminalReceiptId": None,
@@ -321,16 +369,23 @@ class RoomV2SafetyExitAuditTests(unittest.TestCase):
         )
         self.store.create_task(
             {
-                "schemaVersion": "wisdom-weasel.room-task.v2",
+                "schemaVersion": "wisdom-weasel.room-task.v3",
                 "taskId": "task:1",
                 "rootId": "root:1",
                 "parentTaskId": None,
-                "ownerParticipantId": "participant:b",
-                "assigneeParticipantId": "participant:b",
+                "taskKind": "work",
+                "currentOwnerParticipantId": "participant:b",
+                "ownershipRevision": 0,
+                "ownershipReceiptId": None,
                 "objective": "audit",
                 "expectedOutput": "a safe terminal receipt",
                 "requirementItemIds": ["requirement:1"],
                 "acceptanceCriterionIds": ["ac:1"],
+                "contextEvidenceRefs": [],
+                "invitationId": None,
+                "reviewOfTaskIds": [],
+                "reviewAuthorParticipantIds": [],
+                "reviewState": "not_required",
                 "revision": 1,
                 "state": "active",
             },

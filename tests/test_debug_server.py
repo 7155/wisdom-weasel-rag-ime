@@ -26,6 +26,7 @@ from rag_ime.memory_generator import GeneratedMemoryItem, GeneratedMemoryReport
 from rag_ime.memory_models import ImeQueryContext
 from rag_ime.models import InputSuggestion, MemoryAction, ModelPrediction
 from rag_ime.predictor import OllamaPredictionConfig, OllamaPredictionProvider
+from rag_ime.settings_store import ManagementSettingsStore
 
 
 class FakePredictionProvider:
@@ -249,6 +250,12 @@ class PrefixFixtureCore(FixtureCoreClient):
 
 
 class DebugImeServiceTests(unittest.TestCase):
+    def test_tool_gateway_accept_queue_exceeds_the_runtime_host_concurrency_limit(self) -> None:
+        self.assertEqual(
+            debug_server_module.QuietThreadingHTTPServer.request_queue_size,
+            64,
+        )
+
     def test_expected_client_disconnect_does_not_dump_server_traceback(self) -> None:
         server = object.__new__(debug_server_module.QuietThreadingHTTPServer)
         with patch.object(ThreadingHTTPServer, "handle_error") as parent_handler:
@@ -306,21 +313,31 @@ class DebugImeServiceTests(unittest.TestCase):
         self.assertGreaterEqual(seeded["seeded"], 1)
 
     def test_only_agent_gateway_owns_room_runtime_effects(self) -> None:
+        sidecar_db = Path(self.tmp.name) / "passive-sidecar.sqlite"
+        gateway_db = Path(self.tmp.name) / "active-gateway.sqlite"
+        for db_path in (sidecar_db, gateway_db):
+            ManagementSettingsStore(db_path).update_settings(
+                {"agent": {"pi": {"enabled": True}}},
+                updated_by="test",
+            )
         with patch.dict(
             os.environ,
-            {"RAG_IME_ROOM_KERNEL_MODE": "kernel_only"},
+            {
+                "RAG_IME_AGENT_GATEWAY_ENABLED": "1",
+                "RAG_IME_ROOM_KERNEL_MODE": "kernel_only",
+            },
             clear=False,
         ):
             sidecar = DebugImeService(
                 DebugServerConfig(
-                    db_path=Path(self.tmp.name) / "passive-sidecar.sqlite",
+                    db_path=sidecar_db,
                     seed_if_empty=False,
                     server_name="sidecar server",
                 )
             )
             gateway = DebugImeService(
                 DebugServerConfig(
-                    db_path=Path(self.tmp.name) / "active-gateway.sqlite",
+                    db_path=gateway_db,
                     seed_if_empty=False,
                     server_name="agent gateway",
                 )
@@ -330,10 +347,14 @@ class DebugImeServiceTests(unittest.TestCase):
             self.assertFalse(
                 sidecar.agent.room_kernel_commands.runtime_effects_enabled
             )
+            self.assertFalse(sidecar.agent.runtime.runtime_status()["enabled"])
+            self.assertFalse(sidecar.agent.runtime_factory.execution_owner)
             self.assertTrue(gateway.agent.room_kernel_worker_loop.running)
             self.assertTrue(
                 gateway.agent.room_kernel_commands.runtime_effects_enabled
             )
+            self.assertTrue(gateway.agent.runtime.runtime_status()["enabled"])
+            self.assertTrue(gateway.agent.runtime_factory.execution_owner)
         finally:
             sidecar.close()
             gateway.close()

@@ -1,16 +1,20 @@
 ---
 name: test-driven-implementation
-description: Implement one bounded change from observable behavior, adding a failing test first and preserving existing contracts outside the approved scope.
+description: Implement one bounded code slice from observable behavior, starting with a correctly failing test.
 when:
-  - 已确认的行为变更可测试并需要回归保护
-does: 先证明缺口，再做最小完整实现并验证。
-input: 需求、验收、模块所有权、兼容约束和测试入口。
-output: 失败复现、实现、测试结果、契约影响和风险。
+  - An active execution slice needs code and regression protection
+does: Prove the gap, implement at the owning seam, and verify the slice.
+input: Acceptance alias, behavior, owner, compatibility limits and test seam.
+output: Red/green evidence, implementation, contract impact and risk.
 notFor:
-  - 未知故障尚未定位，或仅需读取、调研和格式整理
+  - Unexplained failures, reading, research or formatting-only work
 ---
 
 # Test-Driven Implementation
+
+This is the inner code-change loop of `implementation-execution`, not a
+standalone delivery stage. Return its evidence to the outer execution packet;
+do not settle the Task or move directly to review.
 
 ## Red-Green Contract
 
@@ -31,7 +35,7 @@ test setup is diagnostic evidence, not the red phase.
 5. Refactor only after behavior is green, and only when it improves ownership,
    dependency direction, or deletion of duplicated logic.
 6. Report the behavior changed, evidence, contract impact, unrun checks, and
-   residual risk.
+   residual risk to `implementation-execution`.
 
 ## Evidence Sequence
 

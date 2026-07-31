@@ -33,7 +33,7 @@ describe('preview control transport', () => {
       }),
     ]));
     expect(tools.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'ime_overview', enabled: true }),
+      expect.objectContaining({ id: 'overview', enabled: true }),
       expect.objectContaining({ id: 'workspace_read', enabled: true }),
       expect.objectContaining({ id: 'workspace_shell', enabled: true }),
     ]));

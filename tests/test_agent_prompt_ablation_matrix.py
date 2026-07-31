@@ -225,12 +225,15 @@ class AgentPromptAblationMatrixTests(unittest.TestCase):
             )
         )
 
-    def test_grill_with_docs_is_deferred_to_irreversible_design_approval(self) -> None:
+    def test_alignment_documentation_is_deferred_to_irreversible_design_approval(self) -> None:
         stages = self.matrix["deferredStages"]
 
         self.assertEqual(len(stages), 1)
         stage = stages[0]
-        self.assertEqual(stage["id"], "grill-me-docs")
+        self.assertEqual(
+            stage["id"],
+            "alignment-and-decision.durable-documentation",
+        )
         self.assertEqual(stage["status"], "deferred-not-always-on")
         self.assertIn("after source investigation", stage["activation"])
         self.assertIn("high-impact irreversible", stage["activation"])

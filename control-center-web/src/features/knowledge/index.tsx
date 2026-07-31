@@ -12,6 +12,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
 import {
   Button,
@@ -75,7 +76,8 @@ type DetailTab = 'materials' | 'viewer' | 'search' | 'graph' | 'jobs' | 'setting
 
 export function KnowledgeFeature() {
   const [selectedBaseId, setSelectedBaseId] = useState('');
-  const [tab, setTab] = useState<DetailTab>('materials');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = asDetailTab(searchParams.get('tab') ?? 'materials');
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteBaseOpen, setDeleteBaseOpen] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<KnowledgeDocument | null>(null);
@@ -89,6 +91,12 @@ export function KnowledgeFeature() {
   const selectedBase = queries.base.data ?? bases.find((item) => item.id === selectedBaseId) ?? null;
   const documents = queries.documents.data ?? [];
   const detailQuery = useKnowledgeDocumentDetail(selectedBaseId, selectedDocumentId);
+  const selectTab = (nextTab: DetailTab, replace = true) => {
+    const next = new URLSearchParams(searchParams);
+    if (nextTab === 'materials') next.delete('tab');
+    else next.set('tab', nextTab);
+    setSearchParams(next, { replace });
+  };
 
   useEffect(() => {
     if (!selectedBaseId && bases[0]?.id) setSelectedBaseId(bases[0].id);
@@ -131,8 +139,20 @@ export function KnowledgeFeature() {
   };
 
   const createMutation = useMutation({
-    mutationFn: (input: { name: string; description: string }) => createKnowledgeBase(queries.transport, input),
+    mutationFn: async (input: { name: string; description: string }) => {
+      const created = await createKnowledgeBase(queries.transport, input);
+      if (!created.id || created.name !== input.name) {
+        throw new Error('知识服务没有确认新知识库，未关闭创建窗口。');
+      }
+      return created;
+    },
     onSuccess: async (base) => {
+      queryClient.setQueryData<DocumentKnowledgeBase[]>(knowledgeLibraryKeys.bases(), (current = []) => (
+        current.some((item) => item.id === base.id)
+          ? current.map((item) => item.id === base.id ? base : item)
+          : [...current, base]
+      ));
+      queryClient.setQueryData(knowledgeLibraryKeys.base(base.id), base);
       setSelectedBaseId(base.id);
       setCreateOpen(false);
       await invalidateBase(base.id);
@@ -201,7 +221,11 @@ export function KnowledgeFeature() {
     mutationFn: ({ document, parser }: { document: KnowledgeDocument; parser: KnowledgeParserMode }) => selectedBase
       ? retryKnowledgeDocument(queries.transport, selectedBase, document, { parser })
       : Promise.reject(new Error('没有选中的知识库。')),
-    onSuccess: async () => { setReparseDocument(null); await invalidateBase(); },
+    onSuccess: async () => {
+      setReparseDocument(null);
+      selectTab('jobs');
+      await invalidateBase();
+    },
   });
   const deleteDocumentMutation = useMutation({
     mutationFn: (documentId: string) => deleteKnowledgeDocument(queries.transport, selectedBaseId, documentId),
@@ -211,19 +235,31 @@ export function KnowledgeFeature() {
     },
   });
   const updateMutation = useMutation({
-    mutationFn: (patch: {
+    mutationFn: async (patch: {
       name?: string;
       description?: string;
       agentEnabled?: boolean;
       parser?: KnowledgeParserMode;
       chunkingConfig?: KnowledgeChunkingConfig;
       retrievalConfig?: KnowledgeRetrievalConfig;
-    }) => (
-      selectedBase
-        ? updateKnowledgeBase(queries.transport, selectedBase, patch)
-        : Promise.reject(new Error('没有选中的知识库。'))
-    ),
-    onSuccess: () => invalidateBase(),
+    }) => {
+      if (!selectedBase) throw new Error('没有选中的知识库。');
+      const updated = await updateKnowledgeBase(queries.transport, selectedBase, patch);
+      if (
+        (patch.name !== undefined && updated.name !== patch.name)
+        || (patch.description !== undefined && updated.description !== patch.description)
+      ) {
+        throw new Error('知识服务没有确认基本信息更新，页面仍保留你的输入。');
+      }
+      return updated;
+    },
+    onSuccess: async (base) => {
+      queryClient.setQueryData(knowledgeLibraryKeys.base(base.id), base);
+      queryClient.setQueryData<DocumentKnowledgeBase[]>(knowledgeLibraryKeys.bases(), (current = []) => (
+        current.map((item) => item.id === base.id ? base : item)
+      ));
+      await invalidateBase(base.id);
+    },
   });
   const reindexPreviewMutation = useMutation({
     mutationFn: () => selectedBase
@@ -236,7 +272,7 @@ export function KnowledgeFeature() {
       : Promise.reject(new Error('没有选中的知识库。')),
     onSuccess: async () => {
       reindexPreviewMutation.reset();
-      setTab('jobs');
+      selectTab('jobs');
       await invalidateBase();
     },
   });
@@ -264,7 +300,7 @@ export function KnowledgeFeature() {
             bases={bases}
             onCreate={() => setCreateOpen(true)}
             onRefresh={refresh}
-            onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); setTab('materials'); }}
+            onSelect={(baseId) => { setSelectedBaseId(baseId); setSelectedDocumentId(''); selectTab('materials'); }}
             refreshing={queries.bases.isFetching || queries.worker.isFetching}
             selectedBaseId={selectedBaseId}
             worker={worker}
@@ -273,7 +309,7 @@ export function KnowledgeFeature() {
             {selectedBase ? (
               <>
                 <KnowledgeBaseHeader base={selectedBase} onDelete={() => setDeleteBaseOpen(true)} worker={worker} />
-                <Tabs className="knowledge-library__tabs" onValueChange={(value) => setTab(asDetailTab(value))} value={tab}>
+                <Tabs className="knowledge-library__tabs" onValueChange={(value) => selectTab(asDetailTab(value))} value={tab}>
                   <TabsList aria-label="知识库管理视图">
                     <TabsTrigger value="materials">资料</TabsTrigger>
                     <TabsTrigger value="viewer">查看材料</TabsTrigger>
@@ -294,7 +330,7 @@ export function KnowledgeFeature() {
                       onDelete={setDocumentToDelete}
                       onClearUploads={() => { importMutation.reset(); setUploadItems([]); }}
                       onImport={() => importMutation.mutate({})}
-                      onOpen={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); setTab('viewer'); }}
+                      onOpen={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); selectTab('viewer'); }}
                       onReparse={setReparseDocument}
                       onRetryUpload={(item) => importMutation.mutate({ retryItem: item })}
                       onSelect={(documentId) => { setFocusedHit(null); setSelectedDocumentId(documentId); }}
@@ -322,7 +358,7 @@ export function KnowledgeFeature() {
                     />
                   </TabsContent>
                   <TabsContent value="search">
-                    <KnowledgeSearchPanel base={selectedBase} onOpenHit={(hit) => { setSelectedDocumentId(hit.documentId); setFocusedHit(hit); setTab('viewer'); }} transport={queries.transport} />
+                    <KnowledgeSearchPanel base={selectedBase} onOpenHit={(hit) => { setSelectedDocumentId(hit.documentId); setFocusedHit(hit); selectTab('viewer'); }} transport={queries.transport} />
                   </TabsContent>
                   <TabsContent value="graph">
                     <KnowledgeGraphPanel
@@ -345,7 +381,7 @@ export function KnowledgeFeature() {
                           lineEnd: null,
                           diagnostics: { effectiveMode: 'unknown', lexicalRank: null, denseRank: null, graphRank: null, lexicalScore: null, denseScore: null, graphScore: null, graphMatches: [], graphPaths: [] },
                         } : null);
-                        setTab('viewer');
+                        selectTab('viewer');
                       }}
                       transport={queries.transport}
                     />
@@ -363,6 +399,7 @@ export function KnowledgeFeature() {
                   </TabsContent>
                   <TabsContent value="settings">
                     <KnowledgeSettingsPanel
+                      key={selectedBase.id}
                       base={selectedBase}
                       documents={documents}
                       indexRuntime={knowledgeIndexRuntimeStatus(queries.worker.data)}
@@ -463,6 +500,28 @@ function KnowledgeBaseRail({
           <IconButton icon={<FolderPlus size={15} />} label="新建知识库" onClick={onCreate} size="small" tooltip />
         </div>
       </header>
+      <div className="knowledge-base-rail__mobile">
+        <Field htmlFor="knowledge-mobile-base" label="当前知识库">
+          <Select
+            disabled={!bases.length}
+            id="knowledge-mobile-base"
+            onValueChange={onSelect}
+            options={bases.map((base) => ({
+              value: base.id,
+              label: `${base.name} · ${base.documentCount} 个文件`,
+            }))}
+            value={selectedBaseId || bases[0]?.id || ''}
+          />
+        </Field>
+        <span className="knowledge-base-rail__mobile-worker" data-state={worker.tone}>
+          <i aria-hidden="true" />
+          {worker.label}
+        </span>
+        <div className="knowledge-base-rail__actions">
+          <IconButton disabled={refreshing} icon={<RefreshCw size={15} />} label="刷新知识库" onClick={onRefresh} size="large" tooltip />
+          <IconButton icon={<FolderPlus size={16} />} label="新建知识库" onClick={onCreate} size="large" tooltip />
+        </div>
+      </div>
       <div className="knowledge-base-rail__worker" data-state={worker.tone}>
         <i aria-hidden="true" />
         <span>知识服务</span>
@@ -666,12 +725,6 @@ function KnowledgeSettingsPanel({
             ? 'RRF K 或候选倍数超出允许范围。'
             : '';
   useEffect(() => {
-    setChunking(base.chunkingConfig);
-    setRetrieval(base.retrievalConfig);
-    setName(base.name);
-    setDescription(base.description);
-  }, [base.id, base.name, base.description, base.chunkingConfig, base.retrievalConfig]);
-  useEffect(() => {
     if (!documents.some((document) => document.id === previewDocumentId)) {
       setPreviewDocumentId(documents[0]?.id ?? '');
     }
@@ -690,7 +743,7 @@ function KnowledgeSettingsPanel({
       </section>
       <div className="knowledge-settings-grid">
         <section>
-          <div className="knowledge-settings__heading"><ServerCog size={16} /><div><strong>Agent</strong><span>ime_knowledge</span></div></div>
+          <div className="knowledge-settings__heading"><ServerCog size={16} /><div><strong>Agent</strong><span>knowledge</span></div></div>
           <Switch checked={base.agentEnabled} disabled={pending} label="允许 Agent 使用" onCheckedChange={onAgentEnabled} />
         </section>
         <section>

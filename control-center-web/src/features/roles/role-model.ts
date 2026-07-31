@@ -252,7 +252,7 @@ export function modelDisplayName(profile?: string): string {
     'gpt-5.6-terra': 'GPT-5.6 Terra',
     'gpt-5.6-luna': 'GPT-5.6 Luna',
     'deepseek-v4-flash': 'DeepSeek V4 Flash',
-  } as Record<string, string>)[model] ?? model) || 'Session 选择';
+  } as Record<string, string>)[model] ?? model) || '跟随对话';
 }
 
 export function personaExpressionTraits(persona: AgentPersonaV1): string[] {

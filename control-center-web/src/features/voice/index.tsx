@@ -72,7 +72,6 @@ const defaultSuggestedHotwords = [
 
 export function VoiceFeature() {
   const identity = useProductIdentity();
-  const suggestedHotwords = [...defaultSuggestedHotwords, identity.assistantName];
   const queries = useVoiceQueries();
   const mutationBoundary = useConfigurationMutationBoundary();
   const settingsEnvelope = asRecord(queries.settings.data);
@@ -143,6 +142,9 @@ export function VoiceFeature() {
     () => normalizeHotwordDraft(hotwordsText, hotwordsEnabled),
     [hotwordsEnabled, hotwordsText],
   );
+  const selectedHotwordKeys = new Set(hotwordDraft.words.map(hotwordDedupeKey));
+  const suggestedHotwords = [...new Set([...defaultSuggestedHotwords, identity.assistantName])]
+    .filter((word) => !selectedHotwordKeys.has(hotwordDedupeKey(word)));
   const hotwordDirty = hotwordsEnabled !== booleanValue(voiceSettings.hotwordsEnabled)
     || JSON.stringify(hotwordDraft.words) !== JSON.stringify(savedHotwords);
   const serviceDirty = provider !== (configuredProvider || 'native_streaming') || hotkey !== configuredHotkey;
@@ -251,7 +253,7 @@ export function VoiceFeature() {
             { label: '听写服务', value: queries.runtime.isPending ? '正在检查' : agentRunning ? '运行中' : '未运行', detail: stringValue(valueAt(voiceControl, 'agent.statusText')) || '随时按住快捷键开始听写', icon: Waves, tone: agentRunning ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '麦克风', value: queries.runtime.isPending ? '正在检查' : permissionLabel(microphone), detail: '需要系统授权', icon: Mic, tone: booleanValue(microphone.ok) ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
             { label: '辅助功能', value: queries.runtime.isPending ? '正在检查' : permissionLabel(accessibility), detail: '用于将文字写回当前应用', icon: Shield, tone: booleanValue(accessibility.ok) ? 'success' : queries.runtime.isPending ? 'neutral' : 'warning' },
-            { label: 'API 凭据', value: credentialState.label, detail: '按引擎隔离保存在钥匙串', icon: KeyRound, tone: credentialState.tone },
+            { label: '服务凭据', value: credentialState.label, detail: '按转写服务分别保存在钥匙串', icon: KeyRound, tone: credentialState.tone },
           ]} />
           <InlineNotice title="隐私保护" tone="info">页面不会显示已保存的密钥或请求头。没有取得明确状态时，相关操作保持关闭。</InlineNotice>
           {queries.runtime.error ? <InlineNotice title="权限状态读取失败" tone="warning">暂时无法确认麦克风和辅助功能权限，请刷新后重试。</InlineNotice> : null}
@@ -263,6 +265,7 @@ export function VoiceFeature() {
               <span id="voice-agent-actions-label">听写服务</span>
               <Button
                 aria-label={agentRunning ? '停止听写服务' : '启动听写服务'}
+                aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined}
                 disabled={!nativeActionsAvailable}
                 leadingIcon={agentRunning ? <Square size={14} /> : <Play size={14} />}
                 loading={voiceAction.isPending && ['start_agent', 'stop_agent'].includes(voiceAction.variables ?? '')}
@@ -275,16 +278,16 @@ export function VoiceFeature() {
             </div>
             <div aria-labelledby="voice-microphone-actions-label" className="voice-native-action-group" role="group">
               <span id="voice-microphone-actions-label">麦克风</span>
-              <Button disabled={!nativeActionsAvailable || !agentRunning} leadingIcon={<Mic size={14} />} loading={voiceAction.isPending && voiceAction.variables === 'request_microphone_permission'} onClick={() => voiceAction.mutate('request_microphone_permission')} size="small">请求权限</Button>
-              <Button disabled={!nativeActionsAvailable} loading={voiceAction.isPending && voiceAction.variables === 'open_microphone_settings'} onClick={() => voiceAction.mutate('open_microphone_settings')} size="small" variant="quiet">打开设置</Button>
+              <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable || !agentRunning} leadingIcon={<Mic size={14} />} loading={voiceAction.isPending && voiceAction.variables === 'request_microphone_permission'} onClick={() => voiceAction.mutate('request_microphone_permission')} size="small">请求权限</Button>
+              <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable} loading={voiceAction.isPending && voiceAction.variables === 'open_microphone_settings'} onClick={() => voiceAction.mutate('open_microphone_settings')} size="small" variant="quiet">打开设置</Button>
             </div>
             <div aria-labelledby="voice-accessibility-actions-label" className="voice-native-action-group" role="group">
               <span id="voice-accessibility-actions-label">辅助功能</span>
-              <Button disabled={!nativeActionsAvailable || !agentRunning} leadingIcon={<Shield size={14} />} loading={voiceAction.isPending && voiceAction.variables === 'request_accessibility_permission'} onClick={() => voiceAction.mutate('request_accessibility_permission')} size="small">请求权限</Button>
-              <Button disabled={!nativeActionsAvailable} loading={voiceAction.isPending && voiceAction.variables === 'open_accessibility_settings'} onClick={() => voiceAction.mutate('open_accessibility_settings')} size="small" variant="quiet">打开设置</Button>
+              <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable || !agentRunning} leadingIcon={<Shield size={14} />} loading={voiceAction.isPending && voiceAction.variables === 'request_accessibility_permission'} onClick={() => voiceAction.mutate('request_accessibility_permission')} size="small">请求权限</Button>
+              <Button aria-describedby={!nativeActionsAvailable ? 'voice-native-actions-availability' : undefined} disabled={!nativeActionsAvailable} loading={voiceAction.isPending && voiceAction.variables === 'open_accessibility_settings'} onClick={() => voiceAction.mutate('open_accessibility_settings')} size="small" variant="quiet">打开设置</Button>
             </div>
           </div>
-          {!nativeActionsAvailable ? <InlineNotice title="请在已安装的应用中操作" tone="warning">浏览器预览不能启动听写或打开系统授权；请回到已安装的{identity.productName}。</InlineNotice> : null}
+          {!nativeActionsAvailable ? <div id="voice-native-actions-availability"><InlineNotice title="请在已安装的应用中操作" tone="warning">浏览器预览不能启动听写或打开系统授权；请回到已安装的{identity.productName}。</InlineNotice></div> : null}
           {voiceAction.error ? <InlineNotice title="语音操作失败" tone="danger">{voiceAction.error instanceof Error ? voiceAction.error.message : '本机语音操作没有完成。'}</InlineNotice> : null}
           {nativeReceipt && !nativeReceipt.accepted ? <InlineNotice title="这次操作没有完成" tone="danger">{nativeReceipt.error || '系统没有接受这次操作。'}</InlineNotice> : null}
           {nativeReceipt?.accepted ? <InlineNotice title="听写状态已更新" tone="success">{nativeReceipt.status.statusText}</InlineNotice> : null}
@@ -292,7 +295,7 @@ export function VoiceFeature() {
 
         <ManagementSection
           title="转写引擎与按键"
-          description="选择真正处理音频的 Provider/API，以及按住哪个键开始说话。保存前会先让你确认变化。"
+          description="选择真正处理音频的转写服务，以及按住哪个键开始说话。保存前会先让你确认变化。"
           trailing={<StatusBadge label={currentProviderStatus(queries.settings.isPending, Boolean(queries.settings.error), configuredProvider)} tone={configuredProvider ? 'info' : 'warning'} />}
         >
           <div className="voice-service-layout">
@@ -354,9 +357,9 @@ export function VoiceFeature() {
           {queries.settings.error ? <InlineNotice title="当前设置读取失败" tone="warning">暂时无法核对正在使用的转写引擎，请刷新后重试。</InlineNotice> : null}
         </ManagementSection>
 
-        <ManagementSection title="API 凭据" description="连接当前转写引擎所需的信息只保存在 macOS 钥匙串中；保存后不会再次显示原值。">
+        <ManagementSection title="服务凭据" description="连接当前转写服务所需的信息只保存在 macOS 钥匙串中；保存后不会再次显示原值。">
           <div className="voice-credential-grid">
-            <Field description={credentialState.label === '已配置' ? '已配置；留空可保留现有 Token。' : '首次保存必须填写。'} htmlFor="voice-access-token" label="Access Token">
+            <Field description={credentialState.label === '已配置' ? '已配置；留空可保留现有凭据。' : '首次保存必须填写。'} htmlFor="voice-access-token" label="Access Token">
               <Input autoComplete="new-password" id="voice-access-token" onChange={(event) => setCredentialDraft((current) => ({ ...current, accessToken: event.target.value }))} placeholder={credentialState.label === '已配置' ? '已配置，留空保持不变' : '输入 Access Token'} type="password" value={credentialDraft.accessToken} />
             </Field>
             {provider === 'native_streaming' ? (

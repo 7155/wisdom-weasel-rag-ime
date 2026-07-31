@@ -29,6 +29,7 @@ export type SessionSummary = Pick<
     | 'projectContextEnabled'
     | 'piSkillsEnabled'
     | 'codexSkillsEnabled'
+    | 'roomParticipant'
   >>;
 
 export interface AgentPermissionSelection {
@@ -54,6 +55,8 @@ export interface AgentRoleListResponse {
 
 export interface ComposerAttachment extends PickedFile {
   source: 'picker' | 'clipboard' | 'path';
+  /** Browser-only bytes used for an immediate thumbnail after paste/import. */
+  previewFile?: File;
 }
 
 export type ThinkingLevel = AgentModelCatalogV1['thinkingLevel'];
@@ -110,9 +113,9 @@ export function sessionPermissionLabel(session: SessionSummary): string {
         : 'per_action');
   return {
     read_only: '只读',
-    per_action: '每次确认',
+    per_action: '写入与命令确认',
     workspace_managed: '工作区托管',
-    full_trust: '完全信任',
+    full_trust: '全自动',
   }[executionMode];
 }
 

@@ -6,6 +6,7 @@ import {
   Check,
   Clock3,
   Database,
+  Download,
   FileJson2,
   GitCompareArrows,
   Layers3,
@@ -19,7 +20,17 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
-import { Button, EmptyState, Select, Switch } from '@/components/primitives';
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  EmptyState,
+  Select,
+  Switch,
+} from '@/components/primitives';
 import { sessionItems, type SessionSummary } from '@/features/agent/types';
 import {
   formatJson,
@@ -31,6 +42,7 @@ import {
   type DebugToolBatch,
   type DebugToolExecution,
 } from './model';
+import { buildContextDebugHtml } from './html-export';
 import './context-debug.css';
 
 type PayloadTab =
@@ -47,12 +59,12 @@ type PayloadTab =
 const PAYLOAD_TABS: ReadonlyArray<{ id: PayloadTab; label: string }> = [
   { id: 'delta', label: '本次增量' },
   { id: 'context', label: '完整上下文' },
-  { id: 'provider-request', label: 'Provider 请求' },
-  { id: 'provider-response', label: 'Provider 响应' },
-  { id: 'assistant', label: 'Assistant' },
-  { id: 'runtime-input', label: 'Runtime 输入' },
-  { id: 'system-prompt', label: 'System Prompt' },
-  { id: 'tool-schemas', label: '工具 Schema' },
+  { id: 'provider-request', label: '模型服务请求' },
+  { id: 'provider-response', label: '模型服务响应' },
+  { id: 'assistant', label: '助手回复' },
+  { id: 'runtime-input', label: '本轮输入' },
+  { id: 'system-prompt', label: '系统指令' },
+  { id: 'tool-schemas', label: '工具定义' },
   { id: 'raw', label: '原始记录' },
 ];
 
@@ -64,7 +76,8 @@ export function ContextDebugFeature() {
   const [live, setLive] = useState(true);
   const [selectedCallIndex, setSelectedCallIndex] = useState(0);
   const [payloadTab, setPayloadTab] = useState<PayloadTab>('delta');
-
+  const [htmlPreviewUrls, setHtmlPreviewUrls] = useState<{ download: string; preview: string } | null>(null);
+  const [refreshState, setRefreshState] = useState<'idle' | 'pending' | 'succeeded' | 'failed'>('idle');
   const sessionsQuery = useQuery({
     queryKey: ['context-debug', 'sessions'],
     queryFn: ({ signal }) => transport.request({
@@ -118,7 +131,14 @@ export function ContextDebugFeature() {
     }
   }, [calls, selectedCallIndex]);
 
+  useEffect(() => () => {
+    if (!htmlPreviewUrls) return;
+    URL.revokeObjectURL(htmlPreviewUrls.preview);
+    URL.revokeObjectURL(htmlPreviewUrls.download);
+  }, [htmlPreviewUrls]);
+
   const selectedCall = calls.find((call) => call.index === selectedCallIndex) ?? calls.at(-1);
+  const selectedSessionTitle = sessions.find((session) => session.id === sessionId)?.title ?? '';
   const turnOptions = [
     { value: '', label: '最新回合（自动跟随）' },
     ...response.availableTurns.map((turn) => ({
@@ -143,7 +163,36 @@ export function ContextDebugFeature() {
     setSelectedCallIndex(0);
   }
 
+  async function refreshContext(): Promise<void> {
+    setRefreshState('pending');
+    try {
+      const result = await contextQuery.refetch();
+      setRefreshState(result.isError ? 'failed' : 'succeeded');
+    } catch {
+      setRefreshState('failed');
+    }
+  }
+
+  function showHtmlPreview(): void {
+    const generatedAtMs = Date.now();
+    const options = {
+      generatedAtMs,
+      response,
+      sessionTitle: selectedSessionTitle,
+    };
+    const downloadHtml = buildContextDebugHtml(options);
+    const previewHtml = buildContextDebugHtml({
+      ...options,
+      reportScriptSrc: new URL('context-debug-report.js', document.baseURI).href,
+    });
+    setHtmlPreviewUrls({
+      download: URL.createObjectURL(new Blob([downloadHtml], { type: 'text/html;charset=utf-8' })),
+      preview: URL.createObjectURL(new Blob([previewHtml], { type: 'text/html;charset=utf-8' })),
+    });
+  }
+
   return (
+    <>
     <main className="context-debug-feature" data-route-id="context-debug">
       <header className="context-debug-header">
         <div className="context-debug-heading">
@@ -155,7 +204,7 @@ export function ContextDebugFeature() {
         </div>
         <div className="context-debug-controls">
           <Select
-            aria-label="选择 Agent 会话"
+            aria-label="选择对话"
             className="context-debug-select context-debug-select--session"
             disabled={!sessionOptions.length}
             onValueChange={selectSession}
@@ -179,12 +228,22 @@ export function ContextDebugFeature() {
           />
           <Button
             aria-label="刷新原始上下文"
+            aria-live="polite"
             leadingIcon={<RefreshCw size={15} />}
-            loading={contextQuery.isFetching}
-            onClick={() => void contextQuery.refetch()}
+            loading={refreshState === 'pending' || contextQuery.isFetching}
+            onClick={() => void refreshContext()}
             size="small"
           >
-            刷新
+            {refreshState === 'succeeded' ? '已刷新' : refreshState === 'failed' ? '刷新失败' : '刷新'}
+          </Button>
+          <Button
+            disabled={!context}
+            leadingIcon={<FileJson2 size={15} />}
+            onClick={showHtmlPreview}
+            size="small"
+            variant="quiet"
+          >
+            逐次上下文
           </Button>
           <a className="context-debug-back" href={sessionId ? `#/agent?sessionId=${encodeURIComponent(sessionId)}` : '#/agent'}>
             <ArrowLeft size={14} />对话
@@ -200,19 +259,19 @@ export function ContextDebugFeature() {
       ) : null}
       {!contextQuery.isPending && !contextQuery.error && sessionId && !response.available ? (
         <DebugNotice tone="warning">
-          {response.error || '当前回合没有上下文快照。请在“设置 → 隐私与安全”开启本机上下文快照并选择保存目录；未开启时 Runtime 重启后无法恢复旧 Prompt。'}
+          {response.error || '当前回合没有上下文快照。请在“设置 → 隐私与安全”开启本机上下文快照并选择保存目录；未开启时，应用重启后无法恢复旧的系统指令。'}
         </DebugNotice>
       ) : null}
 
       <ContextXraySummary call={selectedCall} context={context} telemetry={response.telemetry} />
 
       <details className="context-debug-audit">
-        <summary><Braces size={15} /><span><strong>展开原始审计区</strong><small>按需显示消息正文、Provider 载荷、System Prompt、工具 Schema 与原始记录</small></span></summary>
+        <summary><Braces size={15} /><span><strong>展开原始审计区</strong><small>按需显示消息正文、模型服务载荷、系统指令、工具定义与原始记录</small></span></summary>
       <div className="context-debug-workspace">
-        <aside className="context-debug-call-rail" aria-label="LLM 调用列表">
+        <aside className="context-debug-call-rail" aria-label="模型调用列表">
           <DebugSummary context={context} />
           <div className="context-debug-call-rail__heading">
-            <span><Layers3 size={14} />LLM 调用</span>
+            <span><Layers3 size={14} />模型调用</span>
             <b>{calls.length}</b>
           </div>
           {calls.length ? (
@@ -227,7 +286,7 @@ export function ContextDebugFeature() {
                     <span className="context-debug-call__index">{call.index}</span>
                     <span className="context-debug-call__copy">
                       <strong>模型调用 {call.index}</strong>
-                      <small>{call.contextMessages.length} 条消息 · {call.providerExchanges.length} 次 Provider 尝试</small>
+                      <small>{call.contextMessages.length} 条消息 · {call.providerExchanges.length} 次模型服务尝试</small>
                       <span>
                         <em data-tone="added">+{call.contextDelta.addedMessageCount}</em>
                         <em data-tone="removed">-{call.contextDelta.removedMessageCount}</em>
@@ -240,7 +299,7 @@ export function ContextDebugFeature() {
             </ol>
           ) : (
             <p className="context-debug-call-rail__empty">
-              {contextQuery.isPending ? '正在读取 Pi Runtime' : '这轮还没有模型调用'}
+              {contextQuery.isPending ? '正在读取运行上下文' : '这轮还没有模型调用'}
             </p>
           )}
         </aside>
@@ -272,11 +331,17 @@ export function ContextDebugFeature() {
               ))}
             </nav>
             <div className="context-debug-payload__body">
+              {selectedCall && !hasExactProviderContext(selectedCall) ? (
+                <DebugNotice tone="warning">
+                  这条历史记录没有逐次模型服务快照；系统指令与工具定义
+                  仅为整轮记录，不能作为当次实际请求的精确证据。
+                </DebugNotice>
+              ) : null}
               {context && selectedCall ? (
                 <PayloadView call={selectedCall} context={context} tab={payloadTab} />
               ) : (
                 <EmptyState
-                  description="发送一条 Agent 消息后，这里会按 Provider 调用逐次展示真实请求。"
+                  description="发送一条消息后，这里会按模型调用逐次展示真实请求。"
                   icon={Database}
                   title="暂无原始上下文"
                 />
@@ -293,6 +358,38 @@ export function ContextDebugFeature() {
       </div>
       </details>
     </main>
+    <Dialog
+      onOpenChange={(open) => {
+        if (!open) setHtmlPreviewUrls(null);
+      }}
+      open={Boolean(htmlPreviewUrls)}
+    >
+      <DialogContent className="context-debug-html-dialog">
+        <DialogHeader>
+          <DialogTitle>逐次上下文装配</DialogTitle>
+          <DialogDescription>
+            这是打开按钮时冻结的本机快照。每个模型调用分别展示当时实际送入模型服务的系统指令、消息、工具定义、请求及工具回写。
+          </DialogDescription>
+        </DialogHeader>
+        {htmlPreviewUrls ? (
+          <iframe
+            sandbox="allow-scripts"
+            src={htmlPreviewUrls.preview}
+            title="逐次上下文报告"
+          />
+        ) : null}
+        <footer className="context-debug-html-dialog__footer">
+          <span>报告只在本机临时生成；关闭窗口后即释放。</span>
+          {htmlPreviewUrls ? (
+            <a download="agent-context-debug.html" href={htmlPreviewUrls.download}>
+              <Download size={14} />
+              下载报告
+            </a>
+          ) : null}
+        </footer>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
@@ -309,18 +406,18 @@ function ContextXraySummary({ call, context, telemetry }: { call?: DebugModelCal
   const cacheWrite = cacheEvidence?.capability === 'reported' ? cacheEvidence.cacheWriteTokens : projectedNumber(usage, ['cacheWrite', 'cache_creation_input_tokens']);
   const compaction = projectedText(projection, ['compactionState', 'compaction', 'lastCompactionStatus']);
   const recovery = projectedText(projection, ['recoveryState', 'recovery', 'bootstrapRecoveryState']);
-  return <section className="context-xray-summary" aria-label="Session 上下文结构">
-    <header><span><Layers3 size={16} /><strong>Session Context X-ray</strong></span><small>{context ? `Turn ${shortId(context.turnId)}` : '等待 Runtime 投影'}</small></header>
+  return <section className="context-xray-summary" aria-label="对话上下文结构">
+    <header><span><Layers3 size={16} /><strong>上下文组成</strong></span><small>{context ? `回合 ${shortId(context.turnId)}` : '等待运行状态'}</small></header>
     <dl>
-      <XrayMetric label="Stable prefix" value={stablePrefix} suffix="条" />
-      <XrayMetric label="Dynamic tail" value={dynamicTail} suffix="条" />
-      <XrayMetric label="Sealed" value={sealed} suffix="条" />
-      <XrayMetric label="Pending" value={pending} suffix="条" />
-      <XrayMetric label="Cache read" value={cacheRead} suffix="tokens" />
-      <XrayMetric label="Cache write" value={cacheWrite} suffix="tokens" />
+      <XrayMetric label="稳定前缀" value={stablePrefix} suffix="条" />
+      <XrayMetric label="本轮新增" value={dynamicTail} suffix="条" />
+      <XrayMetric label="已封存" value={sealed} suffix="条" />
+      <XrayMetric label="待处理" value={pending} suffix="条" />
+      <XrayMetric label="缓存读取" value={cacheRead} suffix="词元" />
+      <XrayMetric label="缓存写入" value={cacheWrite} suffix="词元" />
     </dl>
-    <div className="context-xray-summary__states"><span><strong>Cache support / hit</strong><small>{cacheEvidence ? cacheEvidence.capability === 'unsupported' ? 'unsupported · Provider 未报告' : cacheEvidence.cacheReadTokens > 0 ? 'supported · hit' : 'supported · no hit' : '后端未投影'}</small></span><span><strong>Compaction / Recovery</strong><small>{compaction || '未投影'} / {recovery || '未投影'}</small></span><span><strong>Context delta</strong><small>{call ? `共同前缀 ${call.contextDelta.commonPrefixMessages} 条${call.contextDelta.prefixBytes !== undefined ? ` / ${call.contextDelta.prefixBytes} bytes` : ''} · +${call.contextDelta.addedMessageCount} / -${call.contextDelta.removedMessageCount}` : '暂无模型调用'}</small></span></div>
-    <p>来源正文默认隐藏。展开下方审计区后，才会显示具体消息、评分调试、Provider 载荷和工具 Schema。</p>
+    <div className="context-xray-summary__states"><span><strong>缓存状态</strong><small>{cacheEvidence ? cacheEvidence.capability === 'unsupported' ? '模型服务未报告' : cacheEvidence.cacheReadTokens > 0 ? '可用 · 已命中' : '可用 · 未命中' : '尚未收到状态'}</small></span><span><strong>压缩与恢复</strong><small>{compaction || '未报告'} / {recovery || '未报告'}</small></span><span><strong>本轮变化</strong><small>{call ? `共同前缀 ${call.contextDelta.commonPrefixMessages} 条${call.contextDelta.prefixBytes !== undefined ? ` / ${call.contextDelta.prefixBytes} 字节` : ''} · 新增 ${call.contextDelta.addedMessageCount} 条 · 移除 ${call.contextDelta.removedMessageCount} 条` : '暂无模型调用'}</small></span></div>
+    <p>来源正文默认隐藏。展开下方审计区后，才会显示具体消息、评分调试、模型服务载荷和工具定义。</p>
   </section>;
 }
 
@@ -372,7 +469,9 @@ function PayloadView({
       </div>
     );
   }
-  if (tab === 'context') return <MessageList emptyLabel="当前调用上下文为空" messages={call.contextMessages} />;
+  if (tab === 'context') {
+    return <MessageList emptyLabel="当前调用上下文为空" messages={callProviderMessages(call)} />;
+  }
   if (tab === 'provider-request') {
     return <JsonPayload value={call.providerExchanges.map((exchange) => ({ index: exchange.index, capturedAtMs: exchange.capturedAtMs, payload: exchange.payload }))} />;
   }
@@ -381,8 +480,12 @@ function PayloadView({
   }
   if (tab === 'assistant') return <JsonPayload value={call.assistantMessage ?? null} />;
   if (tab === 'runtime-input') return <TextPayload value={context.prompt} />;
-  if (tab === 'system-prompt') return <TextPayload value={context.systemPrompt} />;
-  if (tab === 'tool-schemas') return <JsonPayload value={{ activeTools: context.activeTools, schemas: context.toolSchemas }} />;
+  if (tab === 'system-prompt') {
+    return <TextPayload value={callProviderSystemPrompt(call, context)} />;
+  }
+  if (tab === 'tool-schemas') {
+    return <JsonPayload value={{ schemas: callProviderTools(call, context) }} />;
+  }
   return <JsonPayload value={context.raw} />;
 }
 
@@ -430,7 +533,7 @@ function ToolExecutionTimeline({
   return (
     <section className="context-debug-tools" aria-label="工具串并行执行">
       <header>
-        <div><Wrench size={15} /><span><strong>工具执行拓扑</strong><small>按真实生命周期重叠判定并行或串行</small></span></div>
+        <div><Wrench size={15} /><span><strong>工具执行批次</strong><small>记录模式不等同于已证明的实际时间重叠</small></span></div>
         <span>{tools.length} 次工具 · {batches.length} 个阶段</span>
       </header>
       <div className="context-debug-tools__body">
@@ -443,7 +546,7 @@ function ToolExecutionTimeline({
           >
             <header>
               <span className="context-debug-tool-stage__number">阶段 {batch.stage}</span>
-              <strong>{batch.executionMode === 'parallel' ? `并行 ${batch.toolCallIds.length} 项` : '串行'}</strong>
+              <strong>{batch.executionMode === 'parallel' ? `记录为并行批次 ${batch.toolCallIds.length} 项` : '记录为串行批次'}</strong>
               <small>{batch.modelCallIndex ? `模型调用 ${batch.modelCallIndex}` : '未关联模型调用'} · {durationLabel(batch.startedAtMs, batch.endedAtMs)}</small>
             </header>
             <div className="context-debug-tool-stage__items">
@@ -507,9 +610,29 @@ function modelLabel(model: Record<string, unknown>): string {
 }
 
 function callCaption(call: DebugModelCall): string {
-  const runtime = call.runtimeTurnIndex === undefined ? '' : `Agent Loop ${call.runtimeTurnIndex + 1}`;
-  const attempts = `${call.providerExchanges.length} 次 Provider 尝试`;
-  return [runtime, attempts, `${call.contextMessages.length} 条消息`].filter(Boolean).join(' · ');
+  const runtime = call.runtimeTurnIndex === undefined ? '' : `处理步骤 ${call.runtimeTurnIndex + 1}`;
+  const attempts = `${call.providerExchanges.length} 次模型服务尝试`;
+  return [runtime, attempts, `${callProviderMessages(call).length} 条消息`].filter(Boolean).join(' · ');
+}
+
+function callProviderMessages(call: DebugModelCall): unknown[] {
+  if (!Object.hasOwn(call.providerContext, 'messages')) return call.contextMessages;
+  return Array.isArray(call.providerContext.messages) ? call.providerContext.messages : [];
+}
+
+function callProviderSystemPrompt(call: DebugModelCall, context: DebugContextRecord): string {
+  return typeof call.providerContext.systemPrompt === 'string'
+    ? call.providerContext.systemPrompt
+    : context.systemPrompt;
+}
+
+function callProviderTools(call: DebugModelCall, context: DebugContextRecord): unknown[] {
+  if (!Object.hasOwn(call.providerContext, 'tools')) return context.toolSchemas;
+  return Array.isArray(call.providerContext.tools) ? call.providerContext.tools : [];
+}
+
+function hasExactProviderContext(call: DebugModelCall): boolean {
+  return Object.keys(call.providerContext).length > 0;
 }
 
 function durationLabel(startedAtMs: number, endedAtMs?: number): string {
@@ -534,5 +657,5 @@ function shortId(value: string): string {
 }
 
 function errorText(error: unknown): string {
-  return error instanceof Error && error.message.trim() ? error.message.trim() : '无法读取本机 Debug 数据';
+  return error instanceof Error && error.message.trim() ? error.message.trim() : '无法读取本机上下文记录';
 }

@@ -5,7 +5,7 @@ import json
 from collections.abc import Mapping
 from typing import Any, Protocol
 
-from .agent_execution_policy import APPROVAL_AUTO, approval_strategy
+from .agent_execution_policy import APPROVAL_AUTO, APPROVAL_MODEL, approval_strategy
 from .agent_external_approval import ExternalApprovalFinalizer
 from .external_actions import (
     PORTABLE_RESTORE_ACTION,
@@ -29,6 +29,7 @@ class ApprovalHost(Protocol):
     events: Any
     memory_sources: Any
     _approval_executor: Any
+    approval_model: Any
     _process_id_provider: Any
 
     def _record_tool_receipt_evidence_safely(
@@ -118,7 +119,7 @@ class AgentApprovalApplicationService:
         if (
             current_state == "approved"
             and approved
-            and current.get("toolId") == "ime_memory"
+            and current.get("toolId") == "memory"
             and current.get("operation")
             in _RECOVERABLE_GOVERNED_MEMORY_OPERATIONS
         ):
@@ -263,61 +264,109 @@ class AgentApprovalApplicationService:
         current = self.host.sessions.get_approval(approval_id)
         session_id = str(current.get("sessionId") or "")
         session = self.host.sessions.get(session_id)
-        if approval_strategy(
+        strategy = approval_strategy(
             session,
             tool=str(current.get("toolId") or ""),
             operation=str(current.get("operation") or ""),
-        ) != APPROVAL_AUTO:
+        )
+        if strategy not in {APPROVAL_AUTO, APPROVAL_MODEL}:
             raise ValueError(
-                "automatic approval is not enabled for this session"
+                "unattended approval is not enabled for this session"
             )
         if current.get("state") != "pending":
-            raise ValueError("automatic approval is no longer pending")
+            raise ValueError("unattended approval is no longer pending")
         if str(approval.get("payloadSha256") or "") != str(
             current.get("payloadSha256") or ""
         ):
             raise ValueError(
-                "automatic approval payload no longer matches its preview"
+                "unattended approval payload no longer matches its preview"
             )
-        if self.host._approval_executor is None:
+
+        model_decision: Mapping[str, object] | None = None
+        approved = True
+        if strategy == APPROVAL_MODEL:
+            model_decision = self.host.approval_model.decide(
+                current,
+                session,
+            )
+            approved = model_decision.get("decision") == "approve"
+            decided_by = (
+                "approval-model:"
+                + str(model_decision.get("receiptId") or "")
+            )
+        else:
+            decided_by = (
+                "execution-policy:"
+                + str(session.get("executionMode") or "per_action")
+            )
+
+        if approved and self.host._approval_executor is None:
             raise ValueError("approval executor is unavailable")
         decided = self.host.sessions.decide_approval(
             approval_id,
-            approved=True,
+            approved=approved,
             payload_sha256=str(current["payloadSha256"]),
-            decided_by=(
-                "execution-policy:"
-                + str(session.get("executionMode") or "per_action")
-            ),
+            decided_by=decided_by,
         )
-        final = self.execute_approved(decided)
-        memory_checkpoint = self.checkpoint_applied(final)
+        final = self.execute_approved(decided) if approved else dict(decided)
+        memory_checkpoint = (
+            self.checkpoint_applied(final)
+            if approved
+            else {}
+        )
+        event_payload: dict[str, object] = {
+            "approvalId": approval_id,
+            "state": str(final.get("state") or "failed"),
+            "automatic": True,
+            "decisionMode": (
+                "model"
+                if model_decision is not None
+                else "policy"
+            ),
+        }
+        if model_decision is not None:
+            event_payload["approvalModelDecision"] = dict(model_decision)
         self.host.events.publish(
             session_id,
             "approval_resolved",
-            {
-                "approvalId": approval_id,
-                "state": str(final.get("state") or "failed"),
-                "automatic": True,
-            },
+            event_payload,
         )
         receipt = (
             final.get("receipt")
             if isinstance(final.get("receipt"), Mapping)
             else {}
         )
-        return {
-            "summary": str(
-                receipt.get("summary")
-                or "自动批准的操作未返回摘要"
-            ),
+        summary = str(
+            receipt.get("summary")
+            or (
+                model_decision.get("rationaleSummary")
+                if model_decision is not None
+                else ""
+            )
+            or (
+                "Luna Max 已拒绝这次操作"
+                if model_decision is not None and not approved
+                else "自动批准的操作未返回摘要"
+            )
+        )
+        result: dict[str, object] = {
+            "summary": summary,
             "approvalRequired": False,
-            "autoApproved": True,
+            "autoApproved": approved,
             "approvalId": approval_id,
             "approval": final,
             "receipt": dict(receipt),
             "memoryCheckpoint": memory_checkpoint,
+            "decisionMode": (
+                "model"
+                if model_decision is not None
+                else "policy"
+            ),
         }
+        if model_decision is not None:
+            result["modelDecided"] = True
+            result["approvalModelDecision"] = dict(model_decision)
+        return result
 
     def execute_approved(
         self,

@@ -130,7 +130,9 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "roomId": self.room_id,
                 "generation": 0,
                 "state": "running",
-                "owner": str(self.owner["id"]),
+                "facilitatorParticipantId": str(self.owner["id"]),
+                "reporterParticipantId": None,
+                "reporterSelectionReceiptId": None,
                 "requirementAnchorRef": "requirement-anchor:settle@sha256:test",
                 "createdByActorRef": "user:local",
                 "terminalReceiptId": None,
@@ -150,8 +152,15 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "taskId": "task:settle",
                 "rootId": "root:settle",
                 "parentTaskId": None,
-                "ownerParticipantId": str(self.owner["id"]),
-                "assigneeParticipantId": str(self.owner["id"]),
+                "taskKind": "work",
+                "currentOwnerParticipantId": str(self.owner["id"]),
+                "ownershipRevision": 0,
+                "ownershipReceiptId": None,
+                "invitationId": None,
+                "reviewState": "not_required",
+                "reviewOfTaskIds": [],
+                "reviewAuthorParticipantIds": [],
+                "contextEvidenceRefs": [],
                 "objective": "Verify the governed settle lifecycle.",
                 "expectedOutput": "A canonical Post and continuation.",
                 "requirementItemIds": ["requirement:settle"],
@@ -297,12 +306,19 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "attemptedAlternatives": ["已验证本地替代方案"],
                 "unlockCondition": "提供可用环境",
             }
+        public_summaries = {
+            "deliver": "检查与验证均已完成，结果可以交付；当前没有已知残余风险。",
+            "handoff": "当前阶段已经完成，现转交另一位伙伴独立复核后再给出结论。",
+            "wait": "当前仍在等待外部依赖恢复；收到信号后会继续处理。",
+            "blocked": "当前工作受环境条件阻塞；已说明尝试过的方法和恢复条件。",
+        }
         result = self.service.execute_room_capability_tool(
             self.session_id,
             "room_commit",
             {
                 "decision": decision,
                 "summary": f"result:{decision}",
+                "publicSummary": public_summaries[decision],
                 "evidence": evidence,
                 "residualRisks": (
                     []
@@ -346,6 +362,8 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "rootId": "root:settle",
                 "generation": 0,
                 "capabilityEpoch": 7,
+                "runtimeTurnId": "turn:dispatch:settle",
+                "dispatchAttempt": 0,
                 "settleScopeId": "scope:settle",
                 "settleAttempt": attempt,
                 "resourceUsage": {
@@ -384,7 +402,10 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             "root:settle",
             limit=10,
         )
-        self.assertEqual([post["content"] for post in posts], ["result:deliver"])
+        self.assertEqual(
+            [post["content"] for post in posts],
+            ["检查与验证均已完成，结果可以交付；当前没有已知残余风险。"],
+        )
         public_events = self.service.room_snapshot(self.room_id)["events"]
         terminal_events = [
             event
@@ -414,7 +435,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
 
         self.assertEqual(
             settled["settleResult"]["post"]["content"],
-            "result:deliver",
+            "检查与验证均已完成，结果可以交付；当前没有已知残余风险。",
         )
         posts = self.service.room_context_ledger.recent_posts(
             "root:settle",
@@ -422,14 +443,17 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(len(posts), 2)
         self.assertEqual(posts[0]["content"], "public evidence from room_post")
-        self.assertEqual(posts[1]["content"], "result:deliver")
+        self.assertEqual(
+            posts[1]["content"],
+            "检查与验证均已完成，结果可以交付；当前没有已知残余风险。",
+        )
         invocation_id = str(published["invocationReceipt"]["receiptId"])
         self.assertEqual(
             self.service.room_capabilities.execution_receipt(invocation_id)["status"],
             "applied",
         )
 
-    def test_handoff_creates_one_bounded_child_dispatch(self) -> None:
+    def test_handoff_transfers_one_task_and_enqueues_one_dispatch(self) -> None:
         self._invoke_commit(
             "handoff",
             targetParticipantRef="P1",
@@ -440,17 +464,36 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         )
 
         settled = self._settle()
+        self.assertEqual(
+            settled["settleResult"]["post"]["content"],
+            "当前阶段已经完成，现转交另一位伙伴独立复核后再给出结论。",
+        )
+        self.assertNotIn(
+            "独立复核证据并回传结论",
+            settled["settleResult"]["post"]["content"],
+        )
 
         receipt = settled["settleResult"]["receipt"]
-        child_task_id = str(receipt["details"]["childTaskId"])
+        transferred_task_id = str(receipt["details"]["transferredTaskId"])
         child_id = str(receipt["details"]["childDispatchId"])
-        child_task = self.service.room_kernel.task(child_task_id)
+        transferred_task = self.service.room_kernel.task(transferred_task_id)
         child = self.service.room_kernel.dispatch(child_id)
-        self.assertNotEqual(child_task_id, "task:settle")
-        self.assertEqual(child_task["parentTaskId"], "task:settle")
-        self.assertEqual(child_task["objective"], "独立复核证据并回传结论")
-        self.assertEqual(child_task["assigneeParticipantId"], self.target["id"])
-        self.assertEqual(child["taskId"], child_task_id)
+        self.assertEqual(transferred_task_id, "task:settle")
+        self.assertIsNone(transferred_task["parentTaskId"])
+        self.assertEqual(
+            transferred_task["objective"],
+            "独立复核证据并回传结论",
+        )
+        self.assertEqual(
+            transferred_task["currentOwnerParticipantId"],
+            self.target["id"],
+        )
+        self.assertEqual(transferred_task["ownershipRevision"], 1)
+        self.assertEqual(
+            transferred_task["ownershipReceiptId"],
+            receipt["details"]["ownershipReceiptId"],
+        )
+        self.assertEqual(child["taskId"], transferred_task_id)
         self.assertEqual(child["parentDispatchId"], "dispatch:settle")
         self.assertEqual(child["targetParticipantId"], self.target["id"])
         self.assertEqual(child["targetSessionId"], self.target["sessionId"])
@@ -459,12 +502,13 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         self.assertEqual(child["capabilityEpoch"], 8)
         self.assertEqual(child["state"], "pending")
         self.assertEqual(
-            child_task["contextEvidenceRefs"],
+            transferred_task["contextEvidenceRefs"],
             ["evidence:settle"],
         )
+        self.assertEqual(transferred_task["state"], "active")
         self.assertEqual(
-            self.service.room_kernel.task("task:settle")["state"],
-            "completed",
+            self.service.room_kernel.counts("root:settle")["tasks"],
+            1,
         )
         self.assertEqual(
             self.service.room_kernel.continuation(
@@ -476,7 +520,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         pinned, created = self.service.room_skill_receipts.pin_skill(
             receipt_id="skill:handoff-child",
             root_id="root:settle",
-            task_id=child_task_id,
+            task_id=transferred_task_id,
             dispatch_id=child_id,
             session_id=str(self.target["sessionId"]),
             skill_id=skill_id,
@@ -532,6 +576,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             {
                 "decision": "deliver",
                 "summary": "独立复核完成",
+                "publicSummary": "独立复核已经完成，相关检查通过。",
                 "evidence": [
                     {
                         "acceptance": "AC-1",
@@ -551,6 +596,8 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "rootId": "root:settle",
                 "generation": 0,
                 "capabilityEpoch": 8,
+                "runtimeTurnId": f"turn:{child_id}",
+                "dispatchAttempt": 0,
                 "settleScopeId": "scope:handoff-child",
                 "settleAttempt": 1,
                 "resourceUsage": {
@@ -570,7 +617,12 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         )
 
     def test_wait_decision_moves_root_and_task_to_waiting(self) -> None:
-        self._invoke_commit("wait")
+        self._invoke_commit(
+            "wait",
+            waitingFor="user",
+            resumeCondition="用户提供自由文本澄清",
+            question="请补充必要信息。",
+        )
 
         settled = self._settle()
 
@@ -583,6 +635,195 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             self.service.room_kernel_snapshot(self.room_id)["posts"][0]["kind"],
             "wait",
         )
+        commit_id = str(
+            settled["settleResult"]["receipt"]["details"]["commitId"]
+        )
+        continuation = self.service.room_kernel.continuation(commit_id)[
+            "payload"
+        ]
+        self.assertNotIn("questionOptions", continuation)
+        self.assertEqual(continuation["question"], "请补充必要信息。")
+        self.assertNotIn(
+            "question",
+            self.service.room_kernel_snapshot(self.room_id)["posts"][0],
+        )
+
+    def test_user_wait_canonicalizes_structured_question_into_post_and_continuation(
+        self,
+    ) -> None:
+        options = [
+            {
+                "value": "  safe  ",
+                "label": "  稳妥   方案 ",
+                "description": " 保留   当前边界 ",
+                "recommended": True,
+            },
+            {
+                "value": "fast",
+                "label": "快速方案",
+                "recommended": False,
+            },
+        ]
+        normalized = [
+            {
+                "value": "safe",
+                "label": "稳妥 方案",
+                "description": "保留 当前边界",
+                "recommended": True,
+            },
+            {
+                "value": "fast",
+                "label": "快速方案",
+                "recommended": False,
+            },
+        ]
+        self._invoke_commit(
+            "wait",
+            waitingFor="user",
+            resumeCondition="用户选择一个方案",
+            question="采用哪个方案？",
+            questionOptions=options,
+        )
+
+        settled = self._settle()
+
+        self.assertEqual(settled["state"], "committed")
+        commit_id = str(
+            settled["settleResult"]["receipt"]["details"]["commitId"]
+        )
+        continuation = self.service.room_kernel.continuation(commit_id)[
+            "payload"
+        ]
+        self.assertEqual(continuation["question"], "采用哪个方案？")
+        self.assertEqual(continuation["questionOptions"], normalized)
+        post = self.service.room_kernel_snapshot(self.room_id)["posts"][0]
+        self.assertEqual(
+            post["question"],
+            {
+                "prompt": "采用哪个方案？",
+                "options": normalized,
+            },
+        )
+
+    def test_structured_question_validator_fails_closed(self) -> None:
+        options = [
+            {"value": "safe", "label": "稳妥方案"},
+            {"value": "fast", "label": "快速方案"},
+        ]
+        cases = (
+            {
+                "value": options,
+                "decision": "deliver",
+                "waiting_for": "user",
+                "question": "采用哪个方案？",
+                "message": "wait-for-user",
+            },
+            {
+                "value": options,
+                "decision": "wait",
+                "waiting_for": "external",
+                "question": "采用哪个方案？",
+                "message": "wait-for-user",
+            },
+            {
+                "value": options[:1],
+                "decision": "wait",
+                "waiting_for": "user",
+                "question": "采用哪个方案？",
+                "message": "between 2 and 5",
+            },
+            {
+                "value": [*options, *options, *options],
+                "decision": "wait",
+                "waiting_for": "user",
+                "question": "采用哪个方案？",
+                "message": "between 2 and 5",
+            },
+            {
+                "value": [
+                    options[0],
+                    {"value": " safe ", "label": "重复方案"},
+                ],
+                "decision": "wait",
+                "waiting_for": "user",
+                "question": "采用哪个方案？",
+                "message": "unique after normalization",
+            },
+            {
+                "value": [
+                    {**options[0], "recommended": True},
+                    {**options[1], "recommended": True},
+                ],
+                "decision": "wait",
+                "waiting_for": "user",
+                "question": "采用哪个方案？",
+                "message": "at most one recommended",
+            },
+        )
+        for case in cases:
+            with self.assertRaisesRegex(
+                RoomCommitProposalError,
+                str(case["message"]),
+            ):
+                settlement._canonical_question_options(
+                    case["value"],
+                    decision=str(case["decision"]),
+                    waiting_for=str(case["waiting_for"]),
+                    question=case["question"],
+                )
+
+    def test_terminal_public_summary_rejects_internal_protocol_fields(self) -> None:
+        self._invoke_commit(
+            "deliver",
+            publicSummary=(
+                "工作已完成；内部 rootId 为 root:settle，"
+                "evidenceRef 为 evidence:settle。"
+            ),
+        )
+
+        settled = self._settle()
+
+        self.assertEqual(settled["state"], "repair_commit")
+        self.assertIn("must be rewritten for users", settled["reason"])
+
+
+    def test_repair_commit_allows_one_follow_up_then_blocks(self) -> None:
+        self._invoke_commit(
+            "deliver",
+            publicSummary=(
+                "工作已完成；内部 rootId 为 root:settle，"
+                "evidenceRef 为 evidence:settle。"
+            ),
+        )
+
+        first = self._settle(1)
+        replay = self._settle(1)
+        blocked = self._settle(2)
+
+        self.assertEqual(first["state"], "repair_commit")
+        self.assertTrue(first["followUpKey"])
+        self.assertEqual(replay["guardReceipt"], first["guardReceipt"])
+        self.assertEqual(blocked["state"], "blocked")
+        self.assertEqual(blocked["guardReceipt"]["details"]["attempt"], 2)
+        self.assertEqual(
+            blocked["guardReceipt"]["details"]["maxAttempts"],
+            2,
+        )
+        self.assertEqual(
+            self.service.room_kernel.dispatch("dispatch:settle")["state"],
+            "failed",
+        )
+
+    def test_wait_public_summary_cannot_claim_unverified_success(self) -> None:
+        self._invoke_commit(
+            "wait",
+            publicSummary="测试全部通过，只需等待部署窗口。",
+        )
+
+        settled = self._settle()
+
+        self.assertEqual(settled["state"], "repair_commit")
+        self.assertIn("authoritative evidence", settled["reason"])
 
     def test_participant_wait_binds_one_exact_dispatch(self) -> None:
         target_task_id = "task:participant-wait-target"
@@ -593,8 +834,15 @@ class RoomSettleLifecycleTests(unittest.TestCase):
                 "taskId": target_task_id,
                 "rootId": "root:settle",
                 "parentTaskId": "task:settle",
-                "ownerParticipantId": str(self.target["id"]),
-                "assigneeParticipantId": str(self.target["id"]),
+                "taskKind": "review",
+                "currentOwnerParticipantId": str(self.target["id"]),
+                "ownershipRevision": 0,
+                "ownershipReceiptId": None,
+                "invitationId": None,
+                "reviewState": "required",
+                "reviewOfTaskIds": ["task:settle"],
+                "reviewAuthorParticipantIds": [],
+                "contextEvidenceRefs": [],
                 "objective": "Publish one independent review.",
                 "expectedOutput": "A public review result.",
                 "requirementItemIds": ["requirement:settle"],

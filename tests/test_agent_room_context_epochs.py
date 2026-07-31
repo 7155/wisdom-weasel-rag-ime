@@ -51,12 +51,14 @@ class RoomSessionContextEpochStoreTests(unittest.TestCase):
         )
         recovery = json.dumps(
             {
-                "schemaVersion": "wisdom-weasel.room-compaction-recovery.v1",
-                "originalRequirements": ["original"],
-                "currentTask": {"objective": "task"},
-                "acceptance": [{"statement": "accept"}],
+                "authoritativeProjectionRef": {
+                    "rootId": "root:1",
+                    "taskId": "task:1",
+                },
+                "pendingAcceptance": [{"statement": "accept"}],
                 "blockers": [{"statement": "blocked"}],
-                "handoff": {"intentKind": "resume"},
+                "nextAction": {"intentKind": "resume"},
+                "evidenceRefs": ["evidence:1"],
                 "skillReceipt": {"restoredFromReceiptId": "skill:1"},
                 "toolReceipt": {"items": [{"receiptId": "tool:1"}]},
             },
@@ -76,7 +78,16 @@ class RoomSessionContextEpochStoreTests(unittest.TestCase):
 
         self.assertEqual(first, replay)
         self.assertEqual(first["toEpoch"], 2)
-        self.assertEqual(first["evidence"]["originalRequirementCount"], 1)
+        self.assertEqual(
+            first["evidence"]["recoverySchemaVersion"],
+            "wisdom-weasel.room-compaction-recovery.v3",
+        )
+        self.assertEqual(first["evidence"]["rootId"], "root:1")
+        self.assertEqual(first["evidence"]["taskId"], "task:1")
+        self.assertEqual(first["evidence"]["pendingAcceptanceCount"], 1)
+        self.assertEqual(first["evidence"]["blockerCount"], 1)
+        self.assertTrue(first["evidence"]["nextActionPresent"])
+        self.assertEqual(first["evidence"]["evidenceRefCount"], 1)
         self.assertEqual(first["evidence"]["skillReceiptId"], "skill:1")
         self.assertEqual(first["evidence"]["toolReceiptIds"], ["tool:1"])
         with self.assertRaisesRegex(RoomContextEpochConflict, "stale"):
@@ -93,12 +104,13 @@ class RoomSessionContextEpochStoreTests(unittest.TestCase):
         )
         recovery = json.dumps(
             {
-                "schemaVersion": "wisdom-weasel.room-compaction-recovery.v2",
-                "originalRequirements": ["original"],
-                "currentTask": {"objective": "task"},
-                "acceptance": [{"statement": "accept"}],
+                "authoritativeProjectionRef": {
+                    "rootId": "root:1",
+                    "taskId": "task:1",
+                },
+                "pendingAcceptance": [{"statement": "accept"}],
                 "blockers": [],
-                "handoff": {"intentKind": "complete"},
+                "nextAction": {"intentKind": "resume"},
                 "skillReceipt": {"restoredFromReceiptId": "skill:1"},
                 "toolReceipt": {"items": [{"receiptId": "tool:1"}]},
             },

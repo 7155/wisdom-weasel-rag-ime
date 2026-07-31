@@ -140,7 +140,7 @@ _PRESENT_DEFAULTS = PersonaDefaults(
     model_policy="fixed",
     memory_policy="personal-evidence-v1",
     tool_profile_version="control-center-v1",
-    model_profile="gpt/gpt-5.6-terra",
+    model_profile="openai-codex/gpt-5.6-terra",
     thinking_level="max",
 )
 
@@ -148,7 +148,7 @@ _PAST_DEFAULTS = PersonaDefaults(
     model_policy="fixed",
     memory_policy="personal-evidence-v1",
     tool_profile_version="control-center-v1",
-    model_profile="gpt/gpt-5.6-luna",
+    model_profile="openai-codex/gpt-5.6-luna",
     thinking_level="max",
 )
 
@@ -156,7 +156,7 @@ _FUTURE_DEFAULTS = PersonaDefaults(
     model_policy="fixed",
     memory_policy="personal-evidence-v1",
     tool_profile_version="control-center-v1",
-    model_profile="gpt/gpt-5.6-sol",
+    model_profile="openai-codex/gpt-5.6-sol",
     thinking_level="max",
 )
 
@@ -164,7 +164,7 @@ _FLASH_DEFAULTS = PersonaDefaults(
     model_policy="fixed",
     memory_policy="personal-evidence-v1",
     tool_profile_version="control-center-v1",
-    model_profile="gpt/gpt-5.6-luna",
+    model_profile="openai-codex/gpt-5.6-luna",
     thinking_level="low",
 )
 

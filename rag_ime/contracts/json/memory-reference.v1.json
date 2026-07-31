@@ -39,6 +39,28 @@
         "createdAtMs": {"type": "integer", "minimum": 0},
         "updatedAtMs": {"type": "integer", "minimum": 0},
         "occurredAtMs": {"type": "integer", "minimum": 0}
+        ,"sourceContextAvailable": {"type": "boolean"}
+        ,"sourceContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recentContext", "preedit", "redacted", "scopeProject", "usedFor"
+          ],
+          "properties": {
+            "recentContext": {"type": "string", "maxLength": 32000},
+            "preedit": {"type": "string", "maxLength": 32000},
+            "redacted": {"type": "boolean"},
+            "scopeProject": {"type": "string"},
+            "usedFor": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["source_fingerprint", "semantic_grouping"]
+              },
+              "uniqueItems": true
+            }
+          }
+        }
       }
     },
     "source": {"$ref": "#/$defs/source"},

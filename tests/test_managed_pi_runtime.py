@@ -57,6 +57,8 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         self.assertEqual(Path(discovered.node_executable).name, "node")
         self.assertEqual(discovered.extension_path.name, "rag-ime-control.ts")
         self.assertEqual(discovered.tools, CONTROL_TOOL_IDS)
+        self.assertIn("work_documents", discovered.tools)
+        self.assertNotIn("workDocuments", discovered.tools)
         self.assertTrue((self.app_support / "PiRuntime" / POINTER_NAME).is_file())
 
     def test_managed_default_reaches_every_coordinator_native_projection(self) -> None:
@@ -831,7 +833,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             installation.runtime_dir
             / "runtime-host"
             / "skills"
-            / "test-driven-implementation"
+            / "implementation-execution"
             / "SKILL.md"
         )
         skill_body = managed_runtime._native_skill_body(
@@ -876,7 +878,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
                 b"room-v2-staged-prompt"
             ).hexdigest(),
             "roomSkillLoad": {
-                "name": "test-driven-implementation",
+                "name": "implementation-execution",
                 "contentRevision": hashlib.sha256(
                     skill_body.encode("utf-8")
                 ).hexdigest(),
@@ -940,7 +942,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
             payload
             / "runtime-host"
             / "skills"
-            / "test-driven-implementation"
+            / "implementation-execution"
             / "SKILL.md"
         )
         node.parent.mkdir(parents=True)
@@ -953,7 +955,7 @@ class ManagedPiRuntimeTests(unittest.TestCase):
         extension.write_text("export default function () {}\n", encoding="utf-8")
         skill.write_text(
             "---\n"
-            "name: test-driven-implementation\n"
+            "name: implementation-execution\n"
             "---\n"
             "Apply test-driven implementation.\n",
             encoding="utf-8",

@@ -39,7 +39,17 @@ class AgentRoomRouteOwnerTests(unittest.TestCase):
         )
 
     def test_room_message_semantics_have_one_owner_each(self) -> None:
-        self.assertEqual(room_message_owner(work_item_id=""), "session")
+        self.assertEqual(
+            room_message_owner(work_item_id="", room_kind="roleplay"),
+            "session",
+        )
+        self.assertEqual(
+            room_message_owner(
+                work_item_id="",
+                room_kind="collaboration",
+            ),
+            "kernel",
+        )
         self.assertEqual(
             room_message_owner(work_item_id="work-item:confirmed"),
             "kernel",

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import type { RoomEventEnvelopeV2 } from '@/contracts/generated/room-event-envelope.v2';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
-import type { RoomRootExecutionV2 } from '@/contracts/generated/room-root-execution.v2';
+import type { RoomRootExecutionV3 } from '@/contracts/generated/room-root-execution.v3';
 import { MockControlTransport } from '@/test/mock-transport';
 import { RoomKernelLivePanel } from './RoomKernelLivePanel';
 
@@ -104,6 +104,21 @@ describe('RoomKernelLivePanel production adapter', () => {
     expect(screen.getByText('执行中')).toBeInTheDocument();
   });
 
+  it('offers an in-place retry when the task snapshot cannot be read', async () => {
+    const snapshot = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('temporary snapshot failure'); })
+      .mockImplementation(() => kernelSnapshot(2));
+    const transport = mockTransport({ snapshot });
+    renderPanel(transport);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('任务进度暂时不可用');
+    fireEvent.click(screen.getByRole('button', { name: '重新读取' }));
+
+    expect(await screen.findByText('进度已同步')).toBeInTheDocument();
+    expect(snapshot).toHaveBeenCalledTimes(2);
+    expect(transport.subscriptionCalls.at(-1)?.request.lastEventId).toBe('room-a#2');
+  });
+
   it('shows permission denial and never subscribes or renders mutation controls', async () => {
     const denied = Object.assign(new Error('agent.read scope required'), { status: 403 });
     const transport = mockTransport({ snapshot: () => { throw denied; } });
@@ -176,10 +191,11 @@ function kernelSnapshot(lastSequence: number, unknown = false) {
   };
 }
 
-function root(): RoomRootExecutionV2 {
+function root(): RoomRootExecutionV3 {
   return {
-    schemaVersion: 'wisdom-weasel.room-root-execution.v2', rootId: 'root-a', roomId: 'room-a', generation: 3,
-    state: 'running', owner: 'researcher', requirementAnchorRef: 'requirement:1', createdByActorRef: 'user:1',
+    schemaVersion: 'wisdom-weasel.room-root-execution.v3', rootId: 'root-a', roomId: 'room-a', generation: 3,
+    state: 'running', facilitatorParticipantId: 'researcher', reporterParticipantId: null,
+    reporterSelectionReceiptId: null, requirementAnchorRef: 'requirement:1', createdByActorRef: 'user:1',
     terminalReceiptId: null, activeProfileRef: null, budgetPolicyRef: 'budget:default', createdAtMs: 1,
   };
 }

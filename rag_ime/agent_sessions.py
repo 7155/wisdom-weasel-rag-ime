@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from .agent_approval_model import pending_model_arbitration
 from .agent_role_identity import (
     canonical_agent_role_id,
     canonical_role_book_revision_id,
@@ -43,7 +44,9 @@ SELECT
     b.binding_state AS runtime_binding_state,
     b.created_at_ms AS runtime_binding_created_at_ms,
     b.updated_at_ms AS runtime_binding_updated_at_ms,
-    tp.allowed_tools_json AS allowed_tools_json
+    tp.allowed_tools_json AS allowed_tools_json,
+    tp.disclosure_preferences_json AS disclosure_preferences_json,
+    tp.policy_revision AS policy_revision
 FROM agent_sessions AS s
 LEFT JOIN agent_runtime_bindings AS b ON b.session_id = s.id
 LEFT JOIN agent_session_tool_policies AS tp ON tp.session_id = s.id
@@ -67,7 +70,7 @@ class AgentSessionStore:
         role_id: str = "companion-future-v1",
         role_version: str = "1",
         role_book_revision_id: str = "",
-        model_profile: str = "gpt/gpt-5.6-sol",
+        model_profile: str = "openai-codex/gpt-5.6-sol",
         thinking_level: str = "max",
         tool_profile_version: str = "control-center-v1",
         execution_mode: str | None = None,
@@ -551,6 +554,49 @@ class AgentSessionStore:
                 updated_at_ms=updated_at_ms,
             )
         return self.get(session_id)
+    def set_disclosure_preferences(
+        self,
+        session_id: str,
+        preferences: Mapping[str, object],
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        normalized = _disclosure_preferences(preferences)
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = self._get(conn, session_id)
+            if normalized == current.get("capabilityDisclosurePreferences"):
+                return current
+            cursor = conn.execute(
+                """
+                INSERT INTO agent_session_tool_policies(
+                    session_id, allowed_tools_json, disclosure_preferences_json,
+                    policy_revision, updated_at_ms
+                ) VALUES (?, 'null', ?, 2, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    disclosure_preferences_json = excluded.disclosure_preferences_json,
+                    policy_revision = agent_session_tool_policies.policy_revision + 1,
+                    updated_at_ms = excluded.updated_at_ms
+                """,
+                (
+                    session_id,
+                    json.dumps(
+                        normalized,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    timestamp,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise AgentSessionNotFound(session_id)
+            conn.execute(
+                "UPDATE agent_sessions SET updated_at_ms = ? WHERE id = ?",
+                (timestamp, session_id),
+            )
+        return self.get(session_id)
 
     def _set_runtime_policy(
         self,
@@ -839,6 +885,21 @@ class AgentSessionStore:
             ).fetchone()
         return int(row[0] if row else 0)
 
+    def latest_runtime_turn_id(self, session_id: str) -> str:
+        self.get(session_id)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT turn_id
+                FROM agent_runtime_events
+                WHERE session_id = ? AND turn_id <> ''
+                ORDER BY sequence DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+        return str(row["turn_id"]) if row is not None else ""
+
     def prompt_acceptance_evidence(
         self,
         session_id: str,
@@ -926,6 +987,7 @@ class AgentSessionStore:
         *,
         actor: str = "control-center-user",
         updated_at_ms: int | None = None,
+        lifecycle_request: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         action = str(payload.get("action") or "").strip()
         if action not in {
@@ -933,7 +995,6 @@ class AgentSessionStore:
             "submit_review",
             "approve",
             "return_to_draft",
-            "start_execution",
             "complete",
             "cancel",
             "reset",
@@ -941,7 +1002,12 @@ class AgentSessionStore:
             raise ValueError("unsupported agent plan action")
         timestamp = _timestamp(updated_at_ms)
         normalized_actor = _bounded_plan_text(actor, field="actor", maximum=120)
-        note = _bounded_plan_text(payload.get("note"), field="note", maximum=600, required=False)
+        note = _bounded_plan_text(
+            payload.get("note"),
+            field="note",
+            maximum=600,
+            required=action == "return_to_draft",
+        )
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             session = conn.execute(
@@ -952,6 +1018,10 @@ class AgentSessionStore:
                 raise AgentSessionNotFound(session_id)
             current = _agent_plan_projection(conn, session_id, limit=100)
             expected_revision = payload.get("expectedRevision")
+            if action == "return_to_draft" and expected_revision is None:
+                raise ValueError(
+                    "return_to_draft requires expectedRevision"
+                )
             if expected_revision is not None and int(expected_revision) != int(current["revision"]):
                 raise ValueError("agent plan changed; refresh before saving")
             current_status = str(current["status"])
@@ -961,8 +1031,6 @@ class AgentSessionStore:
                 raise ValueError("only a plan in review can be approved")
             if action == "return_to_draft" and current_status not in {"review", "approved"}:
                 raise ValueError("only a reviewed or approved plan can return to draft")
-            if action == "start_execution" and current_status not in {"approved", "executing"}:
-                raise ValueError("plan approval is required before execution")
             if action == "complete" and current_status not in {"approved", "executing"}:
                 raise ValueError("only an approved or executing plan can be completed")
             if action == "cancel" and current_status in {"completed", "cancelled"}:
@@ -988,7 +1056,7 @@ class AgentSessionStore:
                     )
 
             projected = _agent_plan_projection(conn, session_id, limit=100)
-            if action in {"submit_review", "approve", "start_execution", "complete"} and not projected["items"]:
+            if action in {"submit_review", "approve", "complete"} and not projected["items"]:
                 raise ValueError("agent plan must contain at least one item")
             if action == "complete" and any(
                 str(item.get("status") or "") != "completed"
@@ -1001,7 +1069,6 @@ class AgentSessionStore:
                 "submit_review": "review",
                 "approve": "approved",
                 "return_to_draft": "draft",
-                "start_execution": "executing",
                 "complete": "completed",
                 "cancel": "cancelled",
                 "reset": "draft",
@@ -1020,13 +1087,27 @@ class AgentSessionStore:
                 (timestamp, session_id),
             )
             plan = _agent_plan_projection(conn, session_id, limit=100)
-        return {
+            lifecycle_audit = (
+                _create_lifecycle_cancellation_audit(
+                    conn,
+                    session_id=session_id,
+                    request=lifecycle_request,
+                    transition_revision=int(plan["revision"]),
+                    created_at_ms=timestamp,
+                )
+                if lifecycle_request is not None
+                else None
+            )
+        result: dict[str, object] = {
             "schemaVersion": "rag-ime.agent-plan-mutation-result.v1",
             "ok": True,
             "action": action,
             "event": state_event,
             "plan": plan,
         }
+        if lifecycle_audit is not None:
+            result["lifecycleAudit"] = lifecycle_audit
+        return result
 
     def agent_goal(self, session_id: str) -> dict[str, object]:
         self.get(session_id)
@@ -1043,18 +1124,12 @@ class AgentSessionStore:
         with self._connect() as conn:
             plan = _agent_plan_projection(conn, session_id, limit=100)
             goal = _agent_goal_projection(conn, session_id)
-        return {
-            "schemaVersion": "rag-ime.agent-workflow-state.v1",
-            "ok": True,
-            "sessionId": session_id,
-            "plan": plan,
-            "goal": goal,
-            "actGate": (
-                _room_dispatch_act_gate(goal)
-                if room_dispatch_authorized
-                else _agent_act_gate(plan, goal)
-            ),
-        }
+        return _workflow_projection(
+            session_id,
+            plan,
+            goal,
+            room_dispatch_authorized=room_dispatch_authorized,
+        )
 
     def mutate_agent_goal(
         self,
@@ -1063,10 +1138,21 @@ class AgentSessionStore:
         *,
         actor: str = "control-center-user",
         updated_at_ms: int | None = None,
+        lifecycle_request: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
         action = str(payload.get("action") or "").strip()
-        if action not in {"set", "update", "pause", "resume", "complete", "clear"}:
+        if action not in {
+            "confirm_setup",
+            "update",
+            "pause",
+            "resume",
+            "complete",
+            "cancel",
+            "clear",
+        }:
             raise ValueError("unsupported agent goal action")
+        if action == "confirm_setup" and payload.get("confirmed") is not True:
+            raise ValueError("agent goal setup must be explicitly confirmed")
         timestamp = _timestamp(updated_at_ms)
         normalized_actor = _bounded_goal_text(actor, field="actor", maximum=120)
         with self._connect() as conn:
@@ -1079,13 +1165,24 @@ class AgentSessionStore:
                 raise AgentSessionNotFound(session_id)
             current = _agent_goal_projection(conn, session_id)
             expected_revision = payload.get("expectedRevision")
-            if expected_revision is not None and int(expected_revision) != int(current["revision"]):
+            if expected_revision is None:
+                raise ValueError("agent goal mutation requires expectedRevision")
+            if expected_revision is not None and int(expected_revision) != int(
+                current["revision"]
+            ):
                 raise ValueError("agent goal changed; refresh before saving")
             configured = bool(current["configured"])
             current_status = str(current["status"])
-            if action == "set" and configured:
+            if action == "confirm_setup" and configured:
                 raise ValueError("clear the current agent goal before setting another")
-            if action in {"update", "pause", "resume", "complete", "clear"} and not configured:
+            if action in {
+                "update",
+                "pause",
+                "resume",
+                "complete",
+                "cancel",
+                "clear",
+            } and not configured:
                 raise ValueError("this Session has no active agent goal")
             if action == "update" and current_status not in {"active", "paused"}:
                 raise ValueError("only an active or paused goal can be edited")
@@ -1094,23 +1191,44 @@ class AgentSessionStore:
             if action == "resume" and current_status != "paused":
                 raise ValueError("only a paused goal can be resumed")
             if action == "complete" and current_status not in {"active", "paused"}:
-                raise ValueError("only an active or paused goal can be completed")
-            if action == "clear" and current_status == "cleared":
-                raise ValueError("agent goal is already cleared")
+                raise ValueError(
+                    "only an active or paused goal can be completed"
+                )
+            if action == "cancel" and current_status not in {"active", "paused"}:
+                raise ValueError(
+                    "only an active or paused goal can be cancelled"
+                )
 
             goal_id = (
                 f"goal:{uuid.uuid4()}"
-                if action == "set"
+                if action == "confirm_setup"
                 else str(current["goalId"])
             )
             objective = _bounded_goal_text(
                 payload.get("objective")
-                if action == "set" or "objective" in payload
+                if action == "confirm_setup" or "objective" in payload
                 else current.get("objective"),
                 field="objective",
                 maximum=4_000,
             )
-            current_budget = current.get("budget") if isinstance(current.get("budget"), Mapping) else {}
+            success_criteria = _bounded_goal_text(
+                payload.get("successCriteria")
+                if "successCriteria" in payload
+                else current.get("successCriteria"),
+                field="successCriteria",
+                maximum=2_000,
+                required=False,
+            )
+            evidence_expectations = _goal_evidence_expectations(
+                payload.get("evidenceExpectations")
+                if "evidenceExpectations" in payload
+                else current.get("evidenceExpectations")
+            )
+            current_budget = (
+                current.get("budget")
+                if isinstance(current.get("budget"), Mapping)
+                else {}
+            )
             token_budget = _optional_positive_budget(
                 payload.get("tokenBudget")
                 if "tokenBudget" in payload
@@ -1125,10 +1243,15 @@ class AgentSessionStore:
                 field="timeBudgetMs",
                 maximum=365 * 24 * 60 * 60 * 1000,
             )
-            usage = current.get("usage") if isinstance(current.get("usage"), Mapping) else {}
+            usage = (
+                current.get("usage")
+                if isinstance(current.get("usage"), Mapping)
+                else {}
+            )
             tokens_used = int(usage.get("tokens") or 0) if configured else 0
             elapsed_ms = int(usage.get("elapsedMs") or 0) if configured else 0
-            audit_id: str | None = None
+            completion_audit_id: str | None = None
+            cancellation_audit_id: str | None = None
             if action == "complete":
                 summary = _bounded_goal_text(
                     payload.get("summary"),
@@ -1136,7 +1259,7 @@ class AgentSessionStore:
                     maximum=2_000,
                 )
                 evidence = _goal_completion_evidence(payload.get("evidence"))
-                audit_id = f"goal-audit:{uuid.uuid4()}"
+                completion_audit_id = f"goal-audit:{uuid.uuid4()}"
                 conn.execute(
                     """
                     INSERT INTO agent_goal_completion_audits(
@@ -1145,22 +1268,50 @@ class AgentSessionStore:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        audit_id,
+                        completion_audit_id,
                         session_id,
                         goal_id,
                         summary,
-                        json.dumps(evidence, ensure_ascii=False, separators=(",", ":")),
+                        json.dumps(
+                            evidence,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        normalized_actor,
+                        timestamp,
+                    ),
+                )
+            elif action == "cancel":
+                reason = _bounded_goal_text(
+                    payload.get("reason"),
+                    field="cancellation reason",
+                    maximum=1_000,
+                )
+                cancellation_audit_id = f"goal-cancellation:{uuid.uuid4()}"
+                conn.execute(
+                    """
+                    INSERT INTO agent_goal_cancellation_audits(
+                        audit_id, session_id, goal_id, reason,
+                        cancelled_by, created_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        cancellation_audit_id,
+                        session_id,
+                        goal_id,
+                        reason,
                         normalized_actor,
                         timestamp,
                     ),
                 )
 
             target_status = {
-                "set": "active",
+                "confirm_setup": "active",
                 "update": current_status,
                 "pause": "paused",
                 "resume": "active",
                 "complete": "completed",
+                "cancel": "cancelled",
                 "clear": "cleared",
             }[action]
             event = _append_agent_goal_event(
@@ -1168,12 +1319,15 @@ class AgentSessionStore:
                 session_id,
                 goal_id=goal_id,
                 objective=objective,
+                success_criteria=success_criteria,
+                evidence_expectations=evidence_expectations,
                 status=target_status,
                 token_budget=token_budget,
                 time_budget_ms=time_budget_ms,
                 tokens_used=tokens_used,
                 elapsed_ms=elapsed_ms,
-                completion_audit_id=audit_id,
+                completion_audit_id=completion_audit_id,
+                cancellation_audit_id=cancellation_audit_id,
                 actor=normalized_actor,
                 created_at_ms=timestamp,
             )
@@ -1182,7 +1336,7 @@ class AgentSessionStore:
                     conn,
                     session_id=session_id,
                     goal_id=goal_id,
-                    reset_existing=action != "set",
+                    reset_existing=action != "confirm_setup",
                     updated_at_ms=timestamp,
                 )
             conn.execute(
@@ -1191,20 +1345,27 @@ class AgentSessionStore:
             )
             goal = _agent_goal_projection(conn, session_id)
             plan = _agent_plan_projection(conn, session_id, limit=100)
-        return {
+            lifecycle_audit = (
+                _create_lifecycle_cancellation_audit(
+                    conn,
+                    session_id=session_id,
+                    request=lifecycle_request,
+                    transition_revision=int(goal["revision"]),
+                    created_at_ms=timestamp,
+                )
+                if lifecycle_request is not None
+                else None
+            )
+        result: dict[str, object] = {
             "schemaVersion": "rag-ime.agent-goal-mutation-result.v1",
             "ok": True,
             "action": action,
             "event": event,
-            "workflow": {
-                "schemaVersion": "rag-ime.agent-workflow-state.v1",
-                "ok": True,
-                "sessionId": session_id,
-                "plan": plan,
-                "goal": goal,
-                "actGate": _agent_act_gate(plan, goal),
-            },
+            "workflow": _workflow_projection(session_id, plan, goal),
         }
+        if lifecycle_audit is not None:
+            result["lifecycleAudit"] = lifecycle_audit
+        return result
 
     def agent_goal_continuation_budget(
         self,
@@ -1238,7 +1399,7 @@ class AgentSessionStore:
 
         The counter is scoped to a Goal lifecycle epoch, not a Pi cancel scope.
         A new user turn or runtime restart therefore cannot replenish it.
-        Goal set/pause/resume/complete/clear transitions reset the epoch
+        Goal confirmation/pause/resume/complete/cancel/clear transitions reset
         explicitly in ``mutate_agent_goal``.
         """
 
@@ -1407,14 +1568,7 @@ class AgentSessionStore:
                     raise ValueError("goal usage idempotencyKey was reused with different data")
                 plan = _agent_plan_projection(conn, session_id, limit=100)
                 goal = _agent_goal_projection(conn, session_id)
-                return {
-                    "schemaVersion": "rag-ime.agent-workflow-state.v1",
-                    "ok": True,
-                    "sessionId": session_id,
-                    "plan": plan,
-                    "goal": goal,
-                    "actGate": _agent_act_gate(plan, goal),
-                }
+                return _workflow_projection(session_id, plan, goal)
             current = _agent_goal_projection(conn, session_id)
             if not current["configured"] or current["status"] != "active":
                 raise ValueError("goal usage can only be recorded for an active goal")
@@ -1425,6 +1579,10 @@ class AgentSessionStore:
                 session_id,
                 goal_id=str(current["goalId"]),
                 objective=str(current["objective"]),
+                success_criteria=str(current.get("successCriteria") or ""),
+                evidence_expectations=_goal_evidence_expectations(
+                    current.get("evidenceExpectations")
+                ),
                 status="active",
                 token_budget=_optional_positive_budget(
                     budget.get("tokenLimit"), field="tokenBudget", maximum=100_000_000
@@ -1437,6 +1595,7 @@ class AgentSessionStore:
                 tokens_used=int(usage.get("tokens") or 0) + normalized_token_delta,
                 elapsed_ms=int(usage.get("elapsedMs") or 0) + normalized_elapsed_delta,
                 completion_audit_id=None,
+                cancellation_audit_id=None,
                 actor="pi-runtime",
                 created_at_ms=timestamp,
             )
@@ -1463,14 +1622,7 @@ class AgentSessionStore:
             )
             plan = _agent_plan_projection(conn, session_id, limit=100)
             goal = _agent_goal_projection(conn, session_id)
-        return {
-            "schemaVersion": "rag-ime.agent-workflow-state.v1",
-            "ok": True,
-            "sessionId": session_id,
-            "plan": plan,
-            "goal": goal,
-            "actGate": _agent_act_gate(plan, goal),
-        }
+        return _workflow_projection(session_id, plan, goal)
 
     def require_workspace_act(
         self,
@@ -1501,27 +1653,58 @@ class AgentSessionStore:
             raise ValueError(
                 "Goal execution blocked (goal_paused): 当前 Goal 已暂停，恢复后才能继续调用模型或委派任务。"
             )
+        if status == "cancelled":
+            raise ValueError(
+                "Goal execution blocked (goal_cancelled): 当前 Goal 已取消，不能继续调用模型或委派任务。"
+            )
         if goal.get("budgetExceeded") is True:
             raise ValueError(
                 "Goal execution blocked (goal_budget_exhausted): Goal 的 Token 或时间预算已经耗尽。"
             )
         return state
 
-    def begin_agent_plan_execution(self, session_id: str) -> dict[str, object]:
-        state = self.require_workspace_act(session_id)
-        plan = state["plan"] if isinstance(state.get("plan"), Mapping) else {}
-        if plan.get("status") != "approved":
-            return state
-        self.mutate_agent_plan(
-            session_id,
-            {
-                "action": "start_execution",
-                "expectedRevision": plan.get("revision"),
-                "note": "首个受控工作区写操作开始执行",
-            },
-            actor="agent-runtime",
-        )
-        return self.workflow_state(session_id)
+    def record_agent_plan_execution_started(
+        self,
+        session_id: str,
+        *,
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        """Record the first successful governed workspace write exactly once."""
+
+        timestamp = _timestamp(updated_at_ms)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            session = conn.execute(
+                "SELECT id FROM agent_sessions WHERE id = ? AND status <> 'archived'",
+                (session_id,),
+            ).fetchone()
+            if session is None:
+                raise AgentSessionNotFound(session_id)
+            plan = _agent_plan_projection(conn, session_id, limit=100)
+            status = str(plan.get("status") or "")
+            if status == "executing":
+                goal = _agent_goal_projection(conn, session_id)
+                return _workflow_projection(session_id, plan, goal)
+            if status != "approved":
+                raise ValueError(
+                    "plan execution can only be recorded after approval"
+                )
+            _append_agent_plan_state(
+                conn,
+                session_id,
+                title=str(plan["title"]),
+                status="executing",
+                actor="agent-runtime",
+                note="首个受控工作区写操作已完成",
+                created_at_ms=timestamp,
+            )
+            conn.execute(
+                "UPDATE agent_sessions SET updated_at_ms = ? WHERE id = ?",
+                (timestamp, session_id),
+            )
+            plan = _agent_plan_projection(conn, session_id, limit=100)
+            goal = _agent_goal_projection(conn, session_id)
+        return _workflow_projection(session_id, plan, goal)
 
     def update_agent_plan_item(
         self,
@@ -1777,6 +1960,247 @@ class AgentSessionStore:
                 ),
             )
 
+    def lifecycle_cancellation_audit(
+        self,
+        request_id: str,
+    ) -> dict[str, object] | None:
+        normalized = str(request_id or "").strip()
+        if not normalized:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM agent_lifecycle_cancellation_audits
+                WHERE request_id = ?
+                """,
+                (normalized,),
+            ).fetchone()
+        return _lifecycle_cancellation_payload(row) if row is not None else None
+
+    def lifecycle_cancellation_for_transition(
+        self,
+        session_id: str,
+        *,
+        scope_kind: str,
+        scope_id: str,
+        transition_revision: int,
+        action: str,
+    ) -> dict[str, object] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM agent_lifecycle_cancellation_audits
+                WHERE session_id = ? AND scope_kind = ? AND scope_id = ?
+                  AND transition_revision = ? AND action = ?
+                """,
+                (
+                    session_id,
+                    scope_kind,
+                    scope_id,
+                    int(transition_revision),
+                    action,
+                ),
+            ).fetchone()
+        return _lifecycle_cancellation_payload(row) if row is not None else None
+
+    def lifecycle_cancellation_audits(
+        self,
+        session_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, object]]:
+        self.get(session_id)
+        bounded_limit = max(1, min(int(limit), 100))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_lifecycle_cancellation_audits
+                WHERE session_id = ?
+                ORDER BY created_at_ms DESC, request_id
+                LIMIT ?
+                """,
+                (session_id, bounded_limit),
+            ).fetchall()
+        return [_lifecycle_cancellation_payload(row) for row in rows]
+
+    def record_lifecycle_owner_receipt(
+        self,
+        request_id: str,
+        *,
+        owner: str,
+        status: str,
+        receipt: Mapping[str, object],
+        updated_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        owner_columns = {
+            "runtime": ("runtime_status", "runtime_receipt_json"),
+            "approval": ("approval_status", "approval_receipt_json"),
+            "job": ("job_status", "job_receipt_json"),
+            "delegation": (
+                "delegation_status",
+                "delegation_receipt_json",
+            ),
+        }
+        if owner not in owner_columns:
+            raise ValueError("unsupported lifecycle cancellation owner")
+        if status not in {"succeeded", "excluded", "partial", "unknown"}:
+            raise ValueError("unsupported lifecycle cancellation owner status")
+        normalized_request_id = str(request_id or "").strip()
+        if not normalized_request_id:
+            raise ValueError("lifecycle cancellation requestId is required")
+        timestamp = _timestamp(updated_at_ms)
+        _assert_lifecycle_receipt_safe(receipt)
+        receipt_json = json.dumps(
+            dict(receipt),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if len(receipt_json.encode("utf-8")) > 64 * 1024:
+            raise ValueError("lifecycle cancellation owner receipt is too large")
+        status_column, receipt_column = owner_columns[owner]
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT * FROM agent_lifecycle_cancellation_audits
+                WHERE request_id = ?
+                """,
+                (normalized_request_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("lifecycle cancellation audit was not found")
+            conn.execute(
+                f"""
+                UPDATE agent_lifecycle_cancellation_audits
+                SET {status_column} = ?, {receipt_column} = ?, updated_at_ms = ?
+                WHERE request_id = ?
+                """,
+                (status, receipt_json, timestamp, normalized_request_id),
+            )
+            refreshed = conn.execute(
+                """
+                SELECT * FROM agent_lifecycle_cancellation_audits
+                WHERE request_id = ?
+                """,
+                (normalized_request_id,),
+            ).fetchone()
+            assert refreshed is not None
+            aggregate = _lifecycle_cancellation_state(refreshed)
+            conn.execute(
+                """
+                UPDATE agent_lifecycle_cancellation_audits
+                SET state = ?, updated_at_ms = ?
+                WHERE request_id = ?
+                """,
+                (aggregate, timestamp, normalized_request_id),
+            )
+            final = conn.execute(
+                """
+                SELECT * FROM agent_lifecycle_cancellation_audits
+                WHERE request_id = ?
+                """,
+                (normalized_request_id,),
+            ).fetchone()
+        assert final is not None
+        return _lifecycle_cancellation_payload(final)
+
+    def cancel_causal_approvals(
+        self,
+        session_id: str,
+        *,
+        request_id: str,
+        scope_kind: str,
+        scope_id: str,
+        source_revision: int,
+        reason: str,
+        decided_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        if scope_kind not in {"plan", "goal"}:
+            raise ValueError("unsupported lifecycle cancellation scope")
+        timestamp = _timestamp(decided_at_ms)
+        normalized_reason = " ".join(str(reason or "").split())[:1000]
+        causal_clause = (
+            "causal_plan_id = ? AND causal_plan_revision = ?"
+            if scope_kind == "plan"
+            else "causal_goal_id = ?"
+        )
+        causal_values: tuple[object, ...] = (
+            (scope_id, int(source_revision))
+            if scope_kind == "plan"
+            else (scope_id,)
+        )
+        owner = f"lifecycle:{request_id}"[:120]
+        cancelled: list[str] = []
+        excluded_room_bound: list[str] = []
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                f"""
+                SELECT approval_id, state, decided_by, room_bound, receipt_json
+                FROM agent_approvals
+                WHERE session_id = ? AND {causal_clause}
+                  AND state IN ('pending', 'approved', 'external_pending', 'stale')
+                ORDER BY requested_at_ms, approval_id
+                """,
+                (session_id, *causal_values),
+            ).fetchall()
+            for row in rows:
+                approval_id = str(row["approval_id"])
+                if bool(row["room_bound"]):
+                    excluded_room_bound.append(approval_id)
+                    continue
+                if str(row["state"]) == "stale":
+                    if str(row["decided_by"]) == owner:
+                        cancelled.append(approval_id)
+                    continue
+                receipt = {
+                    "schemaVersion": "rag-ime.agent-approval-lifecycle-cancellation.v1",
+                    "requestId": request_id,
+                    "approvalId": approval_id,
+                    "sessionId": session_id,
+                    "scopeKind": scope_kind,
+                    "scopeId": scope_id,
+                    "sourceRevision": int(source_revision),
+                    "reason": normalized_reason,
+                    "mutationApplied": False,
+                    "createdAtMs": timestamp,
+                }
+                cursor = conn.execute(
+                    """
+                    UPDATE agent_approvals
+                    SET state = 'stale', decided_at_ms = ?, decided_by = ?,
+                        receipt_json = ?
+                    WHERE approval_id = ?
+                      AND state IN ('pending', 'approved', 'external_pending')
+                      AND room_bound = 0
+                    """,
+                    (
+                        timestamp,
+                        owner,
+                        json.dumps(
+                            receipt,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        approval_id,
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    cancelled.append(approval_id)
+        return {
+            "schemaVersion": "rag-ime.agent-approval-lifecycle-cancellation-summary.v1",
+            "requestId": request_id,
+            "sessionId": session_id,
+            "scopeKind": scope_kind,
+            "scopeId": scope_id,
+            "sourceRevision": int(source_revision),
+            "cancelledApprovalIds": cancelled,
+            "excludedRoomBoundApprovalIds": excluded_room_bound,
+            "createdAtMs": timestamp,
+        }
+
     def create_approval(
         self,
         *,
@@ -1788,8 +2212,9 @@ class AgentSessionStore:
         risk_level: str,
         requested_at_ms: int | None = None,
         ttl_ms: int = 60_000,
+        causal_metadata: Mapping[str, object] | None = None,
     ) -> dict[str, object]:
-        self.get(session_id)
+        session = self.get(session_id)
         tool = " ".join(str(tool_name).split())[:120]
         action = " ".join(str(operation).split())[:120]
         digest = str(payload_sha256).strip().lower()
@@ -1800,16 +2225,37 @@ class AgentSessionStore:
         if risk_level not in {"R1", "R2", "R3"}:
             raise ValueError("approval risk level must be R1, R2, or R3")
         timestamp = _timestamp(requested_at_ms)
-        bounded_ttl = max(1_000, min(int(ttl_ms), 5 * 60_000))
+        execution_mode = normalize_execution_mode(
+            session.get("executionMode"),
+            tool_profile_version=session.get("toolProfileVersion"),
+        )
+        effective_ttl_ms = max(ttl_ms, 180_000) if execution_mode == FULL_TRUST_EXECUTION_MODE else ttl_ms
+        bounded_ttl = max(1_000, min(int(effective_ttl_ms), 5 * 60_000))
         approval_id = f"approval:{uuid.uuid4()}"
-        preview_json = json.dumps(dict(preview), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        preview_payload = dict(preview)
+        if execution_mode == FULL_TRUST_EXECUTION_MODE:
+            preview_payload["approvalArbitration"] = pending_model_arbitration()
+        preview_json = json.dumps(
+            preview_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         with self._connect() as conn:
+            causal = _approval_causal_metadata(
+                conn,
+                session_id=session_id,
+                preview=preview,
+                supplied=causal_metadata,
+            )
             conn.execute(
                 """
                 INSERT INTO agent_approvals(
                     approval_id, session_id, tool_name, operation, payload_sha256,
-                    preview_json, risk_level, state, requested_at_ms, expires_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                    preview_json, risk_level, state, requested_at_ms, expires_at_ms,
+                    causal_plan_id, causal_plan_revision, causal_goal_id,
+                    causal_goal_revision, causal_turn_id, room_bound
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     approval_id,
@@ -1821,6 +2267,12 @@ class AgentSessionStore:
                     risk_level,
                     timestamp,
                     timestamp + bounded_ttl,
+                    causal["planId"],
+                    causal["planRevision"],
+                    causal["goalId"],
+                    causal["goalRevision"],
+                    causal["turnId"],
+                    int(bool(causal["roomBound"])),
                 ),
             )
         return self.get_approval(approval_id, now_ms=timestamp)
@@ -1861,6 +2313,14 @@ class AgentSessionStore:
             sort_keys=True,
             separators=(",", ":"),
         )
+        base_state = (
+            preview.get("baseState")
+            if isinstance(preview.get("baseState"), Mapping)
+            else {}
+        )
+        room_bound = bool(
+            str(base_state.get("roomInvocationReceiptId") or "").strip()
+        )
         terminal_error = ""
         with self._connect() as conn:
             row = conn.execute(
@@ -1884,11 +2344,18 @@ class AgentSessionStore:
                 cursor = conn.execute(
                     """
                     UPDATE agent_approvals
-                    SET payload_sha256 = ?, preview_json = ?
+                    SET payload_sha256 = ?, preview_json = ?,
+                        room_bound = CASE WHEN ? THEN 1 ELSE room_bound END
                     WHERE approval_id = ? AND state = 'pending'
                       AND payload_sha256 = ?
                     """,
-                    (digest, preview_json, approval_id, expected_digest),
+                    (
+                        digest,
+                        preview_json,
+                        int(room_bound),
+                        approval_id,
+                        expected_digest,
+                    ),
                 )
                 if cursor.rowcount != 1:
                     terminal_error = (
@@ -2227,6 +2694,9 @@ def _session_payload(
 ) -> dict[str, object]:
     roots = json.loads(str(row["workspace_roots_json"] or "[]"))
     allowed_tools = _stored_allowed_tools(row["allowed_tools_json"])
+    disclosure_preferences = _stored_disclosure_preferences(
+        row["disclosure_preferences_json"]
+    )
     model_profile = str(row["model_profile"] or "").strip() or "pi/default"
     payload: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-session.v1",
@@ -2259,6 +2729,8 @@ def _session_payload(
         ),
         "toolAllowlistMode": "explicit" if allowed_tools is not None else "profile",
         "allowedTools": allowed_tools or [],
+        "capabilityDisclosurePreferences": disclosure_preferences,
+        "policyRevision": int(row["policy_revision"] or 1),
         "projectContextEnabled": bool(row["project_context_enabled"]),
         "piSkillsEnabled": bool(row["pi_skills_enabled"]),
         "codexSkillsEnabled": bool(row["codex_skills_enabled"]),
@@ -2569,9 +3041,10 @@ def _agent_goal_projection(
 ) -> dict[str, object]:
     row = conn.execute(
         """
-        SELECT event_id, goal_id, sequence, objective, status, token_budget,
+        SELECT event_id, goal_id, sequence, objective, success_criteria,
+               evidence_expectations_json, status, token_budget,
                time_budget_ms, tokens_used, elapsed_ms, completion_audit_id,
-               actor, created_at_ms
+               cancellation_audit_id, actor, created_at_ms
         FROM agent_thread_goal_events
         WHERE session_id = ?
         ORDER BY sequence DESC
@@ -2587,43 +3060,86 @@ def _agent_goal_projection(
             "goalId": "",
             "revision": 0,
             "objective": "",
+            "successCriteria": "",
+            "evidenceExpectations": [],
             "status": "cleared",
             "budget": {"tokenLimit": None, "timeLimitMs": None},
             "usage": {"tokens": 0, "elapsedMs": 0},
             "remaining": {"tokens": None, "timeMs": None},
             "budgetExceeded": False,
             "completionAudit": None,
+            "cancellationAudit": None,
             "updatedAtMs": 0,
         }
-    token_budget = int(row["token_budget"]) if row["token_budget"] is not None else None
-    time_budget_ms = int(row["time_budget_ms"]) if row["time_budget_ms"] is not None else None
+    token_budget = (
+        int(row["token_budget"]) if row["token_budget"] is not None else None
+    )
+    time_budget_ms = (
+        int(row["time_budget_ms"])
+        if row["time_budget_ms"] is not None
+        else None
+    )
     tokens_used = int(row["tokens_used"])
     elapsed_ms = int(row["elapsed_ms"])
-    remaining_tokens = max(0, token_budget - tokens_used) if token_budget is not None else None
-    remaining_time = max(0, time_budget_ms - elapsed_ms) if time_budget_ms is not None else None
-    audit = None
-    audit_id = str(row["completion_audit_id"] or "")
-    if audit_id:
+    remaining_tokens = (
+        max(0, token_budget - tokens_used)
+        if token_budget is not None
+        else None
+    )
+    remaining_time = (
+        max(0, time_budget_ms - elapsed_ms)
+        if time_budget_ms is not None
+        else None
+    )
+    completion_audit = None
+    completion_audit_id = str(row["completion_audit_id"] or "")
+    if completion_audit_id:
         audit_row = conn.execute(
             """
             SELECT audit_id, summary, evidence_json, completed_by, created_at_ms
             FROM agent_goal_completion_audits
             WHERE audit_id = ? AND session_id = ?
             """,
-            (audit_id, session_id),
+            (completion_audit_id, session_id),
         ).fetchone()
         if audit_row is not None:
             try:
                 evidence = json.loads(str(audit_row["evidence_json"] or "[]"))
             except json.JSONDecodeError:
                 evidence = []
-            audit = {
+            completion_audit = {
                 "auditId": str(audit_row["audit_id"]),
                 "summary": str(audit_row["summary"]),
                 "evidence": evidence if isinstance(evidence, list) else [],
                 "completedBy": str(audit_row["completed_by"]),
                 "createdAtMs": int(audit_row["created_at_ms"]),
             }
+    cancellation_audit = None
+    cancellation_audit_id = str(row["cancellation_audit_id"] or "")
+    if cancellation_audit_id:
+        cancellation_row = conn.execute(
+            """
+            SELECT audit_id, reason, cancelled_by, created_at_ms
+            FROM agent_goal_cancellation_audits
+            WHERE audit_id = ? AND session_id = ?
+            """,
+            (cancellation_audit_id, session_id),
+        ).fetchone()
+        if cancellation_row is not None:
+            cancellation_audit = {
+                "auditId": str(cancellation_row["audit_id"]),
+                "reason": str(cancellation_row["reason"]),
+                "cancelledBy": str(cancellation_row["cancelled_by"]),
+                "createdAtMs": int(cancellation_row["created_at_ms"]),
+            }
+    try:
+        evidence_expectations = json.loads(
+            str(row["evidence_expectations_json"] or "[]")
+        )
+    except json.JSONDecodeError:
+        evidence_expectations = []
+    if not isinstance(evidence_expectations, list):
+        evidence_expectations = []
     status = str(row["status"])
     configured = status != "cleared"
     return {
@@ -2633,6 +3149,8 @@ def _agent_goal_projection(
         "goalId": str(row["goal_id"]),
         "revision": int(row["sequence"]),
         "objective": str(row["objective"]),
+        "successCriteria": str(row["success_criteria"]),
+        "evidenceExpectations": evidence_expectations,
         "status": status,
         "budget": {
             "tokenLimit": token_budget,
@@ -2644,7 +3162,8 @@ def _agent_goal_projection(
             (token_budget is not None and tokens_used >= token_budget)
             or (time_budget_ms is not None and elapsed_ms >= time_budget_ms)
         ),
-        "completionAudit": audit,
+        "completionAudit": completion_audit,
+        "cancellationAudit": cancellation_audit,
         "updatedAtMs": int(row["created_at_ms"]),
     }
 
@@ -2735,12 +3254,15 @@ def _append_agent_goal_event(
     *,
     goal_id: str,
     objective: str,
+    success_criteria: str,
+    evidence_expectations: list[str],
     status: str,
     token_budget: int | None,
     time_budget_ms: int | None,
     tokens_used: int,
     elapsed_ms: int,
     completion_audit_id: str | None,
+    cancellation_audit_id: str | None,
     actor: str,
     created_at_ms: int,
 ) -> dict[str, object]:
@@ -2754,10 +3276,11 @@ def _append_agent_goal_event(
     conn.execute(
         """
         INSERT INTO agent_thread_goal_events(
-            event_id, session_id, goal_id, sequence, objective, status,
+            event_id, session_id, goal_id, sequence, objective,
+            success_criteria, evidence_expectations_json, status,
             token_budget, time_budget_ms, tokens_used, elapsed_ms,
-            completion_audit_id, actor, created_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            completion_audit_id, cancellation_audit_id, actor, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event_id,
@@ -2765,12 +3288,19 @@ def _append_agent_goal_event(
             goal_id,
             sequence,
             objective,
+            success_criteria,
+            json.dumps(
+                evidence_expectations,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
             status,
             token_budget,
             time_budget_ms,
             tokens_used,
             elapsed_ms,
             completion_audit_id,
+            cancellation_audit_id,
             actor,
             created_at_ms,
         ),
@@ -2785,36 +3315,36 @@ def _append_agent_goal_event(
     }
 
 
+def _workflow_projection(
+    session_id: str,
+    plan: Mapping[str, object],
+    goal: Mapping[str, object],
+    *,
+    room_dispatch_authorized: bool = False,
+) -> dict[str, object]:
+    gate = (
+        _room_dispatch_act_gate(goal)
+        if room_dispatch_authorized
+        else _agent_act_gate(plan, goal)
+    )
+    return {
+        "schemaVersion": "rag-ime.agent-workflow-state.v1",
+        "ok": True,
+        "sessionId": session_id,
+        "plan": dict(plan),
+        "goal": dict(goal),
+        "actGate": {
+            **gate,
+            "planRevision": int(plan.get("revision") or 0),
+            "goalRevision": int(goal.get("revision") or 0),
+        },
+    }
+
+
 def _agent_act_gate(
     plan: Mapping[str, object],
     goal: Mapping[str, object],
 ) -> dict[str, object]:
-    plan_status = str(plan.get("status") or "draft")
-    items = plan.get("items") if isinstance(plan.get("items"), list) else []
-    if not items:
-        return {
-            "allowed": False,
-            "reason": "plan_required",
-            "message": "先创建执行计划并提交审阅。",
-        }
-    if plan_status == "completed":
-        return {
-            "allowed": False,
-            "reason": "plan_completed",
-            "message": "当前计划已经完成；开始新任务前请创建并审批新计划。",
-        }
-    if plan_status == "cancelled":
-        return {
-            "allowed": False,
-            "reason": "plan_cancelled",
-            "message": "当前计划已经取消；继续工作前请创建并审批新计划。",
-        }
-    if plan_status not in {"approved", "executing"}:
-        return {
-            "allowed": False,
-            "reason": "plan_not_approved",
-            "message": "计划尚未获得用户批准，只允许只读调研。",
-        }
     if goal.get("configured") is True:
         goal_status = str(goal.get("status") or "")
         if goal_status == "paused":
@@ -2829,16 +3359,32 @@ def _agent_act_gate(
                 "reason": "goal_completed",
                 "message": "当前 Goal 已完成审计，请清除或设置新 Goal。",
             }
+        if goal_status == "cancelled":
+            return {
+                "allowed": False,
+                "reason": "goal_cancelled",
+                "message": "当前 Goal 已取消；清除后才能开始新的 Goal。",
+            }
         if goal.get("budgetExceeded") is True:
             return {
                 "allowed": False,
                 "reason": "goal_budget_exhausted",
                 "message": "Goal 的 Token 或时间预算已经耗尽。",
             }
+    plan_status = str(plan.get("status") or "draft")
+    if plan_status in {"approved", "executing"}:
+        return {
+            "allowed": True,
+            "reason": "approved",
+            "message": "Plan 已批准，工作区写操作仍需通过原有风险与审批策略。",
+        }
     return {
         "allowed": True,
-        "reason": "approved",
-        "message": "Plan 已批准，工作区写操作仍需通过原有预览与审批。",
+        "reason": "user_execution_request",
+        "message": (
+            "用户的执行请求允许在已授权工作区内继续；"
+            "破坏性操作、范围扩张与其他高风险能力仍由原有策略审批。"
+        ),
     }
 
 
@@ -2858,6 +3404,12 @@ def _room_dispatch_act_gate(
                 "allowed": False,
                 "reason": "goal_completed",
                 "message": "当前 Goal 已完成审计，请清除或设置新 Goal。",
+            }
+        if goal_status == "cancelled":
+            return {
+                "allowed": False,
+                "reason": "goal_cancelled",
+                "message": "当前 Goal 已取消；清除后才能开始新的 Goal。",
             }
         if goal.get("budgetExceeded") is True:
             return {
@@ -2896,11 +3448,26 @@ def _bounded_goal_text(
     *,
     field: str,
     maximum: int,
+    required: bool = True,
 ) -> str:
     text = " ".join(str(value or "").split())[:maximum]
-    if not text or "\x00" in text:
+    if "\x00" in text or (required and not text):
         raise ValueError(f"agent goal {field} must not be empty")
     return text
+
+
+def _goal_evidence_expectations(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 20:
+        raise ValueError("goal evidenceExpectations must contain at most 20 items")
+    expectations: list[str] = []
+    for item in value:
+        expectation = " ".join(str(item or "").split())[:600]
+        if not expectation or "\x00" in expectation:
+            raise ValueError("goal evidence expectation must not be empty")
+        expectations.append(expectation)
+    return expectations
 
 
 def _goal_completion_evidence(value: object) -> list[dict[str, str]]:
@@ -2936,6 +3503,235 @@ def _runtime_binding_text(
     return text
 
 
+def _approval_causal_metadata(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    preview: Mapping[str, object],
+    supplied: Mapping[str, object] | None,
+) -> dict[str, object]:
+    base_state = (
+        preview.get("baseState")
+        if isinstance(preview.get("baseState"), Mapping)
+        else {}
+    )
+    room_bound = bool(
+        str(base_state.get("roomInvocationReceiptId") or "").strip()
+    )
+    plan = _agent_plan_projection(conn, session_id, limit=1)
+    goal = _agent_goal_projection(conn, session_id)
+    latest_turn = conn.execute(
+        """
+        SELECT turn_id
+        FROM agent_runtime_events
+        WHERE session_id = ? AND turn_id <> ''
+        ORDER BY sequence DESC
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    causal: dict[str, object] = {
+        "planId": (
+            str(plan["id"])
+            if str(plan["status"]) in {"approved", "executing"}
+            else ""
+        ),
+        "planRevision": (
+            int(plan["revision"])
+            if str(plan["status"]) in {"approved", "executing"}
+            else 0
+        ),
+        "goalId": (
+            str(goal["goalId"])
+            if bool(goal["configured"])
+            and str(goal["status"]) in {"active", "paused"}
+            else ""
+        ),
+        "goalRevision": (
+            int(goal["revision"])
+            if bool(goal["configured"])
+            and str(goal["status"]) in {"active", "paused"}
+            else 0
+        ),
+        "turnId": str(latest_turn["turn_id"]) if latest_turn is not None else "",
+        "roomBound": room_bound,
+    }
+    if supplied is not None:
+        for key in (
+            "planId",
+            "planRevision",
+            "goalId",
+            "goalRevision",
+            "turnId",
+            "roomBound",
+        ):
+            if key in supplied and key != "roomBound":
+                causal[key] = supplied[key]
+    causal["planId"] = str(causal["planId"] or "").strip()[:240]
+    causal["planRevision"] = max(0, int(causal["planRevision"] or 0))
+    causal["goalId"] = str(causal["goalId"] or "").strip()[:240]
+    causal["goalRevision"] = max(0, int(causal["goalRevision"] or 0))
+    causal["turnId"] = str(causal["turnId"] or "").strip()[:240]
+    causal["roomBound"] = room_bound or bool(
+        supplied.get("roomBound") if supplied is not None else False
+    )
+    return causal
+
+
+def _create_lifecycle_cancellation_audit(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    request: Mapping[str, object],
+    transition_revision: int,
+    created_at_ms: int,
+) -> dict[str, object]:
+    request_id = str(request.get("requestId") or "").strip()
+    scope_kind = str(request.get("scopeKind") or "").strip()
+    scope_id = str(request.get("scopeId") or "").strip()
+    action = str(request.get("action") or "").strip()
+    source_revision = int(request.get("sourceRevision") or 0)
+    source_turn_id = str(request.get("sourceTurnId") or "").strip()[:240]
+    reason = " ".join(str(request.get("reason") or "").split())[:1000]
+    if not request_id or len(request_id) > 240:
+        raise ValueError("lifecycle cancellation requestId is invalid")
+    if scope_kind not in {"plan", "goal"} or not scope_id:
+        raise ValueError("lifecycle cancellation scope is invalid")
+    if action not in {"cancel", "pause"}:
+        raise ValueError("lifecycle cancellation action is invalid")
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO agent_lifecycle_cancellation_audits(
+            request_id, session_id, scope_kind, scope_id, source_revision,
+            transition_revision, action, reason, state, source_turn_id,
+            runtime_status, approval_status, job_status, delegation_status,
+            created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, 'pending', 'pending',
+                  'pending', 'pending', ?, ?)
+        """,
+        (
+            request_id,
+            session_id,
+            scope_kind,
+            scope_id,
+            source_revision,
+            int(transition_revision),
+            action,
+            reason,
+            source_turn_id,
+            created_at_ms,
+            created_at_ms,
+        ),
+    )
+    row = conn.execute(
+        """
+        SELECT * FROM agent_lifecycle_cancellation_audits
+        WHERE request_id = ?
+        """,
+        (request_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("lifecycle cancellation audit was not persisted")
+    identity = (
+        str(row["session_id"]),
+        str(row["scope_kind"]),
+        str(row["scope_id"]),
+        int(row["source_revision"]),
+        str(row["action"]),
+    )
+    expected = (
+        session_id,
+        scope_kind,
+        scope_id,
+        source_revision,
+        action,
+    )
+    if identity != expected:
+        raise ValueError("lifecycle cancellation requestId was reused")
+    return _lifecycle_cancellation_payload(row)
+
+
+def _lifecycle_cancellation_state(row: Mapping[str, object]) -> str:
+    statuses = [
+        str(row["runtime_status"]),
+        str(row["approval_status"]),
+        str(row["job_status"]),
+        str(row["delegation_status"]),
+    ]
+    if "pending" in statuses:
+        return "pending"
+    if all(status in {"succeeded", "excluded"} for status in statuses):
+        return "completed"
+    if all(status == "unknown" for status in statuses):
+        return "unknown"
+    return "partial"
+
+
+def _lifecycle_cancellation_payload(
+    row: Mapping[str, object],
+) -> dict[str, object]:
+    def owner_payload(owner: str) -> dict[str, object]:
+        raw = row[f"{owner}_receipt_json"]
+        try:
+            receipt = json.loads(str(raw or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            receipt = {}
+        return {
+            "status": str(row[f"{owner}_status"]),
+            "receipt": receipt if isinstance(receipt, dict) else {},
+        }
+
+    payload: dict[str, object] = {
+        "schemaVersion": "rag-ime.agent-lifecycle-cancellation-audit.v1",
+        "requestId": str(row["request_id"]),
+        "sessionId": str(row["session_id"]),
+        "scopeKind": str(row["scope_kind"]),
+        "scopeId": str(row["scope_id"]),
+        "sourceRevision": int(row["source_revision"]),
+        "transitionRevision": int(row["transition_revision"]),
+        "action": str(row["action"]),
+        "reason": str(row["reason"]),
+        "state": str(row["state"]),
+        "sourceTurnId": str(row["source_turn_id"]),
+        "owners": {
+            "runtime": owner_payload("runtime"),
+            "approval": owner_payload("approval"),
+            "job": owner_payload("job"),
+            "delegation": owner_payload("delegation"),
+        },
+        "createdAtMs": int(row["created_at_ms"]),
+        "updatedAtMs": int(row["updated_at_ms"]),
+    }
+    validate_contract(
+        payload,
+        "agent-lifecycle-cancellation-audit.v1.json",
+    )
+    return payload
+
+
+def _assert_lifecycle_receipt_safe(value: object) -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            normalized = "".join(
+                character
+                for character in str(key).casefold()
+                if character.isalnum()
+            )
+            if normalized in {
+                "pid",
+                "processid",
+                "processhandle",
+                "processgroupid",
+            }:
+                raise ValueError(
+                    "process identity must not enter lifecycle cancellation audit"
+                )
+            _assert_lifecycle_receipt_safe(child)
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            _assert_lifecycle_receipt_safe(child)
+
+
 def _approval_payload(row: sqlite3.Row) -> dict[str, object]:
     preview = json.loads(str(row["preview_json"] or "{}"))
     receipt = json.loads(str(row["receipt_json"])) if row["receipt_json"] else None
@@ -2954,6 +3750,14 @@ def _approval_payload(row: sqlite3.Row) -> dict[str, object]:
         "decidedBy": str(row["decided_by"] or ""),
         "decidedAtMs": int(row["decided_at_ms"]) if row["decided_at_ms"] is not None else None,
         "receipt": receipt if isinstance(receipt, dict) else None,
+        "causalMetadata": {
+            "planId": str(row["causal_plan_id"] or ""),
+            "planRevision": int(row["causal_plan_revision"] or 0),
+            "goalId": str(row["causal_goal_id"] or ""),
+            "goalRevision": int(row["causal_goal_revision"] or 0),
+            "turnId": str(row["causal_turn_id"] or ""),
+            "roomBound": bool(row["room_bound"]),
+        },
     }
     validate_contract(payload, "agent-approval.v1.json")
     return payload
@@ -2998,6 +3802,52 @@ def _stored_allowed_tools(value: object) -> list[str] | None:
     if not isinstance(parsed, list):
         return None
     return [str(item) for item in parsed if str(item).strip()]
+
+
+def _disclosure_preferences(
+    value: Mapping[str, object],
+) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise ValueError("capabilityDisclosurePreferences must be an object")
+    if len(value) > 512:
+        raise ValueError("capabilityDisclosurePreferences contains too many items")
+    normalized: dict[str, str] = {}
+    for raw_id, raw_preference in value.items():
+        capability_id = str(raw_id or "").strip()
+        if (
+            not capability_id
+            or len(capability_id) > 240
+            or any(
+                character
+                not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:._-"
+                for character in capability_id
+            )
+        ):
+            raise ValueError(
+                "capabilityDisclosurePreferences contains an invalid capability id"
+            )
+        preference = str(raw_preference or "").strip().lower()
+        if preference not in {"inherit", "enabled", "disabled"}:
+            raise ValueError(
+                "capability disclosure preference must be inherit, enabled, or disabled"
+            )
+        normalized[capability_id] = preference
+    return dict(sorted(normalized.items()))
+
+
+def _stored_disclosure_preferences(value: object) -> dict[str, str]:
+    if value is None:
+        return {}
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, Mapping):
+        return {}
+    try:
+        return _disclosure_preferences(parsed)
+    except ValueError:
+        return {}
 
 
 def _timestamp(value: int | None) -> int:

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
+from unittest.mock import patch
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -23,6 +25,7 @@ from rag_ime.memory_book_compiler import (
     store_memory_book_plan,
 )
 from rag_ime.models import InputEvent
+from rag_ime.model_registry import ModelDeployment, ModelRegistry
 from rag_ime.retrieval_docs import rebuild_retrieval_docs
 from rag_ime.runtime_config import RuntimeConfigResolver
 from rag_ime.settings_store import ManagementSettingsStore
@@ -953,6 +956,59 @@ class ConfigurationSettingsWorkContractTests(unittest.TestCase):
             self.service.settings_store.get_settings()["display"]["maxWidth"],
             after,
         )
+
+    def test_predictor_settings_preview_validates_registered_artifact_and_cross_field_contract(self) -> None:
+        model_path = Path(self.tmp.name) / "minimind-ime-v2"
+        model_path.mkdir()
+        (model_path / "config.json").write_text(
+            '{"model_type":"minimind"}',
+            encoding="utf-8",
+        )
+        (model_path / "tokenizer.json").write_text("{}", encoding="utf-8")
+        registry_path = Path(self.tmp.name) / "models.json"
+        registry = ModelRegistry(registry_path)
+        registry.register(
+            ModelDeployment(
+                model_id="minimind-ime-v2",
+                path=str(model_path),
+                format="mlx",
+                fingerprint="",
+                profile="minimind_ime_v2",
+                runtime="mlx",
+                prompt_mode="base-completion",
+            ),
+            activate=True,
+        )
+        revision = self.service.management.revision().runtime_revision
+
+        with patch.dict(
+            os.environ,
+            {"RAG_IME_MODEL_REGISTRY": str(registry_path)},
+        ):
+            preview = self.service.configuration_settings_preview(
+                {
+                    "changes": {
+                        "models.modelId": "minimind-ime-v2",
+                        "models.path": str(model_path),
+                        "models.maxTokens": 12,
+                        "models.temperature": 0.2,
+                        "models.topP": 0.9,
+                    },
+                    "expectedRuntimeRevision": revision,
+                }
+            )
+            denied = self.service.configuration_settings_preview(
+                {
+                    "changes": {"models.promptMode": "chat-json"},
+                    "expectedRuntimeRevision": revision,
+                }
+            )
+
+        validate_contract(preview, "management-work-preview.v1.json")
+        validate_contract(denied, "management-work-error.v1.json")
+        self.assertIn("需要重载: predictor", preview["summary"]["items"])
+        self.assertEqual(denied["errorCode"], "invalid_request")
+        self.assertIn("base-completion", json.dumps(denied, ensure_ascii=False))
 
     def test_settings_preview_rejects_secret_values_without_echoing_them(self) -> None:
         secret = "must-never-appear-in-a-receipt"

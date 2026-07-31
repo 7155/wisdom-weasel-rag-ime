@@ -125,7 +125,16 @@ export class NativeControlTransport implements ControlTransport {
 
   async request<Response = unknown>(request: ControlRequest): Promise<Response> {
     assertControlRequest(request);
-    const result = await this.call('request', controlRequestWirePayload(request), request.signal);
+    const catalogTimeoutMs = request.pathId === 'agent.session.commands'
+      || request.pathId === 'agent.session.models'
+      ? Math.max(this.requestTimeoutMs, 45_000)
+      : this.requestTimeoutMs;
+    const result = await this.call(
+      'request',
+      controlRequestWirePayload(request),
+      request.signal,
+      catalogTimeoutMs,
+    );
     const contract = request.responseContract ?? controlRoute(request.pathId).responseContract;
     return (contract ? parseContract(contract, result) : result) as Response;
   }
@@ -174,8 +183,11 @@ export class NativeControlTransport implements ControlTransport {
 
   async pasteImages(options: AgentImagePasteOptions): Promise<PickedFile[]> {
     const maxFiles = assertAgentImagePasteOptions(options);
+    const owner = options.roomId
+      ? { roomId: options.roomId }
+      : { sessionId: options.sessionId };
     const result = await this.call('pasteImages', {
-      sessionId: options.sessionId,
+      ...owner,
       maxFiles,
     });
     if (!Array.isArray(result) || result.length > maxFiles) {
@@ -183,7 +195,7 @@ export class NativeControlTransport implements ControlTransport {
     }
     return result.map((value) => parsePickedFile(value, {
       purpose: 'attachment',
-      sessionId: options.sessionId,
+      ...owner,
       maxFiles,
     }));
   }
@@ -246,7 +258,7 @@ export class NativeControlTransport implements ControlTransport {
   async runApprovedExternalAction(
     request: ExternalActionRequest,
   ): Promise<ExternalActionReceipt> {
-    const result = await this.call('runApprovedExternalAction', request);
+    const result = await this.call('runApprovedExternalAction', request, undefined, 120_000);
     if (!isRecord(result) || typeof result.receiptId !== 'string') {
       throw new NativeBridgeCallError('external action returned an invalid receipt');
     }
@@ -513,10 +525,9 @@ function parsePickedFile(value: unknown, options: FilePickOptions): PickedFile {
   }
   if (options.purpose === 'attachment') {
     if (
-      !MANAGED_AGENT_IMAGE_MIME_TYPES.has(value.mimeType) ||
+      MANAGED_AGENT_IMAGE_MIME_TYPES[value.mimeType] !== true ||
       value.byteSize > MAX_MANAGED_AGENT_IMAGE_BYTES ||
-      typeof value.sessionId !== 'string' ||
-      value.sessionId !== options.sessionId ||
+      !managedReceiptMatchesOwner(value, options) ||
       typeof value.sha256 !== 'string' ||
       !/^[a-f0-9]{64}$/.test(value.sha256) ||
       !/^media_[A-Za-z0-9_-]{12,80}$/.test(value.id) ||
@@ -665,20 +676,41 @@ function isSafeKnowledgeId(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(value);
 }
 
-const MANAGED_AGENT_IMAGE_MIME_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-]);
+const MANAGED_AGENT_IMAGE_MIME_TYPES: Record<string, true> = {
+  'image/png': true,
+  'image/jpeg': true,
+  'image/gif': true,
+  'image/webp': true,
+};
 const MAX_MANAGED_AGENT_IMAGE_BYTES = 20 * 1024 * 1024;
 
+function hasExactlyOneManagedOwner(
+  options: { sessionId?: unknown; roomId?: unknown },
+): boolean {
+  const valid = (value: unknown) => (
+    typeof value === 'string'
+    && /^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(value)
+  );
+  return valid(options.sessionId) !== valid(options.roomId)
+    && (options.sessionId === undefined || valid(options.sessionId))
+    && (options.roomId === undefined || valid(options.roomId));
+}
+
+function managedReceiptMatchesOwner(
+  value: Record<string, unknown>,
+  options: FilePickOptions,
+): boolean {
+  return options.roomId
+    ? value.roomId === options.roomId && value.sessionId === undefined
+    : value.sessionId === options.sessionId && value.roomId === undefined;
+}
+
 function assertAgentImagePasteOptions(options: AgentImagePasteOptions): number {
-  if (!isRecord(options) || Object.keys(options).some((key) => !['sessionId', 'files', 'maxFiles'].includes(key))) {
+  if (!isRecord(options) || Object.keys(options).some((key) => !['sessionId', 'roomId', 'files', 'maxFiles'].includes(key))) {
     throw new TypeError('Agent image paste options contained an unsupported field');
   }
-  if (typeof options.sessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(options.sessionId)) {
-    throw new TypeError('Agent image paste requires a bounded sessionId');
+  if (!hasExactlyOneManagedOwner(options)) {
+    throw new TypeError('Agent image paste requires exactly one bounded sessionId or roomId');
   }
   const files = options.files;
   if (files !== undefined && (!Array.isArray(files) || files.length < 1 || files.length > 8)) {
@@ -697,7 +729,7 @@ function assertAgentImagePasteOptions(options: AgentImagePasteOptions): number {
       !file.name ||
       file.name.length > 512 ||
       file.name.includes('\u0000') ||
-      !MANAGED_AGENT_IMAGE_MIME_TYPES.has(String(file.type).toLowerCase()) ||
+      MANAGED_AGENT_IMAGE_MIME_TYPES[String(file.type).toLowerCase()] !== true ||
       !Number.isSafeInteger(file.size) ||
       file.size <= 0 ||
       file.size > MAX_MANAGED_AGENT_IMAGE_BYTES
@@ -714,6 +746,7 @@ function assertFilePickOptions(options: FilePickOptions): void {
     'multiple',
     'purpose',
     'selection',
+    'roomId',
     'sessionId',
     'kbId',
     'parserProvider',
@@ -742,14 +775,14 @@ function assertFilePickOptions(options: FilePickOptions): void {
     throw new TypeError('FilePickOptions maxFiles must be between 1 and 8');
   }
   if (options.purpose === 'attachment') {
-    if (typeof options.sessionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(options.sessionId)) {
-      throw new TypeError('attachment file selection requires a bounded sessionId');
+    if (!hasExactlyOneManagedOwner(options)) {
+      throw new TypeError('attachment file selection requires exactly one bounded sessionId or roomId');
     }
     if (options.maxFiles === undefined) {
       throw new TypeError('attachment file selection requires maxFiles');
     }
-  } else if (options.sessionId !== undefined) {
-    throw new TypeError('sessionId is only accepted for Agent attachments');
+  } else if (options.sessionId !== undefined || options.roomId !== undefined) {
+    throw new TypeError('sessionId and roomId are only accepted for managed attachments');
   }
   if (options.purpose === 'knowledge-import') {
     if (typeof options.kbId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(options.kbId)) {

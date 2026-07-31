@@ -24,6 +24,7 @@ from rag_ime.agent_command_receipts import (
     AgentCommandReceiptPending,
 )
 from rag_ime.debug_server import DebugImeService, DebugRequestHandler, DebugServerConfig
+from rag_ime.agent_workspace import WorkspaceSnapshotError
 from rag_ime.predictor_latency import PredictorLatencyTrace, append_latency_trace
 from rag_ime.local_sqlite_core import LocalSqliteCoreClient
 from rag_ime.knowledge_workbench import KnowledgeGenerationResult, KnowledgeWorkbenchRequest
@@ -476,6 +477,10 @@ class DebugManagementApiTests(unittest.TestCase):
         review = self.service.rime_lexicon_review({})
         self.assertEqual(review["entryCount"], 1)
         self.assertTrue(review["reviewRequired"])
+        self.assertEqual(review["organization"]["owner"], "maintenance_poll")
+        self.assertEqual(review["organization"]["decoderOwner"], "rime")
+        self.assertTrue(review["organization"]["enabled"])
+        self.assertIsNotNone(review["organization"]["nextRunAtMs"])
 
         stale = self.service.rime_lexicon_apply(
             {
@@ -618,7 +623,7 @@ class DebugManagementApiTests(unittest.TestCase):
 
     def test_settings_update_schema_and_reset_are_audited(self) -> None:
         schema = self.service.settings_schema()
-        update = self.service.settings_update({"display.badges.model": "AI", "interaction.postCommit.numberKeys": "select_prediction"})
+        update = self.service.settings_update({"display.badges.model": "AI", "interaction.postCommit.optionNumber": "disabled"})
         settings = self.service.settings()
         reset = self.service.settings_reset_section({"section": "display"})
 
@@ -627,7 +632,8 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(update["ok"])
         self.assertGreater(int(update["auditId"]), 0)
         self.assertEqual(settings["settings"]["display"]["badges"]["model"], "AI")
-        self.assertEqual(settings["settings"]["interaction"]["postCommit"]["numberKeys"], "select_prediction")
+        self.assertEqual(settings["settings"]["interaction"]["postCommit"]["numberKeys"], "pass_through")
+        self.assertEqual(settings["settings"]["interaction"]["postCommit"]["optionNumber"], "disabled")
         self.assertEqual(reset["settings"]["display"]["badges"]["model"], "模")
         self.assertEqual(self._audit_count("settings_update"), 1)
         self.assertEqual(self._audit_count("settings_reset_section"), 1)
@@ -1270,7 +1276,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertTrue(status["autoApply"])
         self.assertFalse(status["scheduledDraftOnly"])
         self.assertEqual(status["automation"]["runsPerDay"], 2)
-        self.assertEqual(status["automation"]["model"], "deepseek-v4-flash")
+        self.assertEqual(status["automation"]["model"], "gpt/gpt-5.6-luna")
         self.assertEqual(status["ownerCuration"]["policy"]["cadence"], "twice_daily")
         self.assertTrue(
             status["ownerCuration"]["policy"]["autoApplyGovernedWrites"]
@@ -1490,8 +1496,10 @@ class DebugManagementApiTests(unittest.TestCase):
                 source="pi_agent_user",
                 committed_text="甲角色的待审阅长期事实",
                 privacy_disposition="allowed",
-                recent_context="",
+                recent_context="正在核对角色记忆来源",
+                app="com.openai.codex",
                 project="wisdom-weasel-rag-ime",
+                context_group_id="app:codex",
             )
         )
         event_id = int(event_ref.split(":", 1)[1])
@@ -1508,6 +1516,33 @@ class DebugManagementApiTests(unittest.TestCase):
             project="wisdom-weasel-rag-ime",
             provider="test",
             model="test",
+            source_bundle={
+                "inputs": [
+                    {
+                        "sourceRef": "S1",
+                        "sourceId": "source:owner-review-a",
+                        "sourceIds": ["source:owner-review-a"],
+                        "sourceEventIds": [event_id],
+                        "sourceKind": "user_final",
+                        "source": "pi_agent_user",
+                        "createdAtMs": 1_000,
+                        "sourceOccurredAtMs": 1_000,
+                        "app": "com.openai.codex",
+                        "contextGroupId": "app:codex",
+                    }
+                ],
+                "recentEvents": [
+                    {
+                        "eventId": event_id,
+                        "sourceEventIds": [event_id],
+                        "createdAtMs": 1_000,
+                        "sourceOccurredAtMs": 1_000,
+                        "source": "pi_agent_user",
+                        "app": "com.openai.codex",
+                        "contextGroupId": "app:codex",
+                    }
+                ],
+            },
             owner_kind="agent",
             owner_id="role-a",
             run_kind="manual_curation",
@@ -1533,6 +1568,18 @@ class DebugManagementApiTests(unittest.TestCase):
                     {"ownerKind": "agent", "ownerId": "role-a"}
                 ],
             }
+        )
+        self.assertEqual(
+            review["run"]["changes"][0]["sourceEventIds"],
+            [event_id],
+        )
+        self.assertEqual(
+            review["run"]["sourceInputRefs"][0]["sourceEventIds"],
+            [event_id],
+        )
+        self.assertEqual(
+            review["run"]["sourceInputRefs"][0]["contextGroupId"],
+            "app:codex",
         )
         with self.assertRaisesRegex(ValueError, "approved role"):
             self.service.knowledge_workbench_database_apply(
@@ -1865,7 +1912,7 @@ class DebugManagementApiTests(unittest.TestCase):
                     {
                         "schemaVersion": "rag-ime.agent-tool-call.v1",
                         "sessionId": session_id,
-                        "tool": "ime_memory",
+                        "tool": "memory",
                         "toolCallId": "tool:http:1",
                         "args": {"op": "catalog", "query": "输入法"},
                     }
@@ -1893,7 +1940,9 @@ class DebugManagementApiTests(unittest.TestCase):
             self.service.agent.sessions.mutate_agent_goal(
                 session_id,
                 {
-                    "action": "set",
+                    "action": "confirm_setup",
+                    "confirmed": True,
+                    "expectedRevision": 0,
                     "objective": "验证 Pi Goal 用量幂等上报",
                     "tokenBudget": 1_000,
                 },
@@ -1991,7 +2040,7 @@ class DebugManagementApiTests(unittest.TestCase):
 
             approval = self.service.agent.sessions.create_approval(
                 session_id=session_id,
-                tool_name="ime_input",
+                tool_name="input",
                 operation="apply_settings",
                 payload_sha256="a" * 64,
                 preview={"summary": "关闭模糊音"},
@@ -2146,10 +2195,10 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(set(workflow_state["result"]), {"plan", "goal", "actGate"})
         self.assertEqual(goal_usage["result"]["goal"]["usage"]["tokens"], 120)
         self.assertEqual(duplicate_goal_usage["result"]["goal"]["usage"]["tokens"], 120)
-        self.assertEqual(goal_settle["result"]["state"], "blocked")
+        self.assertEqual(goal_settle["result"]["state"], "continue")
         self.assertEqual(
             goal_settle["result"]["reason"],
-            "plan_required",
+            "goal_active",
         )
         self.assertTrue(context_refresh["ok"])
         self.assertEqual(context_refresh["result"]["trigger"], "first_user_prompt")
@@ -2208,6 +2257,7 @@ class DebugManagementApiTests(unittest.TestCase):
         self.assertEqual(failure.code, 409)
         self.assertEqual(payload["schemaVersion"], "rag-ime.local-api-error.v1")
         self.assertEqual(payload["errorCode"], "session_runtime_unavailable")
+        self.assertTrue(payload["retryable"])
         self.assertNotIn("/private/", json.dumps(payload))
         self.assertEqual(healthy_status, 200)
         self.assertTrue(healthy_payload["ok"])
@@ -2707,6 +2757,202 @@ class DebugManagementApiTests(unittest.TestCase):
         )
         self.assertTrue(health["ok"])
 
+    def test_agent_tool_validation_error_is_non_retryable(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        request = Request(
+            f"{base_url}/api/agent/tool/execute",
+            data=json.dumps(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": "session:test",
+                    "tool": "memory",
+                    "toolCallId": "tool:test:invalid",
+                    "args": {"op": "curation_prepare"},
+                }
+            ).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-RAG-IME-Agent-Token": self.service.agent.tool_token,
+            },
+            method="POST",
+        )
+        try:
+            with (
+                patch.object(
+                    self.service.agent_tools,
+                    "execute",
+                    side_effect=ValueError(
+                        "$.segments[1].title: string is longer than 160"
+                    ),
+                ),
+                patch.dict(
+                    os.environ,
+                    {
+                        "NO_PROXY": "127.0.0.1,localhost",
+                        "no_proxy": "127.0.0.1,localhost",
+                    },
+                ),
+                self.assertRaises(HTTPError) as caught,
+            ):
+                urlopen(request, timeout=5)
+            try:
+                error_status = caught.exception.code
+                payload = json.loads(caught.exception.read().decode("utf-8"))
+            finally:
+                caught.exception.close()
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(error_status, 400, payload)
+        self.assertEqual(
+            payload,
+            {
+                "schemaVersion": "rag-ime.agent-tool-error.v1",
+                "ok": False,
+                "error": "$.segments[1].title: string is longer than 160",
+                "errorCode": "invalid_request",
+                "retryable": False,
+            },
+        )
+
+    def test_agent_tool_stale_snapshot_is_a_typed_retryable_conflict(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/api/agent/tool/execute",
+            data=json.dumps(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": "session:test",
+                    "tool": "workspace_edit",
+                    "toolCallId": "tool:test:stale-snapshot",
+                    "args": {
+                        "op": "apply",
+                        "path": "example.py",
+                        "resourceRevision": f"sha256:{'a' * 64}",
+                        "edits": [{"oldText": "before", "newText": "after"}],
+                    },
+                }
+            ).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-RAG-IME-Agent-Token": self.service.agent.tool_token,
+            },
+            method="POST",
+        )
+        try:
+            with (
+                patch.object(
+                    self.service.agent_tools,
+                    "execute",
+                    side_effect=WorkspaceSnapshotError(
+                        "stale_snapshot",
+                        "workspace_edit snapshot is stale",
+                        retryable=True,
+                    ),
+                ),
+                patch.dict(
+                    os.environ,
+                    {
+                        "NO_PROXY": "127.0.0.1,localhost",
+                        "no_proxy": "127.0.0.1,localhost",
+                    },
+                ),
+                self.assertRaises(HTTPError) as caught,
+            ):
+                urlopen(request, timeout=5)
+            try:
+                status = caught.exception.code
+                payload = json.loads(caught.exception.read().decode("utf-8"))
+            finally:
+                caught.exception.close()
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(status, 409, payload)
+        self.assertEqual(payload["errorCode"], "stale_snapshot")
+        self.assertTrue(payload["retryable"])
+
+    def test_agent_tool_workflow_gate_is_a_typed_non_retryable_conflict(self) -> None:
+        class Handler(DebugRequestHandler):
+            pass
+
+        Handler.service = self.service
+        Handler.static_dir = Path("debug")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base_url = f"http://127.0.0.1:{server.server_port}"
+        request = Request(
+            f"{base_url}/api/agent/tool/execute",
+            data=json.dumps(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-call.v1",
+                    "sessionId": "session:test",
+                    "tool": "workspace_edit",
+                    "toolCallId": "tool:test:plan-required",
+                    "args": {"op": "apply", "path": "example.py", "edits": []},
+                }
+            ).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-RAG-IME-Agent-Token": self.service.agent.tool_token,
+            },
+            method="POST",
+        )
+        try:
+            with (
+                patch.object(
+                    self.service.agent_tools,
+                    "execute",
+                    side_effect=ValueError(
+                        "Act Gate blocked workspace mutation (plan_required): "
+                        "先创建执行计划并提交审阅。"
+                    ),
+                ),
+                patch.dict(
+                    os.environ,
+                    {
+                        "NO_PROXY": "127.0.0.1,localhost",
+                        "no_proxy": "127.0.0.1,localhost",
+                    },
+                ),
+                self.assertRaises(HTTPError) as caught,
+            ):
+                urlopen(request, timeout=5)
+            try:
+                error_status = caught.exception.code
+                payload = json.loads(caught.exception.read().decode("utf-8"))
+            finally:
+                caught.exception.close()
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+        self.assertEqual(error_status, 409, payload)
+        self.assertEqual(payload["errorCode"], "workflow_gate_closed")
+        self.assertFalse(payload["retryable"])
+        self.assertIn("plan_required", payload["error"])
+
     def test_agent_prompt_http_preserves_typed_command_receipts(
         self,
     ) -> None:
@@ -2821,7 +3067,7 @@ class DebugManagementApiTests(unittest.TestCase):
         ).hexdigest()
         approval = self.service.agent.sessions.create_approval(
             session_id=str(session["id"]),
-            tool_name="ime_runtime",
+            tool_name="runtime",
             operation="restart_sidecar",
             payload_sha256="f" * 64,
             preview={"summary": "重启 Sidecar"},
@@ -2899,7 +3145,7 @@ class DebugManagementApiTests(unittest.TestCase):
             {
                 "schemaVersion": "rag-ime.agent-tool-call.v1",
                 "sessionId": session["id"],
-                "tool": "ime_planning",
+                "tool": "planning",
                 "toolCallId": "tool:real:complete",
                 "args": {
                     "op": "task_action",
@@ -2926,7 +3172,7 @@ class DebugManagementApiTests(unittest.TestCase):
             {
                 "schemaVersion": "rag-ime.agent-tool-call.v1",
                 "sessionId": session["id"],
-                "tool": "ime_planning",
+                "tool": "planning",
                 "toolCallId": "tool:real:undo",
                 "args": {
                     "op": "undo_task_event",
@@ -2960,7 +3206,7 @@ class DebugManagementApiTests(unittest.TestCase):
             {
                 "schemaVersion": "rag-ime.agent-tool-call.v1",
                 "sessionId": session["id"],
-                "tool": "ime_input",
+                "tool": "input",
                 "toolCallId": "tool:real:settings",
                 "args": {
                     "op": "apply_settings",
@@ -2985,7 +3231,7 @@ class DebugManagementApiTests(unittest.TestCase):
             {
                 "schemaVersion": "rag-ime.agent-tool-call.v1",
                 "sessionId": session["id"],
-                "tool": "ime_input",
+                "tool": "input",
                 "toolCallId": "tool:real:settings:rollback",
                 "args": {
                     "op": "rollback_settings",

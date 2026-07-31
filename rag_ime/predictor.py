@@ -15,7 +15,7 @@ from typing import Any, Protocol
 
 from .models import ModelPrediction
 from .model_registry import is_local_network_endpoint
-from .model_profiles import profile_by_id
+from .model_profiles import canonical_runtime_profile_id, profile_by_id
 from .pinyin_index import build_pinyin_metadata
 from .anti_echo import candidate_echoes_text, candidate_has_self_repetition
 from .keychain_secrets import MODEL_INSTANT_ACCOUNT, MODEL_KEYCHAIN_SERVICE, read_keychain_secret
@@ -835,6 +835,17 @@ class MlxPredictionServiceProvider:
             "modelFingerprint": payload.get("modelFingerprint"),
             "modelLoaded": bool(payload.get("modelLoaded")),
             "modelInfo": model_info,
+            "modelProfile": (
+                dict(payload.get("modelProfile"))
+                if isinstance(payload.get("modelProfile"), dict)
+                else {}
+            ),
+            "promptMode": str(payload.get("promptMode") or ""),
+            "runtimeConfig": (
+                dict(payload.get("runtimeConfig"))
+                if isinstance(payload.get("runtimeConfig"), dict)
+                else {}
+            ),
             "promptCache": prompt_cache,
             "capabilities": capabilities,
         }
@@ -973,8 +984,22 @@ def prediction_provider_from_env(env: dict[str, str] | None = None) -> Predictio
                 base_url=base_url.rstrip("/"),
                 model=model,
                 profile=profile,
+                prompt_mode=source.get(
+                    "RAG_IME_PREDICTOR_PROMPT_MODE",
+                    defaults.prompt_mode,
+                ).strip(),
                 timeout_s=_float_env(source, "RAG_IME_PREDICTOR_TIMEOUT_MS", defaults.timeout_ms) / 1000,
-                max_tokens=int(_float_env(source, "RAG_IME_PREDICTOR_MAX_TOKENS", max(24, defaults.max_tokens))),
+                # The resident MLX service and Sidecar must use the same
+                # profile budget.  Raising MiniMind's 8-token completion
+                # contract to the old generic 24-token floor changes both
+                # latency and the candidate shape.
+                max_tokens=int(
+                    _float_env(
+                        source,
+                        "RAG_IME_PREDICTOR_MAX_TOKENS",
+                        defaults.max_tokens,
+                    )
+                ),
                 temperature=_float_env(source, "RAG_IME_PREDICTOR_TEMPERATURE", defaults.temperature),
                 top_p=_float_env(source, "RAG_IME_PREDICTOR_TOP_P", defaults.top_p),
                 provider_name="local-mlx",
@@ -1031,7 +1056,10 @@ def _prediction_env_with_predictor_file(env: dict[str, str] | None) -> dict[str,
             continue
         key, value = line.split("=", 1)
         file_values[key.strip()] = value.strip().strip('"').strip("'")
-    return {**source, **file_values} if env is None else {**file_values, **source}
+    # predictor.env is fallback configuration only.  LaunchAgent/process
+    # values remain authoritative whether the caller passes an explicit
+    # mapping or asks this function to read os.environ directly.
+    return {**file_values, **source}
 
 
 def _is_loopback_realtime_predictor_url(value: str) -> bool:
@@ -2471,7 +2499,18 @@ def _candidate_parts_from_json_value(value: Any) -> list[str]:
 
 def _normalized_prompt_mode(mode: str) -> str:
     normalized = mode.strip().lower()
-    return "completion" if normalized in {"completion", "base", "prefix"} else "chat"
+    return (
+        "completion"
+        if normalized in {
+            "base",
+            "base-completion",
+            "completion",
+            "none",
+            "prefix",
+            "prompt-free",
+        }
+        else "chat"
+    )
 
 
 def _openai_stable_prefix_for_request(prompt_mode: str, request_type: str) -> str:
@@ -2566,7 +2605,7 @@ def _openai_completion_prefix(
 
 def _status_prompt_mode(mode: str) -> str:
     normalized = mode.strip().lower()
-    if normalized in {"ollama-chat", "mlx-service"}:
+    if normalized in {"base-completion", "ollama-chat", "mlx-service"}:
         return normalized
     return _normalized_prompt_mode(normalized)
 
@@ -2662,6 +2701,7 @@ def _mlx_predict_body(
         "stream": stream,
         "profile": str(getattr(config, "profile", "custom")),
         "profileId": str(getattr(config, "profile", "custom")),
+        "promptMode": str(getattr(config, "prompt_mode", "mlx-service")),
         "requestId": _short_hash(f"{time.time_ns()}:{query}:{context}:{resolved_request_type}"),
         **_prediction_request_metadata(
             context=context,
@@ -2934,13 +2974,31 @@ def _normalized_predictor_profile(profile: str) -> str:
         "base-instant": "completion-instant",
     }
     normalized = aliases.get(normalized, normalized)
-    if normalized in {"custom", "instant", "completion-instant", "ime_hot", "ime_post_commit", "ime_quality"}:
+    normalized = canonical_runtime_profile_id(normalized)
+    if normalized in {
+        "custom",
+        "instant",
+        "completion-instant",
+        "ime_hot",
+        "ime_post_commit",
+        "ime_quality",
+        "minimind_ime_v2",
+    }:
         return normalized
     return "custom"
 
 
 def _prediction_profile_defaults(profile: str) -> PredictionProfileDefaults:
     normalized = _normalized_predictor_profile(profile)
+    if normalized == "minimind_ime_v2":
+        return PredictionProfileDefaults(
+            prompt_mode="base-completion",
+            timeout_ms=900,
+            max_tokens=8,
+            temperature=0.15,
+            top_p=0.85,
+            disable_thinking=False,
+        )
     if normalized == "ime_hot":
         return PredictionProfileDefaults(
             prompt_mode="mlx-service",

@@ -146,6 +146,53 @@ class DesktopAgentToolTests(unittest.TestCase):
             "a" * 64,
         )
 
+    def test_full_trust_model_approval_executes_the_hash_bound_action_without_a_dialog(self) -> None:
+        workspace = Path(self.temporary.name) / "workspace"
+        workspace.mkdir()
+        trusted = self.store.create(
+            title="trusted desktop",
+            mode="coordinator",
+            execution_mode="full_trust",
+            workspace_roots=[str(workspace)],
+            created_at_ms=2,
+        )
+        applied_approvals: list[str] = []
+
+        def auto_approve(approval):
+            applied_approvals.append(str(approval["approvalId"]))
+            decided = self.store.decide_approval(
+                str(approval["approvalId"]),
+                approved=True,
+                payload_sha256=str(approval["payloadSha256"]),
+                decided_by="approval-model:test",
+            )
+            receipt = self.gateway.apply_approval(decided)
+            return {
+                "summary": receipt["summary"],
+                "approvalRequired": False,
+                "autoApproved": True,
+                "approvalId": approval["approvalId"],
+                "receipt": receipt,
+                "modelDecided": True,
+                "decisionMode": "model",
+            }
+
+        self.gateway.bind_auto_approval_executor(auto_approve)
+        request = self.call(
+            "act",
+            snapshotId="axsnap_1",
+            revision=7,
+            nodeRef="ax_button",
+            action="press",
+        )
+        request["sessionId"] = trusted["id"]
+        result = self.gateway.execute(request)["result"]
+
+        self.assertFalse(result["approvalRequired"])
+        self.assertTrue(result["autoApproved"])
+        self.assertEqual(len(applied_approvals), 1)
+        self.assertEqual(len(self.desktop.applied), 1)
+
     def test_stale_desktop_state_never_retargets(self) -> None:
         prepared = self.gateway.execute(
             self.call(

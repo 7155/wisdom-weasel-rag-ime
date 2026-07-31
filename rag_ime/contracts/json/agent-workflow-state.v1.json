@@ -78,10 +78,21 @@
         "createdAtMs": { "type": "integer", "minimum": 0 }
       }
     },
+    "cancellationAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["auditId", "reason", "cancelledBy", "createdAtMs"],
+      "properties": {
+        "auditId": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "cancelledBy": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "createdAtMs": { "type": "integer", "minimum": 0 }
+      }
+    },
     "goal": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schemaVersion", "sessionId", "configured", "goalId", "revision", "objective", "status", "budget", "usage", "remaining", "budgetExceeded", "completionAudit", "updatedAtMs"],
+      "required": ["schemaVersion", "sessionId", "configured", "goalId", "revision", "objective", "successCriteria", "evidenceExpectations", "status", "budget", "usage", "remaining", "budgetExceeded", "completionAudit", "cancellationAudit", "updatedAtMs"],
       "properties": {
         "schemaVersion": { "const": "rag-ime.agent-goal.v1" },
         "sessionId": { "type": "string", "minLength": 1, "maxLength": 240 },
@@ -89,7 +100,13 @@
         "goalId": { "type": "string", "maxLength": 240 },
         "revision": { "type": "integer", "minimum": 0 },
         "objective": { "type": "string", "maxLength": 4000 },
-        "status": { "type": "string", "enum": ["active", "paused", "completed", "cleared"] },
+        "successCriteria": { "type": "string", "maxLength": 2000 },
+        "evidenceExpectations": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 600 }
+        },
+        "status": { "type": "string", "enum": ["active", "paused", "completed", "cancelled", "cleared"] },
         "budget": {
           "type": "object",
           "additionalProperties": false,
@@ -119,17 +136,20 @@
         },
         "budgetExceeded": { "type": "boolean" },
         "completionAudit": { "oneOf": [{ "$ref": "#/$defs/completionAudit" }, { "type": "null" }] },
+        "cancellationAudit": { "oneOf": [{ "$ref": "#/$defs/cancellationAudit" }, { "type": "null" }] },
         "updatedAtMs": { "type": "integer", "minimum": 0 }
       }
     },
     "actGate": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["allowed", "reason", "message"],
+      "required": ["allowed", "reason", "message", "planRevision", "goalRevision"],
       "properties": {
         "allowed": { "type": "boolean" },
-        "reason": { "type": "string", "enum": ["approved", "plan_required", "plan_not_approved", "plan_completed", "plan_cancelled", "goal_paused", "goal_completed", "goal_budget_exhausted"] },
-        "message": { "type": "string", "minLength": 1, "maxLength": 300 }
+        "reason": { "type": "string", "enum": ["approved", "user_execution_request", "plan_required", "plan_not_approved", "plan_completed", "plan_cancelled", "goal_paused", "goal_completed", "goal_cancelled", "goal_budget_exhausted"] },
+        "message": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "planRevision": { "type": "integer", "minimum": 0 },
+        "goalRevision": { "type": "integer", "minimum": 0 }
       }
     }
   }

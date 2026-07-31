@@ -18,6 +18,7 @@ from room_context_epoch_canary import (
     cancel_root,
     debug_evidence,
     encoded,
+    governed_tool_load_receipts,
     latest_transition,
     progressive_discovery_check,
     request_json,
@@ -259,7 +260,7 @@ def validate_project_approval(
             raise RuntimeError(
                 "Room project reviewer or closer attempted a forbidden edit"
             )
-        if set(action) != {"path", "edits"}:
+        if set(action) != {"path", "resourceRevision", "edits"}:
             raise RuntimeError(
                 "Room project edit is outside the approved implementation shape"
             )
@@ -268,6 +269,10 @@ def validate_project_approval(
             raise RuntimeError("Room project attempted to edit an unexpected file")
         edits = action.get("edits")
         current_source = target.read_text(encoding="utf-8")
+        resource_revision = str(action.get("resourceRevision") or "")
+        expected_revision = f"sha256:{hashlib.sha256(target.read_bytes()).hexdigest()}"
+        if resource_revision != expected_revision:
+            raise RuntimeError("Room project edit snapshot is stale")
         shape_valid = isinstance(edits, list) and len(edits) == 1
         candidate_source = ""
         if shape_valid:
@@ -702,11 +707,17 @@ def run(
         )
         for tool_name in (*_EXPECTED_TOOL_COUNTS, "room_commit")
     }
+    loaded_tool_receipts = governed_tool_load_receipts(
+        args.db_path,
+        session_id=session_id,
+        dispatch_ids=dispatch_ids,
+    )
     before = debug_evidence(
         args.base_url,
         session_id,
         requester=requester,
         timeout=args.turn_timeout,
+        governed_tool_receipts=loaded_tool_receipts,
     )
     independent = _independent_project_verification(workspace)
     compact_after = bool(getattr(args, "compact_after", False))
@@ -728,6 +739,7 @@ def run(
             session_id,
             requester=requester,
             timeout=args.turn_timeout,
+            governed_tool_receipts=loaded_tool_receipts,
         )
         transition = latest_transition(args.db_path, session_id)
         compact_result = compacted.get("result") or {}
@@ -908,6 +920,7 @@ def run(
         },
         "approvals": approvals,
         "toolReceipts": tool_receipts,
+        "loadedToolReceipts": loaded_tool_receipts,
         "beforeCompaction": before,
         "compaction": {
             "attempted": compact_after,

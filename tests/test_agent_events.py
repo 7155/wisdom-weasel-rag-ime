@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 import unittest
 
 from rag_ime.agent_events import AgentEventHub
@@ -37,7 +39,8 @@ class AgentEventHubTests(unittest.TestCase):
         self.assertEqual(hub.subscriber_count(), 0)
 
     def test_replay_gap_emits_snapshot_required(self) -> None:
-        hub = AgentEventHub(replay_limit=32)
+        recorded = []
+        hub = AgentEventHub(replay_limit=32, event_recorder=recorded.append)
         for index in range(40):
             hub.publish("session-a", "status_changed", {"index": index})
 
@@ -50,6 +53,11 @@ class AgentEventHubTests(unittest.TestCase):
         control = _sse_payload(next(stream))
         self.assertEqual(control["eventType"], "snapshot_required")
         self.assertEqual(control["payload"]["reason"], "event_replay_gap")
+        self.assertEqual(len(recorded), 40)
+        self.assertEqual(hub.replay("session-a", after_event_id="session-a:40"), ([], False))
+        recovered = hub.publish("session-a", "status_changed", {"index": "recovered"})
+        self.assertEqual(recovered.sequence, 41)
+        self.assertEqual(len(recorded), 41)
         stream.close()
 
     def test_invalid_or_future_resume_token_requires_snapshot(self) -> None:
@@ -69,6 +77,72 @@ class AgentEventHubTests(unittest.TestCase):
         failing = AgentEventHub(event_observer=lambda _event: (_ for _ in ()).throw(RuntimeError("room down")))
         published = failing.publish("session-a", "status_changed", {"status": "busy"})
         self.assertEqual(published.sequence, 1)
+
+    def test_durable_recorder_precedes_live_delivery_while_background_observers_drain_in_order(
+        self,
+    ) -> None:
+        release_projection = threading.Event()
+        recorded: list[str] = []
+        projected: list[str] = []
+
+        def record(event: object) -> None:
+            recorded.append(event.event_id)
+
+        def observe(event: object) -> None:
+            release_projection.wait(2)
+            projected.append(event.event_id)
+
+        hub = AgentEventHub(
+            event_recorder=record,
+            event_observer=observe,
+            background_projection=True,
+        )
+        stream = hub.subscribe("session-a")
+        self.assertEqual(next(stream), b": connected\n\n")
+
+        started_at = time.monotonic()
+        first = hub.publish("session-a", "tool_started")
+        second = hub.publish("session-a", "tool_finished")
+        self.assertLess(time.monotonic() - started_at, 0.25)
+        self.assertEqual(recorded, [first.event_id, second.event_id])
+        self.assertEqual(_sse_payload(next(stream))["eventId"], first.event_id)
+        self.assertEqual(_sse_payload(next(stream))["eventId"], second.event_id)
+        self.assertEqual(projected, [])
+
+        release_projection.set()
+        self.assertTrue(hub.flush(timeout=2))
+        self.assertEqual(projected, [first.event_id, second.event_id])
+        self.assertTrue(hub.close(timeout=2))
+        stream.close()
+
+    def test_recorder_failure_never_reaches_replay_or_live_and_does_not_reuse_a_committed_id(
+        self,
+    ) -> None:
+        durable_sequence = 0
+        fail = True
+
+        def record(event: object) -> None:
+            nonlocal durable_sequence
+            durable_sequence = event.sequence
+            if fail:
+                raise RuntimeError("durable recorder unavailable")
+
+        hub = AgentEventHub(
+            sequence_loader=lambda _session_id: durable_sequence,
+            event_recorder=record,
+        )
+        stream = hub.subscribe("session-a")
+        self.assertEqual(next(stream), b": connected\n\n")
+
+        with self.assertRaisesRegex(RuntimeError, "durable recorder unavailable"):
+            hub.publish("session-a", "tool_started")
+        self.assertEqual(hub.replay("session-a"), ([], False))
+
+        fail = False
+        recovered = hub.publish("session-a", "tool_finished")
+        self.assertEqual(recovered.sequence, 2)
+        self.assertEqual(_sse_payload(next(stream))["eventId"], recovered.event_id)
+        stream.close()
 
     def test_projection_invalidation_discards_old_replay_and_refreshes_live_subscribers(self) -> None:
         recorded = []

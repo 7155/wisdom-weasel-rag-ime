@@ -7,9 +7,11 @@
 import type { ActiveRagStartV1 } from './generated/active-rag-start.v1';
 import type { ActiveRagStatusV1 } from './generated/active-rag-status.v1';
 import type { ActivityTimelineContextV1 } from './generated/activity-timeline-context.v1';
+import type { AgentApprovalModelDecisionV1 } from './generated/agent-approval-model-decision.v1';
 import type { AgentApprovalV1 } from './generated/agent-approval.v1';
 import type { AgentArtifactInspectionV1 } from './generated/agent-artifact-inspection.v1';
 import type { AgentArtifactRefV1 } from './generated/agent-artifact-ref.v1';
+import type { AgentBackgroundJobV1 } from './generated/agent-background-job.v1';
 import type { AgentConfigurationV1 } from './generated/agent-configuration.v1';
 import type { AgentContextItemV1 } from './generated/agent-context-item.v1';
 import type { AgentContextTraceV1 } from './generated/agent-context-trace.v1';
@@ -23,6 +25,7 @@ import type { AgentGoalMutationV1 } from './generated/agent-goal-mutation.v1';
 import type { AgentGoalSettleRequestV1 } from './generated/agent-goal-settle-request.v1';
 import type { AgentGoalSettleResultV1 } from './generated/agent-goal-settle-result.v1';
 import type { AgentGoalUsageV1 } from './generated/agent-goal-usage.v1';
+import type { AgentLifecycleCancellationAuditV1 } from './generated/agent-lifecycle-cancellation-audit.v1';
 import type { AgentMediaV1 } from './generated/agent-media.v1';
 import type { AgentMemoryEvidenceV1 } from './generated/agent-memory-evidence.v1';
 import type { AgentMemoryMaintenanceStatusV1 } from './generated/agent-memory-maintenance-status.v1';
@@ -56,6 +59,7 @@ import type { AgentToolResultV1 } from './generated/agent-tool-result.v1';
 import type { AgentWorkflowStateV1 } from './generated/agent-workflow-state.v1';
 import type { AssistantCandidateActionV1 } from './generated/assistant-candidate-action.v1';
 import type { AssistantOverlayV1 } from './generated/assistant-overlay.v1';
+import type { CapabilityCatalogV1 } from './generated/capability-catalog.v1';
 import type { CollaborationProfileCommandReceiptV1 } from './generated/collaboration-profile-command-receipt.v1';
 import type { CollaborationProfileCommandV1 } from './generated/collaboration-profile-command.v1';
 import type { CollaborationProfileCompileReceiptV1 } from './generated/collaboration-profile-compile-receipt.v1';
@@ -119,6 +123,7 @@ import type { RoomBindingV2 } from './generated/room-binding.v2';
 import type { RoomCapabilityManifestV1 } from './generated/room-capability-manifest.v1';
 import type { RoomCommitV2 } from './generated/room-commit.v2';
 import type { RoomCommitV3 } from './generated/room-commit.v3';
+import type { RoomCommitV4 } from './generated/room-commit.v4';
 import type { RoomContextEntryV1 } from './generated/room-context-entry.v1';
 import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.v2';
 import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
@@ -126,11 +131,13 @@ import type { RoomKernelCommandV1 } from './generated/room-kernel-command.v1';
 import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
 import type { RoomLegacyRefV1 } from './generated/room-legacy-ref.v1';
 import type { RoomParticipantBindingV2 } from './generated/room-participant-binding.v2';
+import type { RoomPeerInvitationV1 } from './generated/room-peer-invitation.v1';
 import type { RoomPostV2 } from './generated/room-post.v2';
 import type { RoomQualityGateReceiptV1 } from './generated/room-quality-gate-receipt.v1';
 import type { RoomRolloutPolicyV1 } from './generated/room-rollout-policy.v1';
 import type { RoomRolloutReceiptV1 } from './generated/room-rollout-receipt.v1';
 import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
+import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
 import type { RoomSettleReceiptV1 } from './generated/room-settle-receipt.v1';
 import type { RoomSettleResultV1 } from './generated/room-settle-result.v1';
 import type { RoomShadowObservationV1 } from './generated/room-shadow-observation.v1';
@@ -139,6 +146,7 @@ import type { RoomSkillPolicyV1 } from './generated/room-skill-policy.v1';
 import type { RoomSkillRecoveryV1 } from './generated/room-skill-recovery.v1';
 import type { RoomSkillSelectionV1 } from './generated/room-skill-selection.v1';
 import type { RoomTaskV2 } from './generated/room-task.v2';
+import type { RoomTaskV3 } from './generated/room-task.v3';
 import type { RoomToolDisclosureReceiptV1 } from './generated/room-tool-disclosure-receipt.v1';
 import type { RoomToolInvocationReceiptV1 } from './generated/room-tool-invocation-receipt.v1';
 import type { RunnerVerificationReceiptV2 } from './generated/runner-verification-receipt.v2';
@@ -146,14 +154,23 @@ import type { SessionMemoryRecallV1 } from './generated/session-memory-recall.v1
 import type { SessionRecallEffectReceiptV1 } from './generated/session-recall-effect-receipt.v1';
 import type { TypedVerificationReceiptV1 } from './generated/typed-verification-receipt.v1';
 import type { UserMemoryDraftV1 } from './generated/user-memory-draft.v1';
+import type { WorkDocumentCommandV1 } from './generated/work-document-command.v1';
+import type { WorkDocumentContextV1 } from './generated/work-document-context.v1';
+import type { WorkDocumentDetailV1 } from './generated/work-document-detail.v1';
+import type { WorkDocumentListV1 } from './generated/work-document-list.v1';
+import type { WorkspaceLspMutationReceiptV1 } from './generated/workspace-lsp-mutation-receipt.v1';
+import type { WorkspaceLspResultV1 } from './generated/workspace-lsp-result.v1';
+import type { WorkspaceLspStatusV1 } from './generated/workspace-lsp-status.v1';
 
 export type {
   ActiveRagStartV1,
   ActiveRagStatusV1,
   ActivityTimelineContextV1,
+  AgentApprovalModelDecisionV1,
   AgentApprovalV1,
   AgentArtifactInspectionV1,
   AgentArtifactRefV1,
+  AgentBackgroundJobV1,
   AgentConfigurationV1,
   AgentContextItemV1,
   AgentContextTraceV1,
@@ -167,6 +184,7 @@ export type {
   AgentGoalSettleRequestV1,
   AgentGoalSettleResultV1,
   AgentGoalUsageV1,
+  AgentLifecycleCancellationAuditV1,
   AgentMediaV1,
   AgentMemoryEvidenceV1,
   AgentMemoryMaintenanceStatusV1,
@@ -200,6 +218,7 @@ export type {
   AgentWorkflowStateV1,
   AssistantCandidateActionV1,
   AssistantOverlayV1,
+  CapabilityCatalogV1,
   CollaborationProfileCommandReceiptV1,
   CollaborationProfileCommandV1,
   CollaborationProfileCompileReceiptV1,
@@ -263,6 +282,7 @@ export type {
   RoomCapabilityManifestV1,
   RoomCommitV2,
   RoomCommitV3,
+  RoomCommitV4,
   RoomContextEntryV1,
   RoomDispatchEnvelopeV2,
   RoomEventEnvelopeV2,
@@ -270,11 +290,13 @@ export type {
   RoomKernelReceiptV1,
   RoomLegacyRefV1,
   RoomParticipantBindingV2,
+  RoomPeerInvitationV1,
   RoomPostV2,
   RoomQualityGateReceiptV1,
   RoomRolloutPolicyV1,
   RoomRolloutReceiptV1,
   RoomRootExecutionV2,
+  RoomRootExecutionV3,
   RoomSettleReceiptV1,
   RoomSettleResultV1,
   RoomShadowObservationV1,
@@ -283,6 +305,7 @@ export type {
   RoomSkillRecoveryV1,
   RoomSkillSelectionV1,
   RoomTaskV2,
+  RoomTaskV3,
   RoomToolDisclosureReceiptV1,
   RoomToolInvocationReceiptV1,
   RunnerVerificationReceiptV2,
@@ -290,15 +313,24 @@ export type {
   SessionRecallEffectReceiptV1,
   TypedVerificationReceiptV1,
   UserMemoryDraftV1,
+  WorkDocumentCommandV1,
+  WorkDocumentContextV1,
+  WorkDocumentDetailV1,
+  WorkDocumentListV1,
+  WorkspaceLspMutationReceiptV1,
+  WorkspaceLspResultV1,
+  WorkspaceLspStatusV1,
 };
 
 export interface ContractTypeMap {
   'active-rag-start.v1': ActiveRagStartV1;
   'active-rag-status.v1': ActiveRagStatusV1;
   'activity-timeline-context.v1': ActivityTimelineContextV1;
+  'agent-approval-model-decision.v1': AgentApprovalModelDecisionV1;
   'agent-approval.v1': AgentApprovalV1;
   'agent-artifact-inspection.v1': AgentArtifactInspectionV1;
   'agent-artifact-ref.v1': AgentArtifactRefV1;
+  'agent-background-job.v1': AgentBackgroundJobV1;
   'agent-configuration.v1': AgentConfigurationV1;
   'agent-context-item.v1': AgentContextItemV1;
   'agent-context-trace.v1': AgentContextTraceV1;
@@ -312,6 +344,7 @@ export interface ContractTypeMap {
   'agent-goal-settle-request.v1': AgentGoalSettleRequestV1;
   'agent-goal-settle-result.v1': AgentGoalSettleResultV1;
   'agent-goal-usage.v1': AgentGoalUsageV1;
+  'agent-lifecycle-cancellation-audit.v1': AgentLifecycleCancellationAuditV1;
   'agent-media.v1': AgentMediaV1;
   'agent-memory-evidence.v1': AgentMemoryEvidenceV1;
   'agent-memory-maintenance-status.v1': AgentMemoryMaintenanceStatusV1;
@@ -345,6 +378,7 @@ export interface ContractTypeMap {
   'agent-workflow-state.v1': AgentWorkflowStateV1;
   'assistant-candidate-action.v1': AssistantCandidateActionV1;
   'assistant-overlay.v1': AssistantOverlayV1;
+  'capability-catalog.v1': CapabilityCatalogV1;
   'collaboration-profile-command-receipt.v1': CollaborationProfileCommandReceiptV1;
   'collaboration-profile-command.v1': CollaborationProfileCommandV1;
   'collaboration-profile-compile-receipt.v1': CollaborationProfileCompileReceiptV1;
@@ -408,6 +442,7 @@ export interface ContractTypeMap {
   'room-capability-manifest.v1': RoomCapabilityManifestV1;
   'room-commit.v2': RoomCommitV2;
   'room-commit.v3': RoomCommitV3;
+  'room-commit.v4': RoomCommitV4;
   'room-context-entry.v1': RoomContextEntryV1;
   'room-dispatch-envelope.v2': RoomDispatchEnvelopeV2;
   'room-event-envelope.v2': RoomEventEnvelopeV2;
@@ -415,11 +450,13 @@ export interface ContractTypeMap {
   'room-kernel-receipt.v1': RoomKernelReceiptV1;
   'room-legacy-ref.v1': RoomLegacyRefV1;
   'room-participant-binding.v2': RoomParticipantBindingV2;
+  'room-peer-invitation.v1': RoomPeerInvitationV1;
   'room-post.v2': RoomPostV2;
   'room-quality-gate-receipt.v1': RoomQualityGateReceiptV1;
   'room-rollout-policy.v1': RoomRolloutPolicyV1;
   'room-rollout-receipt.v1': RoomRolloutReceiptV1;
   'room-root-execution.v2': RoomRootExecutionV2;
+  'room-root-execution.v3': RoomRootExecutionV3;
   'room-settle-receipt.v1': RoomSettleReceiptV1;
   'room-settle-result.v1': RoomSettleResultV1;
   'room-shadow-observation.v1': RoomShadowObservationV1;
@@ -428,6 +465,7 @@ export interface ContractTypeMap {
   'room-skill-recovery.v1': RoomSkillRecoveryV1;
   'room-skill-selection.v1': RoomSkillSelectionV1;
   'room-task.v2': RoomTaskV2;
+  'room-task.v3': RoomTaskV3;
   'room-tool-disclosure-receipt.v1': RoomToolDisclosureReceiptV1;
   'room-tool-invocation-receipt.v1': RoomToolInvocationReceiptV1;
   'runner-verification-receipt.v2': RunnerVerificationReceiptV2;
@@ -435,6 +473,13 @@ export interface ContractTypeMap {
   'session-recall-effect-receipt.v1': SessionRecallEffectReceiptV1;
   'typed-verification-receipt.v1': TypedVerificationReceiptV1;
   'user-memory-draft.v1': UserMemoryDraftV1;
+  'work-document-command.v1': WorkDocumentCommandV1;
+  'work-document-context.v1': WorkDocumentContextV1;
+  'work-document-detail.v1': WorkDocumentDetailV1;
+  'work-document-list.v1': WorkDocumentListV1;
+  'workspace-lsp-mutation-receipt.v1': WorkspaceLspMutationReceiptV1;
+  'workspace-lsp-result.v1': WorkspaceLspResultV1;
+  'workspace-lsp-status.v1': WorkspaceLspStatusV1;
 }
 
 export type GeneratedContractName = keyof ContractTypeMap;

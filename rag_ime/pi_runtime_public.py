@@ -35,6 +35,7 @@ from .agent_blocks import (
     normalize_trusted_agent_blocks,
 )
 from .agent_protocol import AgentBlock, AgentMessage, normalize_agent_block
+from .contracts.json_schema import validate_contract
 
 from .pi_runtime_values import (
     PiRuntimeError,
@@ -50,10 +51,12 @@ __all__ = [
     "last_assistant_preview",
     "managed_media_content_url",
     "pi_message_id",
+    "pi_message_completes_public_turn",
     "pi_message_is_public",
     "pi_message_payload",
     "provider_retry_status",
     "public_code_tool_activity",
+    "public_reasoning_summaries",
     "public_file_name",
     "public_fork_candidate_text",
     "public_pi_model",
@@ -170,7 +173,14 @@ def pi_message_id(raw: Mapping[str, object], turn_id: str) -> str:
 
 
 def pi_message_is_public(raw: Mapping[str, object]) -> bool:
-    """Keep Pi's loop protocol out of the human conversation transcript."""
+    """Keep Pi's loop protocol out while retaining user-visible assistant text.
+
+    Providers commonly attach a public progress paragraph and a Tool call to
+    the same assistant message.  The Tool protocol is projected separately as
+    a redacted activity timeline, but that must not erase the paragraph from
+    durable history.  Tool-only messages remain absent from the human
+    transcript.
+    """
 
     role = str(raw.get("role") or "assistant").lower()
     if role == "user":
@@ -180,14 +190,87 @@ def pi_message_is_public(raw: Mapping[str, object]) -> bool:
     content = raw.get("content")
     if not isinstance(content, list):
         return bool(str(content or "").strip()) or bool(raw.get("errorMessage"))
-    for item in content:
-        value = as_mapping(item)
-        if str(value.get("type") or "") in {"toolCall", "tool_call"}:
-            return False
     return any(
-        str(as_mapping(item).get("type") or "") in {"text", "image"}
+        (
+            str(as_mapping(item).get("type") or "") == "text"
+            and bool(str(as_mapping(item).get("text") or "").strip())
+        )
+        or str(as_mapping(item).get("type") or "") == "image"
         for item in content
     ) or bool(raw.get("errorMessage"))
+
+
+def pi_message_completes_public_turn(raw: Mapping[str, object]) -> bool:
+    """Whether a Pi message is the durable assistant result for this turn.
+
+    A Provider may stream useful progress text and a Tool call in the same
+    assistant message.  That text is public, but the message is not terminal:
+    the Tool result will be followed by another assistant message.  Publishing
+    both as ``message_completed`` creates duplicate transcript rows and makes
+    the first, provisional row look like a finished answer.
+    """
+
+    if not pi_message_is_public(raw):
+        return False
+    content = raw.get("content")
+    if not isinstance(content, list):
+        return True
+    return not any(
+        str(as_mapping(item).get("type") or "") in {"toolCall", "tool_call"}
+        for item in content
+    )
+
+
+def public_reasoning_summaries(
+    raw: Mapping[str, object],
+    *,
+    maximum_items: int = 8,
+) -> list[str]:
+    """Project only Provider-authored reasoning *summaries*.
+
+    Pi's generic ``thinking`` carrier also transports private chain-of-thought
+    for some Providers.  Only the OpenAI Responses API defines this carrier as
+    a user-visible reasoning summary, so every other API (and every
+    ``redacted_thinking`` block) stays private.  The projection is bounded,
+    path/secret redacted, and contains no signatures or raw Provider metadata.
+    """
+
+    if str(raw.get("api") or "").strip().lower() != "openai-responses":
+        return []
+    content = raw.get("content")
+    if not isinstance(content, list):
+        return []
+    limit = max(1, min(int(maximum_items), 12))
+    result: list[str] = []
+    for raw_block in content:
+        block = as_mapping(raw_block)
+        if str(block.get("type") or "") != "thinking":
+            continue
+        value = str(block.get("thinking") or block.get("text") or "").strip()
+        if not value:
+            continue
+        headings = re.findall(r"\*\*([^*\n]{1,300})\*\*", value)
+        candidates = headings or re.split(r"(?:\r?\n){2,}|\r?\n", value)
+        for candidate in candidates:
+            normalized = re.sub(
+                r"^(?:[-*+]\s+|#{1,6}\s+)",
+                "",
+                str(candidate).strip(),
+            )
+            normalized = normalized.strip("*_` ")
+            if not normalized:
+                continue
+            # Non-heading summaries can be paragraphs. Keep the first bounded
+            # sentence rather than exposing an entire reasoning transcript.
+            if not headings:
+                sentence = re.split(r"(?<=[。！？.!?])\s+", normalized, maxsplit=1)[0]
+                normalized = sentence or normalized
+            safe = redact_runtime_text(normalized)[:240].strip()
+            if safe and safe not in result:
+                result.append(safe)
+            if len(result) >= limit:
+                return result
+    return result
 
 
 def public_usage(value: object) -> dict[str, int]:
@@ -322,20 +405,27 @@ def public_code_tool_activity(
     normalized_tool = str(tool_name or "").strip().lower()
     file_tools = {
         "read", "read_file", "workspace_read",
-        "write", "write_file", "workspace_write_file",
-        "edit", "edit_file", "workspace_edit_file",
+        "write", "write_file", "workspace_write_file", "workspace_write",
+        "edit", "edit_file", "workspace_edit_file", "workspace_edit",
+        "workspace_patch",
     }
     search_tools = {"grep", "workspace_search"}
     list_tools = {"find", "ls", "workspace_list"}
-    command_tools = {"bash", "workspace_shell"}
-    coding_tools = file_tools | search_tools | list_tools | command_tools
+    command_tools = {"bash", "workspace_shell", "workspace_job"}
+    semantic_tools = {"workspace_lsp"}
+    coding_tools = (
+        file_tools | search_tools | list_tools | command_tools | semantic_tools
+    )
     if normalized_tool not in coding_tools:
         return {}
+    evidence = _public_tool_evidence_envelope(raw_result)
+    evidence_request = as_mapping(evidence.get("evidenceRequest"))
+    effective_args = {**evidence_request, **dict(args)}
     raw_path = str(
-        args.get("relativePath")
-        or args.get("fileName")
-        or args.get("file_path")
-        or args.get("path")
+        effective_args.get("relativePath")
+        or effective_args.get("fileName")
+        or effective_args.get("file_path")
+        or effective_args.get("path")
         or ""
     )
     workspace_path = _public_workspace_path(raw_path)
@@ -345,17 +435,42 @@ def public_code_tool_activity(
         result["fileName"] = file_name
     if workspace_path:
         result["path"] = workspace_path
+    for key in ("root", "cwd"):
+        visible_path = _public_workspace_path(effective_args.get(key))
+        if visible_path:
+            result[key] = visible_path
 
-    for key in ("op", "mode", "patternKind"):
-        value = _public_tool_text(args.get(key), maximum=120)
+    for key in (
+        "op",
+        "operation",
+        "mode",
+        "patternKind",
+        "server",
+        "label",
+        "jobId",
+        "status",
+        "reason",
+    ):
+        value = _public_tool_text(effective_args.get(key), maximum=240)
         if value:
             result[key] = value
-    for key in ("query", "pattern", "glob"):
-        value = _public_tool_text(args.get(key), maximum=500)
+    for key in ("query", "pattern", "glob", "title", "newName"):
+        value = _public_tool_text(effective_args.get(key), maximum=500)
         if value:
             result[key] = value
-    for key in ("offset", "limit", "context", "timeout"):
-        numeric_value = args.get(key)
+    for key in (
+        "offset",
+        "limit",
+        "context",
+        "timeout",
+        "line",
+        "column",
+        "timeoutMs",
+        "timeoutSeconds",
+        "cursor",
+        "limitBytes",
+    ):
+        numeric_value = effective_args.get(key)
         if isinstance(numeric_value, (int, float)) and not isinstance(
             numeric_value,
             bool,
@@ -363,12 +478,12 @@ def public_code_tool_activity(
             result[key] = numeric_value
 
     if normalized_tool in command_tools:
-        command = _public_tool_text(args.get("command"), maximum=2_000)
+        command = _public_tool_text(effective_args.get("command"), maximum=2_000)
         if command:
             result["command"] = command
 
-    if normalized_tool in {"write", "write_file", "workspace_write_file"}:
-        content = args.get("content")
+    if normalized_tool in {"write", "write_file", "workspace_write_file", "workspace_write"}:
+        content = effective_args.get("content")
         if isinstance(content, str) and content:
             normalized = content.replace("\r\n", "\n").replace("\r", "\n")
             lines = normalized.split("\n")
@@ -381,22 +496,64 @@ def public_code_tool_activity(
     preview_tools = (
         file_tools
         - {
-            "write", "write_file", "workspace_write_file",
-            "edit", "edit_file", "workspace_edit_file",
+            "write", "write_file", "workspace_write_file", "workspace_write",
+            "edit", "edit_file", "workspace_edit_file", "workspace_edit",
+            "workspace_patch",
         }
         | search_tools
         | list_tools
         | command_tools
+        | semantic_tools
     )
     if (
         normalized_tool in preview_tools
         and _public_tool_output_allowed(normalized_tool, raw_path)
     ):
-        preview, truncated = _public_tool_output_preview(raw_result)
+        preview, truncated = _public_tool_output_preview(
+            raw_result,
+            evidence=evidence,
+        )
         if preview:
             result["outputPreview"] = preview
             result["outputTruncated"] = truncated
+    model_decision = _public_approval_model_decision(raw_result)
+    if model_decision:
+        result["decisionMode"] = "model"
+        result["approvalModelDecision"] = model_decision
+        result["automatic"] = True
+
     return result
+
+def _public_approval_model_decision(
+    raw_result: object,
+) -> dict[str, object]:
+    root = as_mapping(raw_result)
+    nested_result = as_mapping(root.get("result"))
+    nested_details = as_mapping(root.get("details"))
+    nested_approval = as_mapping(
+        root.get("approval")
+        or nested_result.get("approval")
+        or nested_details.get("approval")
+    )
+    for candidate in (
+        root.get("approvalModelDecision"),
+        nested_result.get("approvalModelDecision"),
+        nested_details.get("approvalModelDecision"),
+        nested_approval.get("approvalModelDecision"),
+    ):
+        if not isinstance(candidate, Mapping):
+            continue
+        public = dict(candidate)
+        try:
+            validate_contract(
+                public,
+                "agent-approval-model-decision.v1.json",
+            )
+        except ValueError:
+            continue
+        return public
+    return {}
+
 
 
 def _public_workspace_path(value: object) -> str:
@@ -476,7 +633,71 @@ def _public_tool_output_allowed(tool_name: str, raw_path: str) -> bool:
     )
 
 
-def _public_tool_output_preview(raw_result: object) -> tuple[str, bool]:
+def _public_tool_evidence_envelope(raw_result: object) -> dict[str, object]:
+    """Recover a managed coding-tool receipt before generic truncation.
+
+    The runtime bridge deliberately returns a small JSON evidence envelope
+    rather than placing raw workspace output in the public event. Treating
+    that envelope as ordinary text exposed internal handles and JSON syntax
+    while hiding the useful request/summary. Parse only the bounded envelope
+    shapes owned by the bridge; malformed or oversized values fall back to
+    the generic safe preview path.
+    """
+
+    result = as_mapping(raw_result)
+    candidates: list[object] = []
+    content = result.get("content")
+    if isinstance(content, list):
+        candidates.extend(
+            as_mapping(item).get("text")
+            for item in content[:16]
+        )
+    candidates.extend(result.get(key) for key in ("stdout", "output", "text"))
+    for candidate in candidates:
+        if not isinstance(candidate, str) or not candidate:
+            continue
+        # Large enough for the bridge's intentionally bounded summaries, but
+        # refuse to JSON-decode arbitrary multi-megabyte tool output.
+        if len(candidate) > 4_000_000 or not candidate.lstrip().startswith("{"):
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        envelope = as_mapping(parsed)
+        if not envelope.get("evidenceHandle"):
+            continue
+        if not any(
+            key in envelope
+            for key in ("evidenceSummary", "previewHead", "evidenceRequest")
+        ):
+            continue
+        return envelope
+    return {}
+
+
+def _public_tool_output_preview(
+    raw_result: object,
+    *,
+    evidence: Mapping[str, object] | None = None,
+) -> tuple[str, bool]:
+    evidence = evidence or _public_tool_evidence_envelope(raw_result)
+    if evidence:
+        raw_summary = evidence.get("evidenceSummary") or evidence.get("previewHead")
+        source = str(raw_summary or "")
+        text = _public_tool_text(source, maximum=6_000)
+        if text:
+            lines = text.splitlines()
+            preview = "\n".join(lines[:40])[:6_000]
+            evidence_bytes = as_integer(evidence.get("evidenceBytes"))
+            truncated = (
+                len(source) > 6_000
+                or len(lines) > 40
+                or evidence_bytes > len(source.encode("utf-8"))
+                or bool(evidence.get("continuation"))
+            )
+            return preview, truncated
+
     result = as_mapping(raw_result)
     content = result.get("content")
     chunks: list[str] = []
@@ -664,21 +885,10 @@ def pi_message_payload(
             elif content_type in {"thinking", "redacted_thinking"}:
                 continue
             elif content_type in {"toolCall", "tool_call"}:
-                blocks.append(
-                    normalize_agent_block(
-                        {
-                            "id": str(value.get("id") or f"{turn_id}:tool:{index}"),
-                            "type": "tool_call",
-                            "status": "completed",
-                            "presentationKind": "tool_call",
-                            "data": {
-                                "toolCallId": str(value.get("id") or ""),
-                                "toolName": str(value.get("name") or value.get("toolName") or ""),
-                                "arguments": redact_mapping(as_mapping(value.get("arguments"))),
-                            },
-                        }
-                    )
-                )
+                # Tool lifecycle events own the public execution timeline.
+                # Do not duplicate Pi protocol blocks or their arguments in
+                # the human transcript message.
+                continue
     error_message = redact_runtime_text(str(raw.get("errorMessage") or "").strip())
     failed = str(raw.get("stopReason") or "").lower() == "error" or bool(error_message)
     if failed:

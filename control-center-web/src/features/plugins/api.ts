@@ -1,21 +1,49 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useControlTransport } from '@/app/control-transport';
+import {
+  parseCapabilityDefaults,
+  requireCapabilityCatalog,
+  requireSessionCapabilityCatalog,
+  type CapabilityPreference,
+} from './capability-policy';
 
 export const pluginQueryKeys = {
   root: ['plugins'] as const,
-  catalog: () => [...pluginQueryKeys.root, 'catalog'] as const,
+  catalog: (sessionId = '') => [...pluginQueryKeys.root, 'catalog', sessionId] as const,
+  defaults: () => [...pluginQueryKeys.root, 'defaults'] as const,
   installed: () => [...pluginQueryKeys.root, 'installed'] as const,
   versions: () => [...pluginQueryKeys.root, 'versions'] as const,
   proposals: () => [...pluginQueryKeys.root, 'proposals'] as const,
   lifecycle: () => [...pluginQueryKeys.root, 'lifecycle'] as const,
 };
 
-export function usePluginCatalog() {
+export function usePluginCatalog(sessionId = '') {
   const transport = useControlTransport();
   const catalog = useQuery({
-    queryKey: pluginQueryKeys.catalog(),
-    queryFn: ({ signal }) => transport.request({ pathId: 'agent.tools.list', signal }),
+    queryKey: pluginQueryKeys.catalog(sessionId),
+    queryFn: async ({ signal }) => {
+      const response = await transport.request({
+        pathId: 'agent.tools.list',
+        ...(sessionId ? { query: { sessionId } } : {}),
+        signal,
+      });
+      return sessionId
+        ? requireSessionCapabilityCatalog(response, sessionId)
+        : requireCapabilityCatalog(response);
+    },
     staleTime: 30_000,
+    refetchOnReconnect: 'always',
+  });
+  const defaults = useQuery({
+    queryKey: pluginQueryKeys.defaults(),
+    queryFn: async ({ signal }) => {
+      const response = await transport.request({ pathId: 'agent.configuration.get', signal });
+      const parsed = parseCapabilityDefaults(response);
+      if (!parsed) throw new Error('默认能力设置版本未知，当前设置不会被猜测或修改。');
+      return parsed;
+    },
+    staleTime: 30_000,
+    refetchOnReconnect: 'always',
   });
   const installed = useQuery({
     queryKey: pluginQueryKeys.installed(),
@@ -50,7 +78,49 @@ export function usePluginCatalog() {
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.installed() }),
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.proposals() }),
         queryClient.invalidateQueries({ queryKey: pluginQueryKeys.catalog() }),
-        queryClient.invalidateQueries({ queryKey: pluginQueryKeys.versions() }),
+        queryClient.invalidateQueries({ queryKey: pluginQueryKeys.catalog(sessionId) }),
+      ]);
+    },
+  });
+  const updateDefaults = useMutation({
+    mutationFn: (input: {
+      expectedRevision: number;
+      preferences: Record<string, CapabilityPreference>;
+    }) => transport.request({
+      pathId: 'agent.configuration.update',
+      body: {
+        expectedRevision: input.expectedRevision,
+        changes: {
+          'sessionDefaults.capabilityDisclosurePreferences': input.preferences,
+        },
+        updatedBy: 'capability-settings-ui',
+      },
+    }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: pluginQueryKeys.catalog(sessionId) }),
+        queryClient.invalidateQueries({ queryKey: pluginQueryKeys.defaults() }),
+      ]);
+    },
+  });
+  const updateProjectDefaults = useMutation({
+    mutationFn: (input: {
+      expectedRevision: number;
+      projectPreferences: Record<string, Record<string, CapabilityPreference>>;
+    }) => transport.request({
+      pathId: 'agent.configuration.update',
+      body: {
+        expectedRevision: input.expectedRevision,
+        changes: {
+          'capabilityDisclosure.projectPreferences': input.projectPreferences,
+        },
+        updatedBy: 'capability-settings-ui',
+      },
+    }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: pluginQueryKeys.catalog(sessionId) }),
+        queryClient.invalidateQueries({ queryKey: pluginQueryKeys.defaults() }),
       ]);
     },
   });
@@ -70,6 +140,7 @@ export function usePluginCatalog() {
   const refreshAll = async () => {
     await Promise.all([
       catalog.refetch(),
+      defaults.refetch(),
       installed.refetch(),
       versions.refetch(),
       proposals.refetch(),
@@ -78,6 +149,7 @@ export function usePluginCatalog() {
   };
   return {
     catalog,
+    defaults,
     installed,
     versions,
     proposals,
@@ -85,6 +157,8 @@ export function usePluginCatalog() {
     validate,
     preview,
     apply,
+    updateDefaults,
+    updateProjectDefaults,
     updateLifecycle,
     refreshAll,
     transport,

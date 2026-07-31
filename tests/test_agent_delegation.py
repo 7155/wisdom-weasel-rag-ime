@@ -1,21 +1,29 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import stat
 import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 from rag_ime.agent_artifacts import AgentArtifactStore
+from rag_ime.agent_context_runtime import AgentContextRuntime
 from rag_ime.agent_delegation import AgentDelegationCoordinator, AgentDelegationStore
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.agent_templates import AgentTemplateBudget, agent_template as real_agent_template
 from rag_ime.pi_runtime import PiRuntimeConfig
+
+_TASK_CONTRACT = {
+    "expectedOutput": "一份可供主持会话核验的有界结果",
+    "acceptanceCriteria": ["区分已观察事实、推断与未决风险"],
+}
 
 
 class _CompletingRuntime:
@@ -81,6 +89,84 @@ class _ClaimingWithoutEvidenceRuntime(_CompletingRuntime):
         return {"accepted": True, "turnId": turn_id}
 
 
+class _DuplicateTerminalRuntime(_CompletingRuntime):
+    """Publishes contradictory late output after an accepted terminal event."""
+
+    def prompt(self, session_id, _message):
+        first_turn_id = "turn:first-terminal"
+        self.events.publish(
+            session_id,
+            "message_completed",
+            {
+                "message": _assistant_message(
+                    session_id,
+                    first_turn_id,
+                    "首个终态前的唯一结果",
+                ),
+                "usage": {"totalTokens": 17},
+            },
+            turn_id=first_turn_id,
+        )
+        self.events.publish(
+            session_id,
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=first_turn_id,
+        )
+        late_turn_id = "turn:late-contradiction"
+        self.events.publish(
+            session_id,
+            "message_completed",
+            {
+                "message": _assistant_message(
+                    session_id,
+                    late_turn_id,
+                    "不应进入父会话的迟到结果",
+                ),
+                "usage": {"totalTokens": 999},
+            },
+            turn_id=late_turn_id,
+        )
+        self.events.publish(
+            session_id,
+            "turn_failed",
+            {"error": "late contradictory terminal"},
+            turn_id=late_turn_id,
+        )
+        return {"accepted": True, "turnId": first_turn_id}
+
+
+class _LateCompletionAfterCancelRuntime(_CompletingRuntime):
+    """Ignores cancellation and publishes a late success."""
+
+    def prompt(self, session_id, _message):
+        self.session_id = session_id
+        self.events.publish(session_id, "text_delta", {"delta": "超" * 300})
+        return {"accepted": True, "turnId": "turn:over-budget-late"}
+
+    def abort(self, session_id):
+        turn_id = "turn:late-after-cancel"
+        self.events.publish(
+            session_id,
+            "message_completed",
+            {
+                "message": _assistant_message(
+                    session_id,
+                    turn_id,
+                    "取消后的迟到成功不应被接收",
+                ),
+                "usage": {"totalTokens": 777},
+            },
+            turn_id=turn_id,
+        )
+        self.events.publish(
+            session_id,
+            "turn_completed",
+            {"status": "completed"},
+            turn_id=turn_id,
+        )
+
+
 class _HangingRuntime(_CompletingRuntime):
     def prompt(self, session_id, _message):
         self.session_id = session_id
@@ -136,7 +222,7 @@ class _ManyTurnsAndToolsRuntime(_CompletingRuntime):
             self.events.publish(
                 session_id,
                 "tool_started",
-                {"toolCallId": f"tool:{index}", "toolName": "ime_knowledge"},
+                {"toolCallId": f"tool:{index}", "toolName": "knowledge"},
                 turn_id=f"turn:{index}",
             )
         for index in range(12):
@@ -176,7 +262,7 @@ class _InteractiveRuntime(_CompletingRuntime):
             self.events.publish(
                 session_id,
                 "tool_started",
-                {"toolCallId": "tool:1", "toolName": "ime_knowledge"},
+                {"toolCallId": "tool:1", "toolName": "knowledge"},
                 turn_id="turn:interactive",
             )
             self.events.publish(
@@ -273,13 +359,15 @@ class AgentDelegationTests(unittest.TestCase):
         self.sessions = AgentSessionStore(self.db_path)
         self.sessions.initialize()
         self.events = AgentEventHub(sequence_loader=self.sessions.max_event_sequence)
+        self.context_runtime = AgentContextRuntime(self.db_path)
+        self.context_runtime.initialize()
         self.config = PiRuntimeConfig(
             enabled=True,
             executable=self.root / "pi",
             agent_dir=self.root / "config",
             session_dir=self.root / "sessions",
             logs_dir=self.root / "logs",
-            tools=("ime_memory", "ime_knowledge", "ime_agents"),
+            tools=("memory", "knowledge", "agents"),
         )
         self.parent = self.sessions.create(
             title="主持会话",
@@ -304,6 +392,7 @@ class AgentDelegationTests(unittest.TestCase):
             runtime_config=self.config,
             sessions=self.sessions,
             events=self.events,
+            context_runtime=self.context_runtime,
             runtime_factory=runtime_factory,
             cancellation_grace_ms=cancellation_grace_ms,
             subagent_session_retention_ms=subagent_session_retention_ms,
@@ -325,8 +414,17 @@ class AgentDelegationTests(unittest.TestCase):
             {
                 "contextMode": "fresh",
                 "tasks": [
-                    {"agent": "researcher", "task": "核对已有证据"},
-                    {"agent": "reviewer", "task": "检查结论是否充分"},
+                    {
+                        "agent": "researcher",
+                        "task": "核对已有证据",
+                        **_TASK_CONTRACT,
+                        "outputSchema": {
+                            "type": "object",
+                            "required": ["claims"],
+                            "properties": {"claims": {"type": "array"}},
+                        },
+                    },
+                    {"agent": "reviewer", "task": "检查结论是否充分", **_TASK_CONTRACT},
                 ],
             },
         )
@@ -334,8 +432,18 @@ class AgentDelegationTests(unittest.TestCase):
         self.assertEqual(response["acceptanceScope"], "delegation_request")
         self.assertEqual(batch["state"], "completed")
         self.assertEqual(batch["depth"], 1)
+        self.assertEqual(batch["resultDeliveryMode"], "inline")
         self.assertEqual(len(batch["runs"]), 2)
         self.assertEqual({run["usage"]["totalTokens"] for run in batch["runs"]}, {321})
+        self.assertTrue(
+            all(run["expectedOutput"] == _TASK_CONTRACT["expectedOutput"] for run in batch["runs"])
+        )
+        self.assertTrue(
+            all(
+                run["acceptanceCriteria"] == _TASK_CONTRACT["acceptanceCriteria"]
+                for run in batch["runs"]
+            )
+        )
         self.assertTrue(all(run["result"]["summary"] for run in batch["runs"]))
         self.assertTrue(
             all(run["result"]["deliveryStatus"] == "returned" for run in batch["runs"])
@@ -376,13 +484,350 @@ class AgentDelegationTests(unittest.TestCase):
             owner_id=run_id,
         )
         self.assertIn("runtime_retained", {str(item["eventType"]) for item in records})
+        projection = coordinator.artifacts.snapshot(
+            owner_kind="subagent_run",
+            owner_id=run_id,
+        )["projection"]
+        self.assertEqual(projection["expectedOutput"], _TASK_CONTRACT["expectedOutput"])
+        self.assertEqual(
+            projection["acceptanceCriteria"],
+            _TASK_CONTRACT["acceptanceCriteria"],
+        )
+        self.assertEqual(projection["outputSchema"]["required"], ["claims"])
         self.assertNotIn("runtime_retired", {str(item["eventType"]) for item in records})
         with self.assertRaisesRegex(ValueError, "unsupported agent template"):
             coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "market-shell-agent", "task": "执行任意命令"},
+                {"agent": "market-shell-agent", "task": "执行任意命令", **_TASK_CONTRACT},
             )
         coordinator.close()
+
+    def test_delegation_contract_rejects_legacy_unstructured_tasks(self) -> None:
+        coordinator = self.coordinator()
+        with self.assertRaisesRegex(ValueError, "expectedOutput"):
+            coordinator.delegate(
+                str(self.parent["id"]),
+                {"agent": "researcher", "task": "旧式无结构委派"},
+            )
+        with self.assertRaisesRegex(ValueError, "one to eight"):
+            coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "agent": "researcher",
+                    "task": "缺少验收条件",
+                    "expectedOutput": "一份报告",
+                    "acceptanceCriteria": [],
+                },
+            )
+        coordinator.close()
+
+    def test_store_serializes_concurrent_terminal_writers(self) -> None:
+        artifacts = AgentArtifactStore(self.db_path)
+        store = AgentDelegationStore(self.db_path, artifacts=artifacts)
+        store.initialize()
+        child = self.sessions.create(title="concurrent terminal child")
+        batch = store.create_batch(
+            parent_session_id=str(self.parent["id"]),
+            parent_run_id="",
+            context_mode="fresh",
+            depth=1,
+            max_depth=2,
+            runs=[_run_spec(str(child["id"]), task="并发终态只接收一次")],
+        )
+        run_id = str(batch["runs"][0]["id"])
+        store.start_run(run_id)
+
+        def finish(summary: str) -> dict[str, object]:
+            return store.finish_run(
+                run_id,
+                state="completed",
+                result={
+                    "summary": summary,
+                    "deliveryStatus": "returned",
+                    "verificationStatus": "unverified",
+                    "authority": "evidence_only",
+                },
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            returned = list(pool.map(finish, ("first", "second")))
+
+        self.assertEqual(returned[0]["result"], returned[1]["result"])
+        self.assertIn(returned[0]["result"]["summary"], {"first", "second"})
+        terminal_events = [
+            event["eventType"]
+            for event in store.list_events(run_id)
+            if event["eventType"] in {"completed", "failed", "aborted", "timed_out"}
+        ]
+        self.assertEqual(terminal_events, ["completed"])
+
+    def test_async_terminal_result_is_scheduled_once_without_parent_acceptance(self) -> None:
+        coordinator = self.coordinator()
+        response = coordinator.delegate(
+            str(self.parent["id"]),
+            {
+                "agent": "reviewer",
+                "task": "异步核对证据",
+                "expectedOutput": "结构化复核结论",
+                "acceptanceCriteria": ["结论带有证据边界"],
+                "outputSchema": {
+                    "type": "object",
+                    "required": ["summary"],
+                    "properties": {"summary": {"type": "string"}},
+                },
+                "wait": False,
+            },
+        )
+        self.assertFalse(response["waited"])
+        self.assertEqual(response["batch"]["resultDeliveryMode"], "next_turn")
+        run_id = str(response["batch"]["runs"][0]["id"])
+        _wait_until(
+            lambda: coordinator.store.get_run(run_id)["resultContextScheduledAtMs"]
+            is not None
+        )
+        terminal = coordinator.store.get_run(run_id)
+        self.assertEqual(terminal["state"], "completed")
+        self.assertEqual(terminal["result"]["deliveryStatus"], "returned")
+        self.assertEqual(terminal["result"]["verificationStatus"], "unverified")
+        self.assertEqual(terminal["result"]["authority"], "evidence_only")
+        context_items = [
+            item
+            for item in self.context_runtime.list_items(str(self.parent["id"]))
+            if item["sourceKind"] == "subagent_result"
+        ]
+        self.assertEqual(len(context_items), 1)
+        item_id = context_items[0]["itemId"]
+        coordinator.close()
+
+        restarted = self.coordinator()
+        repeated = [
+            item
+            for item in self.context_runtime.list_items(str(self.parent["id"]))
+            if item["sourceKind"] == "subagent_result"
+        ]
+        self.assertEqual([item["itemId"] for item in repeated], [item_id])
+        materialized = self.context_runtime.materialize(str(self.parent["id"]))
+        self.assertEqual(materialized["itemIds"], [item_id])
+        payload = materialized["items"][0]["payload"]
+        self.assertEqual(payload["deliveryStatus"], "returned")
+        self.assertEqual(payload["verificationStatus"], "unverified")
+        self.assertEqual(payload["authority"], "evidence_only")
+        self.assertEqual(payload["acceptanceCriteria"], ["结论带有证据边界"])
+        self.assertEqual(
+            self.sessions.agent_plan(str(self.parent["id"]))["items"],
+            [],
+        )
+        restarted.close()
+
+    def test_first_terminal_result_is_ingested_once_and_late_terminal_is_ignored(self) -> None:
+        coordinator = self.coordinator(_DuplicateTerminalRuntime)
+        try:
+            response = coordinator.delegate(
+                str(self.parent["id"]),
+                {
+                    "agent": "reviewer",
+                    "task": "验证首个终态结果",
+                    **_TASK_CONTRACT,
+                    "wait": False,
+                },
+            )
+            run_id = str(response["batch"]["runs"][0]["id"])
+
+            def terminal_parent_progress() -> list[Mapping[str, object]]:
+                events, gap = self.events.replay(str(self.parent["id"]))
+                self.assertFalse(gap)
+                return [
+                    event.payload
+                    for event in events
+                    if event.event_type == "tool_progress"
+                    and event.payload.get("runId") == run_id
+                    and event.payload.get("state") == "completed"
+                ]
+
+            _wait_until(
+                lambda: coordinator.store.get_run(run_id)["resultContextScheduledAtMs"]
+                is not None
+            )
+            _wait_until(lambda: len(terminal_parent_progress()) == 1)
+            run = coordinator.store.get_run(run_id)
+            self.assertEqual(run["state"], "completed")
+            self.assertIn("首个终态前的唯一结果", run["result"]["summary"])
+            self.assertNotIn("迟到结果", run["result"]["summary"])
+            self.assertEqual(run["usage"]["turnCount"], 1)
+            self.assertEqual(run["usage"]["totalTokens"], 17)
+            terminal_events = [
+                event["eventType"]
+                for event in coordinator.store.list_events(run_id)
+                if event["eventType"] in {"completed", "failed", "aborted", "timed_out"}
+            ]
+            self.assertEqual(terminal_events, ["completed"])
+            context_items = [
+                item
+                for item in self.context_runtime.list_items(str(self.parent["id"]))
+                if item["sourceKind"] == "subagent_result"
+                and item["sourceId"] == run_id
+            ]
+            self.assertEqual(len(context_items), 1)
+            materialized = self.context_runtime.materialize(str(self.parent["id"]))
+            payload = next(
+                item["payload"]
+                for item in materialized["items"]
+                if item["itemId"] == context_items[0]["itemId"]
+            )
+            self.assertEqual(payload["verificationStatus"], "unverified")
+            snapshot = coordinator.artifacts.snapshot(
+                owner_kind="subagent_run",
+                owner_id=run_id,
+            )
+            self.assertIsNotNone(snapshot)
+            assert snapshot is not None
+            self.assertEqual(
+                snapshot["runtimeCheckpoint"]["terminalState"],
+                "completed",
+            )
+            self.assertNotIn("迟到结果", json.dumps(snapshot, ensure_ascii=False))
+        finally:
+            coordinator.close()
+
+    def test_cancelled_run_rejects_late_success_and_projects_one_failed_result(self) -> None:
+        with patch(
+            "rag_ime.agent_delegation.agent_template",
+            side_effect=_small_budget_template,
+        ):
+            coordinator = self.coordinator(_LateCompletionAfterCancelRuntime)
+            try:
+                response = coordinator.delegate(
+                    str(self.parent["id"]),
+                    {
+                        "agent": "worker",
+                        "task": "触发取消后迟到成功",
+                        **_TASK_CONTRACT,
+                        "wait": False,
+                    },
+                )
+                run_id = str(response["batch"]["runs"][0]["id"])
+
+                def failed_parent_progress() -> list[Mapping[str, object]]:
+                    events, gap = self.events.replay(str(self.parent["id"]))
+                    self.assertFalse(gap)
+                    return [
+                        event.payload
+                        for event in events
+                        if event.event_type == "tool_progress"
+                        and event.payload.get("runId") == run_id
+                        and event.payload.get("state") == "failed"
+                    ]
+
+                _wait_until(
+                    lambda: coordinator.store.get_run(run_id)["resultContextScheduledAtMs"]
+                    is not None
+                )
+                _wait_until(lambda: len(failed_parent_progress()) == 1)
+                run = coordinator.store.get_run(run_id)
+                self.assertEqual(run["state"], "failed")
+                self.assertEqual(run["error"], "output budget exceeded")
+                self.assertEqual(run["result"], {})
+                self.assertEqual(run["usage"]["turnCount"], 0)
+                self.assertEqual(run["usage"]["totalTokens"], 0)
+                terminal_events = [
+                    event["eventType"]
+                    for event in coordinator.store.list_events(run_id)
+                    if event["eventType"] in {"completed", "failed", "aborted", "timed_out"}
+                ]
+                self.assertEqual(terminal_events, ["failed"])
+                context_items = [
+                    item
+                    for item in self.context_runtime.list_items(str(self.parent["id"]))
+                    if item["sourceKind"] == "subagent_result"
+                    and item["sourceId"] == run_id
+                ]
+                self.assertEqual(len(context_items), 1)
+                materialized = self.context_runtime.materialize(str(self.parent["id"]))
+                payload = next(
+                    item["payload"]
+                    for item in materialized["items"]
+                    if item["itemId"] == context_items[0]["itemId"]
+                )
+                self.assertEqual(payload["state"], "failed")
+                self.assertEqual(payload["verificationStatus"], "unverified")
+                snapshot = coordinator.artifacts.snapshot(
+                    owner_kind="subagent_run",
+                    owner_id=run_id,
+                )
+                self.assertIsNotNone(snapshot)
+                assert snapshot is not None
+                self.assertEqual(
+                    snapshot["runtimeCheckpoint"]["terminalState"],
+                    "failed",
+                )
+                self.assertNotIn(
+                    "取消后的迟到成功",
+                    json.dumps(snapshot, ensure_ascii=False),
+                )
+            finally:
+                coordinator.close()
+
+    def test_plan_backed_delegation_requires_and_preserves_explicit_item_link(self) -> None:
+        session_id = str(self.parent["id"])
+        item_id = "plan-item:delegated-research"
+        self.sessions.update_agent_plan_item(
+            session_id,
+            item_id=item_id,
+            title="核对子 Agent 证据",
+            status="in_progress",
+        )
+        coordinator = self.coordinator()
+        try:
+            with self.assertRaisesRegex(ValueError, "planItemId is required"):
+                coordinator.delegate(
+                    session_id,
+                    {"agent": "researcher", "task": "缺少明确 Plan 关联", **_TASK_CONTRACT},
+                )
+            with self.assertRaisesRegex(ValueError, "does not belong"):
+                coordinator.delegate(
+                    session_id,
+                    {
+                        "agent": "researcher",
+                        "task": "错误 Plan 关联",
+                        **_TASK_CONTRACT,
+                        "planItemId": "plan-item:other",
+                    },
+                )
+
+            batch = coordinator.delegate(
+                session_id,
+                {
+                    "agent": "researcher",
+                    "task": "返回证据供主持会话核验",
+                    **_TASK_CONTRACT,
+                    "planItemId": item_id,
+                },
+            )["batch"]
+            run = batch["runs"][0]
+            self.assertEqual(run["planItemId"], item_id)
+            self.assertEqual(run["planItemTitle"], "核对子 Agent 证据")
+            self.assertEqual(run["state"], "completed")
+            self.assertEqual(
+                self.sessions.agent_plan(session_id)["items"][0]["status"],
+                "in_progress",
+            )
+            def linked_terminal_progress() -> list[Mapping[str, object]]:
+                parent_events, gap = self.events.replay(session_id)
+                self.assertFalse(gap)
+                return [
+                    event.payload
+                    for event in parent_events
+                    if event.event_type == "tool_progress"
+                    and event.payload.get("state") == "completed"
+                ]
+
+            _wait_until(lambda: bool(linked_terminal_progress()))
+            terminal_progress = linked_terminal_progress()
+            self.assertEqual(terminal_progress[-1]["planItemId"], item_id)
+            self.assertEqual(terminal_progress[-1]["planItemTitle"], "核对子 Agent 证据")
+            self.assertTrue(terminal_progress[-1]["requiresParentPlanUpdate"])
+        finally:
+            coordinator.close()
 
     def test_model_claim_without_receipts_is_returned_but_never_accepted(self) -> None:
         coordinator = self.coordinator(_ClaimingWithoutEvidenceRuntime)
@@ -392,6 +837,7 @@ class AgentDelegationTests(unittest.TestCase):
                 {
                     "agent": "worker",
                     "task": "声称完成但不提供任何工具证据",
+                    **_TASK_CONTRACT,
                 },
             )
 
@@ -428,7 +874,9 @@ class AgentDelegationTests(unittest.TestCase):
         goal = self.sessions.mutate_agent_goal(
             str(self.parent["id"]),
             {
-                "action": "set",
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
                 "objective": "在预算内完成委派",
                 "tokenBudget": 5,
             },
@@ -441,7 +889,7 @@ class AgentDelegationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "goal_paused"):
             coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "worker", "task": "不应启动", "contextMode": "fresh"},
+                {"agent": "worker", "task": "不应启动", "contextMode": "fresh", **_TASK_CONTRACT},
             )
         resumed = self.sessions.mutate_agent_goal(
             str(self.parent["id"]),
@@ -458,7 +906,7 @@ class AgentDelegationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "goal_budget_exhausted"):
             coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "worker", "task": "仍不应启动", "contextMode": "fresh"},
+                {"agent": "worker", "task": "仍不应启动", "contextMode": "fresh", **_TASK_CONTRACT},
             )
         self.assertGreaterEqual(resumed["revision"], goal["revision"])
         coordinator.close()
@@ -467,7 +915,7 @@ class AgentDelegationTests(unittest.TestCase):
         coordinator = self.coordinator(_ManyTurnsAndToolsRuntime)
         batch = coordinator.delegate(
             str(self.parent["id"]),
-            {"agent": "researcher", "task": "完成需要多轮检索的任务"},
+            {"agent": "researcher", "task": "完成需要多轮检索的任务", **_TASK_CONTRACT},
         )["batch"]
 
         run = batch["runs"][0]
@@ -483,7 +931,7 @@ class AgentDelegationTests(unittest.TestCase):
         coordinator = self.coordinator()
         batch = coordinator.delegate(
             str(self.parent["id"]),
-            {"agent": "reviewer", "task": "检查受控 Artifact"},
+            {"agent": "reviewer", "task": "检查受控 Artifact", **_TASK_CONTRACT},
         )["batch"]
         artifact_id = str(batch["runs"][0]["artifact"]["artifactId"])
         other = self.sessions.create(title="其他主持会话")
@@ -505,18 +953,18 @@ class AgentDelegationTests(unittest.TestCase):
             str(self.parent["id"]),
             mode="assistant",
             tool_profile_version="control-center-v1",
-            allowed_tools=["ime_overview", "ime_memory"],
+            allowed_tools=["overview", "memory"],
         )
         coordinator = self.coordinator()
         batch = coordinator.delegate(
             str(self.parent["id"]),
-            {"agent": "worker", "task": "只能使用父会话允许的工具"},
+            {"agent": "worker", "task": "只能使用父会话允许的工具", **_TASK_CONTRACT},
         )["batch"]
         child = self.sessions.get(str(batch["runs"][0]["childSessionId"]))
 
         self.assertEqual(child["toolProfileVersion"], "subagent-worker-v1")
         self.assertEqual(child["toolAllowlistMode"], "explicit")
-        self.assertEqual(child["allowedTools"], ["ime_overview", "ime_memory"])
+        self.assertEqual(child["allowedTools"], ["overview", "memory"])
         coordinator.close()
 
     def test_retention_defaults_to_72_hours_and_gc_runs_on_startup(self) -> None:
@@ -567,6 +1015,8 @@ class AgentDelegationTests(unittest.TestCase):
         default_db = self.root / "default-retention.sqlite"
         default_sessions = AgentSessionStore(default_db)
         default_sessions.initialize()
+        default_context_runtime = AgentContextRuntime(default_db)
+        default_context_runtime.initialize()
         with patch.dict(
             "os.environ",
             {"RAG_IME_SUBAGENT_SESSION_RETENTION_HOURS": "72"},
@@ -576,6 +1026,7 @@ class AgentDelegationTests(unittest.TestCase):
                 runtime_config=self.config,
                 sessions=default_sessions,
                 events=AgentEventHub(),
+                context_runtime=default_context_runtime,
                 runtime_factory=_CompletingRuntime,
             )
         self.assertEqual(
@@ -593,19 +1044,19 @@ class AgentDelegationTests(unittest.TestCase):
         coordinator = self.coordinator()
         first = coordinator.delegate(
             str(self.parent["id"]),
-            {"agent": "delegate", "task": "第一层"},
+            {"agent": "delegate", "task": "第一层", **_TASK_CONTRACT},
         )["batch"]
         first_child = first["runs"][0]["childSessionId"]
         second = coordinator.delegate(
             str(first_child),
-            {"agent": "reviewer", "task": "第二层"},
+            {"agent": "reviewer", "task": "第二层", **_TASK_CONTRACT},
         )["batch"]
         self.assertEqual(second["depth"], 2)
         second_child = second["runs"][0]["childSessionId"]
         with self.assertRaisesRegex(ValueError, "maximum depth is 2"):
             coordinator.delegate(
                 str(second_child),
-                {"agent": "reviewer", "task": "第三层"},
+                {"agent": "reviewer", "task": "第三层", **_TASK_CONTRACT},
             )
         coordinator.close()
 
@@ -652,6 +1103,7 @@ class AgentDelegationTests(unittest.TestCase):
             {
                 "agent": "planner",
                 "task": "继承讨论并规划",
+                **_TASK_CONTRACT,
                 "contextMode": "fork",
                 "_runtimeContext": _fork_context(
                     parent_file=parent_file,
@@ -705,6 +1157,7 @@ class AgentDelegationTests(unittest.TestCase):
             {
                 "agent": "reviewer",
                 "task": "保留后清理",
+                **_TASK_CONTRACT,
                 "contextMode": "fork",
                 "_runtimeContext": _fork_context(
                     parent_file=parent_file,
@@ -761,7 +1214,7 @@ class AgentDelegationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "active Pi runtime"):
             coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "planner", "task": "不能手工分叉", "contextMode": "fork"},
+                {"agent": "planner", "task": "不能手工分叉", "contextMode": "fork", **_TASK_CONTRACT},
             )
 
         child_file = self.config.session_dir / "forged-child.jsonl"
@@ -777,6 +1230,7 @@ class AgentDelegationTests(unittest.TestCase):
                 {
                     "agent": "planner",
                     "task": "拒绝伪造分叉",
+                    **_TASK_CONTRACT,
                     "contextMode": "fork",
                     "_runtimeContext": _fork_context(
                         parent_file=parent_file,
@@ -807,6 +1261,7 @@ class AgentDelegationTests(unittest.TestCase):
                 {
                     "agent": "planner",
                     "task": "拒绝不安全思考块",
+                    **_TASK_CONTRACT,
                     "contextMode": "fork",
                     "_runtimeContext": _fork_context(
                         parent_file=parent_file,
@@ -824,8 +1279,8 @@ class AgentDelegationTests(unittest.TestCase):
             {
                 "wait": False,
                 "tasks": [
-                    {"agent": "researcher", "task": "长任务一"},
-                    {"agent": "reviewer", "task": "长任务二"},
+                    {"agent": "researcher", "task": "长任务一", **_TASK_CONTRACT},
+                    {"agent": "reviewer", "task": "长任务二", **_TASK_CONTRACT},
                 ],
             },
         )
@@ -847,7 +1302,7 @@ class AgentDelegationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at most two"):
             coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "planner", "task": "第三个并行任务", "wait": False},
+                {"agent": "planner", "task": "第三个并行任务", "wait": False, **_TASK_CONTRACT},
             )
         receipt = coordinator.abort(
             str(self.parent["id"]),
@@ -877,7 +1332,7 @@ class AgentDelegationTests(unittest.TestCase):
             coordinator = self.coordinator(_SoftBudgetRuntime)
             batch = coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "reviewer", "task": "接近输出预算但仍完成"},
+                {"agent": "reviewer", "task": "接近输出预算但仍完成", **_TASK_CONTRACT},
             )["batch"]
 
         run = batch["runs"][0]
@@ -902,7 +1357,7 @@ class AgentDelegationTests(unittest.TestCase):
             )
             batch = coordinator.delegate(
                 str(self.parent["id"]),
-                {"agent": "worker", "task": "触发硬输出预算"},
+                {"agent": "worker", "task": "触发硬输出预算", **_TASK_CONTRACT},
             )["batch"]
 
         run = batch["runs"][0]
@@ -1014,6 +1469,7 @@ class AgentDelegationTests(unittest.TestCase):
             {
                 "agent": "worker",
                 "task": "核对实现路径",
+                **_TASK_CONTRACT,
                 "contextMode": "fresh",
                 "wait": False,
             },
@@ -1100,6 +1556,7 @@ class AgentDelegationTests(unittest.TestCase):
             {
                 "agent": "worker",
                 "task": "核对 ACK 顺序",
+                **_TASK_CONTRACT,
                 "contextMode": "fresh",
                 "wait": False,
             },
@@ -1130,6 +1587,7 @@ class AgentDelegationTests(unittest.TestCase):
             {
                 "agent": "reviewer",
                 "task": "完成中断恢复验证",
+                **_TASK_CONTRACT,
                 "contextMode": "fresh",
                 "wait": False,
             },
@@ -1198,6 +1656,7 @@ def _run_spec(child_session_id: str, *, task: str) -> dict[str, object]:
         "templateId": "reviewer",
         "templateVersion": "1",
         "task": task,
+        **_TASK_CONTRACT,
         "maxTurns": 8,
         "maxToolCalls": 12,
         "maxTotalTokens": 10_000,

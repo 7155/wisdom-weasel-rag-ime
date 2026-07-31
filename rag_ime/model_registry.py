@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import math
 import os
 import shlex
 import tempfile
@@ -68,6 +69,9 @@ class ModelDeployment:
     model_name: str = ""
     lane: str = "hot"
     prompt_mode: str = ""
+    max_tokens: int = 0
+    temperature: float | None = None
+    top_p: float | None = None
     active: bool = True
     created_at_ms: int = 0
     updated_at_ms: int = 0
@@ -87,6 +91,9 @@ class ModelDeployment:
             model_name=str(payload.get("modelName") or payload.get("model_name") or "").strip(),
             lane=str(payload.get("lane") or "hot").strip().lower(),
             prompt_mode=str(payload.get("promptMode") or payload.get("prompt_mode") or "").strip(),
+            max_tokens=_integer(payload.get("maxTokens") or payload.get("max_tokens")),
+            temperature=_optional_float(payload.get("temperature")),
+            top_p=_optional_float(payload.get("topP") if "topP" in payload else payload.get("top_p")),
             active=bool(payload.get("active", True)),
             created_at_ms=_integer(payload.get("createdAtMs") or payload.get("created_at_ms")),
             updated_at_ms=_integer(payload.get("updatedAtMs") or payload.get("updated_at_ms")),
@@ -106,6 +113,9 @@ class ModelDeployment:
             "modelName": values["model_name"],
             "lane": values["lane"],
             "promptMode": values["prompt_mode"],
+            "maxTokens": values["max_tokens"],
+            "temperature": values["temperature"],
+            "topP": values["top_p"],
             "active": values["active"],
             "createdAtMs": values["created_at_ms"],
             "updatedAtMs": values["updated_at_ms"],
@@ -170,6 +180,18 @@ class ModelRegistry:
                     raise ValueError(f"hot lane endpoint must be loopback: {deployment.model_id}")
                 if not (deployment.model_name or deployment.path):
                     raise ValueError(f"modelName is required for {runtime}: {deployment.model_id}")
+            if deployment.max_tokens < 0 or deployment.max_tokens > 64:
+                raise ValueError(f"maxTokens must be between 0 and 64: {deployment.model_id}")
+            if deployment.temperature is not None and (
+                not math.isfinite(deployment.temperature)
+                or not 0.0 <= deployment.temperature <= 2.0
+            ):
+                raise ValueError(f"temperature must be finite and between 0 and 2: {deployment.model_id}")
+            if deployment.top_p is not None and (
+                not math.isfinite(deployment.top_p)
+                or not 0.0 < deployment.top_p <= 1.0
+            ):
+                raise ValueError(f"topP must be finite, greater than 0, and at most 1: {deployment.model_id}")
             if deployment.active:
                 if deployment.lane in active_lanes:
                     raise ValueError(f"multiple active models for lane: {deployment.lane}")
@@ -207,6 +229,11 @@ class ModelRegistry:
             endpoint=normalize_model_endpoint(runtime, deployment.endpoint),
             model_name=deployment.model_name.strip() or (deployment.path.strip() if runtime != "mlx" else ""),
             prompt_mode=deployment.prompt_mode.strip(),
+            max_tokens=int(deployment.max_tokens),
+            temperature=(
+                None if deployment.temperature is None else float(deployment.temperature)
+            ),
+            top_p=None if deployment.top_p is None else float(deployment.top_p),
             active=activate,
             created_at_ms=created_at,
             updated_at_ms=now,
@@ -370,6 +397,9 @@ def main(argv: list[str] | None = None) -> int:
     register.add_argument("--model-name", default="")
     register.add_argument("--lane", default="hot")
     register.add_argument("--prompt-mode", default="")
+    register.add_argument("--max-tokens", type=int, default=0)
+    register.add_argument("--temperature", type=float)
+    register.add_argument("--top-p", type=float)
     register.add_argument("--inactive", action="store_true")
 
     resolve = subparsers.add_parser("resolve", help="Resolve the active model for a lane.")
@@ -395,6 +425,9 @@ def main(argv: list[str] | None = None) -> int:
                 model_name=args.model_name,
                 lane=args.lane,
                 prompt_mode=args.prompt_mode,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+                top_p=args.top_p,
             ),
             activate=not args.inactive,
         )
@@ -442,6 +475,15 @@ def _integer(value: object) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def infer_model_runtime(artifact_format: str) -> str:

@@ -256,7 +256,7 @@ class BrowserControlServiceTests(unittest.TestCase):
         call = {
             "schemaVersion": "rag-ime.agent-tool-call.v1",
             "sessionId": session["id"],
-            "tool": "ime_browser",
+            "tool": "browser",
             "toolCallId": "tool:browser",
         }
 

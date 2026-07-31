@@ -29,7 +29,7 @@ _FORBIDDEN_DERIVED_TEXT_MARKERS = (
     "assistant_message",
     "[敏感内容已隐藏]",
     "[REDACTED:",
-    "请调用 ime_memory",
+    "请调用 memory",
     "curation_prepare",
     "runId:",
 )

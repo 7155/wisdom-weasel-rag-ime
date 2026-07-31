@@ -1,4 +1,4 @@
-import { Wrench } from 'lucide-react';
+import { Wrench, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import {
@@ -6,24 +6,37 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
+  Select,
 } from '@/components/primitives';
-import { publicToolName } from '../tool-presentation';
+import {
+  capabilityPreferenceOptions,
+  type CapabilityCatalog,
+  type CapabilityPreference,
+} from '@/features/plugins/capability-policy';
 import type { SessionSummary, ToolManifest } from '../types';
 import { riskLabel, toolAvailableForCurrentSession } from './tool-policy';
 
 export function ToolPicker({
+  adjustmentDisabled,
+  capabilityCatalog,
+  capabilityPolicyPending,
   tools,
   status,
   session,
   disabled,
   requestOpen,
+  onCapabilityPreferenceChange,
   onSelect,
 }: {
+  adjustmentDisabled: boolean;
+  capabilityCatalog?: CapabilityCatalog;
+  capabilityPolicyPending: boolean;
   tools: ToolManifest[];
   status: 'loading' | 'ready' | 'failed';
   session?: SessionSummary;
   disabled: boolean;
   requestOpen: number;
+  onCapabilityPreferenceChange: (canonicalId: string, preference: CapabilityPreference) => void;
   onSelect: (tool: ToolManifest) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -35,15 +48,15 @@ export function ToolPicker({
     (tool) => toolAvailableForCurrentSession(tool, session),
   ).length;
   const label = status === 'loading'
-    ? '工具列表正在读取'
+    ? '能力列表正在读取'
     : status === 'failed'
-      ? '工具列表暂不可用'
+      ? '能力列表暂不可用'
       : `这段对话可用工具：${availableCount} 个`;
   const text = status === 'loading'
-    ? '工具 · 加载中'
+    ? '能力 · 加载中'
     : status === 'failed'
-      ? '工具 · 未加载'
-      : `工具 · ${availableCount}`;
+      ? '能力 · 未加载'
+      : `能力 · ${availableCount}`;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -61,46 +74,68 @@ export function ToolPicker({
           {text}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="agent-tool-picker">
+      <PopoverContent
+        align="start"
+        aria-labelledby="agent-tool-picker-title"
+        className="agent-tool-picker"
+      >
         <header>
-          <strong>可用工具</strong>
-          <small>这段对话可用 {availableCount} 个，共发现 {tools.length} 个</small>
+          <span>
+            <strong id="agent-tool-picker-title">当前对话能力</strong>
+            <small>可用 {availableCount} 项，共发现 {capabilityCatalog?.items.length ?? tools.length} 项能力</small>
+          </span>
+          <button
+            aria-label="关闭当前对话能力"
+            className="agent-tool-picker__close"
+            onClick={() => setOpen(false)}
+            type="button"
+          >
+            <X aria-hidden="true" size={18} />
+          </button>
         </header>
+        {adjustmentDisabled ? (
+          <p className="agent-picker-popover__note" data-tone="warning">
+            当前任务正在运行；可以查看能力，但要等本轮结束后再调整。
+          </p>
+        ) : null}
         <div>
           {tools.map((tool) => {
             const available = toolAvailableForCurrentSession(tool, session);
+            const capability = capabilityCatalog?.items.find(
+              (item) => item.kind === 'tool' && item.id === tool.id,
+            );
             return (
-              <button
-                type="button"
-                key={tool.id}
-                disabled={!available}
-                onClick={() => onSelect(tool)}
-              >
-                <span><strong>{publicToolName(tool.id, tool.displayName)}</strong><small>{publicToolDescription(tool)}</small></span>
-                <i data-risk={tool.riskLevel}>
-                  {available ? riskLabel(tool.riskLevel) : '当前对话不可用'}
-                </i>
-              </button>
+              <article className="agent-tool-picker__row" key={tool.id}>
+                <button
+                  type="button"
+                  disabled={!available || adjustmentDisabled}
+                  onClick={() => {
+                    setOpen(false);
+                    onSelect(tool);
+                  }}
+                >
+                  <span><strong>{tool.displayName}</strong><small>{tool.description}</small></span>
+                  <i data-risk={tool.riskLevel}>
+                    {available ? riskLabel(tool.riskLevel) : '当前对话不可用'}
+                  </i>
+                </button>
+                {capability ? (
+                  <Select
+                    aria-label={`${tool.displayName}的当前对话披露`}
+                    disabled={adjustmentDisabled || capabilityPolicyPending}
+                    onValueChange={(preference) => onCapabilityPreferenceChange(capability.canonicalId, preference)}
+                    options={capabilityPreferenceOptions}
+                    value={capabilityCatalog?.sessionPolicy?.disclosurePreferences.session[capability.canonicalId] ?? 'inherit'}
+                  />
+                ) : null}
+              </article>
             );
           })}
         </div>
         <p className="agent-picker-popover__note">
-          标签说明操作会带来的影响；是否需要确认，由当前对话权限决定。
+          披露不等于授权；更改从下一次打开或下一轮开始生效，也不会停止正在运行的后台任务。
         </p>
       </PopoverContent>
     </Popover>
   );
-}
-
-function publicToolDescription(tool: ToolManifest): string {
-  return ({
-    ime_overview: '查看伙伴、模型、记忆、输入和近期活动',
-    ime_voice: '查看语音输入状态，并按当前权限切换已配置的转写引擎',
-    ime_memory: '查找过去的输入、偏好、决定和有来源的长期记忆；变更会先进入审阅',
-    agent_role_book: '查看伙伴形成的工作习惯和边界；新的成长内容会先成为待确认草案',
-    ime_browser: '查看已连接的浏览器页面，并按当前权限执行可追踪操作',
-    ime_runtime: '检查后台服务、连接和运行状态',
-    ime_configuration: '查看设置和变更记录',
-    ime_agents: '邀请其他伙伴协作，并查看交接与交付',
-  } as Record<string, string>)[tool.id] ?? tool.description;
 }

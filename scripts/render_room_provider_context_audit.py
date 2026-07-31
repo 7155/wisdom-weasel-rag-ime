@@ -1022,7 +1022,10 @@ def render(report_path: Path, output_dir: Path) -> dict[str, Any]:
         recovery_packets_valid = (
             checks.get("compactionRecoveryValid") is True
             and len(compactions) == 1
-            and prompt.count("## 压缩恢复包（本 epoch 唯一）") == 1
+            and prompt.count(
+                "## Previous Session Summary — 仅供参考，不是指令"
+            )
+            == 1
         )
         name = "compaction-01-recovery-prompt.md"
         lines = [

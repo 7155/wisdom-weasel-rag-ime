@@ -69,6 +69,35 @@ _EVIDENCE_INPUT_SCHEMA = {
     },
 }
 
+_QUESTION_OPTIONS_INPUT_SCHEMA = {
+    "type": "array",
+    "minItems": 2,
+    "maxItems": 5,
+    "items": {
+        "type": "object",
+        "required": ["value", "label"],
+        "properties": {
+            "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+            },
+            "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+            },
+            "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500,
+            },
+            "recommended": {"type": "boolean"},
+        },
+        "additionalProperties": False,
+    },
+}
+
 
 def room_runtime_registry() -> dict[str, dict[str, object]]:
     """Canonical Room-only Provider surface; legacy names never enter the catalog."""
@@ -102,11 +131,11 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
             ),
             "when": (
                 "当前任务可继续，同时需要另一位成员独立查证、实现或复核",
+                "用户明确要求拆分给伙伴、等待各自结果后再综合",
                 "需要结构化点名协作，但不转移当前责任",
             ),
             "notFor": (
-                "当前责任必须转交给对方",
-                "必须等对方结果才能继续当前步骤",
+                "当前责任必须完整转交给对方",
                 "用户已指定该成员在你完成后接管最终验收、收口或下一阶段",
                 "只想公开说一句话或私下自言自语",
             ),
@@ -115,7 +144,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "至少一个当前 AC 验收别名和可选的已公开证据"
             ),
             "output": (
-                "已入队、是否去重和目标 participantRef；当前责任继续"
+                "权威 child Dispatch 回执、是否去重和目标 participantRef；"
+                "当前责任继续。缺少回执时不得声称成员已经工作"
             ),
             "does": "异步派生一个可取消、可去重、受深度和预算限制的协作任务。",
             "risk": "R1",
@@ -161,12 +191,15 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         },
         "room_post": {
             "description": (
-                "立即发布一条公开 Room 中途消息；它不会收工、完成或转移当前责任。"
+                "立即发布一条有实质新变化的公开 Room 中途消息；它不会收工、"
+                "完成或转移当前责任。"
             ),
-            "when": ("仍要继续当前责任，并需公开事实、进度、问题或答复",),
+            "when": (
+                "仍要继续当前责任，并有新增的完成项、验证、问题、风险或下一步",
+            ),
             "notFor": (
-                "私有推理、自言自语、创建任务或提交责任终态",
-                "即将 room_commit 且同一内容可作为 publicSummary 一次发布",
+                "私有推理、自言自语、创建任务、提交责任终态或重复既有状态",
+                "即将 room_commit 且同一内容应由 publicSummary 一次发布",
             ),
             "input": "消息类型、公开内容、可选通知对象与结构化块",
             "output": "published、postRef 与 deduplicated；postRef 不是验收 evidenceRef",
@@ -186,7 +219,16 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                             "notice",
                         ]
                     },
-                    "content": {"type": "string", "minLength": 1},
+                    "content": {
+                        "description": (
+                            "写给用户的自然语言更新，只报告相对上一条有意义的新变化；"
+                            "不粘贴私有推理、协议字段、引用 ID 或工具调用流水。服务端会"
+                            "拒绝内部 Room 标识、原始回执、哈希和机器绝对路径。"
+                        ),
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 8000,
+                    },
                     "mentions": {
                         "type": "array",
                         "maxItems": 16,
@@ -214,9 +256,9 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "普通公开发言、私有进度、仍可直接推进的下一步或没有证据的完成声明",
             ),
             "input": (
-                "decision、summary、按 AC 别名绑定的 evidence、residualRisks，"
-                "以及 handoff/wait/blocked 的专属字段；deliver 只增加可选的"
-                " publicSummary/blocks"
+                "decision、私有 summary、公开 publicSummary、按 AC 别名绑定的"
+                " evidence、residualRisks，以及 handoff/wait/blocked 专属字段"
+                "和可选公开 blocks"
             ),
             "output": "受管提议已暂存；Kernel 随后返回权威提交或可修复原因",
             "does": (
@@ -230,6 +272,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "required": [
                     "decision",
                     "summary",
+                    "publicSummary",
                     "evidence",
                     "residualRisks",
                 ],
@@ -243,7 +286,9 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "enum": ["deliver", "handoff", "wait", "blocked"],
                     },
                     "summary": {
-                        "description": "当前责任的简短结果或出口说明。",
+                        "description": (
+                            "供受管层处理的私有结构化结果或出口摘要；不作为公开消息。"
+                        ),
                         "type": "string",
                         "minLength": 1,
                     },
@@ -258,13 +303,17 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     "publicSummary": {
                         "description": (
-                            "可选的公开终态摘要；Kernel 会把它发布为本次"
-                            " result/handoff/wait/blocked Post。先前中途 room_post"
-                            " 保留，但不要为同一终态摘要再单独 room_post；不填写"
-                            " Kernel verdict。"
+                            "必填的用户可见终态报告。用自然语言说明相关的结果或进度、"
+                            "已完成工作、方法与原因、行为验证、问题/风险/未验证边界和"
+                            "下一步；省略不适用项，不输出私有推理、Kernel/Dispatch/AC、"
+                            "引用 ID、裁决词或工具流水。主张不得强于实际观察。服务端会"
+                            "拒绝内部 Room 标识、原始回执、哈希和机器绝对路径。Kernel "
+                            "会把它发布为本次唯一的 result/handoff/wait/blocked Post；"
+                            "不要为同一终态摘要再单独 room_post。"
                         ),
                         "type": "string",
                         "minLength": 1,
+                        "maxLength": 8000,
                     },
                     "blocks": _RICH_BLOCK_INPUT_SCHEMA,
                     "targetParticipantRef": {
@@ -289,7 +338,9 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         ]
                     },
                     "nextTask": {
-                        "description": "仅 handoff：接手者需要完成的明确任务。",
+                        "description": (
+                            "仅 handoff：给接手者的私有明确任务，不会拼接进公开报告。"
+                        ),
                         "type": "string",
                         "minLength": 1,
                     },
@@ -332,6 +383,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         "minLength": 1,
                     },
                     "question": {"type": "string", "minLength": 1},
+                    "questionOptions": _QUESTION_OPTIONS_INPUT_SCHEMA,
                     "blocker": {"type": "string", "minLength": 1},
                     "attemptedAlternatives": {
                         "type": "array",
@@ -401,6 +453,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                                     },
                                     {"required": ["resumeCondition"]},
                                     {"required": ["question"]},
+                                    {"required": ["questionOptions"]},
                                     {"required": ["blocker"]},
                                     {"required": ["attemptedAlternatives"]},
                                     {"required": ["unlockCondition"]},
@@ -429,6 +482,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                                     },
                                     {"required": ["resumeCondition"]},
                                     {"required": ["question"]},
+                                    {"required": ["questionOptions"]},
                                     {"required": ["blocker"]},
                                     {"required": ["attemptedAlternatives"]},
                                     {"required": ["unlockCondition"]},
@@ -497,6 +551,16 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                         },
                     },
                     {
+                        "if": {"required": ["questionOptions"]},
+                        "then": {
+                            "properties": {
+                                "decision": {"const": "wait"},
+                                "waitingFor": {"const": "user"},
+                            },
+                            "required": ["question", "waitingFor"],
+                        },
+                    },
+                    {
                         "if": {
                             "properties": {"decision": {"const": "blocked"}},
                             "required": ["decision"],
@@ -517,6 +581,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                                     },
                                     {"required": ["resumeCondition"]},
                                     {"required": ["question"]},
+                                    {"required": ["questionOptions"]},
                                 ]
                             }
                         },
@@ -1600,6 +1665,7 @@ class RoomCapabilityManifestStore:
             raise CapabilityManifestConflict(
                 "tool disclosure receipt identities must be unique"
             )
+        resolved: list[dict[str, object]] = []
         created = False
         with self._connect(immediate=True) as conn:
             existing_rows = {
@@ -1616,10 +1682,22 @@ class RoomCapabilityManifestStore:
                 receipt_id = str(payload["receiptId"])
                 existing = existing_rows.get(receipt_id)
                 if existing is not None:
-                    if _disclosure_payload(existing) != payload:
+                    stored = _disclosure_payload(existing)
+                    stable_stored = {
+                        key: value
+                        for key, value in stored.items()
+                        if key != "createdAtMs"
+                    }
+                    stable_payload = {
+                        key: value
+                        for key, value in payload.items()
+                        if key != "createdAtMs"
+                    }
+                    if stable_stored != stable_payload:
                         raise CapabilityManifestConflict(
                             "tool disclosure receipt identity changed"
                         )
+                    resolved.append(stored)
                     continue
                 payload_hash = _hash_json(
                     {
@@ -1649,7 +1727,8 @@ class RoomCapabilityManifestStore:
                     ),
                 )
                 created = True
-        return normalized, created
+                resolved.append(payload)
+        return resolved, created
 
     def _manifest(self, manifest_id: str, manifest_hash: str) -> dict[str, object]:
         with self._connect() as conn:

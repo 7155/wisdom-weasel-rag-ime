@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from rag_ime.agent_background_jobs import AgentBackgroundJobService
+from rag_ime.agent_context_runtime import AgentContextRuntime
 from rag_ime.agent_media import AgentMediaStore
 from rag_ime.agent_memory_sources import AgentMemorySourceStore
 from rag_ime.agent_sessions import AgentSessionStore
@@ -13,6 +16,7 @@ from rag_ime.agent_tool_artifacts import AgentToolArtifactProjector
 from rag_ime.agent_tools import ControlToolGateway
 from rag_ime.agent_workspace import WorkspaceHarness, WorkspaceHarnessError
 from rag_ime.contracts.json_schema import validate_contract
+from rag_ime.work_documents import WorkDocumentService
 
 
 class _Management:
@@ -724,7 +728,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             {
                 "schemaVersion": "rag-ime.agent-tool-call.v1",
                 "sessionId": self.session["id"],
-                "tool": "ime_memory",
+                "tool": "memory",
                 "toolCallId": "tool:legacy-recent",
                 "args": {
                     "query": "RAG IME 昨天进展",
@@ -735,12 +739,12 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         self.assertEqual(recent["count"], 1)
         self.assertEqual(recent["items"][0]["text"], "把普通生成和深度检索分开")
-        with self.assertRaisesRegex(ValueError, "unsupported ime_memory operation"):
+        with self.assertRaisesRegex(ValueError, "unsupported memory operation"):
             self.gateway.execute(
                 {
                     "schemaVersion": "rag-ime.agent-tool-call.v1",
                     "sessionId": self.session["id"],
-                    "tool": "ime_memory",
+                    "tool": "memory",
                     "toolCallId": "tool:legacy-write",
                     "args": {
                         "text": "不能凭缺失 op 猜写操作",
@@ -806,7 +810,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def test_runtime_memory_tool_discloses_operation_specific_schema(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)
-        memory = next(item for item in manifests if item["name"] == "ime_memory")
+        memory = next(item for item in manifests if item["name"] == "memory")
         parameters = memory["parameters"]
         branches = parameters["oneOf"]
         by_operation = {
@@ -928,25 +932,22 @@ class ControlToolGatewayTests(unittest.TestCase):
             "mode",
         ):
             self.assertIn(field, parameters["properties"])
-        self.assertIn("Session 启动快照只在首轮注入一次", memory["description"])
-        self.assertIn("Timeline 不能单独证明稳定事实", memory["description"])
-        self.assertIn("无事实问题", memory["description"])
-        self.assertIn("失败回执", memory["description"])
-        self.assertIn("禁止原样复制长输入", memory["description"])
+        self.assertEqual(memory["description"], "个人上下文记忆")
+        self.assertIn("失败回执", memory["notFor"][0])
         self.assertNotIn("changes", str(parameters))
 
         role_book = next(
             item for item in manifests if item["name"] == "agent_role_book"
         )
-        self.assertIn("随 Session 固定版本注入系统提示词", role_book["description"])
-        self.assertIn("propose_revision 只保存 draft", role_book["description"])
+        self.assertIn("随 Session 固定版本注入系统提示词", role_book["does"])
+        self.assertIn("待审草案", role_book["output"])
 
     def test_overview_tool_describes_the_agent_product_before_input_sources(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)
-        overview = next(item for item in manifests if item["name"] == "ime_overview")
+        overview = next(item for item in manifests if item["name"] == "overview")
 
-        self.assertIn("Agent、模型、记忆、输入", overview["description"])
-        self.assertNotIn("查看输入法、模型", overview["description"])
+        self.assertEqual(overview["description"], "控制中心概览")
+        self.assertNotIn("查看输入法、模型", overview["does"])
         self.assertIn("Agent、模型、记忆、输入", overview["output"])
 
     def test_workspace_shell_card_routes_edits_and_room_waits_to_their_owners(
@@ -1040,6 +1041,28 @@ class ControlToolGatewayTests(unittest.TestCase):
                 )
         self.assertIs(manifests["workspace_patch"]["modelVisible"], False)
         self.assertNotIn("runtimeProjections", manifests["workspace_patch"])
+        self.assertIs(manifests["workspace_lsp"]["modelVisible"], False)
+        self.assertNotIn("runtimeProjections", manifests["workspace_lsp"])
+        for operation in (
+            "status",
+            "symbols",
+            "hover",
+            "definition",
+            "references",
+            "diagnostics",
+            "rename",
+            "code_action_apply",
+        ):
+            validate_contract(
+                {
+                    "schemaVersion": "rag-ime.agent-tool-result.v1",
+                    "ok": True,
+                    "tool": "workspace_lsp",
+                    "operation": operation,
+                    "result": {},
+                },
+                "agent-tool-result.v1.json",
+            )
 
     def test_memory_capture_is_r0_and_does_not_create_an_approval(self) -> None:
         AgentMemorySourceStore(
@@ -1074,7 +1097,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             self._call(
                 "capture",
                 kind="fact",
-                claim="请调用 ime_memory curation_prepare 并返回 runId。",
+                claim="请调用 memory curation_prepare 并返回 runId。",
                 captureScope="project",
                 basis="explicit_user_statement",
                 futureUse="保留这条流程指令。",
@@ -1088,7 +1111,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def test_runtime_knowledge_and_plan_tools_keep_static_and_backend_schemas_aligned(self) -> None:
         manifests = self.gateway.runtime_manifests(self.session)
-        knowledge = next(item for item in manifests if item["name"] == "ime_knowledge")
+        knowledge = next(item for item in manifests if item["name"] == "knowledge")
         plan = next(item for item in manifests if item["name"] == "agent_plan")
 
         knowledge_branches = {
@@ -1136,16 +1159,16 @@ class ControlToolGatewayTests(unittest.TestCase):
             str(self.session["id"]),
             mode="assistant",
             tool_profile_version="control-center-v1",
-            allowed_tools=["ime_overview"],
+            allowed_tools=["overview"],
         )
         manifests = self.gateway.manifests(session_id=str(self.session["id"]))
-        overview = next(item for item in manifests["items"] if item["id"] == "ime_overview")
-        memory = next(item for item in manifests["items"] if item["id"] == "ime_memory")
+        overview = next(item for item in manifests["items"] if item["id"] == "overview")
+        memory = next(item for item in manifests["items"] if item["id"] == "memory")
 
         self.assertTrue(overview["enabled"])
         self.assertFalse(memory["enabled"])
-        self.assertEqual(manifests["sessionPolicy"]["allowedTools"], ["ime_overview"])
-        self.gateway.execute(self._tool_call("ime_overview", "status"))
+        self.assertEqual(manifests["sessionPolicy"]["allowedTools"], ["overview"])
+        self.gateway.execute(self._tool_call("overview", "status"))
         with self.assertRaisesRegex(ValueError, "tool profile"):
             self.gateway.execute(self._call("catalog"))
 
@@ -1154,77 +1177,80 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(
             [manifest["id"] for manifest in manifests],
             [
-                "ime_overview",
-                "ime_input",
-                "ime_voice",
-                "ime_planning",
+                "overview",
+                "input",
+                "voice",
+                "planning",
                 "agent_schedule",
-                "ime_memory",
+                "memory",
                 "agent_role_book",
-                "ime_knowledge",
-                "ime_models",
-                "ime_runtime",
-                "ime_configuration",
-                "ime_agents",
-                "ime_browser",
+                "knowledge",
+                "models",
+                "runtime",
+                "configuration",
+                "agents",
+                "browser",
                 "agent_plan",
-                "ime_plugins",
+                "plugins",
+                "work_documents",
                 "desktop_semantic",
                 "workspace_list",
+                "workspace_lsp",
                 "workspace_read",
                 "workspace_search",
                 "workspace_patch",
                 "workspace_edit",
                 "workspace_write",
+                "workspace_job",
                 "workspace_shell",
             ],
         )
-        planning = next(manifest for manifest in manifests if manifest["id"] == "ime_planning")
+        planning = next(manifest for manifest in manifests if manifest["id"] == "planning")
         self.assertEqual(planning["riskLevel"], "R1")
         self.assertEqual(
             planning["operationRisks"],
             {"dashboard": "R0", "task_action": "R1", "undo_task_event": "R1"},
         )
-        memory = next(manifest for manifest in manifests if manifest["id"] == "ime_memory")
+        memory = next(manifest for manifest in manifests if manifest["id"] == "memory")
         self.assertEqual(memory["riskLevel"], "R1")
         self.assertEqual(memory["operationRisks"]["maintenance_preview"], "R0")
         self.assertEqual(memory["operationRisks"]["maintenance_apply"], "R1")
         self.assertEqual(memory["operationRisks"]["maintenance_rollback"], "R1")
-        knowledge = next(manifest for manifest in manifests if manifest["id"] == "ime_knowledge")
+        knowledge = next(manifest for manifest in manifests if manifest["id"] == "knowledge")
         self.assertEqual(
             knowledge["operations"],
             ["list_bases", "search", "find", "open", "status"],
         )
-        input_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_input")
+        input_tool = next(manifest for manifest in manifests if manifest["id"] == "input")
         self.assertEqual(input_tool["riskLevel"], "R1")
         self.assertEqual(input_tool["operationRisks"]["preview_settings"], "R0")
         self.assertEqual(input_tool["operationRisks"]["apply_settings"], "R1")
         self.assertEqual(input_tool["operationRisks"]["lexicon_apply"], "R1")
-        voice_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_voice")
+        voice_tool = next(manifest for manifest in manifests if manifest["id"] == "voice")
         self.assertEqual(voice_tool["riskLevel"], "R1")
         self.assertEqual(voice_tool["operationRisks"]["provider_preview"], "R0")
         self.assertEqual(voice_tool["operationRisks"]["provider_apply"], "R1")
         self.assertEqual(voice_tool["operationRisks"]["provider_rollback"], "R1")
-        runtime_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_runtime")
+        runtime_tool = next(manifest for manifest in manifests if manifest["id"] == "runtime")
         self.assertEqual(runtime_tool["riskLevel"], "R2")
         self.assertEqual(runtime_tool["operationRisks"]["diagnose"], "R0")
         self.assertEqual(runtime_tool["operationRisks"]["pause_ai"], "R1")
         self.assertEqual(runtime_tool["operationRisks"]["restart_sidecar"], "R2")
         self.assertEqual(runtime_tool["operationRisks"]["restart_predictor"], "R2")
-        model_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_models")
+        model_tool = next(manifest for manifest in manifests if manifest["id"] == "models")
         self.assertEqual(model_tool["riskLevel"], "R1")
         self.assertEqual(model_tool["operationRisks"]["profiles"], "R0")
         self.assertEqual(model_tool["operationRisks"]["profile_apply"], "R1")
         self.assertEqual(model_tool["operationRisks"]["profile_rollback"], "R1")
         configuration_tool = next(
-            manifest for manifest in manifests if manifest["id"] == "ime_configuration"
+            manifest for manifest in manifests if manifest["id"] == "configuration"
         )
         self.assertEqual(configuration_tool["riskLevel"], "R3")
         self.assertEqual(configuration_tool["operationRisks"]["export_preview"], "R0")
         self.assertEqual(configuration_tool["operationRisks"]["export"], "R1")
         self.assertEqual(configuration_tool["operationRisks"]["restore_preview"], "R0")
         self.assertEqual(configuration_tool["operationRisks"]["restore_apply"], "R3")
-        browser_tool = next(manifest for manifest in manifests if manifest["id"] == "ime_browser")
+        browser_tool = next(manifest for manifest in manifests if manifest["id"] == "browser")
         self.assertEqual(browser_tool["riskLevel"], "R1")
         self.assertEqual(browser_tool["operationRisks"]["snapshot"], "R0")
         self.assertEqual(browser_tool["operationRisks"]["screenshot"], "R0")
@@ -1235,6 +1261,32 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         self.assertEqual(workspace_shell["sessionModes"], ["coordinator"])
         self.assertEqual(workspace_shell["operationRisks"], {"run": "R2"})
+        workspace_lsp = next(
+            manifest for manifest in manifests if manifest["id"] == "workspace_lsp"
+        )
+        self.assertEqual(workspace_lsp["sessionModes"], ["coordinator"])
+        self.assertEqual(
+            workspace_lsp["operationRisks"],
+            {
+                "status": "R0",
+                "symbols": "R0",
+                "hover": "R0",
+                "definition": "R0",
+                "references": "R0",
+                "diagnostics": "R0",
+                "rename": "R2",
+                "code_action_apply": "R2",
+            },
+        )
+        workspace_job = next(
+            manifest for manifest in manifests if manifest["id"] == "workspace_job"
+        )
+        self.assertEqual(workspace_job["sessionModes"], ["coordinator"])
+        self.assertEqual(
+            workspace_job["operationRisks"],
+            {"list": "R0", "status": "R0", "logs": "R0", "start": "R2", "cancel": "R1"},
+        )
+        self.assertEqual(workspace_job["availability"], "offline")
         desktop = next(manifest for manifest in manifests if manifest["id"] == "desktop_semantic")
         self.assertEqual(desktop["riskLevel"], "R2")
         self.assertEqual(
@@ -1246,26 +1298,71 @@ class ControlToolGatewayTests(unittest.TestCase):
                 manifest["riskLevel"] == "R0"
                 for manifest in manifests
                 if manifest["id"] not in {
-                    "ime_input",
-                    "ime_voice",
-                    "ime_planning",
+                    "input",
+                    "voice",
+                    "planning",
                     "agent_schedule",
-                    "ime_memory",
-                    "ime_models",
-                    "ime_runtime",
-                    "ime_configuration",
-                    "ime_browser",
+                    "memory",
+                    "models",
+                    "runtime",
+                    "configuration",
+                    "browser",
                     "desktop_semantic",
+                    "work_documents",
                     "workspace_patch",
+                    "workspace_lsp",
                     "workspace_edit",
                     "workspace_write",
                     "workspace_shell",
+                    "workspace_job",
                 }
             )
         )
         assistant_call = self._tool_call("workspace_list", "list")
         with self.assertRaisesRegex(ValueError, "session mode"):
             self.gateway.execute(assistant_call)
+
+    def test_runtime_workspace_job_is_discoverable_after_progressive_tool_load(self) -> None:
+        coordinator = self.store.create(
+            title="workspace job disclosure",
+            mode="coordinator",
+            workspace_roots=[self.tmp.name],
+            created_at_ms=2,
+        )
+        background_jobs = AgentBackgroundJobService(
+            Path(self.tmp.name) / "rag-ime.sqlite",
+            events=lambda *_args, **_kwargs: None,
+        )
+        background_jobs.initialize()
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=self.facade,
+            knowledge_client=self.knowledge,
+            workspace_harness=background_jobs.workspace_harness,
+            background_jobs=background_jobs,
+        )
+        try:
+            manifests = {
+                item["name"]: item
+                for item in gateway.runtime_manifests(coordinator)
+            }
+            workspace_job = manifests["workspace_job"]
+            operations = {
+                branch["properties"]["op"]["const"]
+                for branch in workspace_job["parameters"]["oneOf"]
+            }
+
+            self.assertNotIn("modelVisible", workspace_job)
+            self.assertEqual(
+                operations,
+                {"start", "list", "status", "logs", "cancel"},
+            )
+            self.assertIs(manifests["workspace_read"]["modelVisible"], False)
+        finally:
+            background_jobs.close()
 
     def test_agent_plan_is_session_local_and_read_only_blocks_mutations(self) -> None:
         created = self.gateway.execute(
@@ -1317,7 +1414,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         )["result"]
         self.assertEqual(other_plan["items"], [])
 
-    def test_agent_plan_submit_review_is_valid_in_the_runtime_result_contract(self) -> None:
+    def test_agent_plan_submit_review_keeps_user_execution_request_open(self) -> None:
         self.gateway.execute(
             self._tool_call(
                 "agent_plan",
@@ -1331,7 +1428,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             self._tool_call(
                 "agent_plan",
                 "submit_review",
-                note="请在执行写入前审阅",
+                note="记录审阅意见但不阻断执行",
             )
         )
 
@@ -1341,6 +1438,12 @@ class ControlToolGatewayTests(unittest.TestCase):
             reviewed["result"]["presentationKind"],
             "task_plan",
         )
+        self.assertTrue(reviewed["result"]["mutationAllowed"])
+        self.assertEqual(
+            reviewed["result"]["nextAction"],
+            "continue_in_scope_execution",
+        )
+        self.assertIn("可继续处理", reviewed["result"]["summary"])
 
     def test_coordinator_workspace_read_and_shell_use_hash_bound_native_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace"
@@ -1417,6 +1520,170 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(len(executed), 1)
         self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "executing")
 
+    def test_workspace_read_routes_managed_resource_refs_to_authoritative_owners(self) -> None:
+        coordinator = self.store.create(
+            title="resource coordinator",
+            mode="coordinator",
+            workspace_roots=[],
+            created_at_ms=3,
+        )
+        calls: list[tuple[object, ...]] = []
+        delegation = SimpleNamespace(
+            inspect_artifact=lambda session_id, artifact_id, limit: (
+                calls.append(("artifact", session_id, artifact_id, limit))
+                or {"artifact": {"id": artifact_id}, "records": []}
+            )
+        )
+        governed_skills = SimpleNamespace(
+            load_exact=lambda skill_id: (
+                calls.append(("skill", skill_id))
+                or {
+                    "name": skill_id,
+                    "description": "managed",
+                    "body": "first\nsecond\n",
+                    "contentRevision": "revision:1",
+                }
+            )
+        )
+        rooms = SimpleNamespace(
+            participant_for_session=lambda session_id: {
+                "sessionId": session_id,
+                "roomId": "room:managed",
+            }
+        )
+        collaboration = SimpleNamespace(
+            rooms=rooms,
+            media_receipt=lambda media_id, session_id: (
+                calls.append(("media", session_id, media_id))
+                or {"media": {"mediaId": media_id, "mimeType": "image/png"}}
+            ),
+            room_snapshot=lambda room_id: (
+                calls.append(("room", room_id))
+                or {"room": {"id": room_id}, "events": []}
+            ),
+        )
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            delegation=delegation,
+            collaboration=collaboration,
+            governed_skills=governed_skills,
+        )
+
+        def read(resource_ref: str, **args: object) -> dict[str, object]:
+            return gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_read",
+                        "read",
+                        resourceRef=resource_ref,
+                        **args,
+                    ),
+                    "sessionId": coordinator["id"],
+                }
+            )["result"]
+
+        artifact = read("artifact://artifact:one")
+        media = read("media://media_abcdefghijkl")
+        skill = read("skill://structured-handoff", limit=6)
+        room = read("room://room:managed")
+
+        self.assertEqual(artifact["resourceKind"], "artifact")
+        self.assertIn("artifact:one", artifact["content"])
+        self.assertEqual(media["metadata"]["owner"], "AgentMediaStore")
+        self.assertEqual(skill["content"], "first\n")
+        self.assertEqual(skill["nextOffset"], 6)
+        self.assertEqual(room["resourceRevision"], room["resourceRevision"].lower())
+        self.assertEqual(
+            [call[0] for call in calls],
+            ["artifact", "media", "skill", "room"],
+        )
+        with self.assertRaisesRegex(ValueError, "does not belong"):
+            read("room://room:other")
+
+    def test_workspace_job_starts_only_after_hash_bound_approval_and_exposes_logs(self) -> None:
+        workspace = Path(self.tmp.name) / "background-workspace"
+        workspace.mkdir()
+        coordinator = self.store.create(
+            title="background coordinator",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=3,
+        )
+        self._approve_plan(str(coordinator["id"]))
+        events = []
+        background_jobs = AgentBackgroundJobService(
+            Path(self.tmp.name) / "rag-ime.sqlite",
+            events=lambda *args, **kwargs: events.append((args, kwargs)),
+        )
+        background_jobs.initialize()
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            workspace_harness=background_jobs.workspace_harness,
+            background_jobs=background_jobs,
+        )
+        try:
+            pending = gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_job",
+                        "start",
+                        command="python3 -c \"print('background-tool-ok')\"",
+                        cwd=str(workspace),
+                        timeoutSeconds=10,
+                        label="工具后台任务",
+                    ),
+                    "sessionId": coordinator["id"],
+                }
+            )["result"]
+            self.assertTrue(pending["approvalRequired"])
+            self.assertEqual(background_jobs.list(str(coordinator["id"]))["items"], [])
+
+            approval = pending["approval"]
+            decided = self.store.decide_approval(
+                approval["approvalId"],
+                approved=True,
+                payload_sha256=approval["payloadSha256"],
+            )
+            receipt = gateway.apply_approval(decided)
+            job_id = receipt["job"]["jobId"]
+            deadline = time.monotonic() + 5
+            job = receipt["job"]
+            while time.monotonic() < deadline and job["status"] == "running":
+                job = background_jobs.status(str(coordinator["id"]), job_id)["job"]
+                time.sleep(0.05)
+
+            logs = gateway.execute(
+                {
+                    **self._tool_call("workspace_job", "logs", jobId=job_id),
+                    "sessionId": coordinator["id"],
+                }
+            )["result"]
+            listed = gateway.execute(
+                {
+                    **self._tool_call("workspace_job", "list"),
+                    "sessionId": coordinator["id"],
+                }
+            )["result"]
+
+            self.assertEqual(job["status"], "completed")
+            self.assertIn("background-tool-ok", logs["text"])
+            self.assertEqual(listed["items"][0]["jobId"], job_id)
+            self.assertEqual(receipt["auditId"], approval["approvalId"])
+            self.assertEqual(
+                receipt["job"]["causalMetadata"],
+                decided["causalMetadata"],
+            )
+            self.assertTrue(any(args[1] == "background_job_completed" for args, _ in events))
+        finally:
+            background_jobs.close()
+
     def test_read_only_keeps_workspace_reads_and_creates_no_write_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-read-only"
         workspace.mkdir()
@@ -1461,7 +1728,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             [],
         )
 
-    def test_workspace_managed_auto_applies_inside_scope_but_not_outside_or_forbidden(self) -> None:
+    def test_workspace_managed_user_request_auto_applies_in_scope_without_plan_approval(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-managed"
         outside = Path(self.tmp.name) / "workspace-outside"
         workspace.mkdir()
@@ -1477,7 +1744,6 @@ class ControlToolGatewayTests(unittest.TestCase):
             workspace_roots=[str(workspace)],
             created_at_ms=21,
         )
-        self._approve_plan(str(session["id"]))
         executed = []
 
         def fake_execute(prepared):
@@ -1577,7 +1843,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(outside_target.read_text(encoding="utf-8"), "value = 'outside'\n")
         self.assertEqual(len(automatic_approvals), 2)
 
-    def test_full_trust_auto_approves_routine_writes_but_keeps_system_gate(self) -> None:
+    def test_full_trust_model_arbitrates_every_gate_but_keeps_scope_and_system_fences(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-full-trust"
         outside = Path(self.tmp.name) / "outside-full-trust"
         workspace.mkdir()
@@ -1600,7 +1866,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 str(approval["approvalId"]),
                 approved=True,
                 payload_sha256=str(approval["payloadSha256"]),
-                decided_by="execution-policy:full_trust",
+                decided_by="approval-model:test",
             )
             receipt = self.gateway.apply_approval(decided)
             return {
@@ -1609,13 +1875,15 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "autoApproved": True,
                 "approvalId": approval["approvalId"],
                 "receipt": receipt,
+                "modelDecided": True,
+                "decisionMode": "model",
             }
 
         self.gateway.bind_auto_approval_executor(auto_approve)
         routine = self.gateway.execute(
             {
                 **self._tool_call(
-                    "ime_planning",
+                    "planning",
                     "task_action",
                     taskId="task:1",
                     action="complete",
@@ -1626,14 +1894,14 @@ class ControlToolGatewayTests(unittest.TestCase):
         )["result"]
         protected = self.gateway.execute(
             {
-                **self._tool_call("ime_runtime", "restart_sidecar"),
+                **self._tool_call("runtime", "restart_sidecar"),
                 "sessionId": session["id"],
             }
         )["result"]
 
         self.assertTrue(routine["autoApproved"])
-        self.assertTrue(protected["approvalRequired"])
-        self.assertEqual(protected["approval"]["operation"], "restart_sidecar")
+        self.assertTrue(protected["autoApproved"])
+        self.assertEqual(auto_approvals[1]["operation"], "restart_sidecar")
         with self.assertRaisesRegex(WorkspaceHarnessError, "outside"):
             self.gateway.execute(
                 {
@@ -1663,10 +1931,10 @@ class ControlToolGatewayTests(unittest.TestCase):
             outside_target.read_text(encoding="utf-8"),
             "value = 'outside'\n",
         )
-        self.assertEqual(len(auto_approvals), 1)
+        self.assertEqual(len(auto_approvals), 2)
         applied = self.store.get_approval(str(routine["approvalId"]))
         self.assertEqual(applied["state"], "approved")
-        self.assertEqual(applied["decidedBy"], "execution-policy:full_trust")
+        self.assertEqual(applied["decidedBy"], "approval-model:test")
 
     def test_dangerous_profile_auto_approves_through_the_bound_service_bridge(self) -> None:
         self.session = self.store.set_runtime_policy(
@@ -1690,7 +1958,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.gateway.bind_auto_approval_executor(auto_approve)
         response = self.gateway.execute(
             self._tool_call(
-                "ime_planning",
+                "planning",
                 "task_action",
                 taskId="task:1",
                 action="complete",
@@ -1778,7 +2046,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         response = gateway.execute(
             {
                 **self._tool_call(
-                    "ime_planning",
+                    "planning",
                     "task_action",
                     taskId="task:1",
                     action="complete",
@@ -2070,7 +2338,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), "changed\n")
         self.assertEqual(self.store.agent_plan(str(coordinator["id"]))["status"], "approved")
 
-    def test_workspace_write_requires_reviewed_plan_but_read_tools_remain_available(self) -> None:
+    def test_unplanned_user_request_reaches_existing_action_approval_policy(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-gated"
         workspace.mkdir()
         (workspace / "README.md").write_text("readable\n", encoding="utf-8")
@@ -2087,18 +2355,111 @@ class ControlToolGatewayTests(unittest.TestCase):
             }
         )["result"]
         self.assertIn("README.md", str(listed))
-        with self.assertRaisesRegex(ValueError, "Act Gate blocked.*plan_required"):
-            self.gateway.execute(
+        prepared = self.gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_shell",
+                    "run",
+                    command="pwd",
+                    cwd=str(workspace),
+                ),
+                "sessionId": coordinator["id"],
+            }
+        )["result"]
+        self.assertTrue(prepared["approvalRequired"])
+        self.assertEqual(prepared["approval"]["riskLevel"], "R2")
+        self.assertEqual(
+            self.store.agent_plan(str(coordinator["id"]))["status"],
+            "draft",
+        )
+
+    def test_workspace_write_receipt_registers_hash_bound_work_document(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-work-document"
+        workspace.mkdir()
+        coordinator = self.store.create(
+            title="work document coordinator",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=6,
+        )
+        session_id = str(coordinator["id"])
+        self._approve_plan(session_id)
+        plan = self.store.agent_plan(session_id)
+        documents = WorkDocumentService(
+            self.store.db_path,
+            sessions=self.store,
+            context_runtime=AgentContextRuntime(self.store.db_path),
+        )
+        documents.initialize()
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            work_documents=documents,
+        )
+        prepared = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_write",
+                    "apply",
+                    path="docs/work.md",
+                    resourceRevision="missing",
+                    content="# Canonical work\n",
+                    workDocument={
+                        "authorityKind": "session_plan",
+                        "authorityId": session_id,
+                        "authorityRevision": plan["revision"],
+                        "title": "Canonical work",
+                    },
+                ),
+                "sessionId": session_id,
+            }
+        )["result"]
+        approval = prepared["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        tampered = dict(decided)
+        tampered_preview = dict(tampered["preview"])
+        tampered_action = dict(tampered_preview["actionPayload"])
+        tampered_binding = dict(tampered_action["workDocument"])
+        tampered_binding["authorityRevision"] = int(plan["revision"]) + 1
+        tampered_action["workDocument"] = tampered_binding
+        tampered_preview["actionPayload"] = tampered_action
+        tampered["preview"] = tampered_preview
+        with self.assertRaisesRegex(ValueError, "payload no longer matches"):
+            gateway.apply_approval(tampered)
+
+        receipt = gateway.apply_approval(decided)
+        registration = receipt["workDocumentRegistration"]
+        self.assertEqual(registration["operation"], "register")
+        self.assertEqual(registration["document"]["authorityId"], session_id)
+        self.assertEqual(registration["document"]["contentSha256"], receipt["postimageSha256"])
+        listed = gateway.execute(
+            {
+                **self._tool_call("work_documents", "list", limit=10),
+                "sessionId": session_id,
+            }
+        )["result"]
+        self.assertEqual(listed["schemaVersion"], "rag-ime.work-document-list.v1")
+        self.assertEqual(listed["total"], 1)
+        self.assertEqual(
+            gateway.execute(
                 {
                     **self._tool_call(
-                        "workspace_shell",
-                        "run",
-                        command="pwd",
-                        cwd=str(workspace),
+                        "work_documents",
+                        "get",
+                        documentId=registration["document"]["documentId"],
                     ),
-                    "sessionId": coordinator["id"],
+                    "sessionId": session_id,
                 }
-            )
+            )["result"]["document"]["documentId"],
+            registration["document"]["documentId"],
+        )
 
     def test_workspace_harness_failure_keeps_approved_plan_out_of_execution(self) -> None:
         workspace = Path(self.tmp.name) / "workspace-failing"
@@ -2207,7 +2568,7 @@ class ControlToolGatewayTests(unittest.TestCase):
     def test_task_action_requires_native_approval_then_returns_rollback_receipt(self) -> None:
         prepared = self.gateway.execute(
             self._tool_call(
-                "ime_planning",
+                "planning",
                 "task_action",
                 taskId="task:1",
                 date="2026-07-13",
@@ -2390,7 +2751,7 @@ class ControlToolGatewayTests(unittest.TestCase):
     def test_task_action_fails_closed_when_task_changes_after_preview(self) -> None:
         prepared = self.gateway.execute(
             self._tool_call(
-                "ime_planning",
+                "planning",
                 "task_action",
                 taskId="task:1",
                 date="2026-07-13",
@@ -2415,13 +2776,13 @@ class ControlToolGatewayTests(unittest.TestCase):
             {"key": "pinyin.pairs.nL", "value": True},
         ]
         preview = self.gateway.execute(
-            self._tool_call("ime_input", "preview_settings", changes=changes)
+            self._tool_call("input", "preview_settings", changes=changes)
         )["result"]
         self.assertEqual(preview["changeCount"], 2)
         self.assertTrue(preview["approvalRequiredForApply"])
 
         prepared = self.gateway.execute(
-            self._tool_call("ime_input", "apply_settings", changes=changes)
+            self._tool_call("input", "apply_settings", changes=changes)
         )["result"]
         approval = prepared["approval"]
         self.assertEqual(self.facade.settings_payload["pinyin"]["pairs"]["nL"], False)
@@ -2440,7 +2801,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         rollback = self.gateway.execute(
             self._tool_call(
-                "ime_input",
+                "input",
                 "rollback_settings",
                 sourceApprovalId=approval["approvalId"],
             )
@@ -2458,7 +2819,7 @@ class ControlToolGatewayTests(unittest.TestCase):
     def test_input_settings_apply_fails_closed_after_any_settings_revision_change(self) -> None:
         prepared = self.gateway.execute(
             self._tool_call(
-                "ime_input",
+                "input",
                 "apply_settings",
                 changes=[{"key": "display.fadeAnimation", "value": False}],
             )
@@ -2477,14 +2838,14 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def test_lexicon_apply_hides_review_token_redeploys_and_can_rollback(self) -> None:
         review = self.gateway.execute(
-            self._tool_call("ime_input", "lexicon_review")
+            self._tool_call("input", "lexicon_review")
         )["result"]
         review_key = review["entries"][0]["reviewKey"]
         self.assertNotIn("must-not-reach-pi", str(review))
 
         prepared = self.gateway.execute(
             self._tool_call(
-                "ime_input",
+                "input",
                 "lexicon_apply",
                 selectedKeys=[review_key],
             )
@@ -2506,7 +2867,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         rollback = self.gateway.execute(
             self._tool_call(
-                "ime_input",
+                "input",
                 "lexicon_rollback",
                 sourceApprovalId=approval["approvalId"],
             )
@@ -2523,7 +2884,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def test_runtime_pause_resume_and_restart_require_native_approval(self) -> None:
         pause = self.gateway.execute(
-            self._tool_call("ime_runtime", "pause_ai")
+            self._tool_call("runtime", "pause_ai")
         )["result"]["approval"]
         self.assertEqual(pause["riskLevel"], "R1")
         self.assertFalse(self.management.ai_paused)
@@ -2538,7 +2899,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertTrue(self.management.ai_paused)
 
         resume = self.gateway.execute(
-            self._tool_call("ime_runtime", "resume_ai")
+            self._tool_call("runtime", "resume_ai")
         )["result"]["approval"]
         resume_decided = self.store.decide_approval(
             resume["approvalId"],
@@ -2550,7 +2911,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertFalse(resumed["aiPaused"])
 
         restart = self.gateway.execute(
-            self._tool_call("ime_runtime", "restart_predictor")
+            self._tool_call("runtime", "restart_predictor")
         )["result"]["approval"]
         self.assertEqual(restart["riskLevel"], "R2")
         restart_decided = self.store.decide_approval(
@@ -2563,7 +2924,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(restarted["status"], "succeeded")
 
         sidecar = self.gateway.execute(
-            self._tool_call("ime_runtime", "restart_sidecar")
+            self._tool_call("runtime", "restart_sidecar")
         )["result"]["approval"]
         self.assertEqual(sidecar["riskLevel"], "R2")
         sidecar_decided = self.store.decide_approval(
@@ -2584,7 +2945,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def test_runtime_action_fails_closed_when_runtime_revision_changes(self) -> None:
         prepared = self.gateway.execute(
-            self._tool_call("ime_runtime", "restart_predictor")
+            self._tool_call("runtime", "restart_predictor")
         )["result"]["approval"]
         decided = self.store.decide_approval(
             prepared["approvalId"],
@@ -2597,7 +2958,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def test_model_profile_preview_apply_and_rollback_preserve_secrets(self) -> None:
         profiles = self.gateway.execute(
-            self._tool_call("ime_models", "profiles")
+            self._tool_call("models", "profiles")
         )["result"]
         self.assertEqual(profiles["profiles"]["instant"]["provider"], "mlx")
         self.assertFalse(profiles["secretsVisible"])
@@ -2609,14 +2970,14 @@ class ControlToolGatewayTests(unittest.TestCase):
             "model": "qwen3:0.6b",
         }
         preview = self.gateway.execute(
-            self._tool_call("ime_models", "profile_preview", **requested)
+            self._tool_call("models", "profile_preview", **requested)
         )["result"]
         self.assertEqual(preview["restartComponent"], "predictor")
         self.assertTrue(preview["secretsPreserved"])
         self.assertEqual(len(preview["changes"]), 3)
 
         prepared = self.gateway.execute(
-            self._tool_call("ime_models", "profile_apply", **requested)
+            self._tool_call("models", "profile_apply", **requested)
         )["result"]
         approval = prepared["approval"]
         decided = self.store.decide_approval(
@@ -2632,7 +2993,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         rollback = self.gateway.execute(
             self._tool_call(
-                "ime_models",
+                "models",
                 "profile_rollback",
                 sourceApprovalId=approval["approvalId"],
             )
@@ -2649,7 +3010,7 @@ class ControlToolGatewayTests(unittest.TestCase):
     def test_voice_provider_switch_and_rollback_only_change_the_provider_choice(self) -> None:
         preview = self.gateway.execute(
             self._tool_call(
-                "ime_voice",
+                "voice",
                 "provider_preview",
                 provider="realtime_websocket",
             )
@@ -2659,7 +3020,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         prepared = self.gateway.execute(
             self._tool_call(
-                "ime_voice",
+                "voice",
                 "provider_apply",
                 provider="realtime_websocket",
             )
@@ -2677,7 +3038,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         rollback = self.gateway.execute(
             self._tool_call(
-                "ime_voice",
+                "voice",
                 "provider_rollback",
                 sourceApprovalId=prepared["approvalId"],
             )
@@ -2694,7 +3055,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported voice provider field"):
             self.gateway.execute(
                 self._tool_call(
-                    "ime_voice",
+                    "voice",
                     "provider_preview",
                     provider="http_transcription",
                     endpoint="https://must-not-enter-agent-tool.example/v1",
@@ -2709,7 +3070,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             "model": "knowledge-v2",
         }
         prepared = self.gateway.execute(
-            self._tool_call("ime_models", "profile_apply", **requested)
+            self._tool_call("models", "profile_apply", **requested)
         )["result"]["approval"]
         decided = self.store.decide_approval(
             prepared["approvalId"],
@@ -2724,7 +3085,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported model profile field"):
             self.gateway.execute(
                 self._tool_call(
-                    "ime_models",
+                    "models",
                     "profile_preview",
                     **requested,
                     apiKey="must-not-enter-pi-tool",
@@ -2734,7 +3095,7 @@ class ControlToolGatewayTests(unittest.TestCase):
     def test_model_profile_apply_fails_closed_after_configuration_change(self) -> None:
         prepared = self.gateway.execute(
             self._tool_call(
-                "ime_models",
+                "models",
                 "profile_apply",
                 slot="instant",
                 provider="ollama",
@@ -2753,13 +3114,13 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def test_configuration_export_and_restore_are_hash_bound_and_supervised(self) -> None:
         preview = self.gateway.execute(
-            self._tool_call("ime_configuration", "export_preview")
+            self._tool_call("configuration", "export_preview")
         )["result"]
         self.assertFalse(preview["secretsIncluded"])
         self.assertTrue(preview["approvalRequiredForExport"])
 
         prepared = self.gateway.execute(
-            self._tool_call("ime_configuration", "export")
+            self._tool_call("configuration", "export")
         )["result"]
         approval = prepared["approval"]
         backup_root = Path(os.environ["RAG_IME_APP_SUPPORT_DIR"]) / "Backups"
@@ -2783,7 +3144,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         restore = self.gateway.execute(
             self._tool_call(
-                "ime_configuration",
+                "configuration",
                 "restore_preview",
                 sourceApprovalId=approval["approvalId"],
             )
@@ -2798,7 +3159,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         restore_prepared = self.gateway.execute(
             self._tool_call(
-                "ime_configuration",
+                "configuration",
                 "restore_apply",
                 sourceApprovalId=approval["approvalId"],
             )
@@ -2821,7 +3182,7 @@ class ControlToolGatewayTests(unittest.TestCase):
     def test_applied_task_receipt_can_prepare_and_execute_one_approved_undo(self) -> None:
         prepared = self.gateway.execute(
             self._tool_call(
-                "ime_planning",
+                "planning",
                 "task_action",
                 taskId="task:1",
                 date="2026-07-13",
@@ -2841,7 +3202,7 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         undo = self.gateway.execute(
             self._tool_call(
-                "ime_planning",
+                "planning",
                 "undo_task_event",
                 eventId=action_receipt["taskEventId"],
             )
@@ -2861,26 +3222,26 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already been rolled back"):
             self.gateway.execute(
                 self._tool_call(
-                    "ime_planning",
+                    "planning",
                     "undo_task_event",
                     eventId=action_receipt["taskEventId"],
                 )
             )
 
     def test_overview_planning_document_knowledge_and_models_use_scoped_services(self) -> None:
-        overview = self.gateway.execute(self._tool_call("ime_overview", "status"))["result"]
-        planning = self.gateway.execute(self._tool_call("ime_planning", "dashboard"))["result"]
-        bases = self.gateway.execute(self._tool_call("ime_knowledge", "list_bases"))["result"]
+        overview = self.gateway.execute(self._tool_call("overview", "status"))["result"]
+        planning = self.gateway.execute(self._tool_call("planning", "dashboard"))["result"]
+        bases = self.gateway.execute(self._tool_call("knowledge", "list_bases"))["result"]
         knowledge = self.gateway.execute(
             self._tool_call(
-                "ime_knowledge",
+                "knowledge",
                 "search",
                 kbId="kb:project-docs",
                 query="为什么普通生成不经过 Pi",
                 topK=6,
             )
         )["result"]
-        models = self.gateway.execute(self._tool_call("ime_models", "status"))["result"]
+        models = self.gateway.execute(self._tool_call("models", "status"))["result"]
 
         self.assertEqual(overview["unhealthyComponents"], ["predictor"])
         self.assertIn("1 个未完成任务", planning["summary"])
@@ -2895,7 +3256,7 @@ class ControlToolGatewayTests(unittest.TestCase):
     def test_document_knowledge_search_normalizes_mode_and_preserves_file_name_scope(self) -> None:
         self.gateway.execute(
             self._tool_call(
-                "ime_knowledge",
+                "knowledge",
                 "search",
                 kbId="kb:project-docs",
                 query="Agent Loop",
@@ -2910,29 +3271,29 @@ class ControlToolGatewayTests(unittest.TestCase):
 
     def test_document_knowledge_exposes_only_five_read_operations_end_to_end(self) -> None:
         calls = [
-            self._tool_call("ime_knowledge", "list_bases"),
+            self._tool_call("knowledge", "list_bases"),
             self._tool_call(
-                "ime_knowledge",
+                "knowledge",
                 "search",
                 kbId="kb:project-docs",
                 query="Agent Loop",
             ),
             self._tool_call(
-                "ime_knowledge",
+                "knowledge",
                 "find",
                 kbId="kb:project-docs",
                 fileId="file:1",
                 patterns=["热路径"],
             ),
             self._tool_call(
-                "ime_knowledge",
+                "knowledge",
                 "open",
                 kbId="kb:project-docs",
                 fileId="file:1",
                 line=41,
                 windowSize=20,
             ),
-            self._tool_call("ime_knowledge", "status"),
+            self._tool_call("knowledge", "status"),
         ]
 
         for call in calls:
@@ -2943,7 +3304,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             [operation for operation, _payload in self.knowledge.calls[-5:]],
         )
         manifest = next(
-            item for item in self.gateway.manifests()["items"] if item["id"] == "ime_knowledge"
+            item for item in self.gateway.manifests()["items"] if item["id"] == "knowledge"
         )
         self.assertEqual(("list_bases", "search", "find", "open", "status"), tuple(manifest["operations"]))
 
@@ -2951,15 +3312,15 @@ class ControlToolGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not agent-manageable"):
             self.gateway.execute(
                 self._tool_call(
-                    "ime_input",
+                    "input",
                     "apply_settings",
                     changes=[{"key": "privacy.debugIncludeText", "value": True}],
                 )
             )
         with self.assertRaisesRegex(ValueError, "unsupported"):
-            self.gateway.execute(self._tool_call("ime_knowledge", "import", kbId="kb:project-docs"))
-        audit = self.gateway.execute(self._tool_call("ime_configuration", "audit"))["result"]
-        lexicon = self.gateway.execute(self._tool_call("ime_input", "lexicon_review"))["result"]
+            self.gateway.execute(self._tool_call("knowledge", "import", kbId="kb:project-docs"))
+        audit = self.gateway.execute(self._tool_call("configuration", "audit"))["result"]
+        lexicon = self.gateway.execute(self._tool_call("input", "lexicon_review"))["result"]
         self.assertNotIn("must-not-leak", str(audit))
         self.assertNotIn("must-not-reach-pi", str(lexicon))
 
@@ -2972,13 +3333,13 @@ class ControlToolGatewayTests(unittest.TestCase):
             facade=self.facade,
         )
 
-        status = gateway.execute(self._tool_call("ime_knowledge", "status"))["result"]
+        status = gateway.execute(self._tool_call("knowledge", "status"))["result"]
         self.assertFalse(status["available"])
         self.assertEqual(status["reason"], "knowledge_client_not_configured")
         with self.assertRaisesRegex(ValueError, "document knowledge library is unavailable"):
             gateway.execute(
                 self._tool_call(
-                    "ime_knowledge",
+                    "knowledge",
                     "search",
                     kbId="kb:project-docs",
                     query="Pi",
@@ -2992,7 +3353,6 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         forbidden = [
             "child_process",
-            "node:fs",
             "node:child_process",
             "registerCommand(",
             "execSync(",
@@ -3001,24 +3361,28 @@ class ControlToolGatewayTests(unittest.TestCase):
         for marker in forbidden:
             self.assertNotIn(marker, extension)
         for tool in (
-            "ime_overview",
-            "ime_input",
-            "ime_voice",
-            "ime_planning",
+            "overview",
+            "input",
+            "voice",
+            "planning",
             "agent_schedule",
-            "ime_memory",
+            "memory",
             "agent_role_book",
-            "ime_knowledge",
-            "ime_models",
-            "ime_runtime",
-            "ime_configuration",
-            "ime_agents",
+            "knowledge",
+            "models",
+            "runtime",
+            "configuration",
+            "agents",
             "agent_plan",
-            "workspace_list",
-            "workspace_read",
-            "workspace_search",
+            "ls",
+            "read",
+            "grep",
+            "find",
+            "edit",
+            "write",
             "workspace_patch",
-            "workspace_shell",
+            "workspace_lsp",
+            "bash",
         ):
             self.assertEqual(extension.count(f'name: "{tool}"'), 1)
         self.assertIn("RAG_IME_AGENT_TOOL_TOKEN", extension)
@@ -3046,6 +3410,71 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertNotIn('enum: ["apps", "books", "atoms", "tags", "phrases", "groups", "negative"]', extension)
         self.assertIn("result.reviewRequired === true", extension)
         self.assertIn("resolvedReviewRunIds.has(runId)", extension)
+        self.assertIn('executionMode: spec.executionMode ?? "sequential"', extension)
+        for read_only_tool in (
+            "overview",
+            "knowledge",
+            "ls",
+            "read",
+            "grep",
+            "find",
+        ):
+            declaration = extension.index(f'name: "{read_only_tool}"')
+            next_tool = extension.find("\n  {", declaration + 1)
+            tool_block = extension[
+                declaration : next_tool if next_tool >= 0 else len(extension)
+            ]
+            self.assertIn('executionMode: "parallel"', tool_block)
+        for stateful_tool in (
+            "memory",
+            "workspace_patch",
+            "workspace_lsp",
+            "edit",
+            "write",
+            "bash",
+            "workspace_job",
+        ):
+            declaration = extension.index(f'name: "{stateful_tool}"')
+            next_tool = extension.find("\n  {", declaration + 1)
+            tool_block = extension[
+                declaration : next_tool if next_tool >= 0 else len(extension)
+            ]
+            self.assertNotIn('executionMode: "parallel"', tool_block)
+        self.assertIn("class GatewayToolError extends Error", extension)
+        self.assertIn("recentNonRetryableFailures", extension)
+        self.assertIn("同一工具与参数刚刚已被判定为不可重试", extension)
+        self.assertIn('operations: ["list", "update", "submit_review"]', extension)
+        self.assertIn('error.errorCode === "workflow_gate_closed"', extension)
+        self.assertIn('requiredAction: "review_workflow_state"', extension)
+        self.assertIn("Plan 用于进度与审阅，不是普通执行请求的第二道启动许可", extension)
+        self.assertNotIn("wait for user approval before calling edit", extension)
+        for gateway_name in (
+            "workspace_list",
+            "workspace_read",
+            "workspace_search",
+            "workspace_lsp",
+            "workspace_edit",
+            "workspace_write",
+            "workspace_shell",
+            "workspace_job",
+        ):
+            self.assertIn(f'gatewayName: "{gateway_name}"', extension)
+        self.assertIn("gatewayParamsFor(spec, params)", extension)
+        self.assertIn("const maxInlineToolResultBytes = 24 * 1024", extension)
+        self.assertIn('const toolOutputPrefix = "tool-output://"', extension)
+        self.assertIn("function boundedToolResult(", extension)
+        self.assertIn("function readStoredToolOutput(", extension)
+        self.assertIn("fullOutputRef", extension)
+        self.assertIn("writeFileSync(filePath, body, { mode: 0o600 })", extension)
+        self.assertIn('spec.name === "read"', extension)
+        self.assertIn('{ required: ["resourceRef"] }', extension)
+        self.assertIn("selectorCursor: params.selectorCursor", extension)
+        self.assertIn("resourceRef,", extension)
+        self.assertIn('required: ["path", "resourceRevision", "edits"]', extension)
+        self.assertIn('required: ["path", "resourceRevision", "content"]', extension)
+        self.assertIn("resourceRevision: params.resourceRevision", extension)
+        self.assertIn('planItemId: { type: "string", minLength: 1, maxLength: 160 }', extension)
+        self.assertIn("主持 Agent 必须按验收条件核对结果", extension)
 
     def test_retired_room_operations_cannot_reenter_through_ime_agents(self) -> None:
         calls: list[tuple[str, dict[str, object]]] = []
@@ -3074,11 +3503,11 @@ class ControlToolGatewayTests(unittest.TestCase):
             with self.subTest(operation=operation):
                 with self.assertRaisesRegex(
                     ValueError,
-                    "unsupported ime_agents operation",
+                    "unsupported agents operation",
                 ):
                     gateway.execute(
                         self._tool_call(
-                            "ime_agents",
+                            "agents",
                             operation,
                             content="retired",
                         )
@@ -3090,6 +3519,9 @@ class ControlToolGatewayTests(unittest.TestCase):
 
         class _Extensions:
             def list(self):
+                return {"ok": True, "items": []}
+
+            def catalog(self):
                 return {"ok": True, "items": []}
 
             def create_draft(self, payload):
@@ -3107,7 +3539,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.gateway.extensions = _Extensions()
         draft = self.gateway.execute(
             self._tool_call(
-                "ime_plugins",
+                "plugins",
                 "create_draft",
                 draftId="draft-1",
                 manifest={"id": "log-helper"},
@@ -3116,14 +3548,14 @@ class ControlToolGatewayTests(unittest.TestCase):
         )
         validation = self.gateway.execute(
             self._tool_call(
-                "ime_plugins",
+                "plugins",
                 "validate",
                 sourcePath=draft["result"]["draft"]["sourcePath"],
             )
         )
         proposal = self.gateway.execute(
             self._tool_call(
-                "ime_plugins",
+                "plugins",
                 "propose_install",
                 validationToken=validation["result"]["validationToken"],
                 enable=True,
@@ -3136,7 +3568,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             {"action": "install", "validationToken": "validation-1", "enable": True},
         )
         plugin_manifest = next(
-            item for item in self.gateway.manifests()["items"] if item["id"] == "ime_plugins"
+            item for item in self.gateway.manifests()["items"] if item["id"] == "plugins"
         )
         self.assertNotIn("apply", plugin_manifest["operations"])
 
@@ -3209,8 +3641,198 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertEqual(scheduling.created_by_session_id, self.session["id"])
         self.assertFalse(scheduling.require_confirmation)
 
+    def test_workspace_lsp_readonly_and_governed_writes_use_canonical_gateway(self) -> None:
+        workspace = Path(self.tmp.name) / "workspace-lsp"
+        workspace.mkdir()
+        target = workspace / "main.py"
+        target.write_text("foo = 1\n", encoding="utf-8")
+
+        class _LspHarness:
+            def __init__(self) -> None:
+                self.read_calls = []
+                self.apply_calls = []
+
+            def lsp_status(self, session, args):
+                self.read_calls.append(("status", dict(args)))
+                return {
+                    "schemaVersion": "rag-ime.workspace-lsp-status.v1",
+                    "runtimeInstanceId": "workspace-lsp-00000000000000000000000000000001",
+                    "runtimeEpoch": 7,
+                    "observedAtMs": 1_000,
+                    "heartbeatExpiresAtMs": 31_000,
+                    "current": True,
+                    "summary": "fake LSP available",
+                    "state": "available",
+                    "roots": [],
+                }
+
+            def lsp_read(self, session, operation, args):
+                self.read_calls.append((operation, dict(args)))
+                return {
+                    "schemaVersion": "rag-ime.workspace-lsp-result.v1",
+                    "summary": "fake readonly result",
+                    "operation": operation,
+                    "root": str(workspace),
+                    "server": "fake",
+                    "items": [],
+                }
+
+            def prepare_lsp_mutation(self, session, operation, args):
+                return {"operation": operation, "args": dict(args)}
+
+            def lsp_mutation_preview(self, prepared):
+                return {
+                    "title": "确认重命名符号",
+                    "summary": "重命名符号将修改 1 个工作区文件",
+                    "operationLabel": "重命名符号",
+                    "changes": [
+                        {
+                            "label": "main.py",
+                            "before": "foo = 1",
+                            "after": "bar = 1",
+                        }
+                    ],
+                    "actionPayload": {
+                        "path": str(target),
+                        "newName": prepared["args"]["newName"],
+                        "files": [{"path": str(target), "content": "bar = 1\n"}],
+                    },
+                    "baseState": {
+                        "workspaceRoot": str(workspace),
+                        "workspaceRootSha256": "a" * 64,
+                        "server": "fake",
+                        "files": [],
+                    },
+                }
+
+            def apply_lsp_mutation(
+                self,
+                session,
+                operation,
+                action_payload,
+                base_state,
+            ):
+                self.apply_calls.append((operation, dict(action_payload), dict(base_state)))
+                target.write_text(
+                    str(action_payload["files"][0]["content"]),
+                    encoding="utf-8",
+                )
+                return {
+                    "schemaVersion": "rag-ime.workspace-lsp-mutation-receipt.v1",
+                    "mutationApplied": True,
+                    "summary": "workspace_lsp 已修改 1 个文件",
+                    "operation": operation,
+                    "root": str(workspace),
+                    "server": "fake",
+                    "changedFiles": [{"path": str(target)}],
+                    "undoAvailable": False,
+                }
+
+        harness = _LspHarness()
+        gateway = ControlToolGateway(
+            sessions=self.store,
+            management=self.management,
+            core=_Core(),
+            project="wisdom-weasel-rag-ime",
+            facade=_Facade(),
+            workspace_harness=harness,
+        )
+        readonly = self.store.create(
+            title="readonly LSP",
+            mode="coordinator",
+            execution_mode="read_only",
+            workspace_roots=[str(workspace)],
+            created_at_ms=30,
+        )
+        catalog = gateway.manifests(session_id=str(readonly["id"]))
+        lsp_capability = next(
+            item for item in catalog["items"] if item["id"] == "workspace_lsp"
+        )
+        authoritative = lsp_capability["runtimeProjection"]
+        self.assertTrue(authoritative["current"])
+        self.assertEqual(authoritative["runtimeEpoch"], 7)
+        self.assertEqual(authoritative["heartbeatExpiresAtMs"], 31_000)
+
+        status = gateway.execute(
+            {
+                **self._tool_call("workspace_lsp", "status"),
+                "sessionId": readonly["id"],
+            }
+        )["result"]
+        hover = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_lsp",
+                    "hover",
+                    path=str(target),
+                    line=1,
+                    column=1,
+                ),
+                "sessionId": readonly["id"],
+            }
+        )["result"]
+        self.assertEqual(status["state"], "available")
+        self.assertEqual(hover["operation"], "hover")
+        self.assertEqual(
+            self.store.list_approvals(session_id=str(readonly["id"])),
+            [],
+        )
+        with self.assertRaisesRegex(ValueError, "not enabled|read-only"):
+            gateway.execute(
+                {
+                    **self._tool_call(
+                        "workspace_lsp",
+                        "rename",
+                        path=str(target),
+                        line=1,
+                        column=1,
+                        newName="bar",
+                    ),
+                    "sessionId": readonly["id"],
+                }
+            )
+        self.assertEqual(
+            self.store.list_approvals(session_id=str(readonly["id"])),
+            [],
+        )
+
+        governed = self.store.create(
+            title="governed LSP",
+            mode="coordinator",
+            workspace_roots=[str(workspace)],
+            created_at_ms=31,
+        )
+        self._approve_plan(str(governed["id"]))
+        pending = gateway.execute(
+            {
+                **self._tool_call(
+                    "workspace_lsp",
+                    "rename",
+                    path=str(target),
+                    line=1,
+                    column=1,
+                    newName="bar",
+                ),
+                "sessionId": governed["id"],
+            }
+        )["result"]
+        self.assertTrue(pending["approvalRequired"])
+        self.assertEqual(pending["approval"]["riskLevel"], "R2")
+        self.assertEqual(target.read_text(encoding="utf-8"), "foo = 1\n")
+        approval = pending["approval"]
+        decided = self.store.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        receipt = gateway.apply_approval(decided)
+        self.assertTrue(receipt["mutationApplied"])
+        self.assertEqual(receipt["toolId"], "workspace_lsp")
+        self.assertEqual(target.read_text(encoding="utf-8"), "bar = 1\n")
+        self.assertEqual(len(harness.apply_calls), 1)
+
     def _call(self, operation: str, **args):
-        return self._tool_call("ime_memory", operation, **args)
+        return self._tool_call("memory", operation, **args)
 
     def _tool_call(self, tool: str, operation: str, **args):
         return {

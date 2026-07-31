@@ -90,6 +90,51 @@ describe('Agent context runtime panel', () => {
     ).toBe(true));
   });
 
+  it('keeps independent context query failures scoped to their owner and retry control', async () => {
+    let itemAttempts = 0;
+    let traceAttempts = 0;
+    const transport = new StubControlTransport('mock', {
+      'agent.session.contextItems.list': () => {
+        itemAttempts += 1;
+        if (itemAttempts === 1) throw new Error('items offline');
+        return { ok: true, items: [] };
+      },
+      'agent.session.contextTraces.list': () => {
+        traceAttempts += 1;
+        if (traceAttempts === 1) throw new Error('traces offline');
+        return { ok: true, items: [] };
+      },
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+    render(
+      <ControlTransportProvider transport={transport}>
+        <QueryClientProvider client={client}>
+          <ContextRuntimeSections open sessionId="session-1" />
+        </QueryClientProvider>
+      </ControlTransportProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: /查看上下文状态/ }));
+    const inbox = (await screen.findByText('上下文收件箱')).closest('section')!;
+    const pipeline = screen.getByText('上下文管线').closest('section')!;
+
+    expect(await within(inbox).findByRole('alert')).toHaveTextContent('上下文收件箱读取失败');
+    expect(within(pipeline).getByRole('alert')).toHaveTextContent('上下文组装记录读取失败');
+    expect(within(inbox).queryByText('没有等待处理的异步信息')).not.toBeInTheDocument();
+    expect(within(pipeline).queryByText('发送消息后会记录组装阶段')).not.toBeInTheDocument();
+
+    await user.click(within(inbox).getByRole('button', { name: '重新读取上下文收件箱' }));
+    await user.click(within(pipeline).getByRole('button', { name: '重新读取上下文组装记录' }));
+
+    await waitFor(() => expect(itemAttempts).toBe(2));
+    await waitFor(() => expect(traceAttempts).toBe(2));
+    expect(within(inbox).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(pipeline).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(inbox).getByText('没有等待处理的异步信息')).toBeVisible();
+    expect(within(pipeline).getByText('发送消息后会记录组装阶段')).toBeVisible();
+  });
+
   it('places converging trace nodes into topological layers', () => {
     const layers = contextTraceLayers(traceFixture());
     expect(layers.map((layer) => layer.map((node) => node.stage))).toEqual([

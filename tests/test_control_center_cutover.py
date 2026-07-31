@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -8,6 +11,36 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ControlCenterCutoverTests(unittest.TestCase):
+    def test_full_stack_installer_refuses_existing_explicit_squirrel_workspace(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-product-stack-") as tmp:
+            tmp_path = Path(tmp)
+            existing_workdir = tmp_path / "caller-owned-squirrel"
+            existing_workdir.mkdir()
+            caller_marker = existing_workdir / "keep-me"
+            caller_marker.write_text("caller owned\n", encoding="utf-8")
+
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts" / "install_product_stack.sh"), "--include-squirrel"],
+                cwd=ROOT,
+                env={
+                    **os.environ,
+                    "HOME": str(tmp_path),
+                    "RAG_IME_ALLOW_DIRTY_INSTALL": "1",
+                    "RAG_IME_APP_SUPPORT_DIR": str(tmp_path / "app-support"),
+                    "RAG_IME_SQUIRREL_WORKDIR": str(existing_workdir),
+                },
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 73)
+            self.assertIn(
+                "refusing to reuse existing explicit RAG_IME_SQUIRREL_WORKDIR",
+                result.stderr,
+            )
+            self.assertEqual(caller_marker.read_text(encoding="utf-8"), "caller owned\n")
+            self.assertFalse((tmp_path / "app-support").exists())
+
     def test_legacy_swift_control_center_is_removed(self) -> None:
         self.assertFalse((ROOT / "macos" / "RagImeControl").exists())
 
@@ -76,9 +109,40 @@ class ControlCenterCutoverTests(unittest.TestCase):
         self.assertIn("RAG_IME_INSTALL_AGENT_GATEWAY=0", installer)
         self.assertIn("RAG_IME_ROOM_KERNEL_MODE=kernel_only", installer)
         self.assertIn('"$ROOT/scripts/install_sidecar_launch_agent.sh"', installer)
+        self.assertLess(
+            installer.index('"$ROOT/scripts/install_mlx_predictor_launch_agent.sh"'),
+            installer.index('"$ROOT/scripts/install_sidecar_launch_agent.sh"'),
+        )
         self.assertIn("install_voice_input_launch_agent.sh", installer)
         self.assertIn("check_installed_product_components.py", installer)
         self.assertIn("--require-current", installer)
+        self.assertIn("prepare_stack_squirrel_workspace()", installer)
+        self.assertIn(
+            'mktemp -d "${TMPDIR:-/tmp}/rag-ime-squirrel-install-stack.XXXXXX"',
+            installer,
+        )
+        self.assertIn(
+            "refusing to reuse existing explicit $label",
+            installer,
+        )
+        self.assertIn(
+            'RAG_IME_SQUIRREL_PATCH="$ROOT/squirrel-patches/0001-add-rag-ime-sidecar.patch"',
+            installer,
+        )
+        self.assertIn("RAG_IME_SQUIRREL_RESET=0", installer)
+        self.assertIn("RAG_IME_SQUIRREL_BUILD_DRY_RUN=0", installer)
+        self.assertIn(
+            'run_with_stack_squirrel_workspace "$ROOT/scripts/prepare_squirrel_workspace.sh"',
+            installer,
+        )
+        self.assertIn(
+            'run_with_stack_squirrel_workspace "$ROOT/scripts/build_patched_squirrel.sh" install',
+            installer,
+        )
+        self.assertLess(
+            installer.rindex("  prepare_stack_squirrel_workspace"),
+            installer.index('EXTENSION_SOURCE="$ROOT/integrations/browser-copilot/extension"'),
+        )
         self.assertIn("prune_managed_pi_runtime.py", installer)
         self.assertIn("--retain-generations 2", installer)
         self.assertIn("--plan \"$PI_RETENTION_PLAN\"", installer)

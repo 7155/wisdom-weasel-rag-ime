@@ -408,6 +408,10 @@ main[data-route-id='observability'] .observation-debug-context > summary::marker
     grid-column: auto;
   }
 
+  main[data-route-id='observability'] .observation-search {
+    height: var(--control-height-lg);
+  }
+
   main[data-route-id='observability'] .observation-category-tabs {
     flex-wrap: wrap;
     overflow: visible;
@@ -416,6 +420,7 @@ main[data-route-id='observability'] .observation-debug-context > summary::marker
   main[data-route-id='observability'] .observation-category-tabs button {
     flex: 1 0 auto;
     padding-inline: 8px;
+    min-height: var(--control-height-lg);
   }
 
   main[data-route-id='observability'] .observation-timeline button {

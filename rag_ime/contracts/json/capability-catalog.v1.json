@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.capability-catalog.v1",
+  "type": "object",
+  "required": ["schemaVersion", "ok", "revision", "effectiveAtMs", "projectScope", "items"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.capability-catalog.v1"},
+    "ok": {"type": "boolean", "const": true},
+    "revision": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "effectiveAtMs": {"type": "integer", "minimum": 0},
+    "projectScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["supported", "identityKind", "projectId", "reason"],
+          "properties": {
+            "supported": {"type": "boolean", "const": true},
+            "identityKind": {"type": "string", "const": "workspace_scope_sha256"},
+            "projectId": {"type": "string", "pattern": "^workspace-[a-f0-9]{64}$"},
+            "reason": {"type": "string", "const": "session_workspace_scope"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["supported", "identityKind", "reason"],
+          "properties": {
+            "supported": {"type": "boolean", "const": false},
+            "identityKind": {"type": "string", "const": "none"},
+            "reason": {"type": "string", "const": "stable_project_identity_unavailable"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "sessionPolicy": {
+      "type": "object",
+      "required": ["sessionId", "mode", "executionMode", "workspaceScopeGranted", "toolProfileVersion", "toolAllowlistMode", "allowedTools", "policyRevision", "disclosurePreferences", "effectiveAtMs"],
+      "properties": {
+        "sessionId": {"type": "string", "minLength": 1},
+        "mode": {"type": "string", "enum": ["assistant", "coordinator"]},
+        "executionMode": {"type": "string", "enum": ["read_only", "per_action", "workspace_managed", "full_trust"]},
+        "workspaceScopeGranted": {"type": "boolean"},
+        "toolProfileVersion": {"type": "string", "minLength": 1},
+        "toolAllowlistMode": {"type": "string", "enum": ["profile", "explicit"]},
+        "allowedTools": {"type": "array", "items": {"type": "string"}},
+        "policyRevision": {"type": "integer", "minimum": 1},
+        "effectiveAtMs": {"type": "integer", "minimum": 0},
+        "disclosurePreferences": {
+          "type": "object",
+          "required": ["globalDefault", "projectDefault", "session", "effective"],
+          "properties": {
+            "globalDefault": {"$ref": "#/$defs/preferences"},
+            "projectDefault": {"$ref": "#/$defs/preferences"},
+            "session": {"$ref": "#/$defs/preferences"},
+            "effective": {
+              "type": "object",
+              "additionalProperties": {"type": "string", "enum": ["enabled", "disabled"]}
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "canonicalId", "kind", "source", "status", "risk", "requiredPermissions", "authorization", "disclosure", "effectiveScope", "reasons", "revision", "effectiveAtMs"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "canonicalId": {"type": "string", "pattern": "^(tool|skill|extension):.+$"},
+          "kind": {"type": "string", "enum": ["tool", "skill", "extension"]},
+          "source": {
+            "type": "object",
+            "required": ["kind", "label"],
+            "properties": {
+              "kind": {"type": "string", "minLength": 1},
+              "label": {"type": "string", "minLength": 1}
+            }
+          },
+          "status": {"type": "string", "minLength": 1},
+          "risk": {"type": "string", "minLength": 1},
+          "requiredPermissions": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "authorization": {
+            "type": "object",
+            "required": ["state", "reason"],
+            "properties": {
+              "state": {"type": "string", "enum": ["authorized", "denied", "not_applicable"]},
+              "reason": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          },
+          "disclosure": {
+            "type": "object",
+            "required": ["preference", "effective", "state", "reason", "scope"],
+            "properties": {
+              "preference": {"type": "string", "enum": ["inherit", "enabled", "disabled"]},
+              "effective": {"type": "string", "enum": ["enabled", "disabled"]},
+              "state": {"type": "string", "enum": ["disclosed", "hidden"]},
+              "reason": {"type": "string", "minLength": 1},
+              "scope": {"type": "string", "enum": ["session", "project_default", "global_default", "built_in_default"]}
+            },
+            "additionalProperties": false
+          },
+          "effectiveScope": {"type": "string", "enum": ["session", "project_default", "global_default", "built_in_default"]},
+          "reasons": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "revision": {"type": "string", "minLength": 1},
+          "effectiveAtMs": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "preferences": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "enum": ["inherit", "enabled", "disabled"]}
+    }
+  }
+}

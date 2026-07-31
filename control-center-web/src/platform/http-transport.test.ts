@@ -20,6 +20,82 @@ describe('HttpControlTransport', () => {
     expect(() => transport.browserSnapshotImageUrl('../private')).toThrow(/bounded snapshotId/);
   });
 
+  it('uploads browser clipboard Files to the fixed owner-scoped managed media route', async () => {
+    const calls: { url: URL; init?: RequestInit }[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const file = init?.body as File;
+      const ownerKey = url.searchParams.has('roomId') ? 'roomId' : 'sessionId';
+      const ownerId = url.searchParams.get(ownerKey) ?? '';
+      calls.push({ url, init });
+      return new Response(JSON.stringify({
+        schemaVersion: 'rag-ime.agent-media-import.v1',
+        ok: true,
+        media: {
+          schemaVersion: 'rag-ime.agent-media.v1',
+          mediaId: 'media_http_fixture_01',
+          [ownerKey]: ownerId,
+          ownerType: ownerKey === 'roomId' ? 'room' : 'session',
+          ownerId,
+          fileName: file.name,
+          mimeType: file.type,
+          byteSize: file.size,
+          sha256: 'a'.repeat(64),
+          origin: 'user_attachment',
+        },
+      }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+    });
+    const image = new File(['png'], 'clipboard.png', { type: 'image/png' });
+
+    await expect(transport.pasteImages({
+      sessionId: 'session:http-1',
+      files: [image],
+    })).resolves.toEqual([
+      expect.objectContaining({
+        id: 'media_http_fixture_01',
+        sessionId: 'session:http-1',
+        sha256: 'a'.repeat(64),
+      }),
+    ]);
+    await expect(transport.pasteImages({
+      roomId: 'room:http-1',
+      files: [image],
+    })).resolves.toEqual([
+      expect.objectContaining({
+        id: 'media_http_fixture_01',
+        roomId: 'room:http-1',
+      }),
+    ]);
+
+    expect(calls.map((call) => call.url.toString())).toEqual([
+      'http://127.0.0.1:8766/api/agent/media/import?sessionId=session%3Ahttp-1&fileName=clipboard.png',
+      'http://127.0.0.1:8766/api/agent/media/import?roomId=room%3Ahttp-1&fileName=clipboard.png',
+    ]);
+    expect(calls.every((call) => call.init?.body === image)).toBe(true);
+    expect(calls.every((call) => new Headers(call.init?.headers).get('Cache-Control') === 'no-store')).toBe(true);
+  });
+
+  it('does not pretend HTTP can recover clipboard images when WebKit exposes no File', async () => {
+    const fetchMock = vi.fn() as typeof fetch;
+    const transport = new HttpControlTransport({
+      baseUrl: 'http://127.0.0.1:8766',
+      fetch: fetchMock,
+    });
+
+    await expect(transport.pasteImages({
+      sessionId: 'session:http-1',
+      maxFiles: 1,
+    })).rejects.toThrow(/requires clipboard File objects/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('uses a fixed route mapping rather than caller-provided URLs', async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

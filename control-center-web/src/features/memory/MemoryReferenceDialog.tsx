@@ -20,12 +20,10 @@ import {
 import {
   InlineNotice,
   StatusBadge,
-  asRecord,
-  numberValue,
   publicErrorText,
-  stringValue,
 } from '@/features/overview/management-ui';
 import { useMemoryReference, type MemoryReferenceKind } from './api';
+import type { MemoryReferenceV1 } from '@/contracts/generated/memory-reference.v1';
 
 export interface MemoryReferenceSelection {
   kind: MemoryReferenceKind;
@@ -57,29 +55,24 @@ export function MemoryReferenceDialog({
 
   const current = stack[stack.length - 1] ?? root;
   const query = useMemoryReference(current.kind, current.referenceId, Boolean(referenceId));
-  const payload = asRecord(query.data);
-  const directItem = asRecord(payload.item);
-  const item = Object.keys(directItem).length ? directItem : asRecord(payload.reference);
-  const directSource = asRecord(payload.source);
-  const source = Object.keys(directSource).length ? directSource : asRecord(item.source);
-  const directRef = asRecord(payload.ref);
-  const canonicalRef = Object.keys(directRef).length ? directRef : asRecord(item.ref);
-  const references = mergeEvidenceReferences([
-    payload.evidenceRefs,
-    payload.references,
-    payload.sourceRefs,
-    item.evidenceRefs,
-    item.references,
-    item.sourceRefs,
-  ], current.kind);
-  const disposition = stringValue(
-    item.disposition,
-    stringValue(payload.disposition, stringValue(item.status, stringValue(canonicalRef.status))),
-  );
-  const redacted = referenceIsRedacted(payload, item, source);
+  const payload = query.data;
+  const refetch = query.refetch;
+  const item = payload?.item;
+  const source = payload?.source;
+  const resolvedReference = item && source ? { item, source } : undefined;
+  const references: MemoryReferenceSelection[] = (payload?.evidenceRefs ?? []).map((reference) => ({
+    kind: reference.referenceKind,
+    referenceId: reference.referenceId,
+    ...(reference.label ? { label: reference.label } : {}),
+  }));
+  const sourceContext = item?.sourceContext;
+  const sourceContextAvailable = item?.sourceContextAvailable === true && Boolean(sourceContext);
+  const sourceContextRedacted = sourceContext?.redacted === true;
+  const disposition = item?.status ?? '';
+  const redacted = item?.sensitive === true;
   const forgotten = ['not_for_memory', 'expired', 'tombstoned', 'forgotten'].includes(disposition);
-  const title = referenceTitle(item, current);
-  const content = redacted ? '' : referenceContent(item);
+  const title = item?.title || item?.textPreview || item?.text || current.label || current.referenceId;
+  const content = redacted ? '' : item?.detail || item?.summary || item?.text || '';
   const currentKey = referenceKey(current);
   const visited = new Set(stack.map(referenceKey));
 
@@ -100,15 +93,28 @@ export function MemoryReferenceDialog({
         </DialogHeader>
 
         {query.isPending ? (
-          <p className="memory-layer-loading"><LoaderCircle size={15} />正在读取引用详情</p>
+          <p aria-live="polite" className="memory-layer-loading" role="status"><LoaderCircle size={15} />正在读取引用详情</p>
         ) : null}
         {query.error ? (
-          <InlineNotice title="引用暂时无法读取" tone="danger">
-            {publicErrorText(query.error, '引用可能已归档，或当前服务尚未完成投影。')}
-          </InlineNotice>
+          <div className="memory-reference-dialog__feedback">
+            <InlineNotice title="引用暂时无法读取" tone="danger">
+              {publicErrorText(query.error, '引用可能已归档，或当前服务尚未完成投影。')}
+            </InlineNotice>
+            <Button disabled={query.isFetching} onClick={() => void refetch()} size="small" variant="quiet">
+              {query.isFetching ? '正在重试' : '重试读取'}
+            </Button>
+          </div>
+        ) : null}
+        {!query.isPending && !query.error && !resolvedReference ? (
+          <div className="memory-reference-dialog__feedback">
+            <InlineNotice title="没有可显示的引用" tone="info">
+              当前来源没有返回可安全显示的详情。它可能已归档，或不在当前控制中心的所属范围内。
+            </InlineNotice>
+            <Button onClick={() => void refetch()} size="small" variant="quiet">重新读取</Button>
+          </div>
         ) : null}
 
-        {!query.isPending && !query.error ? (
+        {!query.isPending && !query.error && resolvedReference ? (
           <div className="memory-reference-view" data-reference-key={currentKey}>
             <div className="memory-reference-view__identity">
               <span><Fingerprint size={16} /></span>
@@ -133,12 +139,38 @@ export function MemoryReferenceDialog({
 
             <dl className="memory-reference-view__facts">
               <ReferenceFact label="引用类型" value={referenceKindLabel(current.kind)} />
-              <ReferenceFact label="来源类别" value={stringValue(source.type, stringValue(source.kind, stringValue(source.sourceKind, stringValue(item.sourceType, '未标注'))))} />
-              <ReferenceFact label="来源对象" value={stringValue(source.id, stringValue(source.sourceId, stringValue(canonicalRef.sourceId, '未标注')))} />
-              <ReferenceFact label="归属" value={referenceOwner(item)} />
-              <ReferenceFact label="时间" value={referenceTime(item)} />
+              <ReferenceFact label="来源类别" value={resolvedReference.source.sourceKind || resolvedReference.source.kind} />
+              <ReferenceFact label="来源对象" value={resolvedReference.source.id} />
+              <ReferenceFact
+                label="归属"
+                value={resolvedReference.item.ownerKind && resolvedReference.item.ownerId ? `${resolvedReference.item.ownerKind} · ${resolvedReference.item.ownerId}` : '未标注'}
+              />
+              <ReferenceFact label="时间" value={referenceTime(resolvedReference.item)} />
               <ReferenceFact label="下级引用" value={`${references.length} 条`} />
             </dl>
+            {current.kind === 'event' ? (
+              <section className="memory-reference-view__source-context" aria-label="整理使用的输入上下文">
+                <header>
+                  <span><GitBranch size={15} /><strong>整理使用的输入上下文</strong></span>
+                  <small>仅所属范围可读</small>
+                </header>
+                {!sourceContextAvailable ? (
+                  <p>当前引用不在本控制中心的所属范围内，因此不返回输入上下文。</p>
+                ) : sourceContextRedacted ? (
+                  <InlineNotice title="输入上下文已脱敏" tone="warning">
+                    上下文参与了来源指纹与语义分组，但正文不会显示。
+                  </InlineNotice>
+                ) : (
+                  <>
+                    <dl>
+                      <ReferenceFact label="当时上下文" value={sourceContext?.recentContext || '空'} />
+                      <ReferenceFact label="当时预编辑" value={sourceContext?.preedit || '空'} />
+                    </dl>
+                    <p>这些字段来自原始事件，仅用于来源指纹和语义分组；活动时间线只保留稳定引用。</p>
+                  </>
+                )}
+              </section>
+            ) : null}
 
             <section className="memory-reference-view__children" aria-label="来源证据与引用">
               <header><span><GitBranch size={15} /><strong>来源证据与引用</strong></span><small>{references.length} 条</small></header>
@@ -185,127 +217,12 @@ function ReferenceFact({ label, value }: { label: string; value: string }) {
   return <div><dt>{label}</dt><dd>{value || '未标注'}</dd></div>;
 }
 
-function parseEvidenceReferences(value: unknown, fallbackKind: MemoryReferenceKind): MemoryReferenceSelection[] {
-  if (!Array.isArray(value)) return [];
-  const references: MemoryReferenceSelection[] = [];
-  const seen = new Set<string>();
-  for (const raw of value) {
-    const item = asRecord(raw);
-    const rawId = typeof raw === 'string'
-      ? raw
-      : stringValue(item.referenceId, stringValue(item.refId, stringValue(item.id, stringValue(item.sourceId))));
-    const rawKind = typeof raw === 'string'
-      ? inferReferenceKind(raw, fallbackKind)
-      : normalizeReferenceKind(
-        stringValue(
-          item.kind,
-          stringValue(item.referenceKind, stringValue(item.sourceKind, stringValue(item.sourceType))),
-        ),
-        rawId,
-        fallbackKind,
-      );
-    if (!rawId || !rawKind) continue;
-    const reference = {
-      kind: rawKind,
-      referenceId: rawId,
-      label: typeof raw === 'string' ? '' : stringValue(item.label, stringValue(item.title, stringValue(item.textPreview))),
-    };
-    const key = referenceKey(reference);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    references.push(reference);
-  }
-  return references.slice(0, 80);
-}
 
-function mergeEvidenceReferences(
-  values: unknown[],
-  fallbackKind: MemoryReferenceKind,
-): MemoryReferenceSelection[] {
-  const seen = new Set<string>();
-  return values.flatMap((value) => parseEvidenceReferences(value, fallbackKind)).filter((reference) => {
-    const key = referenceKey(reference);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, 80);
-}
-
-function referenceIsRedacted(
-  payload: Record<string, unknown>,
-  item: Record<string, unknown>,
-  source: Record<string, unknown>,
-): boolean {
-  const privacy = stringValue(
-    item.privacyDisposition,
-    stringValue(item.privacyLevel, stringValue(source.privacyDisposition, stringValue(payload.privacyDisposition))),
-  ).toLocaleLowerCase('en-US');
-  return payload.redacted === true
-    || item.redacted === true
-    || item.sensitive === true
-    || source.redacted === true
-    || source.sensitive === true
-    || ['sensitive', 'secret', 'credential', 'redacted'].includes(privacy);
-}
-
-function normalizeReferenceKind(
-  value: string,
-  referenceId: string,
-  fallback: MemoryReferenceKind,
-): MemoryReferenceKind {
-  const normalized = value.trim().toLocaleLowerCase('en-US').replaceAll('-', '_');
-  const aliases: Record<string, MemoryReferenceKind> = {
-    input_event: 'event',
-    event: 'event',
-    agent_evidence: 'evidence',
-    memory_evidence: 'evidence',
-    evidence: 'evidence',
-    memory_atom: 'atom',
-    atom: 'atom',
-    memory_book: 'book',
-    book: 'book',
-    activity_timeline: 'timeline',
-    timeline: 'timeline',
-    role_book: 'role_book_revision',
-    role_book_revision: 'role_book_revision',
-  };
-  return aliases[normalized] ?? inferReferenceKind(referenceId, fallback);
-}
-
-function inferReferenceKind(referenceId: string, fallback: MemoryReferenceKind): MemoryReferenceKind {
-  const normalized = referenceId.toLocaleLowerCase('en-US');
-  if (/^\d+$/u.test(normalized) || normalized.startsWith('event:') || normalized.startsWith('input-memory:')) return 'event';
-  if (normalized.startsWith('evidence:') || normalized.startsWith('agent-memory:')) return 'evidence';
-  if (normalized.startsWith('atom:')) return 'atom';
-  if (normalized.startsWith('book:')) return 'book';
-  if (normalized.startsWith('timeline:')) return 'timeline';
-  if (normalized.startsWith('revision:') || normalized.startsWith('role-book:')) return 'role_book_revision';
-  return fallback;
-}
-
-function referenceTitle(item: Record<string, unknown>, selection: MemoryReferenceSelection): string {
-  return stringValue(
-    item.title,
-    stringValue(item.displayName, stringValue(item.textPreview, stringValue(item.text, selection.label || selection.referenceId))),
-  );
-}
-
-function referenceContent(item: Record<string, unknown>): string {
-  return stringValue(
-    item.detail,
-    stringValue(item.summary, stringValue(item.text, stringValue(item.committedText, stringValue(item.note)))),
-  );
-}
-
-function referenceOwner(item: Record<string, unknown>): string {
-  const ownerKind = stringValue(item.ownerKind, stringValue(item.owner_kind));
-  const ownerId = stringValue(item.ownerId, stringValue(item.owner_id));
-  return ownerKind && ownerId ? `${ownerKind} · ${ownerId}` : '未标注';
-}
-
-function referenceTime(item: Record<string, unknown>): string {
-  const value = numberValue(item.updatedAtMs, numberValue(item.occurredAtMs, numberValue(item.createdAtMs)));
-  return value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(value) : '未标注';
+function referenceTime(item: MemoryReferenceV1['item'] | undefined): string {
+  const value = item?.updatedAtMs || item?.occurredAtMs || item?.createdAtMs;
+  return value
+    ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(value)
+    : '未标注';
 }
 
 function referenceKindLabel(kind: MemoryReferenceKind): string {

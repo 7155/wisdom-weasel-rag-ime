@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "rag-ime.contract.agent-session.v1",
   "type": "object",
-  "required": ["schemaVersion", "id", "title", "mode", "status", "roleId", "roleVersion", "roleBookRevisionId", "modelProfile", "toolProfileVersion", "executionMode", "workspaceScopeGranted", "workspaceScopeSha256", "workspaceScopeGrantedAtMs", "projectContextEnabled", "piSkillsEnabled", "codexSkillsEnabled", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
+  "required": ["schemaVersion", "id", "title", "mode", "status", "roleId", "roleVersion", "roleBookRevisionId", "modelProfile", "toolProfileVersion", "executionMode", "workspaceScopeGranted", "workspaceScopeSha256", "workspaceScopeGrantedAtMs", "capabilityDisclosurePreferences", "policyRevision", "projectContextEnabled", "piSkillsEnabled", "codexSkillsEnabled", "createdAtMs", "updatedAtMs", "messageCount", "workspaceRoots"],
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.agent-session.v1"},
     "id": {"type": "string", "minLength": 1},
@@ -25,6 +25,16 @@
     "mode": {"type": "string", "enum": ["assistant", "coordinator"]},
     "status": {"type": "string", "enum": ["idle", "active", "busy", "faulted", "archived"]},
     "sessionKind": {"type": "string", "enum": ["conversation", "subagent_runtime"]},
+    "roomParticipant": {
+      "type": "object",
+      "required": ["roomId", "participantId", "status"],
+      "properties": {
+        "roomId": {"type": "string", "minLength": 1},
+        "participantId": {"type": "string", "minLength": 1},
+        "status": {"type": "string", "enum": ["active", "muted", "removed"]}
+      },
+      "additionalProperties": false
+    },
     "roleId": {"type": "string", "minLength": 1},
     "roleVersion": {"type": "string", "minLength": 1},
     "roleBookRevisionId": {"type": "string", "maxLength": 240},
@@ -37,6 +47,14 @@
     "workspaceScopeGrantedAtMs": {"type": "integer", "minimum": 0},
     "toolAllowlistMode": {"type": "string", "enum": ["profile", "explicit"]},
     "allowedTools": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "capabilityDisclosurePreferences": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["inherit", "enabled", "disabled"]
+      }
+    },
+    "policyRevision": {"type": "integer", "minimum": 1},
     "projectContextEnabled": {"type": "boolean"},
     "piSkillsEnabled": {"type": "boolean"},
     "codexSkillsEnabled": {"type": "boolean"},

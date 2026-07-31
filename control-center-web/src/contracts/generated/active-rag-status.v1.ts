@@ -12,6 +12,43 @@ export interface ActiveRagStatusV1 {
   candidateCount: number;
   expiresAfterMs?: number;
   candidates?: unknown[];
+  /**
+   * @maxItems 8
+   */
+  evidence?:
+    | []
+    | [RedactedEvidence]
+    | [RedactedEvidence, RedactedEvidence]
+    | [RedactedEvidence, RedactedEvidence, RedactedEvidence]
+    | [RedactedEvidence, RedactedEvidence, RedactedEvidence, RedactedEvidence]
+    | [RedactedEvidence, RedactedEvidence, RedactedEvidence, RedactedEvidence, RedactedEvidence]
+    | [
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+      ]
+    | [
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+      ]
+    | [
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+        RedactedEvidence,
+      ];
   stored?: boolean;
   noStore?: boolean;
   privacyAssessment?: {
@@ -48,6 +85,7 @@ export interface ActiveRagStatusV1 {
       elapsedMs: number;
       [k: string]: unknown;
     };
+    contextView?: ContextView;
     progress?: {
       stage: string;
       elapsedMs: number;
@@ -138,4 +176,137 @@ export interface ActiveRagStatusV1 {
   };
   traceEvents?: unknown[];
   [k: string]: unknown;
+}
+export interface RedactedEvidence {
+  evidenceId: string;
+  sourceType: string;
+  sourceLane: string;
+  score: number;
+  confidence: number;
+  /**
+   * @maxItems 6
+   */
+  tags:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string];
+  hasPreview: boolean;
+}
+export interface ContextView {
+  schemaVersion: 'rag-ime.active-rag-context-view.v1';
+  source: 'frontend_request' | 'provider_request';
+  currentRequest: string;
+  currentContext: string;
+  selectedText: string;
+  taskMode: string;
+  groundingMode: string;
+  windowContext: {
+    [k: string]: unknown;
+  };
+  /**
+   * @maxItems 4
+   */
+  recentCompleteInputs:
+    | []
+    | [unknown]
+    | [unknown, unknown]
+    | [unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown];
+  planning: {
+    [k: string]: unknown;
+  };
+  activityTimeline: {
+    [k: string]: unknown;
+  };
+  /**
+   * @maxItems 12
+   */
+  groundingEvidence:
+    | []
+    | [unknown]
+    | [unknown, unknown]
+    | [unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown]
+    | [
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+      ]
+    | [
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+      ];
+  /**
+   * @maxItems 12
+   */
+  evidenceHints:
+    | []
+    | [unknown]
+    | [unknown, unknown]
+    | [unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown]
+    | [unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown, unknown]
+    | [
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+      ]
+    | [
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+        unknown,
+      ];
+  contextBudget: {
+    [k: string]: unknown;
+  };
 }

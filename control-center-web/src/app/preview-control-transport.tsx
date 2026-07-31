@@ -1,14 +1,52 @@
 import { CONTROL_ROUTES, controlRoute, type ControlPathId } from '@/platform/routes';
-import type { ControlRequest, ControlTransport } from '@/platform/transport';
+import type {
+  AgentImagePasteOptions,
+  ControlRequest,
+  ControlTransport,
+  PickedFile,
+} from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
-import { previewModelCatalog, previewPersonas, PREVIEW_REPORT_BYTES, PREVIEW_REPORT_HTML } from '@/features/agent/preview-data';
+import { previewBackgroundJobs, previewModelCatalog, previewPersonas, PREVIEW_REPORT_HTML } from '@/features/agent/preview-data';
+import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { AgentWorkflowStateV1 } from '@/contracts/generated/agent-workflow-state.v1';
+import { createPreviewHistoryRoutes } from './preview-history-routes';
+import { createPreviewWorkDocumentRoutes } from './preview-work-document-routes';
+import {
+  previewActivityTimeline,
+  previewMemoryApplyPreview,
+  previewMemoryCurationRun,
+  previewMemoryCurationStatus,
+  previewMemoryEntity,
+  previewMemoryGraph,
+  previewMemoryPage,
+  previewMemoryReference,
+  previewMemorySummary,
+  previewMemoryWorkReceipt,
+  previewTimelineDate,
+} from './preview-memory-data';
+import {
+  previewRoomKernelReceipt,
+  previewRoomKernelRouteManifest,
+  previewRoomKernelSnapshot,
+  previewRoomSnapshot,
+} from './preview-room-data';
+import {
+  applyPreviewConfigurationChanges,
+  previewConfigurationSchema,
+  previewConfigurationSettings,
+  previewConfigurationValues,
+  previewLexiconReview,
+} from './preview-input-data';
 
 export function createPreviewTransport(): MockControlTransport {
   let nextSessionId = 1;
   let nextRoleId = 1;
   let nextWakeScheduleId = 1;
+  let nextRoomId = 1;
+  const previewRoomSnapshots = new Map<string, Record<string, unknown>>([
+    ['room-preview', previewRoomSnapshot('room-preview') as unknown as Record<string, unknown>],
+  ]);
   let previewEvidenceDisposition = 'not_for_memory';
   let previewMemoryRunStatus = 'draft';
   let previewWorkflow = previewWorkflowState('session-preview');
@@ -17,8 +55,33 @@ export function createPreviewTransport(): MockControlTransport {
   let previewLifecyclePolicies = previewLifecyclePolicyItems();
   const previewTimelineStatuses = new Map<string, string>();
   const previewMemorySelections = new Map<number, boolean>([[1, true], [2, false], [3, true]]);
+  let previewConfiguration = previewConfigurationValues();
+  let previousPreviewConfiguration: Record<string, unknown> | undefined;
+  let previewConfigurationRevision = 12;
+  let previewLexiconRollbackId = '';
+  let nextKnowledgeBaseId = 1;
+  let nextKnowledgeJobId = 1;
+  let previewKnowledgeBases = [previewKnowledgeBase()];
+  const previewKnowledgeDocuments: Record<string, unknown>[] = [{
+    id: 'file:preview-yuxi',
+    baseId: 'kb:preview-project-docs',
+    fileName: 'agent-runtime-notes.md',
+    mimeType: 'text/markdown',
+    byteSize: 48_320,
+    status: 'ready',
+    stage: 'ready',
+    chunkCount: 36,
+    parserProvider: 'builtin',
+    revision: 1,
+    updatedAtMs: Date.now() - 180_000,
+  }];
+  let previewKnowledgeJobs: Record<string, unknown>[] = [];
+  let previewTransport: MockControlTransport | undefined;
+  const previewBackgroundJobsBySession: Record<string, AgentBackgroundJobV1[]> = {
+    'session-states': previewBackgroundJobs('session-states'),
+  };
   const sessions: Record<string, unknown>[] = [
-    previewSession('session-preview', '控制中心迁移', 'companion-present-v1', Date.now(), '1', { messageCount: 4, lastMessagePreview: '三条 Lane 已经收束到同一个 ControlTransport。' }),
+    previewSession('session-preview', '控制中心迁移', 'companion-present-v1', Date.now(), '1', { messageCount: 4, lastMessagePreview: '三条工作线已经收束到同一个控制入口。' }),
     // Genuinely empty so the preview can exercise the welcome state.
     previewSession('session-fresh', '新对话', 'companion-present-v1', Date.now() - 120_000),
     // Long transcript: gives the timeline a real scroll extent so follow and
@@ -31,8 +94,8 @@ export function createPreviewTransport(): MockControlTransport {
     previewSession('session-memory', '记忆整理', 'companion-present-v1', Date.now() - 360_000, '1', { messageCount: 12, lastMessagePreview: '已把最近输入整理为 3 个主题。' }),
   ];
   const roomSessions: Record<string, unknown>[] = [
-    previewRoomSession('session-room-present', '迁移作战室 · 澄·今', 'companion-present-v1'),
-    previewRoomSession('session-room-firstlight', '迁移作战室 · 澄·初', 'companion-firstlight-v1'),
+    previewRoomSession('session-room-present', '迁移作战室 · 澄·今', 'companion-present-v1', 'participant-present'),
+    previewRoomSession('session-room-firstlight', '迁移作战室 · 澄·初', 'companion-firstlight-v1', 'participant-firstlight'),
   ];
   let personas: AgentPersonaV1[] = previewPersonas.map((persona) => ({
     ...persona,
@@ -40,6 +103,9 @@ export function createPreviewTransport(): MockControlTransport {
     runtimeCharacteristics: { ...persona.runtimeCharacteristics },
   }));
   let companionConfigurationRevision = 1;
+  let capabilityGlobalPreferences: Record<string, string> = {};
+  let capabilityProjectPreferences: Record<string, Record<string, string>> = {};
+  const capabilitySessionPreferences = new Map<string, Record<string, string>>();
   const previewModelCatalogs = new Map<string, ReturnType<typeof previewModelCatalog>>();
   let defaultCompanion = {
     roleId: personas.find((persona) => persona.runtimeCharacteristics.isDefault)?.roleId ?? personas[0]?.roleId ?? '',
@@ -154,11 +220,25 @@ export function createPreviewTransport(): MockControlTransport {
     const validationToken = stringValue(body.validationToken);
     const tokenPluginId = validationToken.split(':')[1] || '';
     const pluginId = stringValue(body.pluginId) || tokenPluginId || 'session-review';
+    const installedExtension = previewInstalledExtensions.find(
+      (item) => stringValue(item.id) === pluginId,
+    );
+    if (action === 'rollback' && installedExtension?.rollbackAvailable !== true) {
+      throw new Error('这个扩展当前没有可恢复的上一版本。');
+    }
+    const rollbackVersion = action === 'rollback'
+      ? stringValue(installedExtension?.previousVersion)
+      : '';
+    if (action === 'rollback' && !rollbackVersion) {
+      throw new Error('这个扩展缺少可核验的上一版本，未创建恢复预览。');
+    }
     previewExtensionChange = {
       action,
       pluginId,
-      displayName: pluginId === 'session-review' ? 'Session Review' : pluginId,
+      displayName: stringValue(installedExtension?.displayName)
+        || (pluginId === 'session-review' ? 'Session Review' : pluginId),
       enable: body.enable !== false,
+      ...(rollbackVersion ? { version: rollbackVersion } : {}),
     };
     return {
       ok: true,
@@ -343,17 +423,33 @@ export function createPreviewTransport(): MockControlTransport {
   routes['agent.configuration.get'] = () => previewCompanionConfiguration(
     companionConfigurationRevision,
     defaultCompanion,
+    capabilityGlobalPreferences,
+    capabilityProjectPreferences,
   );
   routes['agent.configuration.update'] = (request: ControlRequest) => {
     const body = record(request.body);
     if (Number(body.expectedRevision) !== companionConfigurationRevision) throw new Error('Preview companion configuration changed.');
     const changes = record(body.changes);
-    const roleId = stringValue(changes['sessionDefaults.roleId']);
-    const roleVersion = stringValue(changes['sessionDefaults.roleVersion']) || '1';
-    if (!personas.some((persona) => persona.roleId === roleId && persona.version === roleVersion)) throw new Error('Preview companion not found.');
-    defaultCompanion = { roleId, roleVersion };
+    if (Object.hasOwn(changes, 'sessionDefaults.capabilityDisclosurePreferences')) {
+      capabilityGlobalPreferences = previewCapabilityPreferences(changes['sessionDefaults.capabilityDisclosurePreferences']);
+    } else if (Object.hasOwn(changes, 'capabilityDisclosure.projectPreferences')) {
+      capabilityProjectPreferences = Object.fromEntries(
+        Object.entries(record(changes['capabilityDisclosure.projectPreferences']))
+          .map(([projectId, preferences]) => [projectId, previewCapabilityPreferences(preferences)]),
+      );
+    } else {
+      const roleId = stringValue(changes['sessionDefaults.roleId']);
+      const roleVersion = stringValue(changes['sessionDefaults.roleVersion']) || '1';
+      if (!personas.some((persona) => persona.roleId === roleId && persona.version === roleVersion)) throw new Error('Preview companion not found.');
+      defaultCompanion = { roleId, roleVersion };
+    }
     companionConfigurationRevision += 1;
-    return previewCompanionConfiguration(companionConfigurationRevision, defaultCompanion);
+    return previewCompanionConfiguration(
+      companionConfigurationRevision,
+      defaultCompanion,
+      capabilityGlobalPreferences,
+      capabilityProjectPreferences,
+    );
   };
   routes['agent.sessions.create'] = (request: ControlRequest) => {
     const body = record(request.body);
@@ -366,6 +462,27 @@ export function createPreviewTransport(): MockControlTransport {
     );
     sessions.unshift(session);
     return { ok: true, session };
+  };
+  routes['agent.tools.list'] = (request: ControlRequest) => {
+    const sessionId = stringValue(record(request.query).sessionId);
+    const projectId = `workspace-${'b'.repeat(64)}`;
+    return previewCapabilityCatalog(
+      sessionId,
+      capabilitySessionPreferences.get(sessionId) ?? {},
+      capabilityGlobalPreferences,
+      capabilityProjectPreferences[projectId] ?? {},
+    );
+  };
+  routes['agent.session.capability-policy.update'] = (request: ControlRequest) => {
+    const sessionId = stringValue(record(request.params).sessionId);
+    if (!sessions.some((session) => stringValue(session.id) === sessionId) && !roomSessions.some((session) => stringValue(session.id) === sessionId)) {
+      throw new Error('Preview session not found.');
+    }
+    capabilitySessionPreferences.set(
+      sessionId,
+      previewCapabilityPreferences(record(request.body).capabilityDisclosurePreferences),
+    );
+    return { ok: true };
   };
   routes['agent.session.archive'] = (request: ControlRequest) => {
     const sessionId = stringValue(record(request.params).sessionId);
@@ -478,6 +595,109 @@ export function createPreviewTransport(): MockControlTransport {
       items: [],
     };
   };
+  routes['agent.session.backgroundJobs.list'] = (request: ControlRequest) => {
+    const sessionId = stringValue(record(request.params).sessionId);
+    const requestedLimit = Number(record(request.query).limit) || 50;
+    const limit = Math.min(100, Math.max(1, Math.trunc(requestedLimit)));
+    const items = (previewBackgroundJobsBySession[sessionId] ?? []).slice(0, limit);
+    return {
+      schemaVersion: 'rag-ime.agent-background-job-list.v1',
+      ok: true,
+      sessionId,
+      items,
+      activeCount: items.filter((job) => (
+        job.status === 'queued' || job.status === 'running' || job.status === 'cancelling'
+      )).length,
+    };
+  };
+  routes['agent.session.backgroundJob.get'] = (request: ControlRequest) => {
+    const sessionId = stringValue(record(request.params).sessionId);
+    const jobId = stringValue(record(request.params).jobId);
+    const job = (previewBackgroundJobsBySession[sessionId] ?? [])
+      .find((item) => item.jobId === jobId);
+    if (!job) throw new Error('Preview background job not found.');
+    return { ok: true, job };
+  };
+  routes['agent.session.backgroundJob.logs'] = (request: ControlRequest) => {
+    const sessionId = stringValue(record(request.params).sessionId);
+    const jobId = stringValue(record(request.params).jobId);
+    const job = (previewBackgroundJobsBySession[sessionId] ?? [])
+      .find((item) => item.jobId === jobId);
+    if (!job) throw new Error('Preview background job not found.');
+    const text = job.status === 'failed'
+      ? 'test_agent_routes ... FAIL\nAssertionError: expected background job route\n'
+      : '> control-center-web@ build\n> tsc -b && vite build\ntransforming modules...\n';
+    const requestedCursor = Math.max(0, Math.trunc(Number(record(request.query).cursor) || 0));
+    const cursor = Math.max(requestedCursor, job.logStartCursor);
+    const nextCursor = cursor + new TextEncoder().encode(text).byteLength;
+    return {
+      schemaVersion: 'rag-ime.agent-background-job-log.v1',
+      ok: true,
+      jobId,
+      sessionId,
+      cursor,
+      nextCursor,
+      logStartCursor: job.logStartCursor,
+      truncatedBeforeCursor: requestedCursor < job.logStartCursor,
+      hasMore: nextCursor < job.outputBytes,
+      text,
+    };
+  };
+  routes['agent.session.backgroundJob.cancel'] = (request: ControlRequest) => {
+    const sessionId = stringValue(record(request.params).sessionId);
+    const jobId = stringValue(record(request.params).jobId);
+    const jobs = previewBackgroundJobsBySession[sessionId] ?? [];
+    const index = jobs.findIndex((item) => item.jobId === jobId);
+    if (index < 0) throw new Error('Preview background job not found.');
+    if (
+      jobs[index]!.status === 'completed'
+      || jobs[index]!.status === 'failed'
+      || jobs[index]!.status === 'cancelled'
+      || jobs[index]!.status === 'orphaned'
+    ) {
+      return {
+        schemaVersion: 'rag-ime.agent-background-job-cancel-receipt.v1',
+        ok: true,
+        summary: '后台任务已经结束',
+        alreadyTerminal: true,
+        job: jobs[index]!,
+      };
+    }
+    const nowMs = Date.now();
+    const job = {
+      ...jobs[index]!,
+      status: 'cancelled' as const,
+      updatedAtMs: nowMs,
+      endedAtMs: nowMs,
+      exitCode: 143,
+      cancelRequestedAtMs: nowMs,
+    };
+    jobs[index] = job;
+    previewTransport?.emit('agent.session.events', {
+      schemaVersion: 'rag-ime.agent-event.v1',
+      eventId: `${sessionId}:background-job-cancelled:${jobId}`,
+      sessionId,
+      turnId: `background-job:${jobId}`,
+      sequence: 8,
+      createdAtMs: nowMs,
+      eventType: 'background_job_cancelled',
+      payload: { job },
+      resumeToken: `${sessionId}:8`,
+    });
+    return {
+      schemaVersion: 'rag-ime.agent-background-job-cancel-receipt.v1',
+      ok: true,
+      summary: '已请求停止后台任务',
+      alreadyTerminal: false,
+      job,
+      cancelReceipt: {
+        jobId,
+        status: 'cancelled',
+        reason: stringValue(record(request.body).reason) || 'preview_user_requested',
+      },
+    };
+  };
+
   routes['memory.pages'] = (request: ControlRequest) =>
     previewMemoryPage(request, previewEvidenceDisposition);
   routes['memory.source.disposition'] = (request: ControlRequest) => {
@@ -487,25 +707,306 @@ export function createPreviewTransport(): MockControlTransport {
     }
     return { ok: true, changed: true };
   };
+  routes['configuration.settings'] = () =>
+    previewConfigurationSettings(previewConfiguration, previewConfigurationRevision);
+  routes['configuration.settings.preview'] = (request: ControlRequest) => {
+    const changes = record(record(request.body).changes);
+    const fieldCount = Object.keys(changes).length;
+    return {
+      ok: true,
+      previewToken: 'preview-configuration-settings',
+      pathId: 'configuration.settings.apply',
+      payloadSha256: `sha256:preview-configuration-${fieldCount}`,
+      requiredConfirm: 'apply',
+      expiresAtMs: Date.now() + 300_000,
+      expectedRevision: {
+        runtimeRevision: previewConfigurationRevision,
+        subjectRevision: `sha256:preview-settings-${previewConfigurationRevision}`,
+      },
+      summary: {
+        title: '保存这些设置？',
+        items: [`将更新 ${fieldCount} 项设置；应用后仍可撤销。`],
+        risk: 'R1',
+      },
+    };
+  };
+  routes['configuration.settings.apply'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    previousPreviewConfiguration = previewConfiguration;
+    previewConfiguration = applyPreviewConfigurationChanges(
+      previewConfiguration,
+      record(body.changes),
+    );
+    previewConfigurationRevision += 1;
+    return {
+      ok: true,
+      receiptId: `preview-configuration-receipt-${previewConfigurationRevision}`,
+      pathId: 'configuration.settings.apply',
+      payloadSha256: stringValue(body.payloadSha256),
+      appliedAtMs: Date.now(),
+      rollbackAvailable: true,
+      rollbackToken: `preview-configuration-rollback-${previewConfigurationRevision}`,
+      result: { runtimeRevision: previewConfigurationRevision },
+    };
+  };
+  routes['configuration.settings.rollback'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    if (previousPreviewConfiguration) {
+      previewConfiguration = previousPreviewConfiguration;
+      previousPreviewConfiguration = undefined;
+    }
+    previewConfigurationRevision += 1;
+    return {
+      ok: true,
+      receiptId: `preview-configuration-rollback-receipt-${previewConfigurationRevision}`,
+      pathId: 'configuration.settings.rollback',
+      payloadSha256: stringValue(body.payloadSha256),
+      appliedAtMs: Date.now(),
+      rollbackAvailable: false,
+      rollbackToken: '',
+      result: { runtimeRevision: previewConfigurationRevision },
+    };
+  };
+  routes['input.lexicon.review'] = () => previewLexiconReview();
+  routes['input.lexicon.apply'] = (request: ControlRequest) => {
+    const selectedKeys = record(request.body).selectedKeys;
+    const entryCount = Array.isArray(selectedKeys)
+      ? selectedKeys.filter((item): item is string => typeof item === 'string').length
+      : 0;
+    previewLexiconRollbackId = `preview-lexicon-rollback-${Date.now()}`;
+    return {
+      schemaVersion: 'rag-ime.rime-lexicon-review.v1',
+      ok: true,
+      applied: true,
+      rollbackId: previewLexiconRollbackId,
+      entryCount,
+      requiresRedeploy: true,
+    };
+  };
+  routes['input.lexicon.rollback'] = (request: ControlRequest) => ({
+    schemaVersion: 'rag-ime.rime-lexicon-review.v1',
+    ok: true,
+    rolledBack: true,
+    rollbackId: stringValue(record(request.body).rollbackId) || previewLexiconRollbackId,
+    entryCount: 0,
+    requiresRedeploy: true,
+  });
+  Object.assign(
+    routes,
+    createPreviewHistoryRoutes(),
+    createPreviewWorkDocumentRoutes(),
+  );
+  routes['agent.rooms.list'] = (request: ControlRequest) => {
+    const includeArchived = record(request.query).includeArchived === true;
+    return {
+      ok: true,
+      rooms: [...previewRoomSnapshots.values()]
+        .map((snapshot) => record(snapshot.room))
+        .filter((room) => includeArchived || room.status !== 'archived'),
+    };
+  };
+  routes['agent.rooms.create'] = (request: ControlRequest) => {
+    const roomId = `room-preview-${nextRoomId++}`;
+    const snapshot = previewCreatedRoomSnapshot(roomId, record(request.body));
+    previewRoomSnapshots.set(roomId, snapshot);
+    return { ok: true, room: record(snapshot.room) };
+  };
+  routes['agent.room.get'] = (request: ControlRequest) => {
+    const roomId = stringValue(record(request.params).roomId);
+    const snapshot = previewRoomSnapshots.get(roomId);
+    if (!snapshot) throw new Error('这个协作空间已经不存在，请刷新列表。');
+    return { ok: true, room: record(snapshot.room) };
+  };
+  routes['agent.room.snapshot'] = (request: ControlRequest) => {
+    const roomId = stringValue(record(request.params).roomId);
+    const snapshot = previewRoomSnapshots.get(roomId);
+    if (!snapshot) throw new Error('这个协作空间已经不存在，请刷新列表。');
+    return snapshot;
+  };
+  routes['agent.room.topic.create'] = (request: ControlRequest) => {
+    const roomId = stringValue(record(request.params).roomId);
+    const snapshot = previewRoomSnapshots.get(roomId);
+    if (!snapshot) throw new Error('这个协作空间已经不存在，请刷新列表。');
+    const updated = previewRoomTopicMutation(snapshot, record(request.body), true);
+    previewRoomSnapshots.set(roomId, updated);
+    return { ok: true, room: record(updated.room) };
+  };
+  routes['agent.room.topic.update'] = (request: ControlRequest) => {
+    const roomId = stringValue(record(request.params).roomId);
+    const snapshot = previewRoomSnapshots.get(roomId);
+    if (!snapshot) throw new Error('这个协作空间已经不存在，请刷新列表。');
+    const updated = previewRoomTopicMutation(snapshot, record(request.body), false);
+    previewRoomSnapshots.set(roomId, updated);
+    return { ok: true, room: record(updated.room) };
+  };
+  routes['agent.room.topics'] = (request: ControlRequest) => {
+    const roomId = stringValue(record(request.params).roomId);
+    const snapshot = previewRoomSnapshots.get(roomId);
+    if (!snapshot) throw new Error('这个协作空间已经不存在，请刷新列表。');
+    const topics = record(snapshot.room).topics;
+    return { ok: true, topics: Array.isArray(topics) ? topics : [] };
+  };
   routes['agent.room.kernel.snapshot'] = (request: ControlRequest) =>
     previewRoomKernelSnapshot(stringValue(record(request.params).roomId) || 'room-preview');
   routes['agent.room.kernel.command'] = (request: ControlRequest) =>
     previewRoomKernelReceipt(record(request.body));
   routes['agent.media.preview'] = (request: ControlRequest) => previewManagedFile(request);
+  routes['knowledgeBases.list'] = () => ({
+    ok: true,
+    items: previewKnowledgeBases.map((base) => ({ ...base })),
+  });
+  routes['knowledgeBases.get'] = (request: ControlRequest) => {
+    const baseId = stringValue(record(request.params).kbId);
+    const base = previewKnowledgeBases.find((item) => stringValue(item.id) === baseId);
+    if (!base) throw new Error('这个文档知识库已经不存在，请刷新列表。');
+    return { ok: true, base: { ...base } };
+  };
+  routes['knowledgeBases.create'] = (request: ControlRequest) => {
+    const body = record(request.body);
+    const name = stringValue(body.name).trim();
+    if (!name) throw new Error('知识库名称不能为空。');
+    const now = Date.now();
+    const base = {
+      id: `kb:preview-created-${nextKnowledgeBaseId++}`,
+      name,
+      description: stringValue(body.description).trim(),
+      documentCount: 0,
+      chunkCount: 0,
+      status: 'ready',
+      agentEnabled: body.agentEnabled === true,
+      parserMode: stringValue(body.parserProvider) || 'auto',
+      revision: 1,
+      updatedAtMs: now,
+    };
+    previewKnowledgeBases = [base, ...previewKnowledgeBases];
+    return { ok: true, base: { ...base } };
+  };
+  routes['knowledgeBases.update'] = (request: ControlRequest) => {
+    const baseId = stringValue(record(request.params).kbId);
+    const body = record(request.body);
+    const index = previewKnowledgeBases.findIndex((item) => stringValue(item.id) === baseId);
+    const current = previewKnowledgeBases[index];
+    if (!current) throw new Error('这个文档知识库已经不存在，请刷新列表。');
+    const expectedRevision = body.expectedRevision;
+    if (expectedRevision !== undefined && String(expectedRevision) !== String(current.revision)) {
+      throw new Error('知识库已在其他位置更新，请刷新后重试。');
+    }
+    const parserProvider = stringValue(body.parserProvider);
+    const updated = {
+      ...current,
+      ...(typeof body.name === 'string' ? { name: body.name.trim() } : {}),
+      ...(typeof body.description === 'string' ? { description: body.description.trim() } : {}),
+      ...(typeof body.agentEnabled === 'boolean' ? { agentEnabled: body.agentEnabled } : {}),
+      ...(parserProvider ? { parserMode: parserProvider } : {}),
+      ...(record(body.chunkingConfig).strategy ? { chunkingConfig: { ...record(body.chunkingConfig) } } : {}),
+      ...(record(body.retrievalConfig).mode ? { retrievalConfig: { ...record(body.retrievalConfig) } } : {}),
+      revision: Number(current.revision ?? 0) + 1,
+      updatedAtMs: Date.now(),
+    };
+    previewKnowledgeBases = previewKnowledgeBases.map((item, itemIndex) => itemIndex === index ? updated : item);
+    return { ok: true, base: { ...updated } };
+  };
+  routes['knowledgeBases.documents.list'] = (request: ControlRequest) => {
+    const baseId = stringValue(record(request.params).kbId);
+    return {
+      ok: true,
+      items: previewKnowledgeDocuments
+        .filter((document) => stringValue(document.baseId) === baseId)
+        .map((document) => ({ ...document })),
+    };
+  };
+  routes['knowledgeBases.chunkPreview'] = (request: ControlRequest) => {
+    const baseId = stringValue(record(request.params).kbId);
+    const documentId = stringValue(record(request.params).fileId);
+    const document = previewKnowledgeDocuments.find((item) => (
+      stringValue(item.baseId) === baseId && stringValue(item.id) === documentId
+    ));
+    if (!document) throw new Error('用于预览切分的材料已经不存在。');
+    const strategy = stringValue(record(record(request.body).chunkingConfig).strategy) || 'markdown';
+    return {
+      ok: true,
+      fileId: documentId,
+      total: 2,
+      truncated: false,
+      items: [
+        {
+          chunkId: 'chunk:preview-settings-1',
+          ordinal: 0,
+          content: `# Agent Runtime\n使用 ${strategy} 策略生成的首个预览片段。`,
+          page: 1,
+        },
+        {
+          chunkId: 'chunk:preview-settings-2',
+          ordinal: 1,
+          content: 'Tool 只按需检索这个文档知识库，不会读取个人记忆。',
+          page: 3,
+        },
+      ],
+    };
+  };
+  routes['knowledgeBases.document.retry'] = (request: ControlRequest) => {
+    const baseId = stringValue(record(request.params).kbId);
+    const documentId = stringValue(record(request.params).fileId);
+    const document = previewKnowledgeDocuments.find((item) => (
+      stringValue(item.baseId) === baseId && stringValue(item.id) === documentId
+    ));
+    if (!document) throw new Error('需要重新解析的材料已经不存在。');
+    const now = Date.now();
+    const job = {
+      id: `job:preview-reparse-${nextKnowledgeJobId++}`,
+      baseId,
+      fileId: documentId,
+      fileName: stringValue(document.fileName),
+      kind: 'reparse',
+      parserMode: stringValue(record(request.body).parserProvider) || stringValue(document.parserProvider),
+      status: 'succeeded',
+      stage: 'ready',
+      progress: 1,
+      cancellable: false,
+      revision: Number(document.revision ?? 0),
+      createdAtMs: now,
+      startedAtMs: now,
+      finishedAtMs: now,
+      updatedAtMs: now,
+    };
+    previewKnowledgeJobs = [job, ...previewKnowledgeJobs];
+    return { ok: true, job: { ...job } };
+  };
+  routes['knowledgeBases.jobs.list'] = (request: ControlRequest) => {
+    const baseId = stringValue(record(request.params).kbId);
+    return {
+      ok: true,
+      items: previewKnowledgeJobs
+        .filter((job) => stringValue(job.baseId) === baseId)
+        .map((job) => ({ ...job })),
+    };
+  };
   const routeIds = Array.from(new Set<ControlPathId>([
     ...(Object.keys(routes) as ControlPathId[]),
     'agent.room.kernel.events',
   ]));
-  return new MockControlTransport({
+  previewTransport = new MockControlTransport({
     routes,
     capabilities: {
       routeIds,
+      features: {
+        configurationSettingsWorkContract: true,
+        historyWorkContract: true,
+        managementWorkContract: true,
+        workDocuments: true,
+      },
       raw: {
         client: { remote: false, deviceAuthenticated: false, grantedScopes: [] },
-        features: {},
+        features: {
+          configurationSettingsWorkContract: true,
+          historyWorkContract: true,
+          managementWorkContract: true,
+          workDocuments: true,
+        },
         routes: previewRoomKernelRouteManifest(),
       },
     },
+    imagePaste: previewImagePaste,
     pickedFiles: [
       {
         id: 'media_preview_attachment_01',
@@ -517,6 +1018,73 @@ export function createPreviewTransport(): MockControlTransport {
       },
     ],
   });
+  return previewTransport;
+}
+
+const PREVIEW_IMAGE_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+
+async function previewImagePaste(
+  options: AgentImagePasteOptions,
+): Promise<PickedFile[]> {
+  const ownerId = options.roomId ?? options.sessionId;
+  if (
+    !ownerId
+    || !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/.test(ownerId)
+    || (options.roomId !== undefined && options.sessionId !== undefined)
+  ) {
+    throw new TypeError('Preview image paste requires exactly one bounded sessionId or roomId');
+  }
+  const owner = options.roomId ? { roomId: ownerId } : { sessionId: ownerId };
+  const files = Array.from(options.files ?? []);
+  if (!files.length) return [];
+  const maxFiles = options.maxFiles ?? files.length;
+  if (!Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 8 || files.length > maxFiles) {
+    throw new TypeError('Preview image paste requires between 1 and 8 files within maxFiles');
+  }
+  const receipts: PickedFile[] = [];
+  for (const file of files.slice(0, maxFiles)) {
+    if (
+      !PREVIEW_IMAGE_MIME_TYPES.has(file.type.toLowerCase())
+      || file.size <= 0
+      || file.size > 20 * 1024 * 1024
+    ) {
+      throw new TypeError('Preview image paste accepts only non-empty PNG, JPEG, GIF, or WebP files up to 20 MiB');
+    }
+    const sha256 = await previewSha256(file);
+    receipts.push({
+      id: `media_preview_${sha256.slice(0, 24)}`,
+      name: file.name || 'clipboard-image',
+      mimeType: file.type.toLowerCase(),
+      byteSize: file.size,
+      ...owner,
+      sha256,
+    });
+  }
+  return receipts;
+}
+
+async function previewSha256(file: File): Promise<string> {
+  const bytes = typeof file.arrayBuffer === 'function'
+    ? await file.arrayBuffer()
+    : await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(reader.error ?? new Error('Unable to read preview image bytes'));
+        reader.onload = () => {
+          if (reader.result instanceof ArrayBuffer) resolve(reader.result);
+          else reject(new TypeError('Preview image reader returned non-binary data'));
+        };
+        reader.readAsArrayBuffer(file);
+      });
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(
+    new Uint8Array(digest),
+    (value) => value.toString(16).padStart(2, '0'),
+  ).join('');
 }
 
 
@@ -672,23 +1240,9 @@ function previewResponse(pathId: ControlPathId): unknown {
     case 'agent.roles.list':
       return { ok: true, roles: [] };
     case 'agent.tools.list':
-      return {
-        ok: true,
-        items: [
-          previewTool('ime_overview', '控制中心概览', '查看输入法、模型、记忆和最近活动的整体状态', 'control', 'R0', ['status', 'capabilities', 'recent_activity']),
-          previewTool('ime_input', '输入法', '查看输入设置、方案与候选解释，并在批准后调整配置或词表', 'input', 'R1', ['get_settings', 'preview_settings', 'apply_settings', 'rollback_settings', 'profile', 'candidate_explain', 'lexicon_review', 'lexicon_apply', 'lexicon_rollback']),
-          previewTool('ime_voice', '语音输入', '查看语音状态，并在批准后切换已配置的语音 Provider', 'voice', 'R1', ['status', 'privacy_policy', 'provider_status', 'provider_preview', 'provider_apply', 'provider_rollback']),
-          previewTool('ime_planning', '规划与任务', '查看每日计划，并在确认后更新任务状态', 'planning', 'R1', ['dashboard', 'task_action', 'undo_task_event']),
-          previewTool('ime_memory', '个人上下文记忆', '查询 Evidence、Current Fact、Topic Book 与已批准 Timeline，并生成 Atom-first 可审阅草案', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'maintenance_status', 'curation_prepare', 'maintenance_preview', 'maintenance_review', 'maintenance_apply', 'maintenance_rollback', 'list', 'search']),
-          previewTool('ime_knowledge', '文档知识库', '检索用户明确启用的独立文档知识库', 'knowledge', 'R0', ['list_bases', 'search', 'find', 'open', 'status']),
-          previewTool('ime_browser', '浏览器共驾', '读取已配对浏览器的页面，并在批准后执行可追踪操作', 'browser', 'R1', ['status', 'tabs', 'snapshot', 'screenshot', 'trace', 'navigate', 'click', 'type', 'scroll', 'wait', 'stop']),
-          previewTool('workspace_list', '项目文件', '列出已授权项目目录中的文件', 'workspace', 'R0', ['list']),
-          previewTool('workspace_read', '读取文件', '读取已授权项目目录中的文件内容', 'workspace', 'R0', ['read']),
-          previewTool('workspace_search', '搜索项目', '在已授权项目目录中检索文件与内容', 'workspace', 'R0', ['search']),
-          previewTool('workspace_patch', '修改文件', '在审批边界内修改已授权项目文件', 'workspace', 'R2', ['patch']),
-          previewTool('workspace_shell', '运行命令', '在审批边界内执行项目命令', 'workspace', 'R2', ['run']),
-        ],
-      };
+      return (request: ControlRequest) => previewCapabilityCatalog(
+        stringValue(record(request.query).sessionId),
+      );
     case 'agent.subagents.list':
       return {
         ok: true,
@@ -720,7 +1274,6 @@ function previewResponse(pathId: ControlPathId): unknown {
         ],
       };
     case 'memory.pages':
-    case 'history.page':
       return { ok: true, items: [], nextCursor: '' };
     case 'memory.source.disposition':
       return { ok: true, changed: true };
@@ -879,6 +1432,49 @@ function previewResponse(pathId: ControlPathId): unknown {
     case 'browser.managed.stop':
     case 'browser.permission.decide':
       return { ok: true };
+    case 'input.source.get':
+      return {
+        ok: true,
+        selected: true,
+        typingReady: true,
+        readinessState: 'ready',
+        inputSourceId: 'im.rime.inputmethod.Squirrel.Rime',
+      };
+    case 'overview.get':
+      return {
+        ok: true,
+        profile: '标准模式',
+        components: {
+          sidecar: { ok: true, status: 'ready', detail: '后台服务已连接' },
+          predictor: { ok: true, status: 'ready', detail: '本机模型已载入' },
+          foregroundContext: { ok: true, status: 'ready', detail: '前台上下文按授权读取' },
+        },
+      };
+    case 'diagnostics.models':
+      return {
+        ok: true,
+        configurationPending: false,
+        activeConfig: {
+          modelId: 'minimind-ime-v2',
+          profileId: 'minimind_ime_v2',
+          path: '/Library/Application Support/RAG-IME/models/minimind-ime-v2',
+          promptMode: 'base-completion',
+          maxTokens: 8,
+          temperature: 0.15,
+          topP: 0.85,
+        },
+        availableModels: [{
+          id: 'minimind-ime-v2',
+          active: true,
+          profileId: 'minimind_ime_v2',
+          path: '/Library/Application Support/RAG-IME/models/minimind-ime-v2',
+          promptMode: 'base-completion',
+          maxTokens: 8,
+          temperature: 0.15,
+          topP: 0.85,
+        }],
+        healthAgreement: { ok: true },
+      };
     case 'configuration.settings':
       return previewConfigurationSettings();
     case 'configuration.schema':
@@ -888,229 +1484,6 @@ function previewResponse(pathId: ControlPathId): unknown {
   }
 }
 
-function previewMemoryPage(
-  request: ControlRequest,
-  evidenceDisposition: string,
-): Record<string, unknown> {
-  const kind = stringValue(record(request.params).kind);
-  if (kind === 'evidence') {
-    return {
-      ok: true,
-      items: [
-        {
-          id: 'event:10001',
-          title: '嗯嗯那个这个',
-          detail: evidenceDisposition === 'not_for_memory'
-            ? 'input_noise_filler'
-            : 'user_restored',
-          status: evidenceDisposition,
-          disposition: evidenceDisposition,
-          source: { type: 'input_event', id: 'event:10001' },
-          ref: { type: 'event', id: 'event:10001' },
-          evidenceRefs: [],
-          type: 'user_final',
-          ownerKind: 'user',
-          ownerId: 'default',
-          updatedAtMs: Date.now() - 86_400_000,
-        },
-        {
-          id: 'evidence:preview-compaction',
-          title: '桌面上下文默认读取 Accessibility Tree，截图仅作兜底。',
-          detail: 'durable_role_summary',
-          status: 'remember',
-          disposition: 'remember',
-          source: { type: 'agent_memory_evidence', id: 'evidence:preview-compaction' },
-          ref: { type: 'evidence', id: 'evidence:preview-compaction' },
-          evidenceRefs: [{
-            kind: 'event',
-            referenceId: 'event:10002',
-            title: 'Accessibility Tree 与截图边界的对话记录',
-          }],
-          type: 'session_compaction',
-          ownerKind: 'agent',
-          ownerId: 'companion-present-v1',
-          updatedAtMs: Date.now() - 3_600_000,
-        },
-      ],
-      nextCursor: '',
-      limit: 50,
-    };
-  }
-  if (kind === 'books') {
-    return {
-      ok: true,
-      items: [
-        {
-          id: 'book:preview-memory-governance',
-          title: '记忆治理与桌面上下文',
-          summary: '按用户、角色和项目隔离证据；每日整理先生成可审阅草案。',
-          status: 'active',
-          source: { type: 'memory_book', id: 'book:preview-memory-governance' },
-          ref: { type: 'book', id: 'book:preview-memory-governance' },
-          evidenceRefs: [
-            { kind: 'atom', referenceId: 'atom:input-boundary', title: '输入段封口规则' },
-            { kind: 'atom', referenceId: 'atom:timeline-governance', title: '时间线必须审批后参与召回' },
-          ],
-          type: 'topic',
-          ownerKind: 'user',
-          ownerId: 'default',
-          tags: ['记忆治理', '桌面上下文'],
-          updatedAtMs: Date.now() - 7_200_000,
-        },
-      ],
-      nextCursor: '',
-      limit: 50,
-    };
-  }
-  if (kind === 'timelines') {
-    const date = new Date().toISOString().slice(0, 10);
-    const timeline = previewActivityTimeline(date, 'approved');
-    return {
-      ok: true,
-      items: [{
-        id: timeline.timelineId,
-        title: `${date} 语义任务时间线`,
-        summary: timeline.summary,
-        status: timeline.status,
-        type: 'daily_activity_timeline',
-        taskCount: timeline.segmentCount,
-        eventCount: timeline.eventCount,
-        source: timeline.source,
-        ref: timeline.ref,
-        evidenceRefs: (timeline.segments as Record<string, unknown>[])
-          .flatMap((segment) => segment.evidenceRefs as Record<string, unknown>[]),
-        updatedAtMs: timeline.updatedAtMs,
-      }],
-      nextCursor: '',
-      limit: 50,
-    };
-  }
-  return previewMemoryCatalogPage(kind);
-}
-
-function previewMemoryReference(kind: string, referenceId: string): Record<string, unknown> {
-  const now = Date.now();
-  if (kind === 'event') {
-    return {
-      schemaVersion: 'rag-ime.memory-reference.v1',
-      ok: true,
-      source: { type: 'input_event', id: referenceId },
-      ref: { type: 'event', id: referenceId },
-      item: {
-        id: referenceId,
-        title: '原始完整输入',
-        committedText: referenceId.endsWith('10001')
-          ? '嗯嗯那个这个'
-          : '输入框最终文本已在提交时形成可追溯证据。',
-        status: 'active',
-        app: referenceId.endsWith('10001') ? 'com.mitchellh.ghostty' : 'com.openai.codex',
-        sourceKind: 'squirrel_input_segment',
-        ownerKind: 'user',
-        ownerId: 'default',
-        occurredAtMs: now - 3_600_000,
-      },
-      evidenceRefs: [],
-    };
-  }
-  if (kind === 'evidence') {
-    return {
-      schemaVersion: 'rag-ime.memory-reference.v1',
-      ok: true,
-      source: { type: 'agent_memory_evidence', id: referenceId },
-      ref: { type: 'evidence', id: referenceId },
-      item: {
-        id: referenceId,
-        title: 'Agent 对话整理证据',
-        detail: '桌面上下文默认读取 Accessibility Tree，截图仅在语义不足时兜底。',
-        status: 'remember',
-        ownerKind: 'agent',
-        ownerId: 'companion-present-v1',
-        updatedAtMs: now - 2_400_000,
-      },
-      evidenceRefs: [{ kind: 'event', referenceId: 'event:10002', title: '原始对话输入' }],
-    };
-  }
-  if (kind === 'atom') {
-    const timelineBoundary = referenceId.includes('timeline');
-    return {
-      schemaVersion: 'rag-ime.memory-reference.v1',
-      ok: true,
-      source: { type: 'memory_atom', id: referenceId },
-      ref: { type: 'atom', id: referenceId },
-      item: {
-        id: referenceId,
-        title: timelineBoundary ? '时间线召回边界' : '输入段封口规则',
-        text: timelineBoundary
-          ? '已批准时间线可用于活动背景，但不能单独证明稳定事实。'
-          : '输入框最终文本优先，Enter 或切换 App 后才形成完整输入段。',
-        status: 'active',
-        claimState: 'current',
-        ownerKind: 'user',
-        ownerId: 'default',
-        updatedAtMs: now - 120_000,
-      },
-      evidenceRefs: timelineBoundary
-        ? [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: 'Agent 对话整理证据' }]
-        : [{ kind: 'event', referenceId: 'event:10003', title: '输入框最终文本采集记录' }],
-    };
-  }
-  if (kind === 'book') {
-    return {
-      schemaVersion: 'rag-ime.memory-reference.v1',
-      ok: true,
-      source: { type: 'memory_book', id: referenceId },
-      ref: { type: 'book', id: referenceId },
-      item: {
-        id: referenceId,
-        title: referenceId.includes('agent-runtime') ? 'Agent Runtime' : '输入法记忆与上下文',
-        summary: '聚合当前 Atom 和来源证据，作为主题检索入口。',
-        status: 'active',
-        type: 'topic',
-        ownerKind: 'user',
-        ownerId: 'default',
-        updatedAtMs: now - 90_000,
-      },
-      evidenceRefs: [
-        { kind: 'atom', referenceId: 'atom:input-boundary', title: '输入段封口规则' },
-        { kind: 'atom', referenceId: 'atom:timeline-governance', title: '时间线召回边界' },
-      ],
-    };
-  }
-  if (kind === 'timeline') {
-    const matchedDate = referenceId.match(/(20\d{2}-\d{2}-\d{2})/u)?.[1]
-      ?? new Date().toISOString().slice(0, 10);
-    const timeline = previewActivityTimeline(matchedDate, 'approved');
-    return {
-      schemaVersion: 'rag-ime.memory-reference.v1',
-      ok: true,
-      source: timeline.source,
-      ref: timeline.ref,
-      item: {
-        ...timeline,
-        id: timeline.timelineId,
-        title: `${matchedDate} 语义任务时间线`,
-      },
-      evidenceRefs: (timeline.segments as Record<string, unknown>[])
-        .flatMap((segment) => segment.evidenceRefs as Record<string, unknown>[]),
-    };
-  }
-  return {
-    schemaVersion: 'rag-ime.memory-reference.v1',
-    ok: true,
-    source: { type: 'role_book_revision', id: referenceId },
-    ref: { type: 'role_book_revision', id: referenceId },
-    item: {
-      id: referenceId,
-      title: '澄 · 当前角色书',
-      detail: '维护角色使命、能力画像、协作习惯与已验证教训。',
-      status: 'active',
-      ownerKind: 'agent',
-      ownerId: 'companion-present-v1',
-      updatedAtMs: now - 60_000,
-    },
-    evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: '最近角色整理证据' }],
-  };
-}
 
 function previewBrowserSnapshot(): Record<string, unknown> {
   return {
@@ -1289,546 +1662,6 @@ function previewObservationSnapshot(filters: Record<string, unknown> = {}) {
   };
 }
 
-function previewMemorySummary(timelineStatuses = new Map<string, string>()): Record<string, unknown> {
-  const today = new Date().toISOString().slice(0, 10);
-  const currentTimelineStatus = timelineStatuses.get(today) || 'draft';
-  const activityTimelineCounts: Record<string, number> = { approved: 11 };
-  activityTimelineCounts[currentTimelineStatus] = (activityTimelineCounts[currentTimelineStatus] ?? 0) + 1;
-  return {
-    ok: true,
-    runtimeRevision: 7,
-    appCount: 4,
-    completeInputCount: 3_602,
-    blockedFragmentCount: 4_887,
-    memoryBookCount: 15,
-    memoryAtomCount: 123,
-    memoryAtomArchivedCount: 21,
-    memoryAtomSourceArchiveCount: 44,
-    memoryTagCount: 93,
-    pendingCompileEvents: 0,
-    evidenceSourceCount: 2,
-    forgottenSourceCount: 1,
-    needsReviewSourceCount: 0,
-    currentAtomCount: 123,
-    historicalAtomCount: 21,
-    agentEvidenceCount: 142,
-    agentEvidenceTombstonedCount: 4,
-    roleBookRevisionCounts: { active: 3, draft: 1, superseded: 8 },
-    activityTimelineCounts,
-    governanceProposalCounts: { preview: 2, applied: 14, rolled_back: 1 },
-    latestActivityTimeline: {
-      date: today,
-      status: currentTimelineStatus,
-      updatedAtMs: Date.now() - 90_000,
-    },
-    projection: {
-      fresh: true,
-      backlog: 0,
-      dead: 0,
-      retrievalDocuments: 151,
-      checkpointCaughtUp: true,
-      vectorCoverage: 1,
-    },
-    owners: [
-      { ownerKind: 'user', ownerId: 'default', itemCount: 124 },
-      { ownerKind: 'agent', ownerId: 'companion-present-v1', itemCount: 16 },
-    ],
-  };
-}
-
-function previewActivityTimeline(date: string, status: string): Record<string, unknown> {
-  const dayStart = localPreviewDayStart(date);
-  const hash = '8d4a2d9c1fc84d408f8fe9a314f34c767b28e32e5b6461d73cc8e22d2209dc11';
-  const segments = [
-    previewActivitySegment({
-      id: 'codex-account-switch',
-      position: 0,
-      title: 'CAS 切换 Codex 账号',
-      apps: ['com.mitchellh.ghostty', 'com.openai.codex'],
-      startMs: dayStart + 8.4 * 3_600_000,
-      endMs: dayStart + 9.1 * 3_600_000,
-      eventCount: 8,
-      summary: '在 Ghostty 中使用 CAS 切换账号，随后回到 Codex 验证新账号会话；跨 App 事件属于同一个任务。',
-      sourceKinds: ['squirrel_input_segment', 'pi_agent'],
-      contextGroupIds: ['group:codex-account'],
-      previews: ['cas codex switch work', '已切换 Codex 账号，继续当前会话'],
-    }),
-    previewActivitySegment({
-      id: 'memory-redesign',
-      position: 1,
-      title: '重构个人上下文记忆系统',
-      apps: ['com.openai.codex', 'com.google.Chrome'],
-      startMs: dayStart + 9.2 * 3_600_000,
-      endMs: dayStart + 12.1 * 3_600_000,
-      eventCount: 27,
-      summary: '围绕 Evidence、Current Fact、Topic Book、Role Book 和 Timeline 的边界完成方案核对与资料查证。',
-      sourceKinds: ['pi_agent', 'browser_extension', 'squirrel_input_segment'],
-      contextGroupIds: ['group:personal-context', 'group:memory-evaluation'],
-      previews: ['现在记忆系统是什么结构', '核对长期记忆更新与来源追溯方案'],
-      redactedEventCount: 2,
-    }),
-    previewActivitySegment({
-      id: 'timeline-implementation',
-      position: 2,
-      title: '实现语义时间线与来源下钻',
-      apps: ['com.microsoft.VSCode', 'com.mitchellh.ghostty', 'com.openai.codex'],
-      startMs: dayStart + 13.2 * 3_600_000,
-      endMs: dayStart + 17.1 * 3_600_000,
-      eventCount: 36,
-      summary: '实现跨 App 任务聚合、记忆召回和逐层来源查看，并运行 Web、后端与输入法集成验证。',
-      sourceKinds: ['squirrel_input_segment', 'pi_agent'],
-      contextGroupIds: ['group:input-method', 'group:personal-context', 'group:verification'],
-      previews: ['完成新版前端和时间线整理', '运行后端、Web 与输入法集成测试'],
-    }),
-  ];
-  return {
-    schemaVersion: 'rag-ime.daily-activity-timeline.v1',
-    timelineId: `timeline:${date}`,
-    project: 'wisdom-weasel-rag-ime',
-    date,
-    timezone: 'Asia/Shanghai',
-    status,
-    segmentationMode: 'semantic_task_v2',
-    sourceEventIds: segments.flatMap((segment) => segment.sourceEventIds as number[]),
-    sourceEventHash: hash,
-    segments,
-    summary: '当天完成 Codex 账号切换、个人上下文架构重构，以及语义时间线和来源下钻的实现验证。',
-    eventCount: segments.reduce((sum, segment) => sum + Number(segment.eventCount), 0),
-    segmentCount: segments.length,
-    approvedBookId: status === 'approved' ? `book:daily:${date}` : '',
-    approvedBy: status === 'approved' ? 'control-center-user' : '',
-    approvedAtMs: status === 'approved' ? Date.now() - 30_000 : 0,
-    createdAtMs: dayStart + 18 * 3_600_000,
-    updatedAtMs: Date.now() - 30_000,
-    source: { type: 'daily_activity_timeline', id: `timeline:${date}` },
-    ref: { type: 'timeline', id: `timeline:${date}` },
-    policy: {
-      derivedFromInputEvents: true,
-      longTermFact: false,
-      automaticPromotion: false,
-      explicitApprovalRequired: true,
-    },
-  };
-}
-
-function previewActivitySegment(input: {
-  id: string;
-  position: number;
-  title: string;
-  apps: string[];
-  startMs: number;
-  endMs: number;
-  eventCount: number;
-  summary: string;
-  sourceKinds: string[];
-  contextGroupIds: string[];
-  previews: string[];
-  redactedEventCount?: number;
-}): Record<string, unknown> {
-  const firstEventId = 10_001 + input.position * 100;
-  const sourceEventIds = Array.from(
-    { length: input.eventCount },
-    (_, index) => firstEventId + index,
-  );
-  return {
-    segmentId: `segment:${input.id}`,
-    position: input.position,
-    title: input.title,
-    app: input.apps[0],
-    apps: input.apps,
-    sourceKinds: input.sourceKinds,
-    contextGroupIds: input.contextGroupIds,
-    startMs: Math.round(input.startMs),
-    endMs: Math.round(input.endMs),
-    eventCount: input.eventCount,
-    sourceEventIds,
-    sourceEventHash: '24d18e6ea9f1d8dd36b957d3948dc6948c00c86173691104be5b3e24358da8bb',
-    summary: input.summary,
-    redactedEventCount: input.redactedEventCount ?? 0,
-    evidenceRefs: sourceEventIds.map((eventId, index) => ({
-      sourceType: 'input_event',
-      sourceId: `event:${eventId}`,
-      eventId,
-      app: input.apps[index % input.apps.length],
-      sourceKind: input.sourceKinds[index % input.sourceKinds.length],
-      occurredAtMs: Math.round(
-        input.startMs
-        + ((input.endMs - input.startMs) * index) / Math.max(1, input.eventCount - 1),
-      ),
-      preview: input.previews[index % input.previews.length],
-    })),
-    source: { type: 'daily_activity_timeline', id: `timeline:${new Date(input.startMs).toISOString().slice(0, 10)}` },
-    ref: { type: 'timeline', id: `timeline:${new Date(input.startMs).toISOString().slice(0, 10)}` },
-  };
-}
-
-function previewTimelineDate(timelineId: string): string {
-  const value = timelineId.startsWith('timeline:') ? timelineId.slice('timeline:'.length) : '';
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : new Date().toISOString().slice(0, 10);
-}
-
-function localPreviewDayStart(date: string): number {
-  const [year, month, day] = date.split('-').map(Number);
-  return new Date(year, month - 1, day).getTime();
-}
-
-function previewMemoryCatalogPage(kind: string): Record<string, unknown> {
-  const common = { ok: true, nextCursor: '', limit: 50 };
-  if (kind === 'apps') {
-    return {
-      ...common,
-      rawTextVisible: false,
-      items: [
-        previewAppMemory('com.openai.codex', 'Codex', 3_501, 89, 8, Date.now() - 42_000),
-        previewAppMemory('com.mitchellh.ghostty', 'Ghostty', 67, 10, 1, Date.now() - 320_000),
-        previewAppMemory('com.microsoft.VSCode', 'VS Code', 26, 5, 1, Date.now() - 840_000),
-        previewAppMemory('com.microsoft.edgemac', 'Edge', 8, 7, 0, Date.now() - 1_500_000),
-      ],
-    };
-  }
-  if (kind === 'tags') {
-    return {
-      ...common,
-      items: [
-        { id: 'agent-runtime', tag: 'Agent Runtime', description: '会话、工具与执行边界', item_count: 18, edge_count: 2, color_token: 'teal', status: 'active', source: 'agent' },
-        { id: 'memory-quality', tag: '记忆质量', description: '去噪、合并与来源约束', item_count: 14, edge_count: 2, color_token: 'green', status: 'active', source: 'agent' },
-        { id: 'input-boundary', tag: '输入封口', description: 'Backspace 编辑，Enter 后持久化', item_count: 9, edge_count: 2, color_token: 'orange', status: 'active', source: 'agent' },
-      ],
-    };
-  }
-  if (kind === 'groups') {
-    return {
-      ...common,
-      items: [
-        { id: 'group:input-method', title: '输入法', note: '输入质量、候选与上下文注入', tags: ['输入封口', '记忆质量'], event_count: 34, color_token: 'teal', status: 'active', source: 'agent' },
-        { id: 'group:agent', title: 'Agent 工程', note: '会话、工具和长期记忆', tags: ['Agent Runtime', '记忆质量'], event_count: 27, color_token: 'blue', status: 'active', source: 'agent' },
-      ],
-    };
-  }
-  if (kind === 'atoms') {
-    return {
-      ...common,
-      items: [
-        {
-          id: 'atom:input-boundary',
-          title: '输入段封口规则',
-          text: 'Backspace 修改当前缓冲区，Enter 或切换 App 后才形成完整输入段。',
-          status: 'active',
-          source: { type: 'memory_atom', id: 'atom:input-boundary' },
-          ref: { type: 'atom', id: 'atom:input-boundary' },
-          evidenceRefs: [{ kind: 'event', referenceId: 'event:10003', title: '输入框最终文本采集记录' }],
-          tags: ['输入封口', '记忆质量'],
-          updatedAtMs: Date.now() - 120_000,
-        },
-        {
-          id: 'atom:timeline-governance',
-          title: '时间线召回边界',
-          text: '活动时间线是经审批的活动衍生物，可参与 Session 启动上下文和工具检索，但不能单独证明长期事实。',
-          status: 'active',
-          source: { type: 'memory_atom', id: 'atom:timeline-governance' },
-          ref: { type: 'atom', id: 'atom:timeline-governance' },
-          evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: 'Agent 对话整理证据' }],
-          tags: ['时间线', '记忆治理'],
-          updatedAtMs: Date.now() - 240_000,
-        },
-      ],
-    };
-  }
-  if (kind === 'phrases') {
-    return { ...common, items: [{ id: 'phrase:memory-curator', text: '记忆整理 Skill', status: 'approved', source: 'agent', updatedAtMs: Date.now() - 360_000 }] };
-  }
-  if (kind === 'negative') {
-    return { ...common, items: [{ id: 'negative:rime-fragment', reason: '未封口的 Rime 单词碎片不得注入上下文', active: true, status: 'active', source: 'input_quality', updatedAtMs: Date.now() - 480_000 }] };
-  }
-  return {
-    ...common,
-    items: [
-      {
-        id: 'book:input-memory',
-        type: 'topic',
-        title: '输入法记忆与上下文',
-        summary: '完整输入段、App 来源、当前事实与闪电联想边界。',
-        status: 'active',
-        source: { type: 'memory_book', id: 'book:input-memory' },
-        ref: { type: 'book', id: 'book:input-memory' },
-        evidenceRefs: [{ kind: 'atom', referenceId: 'atom:input-boundary', title: '输入段封口规则' }],
-        tags: ['输入封口', '记忆质量'],
-        updatedAtMs: Date.now() - 90_000,
-      },
-      {
-        id: 'book:agent-runtime',
-        type: 'topic',
-        title: 'Agent Runtime',
-        summary: 'Role Book、Session 启动注入、显式记忆工具与受控写入。',
-        status: 'active',
-        source: { type: 'memory_book', id: 'book:agent-runtime' },
-        ref: { type: 'book', id: 'book:agent-runtime' },
-        evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:preview-compaction', title: 'Agent 对话整理证据' }],
-        tags: ['Agent Runtime'],
-        updatedAtMs: Date.now() - 210_000,
-      },
-    ],
-  };
-}
-
-function previewAppMemory(
-  id: string,
-  title: string,
-  eventCount: number,
-  atomCount: number,
-  bookCount: number,
-  latestAtMs: number,
-): Record<string, unknown> {
-  return {
-    id,
-    title,
-    detail: `${eventCount} 段完整输入 · ${atomCount} 个记忆原子 · ${bookCount} 本主题书`,
-    source: 'input_app',
-    status: 'active',
-    type: 'app',
-    bundleId: id,
-    eventCount,
-    finalizedSegmentCount: Math.min(eventCount, Math.max(0, Math.round(eventCount * 0.72))),
-    contextGroupCount: Math.max(1, Math.round(eventCount / 18)),
-    atomCount,
-    bookCount,
-    latestAtMs,
-  };
-}
-
-function previewMemoryGraph(plane: 'groups' | 'tags'): Record<string, unknown> {
-  const runtime = previewMemoryGraphNode('tag:agent-runtime', 'tag', 'Agent Runtime', '会话、工具与执行边界', 18, 'teal');
-  const quality = previewMemoryGraphNode('tag:memory-quality', 'tag', '记忆质量', '去噪、合并与来源约束', 14, 'green');
-  const boundary = previewMemoryGraphNode('tag:input-boundary', 'tag', '输入封口', 'Backspace 编辑，Enter 后持久化', 9, 'orange');
-  const tags = [runtime, quality, boundary];
-  if (plane === 'tags') {
-    return previewMemoryGraphEnvelope(plane, tags, [
-      previewMemoryGraphEdge('tag-edge:runtime-quality', 'tagRelation', 'tag:agent-runtime', 'tag:memory-quality', 'related_to', 0.92, 8),
-      previewMemoryGraphEdge('tag-edge:quality-boundary', 'tagRelation', 'tag:memory-quality', 'tag:input-boundary', 'depends_on', 0.88, 6),
-      previewMemoryGraphEdge('tag-edge:boundary-runtime', 'tagRelation', 'tag:input-boundary', 'tag:agent-runtime', 'feeds', 0.74, 4),
-    ]);
-  }
-  const inputGroup = previewMemoryGraphNode('group:input-method', 'group', '输入法', '输入质量、候选与上下文注入', 34, 'teal');
-  const agentGroup = previewMemoryGraphNode('group:agent', 'group', 'Agent 工程', '会话、工具和长期记忆', 27, 'blue');
-  const book = previewMemoryGraphNode('book:input-memory', 'book', '输入法记忆与上下文', '完整输入段、App 来源和闪电联想边界', 12, 'green');
-  return previewMemoryGraphEnvelope(plane, [inputGroup, agentGroup, book, ...tags], [
-    previewMemoryGraphEdge('member:input-boundary', 'groupMember', 'group:input-method', 'tag:input-boundary', 'contains', 1, 1),
-    previewMemoryGraphEdge('member:input-quality', 'groupMember', 'group:input-method', 'tag:memory-quality', 'contains', 1, 1),
-    previewMemoryGraphEdge('member:input-book', 'groupMember', 'group:input-method', 'book:input-memory', 'contains', 0.9, 1),
-    previewMemoryGraphEdge('member:agent-runtime', 'groupMember', 'group:agent', 'tag:agent-runtime', 'contains', 1, 1),
-    previewMemoryGraphEdge('member:agent-quality', 'groupMember', 'group:agent', 'tag:memory-quality', 'contains', 0.85, 1),
-  ]);
-}
-
-function previewMemoryGraphEnvelope(
-  plane: 'groups' | 'tags',
-  nodes: Record<string, unknown>[],
-  edges: Record<string, unknown>[],
-): Record<string, unknown> {
-  return {
-    schemaVersion: 'rag-ime.memory-graph.v1',
-    ok: true,
-    settingsRevision: 'settings:preview',
-    runtimeRevision: 7,
-    graphRevision: `sha256:${'a'.repeat(64)}`,
-    plane,
-    project: 'wisdom-weasel-rag-ime',
-    filters: { status: 'active', query: '', focusId: '', minWeight: 0 },
-    nodes,
-    edges,
-    truncated: { nodes: false, edges: false },
-    limits: { nodeLimit: 48, edgeLimit: 160, depth: 1 },
-  };
-}
-
-function previewMemoryGraphNode(
-  id: string,
-  kind: 'tag' | 'group' | 'book',
-  label: string,
-  description: string,
-  memberCount: number,
-  color: string,
-): Record<string, unknown> {
-  return {
-    id,
-    entityId: id.slice(id.indexOf(':') + 1),
-    kind,
-    label,
-    description,
-    color,
-    status: 'active',
-    source: 'preview',
-    project: 'wisdom-weasel-rag-ime',
-    qualityScore: 1,
-    memberCount,
-    edgeCount: 2,
-    updatedAtMs: Date.now() - 60_000,
-  };
-}
-
-function previewMemoryGraphEdge(
-  id: string,
-  kind: 'tagRelation' | 'groupMember',
-  sourceId: string,
-  targetId: string,
-  relation: string,
-  weight: number,
-  evidenceCount: number,
-): Record<string, unknown> {
-  return {
-    id,
-    kind,
-    sourceId,
-    targetId,
-    sourceKind: sourceId.split(':', 1)[0],
-    targetKind: targetId.split(':', 1)[0],
-    relation,
-    weight,
-    directionBias: 0,
-    evidenceCount,
-    source: 'preview',
-    updatedAtMs: Date.now() - 60_000,
-  };
-}
-
-function previewMemoryEntity(kindValue: string, entityId: string): Record<string, unknown> {
-  const kind = kindValue === 'group' || kindValue === 'book' ? kindValue : 'tag';
-  const catalog = {
-    'agent-runtime': previewMemoryGraphNode('tag:agent-runtime', 'tag', 'Agent Runtime', '会话、工具与执行边界', 18, 'teal'),
-    'memory-quality': previewMemoryGraphNode('tag:memory-quality', 'tag', '记忆质量', '去噪、合并与来源约束', 14, 'green'),
-    'input-boundary': previewMemoryGraphNode('tag:input-boundary', 'tag', '输入封口', 'Backspace 编辑，Enter 后持久化', 9, 'orange'),
-    'input-method': previewMemoryGraphNode('group:input-method', 'group', '输入法', '输入质量、候选与上下文注入', 34, 'teal'),
-    agent: previewMemoryGraphNode('group:agent', 'group', 'Agent 工程', '会话、工具和长期记忆', 27, 'blue'),
-    'input-memory': previewMemoryGraphNode('book:input-memory', 'book', '输入法记忆与上下文', '完整输入段、App 来源和闪电联想边界', 12, 'green'),
-  } as const;
-  const fallback = previewMemoryGraphNode(
-    `${kind}:${entityId || 'preview'}`,
-    kind,
-    entityId || '预览记忆',
-    '本地记忆关系',
-    0,
-    'gray',
-  );
-  const entity = catalog[entityId as keyof typeof catalog] ?? fallback;
-  const related = kind === 'tag'
-    ? catalog['memory-quality']
-    : kind === 'book'
-      ? catalog['input-method']
-      : catalog['agent-runtime'];
-  const connectionEdge = kind === 'tag'
-    ? previewMemoryGraphEdge(`entity-edge:${entityId}`, 'tagRelation', String(entity.id), String(related.id), 'related_to', 0.88, 6)
-    : kind === 'book'
-      ? previewMemoryGraphEdge(`entity-edge:${entityId}`, 'groupMember', String(related.id), String(entity.id), 'contains', 0.9, 1)
-      : previewMemoryGraphEdge(`entity-edge:${entityId}`, 'groupMember', String(entity.id), String(related.id), 'contains', 0.9, 1);
-  const members = kind === 'group'
-    ? [catalog['input-boundary'], catalog['memory-quality']].map((node) => ({
-        node,
-        edge: previewMemoryGraphEdge(`entity-member:${String(node.id)}`, 'groupMember', String(entity.id), String(node.id), 'contains', 1, 1),
-      }))
-    : [];
-  return {
-    schemaVersion: 'rag-ime.memory-entity.v1',
-    ok: true,
-    settingsRevision: 'settings:preview',
-    runtimeRevision: 7,
-    kind,
-    entityId: entityId || 'preview',
-    entityRevision: `sha256:${'b'.repeat(64)}`,
-    project: 'wisdom-weasel-rag-ime',
-    entity,
-    attributes: {
-      type: kind === 'group' ? 'semantic' : kind === 'book' ? 'topic' : 'concept',
-      aliases: kind === 'tag' && entityId === 'memory-quality' ? ['记忆治理'] : [],
-      tags: kind === 'book' ? ['输入封口', '记忆质量'] : [],
-    },
-    connections: { items: [{ node: related, edge: connectionEdge }], nextCursor: '', limit: 40, hasMore: false },
-    members: { items: members, nextCursor: '', limit: 40, hasMore: false },
-    limits: { connectionsLimit: 40, membersLimit: 40 },
-  };
-}
-
-function previewMemoryCurationStatus(status: string): Record<string, unknown> {
-  return {
-    ok: true,
-    policy: 'review',
-    autoApply: false,
-    pendingDraftCount: status === 'draft' ? 1 : 0,
-    runs: [{ runId: 'memory_book_preview', status, diffCount: 3, createdAtMs: Date.now() - 180_000 }],
-  };
-}
-
-function previewMemoryCurationRun(
-  selections: Map<number, boolean>,
-  status: string,
-): Record<string, unknown> {
-  const changes = [
-    ['upsert_memory_atom', '更新记忆原子', '输入封口边界', 'Backspace 修改缓冲区，Enter 或切换 App 后才写入完整段落。', 18],
-    ['merge_semantic_tag', '合并标签', '合并输入法同义标签', '保留清晰名称和别名，移除传输层标签。', 11],
-    ['supersede_memory', '归档噪声', '隔离旧 Rime 碎片', '未封口单词和短片段不再参与 Agent 上下文或长期记忆。', 4_887],
-  ].map(([operation, operationLabel, title, detail, sourceCount], index) => {
-    const diffId = index + 1;
-    const selected = selections.get(diffId) === true;
-    return {
-      diffId,
-      operation,
-      operationLabel,
-      status: status === 'draft' ? (selected ? 'approved' : 'rejected') : status === 'rolled_back' ? 'rolled_back' : 'applied',
-      selected,
-      title,
-      detail,
-      sourceCount,
-    };
-  });
-  return {
-    ok: true,
-    stale: false,
-    canApply: status === 'draft' && changes.some((change) => change.selected),
-    canRollback: status === 'applied',
-    run: {
-      runId: 'memory_book_preview',
-      status,
-      createdAtMs: Date.now() - 180_000,
-      diffCount: changes.length,
-      pendingDiffCount: status === 'draft' ? changes.filter((change) => change.selected).length : 0,
-      changes,
-    },
-  };
-}
-
-function previewMemoryApplyPreview(): Record<string, unknown> {
-  return {
-    schemaVersion: 'rag-ime.management-work-preview.v1',
-    ok: true,
-    previewToken: 'preview-memory-curation',
-    pathId: 'knowledge.database.apply',
-    payloadSha256: `sha256:${'d'.repeat(64)}`,
-    expectedRevision: { runtimeRevision: 7, subjectRevision: 'memory_book_preview' },
-    expiresAtMs: Date.now() + 60_000,
-    requiredConfirm: 'apply',
-    summary: {
-      title: '应用所选记忆更新',
-      items: ['只写入已勾选的整理建议', '重建本地记忆检索索引'],
-      risk: 'R2',
-    },
-  };
-}
-
-function previewMemoryWorkReceipt(pathId: string, rollbackAvailable: boolean): Record<string, unknown> {
-  return {
-    schemaVersion: 'rag-ime.management-work-receipt.v1',
-    ok: true,
-    receiptId: pathId.endsWith('rollback') ? 'receipt-memory-curation-rollback' : 'receipt-memory-curation',
-    pathId,
-    payloadSha256: `sha256:${'d'.repeat(64)}`,
-    appliedAtMs: Date.now(),
-    auditId: 17,
-    rollbackAvailable,
-    rollbackToken: rollbackAvailable ? 'rollback-memory-curation' : '',
-    rollbackAuthority: { runId: 'memory_book_preview' },
-    restartComponents: [],
-    result: { status: pathId.endsWith('rollback') ? 'rolled_back' : 'applied' },
-  };
-}
 
 function previewKnowledgeBase(): Record<string, unknown> {
   return {
@@ -1898,18 +1731,23 @@ function previewWorkflowState(sessionId: string): AgentWorkflowStateV1 {
       goalId: `goal:${sessionId}`,
       revision: 1,
       objective: '在明确预算内完成 Agent 工作流，并留下可复现的验证证据。',
+      successCriteria: '计划全部完成，并通过用户验收。',
+      evidenceExpectations: ['聚焦测试结果', '可定位的产物或变更记录'],
       status: 'active',
       budget: { tokenLimit: 48_000, timeLimitMs: 3_600_000 },
       usage: { tokens: 14_600, elapsedMs: 1_080_000 },
       remaining: { tokens: 33_400, timeMs: 2_520_000 },
       budgetExceeded: false,
       completionAudit: null,
+      cancellationAudit: null,
       updatedAtMs: now,
     },
     actGate: {
-      allowed: false,
-      reason: 'plan_not_approved',
-      message: 'Plan 正在等待审阅。',
+      allowed: true,
+      reason: 'user_execution_request',
+      message: '用户已请求执行，可在已授权工作区内继续；高风险操作仍需逐项审批。',
+      planRevision: 2,
+      goalRevision: 1,
     },
   };
 }
@@ -1954,13 +1792,14 @@ function mutatePreviewPlan(
       items: [],
       counts: { total: 0, pending: 0, inProgress: 0, completed: 0 },
     };
-    return { ...workflow, plan, actGate: previewActGate(plan.status, workflow.goal) };
+    return { ...workflow, plan, actGate: previewActGate(plan, workflow.goal) };
   }
   let status = workflow.plan.status;
   if (action === 'submit_review') status = 'review';
   if (action === 'approve') status = 'approved';
   if (action === 'return_to_draft' || action === 'save') status = 'draft';
   if (action === 'cancel') status = 'cancelled';
+  if (action === 'complete') status = 'completed';
   const requestedItems: AgentWorkflowStateV1['plan']['items'] = Array.isArray(body.items)
     ? body.items.map((item, index) => {
       const value = record(item);
@@ -1999,7 +1838,7 @@ function mutatePreviewPlan(
       completed: items.filter((item) => item.status === 'completed').length,
     },
   };
-  return { ...workflow, plan, actGate: previewActGate(plan.status, workflow.goal) };
+  return { ...workflow, plan, actGate: previewActGate(plan, workflow.goal) };
 }
 
 function mutatePreviewGoal(
@@ -2009,25 +1848,29 @@ function mutatePreviewGoal(
   const action = stringValue(body.action);
   if (action === 'clear') {
     const empty = previewWorkflowState(workflow.sessionId).goal;
-    const goal = {
+    const goal: AgentWorkflowStateV1['goal'] = {
       ...empty,
       configured: false,
       goalId: '',
       revision: workflow.goal.revision + 1,
       objective: '',
+      successCriteria: '',
+      evidenceExpectations: [],
       status: 'cleared' as const,
       budget: { tokenLimit: null, timeLimitMs: null },
       usage: { tokens: 0, elapsedMs: 0 },
       remaining: { tokens: null, timeMs: null },
       completionAudit: null,
+      cancellationAudit: null,
     };
-    return { ...workflow, goal, actGate: previewActGate(workflow.plan.status, goal) };
+    return { ...workflow, goal, actGate: previewActGate(workflow.plan, goal) };
   }
   const now = Date.now();
   let status = workflow.goal.status;
-  if (action === 'set' || action === 'update' || action === 'resume') status = 'active';
+  if (action === 'confirm_setup' || action === 'update' || action === 'resume') status = 'active';
   if (action === 'pause') status = 'paused';
   if (action === 'complete') status = 'completed';
+  if (action === 'cancel') status = 'cancelled';
   const tokenLimit = optionalPreviewNumber(body.tokenBudget, workflow.goal.budget.tokenLimit);
   const timeLimitMs = optionalPreviewNumber(body.timeBudgetMs, workflow.goal.budget.timeLimitMs);
   const evidence = Array.isArray(body.evidence)
@@ -2041,12 +1884,17 @@ function mutatePreviewGoal(
       };
     })
     : [];
+  const evidenceExpectations: AgentWorkflowStateV1['goal']['evidenceExpectations'] = Array.isArray(body.evidenceExpectations)
+    ? (body.evidenceExpectations.map(stringValue).filter(Boolean).slice(0, 20) as AgentWorkflowStateV1['goal']['evidenceExpectations'])
+    : workflow.goal.evidenceExpectations;
   const goal: AgentWorkflowStateV1['goal'] = {
     ...workflow.goal,
     configured: true,
     goalId: workflow.goal.goalId || `goal:${workflow.sessionId}`,
     revision: workflow.goal.revision + 1,
     objective: stringValue(body.objective) || workflow.goal.objective || 'Preview Goal',
+    successCriteria: stringValue(body.successCriteria) || workflow.goal.successCriteria,
+    evidenceExpectations,
     status,
     budget: { tokenLimit, timeLimitMs },
     remaining: {
@@ -2066,45 +1914,53 @@ function mutatePreviewGoal(
         createdAtMs: now,
       }
       : workflow.goal.completionAudit,
+    cancellationAudit: action === 'cancel'
+      ? {
+        auditId: `goal-cancellation:${now}`,
+        reason: stringValue(body.reason) || 'Preview 中取消。',
+        cancelledBy: 'user',
+        createdAtMs: now,
+      }
+      : workflow.goal.cancellationAudit,
     updatedAtMs: now,
   };
-  return { ...workflow, goal, actGate: previewActGate(workflow.plan.status, goal) };
+  return { ...workflow, goal, actGate: previewActGate(workflow.plan, goal) };
 }
 
 function previewActGate(
-  planStatus: AgentWorkflowStateV1['plan']['status'],
+  plan: AgentWorkflowStateV1['plan'],
   goal: AgentWorkflowStateV1['goal'],
 ): AgentWorkflowStateV1['actGate'] {
+  const revisions = {
+    planRevision: plan.revision,
+    goalRevision: goal.revision,
+  };
+  const planStatus = plan.status;
   if (goal.status === 'paused') {
-    return { allowed: false, reason: 'goal_paused', message: 'Goal 已暂停。' };
+    return { allowed: false, reason: 'goal_paused', message: 'Goal 已暂停。', ...revisions };
   }
   if (goal.status === 'completed') {
-    return { allowed: false, reason: 'goal_completed', message: 'Goal 已完成。' };
+    return { allowed: false, reason: 'goal_completed', message: 'Goal 已完成。', ...revisions };
+  }
+  if (goal.status === 'cancelled') {
+    return { allowed: false, reason: 'goal_cancelled', message: 'Goal 已取消。', ...revisions };
   }
   if (goal.budgetExceeded) {
-    return { allowed: false, reason: 'goal_budget_exhausted', message: 'Goal 预算已用尽。' };
+    return { allowed: false, reason: 'goal_budget_exhausted', message: 'Goal 预算已用尽。', ...revisions };
   }
   if (planStatus === 'approved' || planStatus === 'executing') {
-    return { allowed: true, reason: 'approved', message: 'Plan 已批准，可以进入 Act。' };
-  }
-  if (planStatus === 'completed') {
     return {
-      allowed: false,
-      reason: 'plan_completed',
-      message: '当前计划已经完成；开始新任务前请创建并审批新计划。',
-    };
-  }
-  if (planStatus === 'cancelled') {
-    return {
-      allowed: false,
-      reason: 'plan_cancelled',
-      message: '当前计划已经取消；继续工作前请创建并审批新计划。',
+      allowed: true,
+      reason: 'approved',
+      message: '计划已经批准；执行仍受工作区权限与高风险操作审批约束。',
+      ...revisions,
     };
   }
   return {
-    allowed: false,
-    reason: planStatus === 'draft' ? 'plan_required' : 'plan_not_approved',
-    message: planStatus === 'draft' ? '请先提交计划审阅。' : '计划正在等待审阅。',
+    allowed: true,
+    reason: 'user_execution_request',
+    message: '用户已请求执行，可在已授权工作区内继续；高风险操作仍需逐项审批。',
+    ...revisions,
   };
 }
 
@@ -2118,6 +1974,7 @@ function previewInstalledExtensionItems(): Record<string, unknown>[] {
     id: 'timeline-inspector',
     displayName: 'Timeline Inspector',
     version: '1.0.0',
+    previousVersion: '0.9.0',
     enabled: true,
     rollbackAvailable: true,
   }];
@@ -2170,8 +2027,9 @@ function applyPreviewExtensionChange(
       id: pluginId,
       displayName: stringValue(change.displayName) || pluginId,
       version: '1.1.0',
+      previousVersion: action === 'update' ? stringValue(existing?.version) : '',
       enabled: change.enable !== false,
-      rollbackAvailable: action === 'update',
+      rollbackAvailable: action === 'update' && Boolean(existing),
     };
     return existing
       ? installed.map((item) => stringValue(item.id) === pluginId ? next : item)
@@ -2181,6 +2039,24 @@ function applyPreviewExtensionChange(
   if (action === 'enable' || action === 'disable') {
     return installed.map((item) => stringValue(item.id) === pluginId
       ? { ...item, enabled: action === 'enable' }
+      : item);
+  }
+  if (action === 'rollback') {
+    if (existing.rollbackAvailable !== true) {
+      throw new Error('这个扩展当前没有可恢复的上一版本。');
+    }
+    const rollbackVersion = stringValue(change.version)
+      || stringValue(existing.previousVersion);
+    if (!rollbackVersion) {
+      throw new Error('这个扩展缺少可核验的上一版本，未执行恢复。');
+    }
+    return installed.map((item) => stringValue(item.id) === pluginId
+      ? {
+        ...item,
+        version: rollbackVersion,
+        previousVersion: '',
+        rollbackAvailable: false,
+      }
       : item);
   }
   return installed;
@@ -2293,6 +2169,8 @@ function previewSubagentBatch(): Record<string, unknown> {
     id,
     batchId: 'subagent-batch:preview',
     childSessionId: `subagent-runtime:${id}`,
+    planItemId: 'plan-item:preview-research',
+    planItemTitle: '核对研究证据',
     templateId,
     templateVersion: '1',
     ordinal,
@@ -2519,7 +2397,7 @@ function previewDebugContext(sessionId: string, turnId: string): Record<string, 
       ],
       toolExecutions: [
         { toolCallId: 'tool-preview-read', toolName: 'memory_search', modelCallIndex: 1, runtimeTurnIndex: 0, startedAtMs: now + 140, endedAtMs: now + 205, startSequence: 1, endSequence: 4, args: { query: '上下文缓存' }, result: { items: 2 }, isError: false, status: 'completed', updates: [] },
-        { toolCallId: 'tool-preview-status', toolName: 'ime_overview', modelCallIndex: 1, runtimeTurnIndex: 0, startedAtMs: now + 145, endedAtMs: now + 198, startSequence: 2, endSequence: 3, args: { op: 'status' }, result: { healthy: true }, isError: false, status: 'completed', updates: [] },
+        { toolCallId: 'tool-preview-status', toolName: 'overview', modelCallIndex: 1, runtimeTurnIndex: 0, startedAtMs: now + 145, endedAtMs: now + 198, startSequence: 2, endSequence: 3, args: { op: 'status' }, result: { healthy: true }, isError: false, status: 'completed', updates: [] },
       ],
       toolBatches: [{ id: 'preview-call-1-stage-1', modelCallIndex: 1, runtimeTurnIndex: 0, stage: 1, executionMode: 'parallel', startedAtMs: now + 140, endedAtMs: now + 205, status: 'completed', toolCallIds: ['tool-preview-read', 'tool-preview-status'] }],
     },
@@ -2605,9 +2483,15 @@ function previewRoomSession(
   id: string,
   title: string,
   roleId: string,
+  participantId: string,
 ): Record<string, unknown> {
   return {
     ...previewSession(id, title, roleId, Date.now()),
+    roomParticipant: {
+      roomId: 'room-preview',
+      participantId,
+      status: 'active',
+    },
     mode: 'coordinator',
     toolProfileVersion: 'control-center-v1',
     executionMode: 'workspace_managed',
@@ -2643,6 +2527,117 @@ function previewTool(
     enabled: true,
     effectiveOperations: operations,
   };
+}
+
+function previewCapabilityCatalog(
+  sessionId: string,
+  sessionPreferences: Record<string, string> = {},
+  globalPreferences: Record<string, string> = {},
+  projectPreferences: Record<string, string> = {},
+): Record<string, unknown> {
+  const effectiveAtMs = Date.now();
+  const manifests = [
+    previewTool('overview', '控制中心概览', '查看输入法、模型、记忆和最近活动的整体状态', 'control', 'R0', ['status', 'capabilities', 'recent_activity']),
+    previewTool('input', '输入法', '查看输入设置、方案与候选解释，并在批准后调整配置或词表', 'input', 'R1', ['get_settings', 'apply_settings', 'rollback_settings', 'profile', 'candidate_explain']),
+    previewTool('voice', '语音输入', '查看语音状态，并在批准后切换已配置的语音 Provider', 'voice', 'R1', ['status', 'privacy_policy', 'provider_status', 'provider_preview', 'provider_apply']),
+    previewTool('planning', '规划与任务', '查看每日计划，并在确认后更新任务状态', 'planning', 'R1', ['dashboard', 'task_action', 'undo_task_event']),
+    previewTool('memory', '个人上下文记忆', '查询已治理的长期记忆与来源链路', 'memory', 'R1', ['catalog', 'read', 'recent', 'trace', 'search']),
+    previewTool('knowledge', '文档知识库', '检索用户明确启用的独立文档知识库', 'knowledge', 'R0', ['list_bases', 'search', 'find', 'open', 'status']),
+    previewTool('browser', '浏览器共驾', '读取已配对浏览器的页面，并在批准后执行可追踪操作', 'browser', 'R1', ['status', 'tabs', 'snapshot', 'navigate', 'click', 'type', 'stop']),
+    previewTool('workspace_read', '读取文件', '读取已授权项目目录中的文件内容', 'workspace', 'R0', ['read']),
+    previewTool('workspace_search', '搜索项目', '在已授权项目目录中检索文件与内容', 'workspace', 'R0', ['search']),
+    previewTool('workspace_edit', '修改文件', '通过快照保护修改已授权项目文件', 'workspace', 'R2', ['edit']),
+    previewTool('workspace_shell', '运行命令', '在审批与已授权工作区边界内运行命令', 'workspace', 'R2', ['run']),
+    previewTool('workspace_job', '后台任务', '启动并观察有界后台命令', 'workspace', 'R2', ['start', 'status', 'cancel']),
+  ];
+  const items = manifests.map((manifest) => {
+    const id = stringValue(manifest.id);
+    const canonicalId = `tool:${id}`;
+    const sessionPreference = sessionPreferences[canonicalId] ?? 'inherit';
+    const projectPreference = projectPreferences[canonicalId] ?? 'inherit';
+    const globalPreference = globalPreferences[canonicalId] ?? 'inherit';
+    const effective = sessionPreference !== 'inherit'
+      ? sessionPreference
+      : projectPreference !== 'inherit'
+        ? projectPreference
+        : globalPreference !== 'inherit'
+          ? globalPreference
+          : 'enabled';
+    const effectiveScope = sessionPreference !== 'inherit'
+      ? 'session'
+      : projectPreference !== 'inherit'
+        ? 'project_default'
+        : globalPreference !== 'inherit'
+          ? 'global_default'
+          : 'built_in_default';
+    const risk = stringValue(manifest.riskLevel) || 'R0';
+    return {
+      ...manifest,
+      canonicalId,
+      kind: 'tool',
+      source: { kind: 'product', label: 'Personal Agent Workbench' },
+      status: stringValue(manifest.availability) || 'offline',
+      risk,
+      requiredPermissions: [
+        ...(risk === 'R0' ? [] : ['native_approval']),
+        ...(id.startsWith('workspace_') ? ['workspace_scope'] : []),
+      ],
+      authorization: {
+        state: sessionId ? 'authorized' : 'not_applicable',
+        reason: sessionId ? 'existing_session_policy_authorizes_tool' : 'session_context_required',
+      },
+      disclosure: {
+        preference: sessionPreference,
+        effective,
+        state: effective === 'enabled' ? 'disclosed' : 'hidden',
+        reason: effectiveScope === 'session' ? 'session_preference' : `inherited_${effectiveScope}`,
+
+        scope: effectiveScope,
+      },
+      effectiveScope,
+      reasons: [effectiveScope === 'session' ? 'session_preference' : `inherited_${effectiveScope}`],
+      revision: `preview:${id}:1`,
+      effectiveAtMs,
+    };
+  });
+  const projectId = `workspace-${'b'.repeat(64)}`;
+  return {
+    schemaVersion: 'rag-ime.capability-catalog.v1',
+    ok: true,
+    revision: `sha256:${'a'.repeat(64)}`,
+    effectiveAtMs,
+    projectScope: sessionId
+      ? { supported: true, identityKind: 'workspace_scope_sha256', projectId, reason: 'session_workspace_scope' }
+      : { supported: false, identityKind: 'none', reason: 'stable_project_identity_unavailable' },
+    ...(sessionId ? {
+      sessionPolicy: {
+        sessionId,
+        mode: 'coordinator',
+        executionMode: 'workspace_managed',
+        workspaceScopeGranted: true,
+        toolProfileVersion: 'control-center-v1',
+        toolAllowlistMode: 'profile',
+        allowedTools: [],
+        policyRevision: 1,
+        disclosurePreferences: {
+          globalDefault: globalPreferences,
+          projectDefault: projectPreferences,
+          session: sessionPreferences,
+          effective: Object.fromEntries(items.map((item) => [item.canonicalId, record(item.disclosure).effective])),
+        },
+        effectiveAtMs,
+      },
+    } : {}),
+    items,
+  };
+}
+
+function previewCapabilityPreferences(value: unknown): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(record(value)).filter(([, preference]) => (
+      preference === 'inherit' || preference === 'enabled' || preference === 'disabled'
+    )),
+  ) as Record<string, string>;
 }
 
 function stringValue(value: unknown): string {
@@ -2695,193 +2690,6 @@ function previewEditablePersona(
   };
 }
 
-function previewConfigurationSettings(): Record<string, unknown> {
-  return {
-    ok: true,
-    configured: true,
-    settingsHash: 'sha256:preview-settings',
-    runtimeRevision: 12,
-    runtimeConfig: { runtimeRevision: 12, settingsRevision: 'sha256:preview-settings' },
-    settings: {
-      identity: {
-        productName: '澄',
-        assistantName: '澄',
-        tagline: '记得你，也陪你做事',
-      },
-      models: {
-        hot: 'minimind_ime_v2',
-      },
-      activeRag: {
-        enabled: true,
-        quickModel: 'deepseek/deepseek-v4-flash',
-        quickThinkingLevel: 'high',
-      },
-      memory: {
-        enabled: true,
-        retentionDays: 30,
-        recall: { detailLevel: 'compact', timelineEnabled: true },
-      },
-      context: {
-        recentInputBaseline: 20,
-        tokenBudget: 4096,
-        temporalRecall: true,
-      },
-      planning: { enabled: true, injectIntoContext: true },
-      agent: { pi: { enabled: true, idleTimeoutSeconds: 900, resumeLastSession: true } },
-      voice: {
-        provider: 'native_streaming',
-        hotkey: 'middle_mouse',
-        hotwordsEnabled: true,
-        hotwords: ['Pi', 'Agent', 'Tool'],
-        refinementModel: 'inherit',
-        refinementThinkingLevel: 'off',
-      },
-      privacy: {
-        traceIncludeText: false,
-        debugIncludeText: false,
-        debugContextDirectory: '/Volumes/External/Cheng/context-snapshots',
-        debugContextMaxGiB: 5,
-        debugContextMaxCallsPerTurn: 128,
-        redactSecrets: true,
-      },
-    },
-  };
-}
-
-function previewConfigurationSchema(): Record<string, unknown> {
-  return {
-    ok: true,
-    schemaVersion: 'rag-ime.settings-schema.v3',
-    sections: [
-      {
-        id: 'identity',
-        label: '称呼与外观',
-        fields: [
-          {
-            key: 'identity.productName',
-            type: 'string',
-            label: '应用名称',
-            description: '显示在侧栏和窗口标题中；不会改变安装包文件名',
-            minLength: 1,
-            maxLength: 24,
-            applyMode: 'live',
-          },
-          {
-            key: 'identity.assistantName',
-            type: 'string',
-            label: '通用伙伴称呼',
-            description: '没有指向某位具体伙伴时使用；自建伙伴可以单独命名，内置伙伴复制后也能调整',
-            minLength: 1,
-            maxLength: 24,
-            applyMode: 'live',
-          },
-          {
-            key: 'identity.tagline',
-            type: 'string',
-            label: '侧栏短句',
-            description: '应用名称下方的一句短介绍',
-            minLength: 1,
-            maxLength: 48,
-            applyMode: 'live',
-          },
-        ],
-      },
-      {
-        id: 'models',
-        label: 'Models',
-        fields: [
-          { key: 'models.hot', type: 'string', label: '本机预测配置 ID', applyMode: 'restart_predictor' },
-        ],
-      },
-      {
-        id: 'activeRag',
-        label: 'Active RAG',
-        fields: [
-          { key: 'activeRag.enabled', type: 'boolean', label: '启用深度生成', applyMode: 'live' },
-          { key: 'activeRag.quickModel', type: 'pi-model', label: '闪电生成模型', applyMode: 'live' },
-          { key: 'activeRag.quickThinkingLevel', type: 'pi-thinking', modelKey: 'activeRag.quickModel', label: '闪电生成思考', applyMode: 'live' },
-        ],
-      },
-      {
-        id: 'memory',
-        label: 'Memory',
-        fields: [
-          { key: 'memory.enabled', type: 'boolean', label: '启用长期记忆', applyMode: 'live' },
-          { key: 'memory.retentionDays', type: 'integer', label: '原始输入保留天数', min: 1, max: 3650, applyMode: 'live' },
-          { key: 'memory.recall.detailLevel', type: 'enum', label: '召回正文密度', options: ['compact', 'expanded'], applyMode: 'live' },
-          { key: 'memory.recall.timelineEnabled', type: 'boolean', label: '允许时间线召回', applyMode: 'live' },
-        ],
-      },
-      {
-        id: 'context',
-        label: 'Context',
-        fields: [
-          { key: 'context.recentInputBaseline', type: 'integer', label: '近期输入基线', min: 0, max: 80, applyMode: 'live' },
-          { key: 'context.tokenBudget', type: 'integer', label: '上下文容量', min: 512, max: 32768, applyMode: 'live' },
-          { key: 'context.temporalRecall', type: 'boolean', label: '理解时间表达', applyMode: 'live' },
-        ],
-      },
-      {
-        id: 'planning',
-        label: 'Planning',
-        fields: [
-          { key: 'planning.enabled', type: 'boolean', label: '启用任务规划', applyMode: 'live' },
-          { key: 'planning.injectIntoContext', type: 'boolean', label: '向 Agent 提供当前任务', applyMode: 'live' },
-        ],
-      },
-      {
-        id: 'agent',
-        label: 'Agent',
-        fields: [
-          { key: 'agent.pi.enabled', type: 'boolean', label: '连接 Pi', applyMode: 'live' },
-          { key: 'agent.pi.idleTimeoutSeconds', type: 'integer', label: '空闲退出时间', min: 0, max: 86400, applyMode: 'live' },
-          { key: 'agent.pi.systemProxy', type: 'boolean', label: '远程模型跟随系统代理', applyMode: 'restart_agent_gateway' },
-          { key: 'agent.pi.resumeLastSession', type: 'boolean', label: '恢复上次对话', applyMode: 'live' },
-        ],
-      },
-      {
-        id: 'privacy',
-        label: 'Privacy',
-        fields: [
-          {
-            key: 'privacy.debugIncludeText',
-            type: 'boolean',
-            label: '保存并查看本机上下文快照',
-            applyMode: 'restart_agent_gateway',
-          },
-          {
-            key: 'privacy.debugContextDirectory',
-            type: 'string',
-            label: '上下文快照目录（支持外置硬盘）',
-            applyMode: 'restart_agent_gateway',
-            maxLength: 1024,
-          },
-          {
-            key: 'privacy.debugContextMaxGiB',
-            type: 'integer',
-            label: '上下文快照容量',
-            min: 1,
-            max: 64,
-            unit: 'GiB',
-            applyMode: 'restart_agent_gateway',
-          },
-          {
-            key: 'privacy.debugContextMaxCallsPerTurn',
-            type: 'integer',
-            label: '每回合保留的模型调用',
-            min: 1,
-            max: 256,
-            unit: '次/回合',
-            applyMode: 'restart_agent_gateway',
-            expert: true,
-          },
-          { key: 'privacy.traceIncludeText', type: 'boolean', label: '诊断记录包含正文', applyMode: 'live', expert: true },
-          { key: 'privacy.redactSecrets', type: 'boolean', label: '诊断中隐藏秘密', applyMode: 'live' },
-        ],
-      },
-    ],
-  };
-}
 
 function previewThinkingLevel(value: unknown): NonNullable<AgentPersonaV1['defaults']['thinkingLevel']> {
   const level = stringValue(value);
@@ -2893,6 +2701,8 @@ function previewThinkingLevel(value: unknown): NonNullable<AgentPersonaV1['defau
 function previewCompanionConfiguration(
   revision: number,
   defaults: { roleId: string; roleVersion: string },
+  capabilityGlobalPreferences: Record<string, string>,
+  capabilityProjectPreferences: Record<string, Record<string, string>>,
 ): Record<string, unknown> {
   return {
     ok: true,
@@ -2902,8 +2712,129 @@ function previewCompanionConfiguration(
         sessionDefaults: {
           roleId: defaults.roleId,
           roleVersion: defaults.roleVersion,
+          capabilityDisclosurePreferences: capabilityGlobalPreferences,
+        },
+        capabilityDisclosure: {
+          projectPreferences: capabilityProjectPreferences,
         },
       },
+    },
+  };
+}
+
+function previewCreatedRoomSnapshot(
+  roomId: string,
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  const now = Date.now();
+  const requestedParticipants = Array.isArray(body.participants)
+    ? body.participants.map(record)
+    : [];
+  if (requestedParticipants.length < 2 || requestedParticipants.length > 4) {
+    throw new Error('请选择 2 至 4 位伙伴。');
+  }
+  const participants = requestedParticipants.map((participant, ordinal) => ({
+    schemaVersion: 'rag-ime.agent-participant.v1',
+    id: `${roomId}:participant-${ordinal + 1}`,
+    roomId,
+    sessionId: `${roomId}:session-${ordinal + 1}`,
+    roleId: stringValue(participant.roleId),
+    roleVersion: stringValue(participant.roleVersion) || '1',
+    displayName: stringValue(participant.displayName) || `伙伴 ${ordinal + 1}`,
+    collaborationRole: stringValue(participant.collaborationRole)
+      || (ordinal === 0 ? 'coordinator' : 'implementer'),
+    status: 'active',
+    ordinal,
+    createdAtMs: now,
+    lastSpokeAtMs: null,
+  }));
+  const workspaceRoots = Array.isArray(body.workspaceRoots)
+    ? body.workspaceRoots.filter((value): value is string => typeof value === 'string')
+    : [];
+  const room = {
+    schemaVersion: 'rag-ime.agent-room.v1',
+    id: roomId,
+    title: stringValue(body.title),
+    status: 'active',
+    roomKind: stringValue(body.roomKind) || 'collaboration',
+    avatar: stringValue(body.avatar),
+    description: stringValue(body.description),
+    scenarioPrompt: stringValue(body.scenarioPrompt),
+    routingPolicy: stringValue(body.routingPolicy) || 'natural',
+    routingConfig: record(body.routingConfig),
+    moderatorParticipantId: participants[0]!.id,
+    workspaceRoots,
+    executionMode: stringValue(body.executionMode) || 'workspace_managed',
+    createdAtMs: now,
+    updatedAtMs: now,
+    lastEventSequence: 0,
+    participants,
+    topics: [],
+    artifacts: [],
+    workItems: [],
+  };
+  return {
+    schemaVersion: 'rag-ime.agent-room-snapshot.v1',
+    ok: true,
+    room,
+    events: [],
+    firstSequence: 0,
+    lastSequence: 0,
+    resumeToken: '',
+    truncated: false,
+  };
+}
+
+function previewRoomTopicMutation(
+  snapshot: Record<string, unknown>,
+  body: Record<string, unknown>,
+  create: boolean,
+): Record<string, unknown> {
+  const room = record(snapshot.room);
+  const roomId = stringValue(room.id);
+  const currentTopics = Array.isArray(room.topics) ? room.topics.map(record) : [];
+  const now = Date.now();
+  let topics: Record<string, unknown>[];
+  let activeTopicId = stringValue(room.activeTopicId);
+  if (create) {
+    const title = stringValue(body.title);
+    if (!title) throw new Error('话题名称不能为空。');
+    const topic = {
+      schemaVersion: 'rag-ime.agent-room-topic.v1',
+      id: `${roomId}:topic-${currentTopics.length + 1}`,
+      roomId,
+      title,
+      summary: stringValue(body.summary),
+      status: 'active',
+      ordinal: currentTopics.length,
+      createdAtMs: now,
+      updatedAtMs: now,
+    };
+    topics = [...currentTopics, topic];
+  } else {
+    const topicId = stringValue(body.topicId);
+    if (!currentTopics.some((topic) => topic.id === topicId)) {
+      throw new Error('这个话题已经不存在，请刷新后重试。');
+    }
+    topics = currentTopics.map((topic) => topic.id === topicId
+      ? {
+          ...topic,
+          ...(typeof body.title === 'string' ? { title: stringValue(body.title) } : {}),
+          ...(typeof body.summary === 'string' ? { summary: stringValue(body.summary) } : {}),
+          ...(body.archived === true ? { status: 'archived' } : {}),
+          updatedAtMs: now,
+        }
+      : topic);
+    if (body.activate === true) activeTopicId = topicId;
+    if (body.archived === true && activeTopicId === topicId) activeTopicId = '';
+  }
+  return {
+    ...snapshot,
+    room: {
+      ...room,
+      topics,
+      activeTopicId,
+      updatedAtMs: now,
     },
   };
 }
@@ -2912,405 +2843,4 @@ function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
-}
-
-function roomPostBlock(
-  id: string,
-  type: string,
-  presentationKind: string,
-  summary: string,
-  data: Record<string, unknown>,
-): Record<string, unknown> {
-  return {
-    schemaVersion: 'rag-ime.agent-block.v1',
-    id,
-    type,
-    status: 'completed',
-    presentationKind,
-    data,
-    summary,
-    source: {},
-    visibility: 'room_post',
-    digest: 'd'.repeat(64),
-    ref: `ref:${id}`,
-    generation: 0,
-  };
-}
-
-function previewRoomSnapshot(roomId: string) {
-  const now = Date.now() - 60_000;
-  const rootId = `${roomId}:turn-1`;
-  const participants = [
-    previewParticipant(roomId, 'participant-present', 'session-room-present', 'companion-present-v1', '澄·今', 0),
-    previewParticipant(roomId, 'participant-firstlight', 'session-room-firstlight', 'companion-firstlight-v1', '澄·初', 1),
-  ];
-  const event = (
-    sequence: number,
-    eventType: string,
-    participantId: string | null,
-    payload: Record<string, unknown>,
-  ) => ({
-    schemaVersion: 'rag-ime.agent-room-event.v1',
-    eventId: `${roomId}:${sequence}`,
-    roomId,
-    sequence,
-    turnId: rootId,
-    eventType,
-    participantId,
-    sourceSessionId: participantId === 'participant-present'
-      ? 'session-room-present'
-      : participantId === 'participant-firstlight'
-        ? 'session-room-firstlight'
-        : '',
-    createdAtMs: now + sequence,
-    payload,
-    resumeToken: `${roomId}:${sequence}`,
-  });
-  const roomPost = (
-    postId: string,
-    participantId: string,
-    dispatchId: string,
-    content: string,
-    createdAtMs: number,
-    blocks?: Record<string, unknown>[],
-  ) => ({
-    schemaVersion: 'wisdom-weasel.room-post.v2',
-    postId,
-    roomId,
-    rootId,
-    generation: 0,
-    dispatchId,
-    authorActorRef: participantId,
-    kind: 'result',
-    visibility: 'room',
-    content,
-    idempotencyKey: postId,
-    publicationSource: { kind: 'room_commit', ref: `commit:${postId}` },
-    createdAtMs,
-    ...(blocks ? { blocks } : {}),
-  });
-  const events = [
-    event(1, 'user_message', null, {
-      messageId: 'room-user-1', rootId,
-      text: '并行检查 Agent UI 与 Control API 的集成边界。',
-    }),
-    event(2, 'route_decision', 'participant-present', {
-      rootId, dispatchId: 'dispatch-present',
-      targetParticipantId: 'participant-present', targetDisplayName: '澄·今',
-      reason: '负责前端时间线', summary: '澄·今已接手前端时间线',
-    }),
-    event(3, 'route_decision', 'participant-firstlight', {
-      rootId, dispatchId: 'dispatch-firstlight',
-      targetParticipantId: 'participant-firstlight', targetDisplayName: '澄·初',
-      reason: '负责接口边界', summary: '澄·初已接手接口边界',
-    }),
-    event(4, 'participant_activity', 'participant-present', {
-      rootId, dispatchId: 'dispatch-present', sourceEventId: 'tool-present-start',
-      sourceEventType: 'tool_started', toolCallId: 'tool-present', toolName: 'read_file',
-      summary: '读取 Room 时间线实现',
-    }),
-    event(5, 'participant_activity', 'participant-present', {
-      rootId, dispatchId: 'dispatch-present', sourceEventId: 'tool-present-finish',
-      sourceEventType: 'tool_finished', toolCallId: 'tool-present', toolName: 'read_file',
-      summary: '已核对流式投影与 Post 替换', isError: false,
-    }),
-    event(6, 'participant_delta', 'participant-present', {
-      rootId, dispatchId: 'dispatch-present', messageId: 'room-assistant-1',
-      delta: '我会把工具进展留在当前消息里；完成后，这里会直接变成清晰的公开结果。',
-    }),
-    event(7, 'room_post', 'participant-present', {
-      rootId, dispatchId: 'dispatch-present',
-      post: roomPost(
-        'room-post-present', 'participant-present', 'dispatch-present',
-        '我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。',
-        now + 7,
-        /* The same managed report a Session turn delivers. Room routes results
-           through the identical AgentBlocks renderer, so this is what proves
-           the two workspaces share one result language rather than merely
-           looking alike. Room post blocks carry the full agent-block.v1 shape
-           — summary/source/visibility/digest/ref/generation are all required,
-           and a post whose blocks fail validation is dropped whole. */
-        [
-          roomPostBlock('room-post-text', 'text', 'markdown', '结果说明', {
-            text: '我已把实时进展收拢在同一条消息里；完成后会在原处留下清晰结果。',
-          }),
-          roomPostBlock('room-post-report', 'file', 'file', '词库健康报告', {
-            mediaId: 'media_previewreport01',
-            name: 'lexicon-health-report.html',
-            mimeType: 'text/html',
-            byteSize: PREVIEW_REPORT_BYTES,
-            sha256: 'c'.repeat(64),
-          }),
-        ],
-      ),
-    }),
-    event(8, 'turn_completed', 'participant-present', {
-      rootId, dispatchId: 'dispatch-present', summary: '前端时间线检查完成',
-    }),
-    event(9, 'participant_activity', 'participant-firstlight', {
-      rootId, dispatchId: 'dispatch-firstlight', sourceEventId: 'tool-firstlight-start',
-      sourceEventType: 'tool_started', toolCallId: 'tool-firstlight', toolName: 'control_api',
-      summary: '检查路由与权限回执',
-    }),
-    event(10, 'participant_delta', 'participant-firstlight', {
-      rootId, dispatchId: 'dispatch-firstlight', messageId: 'room-assistant-2',
-      delta: 'Control API 只在服务端确认后更新权限状态，失败回执不会伪装成已生效。',
-    }),
-    event(11, 'participant_activity', 'participant-firstlight', {
-      rootId, dispatchId: 'dispatch-firstlight', sourceEventId: 'tool-firstlight-finish',
-      sourceEventType: 'tool_finished', toolCallId: 'tool-firstlight', toolName: 'control_api',
-      summary: '路由与权限回执检查完成', isError: false,
-    }),
-    event(12, 'room_post', 'participant-firstlight', {
-      rootId, dispatchId: 'dispatch-firstlight',
-      post: roomPost(
-        'room-post-firstlight', 'participant-firstlight', 'dispatch-firstlight',
-        '我核对了工作目录和授权边界：需要确认的操作会等你，公开消息也不会重复出现。',
-        now + 12,
-      ),
-    }),
-    event(13, 'turn_completed', 'participant-firstlight', {
-      rootId, dispatchId: 'dispatch-firstlight', summary: '接口边界检查完成',
-    }),
-    event(14, 'turn_completed', null, { rootId, summary: '协作检查完成' }),
-  ];
-  return {
-    schemaVersion: 'rag-ime.agent-room-snapshot.v1',
-    ok: true,
-    room: {
-      schemaVersion: 'rag-ime.agent-room.v1',
-      id: roomId,
-      title: '迁移作战室',
-      status: 'active',
-      executionMode: 'workspace_managed',
-      roomKind: 'collaboration',
-      avatar: 'briefcase',
-      description: '验证责任交接、流式投影与多端控制面板',
-      routingPolicy: 'natural',
-      moderatorParticipantId: 'participant-present',
-      activeTopicId: 'topic-preview',
-      workspaceRoots: ['/Volumes/work/wisdom-weasel-rag-ime'],
-      topics: [{
-        schemaVersion: 'rag-ime.agent-room-topic.v1',
-        id: 'topic-preview',
-        roomId,
-        title: '网关升级',
-        summary: '保持 Pi Session 独立，以 WorkItem 责任账本完成协作闭环。',
-        status: 'active',
-        ordinal: 0,
-        createdAtMs: now,
-        updatedAtMs: now,
-      }],
-      artifacts: [],
-      workItems: [{
-        schemaVersion: 'rag-ime.agent-room-work-item.v1',
-        id: 'room-work:preview',
-        roomId,
-        topicId: 'topic-preview',
-        rootTurnId: `${roomId}:turn-1`,
-        rootWorkId: 'room-work:preview',
-        parentWorkId: '',
-        objective: '核对多端网关回放与责任闭环',
-        expectedOutput: '测试证据和风险说明',
-        acceptanceCriteria: ['目标回合接受后才转移 owner', '交付经过协调者验收'],
-        accountableParticipantId: 'participant-present',
-        currentOwnerParticipantId: 'participant-firstlight',
-        offeredToParticipantId: '',
-        createdByParticipantId: 'participant-present',
-        clientMessageId: 'preview-assignment',
-        state: 'review',
-        depth: 1,
-        revision: 1,
-        resultSummary: '已完成回放游标与公平队列测试。',
-        artifactRefs: [],
-        evidenceRefs: ['test:room-replay'],
-        blocker: {},
-        acceptedTurnId: 'turn:preview-worker',
-        createdAtMs: now + 2,
-        updatedAtMs: now + 7,
-        completedAtMs: null,
-      }],
-      createdAtMs: now,
-      updatedAtMs: now + events.length,
-      lastEventSequence: events.length,
-      participants,
-    },
-    events,
-    firstSequence: 1,
-    lastSequence: events.length,
-    resumeToken: `${roomId}:${events.length}`,
-    truncated: false,
-  };
-}
-
-function previewRoomKernelSnapshot(roomId: string): Record<string, unknown> {
-  const now = Date.now() - 24_000;
-  const rootId = `${roomId}:root-preview`;
-  const originalText = '核对多端网关回放与责任闭环';
-  const anchorId = `${rootId}:anchor`;
-  const catalogRevisionId = `${rootId}:requirements-v1`;
-  return {
-    roomId,
-    lastSequence: 1,
-    snapshotHash: `sha256:${'b'.repeat(64)}`,
-    roots: [{
-      schemaVersion: 'wisdom-weasel.room-root-execution.v2',
-      rootId,
-      roomId,
-      generation: 1,
-      state: 'running',
-      owner: '澄·今',
-      requirementAnchorRef: anchorId,
-      createdByActorRef: 'user:preview',
-      terminalReceiptId: null,
-      activeProfileRef: null,
-      budgetPolicyRef: 'budget:preview',
-      createdAtMs: now,
-    }],
-    tasks: [],
-    dispatches: [],
-    posts: [{
-      schemaVersion: 'wisdom-weasel.room-post.v2',
-      postId: `${rootId}:post-progress`,
-      roomId,
-      rootId,
-      generation: 1,
-      authorActorRef: '澄·初',
-      kind: 'finding',
-      visibility: 'room',
-      content: '已核对回放游标与权限边界，正在等待独立验收。',
-      idempotencyKey: `${rootId}:post-progress`,
-      publicationSource: { kind: 'room_commit', ref: 'commit:preview-progress' },
-      createdAtMs: now + 10_000,
-    }],
-    sessions: [{
-      sessionId: 'session-room-present',
-      rootId,
-      generation: 1,
-      state: 'running',
-      updatedAtMs: now + 20_000,
-    }],
-    receipts: [],
-    cancellationSurfaces: [],
-    requirementsByRootId: {
-      [rootId]: {
-        projectionSource: 'canonical_fixture',
-        rootId,
-        anchors: [{
-          anchor: {
-            schemaVersion: 'wisdom-weasel.requirement-anchor.v1',
-            anchorId,
-            rootId,
-            rootSequence: 1,
-            originalContentSha256: 'a'.repeat(64),
-            originalByteLength: new TextEncoder().encode(originalText).byteLength,
-            createdBy: 'user:preview',
-            authenticity: 'original_user_bytes',
-            provenance: { requestId: 'request:preview-room-task' },
-            createdAtMs: now,
-          },
-          originalText,
-          integrityStatus: 'verified',
-        }],
-        catalog: {
-          schemaVersion: 'wisdom-weasel.requirement-catalog-revision.v1',
-          catalogRevisionId,
-          rootId,
-          revision: 1,
-          supersedesRevisionId: null,
-          anchorRefs: [anchorId],
-          items: [{
-            itemId: `${rootId}:item-1`,
-            statement: '回放游标与权限边界均有可复查证据',
-            kind: 'explicit_user_requirement',
-            state: 'active',
-          }],
-          acceptanceCriteria: [{
-            criterionId: `${rootId}:criterion-1`,
-            itemId: `${rootId}:item-1`,
-            acceptanceCriterionFullNameZh: '多端回放与权限边界验收标准',
-            criterionKind: 'user_journey',
-            expectedReceiptTypes: ['test'],
-            statement: '公开结果不重复，越权操作不会被静默执行',
-          }],
-          changeReason: '把原始请求整理成可核对的任务目录',
-          provenance: { source: 'preview-room-task' },
-          payloadHash: 'c'.repeat(64),
-          createdBy: 'requirements-governor',
-          createdAtMs: now + 1,
-        },
-        receiptAssessments: [],
-        deliveryGate: null,
-        conflicts: [],
-        peerReviewRounds: [],
-      },
-    },
-  };
-}
-
-function previewRoomKernelReceipt(command: Record<string, unknown>): Record<string, unknown> {
-  const commandKind = stringValue(command.commandKind);
-  const generation = Number(command.generation) || 0;
-  const commandId = stringValue(command.commandId) || 'preview-room-command';
-  return {
-    schemaVersion: 'wisdom-weasel.room-kernel-receipt.v1',
-    receiptId: `preview:${commandId}`,
-    rootId: command.rootId === null ? null : stringValue(command.rootId),
-    commandId,
-    receiptKind: commandKind === 'panic' ? 'panic' : 'root_cancelled',
-    status: 'applied',
-    generation: commandKind === 'cancel_root' ? generation + 1 : generation,
-    details: { preview: true },
-    createdAtMs: Date.now(),
-  };
-}
-
-function previewRoomKernelRouteManifest(): Record<string, unknown>[] {
-  return [
-    previewRoomKernelRoute('agent.room.kernel.snapshot', 'GET', false, ['agent.read'], []),
-    previewRoomKernelRoute('agent.room.kernel.events', 'GET', true, ['agent.read'], ['lastEventId']),
-    previewRoomKernelRoute('agent.room.kernel.command', 'POST', false, ['agent.write'], []),
-  ];
-}
-
-function previewRoomKernelRoute(
-  pathId: string,
-  method: string,
-  subscription: boolean,
-  remoteScopes: string[],
-  query: string[],
-): Record<string, unknown> {
-  return {
-    pathId,
-    method,
-    remoteSafe: true,
-    subscription,
-    params: ['roomId'],
-    query,
-    remoteScopes,
-  };
-}
-
-function previewParticipant(
-  roomId: string,
-  id: string,
-  sessionId: string,
-  roleId: string,
-  displayName: string,
-  ordinal: number,
-) {
-  return {
-    schemaVersion: 'rag-ime.agent-participant.v1',
-    id,
-    roomId,
-    sessionId,
-    roleId,
-    roleVersion: '1',
-    displayName,
-    collaborationRole: ordinal === 0 ? 'coordinator' : 'researcher',
-    status: 'active',
-    ordinal,
-    createdAtMs: 1,
-    lastSpokeAtMs: null,
-  };
 }

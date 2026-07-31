@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .agent_artifacts import AgentArtifactStore
+from .agent_context_runtime import AgentContextRuntime
 from .agent_events import AgentEventHub
 from .agent_protocol import AgentEventEnvelope
 from .agent_runtime_driver import (
@@ -38,6 +39,35 @@ _SOFT_BUDGET_RATIO = 0.8
 _DEFAULT_CANCELLATION_GRACE_MS = 2_000
 _DEFAULT_SUBAGENT_SESSION_RETENTION_MS = 72 * 60 * 60 * 1_000
 _DEFAULT_SUBAGENT_SESSION_GC_INTERVAL_MS = 15 * 60 * 1_000
+_DELEGATION_TASK_CONTRACT: dict[str, object] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "agent",
+        "version",
+        "task",
+        "expectedOutput",
+        "acceptanceCriteria",
+    ],
+    "properties": {
+        "agent": {"type": "string", "minLength": 1, "maxLength": 40},
+        "version": {"type": "string", "const": "1"},
+        "task": {"type": "string", "minLength": 1, "maxLength": 8_000},
+        "expectedOutput": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2_000,
+        },
+        "acceptanceCriteria": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1, "maxLength": 1_000},
+        },
+        "outputSchema": {"type": "object"},
+    },
+}
 
 
 class AgentDelegationStore:
@@ -69,6 +99,8 @@ class AgentDelegationStore:
         depth: int,
         max_depth: int,
         runs: Sequence[Mapping[str, object]],
+        result_delivery_mode: str = "inline",
+        causal_metadata: Mapping[str, object] | None = None,
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
         values = [dict(item) for item in runs]
@@ -76,26 +108,37 @@ class AgentDelegationStore:
             raise ValueError("delegation requires one or two tasks")
         if context_mode not in {"fresh", "fork"}:
             raise ValueError("delegation contextMode must be fresh or fork")
+        if result_delivery_mode not in {"inline", "next_turn"}:
+            raise ValueError("delegation result delivery mode is invalid")
         if not 1 <= depth <= max_depth <= 2:
             raise ValueError("delegation depth is outside the managed limit")
         now = _timestamp(created_at_ms)
         batch_id = f"subagent-batch:{uuid.uuid4()}"
         run_ids: list[str] = []
+        causal = _delegation_causal_metadata(causal_metadata)
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO agent_subagent_batches(
                     id, parent_session_id, parent_run_id, context_mode, state,
-                    depth, max_depth, created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?)
+                    result_delivery_mode, depth, max_depth, causal_plan_id,
+                    causal_plan_revision, causal_goal_id, causal_goal_revision,
+                    room_bound, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     batch_id,
                     parent_session_id,
                     parent_run_id,
                     context_mode,
+                    result_delivery_mode,
                     depth,
                     max_depth,
+                    causal["planId"],
+                    causal["planRevision"],
+                    causal["goalId"],
+                    causal["goalRevision"],
+                    int(bool(causal["roomBound"])),
                     now,
                     now,
                 ),
@@ -118,10 +161,11 @@ class AgentDelegationStore:
                     """
                     INSERT INTO agent_subagent_runs(
                         id, batch_id, child_session_id, template_id, template_version,
-                        ordinal, task_text, state, max_turns, max_tool_calls,
-                        max_total_tokens, max_duration_ms, max_output_chars,
-                        created_at_ms, updated_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
+                        ordinal, task_text, expected_output, acceptance_criteria_json,
+                        output_schema_json, plan_item_id, plan_item_title, state,
+                        max_turns, max_tool_calls, max_total_tokens, max_duration_ms,
+                        max_output_chars, created_at_ms, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         run_id,
@@ -131,6 +175,21 @@ class AgentDelegationStore:
                         _required_text(value, "templateVersion"),
                         ordinal,
                         _bounded_task(value.get("task")),
+                        _delegation_expected_output(value.get("expectedOutput")),
+                        json.dumps(
+                            _delegation_acceptance_criteria(value.get("acceptanceCriteria")),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        json.dumps(
+                            _delegation_output_schema(value.get("outputSchema")),
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        _bounded_text(value.get("planItemId"), maximum=160),
+                        _bounded_text(value.get("planItemTitle"), maximum=240),
                         _bounded_int(value.get("maxTurns"), minimum=0, maximum=32),
                         _bounded_int(value.get("maxToolCalls"), minimum=0, maximum=64),
                         _bounded_int(value.get("maxTotalTokens"), minimum=256, maximum=262_144),
@@ -144,7 +203,15 @@ class AgentDelegationStore:
                     conn,
                     run_id=run_id,
                     event_type="queued",
-                    payload={"batchId": batch_id, "ordinal": ordinal},
+                    payload={
+                        "batchId": batch_id,
+                        "ordinal": ordinal,
+                        "planItemId": _bounded_text(value.get("planItemId"), maximum=160),
+                        "planItemTitle": _bounded_text(
+                            value.get("planItemTitle"),
+                            maximum=240,
+                        ),
+                    },
                     created_at_ms=now,
                 )
         for run_id in run_ids:
@@ -299,7 +366,7 @@ class AgentDelegationStore:
     ) -> dict[str, object]:
         now = _timestamp(updated_at_ms)
         with self._connect() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 UPDATE agent_subagent_runs
                 SET turn_count = ?, tool_count = ?, total_tokens = ?, updated_at_ms = ?
@@ -313,7 +380,7 @@ class AgentDelegationStore:
                     run_id,
                 ),
             )
-            if summary:
+            if cursor.rowcount == 1 and summary:
                 self._append_event_conn(
                     conn,
                     run_id=run_id,
@@ -342,41 +409,97 @@ class AgentDelegationStore:
         result_json = json.dumps(
             dict(result or {}), ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
+        already_terminal = False
         with self._connect() as conn:
+            # Serialize terminal selection with the write. A late runtime
+            # callback may race cancellation or a sibling terminal callback,
+            # but exactly one of them owns the durable terminal transition.
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT batch_id, state FROM agent_subagent_runs WHERE id = ?", (run_id,)
             ).fetchone()
             if row is None:
                 raise KeyError(run_id)
-            if str(row["state"]) in _TERMINAL_STATES:
-                return self.get_run(run_id)
-            conn.execute(
+            already_terminal = str(row["state"]) in _TERMINAL_STATES
+            if not already_terminal:
+                conn.execute(
+                    """
+                    UPDATE agent_subagent_runs
+                    SET state = ?, result_json = ?, error = ?, turn_count = ?,
+                        tool_count = ?, total_tokens = ?, updated_at_ms = ?, completed_at_ms = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        state,
+                        result_json,
+                        _bounded_text(error, maximum=500),
+                        max(0, int(turn_count)),
+                        max(0, int(tool_count)),
+                        max(0, int(total_tokens)),
+                        now,
+                        now,
+                        run_id,
+                    ),
+                )
+                self._append_event_conn(
+                    conn,
+                    run_id=run_id,
+                    event_type=state,
+                    payload={"error": _bounded_text(error, maximum=240)} if error else {},
+                    created_at_ms=now,
+                )
+                self._refresh_batch_conn(conn, str(row["batch_id"]), updated_at_ms=now)
+        self._sync_run_artifact(run_id)
+        return self.get_run(run_id)
+
+    def pending_result_context_runs(self) -> list[dict[str, str]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.id AS run_id, r.batch_id, b.parent_session_id
+                FROM agent_subagent_runs r
+                JOIN agent_subagent_batches b ON b.id = r.batch_id
+                WHERE b.result_delivery_mode = 'next_turn'
+                  AND r.state IN ('completed', 'failed', 'aborted', 'timed_out')
+                  AND r.result_context_scheduled_at_ms IS NULL
+                ORDER BY r.completed_at_ms, r.id
+                """
+            ).fetchall()
+        return [
+            {
+                "runId": str(row["run_id"]),
+                "batchId": str(row["batch_id"]),
+                "parentSessionId": str(row["parent_session_id"]),
+            }
+            for row in rows
+        ]
+
+    def mark_result_context_scheduled(
+        self,
+        run_id: str,
+        *,
+        scheduled_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        now = _timestamp(scheduled_at_ms)
+        with self._connect() as conn:
+            cursor = conn.execute(
                 """
                 UPDATE agent_subagent_runs
-                SET state = ?, result_json = ?, error = ?, turn_count = ?,
-                    tool_count = ?, total_tokens = ?, updated_at_ms = ?, completed_at_ms = ?
-                WHERE id = ?
+                SET result_context_scheduled_at_ms = ?, updated_at_ms = ?
+                WHERE id = ? AND state IN ('completed', 'failed', 'aborted', 'timed_out')
+                  AND result_context_scheduled_at_ms IS NULL
                 """,
-                (
-                    state,
-                    result_json,
-                    _bounded_text(error, maximum=500),
-                    max(0, int(turn_count)),
-                    max(0, int(tool_count)),
-                    max(0, int(total_tokens)),
-                    now,
-                    now,
-                    run_id,
-                ),
+                (now, now, run_id),
             )
-            self._append_event_conn(
-                conn,
-                run_id=run_id,
-                event_type=state,
-                payload={"error": _bounded_text(error, maximum=240)} if error else {},
-                created_at_ms=now,
-            )
-            self._refresh_batch_conn(conn, str(row["batch_id"]), updated_at_ms=now)
+            if cursor.rowcount != 1:
+                row = conn.execute(
+                    "SELECT state, result_context_scheduled_at_ms FROM agent_subagent_runs WHERE id = ?",
+                    (run_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(run_id)
+                if row["result_context_scheduled_at_ms"] is None:
+                    raise ValueError("delegated run is not ready for result context")
         self._sync_run_artifact(run_id)
         return self.get_run(run_id)
 
@@ -437,6 +560,151 @@ class AgentDelegationStore:
         for run_id in affected:
             self._sync_run_artifact(run_id)
         return active
+
+    def request_causal_abort(
+        self,
+        *,
+        request_id: str,
+        scope_kind: str,
+        scope_id: str,
+        source_revision: int,
+        reason: str,
+        requested_at_ms: int | None = None,
+    ) -> dict[str, object]:
+        if scope_kind not in {"plan", "goal"}:
+            raise ValueError("unsupported delegation cancellation scope")
+        normalized_request_id = _bounded_text(
+            request_id,
+            maximum=240,
+            required=True,
+        )
+        normalized_reason = (
+            _bounded_text(reason, maximum=240)
+            or "Parent lifecycle cancelled"
+        )
+        causal_clause = (
+            "causal_plan_id = ? AND causal_plan_revision = ?"
+            if scope_kind == "plan"
+            else "causal_goal_id = ?"
+        )
+        causal_values: tuple[object, ...] = (
+            (scope_id, int(source_revision))
+            if scope_kind == "plan"
+            else (scope_id,)
+        )
+        now = _timestamp(requested_at_ms)
+        active_run_ids: list[str] = []
+        affected_run_ids: list[str] = []
+        batch_ids: list[str] = []
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            excluded_rows = conn.execute(
+                f"""
+                SELECT id
+                FROM agent_subagent_batches
+                WHERE {causal_clause} AND room_bound = 1
+                  AND state IN ('queued', 'running')
+                ORDER BY created_at_ms, id
+                """,
+                causal_values,
+            ).fetchall()
+            rows = conn.execute(
+                f"""
+                SELECT id, state, lifecycle_cancel_request_id
+                FROM agent_subagent_batches
+                WHERE room_bound = 0
+                  AND (
+                    ({causal_clause} AND state IN ('queued', 'running'))
+                    OR lifecycle_cancel_request_id = ?
+                  )
+                ORDER BY created_at_ms, id
+                """,
+                (*causal_values, normalized_request_id),
+            ).fetchall()
+            for batch in rows:
+                batch_id = str(batch["id"])
+                current_owner = str(
+                    batch["lifecycle_cancel_request_id"] or ""
+                )
+                if current_owner not in {"", normalized_request_id}:
+                    continue
+                batch_ids.append(batch_id)
+                conn.execute(
+                    """
+                    UPDATE agent_subagent_batches
+                    SET abort_requested = 1,
+                        lifecycle_cancel_request_id = ?,
+                        updated_at_ms = ?
+                    WHERE id = ?
+                      AND lifecycle_cancel_request_id IN ('', ?)
+                    """,
+                    (
+                        normalized_request_id,
+                        now,
+                        batch_id,
+                        normalized_request_id,
+                    ),
+                )
+                runs = conn.execute(
+                    """
+                    SELECT id, state
+                    FROM agent_subagent_runs
+                    WHERE batch_id = ?
+                    ORDER BY ordinal, id
+                    """,
+                    (batch_id,),
+                ).fetchall()
+                for run in runs:
+                    run_id = str(run["id"])
+                    state = str(run["state"])
+                    if state == "queued":
+                        cursor = conn.execute(
+                            """
+                            UPDATE agent_subagent_runs
+                            SET state = 'aborted', error = ?,
+                                updated_at_ms = ?, completed_at_ms = ?
+                            WHERE id = ? AND state = 'queued'
+                            """,
+                            (
+                                normalized_reason,
+                                now,
+                                now,
+                                run_id,
+                            ),
+                        )
+                        if cursor.rowcount == 1:
+                            affected_run_ids.append(run_id)
+                            self._append_event_conn(
+                                conn,
+                                run_id=run_id,
+                                event_type="aborted",
+                                payload={
+                                    "reason": "parent_lifecycle_cancelled",
+                                    "requestId": normalized_request_id,
+                                    "scopeKind": scope_kind,
+                                    "scopeId": scope_id,
+                                },
+                                created_at_ms=now,
+                            )
+                    elif state == "running":
+                        affected_run_ids.append(run_id)
+                        active_run_ids.append(run_id)
+                self._refresh_batch_conn(
+                    conn,
+                    batch_id,
+                    updated_at_ms=now,
+                )
+        for run_id in affected_run_ids:
+            self._sync_run_artifact(run_id)
+        return {
+            "requestId": normalized_request_id,
+            "batchIds": batch_ids,
+            "activeRunIds": active_run_ids,
+            "excludedRoomBoundBatchIds": [
+                str(row["id"])
+                for row in excluded_rows
+            ],
+        }
 
     def claim_control(
         self,
@@ -718,7 +986,8 @@ class AgentDelegationStore:
                 """
                 UPDATE agent_subagent_runs
                 SET state = 'queued', result_json = '{}', error = '',
-                    started_at_ms = NULL, completed_at_ms = NULL, updated_at_ms = ?
+                    started_at_ms = NULL, completed_at_ms = NULL,
+                    result_context_scheduled_at_ms = NULL, updated_at_ms = ?
                 WHERE id = ?
                 """,
                 (now, run_id),
@@ -1163,6 +1432,7 @@ class AgentDelegationCoordinator:
         runtime_config: PiRuntimeConfig,
         sessions: AgentSessionStore,
         events: AgentEventHub,
+        context_runtime: AgentContextRuntime,
         media_resolver: Callable[[str, str, str], str] | None = None,
         runtime_factory: Callable[..., PiRuntimeManager] | None = None,
         runtime_driver_factory: RuntimeDriverFactory | None = None,
@@ -1172,11 +1442,13 @@ class AgentDelegationCoordinator:
         cancellation_grace_ms: int = _DEFAULT_CANCELLATION_GRACE_MS,
         subagent_session_retention_ms: int | None = None,
         subagent_session_gc_interval_ms: int | None = None,
+        room_bound_provider: Callable[[str], bool] | None = None,
     ) -> None:
         self.artifacts = AgentArtifactStore(db_path, root=artifact_root)
         self.store = AgentDelegationStore(db_path, artifacts=self.artifacts)
         self.store.initialize()
         self.runtime_config = runtime_config
+        self.context_runtime = context_runtime
         self.sessions = sessions
         self.events = events
         self.media_resolver = media_resolver
@@ -1188,6 +1460,7 @@ class AgentDelegationCoordinator:
             tool_gateway_token or runtime_config.tool_gateway_token
         )
         self._compaction_observer = compaction_observer
+        self._room_bound_provider = room_bound_provider
         self._cancellation_grace_ms = max(10, min(int(cancellation_grace_ms), 30_000))
         self._subagent_session_retention_ms = max(
             0,
@@ -1218,6 +1491,7 @@ class AgentDelegationCoordinator:
         self._threads: dict[str, threading.Thread] = {}
         self._closed = False
         recoverable = self.store.reconcile_interrupted_runs()
+        self._schedule_pending_result_contexts()
         self.collect_expired_sessions(force=True)
         if self.runtime_config.enabled:
             for run_id in recoverable:
@@ -1238,7 +1512,13 @@ class AgentDelegationCoordinator:
         parent_run = self.store.run_for_child_session(parent_session_id)
         if parent.get("status") == "archived" and parent_run is None:
             raise ValueError("archived sessions cannot delegate tasks")
+        wait = payload.get("wait") is not False
         tasks = _delegation_tasks(payload)
+        plan_item_id, plan_item_title = self._plan_item_link(
+            parent_session_id,
+            payload,
+            parent_run=parent_run,
+        )
         context_mode = str(payload.get("contextMode") or "fresh").strip()
         if context_mode not in {"fresh", "fork"}:
             raise ValueError("contextMode must be fresh or fork")
@@ -1256,12 +1536,48 @@ class AgentDelegationCoordinator:
         )
         depth = int(parent_run.get("depth") or 0) + 1 if parent_run else 1
         parent_run_id = str(parent_run.get("id") or "") if parent_run else ""
+        if parent_run is not None:
+            parent_batch = self.store.get_batch(str(parent_run["batchId"]))
+            causal_metadata = dict(parent_batch["causalMetadata"])
+        else:
+            plan = self.sessions.agent_plan(parent_session_id)
+            goal = self.sessions.agent_goal(parent_session_id)
+            causal_metadata = {
+                "planId": (
+                    str(plan["id"])
+                    if str(plan["status"]) in {"approved", "executing"}
+                    else ""
+                ),
+                "planRevision": (
+                    int(plan["revision"])
+                    if str(plan["status"]) in {"approved", "executing"}
+                    else 0
+                ),
+                "goalId": (
+                    str(goal["goalId"])
+                    if bool(goal["configured"])
+                    and str(goal["status"]) in {"active", "paused"}
+                    else ""
+                ),
+                "goalRevision": (
+                    int(goal["revision"])
+                    if bool(goal["configured"])
+                    and str(goal["status"]) in {"active", "paused"}
+                    else 0
+                ),
+                "roomBound": False,
+            }
+        if (
+            self._room_bound_provider is not None
+            and self._room_bound_provider(parent_session_id)
+        ):
+            causal_metadata["roomBound"] = True
         if depth > 2:
             raise ValueError("subagent maximum depth is 2")
 
         templates: list[AgentTemplate] = []
         for task in tasks:
-            template = agent_template(task["agent"], task.get("version") or "1")
+            template = agent_template(str(task["agent"]), str(task.get("version") or "1"))
             if context_mode not in template.context_modes:
                 raise ValueError(
                     f"agent template {template.template_id} does not support {context_mode} context"
@@ -1326,8 +1642,13 @@ class AgentDelegationCoordinator:
                         {
                             "childSessionId": child["id"],
                             "templateId": template.template_id,
+                            "expectedOutput": task["expectedOutput"],
+                            "acceptanceCriteria": task["acceptanceCriteria"],
+                            "outputSchema": task.get("outputSchema", {}),
                             "templateVersion": template.version,
                             "task": task["task"],
+                            "planItemId": plan_item_id,
+                            "planItemTitle": plan_item_title,
                             "maxTurns": budget.max_turns,
                             "maxToolCalls": budget.max_tool_calls,
                             "maxTotalTokens": budget.max_total_tokens,
@@ -1341,7 +1662,9 @@ class AgentDelegationCoordinator:
                     context_mode=context_mode,
                     depth=depth,
                     max_depth=2,
+                    result_delivery_mode="inline" if wait else "next_turn",
                     runs=run_specs,
+                    causal_metadata=causal_metadata,
                 )
             except Exception:
                 for child in reversed(created_sessions):
@@ -1358,8 +1681,6 @@ class AgentDelegationCoordinator:
 
             for run in batch["runs"]:
                 self._start_run_thread(str(run["id"]))
-
-        wait = payload.get("wait") is not False
         if wait:
             batch = self.wait(str(batch["id"]))
         return {
@@ -1599,7 +1920,11 @@ class AgentDelegationCoordinator:
                     {
                         "agent": current["templateId"],
                         "version": current["templateVersion"],
+                        "expectedOutput": current["expectedOutput"],
+                        "acceptanceCriteria": current["acceptanceCriteria"],
+                        "outputSchema": current.get("outputSchema", {}),
                         "task": current["task"],
+                        "planItemId": current["planItemId"],
                         "contextMode": "fresh",
                         "wait": False,
                     },
@@ -1688,6 +2013,8 @@ class AgentDelegationCoordinator:
         ):
             time.sleep(0.01)
             current = self.store.get_batch(str(batch["id"]))
+        self._schedule_pending_result_contexts()
+        current = self.store.get_batch(str(batch["id"]))
         self.collect_expired_sessions(force=False)
         pending_run_ids = [
             str(run.get("id") or "")
@@ -1704,6 +2031,90 @@ class AgentDelegationCoordinator:
                 "pendingRunIds": pending_run_ids,
                 "graceMs": self._cancellation_grace_ms,
             },
+        }
+
+    def cancel_causal(
+        self,
+        parent_session_id: str,
+        *,
+        request_id: str,
+        scope_kind: str,
+        scope_id: str,
+        source_revision: int,
+        reason: str,
+    ) -> dict[str, object]:
+        selection = self.store.request_causal_abort(
+            request_id=request_id,
+            scope_kind=scope_kind,
+            scope_id=scope_id,
+            source_revision=source_revision,
+            reason=reason,
+        )
+        for run_id in selection["activeRunIds"]:
+            self._request_cancel(
+                str(run_id),
+                state="aborted",
+                reason="Parent lifecycle cancelled",
+            )
+        deadline = (
+            time.monotonic()
+            + self._cancellation_grace_ms / 1000.0
+            + 1.0
+        )
+        batches = [
+            self.store.get_batch(str(batch_id))
+            for batch_id in selection["batchIds"]
+        ]
+        while (
+            any(
+                str(run.get("state") or "") in _ACTIVE_STATES
+                for batch in batches
+                for run in batch["runs"]
+            )
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.01)
+            batches = [
+                self.store.get_batch(str(batch_id))
+                for batch_id in selection["batchIds"]
+            ]
+        self._schedule_pending_result_contexts()
+        pending_run_ids = [
+            str(run["id"])
+            for batch in batches
+            for run in batch["runs"]
+            if str(run.get("state") or "") in _ACTIVE_STATES
+        ]
+        return {
+            "schemaVersion": "rag-ime.agent-delegation-lifecycle-cancellation-summary.v1",
+            "requestId": request_id,
+            "parentSessionId": parent_session_id,
+            "scopeKind": scope_kind,
+            "scopeId": scope_id,
+            "sourceRevision": int(source_revision),
+            "state": (
+                "requested"
+                if pending_run_ids
+                else "terminated"
+            ),
+            "pendingRunIds": pending_run_ids,
+            "batches": [
+                {
+                    "batchId": str(batch["id"]),
+                    "state": str(batch["state"]),
+                    "runs": [
+                        {
+                            "runId": str(run["id"]),
+                            "state": str(run["state"]),
+                        }
+                        for run in batch["runs"]
+                    ],
+                }
+                for batch in batches
+            ],
+            "excludedRoomBoundBatchIds": list(
+                selection["excludedRoomBoundBatchIds"]
+            ),
         }
 
     def wait(self, batch_id: str) -> dict[str, object]:
@@ -1890,12 +2301,58 @@ class AgentDelegationCoordinator:
                     self.store.append_budget_event(run_id, reason, phase="soft")
                     persist_runtime_event(event)
 
+        def accept_runtime_terminal(
+            event: AgentEventEnvelope,
+            *,
+            state: str,
+            error: str = "",
+        ) -> tuple[str, str]:
+            def persist() -> tuple[str, str]:
+                cancellation_state = ""
+                cancellation_reason = ""
+                if active_run is not None:
+                    cancellation_state = active_run.cancellation_state
+                    cancellation_reason = active_run.cancellation_reason
+                final_state = cancellation_state or state
+                final_error = cancellation_reason or error
+                persist_runtime_event(
+                    event,
+                    terminal_state=final_state,
+                    error=final_error,
+                )
+                # Wake the worker only after the recovery checkpoint is
+                # durable. _request_cancel uses this same lock, so cancellation
+                # and runtime terminal delivery have one linearized winner.
+                terminal.set()
+                return final_state, final_error
+
+            if active_run is None:
+                return persist()
+            with active_run.lock:
+                return persist()
+
         def observe(event: AgentEventEnvelope) -> None:
             nonlocal terminal_error, completed, last_message
             nonlocal turn_count, total_tokens, output_chars
             if event.session_id != child_session_id:
                 return
             with update_lock:
+                if terminal.is_set():
+                    return
+                cancellation_state = ""
+                cancellation_reason = ""
+                if active_run is not None:
+                    with active_run.lock:
+                        cancellation_state = active_run.cancellation_state
+                        cancellation_reason = active_run.cancellation_reason
+                if cancellation_state and event.event_type not in {
+                    "turn_completed",
+                    "turn_failed",
+                }:
+                    # Cancellation owns the terminal projection. Runtime output
+                    # arriving after that decision is late evidence and cannot
+                    # mutate usage, inbox state, or the recovery checkpoint.
+                    return
                 if event.event_type == "text_delta":
                     output_chars += len(str(event.payload.get("delta") or ""))
                 elif event.event_type == "tool_started":
@@ -1992,33 +2449,32 @@ class AgentDelegationCoordinator:
                             updated_at_ms=event.created_at_ms,
                         )
                 elif event.event_type == "turn_completed":
-                    completed = True
-                    persist_runtime_event(event, terminal_state="completed")
-                    terminal.set()
+                    final_state, final_error = accept_runtime_terminal(
+                        event,
+                        state="completed",
+                    )
+                    completed = final_state == "completed"
+                    terminal_error = final_error
                 elif event.event_type == "turn_failed":
-                    terminal_error = _bounded_text(
+                    runtime_error = _bounded_text(
                         event.payload.get("error") or "delegated Pi turn failed",
                         maximum=500,
                     )
-                    cancellation_state = ""
-                    cancellation_reason = ""
-                    if active_run is not None:
-                        with active_run.lock:
-                            cancellation_state = active_run.cancellation_state
-                            cancellation_reason = active_run.cancellation_reason
-                    persist_runtime_event(
+                    _, terminal_error = accept_runtime_terminal(
                         event,
-                        terminal_state=cancellation_state or "failed",
-                        error=cancellation_reason or terminal_error,
+                        state="failed",
+                        error=runtime_error,
                     )
-                    terminal.set()
-                check_usage_budget(event)
+                if not terminal.is_set():
+                    check_usage_budget(event)
 
         remove_observer = self.events.add_observer(observe)
         context = {
             "agentTemplateId": run["templateId"],
             "agentTemplateVersion": run["templateVersion"],
             "delegationDepth": batch["depth"],
+            "planItemId": run["planItemId"],
+            "planItemTitle": run["planItemTitle"],
             "toolProfileVersion": self.sessions.get(child_session_id)["toolProfileVersion"],
         }
         if self._legacy_runtime_factory is not None:
@@ -2148,6 +2604,12 @@ class AgentDelegationCoordinator:
                 turn_count=turn_count,
                 tool_count=base_tool_count + len(tool_ids),
                 total_tokens=total_tokens,
+            )
+            terminal_batch = self.store.get_batch(str(batch["id"]))
+            final = self._schedule_result_context(
+                parent_session_id,
+                terminal_batch,
+                final,
             )
             self._publish_parent_progress(
                 parent_session_id,
@@ -2279,7 +2741,7 @@ class AgentDelegationCoordinator:
         if active is None:
             return
         with active.lock:
-            if active.cancellation_state:
+            if active.terminal.is_set() or active.cancellation_state:
                 return
             active.cancellation_state = state
             active.cancellation_reason = _bounded_text(reason, maximum=240)
@@ -2324,6 +2786,36 @@ class AgentDelegationCoordinator:
         finally:
             active.forced.set()
 
+    def _schedule_pending_result_contexts(self) -> None:
+        for pending in self.store.pending_result_context_runs():
+            batch = self.store.get_batch(str(pending["batchId"]))
+            run = self.store.get_run(str(pending["runId"]))
+            self._schedule_result_context(
+                str(pending["parentSessionId"]),
+                batch,
+                run,
+            )
+
+    def _schedule_result_context(
+        self,
+        parent_session_id: str,
+        batch: Mapping[str, object],
+        run: Mapping[str, object],
+    ) -> dict[str, object]:
+        current = dict(run)
+        if (
+            str(batch.get("resultDeliveryMode") or "") != "next_turn"
+            or current.get("resultContextScheduledAtMs") is not None
+            or str(current.get("state") or "") not in _TERMINAL_STATES
+        ):
+            return current
+        self.context_runtime.enqueue_delegated_result(
+            parent_session_id=parent_session_id,
+            batch=batch,
+            run=current,
+        )
+        return self.store.mark_result_context_scheduled(str(current["id"]))
+
     def _publish_parent_progress(
         self,
         parent_session_id: str,
@@ -2335,40 +2827,131 @@ class AgentDelegationCoordinator:
             parent_session_id,
             "tool_progress",
             {
-                "toolName": "ime_agents",
+                "toolName": "agents",
                 "toolCallId": f"subagent:{batch['id']}",
                 "summary": summary,
                 "batchId": batch["id"],
                 "runId": run["id"],
                 "agent": run["templateId"],
                 "state": run["state"],
+                "planItemId": run["planItemId"],
+                "planItemTitle": run["planItemTitle"],
+                "requiresParentPlanUpdate": run["state"] not in {"queued", "running"},
             },
         )
 
+    def _plan_item_link(
+        self,
+        parent_session_id: str,
+        payload: Mapping[str, object],
+        *,
+        parent_run: Mapping[str, object] | None,
+    ) -> tuple[str, str]:
+        requested = _bounded_text(payload.get("planItemId"), maximum=160)
+        if parent_run is not None:
+            inherited = _bounded_text(parent_run.get("planItemId"), maximum=160)
+            if requested and requested != inherited:
+                raise ValueError("nested delegation must keep the parent run planItemId")
+            return (
+                inherited,
+                _bounded_text(parent_run.get("planItemTitle"), maximum=240),
+            )
 
-def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, str]]:
+        plan = self.sessions.agent_plan(parent_session_id, limit=100)
+        items = [
+            item
+            for item in plan.get("items", [])
+            if isinstance(item, Mapping)
+        ]
+        if not items:
+            if requested:
+                raise ValueError("planItemId does not belong to the parent Session Plan")
+            return "", ""
+        if not requested:
+            raise ValueError(
+                "planItemId is required when delegating from a Session with a Plan"
+            )
+        linked = next(
+            (item for item in items if str(item.get("id") or "") == requested),
+            None,
+        )
+        if linked is None:
+            raise ValueError("planItemId does not belong to the parent Session Plan")
+        return requested, _bounded_text(linked.get("title"), maximum=240, required=True)
+
+
+def _delegation_tasks(payload: Mapping[str, object]) -> list[dict[str, object]]:
+    has_tasks = "tasks" in payload
     raw_tasks = payload.get("tasks")
-    if raw_tasks is None:
+    if has_tasks:
+        mixed_fields = [
+            field
+            for field in (
+                "agent",
+                "version",
+                "task",
+                "expectedOutput",
+                "acceptanceCriteria",
+                "outputSchema",
+            )
+            if field in payload
+        ]
+        if mixed_fields:
+            raise ValueError("tasks cannot be combined with single-task delegation fields")
+    if not has_tasks:
         raw_tasks = [
             {
                 "agent": payload.get("agent"),
                 "version": payload.get("version") or "1",
                 "task": payload.get("task"),
+                "expectedOutput": payload.get("expectedOutput"),
+                "acceptanceCriteria": payload.get("acceptanceCriteria"),
+                **(
+                    {"outputSchema": payload.get("outputSchema")}
+                    if "outputSchema" in payload
+                    else {}
+                ),
             }
         ]
     if not isinstance(raw_tasks, list) or not 1 <= len(raw_tasks) <= _MAX_PARALLEL_RUNS:
         raise ValueError("tasks must contain one or two delegated tasks")
-    tasks: list[dict[str, str]] = []
+    tasks: list[dict[str, object]] = []
+    allowed_fields = {
+        "agent",
+        "version",
+        "task",
+        "expectedOutput",
+        "acceptanceCriteria",
+        "outputSchema",
+    }
     for value in raw_tasks:
         if not isinstance(value, Mapping):
             raise ValueError("each delegated task must be an object")
-        tasks.append(
-            {
-                "agent": _bounded_text(value.get("agent"), maximum=40, required=True),
-                "version": _bounded_text(value.get("version") or "1", maximum=12, required=True),
-                "task": _bounded_task(value.get("task")),
-            }
-        )
+        unsupported = set(value) - allowed_fields
+        if unsupported:
+            raise ValueError(
+                f"unsupported delegated task field: {sorted(unsupported)[0]}"
+            )
+        task: dict[str, object] = {
+            "agent": _bounded_text(value.get("agent"), maximum=40, required=True),
+            "version": _bounded_text(
+                value.get("version") or "1",
+                maximum=12,
+                required=True,
+            ),
+            "task": _bounded_task(value.get("task")),
+            "expectedOutput": _delegation_expected_output(
+                value.get("expectedOutput")
+            ),
+            "acceptanceCriteria": _delegation_acceptance_criteria(
+                value.get("acceptanceCriteria")
+            ),
+        }
+        output_schema = _delegation_output_schema(value.get("outputSchema"))
+        if output_schema:
+            task["outputSchema"] = output_schema
+        validate_contract(task, _DELEGATION_TASK_CONTRACT)
+        tasks.append(task)
     return tasks
 
 
@@ -2396,6 +2979,7 @@ def _validated_native_fork_sessions(
         or str(parent_runtime_binding.get("runtimeKind") or "") != "pi_rpc"
     ):
         raise ValueError("native Pi fork requires a managed Pi parent binding")
+
     expected_parent_value = str(parent_runtime_binding.get("transcriptRef") or "").strip()
     if not expected_parent_value:
         raise ValueError("fork context requires a persisted parent Pi session")
@@ -2469,6 +3053,19 @@ def _validated_native_fork_sessions(
     return resolved
 
 
+def _delegation_causal_metadata(
+    value: Mapping[str, object] | None,
+) -> dict[str, object]:
+    source = value if isinstance(value, Mapping) else {}
+    return {
+        "planId": _bounded_text(source.get("planId"), maximum=240),
+        "planRevision": max(0, int(source.get("planRevision") or 0)),
+        "goalId": _bounded_text(source.get("goalId"), maximum=240),
+        "goalRevision": max(0, int(source.get("goalRevision") or 0)),
+        "roomBound": bool(source.get("roomBound")),
+    }
+
+
 def _managed_regular_file(path: Path, root: Path) -> bool:
     if not _is_within(path, root) or path.is_symlink() or not path.is_file():
         return False
@@ -2523,6 +3120,23 @@ def _unsafe_fork_thinking(record: Mapping[str, object]) -> bool:
 
 
 def _subagent_prompt(run: Mapping[str, object], batch: Mapping[str, object]) -> str:
+    criteria = "\n".join(
+        f"- {item}"
+        for item in run.get("acceptanceCriteria", [])
+        if isinstance(item, str)
+    )
+    output_schema = run.get("outputSchema")
+    schema_section = (
+        "\n\n输出 JSON Schema：\n"
+        + json.dumps(
+            output_schema,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if isinstance(output_schema, Mapping) and output_schema
+        else ""
+    )
     return (
         "请完成下面这一项有界委派任务。只返回可交给主持会话使用的结果；"
         "不要把自己描述成长期群聊成员，也不要扩大工具或权限。"
@@ -2530,6 +3144,9 @@ def _subagent_prompt(run: Mapping[str, object], batch: Mapping[str, object]) -> 
         "实际取得的工具回执或产物引用，以及仍未消除的不确定性；"
         "没有真实回执时不要虚构引用，也不要宣称父任务已经验收通过。\n\n"
         f"任务：\n{run['task']}\n\n"
+        f"预期交付：\n{run['expectedOutput']}\n\n"
+        f"验收条件：\n{criteria}"
+        f"{schema_section}\n\n"
         f"上下文模式：{batch['contextMode']}\n"
         f"委派深度：{batch['depth']}/{batch['maxDepth']}"
     )
@@ -2666,6 +3283,7 @@ def _batch_payload(row: sqlite3.Row, runs: Sequence[sqlite3.Row]) -> dict[str, o
         "parentSessionId": str(row["parent_session_id"]),
         "parentRunId": str(row["parent_run_id"] or ""),
         "contextMode": str(row["context_mode"]),
+        "resultDeliveryMode": str(row["result_delivery_mode"]),
         "state": str(row["state"]),
         "depth": int(row["depth"]),
         "maxDepth": int(row["max_depth"]),
@@ -2674,6 +3292,13 @@ def _batch_payload(row: sqlite3.Row, runs: Sequence[sqlite3.Row]) -> dict[str, o
         "updatedAtMs": int(row["updated_at_ms"]),
         "completedAtMs": int(row["completed_at_ms"]) if row["completed_at_ms"] is not None else None,
         "runs": run_payloads,
+        "causalMetadata": {
+            "planId": str(row["causal_plan_id"] or ""),
+            "planRevision": int(row["causal_plan_revision"] or 0),
+            "goalId": str(row["causal_goal_id"] or ""),
+            "goalRevision": int(row["causal_goal_revision"] or 0),
+            "roomBound": bool(row["room_bound"]),
+        },
     }
     for run in run_payloads:
         validate_contract(run, "agent-subagent-run.v1.json")
@@ -2688,10 +3313,18 @@ def _run_payload(row: sqlite3.Row) -> dict[str, object]:
         "id": str(row["id"]),
         "batchId": str(row["batch_id"]),
         "childSessionId": str(row["child_session_id"]),
+        "planItemId": str(row["plan_item_id"] or ""),
+        "planItemTitle": str(row["plan_item_title"] or ""),
         "templateId": str(row["template_id"]),
         "templateVersion": str(row["template_version"]),
         "ordinal": int(row["ordinal"]),
         "task": str(row["task_text"]),
+        "expectedOutput": str(row["expected_output"]),
+        "acceptanceCriteria": [
+            str(item)
+            for item in json.loads(str(row["acceptance_criteria_json"] or "[]"))
+            if isinstance(item, str)
+        ],
         "state": str(row["state"]),
         "budget": {
             "maxTurns": int(row["max_turns"]),
@@ -2707,11 +3340,19 @@ def _run_payload(row: sqlite3.Row) -> dict[str, object]:
         },
         "result": result if isinstance(result, dict) else {},
         "error": str(row["error"] or ""),
+        "resultContextScheduledAtMs": (
+            int(row["result_context_scheduled_at_ms"])
+            if row["result_context_scheduled_at_ms"] is not None
+            else None
+        ),
         "createdAtMs": int(row["created_at_ms"]),
         "startedAtMs": int(row["started_at_ms"]) if row["started_at_ms"] is not None else None,
         "updatedAtMs": int(row["updated_at_ms"]),
         "completedAtMs": int(row["completed_at_ms"]) if row["completed_at_ms"] is not None else None,
     }
+    output_schema = _json_mapping(row["output_schema_json"])
+    if output_schema:
+        payload["outputSchema"] = output_schema
     validate_contract(payload, "agent-subagent-run.v1.json")
     return payload
 
@@ -2732,6 +3373,58 @@ def _bounded_task(value: object) -> str:
     if not text:
         raise ValueError("delegated task must not be empty")
     return text[:8_000]
+
+def _delegation_expected_output(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("delegated expectedOutput must be a string")
+    text = " ".join(value.split())
+    if not text:
+        raise ValueError("delegated expectedOutput must not be empty")
+    if len(text) > 2_000:
+        raise ValueError("delegated expectedOutput exceeds 2000 characters")
+    return text
+
+
+def _delegation_acceptance_criteria(value: object) -> list[str]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 8:
+        raise ValueError("delegated acceptanceCriteria must contain one to eight items")
+    criteria: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError("delegated acceptanceCriteria items must be strings")
+        text = " ".join(item.split())
+        if not text:
+            raise ValueError("delegated acceptanceCriteria items must not be empty")
+        if len(text) > 1_000:
+            raise ValueError(
+                "delegated acceptanceCriteria item exceeds 1000 characters"
+            )
+        criteria.append(text)
+    if len(criteria) != len(set(criteria)):
+        raise ValueError("delegated acceptanceCriteria items must be unique")
+    return criteria
+
+
+def _delegation_output_schema(value: object) -> dict[str, object]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError("delegated outputSchema must be a JSON object")
+    schema = dict(value)
+    if len(schema) > 128:
+        raise ValueError("delegated outputSchema has too many top-level properties")
+    try:
+        encoded = json.dumps(
+            schema,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("delegated outputSchema must contain only JSON values") from exc
+    if len(encoded.encode("utf-8")) > 16 * 1024:
+        raise ValueError("delegated outputSchema exceeds 16 KiB")
+    return schema
 
 
 def _bounded_int(value: object, *, minimum: int, maximum: int) -> int:

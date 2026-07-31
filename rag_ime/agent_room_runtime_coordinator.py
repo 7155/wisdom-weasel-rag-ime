@@ -149,6 +149,7 @@ class RoomKernelRuntimeCoordinator:
         session_id = _required_text(dispatch, "targetSessionId")
         root = self.kernel.root(_required_text(dispatch, "rootId"))
         room_id = str(root["roomId"])
+        task = self.kernel.task(str(dispatch["taskId"]))
         participant = self.rooms.participant_for_session(session_id)
         if participant is None or participant.get("roomId") != room_id:
             raise RoomKernelFenceError(
@@ -160,15 +161,24 @@ class RoomKernelRuntimeCoordinator:
         )
         role_book_prompt = self.role_book_prompt_resolver(session_id)
         session = self.session_resolver(session_id)
+        is_root_coordinator = (
+            str(dispatch.get("targetParticipantId") or "")
+            == str(root.get("facilitatorParticipantId") or "")
+            and not task.get("parentTaskId")
+        )
         role_id = canonical_collaboration_role_id(
             participant.get("collaborationRole")
         )
         role = collaboration_role(role_id)
-        template_id = {
-            "coordinator": "planner",
-            "researcher": "researcher",
-            "reviewer": "reviewer",
-        }.get(str(participant.get("collaborationRole") or ""), "worker")
+        template_id = (
+            "planner"
+            if is_root_coordinator
+            else {
+                "coordinator": "planner",
+                "researcher": "researcher",
+                "reviewer": "reviewer",
+            }.get(role_id, "worker")
+        )
         template = agent_template(template_id)
         active_profile, profile_pin = self.profile_pins.resolve(
             root,
@@ -258,7 +268,6 @@ class RoomKernelRuntimeCoordinator:
             generation=generation,
             created_at_ms=prepared_at_ms,
         )
-        task = self.kernel.task(str(dispatch["taskId"]))
         requirement_binding, _ = self.requirements.prepare_dispatch_binding(
             dispatch_id=dispatch_id,
             root_id=str(dispatch["rootId"]),
@@ -321,6 +330,23 @@ class RoomKernelRuntimeCoordinator:
             active_profile,
             guard_surfaces["prompt"] if guard_surfaces is not None else None,
         )
+        if is_root_coordinator:
+            coordinator_duty = (
+                "<root-coordinator-duty>\n"
+                "你是本 Root 的确定性责任协调者，即使成员配置中的岗位名称不是"
+                " coordinator。若当前 AC 要求多人协作，先一次拆成互相独立的"
+                "子产物，再对每一位其他可用 Room 成员分别调用 room_collaborate；"
+                "本地重复调用 read、grep 或其他工具不算伙伴工作。保存每次权威"
+                " executionReceipt，等待 child Dispatch 的公开结果，全部到齐后"
+                "才能综合或复核。无法创建或恢复受管 child Dispatch 时，提交带"
+                "尝试和解锁条件的 blocked，不得虚构分工或继续。\n"
+                "</root-coordinator-duty>"
+            )
+            profile_overlay = "\n\n".join(
+                value
+                for value in (profile_overlay, coordinator_duty)
+                if value
+            )
         layers = _prompt_layers(
             persona=persona,
             session=session,

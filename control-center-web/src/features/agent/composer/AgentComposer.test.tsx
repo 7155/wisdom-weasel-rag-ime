@@ -2,7 +2,9 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/primitives';
+import type { CapabilityCatalog } from '@/features/plugins/capability-policy';
 import { previewSessions } from '../preview-data';
+import type { ToolManifest } from '../types';
 import { AgentComposer } from './AgentComposer';
 
 describe('AgentComposer macOS input methods', () => {
@@ -46,6 +48,7 @@ describe('AgentComposer macOS input methods', () => {
     expect(composer).toHaveAttribute('autocomplete', 'off');
     expect(composer).toHaveAttribute('autocorrect', 'off');
     expect(composer).toHaveAttribute('spellcheck', 'false');
+    expect(composer).not.toHaveAttribute('aria-expanded');
 
     fireEvent.compositionStart(composer);
     fireEvent.change(composer, { target: { value: 'jinr' } });
@@ -63,6 +66,102 @@ describe('AgentComposer macOS input methods', () => {
     fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onSend).toHaveBeenLastCalledWith('prompt', '今儿');
+  });
+
+  it('labels the capability picker and provides an explicit close target', () => {
+    const tool: ToolManifest = {
+      schemaVersion: 'rag-ime.control-tool-manifest.v1',
+      id: 'planning',
+      domain: 'planning',
+      displayName: '规划与任务',
+      description: '查看每日计划',
+      category: 'planning',
+      riskLevel: 'R1',
+      sessionModes: ['coordinator'],
+      operations: ['dashboard'],
+      resultPresentation: 'status',
+      availability: 'online',
+      version: '1',
+    };
+    const capabilityCatalog: CapabilityCatalog = {
+      schemaVersion: 'rag-ime.capability-catalog.v1',
+      ok: true,
+      revision: 'catalog-1',
+      effectiveAtMs: 1,
+      projectScope: {
+        supported: false,
+        identityKind: 'none',
+        reason: 'No project scope in this focused picker test.',
+      },
+      sessionPolicy: {
+        sessionId: previewSessions[0].id,
+        policyRevision: 1,
+        disclosurePreferences: {
+          globalDefault: {},
+          projectDefault: {},
+          session: {},
+          effective: { 'tool:planning': 'enabled' },
+        },
+        effectiveAtMs: 1,
+      },
+      items: [{
+        id: tool.id,
+        canonicalId: 'tool:planning',
+        kind: 'tool',
+        displayName: tool.displayName,
+        description: tool.description,
+        source: { kind: 'built_in', label: 'Control Center' },
+        status: 'available',
+        risk: tool.riskLevel,
+        requiredPermissions: [],
+        authorization: { state: 'authorized', reason: 'Focused picker test fixture.' },
+        disclosure: {
+          preference: 'inherit',
+          effective: 'enabled',
+          state: 'disclosed',
+          reason: 'Focused picker test fixture.',
+        },
+        effectiveScope: 'built_in_default',
+        reasons: [],
+        revision: 'capability-1',
+        effectiveAtMs: 1,
+      }],
+    };
+    render(
+      <TooltipProvider>
+        <AgentComposer
+          draft=""
+          attachments={[]}
+          session={previewSessions[0]}
+          commands={[]}
+          capabilityCatalog={capabilityCatalog}
+          tools={[tool]}
+          toolCatalogStatus="ready"
+          busy={false}
+          sending={false}
+          onDraftChange={() => {}}
+          onAttachmentsChange={() => {}}
+          onPickAttachments={() => {}}
+          onPasteImages={() => {}}
+          onToolSelect={() => {}}
+          onProductCommand={() => {}}
+          onSend={() => {}}
+          onStop={() => {}}
+          onPermissionChange={() => {}}
+          onWorkspaceRootsChange={() => {}}
+          onModelChange={() => {}}
+        />
+      </TooltipProvider>,
+    );
+
+    const trigger = screen.getByRole('button', { name: '这段对话可用工具：1 个' });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole('dialog', { name: '当前对话能力' });
+    expect(within(dialog).getByRole('combobox', { name: '规划与任务的当前对话披露' })).toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭当前对话能力' }));
+    expect(screen.queryByRole('dialog', { name: '当前对话能力' })).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('keeps responsive controls together while the send action stays fixed', () => {

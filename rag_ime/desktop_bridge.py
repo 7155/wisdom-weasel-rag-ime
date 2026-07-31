@@ -58,7 +58,7 @@ class DesktopBridgeClient:
         since_snapshot_id: str = "",
     ) -> dict[str, object]:
         payload: dict[str, object] = {
-            "maxNodes": max(1, min(int(max_nodes), 400)),
+            "maxNodes": max(1, min(int(max_nodes), 500)),
             "maxDepth": max(1, min(int(max_depth), 12)),
         }
         if bundle_id:

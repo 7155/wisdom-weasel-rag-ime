@@ -24,10 +24,20 @@
   min-height: 58px;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 9px 24px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-subtle);
+}
+
+.browser-action-receipt {
+  min-width: 0;
+  flex: 0 0 100%;
+}
+
+.browser-action-receipt .mgmt-notice {
+  margin: 0;
 }
 
 .browser-modebar__status {
@@ -376,6 +386,18 @@
   background: var(--color-surface);
   color: var(--color-text);
 }
+
+.browser-pairing-guidance {
+  margin: 8px 0 0;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.browser-setup__section > .browser-action-receipt,
+.browser-list-view > .browser-action-receipt {
+  margin: 12px 0;
+}
 .browser-managed-actions { margin-top: 14px; }
 
 @media (max-width: 1100px) {
@@ -388,15 +410,27 @@
 @media (max-width: 760px) {
   .mgmt-page[data-route-id='browser'] { height: auto; min-height: calc(100dvh - var(--topbar-height)); overflow: visible; }
   .mgmt-page[data-route-id='browser'] > .mgmt-page__body { height: auto; }
-  .browser-modebar { align-items: stretch; flex-direction: column; }
+  .browser-modebar { align-items: stretch; flex-direction: column; padding-inline: 16px; }
   .browser-modebar__status { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .browser-modebar .ui-segmented { width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .browser-modebar > .browser-action-receipt { width: 100%; flex: 0 0 auto; }
+  .browser-tabs > .ui-tabs__list { padding-inline: 12px; overflow-x: auto; }
+  .browser-list-view, .browser-setup { padding: 18px 16px 48px; }
   .browser-workbench { grid-template-columns: 1fr; }
   .browser-rail { max-height: 320px; border-right: 0; border-bottom: 1px solid var(--color-border); }
   .browser-page-view { min-height: 720px; }
+  .browser-pairing-token { grid-template-columns: minmax(0, 1fr) max-content 40px; }
   .browser-permission-list article,
   .browser-trace-list article { grid-template-columns: 34px minmax(0, 1fr); }
   .browser-permission-actions,
-  .browser-trace-meta { grid-column: 2; justify-content: flex-start; }
+  .browser-trace-meta { grid-column: 2; flex-wrap: wrap; justify-content: flex-start; }
+  .mgmt-page[data-route-id='browser'] .ui-button,
+  .mgmt-page[data-route-id='browser'] .ui-icon-button,
+  .mgmt-page[data-route-id='browser'] .ui-segmented__item,
+  .mgmt-page[data-route-id='browser'] .browser-pairing-token input {
+    min-height: 40px;
+  }
+  .mgmt-page[data-route-id='browser'] .ui-icon-button { min-width: 40px; }
 }
 
 /* ============== browser adopts the workspace pane grammar ==============

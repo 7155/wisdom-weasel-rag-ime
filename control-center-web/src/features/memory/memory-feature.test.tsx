@@ -61,7 +61,7 @@ describe('MemoryFeature relations', () => {
 
     await user.click(await screen.findByRole('tab', { name: '时间线' }));
     expect(await screen.findByText('实现最终输入框捕获并核对三条记忆消费路径。')).toBeInTheDocument();
-    expect(screen.getByText('2 个语义任务')).toBeInTheDocument();
+    expect(screen.getByText('2 项活动')).toBeInTheDocument();
     expect(screen.getByText('后台会自动发布；仅在时间类问题中按需召回')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '立即发布' }));
@@ -262,10 +262,25 @@ describe('MemoryFeature relations', () => {
         'memory.reference.get': (request: ControlRequest) => {
           expect(request.params).toEqual({ kind: 'event', referenceId: 'input-memory:42' });
           return {
+            schemaVersion: 'rag-ime.memory-reference.v1',
+            settingsRevision: 'settings:test',
+            runtimeRevision: 1,
             ok: true,
-            ref: { kind: 'event', referenceId: 'input-memory:42', status: 'active' },
-            source: { type: 'ax_focused_value', id: 'input-memory:42' },
-            item: { title: 'AX 最终输入', status: 'active', text: '最终输入框内容优先进入记忆' },
+            kind: 'event',
+            referenceId: 'input-memory:42',
+            ref: {
+              kind: 'event',
+              id: 'input-memory:42',
+              referenceKind: 'event',
+              referenceId: 'input-memory:42',
+            },
+            source: { kind: 'ax_focused_value', id: 'input-memory:42' },
+            item: {
+              id: 'input-memory:42',
+              title: 'AX 最终输入',
+              status: 'active',
+              text: '最终输入框内容优先进入记忆',
+            },
             evidenceRefs: [],
           };
         },
@@ -365,10 +380,26 @@ describe('MemoryFeature relations', () => {
           history: [],
           dailyDrafts: [],
         },
-        'memory.reference.get': (request: ControlRequest) => ({
+        'memory.reference.get': () => ({
+          schemaVersion: 'rag-ime.memory-reference.v1',
+          settingsRevision: 'settings:test',
+          runtimeRevision: 1,
           ok: true,
-          ref: { kind: request.params?.kind, referenceId: request.params?.referenceId, status: 'active' },
-          item: { title: '角色工作证据', status: 'active', text: '已完成事实链重构并通过测试。' },
+          kind: 'evidence',
+          referenceId: 'evidence:role-work',
+          ref: {
+            kind: 'evidence',
+            id: 'evidence:role-work',
+            referenceKind: 'evidence',
+            referenceId: 'evidence:role-work',
+          },
+          source: { kind: 'agent_memory_evidence', id: 'evidence:role-work' },
+          item: {
+            id: 'evidence:role-work',
+            title: '角色工作证据',
+            status: 'active',
+            text: '已完成事实链重构并通过测试。',
+          },
           evidenceRefs: [],
         }),
       },
@@ -403,8 +434,14 @@ describe('MemoryFeature relations', () => {
         'memory.reference.get': (request: ControlRequest) => {
           expect(request.params).toEqual({ kind, referenceId: id });
           return {
+            schemaVersion: 'rag-ime.memory-reference.v1',
+            settingsRevision: 'settings:test',
+            runtimeRevision: 1,
             ok: true,
-            ref: { kind, referenceId: id, status: 'active' },
+            kind,
+            referenceId: id,
+            ref: { kind, id, referenceKind: kind, referenceId: id },
+            source: { kind: `memory_${kind}`, id },
             item: { id, title: `深链 ${layer}`, status: 'active', text: '公开详情' },
             evidenceRefs: [],
           };
@@ -427,21 +464,52 @@ describe('MemoryFeature relations', () => {
         'memory.reference.get': (request: ControlRequest) => {
           if (request.params?.kind === 'event') {
             return {
+              schemaVersion: 'rag-ime.memory-reference.v1',
+              settingsRevision: 'settings:test',
+              runtimeRevision: 1,
               ok: true,
-              item: { title: '原始事件', status: 'archived' },
-              evidenceRefs: [{ kind: 'evidence', referenceId: 'evidence:redacted', label: '返回根节点' }],
+              kind: 'event',
+              referenceId: 'event:1',
+              item: { id: 'event:1', title: '原始事件', status: 'archived' },
+              source: { kind: 'input_event', id: 'event:1' },
+              ref: { kind: 'event', id: 'event:1', referenceKind: 'event', referenceId: 'event:1' },
+              evidenceRefs: [{
+                kind: 'evidence',
+                id: 'evidence:redacted',
+                referenceKind: 'evidence',
+                referenceId: 'evidence:redacted',
+                label: '返回根节点',
+              }],
             };
           }
           return {
+            schemaVersion: 'rag-ime.memory-reference.v1',
+            settingsRevision: 'settings:test',
+            runtimeRevision: 1,
             ok: true,
-            redacted: true,
+            kind: 'evidence',
+            referenceId: 'evidence:redacted',
             item: {
+              id: 'evidence:redacted',
               title: '已脱敏证据',
               status: 'not_for_memory',
               sensitive: true,
               text: 'SECRET SHOULD NEVER RENDER',
             },
-            evidenceRefs: [{ kind: 'event', referenceId: 'event:1', label: '原始输入' }],
+            source: { kind: 'agent_memory_evidence', id: 'evidence:redacted' },
+            ref: {
+              kind: 'evidence',
+              id: 'evidence:redacted',
+              referenceKind: 'evidence',
+              referenceId: 'evidence:redacted',
+            },
+            evidenceRefs: [{
+              kind: 'event',
+              id: 'event:1',
+              referenceKind: 'event',
+              referenceId: 'event:1',
+              label: '原始输入',
+            }],
           };
         },
       },
@@ -455,6 +523,52 @@ describe('MemoryFeature relations', () => {
     expect(await within(dialog).findByRole('heading', { name: '原始事件' })).toBeInTheDocument();
     expect(within(dialog).getByText('已在路径中')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: /返回根节点/ })).toBeDisabled();
+  });
+
+  it('keeps a failed evidence reference actionable and retries the typed response', async () => {
+    const user = userEvent.setup();
+    let attempts = 0;
+    const transport = new MockControlTransport({
+      routes: {
+        'memory.summary': { ok: true, memoryBookCount: 1, memoryAtomCount: 1 },
+        'memory.pages': { ok: true, items: [], nextCursor: '', limit: 50 },
+        'memory.reference.get': () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error('temporary reference failure');
+          return {
+            schemaVersion: 'rag-ime.memory-reference.v1',
+            settingsRevision: 'settings:test',
+            runtimeRevision: 1,
+            ok: true,
+            kind: 'evidence',
+            referenceId: 'evidence:retry',
+            item: {
+              id: 'evidence:retry',
+              title: '重试后的证据',
+              status: 'active',
+              text: '引用详情已恢复。',
+            },
+            source: { kind: 'agent_memory_evidence', id: 'evidence:retry' },
+            ref: {
+              kind: 'evidence',
+              id: 'evidence:retry',
+              referenceKind: 'evidence',
+              referenceId: 'evidence:retry',
+            },
+            evidenceRefs: [],
+          };
+        },
+      },
+    });
+    renderMemory(transport, '/memory?layer=evidence&id=evidence%3Aretry');
+
+    const retry = await screen.findByRole('button', { name: '重试读取' });
+    expect(screen.getByText('引用暂时无法读取')).toBeInTheDocument();
+    await user.click(retry);
+
+    expect(await screen.findByRole('dialog', { name: '重试后的证据' })).toBeInTheDocument();
+    expect(screen.getByText('引用详情已恢复。')).toBeInTheDocument();
+    expect(attempts).toBe(2);
   });
 
   it('edits the selected topic-book stable id directly', async () => {
@@ -1032,6 +1146,8 @@ function activityTimeline(status: string, date: string): Record<string, unknown>
     contextGroupIds: ['group:personal-context'],
     startMs: start + position * 3_600_000,
     endMs: start + (position + 1) * 3_600_000,
+    activityKind: 'consolidated_activity',
+    spanSemantics: 'first_to_last_source_event',
     eventCount: 4,
     sourceEventIds: [position + 1],
     sourceEventHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
@@ -1054,6 +1170,11 @@ function activityTimeline(status: string, date: string): Record<string, unknown>
     summary: '当天完成个人上下文主链改造与验证。',
     eventCount: 8,
     segmentCount: 2,
+    observedStartMs: start,
+    observedEndMs: start + 2 * 3_600_000,
+    spanSemantics: 'first_to_last_source_event',
+    ordinaryActivityCount: 0,
+    consolidatedActivityCount: 2,
     approvedBookId: '',
     approvedBy: status === 'approved' ? 'control-center-user' : '',
     approvedAtMs: status === 'approved' ? start + 10_000 : 0,
@@ -1064,6 +1185,7 @@ function activityTimeline(status: string, date: string): Record<string, unknown>
       longTermFact: false,
       automaticPromotion: true,
       explicitApprovalRequired: false,
+      minimumConsolidatedSpanMs: 30 * 60_000,
     },
   };
 }

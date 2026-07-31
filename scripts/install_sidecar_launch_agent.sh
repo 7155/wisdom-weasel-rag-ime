@@ -8,6 +8,9 @@ PLIST_PATH="$PLIST_DIR/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs/RagIme"
 APP_SUPPORT_DIR="${RAG_IME_APP_SUPPORT_DIR:-$HOME/Library/Application Support/RagIme}"
 APP_CODE_DIR="$APP_SUPPORT_DIR/app"
+MODEL_REGISTRY_EXPLICIT="${RAG_IME_MODEL_REGISTRY+x}"
+MODEL_REGISTRY_ORIGIN="${RAG_IME_MODEL_REGISTRY_ORIGIN:-$([[ -n "$MODEL_REGISTRY_EXPLICIT" ]] && printf explicit || printf default)}"
+MODEL_REGISTRY_PATH="${RAG_IME_MODEL_REGISTRY:-$APP_SUPPORT_DIR/models.json}"
 INSTALL_MARKER="$APP_CODE_DIR/rag-ime-install-marker.json"
 LAUNCH_WRAPPER="$APP_CODE_DIR/sidecar_launch.py"
 RESTORE_SUPERVISOR="$APP_CODE_DIR/portable_restore_supervisor.py"
@@ -63,6 +66,41 @@ case "$ROOM_KERNEL_MODE" in
     ;;
 esac
 
+is_dry_run() {
+  case "$DRY_RUN" in
+    1|true|TRUE) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+python_has_required_stdlib() {
+  local candidate="$1"
+  [[ "$candidate" == /* && -f "$candidate" && -x "$candidate" ]] || return 1
+  "$candidate" - <<'PY' >/dev/null 2>&1
+import hashlib
+import sqlite3
+import ssl
+import sys
+
+hashlib.md5(b"rag-ime").hexdigest()
+raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
+PY
+}
+
+python_has_required_runtime() {
+  local candidate="$1"
+  RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING="$REQUIRE_MLX_EMBEDDING" \
+    "$candidate" - <<'PY' >/dev/null 2>&1
+import os
+import pypdf
+import yaml
+
+if os.environ.get("RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING") == "1":
+    import mlx
+    import transformers
+PY
+}
+
 detect_python() {
   local candidate
   local candidates=()
@@ -83,26 +121,14 @@ detect_python() {
   candidates+=("/usr/local/bin/python3")
 
   for candidate in "${candidates[@]}"; do
-    if [[ -n "$candidate" && -x "$candidate" ]] \
-      && RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING="$REQUIRE_MLX_EMBEDDING" \
-        "$candidate" - <<'PY' >/dev/null 2>&1; then
-import hashlib
-import os
-import pypdf
-import sqlite3
-import ssl
-import sys
-import yaml
-
-hashlib.md5(b"rag-ime").hexdigest()
-if os.environ.get("RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING") == "1":
-    import mlx
-    import transformers
-raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
-PY
-      printf '%s\n' "$candidate"
-      return 0
+    if ! python_has_required_stdlib "$candidate"; then
+      continue
     fi
+    if ! is_dry_run && ! python_has_required_runtime "$candidate"; then
+      continue
+    fi
+    printf '%s\n' "$candidate"
+    return 0
   done
   return 1
 }
@@ -136,29 +162,25 @@ PY
   return 1
 }
 
-PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(detect_python || true)}"
-
-if [[ -z "$PYTHON_EXECUTABLE" || ! -x "$PYTHON_EXECUTABLE" ]]; then
-  echo "python executable not found or not executable: $PYTHON_EXECUTABLE" >&2
+if [[ -n "${RAG_IME_PYTHON:-}" ]] \
+  && [[ "$RAG_IME_PYTHON" != /* || ! -f "$RAG_IME_PYTHON" || ! -x "$RAG_IME_PYTHON" ]]; then
+  echo "RAG_IME_PYTHON must be an absolute executable file: $RAG_IME_PYTHON" >&2
+  exit 1
+fi
+if [[ -n "${RAG_IME_KNOWLEDGE_PYTHON:-}" ]] \
+  && [[ "$RAG_IME_KNOWLEDGE_PYTHON" != /* || ! -f "$RAG_IME_KNOWLEDGE_PYTHON" || ! -x "$RAG_IME_KNOWLEDGE_PYTHON" ]]; then
+  echo "RAG_IME_KNOWLEDGE_PYTHON must be an absolute executable file: $RAG_IME_KNOWLEDGE_PYTHON" >&2
   exit 1
 fi
 
-if ! RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING="$REQUIRE_MLX_EMBEDDING" \
-  "$PYTHON_EXECUTABLE" - <<'PY' >/dev/null 2>&1; then
-import hashlib
-import os
-import pypdf
-import sqlite3
-import ssl
-import sys
-import yaml
+PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(detect_python || true)}"
 
-hashlib.md5(b"rag-ime").hexdigest()
-if os.environ.get("RAG_IME_INSTALL_REQUIRE_MLX_EMBEDDING") == "1":
-    import mlx
-    import transformers
-raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
-PY
+if ! python_has_required_stdlib "$PYTHON_EXECUTABLE"; then
+  echo "python executable must be an absolute executable Python 3.12+ with stdlib sqlite3/hashlib/ssl: $PYTHON_EXECUTABLE" >&2
+  exit 1
+fi
+
+if ! is_dry_run && ! python_has_required_runtime "$PYTHON_EXECUTABLE"; then
   if [[ "$REQUIRE_MLX_EMBEDDING" == "1" ]]; then
     echo "python executable must be Python 3.12+ and import the project runtime plus MLX modules (pypdf/yaml/mlx/transformers): $PYTHON_EXECUTABLE" >&2
     echo "Run scripts/setup_knowledge_worker_env.sh or set RAG_IME_PYTHON to a compatible Python." >&2
@@ -206,6 +228,44 @@ eval "$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_EXECUTABLE" -m ra
 set +a
 export RAG_IME_RUNTIME_PROFILE="$RUNTIME_PROFILE"
 
+# The model registry is the product's authoritative hot-model selection. A
+# clean install must not depend on a previous LaunchAgent having happened to
+# contain predictor variables: without provider/base/model the Sidecar
+# deliberately constructs NullPredictionProvider and the healthy resident
+# MiniMind service never receives a request. Import the resolved plan here,
+# while preserving any explicit non-empty install-time override.
+if [[ "$MODEL_REGISTRY_ORIGIN" == "explicit" && ! -f "$MODEL_REGISTRY_PATH" ]]; then
+  echo "Explicit model registry does not exist: $MODEL_REGISTRY_PATH" >&2
+  exit 1
+fi
+if [[ -f "$MODEL_REGISTRY_PATH" ]]; then
+  if ! MODEL_RUNTIME_ENV="$(
+    PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PYTHON_EXECUTABLE" -m rag_ime.model_runtime \
+      --registry "$MODEL_REGISTRY_PATH" \
+      --lane hot \
+      --format shell
+  )"; then
+    echo "Active hot model registry entry is invalid or its artifact is missing: $MODEL_REGISTRY_PATH" >&2
+    exit 1
+  fi
+  while IFS= read -r assignment; do
+    [[ -n "$assignment" ]] || continue
+    key="${assignment%%=*}"
+    case "$key" in
+      RAG_IME_PREDICTOR_*|RAG_IME_MLX_*|RAG_IME_MODEL_ID|RAG_IME_MODEL_FINGERPRINT|RAG_IME_MODEL_RUNTIME)
+        if [[ -z "$(printenv "$key" 2>/dev/null || true)" ]]; then
+          eval "export $assignment"
+        fi
+        ;;
+    esac
+  done <<< "$MODEL_RUNTIME_ENV"
+  export RAG_IME_MODEL_REGISTRY="$MODEL_REGISTRY_PATH"
+  export RAG_IME_PREDICTOR_TIMEOUT_MS="${RAG_IME_PREDICTOR_TIMEOUT_MS:-3000}"
+  export RAG_IME_PREDICTOR_MAX_TOKENS="${RAG_IME_PREDICTOR_MAX_TOKENS:-8}"
+  export RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS="${RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS:-0}"
+fi
+
 if [[ ! -f "$ROOT/scripts/sidecar_launch.py" ]]; then
   echo "sidecar launch wrapper not found: $ROOT/scripts/sidecar_launch.py" >&2
   exit 1
@@ -245,6 +305,34 @@ chmod 644 "$PI_EXTENSION_TARGET" "$PI_INTEGRATION_DIR/pi-native-session.ts"
 # these product-owned directories makes skill updates part of the normal stack
 # install even when the verified Pi executable payload itself is reused.
 mkdir -p "$MANAGED_PI_SKILLS_DIR"
+# Remove only retired product-owned names. Unrecognized directories remain
+# user-owned, while old aliases must not compete with the compact native catalog.
+RETIRED_MANAGED_PI_SKILLS=(
+  grill-me
+  grill-me-docs
+  managed-task-execution
+  project-devlog
+  rag-ime-memory-curator
+  rag-ime-plugin-creator
+  requirement-alignment
+  room-delivery-closure
+  room-delivery-self-check
+  room-implementation-execution
+  room-implementation-planning
+  room-independent-vision-review
+  room-managed-task-execution
+  room-requirement-clarification
+  room-review-feedback-resolution
+  room-solution-convergence
+  room-structured-handoff
+  room-systematic-debugging
+  room-test-driven-implementation
+  solution-convergence
+  structured-result-presentation
+)
+for retired_skill_name in "${RETIRED_MANAGED_PI_SKILLS[@]}"; do
+  rm -rf "$MANAGED_PI_SKILLS_DIR/$retired_skill_name"
+done
 for skill_source in "$PI_SKILLS_SOURCE_DIR"/*; do
   if [[ ! -d "$skill_source" || -L "$skill_source" ]]; then
     continue
@@ -855,7 +943,17 @@ echo "Logs: $LOG_DIR/sidecar.out.log and $LOG_DIR/sidecar.err.log"
 
 health_deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
 while (( SECONDS < health_deadline )); do
-  if "$PYTHON_EXECUTABLE" - "$HOST" "$PORT" "$ROOM_KERNEL_MODE" >/dev/null 2>&1 <<'PY'
+  if "$PYTHON_EXECUTABLE" - \
+    "$HOST" \
+    "$PORT" \
+    "$ROOM_KERNEL_MODE" \
+    "${RAG_IME_PREDICTOR_PROVIDER:-}" \
+    "${RAG_IME_PREDICTOR_MODEL:-}" \
+    "${RAG_IME_PREDICTOR_PROFILE:-}" \
+    "${RAG_IME_PREDICTOR_PROMPT_MODE:-}" \
+    "${RAG_IME_PREDICTOR_MAX_TOKENS:-}" \
+    "${RAG_IME_PREDICTOR_TEMPERATURE:-}" \
+    "${RAG_IME_PREDICTOR_TOP_P:-}" >/dev/null 2>&1 <<'PY'
 import json
 import sys
 import urllib.request
@@ -863,12 +961,47 @@ import urllib.request
 host = sys.argv[1]
 port = sys.argv[2]
 expected_room_kernel_mode = sys.argv[3]
+expected_predictor_provider = sys.argv[4]
+expected_predictor_model = sys.argv[5]
+expected_predictor_profile = sys.argv[6]
+expected_prompt_mode = sys.argv[7]
+expected_max_tokens = sys.argv[8]
+expected_temperature = sys.argv[9]
+expected_top_p = sys.argv[10]
 url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 with opener.open(f"http://{url_host}:{port}/health", timeout=1.0) as response:
     payload = json.loads(response.read().decode("utf-8"))
 if not payload.get("ok"):
     raise SystemExit(1)
+if expected_predictor_provider and expected_predictor_model:
+    predictor = payload.get("predictor")
+    if not isinstance(predictor, dict) or not predictor.get("configured"):
+        raise SystemExit(1)
+    if str(predictor.get("model") or "") != expected_predictor_model:
+        raise SystemExit(1)
+    if str(predictor.get("providerProfile") or "") != expected_predictor_profile:
+        raise SystemExit(1)
+    if str(predictor.get("promptMode") or "") != expected_prompt_mode:
+        raise SystemExit(1)
+    try:
+        runtime_max_tokens = int(predictor.get("maxTokens"))
+        configured_max_tokens = int(expected_max_tokens)
+    except (TypeError, ValueError):
+        raise SystemExit(1)
+    if runtime_max_tokens != configured_max_tokens:
+        raise SystemExit(1)
+    try:
+        runtime_temperature = float(predictor.get("temperature"))
+        runtime_top_p = float(predictor.get("topP"))
+        configured_temperature = float(expected_temperature)
+        configured_top_p = float(expected_top_p)
+    except (TypeError, ValueError):
+        raise SystemExit(1)
+    if abs(runtime_temperature - configured_temperature) > 1e-9:
+        raise SystemExit(1)
+    if abs(runtime_top_p - configured_top_p) > 1e-9:
+        raise SystemExit(1)
 with opener.open(
     f"http://{url_host}:{port}/api/agent/control/capabilities",
     timeout=1.0,

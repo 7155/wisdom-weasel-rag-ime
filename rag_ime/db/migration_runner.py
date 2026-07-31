@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import sqlite3
 import time
@@ -41,7 +42,7 @@ class MigrationResult:
         }
 
 
-MigrationHook = Callable[[sqlite3.Connection], None]
+MigrationHook = Callable[[sqlite3.Connection, int], None]
 
 
 def apply_database_migrations(
@@ -72,7 +73,7 @@ def apply_database_migrations(
         hook = _MIGRATION_HOOKS.get(migration.version)
         with conn:
             if hook is not None:
-                hook(conn)
+                hook(conn, timestamp)
             if migration.sql.strip():
                 _execute_sql_script(conn, migration.sql)
             conn.execute(
@@ -183,7 +184,10 @@ def _execute_sql_script(conn: sqlite3.Connection, sql: str) -> None:
         raise ValueError("incomplete SQL migration statement")
 
 
-def _canonicalize_memory_feedback_events(conn: sqlite3.Connection) -> None:
+def _canonicalize_memory_feedback_events(
+    conn: sqlite3.Connection,
+    _applied_at_ms: int,
+) -> None:
     if not _table_exists(conn, "memory_feedback_events"):
         return
     columns = {str(row[1]): row for row in conn.execute("PRAGMA table_info(memory_feedback_events)")}
@@ -231,7 +235,10 @@ def _canonicalize_memory_feedback_events(conn: sqlite3.Connection) -> None:
     conn.execute(f"DROP TABLE {legacy}")
 
 
-def _migrate_context_group_columns(conn: sqlite3.Connection) -> None:
+def _migrate_context_group_columns(
+    conn: sqlite3.Connection,
+    _applied_at_ms: int,
+) -> None:
     if not _table_exists(conn, "input_events"):
         return
     columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(input_events)")}
@@ -245,7 +252,10 @@ def _migrate_context_group_columns(conn: sqlite3.Connection) -> None:
     )
 
 
-def _canonicalize_input_events(conn: sqlite3.Connection) -> None:
+def _canonicalize_input_events(
+    conn: sqlite3.Connection,
+    _applied_at_ms: int,
+) -> None:
     """Bring early input-event tables up to the legacy-core contract in place."""
     if not _table_exists(conn, "input_events"):
         return
@@ -267,7 +277,10 @@ def _canonicalize_input_events(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE input_events ADD COLUMN {name} {declaration}")
 
 
-def _migrate_agent_identity_column(conn: sqlite3.Connection) -> None:
+def _migrate_agent_identity_column(
+    conn: sqlite3.Connection,
+    _applied_at_ms: int,
+) -> None:
     """Add the Agent identity column before the identity migration uses it."""
 
     if not _table_exists(conn, "agent_sessions"):
@@ -275,6 +288,277 @@ def _migrate_agent_identity_column(conn: sqlite3.Connection) -> None:
     columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(agent_sessions)")}
     if "agent_id" not in columns:
         conn.execute("ALTER TABLE agent_sessions ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''")
+
+
+_LEGACY_PROJECT_TOOL_IDS = {
+    "ime_overview": "overview",
+    "ime_input": "input",
+    "ime_voice": "voice",
+    "ime_planning": "planning",
+    "ime_memory": "memory",
+    "ime_knowledge": "knowledge",
+    "ime_models": "models",
+    "ime_runtime": "runtime",
+    "ime_configuration": "configuration",
+    "ime_agents": "agents",
+    "ime_browser": "browser",
+    "ime_plugins": "plugins",
+}
+_LEGACY_CAPABILITY_KEYS = {
+    f"tool:{legacy}": f"tool:{canonical}"
+    for legacy, canonical in _LEGACY_PROJECT_TOOL_IDS.items()
+}
+
+
+def _migrate_project_tool_ids(
+    conn: sqlite3.Connection,
+    applied_at_ms: int,
+) -> None:
+    policy_updates: list[tuple[str, str, str]] = []
+    for session_id, allowed_raw, disclosure_raw in conn.execute(
+        """
+        SELECT session_id, allowed_tools_json, disclosure_preferences_json
+        FROM agent_session_tool_policies
+        """
+    ):
+        allowed = _load_json(allowed_raw, field="agent_session_tool_policies.allowed_tools_json")
+        if allowed is not None and not isinstance(allowed, list):
+            raise RuntimeError(
+                "agent_session_tool_policies.allowed_tools_json must be an array or null"
+            )
+        rewritten_allowed = (
+            _rewrite_tool_id_array(
+                allowed,
+                field="agent_session_tool_policies.allowed_tools_json",
+            )
+            if isinstance(allowed, list)
+            else allowed
+        )
+        disclosure = _load_json_object(
+            disclosure_raw,
+            field="agent_session_tool_policies.disclosure_preferences_json",
+        )
+        rewritten_disclosure = _rewrite_capability_preference_keys(
+            disclosure,
+            field="agent_session_tool_policies.disclosure_preferences_json",
+        )
+        if rewritten_allowed != allowed or rewritten_disclosure != disclosure:
+            policy_updates.append(
+                (
+                    _json_text(rewritten_allowed),
+                    _json_text(rewritten_disclosure),
+                    str(session_id),
+                )
+            )
+
+    configuration_updates: list[tuple[str, int]] = []
+    for singleton_id, configuration_raw in conn.execute(
+        "SELECT singleton_id, configuration_json FROM agent_configuration_state"
+    ):
+        configuration = _load_json_object(
+            configuration_raw,
+            field="agent_configuration_state.configuration_json",
+        )
+        rewritten = _rewrite_configuration_capability_preferences(configuration)
+        if rewritten != configuration:
+            configuration_updates.append((_json_text(rewritten), int(singleton_id)))
+
+    live_bindings_to_revoke: list[tuple[str, str]] = []
+    for row in conn.execute(
+        """
+        SELECT binding.session_id, binding.manifest_id, manifest.payload_json,
+               binding.room_binding_json, binding.participant_binding_json
+        FROM room_v2_capability_runtime_bindings AS binding
+        JOIN room_v2_capability_manifests AS manifest
+          ON manifest.manifest_id = binding.manifest_id
+        WHERE binding.state IN ('prepared', 'active')
+        """
+    ):
+        documents = (
+            _load_json(row[2], field="room_v2_capability_manifests.payload_json"),
+            _load_json(
+                row[3],
+                field="room_v2_capability_runtime_bindings.room_binding_json",
+            ),
+            _load_json(
+                row[4],
+                field="room_v2_capability_runtime_bindings.participant_binding_json",
+            ),
+        )
+        if any(_contains_legacy_tool_id(document) for document in documents):
+            live_bindings_to_revoke.append((str(row[0]), str(row[1])))
+
+    for allowed_json, disclosure_json, session_id in policy_updates:
+        conn.execute(
+            """
+            UPDATE agent_session_tool_policies
+            SET allowed_tools_json = ?, disclosure_preferences_json = ?,
+                policy_revision = policy_revision + 1,
+                updated_at_ms = MAX(updated_at_ms, ?)
+            WHERE session_id = ?
+            """,
+            (allowed_json, disclosure_json, applied_at_ms, session_id),
+        )
+    for configuration_json, singleton_id in configuration_updates:
+        conn.execute(
+            """
+            UPDATE agent_configuration_state
+            SET revision = revision + 1,
+                configuration_json = ?,
+                applied_revision = CASE
+                    WHEN sync_state = 'synchronized' THEN revision + 1
+                    ELSE applied_revision
+                END,
+                updated_at_ms = MAX(updated_at_ms, ?),
+                updated_by = 'tool-id-cutover'
+            WHERE singleton_id = ?
+            """,
+            (configuration_json, applied_at_ms, singleton_id),
+        )
+    conn.execute(
+        """
+        UPDATE agent_approvals
+        SET state = 'expired',
+            expires_at_ms = MIN(expires_at_ms, ?),
+            decided_at_ms = ?,
+            decided_by = 'tool-id-cutover'
+        WHERE state IN ('pending', 'approved', 'external_pending')
+          AND tool_name IN (
+              'ime_overview', 'ime_input', 'ime_voice', 'ime_planning',
+              'ime_memory', 'ime_knowledge', 'ime_models', 'ime_runtime',
+              'ime_configuration', 'ime_agents', 'ime_browser', 'ime_plugins'
+          )
+        """,
+        (applied_at_ms, applied_at_ms),
+    )
+    for session_id, manifest_id in live_bindings_to_revoke:
+        conn.execute(
+            """
+            UPDATE room_v2_capability_runtime_bindings
+            SET state = 'revoked',
+                capability_epoch = capability_epoch + 1,
+                updated_at_ms = MAX(updated_at_ms, ?)
+            WHERE session_id = ? AND manifest_id = ?
+              AND state IN ('prepared', 'active')
+            """,
+            (applied_at_ms, session_id, manifest_id),
+        )
+
+
+def _rewrite_configuration_capability_preferences(
+    configuration: dict[str, object],
+) -> dict[str, object]:
+    rewritten = dict(configuration)
+    defaults = rewritten.get("sessionDefaults")
+    if isinstance(defaults, dict) and "capabilityDisclosurePreferences" in defaults:
+        rewritten_defaults = dict(defaults)
+        preferences = defaults["capabilityDisclosurePreferences"]
+        if not isinstance(preferences, dict):
+            raise RuntimeError(
+                "agent_configuration_state.configuration_json "
+                "sessionDefaults.capabilityDisclosurePreferences must be an object"
+            )
+        rewritten_defaults["capabilityDisclosurePreferences"] = (
+            _rewrite_capability_preference_keys(
+                preferences,
+                field=(
+                    "agent_configuration_state.configuration_json "
+                    "sessionDefaults.capabilityDisclosurePreferences"
+                ),
+            )
+        )
+        rewritten["sessionDefaults"] = rewritten_defaults
+
+    disclosure = rewritten.get("capabilityDisclosure")
+    if isinstance(disclosure, dict) and "projectPreferences" in disclosure:
+        project_preferences = disclosure["projectPreferences"]
+        if not isinstance(project_preferences, dict):
+            raise RuntimeError(
+                "agent_configuration_state.configuration_json "
+                "capabilityDisclosure.projectPreferences must be an object"
+            )
+        rewritten_projects: dict[str, object] = {}
+        for project_id, preferences in project_preferences.items():
+            if not isinstance(preferences, dict):
+                raise RuntimeError(
+                    "agent_configuration_state.configuration_json "
+                    f"capabilityDisclosure.projectPreferences[{project_id!r}] "
+                    "must be an object"
+                )
+            rewritten_projects[project_id] = _rewrite_capability_preference_keys(
+                preferences,
+                field=(
+                    "agent_configuration_state.configuration_json "
+                    f"capabilityDisclosure.projectPreferences[{project_id!r}]"
+                ),
+            )
+        rewritten_disclosure = dict(disclosure)
+        rewritten_disclosure["projectPreferences"] = rewritten_projects
+        rewritten["capabilityDisclosure"] = rewritten_disclosure
+    return rewritten
+
+
+def _rewrite_tool_id_array(values: list[object], *, field: str) -> list[object]:
+    present = {value for value in values if isinstance(value, str)}
+    for legacy, canonical in _LEGACY_PROJECT_TOOL_IDS.items():
+        if legacy in present and canonical in present:
+            raise RuntimeError(
+                f"{field} contains conflicting Tool IDs {legacy!r} and {canonical!r}"
+            )
+    return [
+        _LEGACY_PROJECT_TOOL_IDS.get(value, value)
+        if isinstance(value, str)
+        else value
+        for value in values
+    ]
+
+
+def _rewrite_capability_preference_keys(
+    preferences: dict[str, object],
+    *,
+    field: str,
+) -> dict[str, object]:
+    for legacy, canonical in _LEGACY_CAPABILITY_KEYS.items():
+        if legacy in preferences and canonical in preferences:
+            raise RuntimeError(
+                f"{field} contains conflicting capability keys "
+                f"{legacy!r} and {canonical!r}"
+            )
+    return {
+        _LEGACY_CAPABILITY_KEYS.get(key, key): value
+        for key, value in preferences.items()
+    }
+
+
+def _contains_legacy_tool_id(value: object) -> bool:
+    if isinstance(value, str):
+        return value in _LEGACY_PROJECT_TOOL_IDS or value in _LEGACY_CAPABILITY_KEYS
+    if isinstance(value, list):
+        return any(_contains_legacy_tool_id(item) for item in value)
+    if isinstance(value, dict):
+        return any(
+            _contains_legacy_tool_id(key) or _contains_legacy_tool_id(item)
+            for key, item in value.items()
+        )
+    return False
+
+
+def _load_json(raw: object, *, field: str) -> object:
+    try:
+        return json.loads(str(raw))
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(f"{field} contains invalid JSON") from error
+
+
+def _load_json_object(raw: object, *, field: str) -> dict[str, object]:
+    value = _load_json(raw, field=field)
+    if not isinstance(value, dict):
+        raise RuntimeError(f"{field} must be a JSON object")
+    return value
+
+
+def _json_text(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
@@ -289,4 +573,5 @@ _MIGRATION_HOOKS: dict[int, MigrationHook] = {
     3: _migrate_context_group_columns,
     7: _canonicalize_input_events,
     29: _migrate_agent_identity_column,
+    118: _migrate_project_tool_ids,
 }

@@ -12,6 +12,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -29,6 +31,14 @@ from rag_ime.managed_pi_runtime import (
 
 ROOM_RUNTIME_CONTRACT = ROOT / "integrations" / "pi" / "room-runtime-host-contract.json"
 ROOM_RUNTIME_ADAPTER = ROOT / "integrations" / "pi" / "room-runtime-host.ts"
+SKILL_ROUTING_CARDS = ROOT / "integrations" / "pi" / "skill-routing-cards.json"
+BUNDLED_SKILL_SUPPORT_DIRS: frozenset[str] = frozenset()
+PROJECT_ROUTING_SKILLS = frozenset(
+    {"memory-curation", "plugin-creator", "work-document-archive"}
+)
+ROUTING_CARD_FIELDS = ("name", "when", "notFor", "does", "input", "output")
+MAX_ROUTING_CARD_CHARS = 420
+SKILL_SOURCE_KINDS = ("bundled", "configured", "pi-installed")
 REQUIRED_PI_RUNTIME_BASE_COMMIT = "0fd0564af34cb40bbcd6b8903c01b36191c4f90d"
 REQUIRED_GOAL_RUNTIME_SOURCE_MARKERS = {
     "providerContextJournal": (
@@ -311,14 +321,322 @@ def _hash_tree(path: Path) -> bytes:
     return digest.digest()
 
 
-def _product_skill_dirs(skills_root: Path) -> tuple[Path, ...]:
+def _product_skill_dirs(
+    skills_root: Path,
+    *,
+    allowed_support_dirs: frozenset[str] = BUNDLED_SKILL_SUPPORT_DIRS,
+) -> tuple[Path, ...]:
     if not skills_root.is_dir():
         return ()
-    return tuple(
-        item
-        for item in sorted(skills_root.iterdir())
-        if item.is_dir() and (item / "SKILL.md").is_file()
+    skills: list[Path] = []
+    for item in sorted(skills_root.iterdir(), key=lambda candidate: candidate.name):
+        if not item.is_dir():
+            continue
+        if (item / "SKILL.md").is_file():
+            skills.append(item)
+            continue
+        if item.name in allowed_support_dirs:
+            continue
+        raise ManagedPiRuntimeError(
+            "bundled Skill discovery failed: "
+            f"direct child directory {item} is missing SKILL.md"
+        )
+    return tuple(skills)
+
+
+def _skill_frontmatter(skill_file: Path, *, source: str) -> dict[str, object]:
+    try:
+        content = skill_file.read_text(encoding="utf-8")
+        parts = content.split("---", 2)
+        if len(parts) != 3 or parts[0].strip():
+            raise ValueError("missing leading YAML frontmatter")
+        value = yaml.safe_load(parts[1])
+    except (OSError, UnicodeError, yaml.YAMLError, ValueError) as error:
+        raise ManagedPiRuntimeError(
+            f"{source} Skill frontmatter is invalid at {skill_file}: {error}"
+        ) from error
+    if not isinstance(value, dict):
+        raise ManagedPiRuntimeError(
+            f"{source} Skill frontmatter must be an object at {skill_file}"
+        )
+    name = value.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ManagedPiRuntimeError(
+            f"{source} Skill frontmatter has no non-empty name at {skill_file}"
+        )
+    if name.strip() != skill_file.parent.name:
+        raise ManagedPiRuntimeError(
+            f"{source} Skill name {name!r} does not match directory "
+            f"{skill_file.parent.name!r} at {skill_file}"
+        )
+    return value
+
+
+def _discover_skill_files(paths: tuple[Path, ...], *, source: str) -> tuple[Path, ...]:
+    discovered: dict[Path, Path] = {}
+    for configured_path in paths:
+        path = configured_path.expanduser()
+        if not path.exists():
+            continue
+        candidates: tuple[Path, ...]
+        if path.is_file():
+            candidates = (path,) if path.name == "SKILL.md" else ()
+        elif (path / "SKILL.md").is_file():
+            candidates = (path / "SKILL.md",)
+        else:
+            candidates = tuple(sorted(path.rglob("SKILL.md")))
+        for candidate in candidates:
+            try:
+                canonical = candidate.resolve(strict=True)
+            except OSError as error:
+                raise ManagedPiRuntimeError(
+                    f"{source} Skill path cannot be resolved: {candidate}: {error}"
+                ) from error
+            discovered.setdefault(canonical, candidate)
+    return tuple(discovered[key] for key in sorted(discovered, key=lambda item: item.as_posix()))
+
+
+def _validated_collision_policy(value: object) -> dict[str, frozenset[str]]:
+    if not isinstance(value, dict) or value.get("default") != "reject":
+        raise ManagedPiRuntimeError(
+            "Skill collisionPolicy.default must be the fail-closed value 'reject'"
+        )
+    bundled_wins = value.get("bundledWins")
+    if not isinstance(bundled_wins, dict):
+        raise ManagedPiRuntimeError("Skill collisionPolicy.bundledWins must be an object")
+    unknown_sources = set(bundled_wins) - {"configured", "pi-installed"}
+    if unknown_sources:
+        raise ManagedPiRuntimeError(
+            "Skill collisionPolicy.bundledWins has unknown sources: "
+            + ", ".join(sorted(unknown_sources))
+        )
+    result: dict[str, frozenset[str]] = {}
+    for source in ("configured", "pi-installed"):
+        names = bundled_wins.get(source, [])
+        if (
+            not isinstance(names, list)
+            or any(not isinstance(name, str) or not name.strip() for name in names)
+            or len(names) != len(set(names))
+        ):
+            raise ManagedPiRuntimeError(
+                f"Skill collisionPolicy.bundledWins.{source} must be a unique string array"
+            )
+        result[source] = frozenset(names)
+    return result
+
+
+def _resolve_skill_source_collisions(
+    *,
+    bundled: tuple[Path, ...],
+    configured: tuple[Path, ...],
+    pi_installed: tuple[Path, ...],
+    collision_policy: object,
+) -> dict[str, dict[str, str]]:
+    bundled_wins = _validated_collision_policy(collision_policy)
+    candidates: dict[str, list[dict[str, str]]] = {}
+    source_paths = {
+        "bundled": bundled,
+        "configured": configured,
+        "pi-installed": pi_installed,
+    }
+    for source in SKILL_SOURCE_KINDS:
+        files = _discover_skill_files(source_paths[source], source=source)
+        for skill_file in files:
+            frontmatter = _skill_frontmatter(skill_file, source=source)
+            name = str(frontmatter["name"]).strip()
+            entry = {
+                "name": name,
+                "source": source,
+                "path": str(skill_file.resolve()),
+            }
+            candidates.setdefault(name, []).append(entry)
+
+    resolved: dict[str, dict[str, str]] = {}
+    for name in sorted(candidates):
+        entries = candidates[name]
+        if len(entries) == 1:
+            resolved[name] = entries[0]
+            continue
+        bundled_entries = [entry for entry in entries if entry["source"] == "bundled"]
+        non_bundled_sources = {entry["source"] for entry in entries if entry["source"] != "bundled"}
+        bundled_is_explicit_winner = (
+            len(bundled_entries) == 1
+            and len(entries) == len({entry["source"] for entry in entries})
+            and all(name in bundled_wins[source] for source in non_bundled_sources)
+        )
+        if bundled_is_explicit_winner:
+            resolved[name] = bundled_entries[0]
+            continue
+        diagnostics = "; ".join(
+            f"{entry['source']}={entry['path']}" for entry in entries
+        )
+        raise ManagedPiRuntimeError(
+            f"unresolved Skill name collision for {name!r}: {diagnostics}; "
+            "collisionPolicy.default=reject"
+        )
+    return resolved
+
+
+def _compact_card_length(card: dict[str, object]) -> int:
+    return len(json.dumps(card, ensure_ascii=False, separators=(",", ":")))
+
+
+def _validated_skill_routing_catalog(
+    cards_path: Path,
+    skills_root: Path,
+) -> dict[str, object]:
+    try:
+        catalog = json.loads(cards_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ManagedPiRuntimeError(
+            f"Skill routing card catalog is invalid at {cards_path}: {error}"
+        ) from error
+    if not isinstance(catalog, dict) or catalog.get("schemaVersion") != (
+        "rag-ime.skill-routing-card-catalog.v1"
+    ):
+        raise ManagedPiRuntimeError("Skill routing card catalog has an invalid schemaVersion")
+    cards = catalog.get("cards")
+    if not isinstance(cards, list):
+        raise ManagedPiRuntimeError("Skill routing card catalog must contain cards[]")
+
+    cards_by_name: dict[str, dict[str, object]] = {}
+    for index, value in enumerate(cards):
+        if not isinstance(value, dict):
+            raise ManagedPiRuntimeError(f"Skill routing card cards[{index}] must be an object")
+        name = value.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ManagedPiRuntimeError(
+                f"Skill routing card cards[{index}].name must be non-empty"
+            )
+        if name in cards_by_name:
+            raise ManagedPiRuntimeError(f"duplicate Skill routing card: {name}")
+        unexpected = set(value) - set(ROUTING_CARD_FIELDS)
+        if unexpected:
+            raise ManagedPiRuntimeError(
+                f"Skill routing card {name!r} has unsupported fields: "
+                + ", ".join(sorted(unexpected))
+            )
+        when = value.get("when")
+        does = value.get("does")
+        not_for = value.get("notFor")
+        if (
+            not isinstance(when, list)
+            or not when
+            or any(not isinstance(item, str) or not item.strip() for item in when)
+            or not isinstance(does, str)
+            or not does.strip()
+            or (
+                not_for is not None
+                and (
+                    not isinstance(not_for, list)
+                    or not not_for
+                    or any(
+                        not isinstance(item, str) or not item.strip()
+                        for item in not_for
+                    )
+                )
+            )
+            or any(
+                field in value
+                and (
+                    not isinstance(value[field], str)
+                    or not str(value[field]).strip()
+                )
+                for field in ("input", "output")
+            )
+        ):
+            raise ManagedPiRuntimeError(
+                f"Skill routing card {name!r} has invalid routing fields"
+            )
+        if _compact_card_length(value) > MAX_ROUTING_CARD_CHARS:
+            raise ManagedPiRuntimeError(
+                f"Skill routing card exceeds {MAX_ROUTING_CARD_CHARS} characters: {name}"
+            )
+        serialized = json.dumps(value, ensure_ascii=False)
+        if any(
+            marker in serialized
+            for marker in (
+                "file://",
+                str(ROOT),
+                str(skills_root.resolve()),
+                "/Users/",
+                "/Volumes/",
+                "/home/",
+                "\\Users\\",
+            )
+        ):
+            raise ManagedPiRuntimeError(
+                f"Skill routing card leaks a managed filesystem path: {name}"
+            )
+        cards_by_name[name] = value
+
+    product_skills = _product_skill_dirs(skills_root)
+    product_names = {skill.name for skill in product_skills}
+    for name in sorted(PROJECT_ROUTING_SKILLS):
+        if name not in product_names:
+            raise ManagedPiRuntimeError(
+                f"project routing card source Skill is missing: bundled={name}"
+            )
+        source = _skill_frontmatter(skills_root / name / "SKILL.md", source="bundled")
+        try:
+            projection = {field: source[field] for field in ROUTING_CARD_FIELDS}
+        except KeyError as error:
+            raise ManagedPiRuntimeError(
+                f"bundled Skill {name!r} is missing routing field {error.args[0]!r}"
+            ) from error
+        card = cards_by_name.get(name)
+        if card != projection:
+            raise ManagedPiRuntimeError(
+                f"project routing card drift for {name!r}: "
+                "card must exactly project bundled SKILL.md frontmatter"
+            )
+
+    collision_policy = catalog.get("collisionPolicy")
+    bundled_wins = _validated_collision_policy(collision_policy)
+    for source, names in bundled_wins.items():
+        unknown_names = names - product_names
+        if unknown_names:
+            raise ManagedPiRuntimeError(
+                f"Skill collisionPolicy.bundledWins.{source} references "
+                "unknown bundled Skills: "
+                + ", ".join(sorted(unknown_names))
+            )
+    coverage = catalog.get("coverage")
+    if not isinstance(coverage, dict):
+        raise ManagedPiRuntimeError("Skill routing card coverage must be an object")
+    multiplicity = coverage.get("duplicateSourceMultiplicity")
+    if not isinstance(multiplicity, dict):
+        raise ManagedPiRuntimeError(
+            "Skill routing card coverage.duplicateSourceMultiplicity must be an object"
+        )
+    for name, count in multiplicity.items():
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(count, int)
+            or count < 2
+        ):
+            raise ManagedPiRuntimeError(
+                f"invalid Skill routing source multiplicity for {name!r}: {count!r}"
+            )
+    represented_entries = len(cards) + sum(
+        count - 1 for count in multiplicity.values()
     )
+    derived_scope = {
+        "bundledSkillEntries": len(product_skills),
+        "projectedBundledCards": len(PROJECT_ROUTING_SKILLS),
+        "canonicalCards": len(cards),
+    }
+    if catalog.get("scope") != derived_scope:
+        raise ManagedPiRuntimeError(
+            f"Skill routing card scope drift: expected {derived_scope!r}"
+        )
+    if coverage.get("representedSourceEntries") != represented_entries:
+        raise ManagedPiRuntimeError(
+            "Skill routing card coverage drift: "
+            f"expected representedSourceEntries={represented_entries}"
+        )
+    return catalog
 
 
 def _copy_product_skills(source_root: Path, runtime_root: Path) -> tuple[str, ...]:
@@ -330,20 +648,44 @@ def _copy_product_skills(source_root: Path, runtime_root: Path) -> tuple[str, ..
     return tuple(copied)
 
 
-def _runtime_host_banner(skills_root: Path) -> str:
+def _runtime_host_banner(
+    skills_root: Path,
+    collision_policy: object | None = None,
+) -> str:
     skill_names = [item.name for item in _product_skill_dirs(skills_root)]
+    if collision_policy is None:
+        collision_policy = json.loads(
+            SKILL_ROUTING_CARDS.read_text(encoding="utf-8")
+        ).get("collisionPolicy")
+    bundled_wins = _validated_collision_policy(collision_policy)
+    policy_json = {
+        "default": "reject",
+        "bundledWins": {
+            source: sorted(names) for source, names in bundled_wins.items()
+        },
+    }
     return (
         'import { createRequire as __createRequire } from "node:module"; '
-        'import { delimiter as __pathDelimiter, dirname as __dirname, join as __join } from "node:path"; '
+        'import { basename as __basename, delimiter as __pathDelimiter, dirname as __dirname, join as __join, resolve as __resolve } from "node:path"; '
+        'import { existsSync as __existsSync, readdirSync as __readdirSync, readFileSync as __readFileSync, realpathSync as __realpathSync, statSync as __statSync } from "node:fs"; '
+        'import { homedir as __homedir } from "node:os"; '
         'import { fileURLToPath as __fileURLToPath } from "node:url"; '
         'const require = __createRequire(import.meta.url); '
         f'const __ragImeSkillNames = {json.dumps(skill_names, ensure_ascii=True)}; '
+        f'const __ragImeSkillCollisionPolicy = {json.dumps(policy_json, ensure_ascii=True)}; '
         'const __ragImeRuntimeDir = __dirname(__fileURLToPath(import.meta.url)); '
         'const __ragImeSkillPaths = __ragImeSkillNames.map((name) => __join(__ragImeRuntimeDir, "skills", name)); '
         'const __ragImeRoutingCards = __join(__ragImeRuntimeDir, "skill-routing-cards.json"); '
-        'const __ragImeConfiguredSkills = process.env.RAG_IME_PI_SKILL_PATHS || ""; '
+        'const __ragImeConfiguredSkills = (process.env.RAG_IME_PI_SKILL_PATHS || "").split(__pathDelimiter).filter(Boolean); '
+        'const __ragImePiAgentDir = __resolve(process.env.PI_CODING_AGENT_DIR || __join(__homedir(), ".pi", "agent")); '
+        'const __ragImePiInstalledSkills = (process.env.RAG_IME_PI_USER_SKILL_PATHS || __join(__ragImePiAgentDir, "skills")).split(__pathDelimiter).filter(Boolean); '
+        'const __ragImeFindSkillFiles = (path) => { if (!__existsSync(path)) return []; const stat = __statSync(path); if (!stat.isDirectory()) return path.endsWith("SKILL.md") ? [path] : []; if (__existsSync(__join(path, "SKILL.md"))) return [__join(path, "SKILL.md")]; return __readdirSync(path, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).flatMap((entry) => entry.isDirectory() ? __ragImeFindSkillFiles(__join(path, entry.name)) : []); }; '
+        'const __ragImeSourcePaths = { bundled: __ragImeSkillPaths, configured: __ragImeConfiguredSkills, "pi-installed": __ragImePiInstalledSkills }; '
+        'const __ragImeCandidates = new Map(); '
+        'for (const [source, paths] of Object.entries(__ragImeSourcePaths)) for (const path of paths.flatMap(__ragImeFindSkillFiles)) { const canonical = __realpathSync(path); const body = __readFileSync(canonical, "utf8"); const frontmatter = /^---\\s*\\r?\\n([\\s\\S]*?)\\r?\\n---(?:\\s*\\r?\\n|\\s*$)/.exec(body); const match = frontmatter && /^name:\\s*["\']?([^"\'#\\r\\n]+)["\']?\\s*$/m.exec(frontmatter[1]); if (!match) throw new Error(`Invalid ${source} Skill frontmatter at ${canonical}: missing name`); const name = match[1].trim(); if (name !== __basename(__dirname(canonical))) throw new Error(`Invalid ${source} Skill frontmatter at ${canonical}: name "${name}" does not match directory`); const entries = __ragImeCandidates.get(name) || []; if (!entries.some((entry) => entry.path === canonical)) entries.push({ name, source, path: canonical }); __ragImeCandidates.set(name, entries); } '
+        'for (const [name, entries] of [...__ragImeCandidates].sort(([a], [b]) => a.localeCompare(b))) { if (entries.length < 2) continue; const bundled = entries.filter((entry) => entry.source === "bundled"); const otherSources = new Set(entries.filter((entry) => entry.source !== "bundled").map((entry) => entry.source)); const explicitBundledWinner = bundled.length === 1 && entries.length === new Set(entries.map((entry) => entry.source)).size && [...otherSources].every((source) => (__ragImeSkillCollisionPolicy.bundledWins[source] || []).includes(name)); if (!explicitBundledWinner) throw new Error(`Unresolved Skill name collision for "${name}": ${entries.map((entry) => `${entry.source}=${entry.path}`).join("; ")}; collisionPolicy.default=reject`); } '
         'process.env.RAG_IME_PI_SKILL_PATHS = '
-        '[...__ragImeSkillPaths, __ragImeConfiguredSkills].filter(Boolean).join(__pathDelimiter); '
+        '[...__ragImeSkillPaths, ...__ragImeConfiguredSkills].filter(Boolean).join(__pathDelimiter); '
         'process.env.RAG_IME_PI_SKILL_ROUTING_CARDS = '
         'process.env.RAG_IME_PI_SKILL_ROUTING_CARDS || __ragImeRoutingCards;'
     )
@@ -528,12 +870,19 @@ def main(argv: list[str] | None = None) -> int:
         ) * 1_000
         provider_bridge_source = ROOT / "rag_ime" / "node" / "pi_provider_bridge_bundled.ts"
         product_skills = ROOT / "integrations" / "pi" / "skills"
-        skill_routing_cards = ROOT / "integrations" / "pi" / "skill-routing-cards.json"
+        skill_routing_cards = SKILL_ROUTING_CARDS
+        routing_catalog = _validated_skill_routing_catalog(
+            skill_routing_cards,
+            product_skills,
+        )
+        routing_catalog_bytes = (
+            json.dumps(routing_catalog, ensure_ascii=False, indent=2) + "\n"
+        ).encode("utf-8")
         packager_digest = hashlib.sha256(
             provider_bridge_source.read_bytes()
             + Path(__file__).read_bytes()
             + _hash_tree(product_skills)
-            + skill_routing_cards.read_bytes()
+            + routing_catalog_bytes
             + ROOM_RUNTIME_CONTRACT.read_bytes()
             + ROOM_RUNTIME_ADAPTER.read_bytes()
             + json.dumps(CONTROL_TOOL_IDS, separators=(",", ":")).encode("utf-8")
@@ -560,7 +909,9 @@ def main(argv: list[str] | None = None) -> int:
             runtime_dir.mkdir(mode=0o700)
             bin_dir.mkdir(mode=0o700)
             _copy_product_skills(product_skills, runtime_dir / "skills")
-            shutil.copy2(skill_routing_cards, runtime_dir / "skill-routing-cards.json")
+            (runtime_dir / "skill-routing-cards.json").write_bytes(
+                routing_catalog_bytes
+            )
             shutil.copy2(ROOM_RUNTIME_CONTRACT, runtime_dir / "room-runtime-host-contract.json")
             shutil.copy2(ROOM_RUNTIME_ADAPTER, runtime_dir / "room-runtime-host.ts")
             bundled_entrypoint = runtime_dir / "cli.mjs"
@@ -573,7 +924,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--format=esm",
                     "--target=node22",
                     f"--outfile={bundled_entrypoint}",
-                    f'--banner:js={_runtime_host_banner(product_skills)}',
+                    f'--banner:js={_runtime_host_banner(product_skills, routing_catalog["collisionPolicy"])}',
                 ],
                 cwd=pi_root,
             )

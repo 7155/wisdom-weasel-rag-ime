@@ -6,7 +6,7 @@ from .text_utils import compact_whitespace
 
 
 _MEMORY_WORKFLOW_INSTRUCTION_RE = re.compile(
-    r"(?:请(?:调用|使用)\s*ime_memory|"
+    r"(?:请(?:调用|使用)\s*memory|"
     r"\bmaintenance_(?:preview|review|apply|rollback)\b|"
     r"\bcuration_prepare\b.{0,160}(?:\brunId\b|审阅|草案))",
     re.IGNORECASE,

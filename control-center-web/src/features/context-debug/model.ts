@@ -52,6 +52,7 @@ export interface DebugModelCall {
   updatedAtMs: number;
   completedAtMs?: number;
   contextMessages: unknown[];
+  providerContext: JsonRecord;
   contextDelta: DebugContextDelta;
   providerExchanges: DebugProviderExchange[];
   assistantMessage?: unknown;
@@ -167,6 +168,7 @@ function normalizeModelCall(value: JsonRecord, fallbackIndex: number): DebugMode
     updatedAtMs: number(value.updatedAtMs) || number(value.capturedAtMs),
     completedAtMs: optionalNumber(value.completedAtMs),
     contextMessages: array(value.contextMessages),
+    providerContext: record(value.providerContext),
     contextDelta: {
       baseCallIndex: optionalNumber(delta.baseCallIndex),
       commonPrefixMessages: number(delta.commonPrefixMessages),
@@ -215,6 +217,7 @@ function normalizeLegacyModelCall(
     capturedAtMs: number(window.capturedAtMs),
     updatedAtMs: number(request?.capturedAtMs) || number(window.capturedAtMs),
     contextMessages: messages,
+    providerContext: {},
     contextDelta: {
       baseCallIndex: fallbackIndex > 0 ? fallbackIndex : undefined,
       commonPrefixMessages: commonPrefix,

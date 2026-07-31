@@ -4,7 +4,9 @@
  * Source: rag_ime/contracts/json/agent-plan-mutation.v1.json
  */
 
-export interface AgentPlanMutationV1 {
+export type AgentPlanMutationV1 = {
+  [k: string]: unknown;
+} & {
   action:
     'save' | 'submit_review' | 'approve' | 'return_to_draft' | 'complete' | 'cancel' | 'reset';
   expectedRevision?: number;
@@ -18,4 +20,4 @@ export interface AgentPlanMutationV1 {
     title: string;
     status: 'pending' | 'in_progress' | 'completed';
   }[];
-}
+};

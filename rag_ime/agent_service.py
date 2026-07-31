@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import time
@@ -21,7 +22,10 @@ from .agent_configuration import (
     runtime_policy_from_configuration,
 )
 from .agent_approval_application import AgentApprovalApplicationService
+from .agent_approval_model import ApprovalModelArbiter
+from .agent_background_jobs import AgentBackgroundJobService
 from .agent_context_runtime import AgentContextRuntime
+from .work_documents import WorkDocumentService
 from .agent_command_receipts import (
     AgentCommandReceiptStore,
     AgentTurnConflictError,
@@ -31,7 +35,7 @@ from .agent_event_projection import AgentEventProjectionService
 from .agent_block_store import AgentBlockStore
 from .agent_delegation import AgentDelegationCoordinator
 from .agent_file_preview import AgentFilePreviewReader
-from .agent_media import AgentMediaStore
+from .agent_media import AgentMediaStore, IMAGE_MIME_TYPES
 from .agent_memory_context import AgentMemoryContextService
 from .agent_memory_context_support import (
     compaction_summary as _compaction_summary,
@@ -156,6 +160,7 @@ class AgentService:
         memory_embedding_provider: EmbeddingProvider | None = None,
         wake_scheduler_enabled: bool = False,
         wake_scheduler_poll_seconds: float = 1.0,
+        background_job_execution_owner: bool = True,
         room_kernel_mode: KernelMode = "off",
         room_kernel_worker_enabled: bool = True,
         room_runner_secrets: Mapping[str, bytes | str] | None = None,
@@ -311,6 +316,22 @@ class AgentService:
             sequence_loader=self.sessions.max_event_sequence,
             event_recorder=self._record_event,
             event_observer=self._mirror_event_to_room,
+            background_projection=True,
+        )
+        self.background_jobs = AgentBackgroundJobService(
+            db_path,
+            events=self.events.publish,
+            execution_owner=background_job_execution_owner,
+        )
+        self.background_jobs.initialize()
+        self.work_documents = WorkDocumentService(
+            db_path,
+            sessions=self.sessions,
+            context_runtime=self.context_runtime,
+        )
+        self.work_documents.initialize()
+        self.room_work.set_terminal_observer(
+            self.work_documents.observe_authority
         )
         self.runtime: AgentRuntimeDriver = self.runtime_factory.create(
             RuntimeDriverContext(
@@ -324,6 +345,11 @@ class AgentService:
             ),
             purpose="interactive",
             session_context_provider=self._runtime_session_context,
+        )
+        self.approval_model = ApprovalModelArbiter(
+            db_path,
+            runtime_provider=lambda: self.runtime,
+            context_provider=self._approval_model_context,
         )
         self.role_application = AgentRoleApplicationService(
             personas=self.personas,
@@ -348,11 +374,18 @@ class AgentService:
             db_path=db_path,
             runtime_config=configured,
             sessions=self.sessions,
+            context_runtime=self.context_runtime,
             events=self.events,
             media_resolver=self.media.resolve_pi_image,
             runtime_driver_factory=self.runtime_factory,
             tool_gateway_token=self.tool_token,
             compaction_observer=self._checkpoint_runtime_compaction,
+            room_bound_provider=lambda session_id: (
+                self.room_turns.session_turn_active(session_id)
+                or self._active_room_dispatch_authorizes_work(
+                    session_id
+                )
+            ),
         )
         self.session_application = AgentSessionApplicationService(
             sessions=self.sessions,
@@ -440,6 +473,9 @@ class AgentService:
                 runtime_provider=lambda: self.runtime,
                 runtime_tool_manifest=lambda session: (
                     self._runtime_tool_manifest(session)
+                ),
+                room_public_recovery_context=(
+                    self._room_public_recovery_context_for_session
                 ),
             )
         )
@@ -595,6 +631,7 @@ class AgentService:
         self.room_legacy_dispatch = RoomLegacyDispatchService(
             self,
             build_participant_prompt=_room_participant_prompt,
+            resolve_attachments=self._resolve_room_attachments,
         )
         self.room_legacy_cancellation = RoomLegacyCancellationService(self)
         self.room_work_application = RoomWorkApplicationService(self)
@@ -602,9 +639,14 @@ class AgentService:
         self.message_snapshot = AgentMessageSnapshotService(
             sessions=self.sessions,
             runtime_provider=lambda: self.runtime,
+            workflow_projector=self.workflow_state,
             agent_blocks=self.agent_blocks,
             observations=self.observations,
             events=self.events,
+            background_jobs=self.background_jobs,
+            room_public_messages=(
+                self._room_public_messages_for_session
+            ),
         )
         self.room_management = RoomManagementService(
             rooms=self.rooms,
@@ -626,6 +668,7 @@ class AgentService:
                 self.room_turns.user_priority_sessions
             ),
         )
+        self._reconcile_room_work_from_kernel()
         if self._room_kernel_worker_enabled:
             self.room_kernel_worker_loop.start()
 
@@ -823,6 +866,345 @@ class AgentService:
                 preserve_user_allowlist=True,
             ),
         }
+
+    def _approval_model_context(
+        self,
+        approval: Mapping[str, object],
+        session: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Project user/task evidence without any primary-Agent output."""
+
+        session_id = str(
+            approval.get("sessionId") or session.get("id") or ""
+        )
+        participant = self.rooms.participant_for_session(
+            session_id,
+            active_only=False,
+        )
+        room_id = (
+            str(participant.get("roomId") or "")
+            if isinstance(participant, Mapping)
+            else ""
+        )
+        if room_id:
+            requests: list[dict[str, object]] = []
+            for event in self.rooms.list_events(room_id, limit=500):
+                if str(event.get("eventType") or "") != "user_message":
+                    continue
+                payload = (
+                    event.get("payload")
+                    if isinstance(event.get("payload"), Mapping)
+                    else {}
+                )
+                text = str(payload.get("text") or "").strip()
+                if not text:
+                    continue
+                requests.append(
+                    {
+                        "role": "user",
+                        "text": text,
+                        "turnId": str(event.get("turnId") or ""),
+                        "createdAtMs": int(event.get("createdAtMs") or 0),
+                    }
+                )
+            identity = self.room_capabilities.runtime_identity(session_id)
+            task_context: dict[str, object] = {}
+            if isinstance(identity, Mapping):
+                dispatch_id = str(identity.get("dispatchId") or "")
+                try:
+                    dispatch = self.room_kernel.dispatch(dispatch_id)
+                    task = self.room_kernel.task(
+                        str(dispatch.get("taskId") or "")
+                    )
+                except (KeyError, ValueError):
+                    task = {}
+                if isinstance(task, Mapping) and task:
+                    task_context = {
+                        "kind": "room_task",
+                        "roomId": room_id,
+                        "rootId": str(task.get("rootId") or ""),
+                        "dispatchId": dispatch_id,
+                        "taskId": str(task.get("taskId") or ""),
+                        "state": str(task.get("state") or ""),
+                        "objective": str(task.get("objective") or ""),
+                        "expectedOutput": str(
+                            task.get("expectedOutput") or ""
+                        ),
+                        "acceptanceCriterionIds": list(
+                            task.get("acceptanceCriterionIds") or []
+                        ),
+                    }
+            return {
+                "contextKind": "room",
+                "contextAvailable": bool(requests and task_context),
+                "contextId": room_id,
+                "userRequests": requests[-8:],
+                "currentTask": task_context,
+                "actor": {
+                    "sessionId": session_id,
+                    "roomId": room_id,
+                    "participantId": (
+                        str(participant.get("id") or "")
+                        if isinstance(participant, Mapping)
+                        else ""
+                    ),
+                    "dispatchId": (
+                        str(identity.get("dispatchId") or "")
+                        if isinstance(identity, Mapping)
+                        else ""
+                    ),
+                },
+            }
+
+        message_snapshot = self.message_snapshot.messages(session_id)
+        requests: list[dict[str, object]] = []
+        for message in list(message_snapshot.get("messages") or []):
+            if not isinstance(message, Mapping):
+                continue
+            if str(message.get("role") or "") != "user":
+                continue
+            text = _approval_user_request_text(message)
+            if not text:
+                continue
+            requests.append(
+                {
+                    "role": "user",
+                    "text": text,
+                    "turnId": str(
+                        message.get("turnId") or message.get("id") or ""
+                    ),
+                    "createdAtMs": int(message.get("createdAtMs") or 0),
+                }
+            )
+        workflow = self.sessions.workflow_state(session_id)
+        goal = (
+            workflow.get("goal")
+            if isinstance(workflow.get("goal"), Mapping)
+            else {}
+        )
+        plan = (
+            workflow.get("plan")
+            if isinstance(workflow.get("plan"), Mapping)
+            else {}
+        )
+        current_task = {
+            "kind": "agent_workflow",
+            "activeUserRequest": (
+                str(requests[-1]["text"]) if requests else ""
+            ),
+            "goal": (
+                {
+                    "goalId": str(goal.get("goalId") or ""),
+                    "status": str(goal.get("status") or ""),
+                    "objective": str(goal.get("objective") or ""),
+                    "successCriteria": str(
+                        goal.get("successCriteria") or ""
+                    ),
+                    "evidenceExpectations": list(
+                        goal.get("evidenceExpectations") or []
+                    ),
+                }
+                if goal.get("configured") is True
+                else {}
+            ),
+            "plan": {
+                "title": str(plan.get("title") or ""),
+                "status": str(plan.get("status") or ""),
+                "items": [
+                    {
+                        "title": str(item.get("title") or ""),
+                        "status": str(item.get("status") or ""),
+                    }
+                    for item in list(plan.get("items") or [])[-20:]
+                    if isinstance(item, Mapping)
+                ],
+            },
+        }
+        return {
+            "contextKind": "session",
+            "contextAvailable": bool(requests),
+            "contextId": session_id,
+            "userRequests": requests[-8:],
+            "currentTask": current_task,
+            "actor": {"sessionId": session_id},
+        }
+
+    def _settled_room_public_recovery_context(
+        self,
+        session_id: str,
+        tombstone: Mapping[str, object],
+    ) -> str:
+        if str(tombstone.get("state") or "") != "revoked":
+            return ""
+        materialized = self.context_runtime.materialize(session_id)
+        if any(
+            isinstance(item, Mapping)
+            and item.get("sourceKind") == "room_compaction_recovery"
+            for item in materialized.get("items") or []
+        ):
+            return ""
+        identity = self.room_capabilities.runtime_identity(session_id)
+        participant = self.rooms.participant_for_session(
+            session_id,
+            active_only=False,
+        )
+        if identity is None or participant is None:
+            return ""
+        room_id = str(identity.get("roomId") or "")
+        root_id = str(identity.get("rootId") or "")
+        dispatch_id = str(identity.get("dispatchId") or "")
+        generation = int(identity.get("generation") or 0)
+        participant_id = str(participant.get("id") or "")
+        if (
+            not room_id
+            or not root_id
+            or not dispatch_id
+            or generation < 1
+            or not participant_id
+            or str(participant.get("roomId") or "") != room_id
+        ):
+            return ""
+        records: list[dict[str, object]] = []
+        seen_event_ids: set[str] = set()
+        seen_post_ids: set[str] = set()
+        for event in self.rooms.list_events(room_id, limit=2_000):
+            if str(event.get("turnId") or "") != root_id:
+                continue
+            event_id = str(event.get("eventId") or "")
+            payload = event.get("payload")
+            if not event_id or not isinstance(payload, Mapping):
+                continue
+            event_type = str(event.get("eventType") or "")
+            if event_type == "user_message":
+                if event_id in seen_event_ids:
+                    continue
+                text = " ".join(
+                    str(payload.get("text") or "").split()
+                )[:1_000]
+                if not text:
+                    continue
+                seen_event_ids.add(event_id)
+                records.append(
+                    {
+                        "eventId": event_id,
+                        "sequence": int(event.get("sequence") or 0),
+                        "turnId": root_id,
+                        "role": "user",
+                        "text": text,
+                    }
+                )
+                continue
+            if (
+                event_type != "room_post"
+                or str(event.get("participantId") or "")
+                != participant_id
+                or str(event.get("sourceSessionId") or "")
+                != session_id
+            ):
+                continue
+            post = payload.get("post")
+            if not isinstance(post, Mapping):
+                continue
+            post_id = str(post.get("postId") or "")
+            post_root_id = str(post.get("rootId") or root_id)
+            post_dispatch_id = str(
+                post.get("dispatchId") or dispatch_id
+            )
+            raw_post_generation = post.get("generation")
+            post_generation = (
+                int(raw_post_generation)
+                if isinstance(raw_post_generation, int)
+                and not isinstance(raw_post_generation, bool)
+                else generation
+            )
+            text = " ".join(
+                str(post.get("content") or "").split()
+            )[:1_000]
+            if (
+                not post_id
+                or post_id in seen_post_ids
+                or post_root_id != root_id
+                or post_dispatch_id != dispatch_id
+                or post_generation != generation
+                or not text
+            ):
+                continue
+            seen_post_ids.add(post_id)
+            records.append(
+                {
+                    "eventId": event_id,
+                    "postId": post_id,
+                    "sequence": int(event.get("sequence") or 0),
+                    "turnId": root_id,
+                    "role": "assistant",
+                    "kind": str(post.get("kind") or "message"),
+                    "text": text,
+                }
+            )
+        if not records:
+            return ""
+        records = records[-ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT:]
+        packet: dict[str, object] = {
+            "schemaVersion": (
+                "rag-ime.room-session-public-recovery.v1"
+            ),
+            "authority": "room_public_ledger_read_projection",
+            "activeRoomDispatch": False,
+            "roomId": room_id,
+            "rootId": root_id,
+            "dispatchId": dispatch_id,
+            "generation": generation,
+            "capabilityEpoch": int(
+                tombstone.get("capabilityEpoch") or 0
+            ),
+            "messages": records,
+        }
+        rendered = json.dumps(
+            packet,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        while (
+            records
+            and len(rendered.encode("utf-8"))
+            > ROOM_CONTEXT_HISTORY_CHAR_BUDGET
+        ):
+            records.pop(0)
+            rendered = json.dumps(
+                packet,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        if not records:
+            return ""
+        return (
+            "<room-public-recovery>\n"
+            f"{rendered}\n"
+            "</room-public-recovery>"
+        )
+
+
+    def _room_public_recovery_context_for_session(
+        self,
+        session_id: str,
+    ) -> str:
+        if self.room_capabilities.manifest_for_runtime(
+            session_id
+        ) is not None:
+            return ""
+        tombstone = self.room_capabilities.runtime_binding(
+            session_id,
+            active_only=False,
+        )
+        if tombstone is None:
+            return ""
+        return self._settled_room_public_recovery_context(
+            session_id,
+            tombstone,
+        )
+
 
     def _runtime_session_context(self, session: Mapping[str, object]) -> Mapping[str, object]:
         bound = self.room_capabilities.manifest_for_runtime(str(session.get("id") or ""))
@@ -1135,8 +1517,21 @@ class AgentService:
     ) -> dict[str, object]:
         request = dict(payload)
         validate_contract(request, "agent-plan-mutation.v1.json")
-        self.sessions.mutate_agent_plan(session_id, request)
-        return self.publish_workflow_state(session_id, reason=f"plan:{request['action']}")
+        if request["action"] == "cancel":
+            self._transition_lifecycle_cancellation(
+                session_id,
+                request,
+                scope_kind="plan",
+            )
+        else:
+            self.sessions.mutate_agent_plan(session_id, request)
+        state = self.publish_workflow_state(session_id, reason=f"plan:{request['action']}")
+        try:
+            self.work_documents.observe_authority("session_plan", session_id)
+        except Exception:
+            # The reconciler owns filesystem recovery; Plan state remains canonical.
+            pass
+        return state
 
     def mutate_goal(
         self,
@@ -1145,8 +1540,238 @@ class AgentService:
     ) -> dict[str, object]:
         request = dict(payload)
         validate_contract(request, "agent-goal-mutation.v1.json")
-        self.sessions.mutate_agent_goal(session_id, request)
-        return self.publish_workflow_state(session_id, reason=f"goal:{request['action']}")
+        if request["action"] in {"pause", "cancel"}:
+            self._transition_lifecycle_cancellation(
+                session_id,
+                request,
+                scope_kind="goal",
+            )
+        else:
+            self.sessions.mutate_agent_goal(session_id, request)
+        state = self.publish_workflow_state(session_id, reason=f"goal:{request['action']}")
+        goal = state.get("goal")
+        if isinstance(goal, Mapping) and goal.get("goalId"):
+            try:
+                self.work_documents.observe_authority(
+                    "session_goal", str(goal["goalId"])
+                )
+            except Exception:
+                # The reconciler owns filesystem recovery; Goal state remains canonical.
+                pass
+        return state
+
+    def _transition_lifecycle_cancellation(
+        self,
+        session_id: str,
+        request: Mapping[str, object],
+        *,
+        scope_kind: str,
+    ) -> dict[str, object]:
+        action = str(request["action"])
+        if scope_kind == "plan":
+            source = self.sessions.agent_plan(session_id)
+            scope_id = str(source["id"])
+            expected_terminal = "cancelled"
+        else:
+            source = self.sessions.agent_goal(session_id)
+            scope_id = str(source["goalId"])
+            expected_terminal = "paused" if action == "pause" else "cancelled"
+        source_revision = int(source["revision"])
+        expected_revision = request.get("expectedRevision")
+        existing = None
+        if str(source["status"]) == expected_terminal:
+            candidate = self.sessions.lifecycle_cancellation_for_transition(
+                session_id,
+                scope_kind=scope_kind,
+                scope_id=scope_id,
+                transition_revision=source_revision,
+                action=action,
+            )
+            if (
+                candidate is not None
+                and (
+                    expected_revision is None
+                    or int(candidate["sourceRevision"]) == int(expected_revision)
+                )
+            ):
+                existing = candidate
+        if existing is None:
+            lifecycle_request = {
+                "requestId": _lifecycle_cancellation_request_id(
+                    session_id=session_id,
+                    scope_kind=scope_kind,
+                    scope_id=scope_id,
+                    source_revision=source_revision,
+                    action=action,
+                ),
+                "scopeKind": scope_kind,
+                "scopeId": scope_id,
+                "sourceRevision": source_revision,
+                "sourceTurnId": self.sessions.latest_runtime_turn_id(session_id),
+                "action": action,
+                "reason": str(request.get("reason") or request.get("note") or ""),
+            }
+            if scope_kind == "plan":
+                mutation = self.sessions.mutate_agent_plan(
+                    session_id,
+                    request,
+                    lifecycle_request=lifecycle_request,
+                )
+            else:
+                mutation = self.sessions.mutate_agent_goal(
+                    session_id,
+                    request,
+                    lifecycle_request=lifecycle_request,
+                )
+            existing = dict(mutation["lifecycleAudit"])
+        audit = self._cancel_lifecycle_owners(existing)
+        self.events.publish(
+            session_id,
+            "lifecycle_cancellation_changed",
+            {"audit": audit},
+            turn_id=str(audit.get("sourceTurnId") or ""),
+        )
+        return audit
+
+    def _cancel_lifecycle_owners(
+        self,
+        audit: Mapping[str, object],
+    ) -> dict[str, object]:
+        request_id = str(audit["requestId"])
+        session_id = str(audit["sessionId"])
+        scope_kind = str(audit["scopeKind"])
+        scope_id = str(audit["scopeId"])
+        source_revision = int(audit["sourceRevision"])
+        reason = str(audit.get("reason") or f"{scope_kind}_{audit['action']}")
+        current = dict(audit)
+
+        runtime_owner = _lifecycle_owner(current, "runtime")
+        if runtime_owner["status"] not in {"succeeded", "excluded"}:
+            room_active = (
+                self.room_turns.session_turn_active(session_id)
+                or self._active_room_dispatch_authorizes_work(session_id)
+            )
+            if room_active:
+                current = self.sessions.record_lifecycle_owner_receipt(
+                    request_id,
+                    owner="runtime",
+                    status="excluded",
+                    receipt={
+                        "reason": "active_room_dispatch_owned_by_room_kernel",
+                        "sessionId": session_id,
+                    },
+                )
+            else:
+                try:
+                    raw_runtime_receipt = self.runtime.abort(session_id)
+                    runtime_receipt = _lifecycle_public_receipt(
+                        raw_runtime_receipt
+                    )
+                    runtime_status = _runtime_lifecycle_status(
+                        runtime_receipt
+                    )
+                except Exception as exc:
+                    runtime_status = "unknown"
+                    runtime_receipt = {
+                        "reason": "runtime_owner_request_failed",
+                        "errorType": type(exc).__name__,
+                    }
+                current = self.sessions.record_lifecycle_owner_receipt(
+                    request_id,
+                    owner="runtime",
+                    status=runtime_status,
+                    receipt=runtime_receipt,
+                )
+
+        approval_owner = _lifecycle_owner(current, "approval")
+        if approval_owner["status"] not in {"succeeded", "excluded"}:
+            try:
+                approval_receipt = self.sessions.cancel_causal_approvals(
+                    session_id,
+                    request_id=request_id,
+                    scope_kind=scope_kind,
+                    scope_id=scope_id,
+                    source_revision=source_revision,
+                    reason=reason,
+                )
+                approval_status = "succeeded"
+            except Exception as exc:
+                approval_status = "unknown"
+                approval_receipt = {
+                    "reason": "approval_owner_request_failed",
+                    "errorType": type(exc).__name__,
+                }
+            current = self.sessions.record_lifecycle_owner_receipt(
+                request_id,
+                owner="approval",
+                status=approval_status,
+                receipt=_lifecycle_public_receipt(approval_receipt),
+            )
+
+        job_owner = _lifecycle_owner(current, "job")
+        if job_owner["status"] not in {"succeeded", "excluded"}:
+            try:
+                job_receipt = self.background_jobs.cancel_causal(
+                    session_id,
+                    request_id=request_id,
+                    scope_kind=scope_kind,
+                    scope_id=scope_id,
+                    source_revision=source_revision,
+                    reason=reason,
+                )
+                job_status = _job_lifecycle_status(job_receipt)
+            except Exception as exc:
+                job_status = "unknown"
+                job_receipt = {
+                    "reason": "background_job_owner_request_failed",
+                    "errorType": type(exc).__name__,
+                }
+            current = self.sessions.record_lifecycle_owner_receipt(
+                request_id,
+                owner="job",
+                status=job_status,
+                receipt=_lifecycle_public_receipt(job_receipt),
+            )
+        delegation_owner = _lifecycle_owner(current, "delegation")
+        if delegation_owner["status"] not in {"succeeded", "excluded"}:
+            room_active = (
+                self.room_turns.session_turn_active(session_id)
+                or self._active_room_dispatch_authorizes_work(session_id)
+            )
+            if room_active:
+                delegation_status = "excluded"
+                delegation_receipt = {
+                    "reason": "active_room_dispatch_owned_by_room_kernel",
+                    "sessionId": session_id,
+                }
+            else:
+                try:
+                    delegation_receipt = self.delegation.cancel_causal(
+                        session_id,
+                        request_id=request_id,
+                        scope_kind=scope_kind,
+                        scope_id=scope_id,
+                        source_revision=source_revision,
+                        reason=reason,
+                    )
+                    delegation_status = _delegation_lifecycle_status(
+                        delegation_receipt
+                    )
+                except Exception as exc:
+                    delegation_status = "unknown"
+                    delegation_receipt = {
+                        "reason": "delegation_owner_request_failed",
+                        "errorType": type(exc).__name__,
+                    }
+            current = self.sessions.record_lifecycle_owner_receipt(
+                request_id,
+                owner="delegation",
+                status=delegation_status,
+                receipt=_lifecycle_public_receipt(
+                    delegation_receipt
+                ),
+            )
+        return current
 
     def internal_workflow_state(self, payload: Mapping[str, object]) -> dict[str, object]:
         state = self.workflow_state(_required_text(payload, "sessionId"))
@@ -1213,6 +1838,9 @@ class AgentService:
             elif goal_status == "completed":
                 decision = "completed"
                 reason = "goal_completed"
+            elif goal_status == "cancelled":
+                decision = "cancelled"
+                reason = "goal_cancelled"
             elif goal_status != "active":
                 decision = "inactive"
                 reason = f"goal_{goal_status or 'not_active'}"
@@ -2106,6 +2734,7 @@ class AgentService:
             )
         client_message_id = _optional_client_message_id(payload.get("clientMessageId"))
         work_item_id = _optional_work_item_id(payload.get("workItemId"))
+        attachment_ids = _room_attachment_ids(payload.get("attachmentIds"))
         requested_ids = payload.get("participantIds")
         if requested_ids is None:
             requested_participant_ids: list[str] = []
@@ -2124,6 +2753,7 @@ class AgentService:
                 client_message_id="",
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
+                attachment_ids=attachment_ids,
             )
         claim = self.command_receipts.begin(
             command_scope="room_message",
@@ -2133,6 +2763,7 @@ class AgentService:
                 "message": message,
                 "participantIds": requested_participant_ids,
                 "workItemId": work_item_id,
+                "attachmentIds": attachment_ids,
             },
         )
         if claim.replay_response is not None:
@@ -2144,6 +2775,7 @@ class AgentService:
                 client_message_id=client_message_id,
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
+                attachment_ids=attachment_ids,
             )
         except Exception as exc:
             self.command_receipts.fail(
@@ -2161,6 +2793,60 @@ class AgentService:
             client_message_id=client_message_id,
             response=response,
         )
+
+    def _resolve_room_attachments(
+        self,
+        room_id: str,
+        target_session_ids: Sequence[str],
+        attachment_ids: Sequence[str],
+    ) -> list[dict[str, object]]:
+        if not attachment_ids:
+            return []
+        room = self.rooms.get(room_id)
+        if room.get("status") != "active":
+            raise ValueError("Room attachments require an active Room")
+        active_by_session = {
+            str(participant.get("sessionId") or ""): participant
+            for participant in room.get("participants", [])
+            if (
+                isinstance(participant, Mapping)
+                and participant.get("status") == "active"
+            )
+        }
+        for session_id in target_session_ids:
+            participant = active_by_session.get(str(session_id))
+            if participant is None:
+                raise ValueError("Room attachment target is no longer an active participant")
+            selected = self.runtime.model_catalog(str(session_id)).get("selected")
+            if (
+                not isinstance(selected, Mapping)
+                or selected.get("supportsImages") is not True
+            ):
+                name = str(participant.get("displayName") or "所选伙伴")
+                raise ValueError(
+                    f"{name} 的当前模型不支持图片，请切换模型或移除图片后重试"
+                )
+        receipts = [
+            self.media.receipt(media_id, room_id=room_id)
+            for media_id in dict.fromkeys(attachment_ids)
+        ]
+        for receipt in receipts:
+            if receipt.get("mimeType") not in IMAGE_MIME_TYPES:
+                raise ValueError("Room attachments currently support PNG, JPEG, GIF, and WebP only")
+        return receipts
+
+    def _room_dispatch_images(
+        self,
+        dispatch: Mapping[str, object],
+    ) -> list[dict[str, str]]:
+        attachment_ids = _room_attachment_ids(dispatch.get("attachmentIds"))
+        if not attachment_ids:
+            return []
+        root = self.room_kernel.root(str(dispatch.get("rootId") or ""))
+        room_id = str(root["roomId"])
+        session_id = str(dispatch.get("targetSessionId") or "")
+        self._resolve_room_attachments(room_id, [session_id], attachment_ids)
+        return self.media.pi_images("", attachment_ids, room_id=room_id)
 
     def abort_room_turn(
         self,
@@ -2213,10 +2899,30 @@ class AgentService:
             kernel_owns_room_execution(self.room_kernel.mode)
             and room_turn_id in self.room_kernel.root_ids(room_id)
         ):
-            return self.room_kernel_application.cancel_root(
-                room_id,
+            background_job_receipts: list[dict[str, object]] = []
+            runtime_targets = self.room_kernel.active_runtime_targets(
                 room_turn_id,
             )
+            for session_id in dict.fromkeys(
+                str(target["sessionId"])
+                for target in runtime_targets
+                if str(target.get("sessionId") or "")
+            ):
+                background_job_receipts.extend(
+                    self.background_jobs.cancel_room_root(
+                        session_id,
+                        room_turn_id=room_turn_id,
+                        reason=f"Cancelled with Room root {room_turn_id}",
+                    )
+                )
+            response = dict(
+                self.room_kernel_application.cancel_root(
+                    room_id,
+                    room_turn_id,
+                )
+            )
+            response["backgroundJobReceipts"] = background_job_receipts
+            return response
         return self.room_legacy_cancellation.abort_turn(
             room_id,
             room_turn_id=room_turn_id,
@@ -2230,19 +2936,37 @@ class AgentService:
         client_message_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
+        attachment_ids: Sequence[str],
     ) -> dict[str, object]:
         if kernel_owns_room_execution(self.room_kernel.mode):
-            owner = room_message_owner(work_item_id=work_item_id)
+            room = self.rooms.get(room_id)
+            owner = room_message_owner(
+                work_item_id=work_item_id,
+                room_kind=str(
+                    room.get("roomKind") or "collaboration"
+                ),
+            )
             if owner == "session":
                 return self.room_legacy_dispatch.post_conversation(
                     room_id,
                     message=message,
                     client_message_id=client_message_id,
                     requested_participant_ids=requested_participant_ids,
+                    attachment_ids=attachment_ids,
                 )
             if owner != "kernel":
                 raise RoomKernelFenceError(
                     f"unsupported Room message owner: {owner}"
+                )
+            if not work_item_id:
+                return self.room_legacy_dispatch.post_conversation(
+                    room_id,
+                    message=message,
+                    client_message_id=client_message_id,
+                    requested_participant_ids=(
+                        requested_participant_ids
+                    ),
+                    attachment_ids=attachment_ids,
                 )
             return self.room_application.post_message(
                 room_id,
@@ -2250,6 +2974,7 @@ class AgentService:
                 client_message_id=client_message_id,
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
+                attachment_ids=attachment_ids,
             )
         return self.room_legacy_dispatch.post_message(
             room_id,
@@ -2257,6 +2982,7 @@ class AgentService:
             client_message_id=client_message_id,
             requested_participant_ids=requested_participant_ids,
             work_item_id=work_item_id,
+            attachment_ids=attachment_ids,
         )
 
     def _dispatch_room_target(
@@ -2270,6 +2996,7 @@ class AgentService:
         topic_id: str,
         unread: Mapping[str, object],
         work_item: Mapping[str, object] | None,
+        attachment_ids: Sequence[str],
     ) -> dict[str, object]:
         return self.room_legacy_dispatch.dispatch_target(
             room=room,
@@ -2280,6 +3007,7 @@ class AgentService:
             topic_id=topic_id,
             unread=unread,
             work_item=work_item,
+            attachment_ids=attachment_ids,
         )
 
     def send_room_intercom(
@@ -2420,6 +3148,10 @@ class AgentService:
         return self.session_policy.update_session(session_id, payload)
 
     def delete_session(self, session_id: str) -> dict[str, object]:
+        self.background_jobs.cancel_session(
+            session_id,
+            reason="agent_session_deleted",
+        )
         return self.session_application.delete_session(session_id)
 
     def fork_candidates(self, session_id: str) -> dict[str, object]:
@@ -2460,23 +3192,67 @@ class AgentService:
     def _forkable_session(self, session_id: str) -> dict[str, object]:
         return self.session_branching.forkable_session(session_id)
 
+    def _room_public_messages_for_session(
+        self,
+        session_id: str,
+    ) -> dict[str, object] | None:
+        participant = self.rooms.participant_for_session(
+            session_id,
+            active_only=False,
+        )
+        if participant is None:
+            return None
+        room_id = str(participant.get("roomId") or "")
+        participant_id = str(participant.get("id") or "")
+        if not room_id or not participant_id:
+            return None
+        events = self.rooms.list_events(
+            room_id,
+            limit=2_000,
+        )
+        return {
+            "participantId": participant_id,
+            "events": [
+                event
+                for event in events
+                if event.get("eventType") == "user_message"
+                or (
+                    event.get("eventType") == "room_post"
+                    and str(event.get("participantId") or "")
+                    == participant_id
+                )
+            ],
+        }
+
+
     def messages(self, session_id: str) -> dict[str, object]:
         return self.message_snapshot.messages(session_id)
 
     def import_media(
         self,
         *,
-        session_id: str,
+        session_id: str = "",
+        room_id: str = "",
         data: bytes,
         mime_type: str,
         file_name: str = "",
     ) -> dict[str, object]:
-        self.sessions.get(session_id)
+        owner_type, owner_id = _media_owner_input(
+            session_id=session_id,
+            room_id=room_id,
+        )
+        if owner_type == "session":
+            self.sessions.get(owner_id)
+        else:
+            room = self.rooms.get(owner_id)
+            if room.get("status") != "active":
+                raise ValueError("Room attachments require an active Room")
         return {
             "schemaVersion": "rag-ime.agent-media-import.v1",
             "ok": True,
             "media": self.media.import_bytes(
-                session_id=session_id,
+                session_id=owner_id if owner_type == "session" else "",
+                room_id=owner_id if owner_type == "room" else "",
                 data=data,
                 mime_type=mime_type,
                 file_name=file_name,
@@ -2484,29 +3260,71 @@ class AgentService:
         }
 
     def list_media(self, payload: Mapping[str, object]) -> dict[str, object]:
-        session_id = _required_text(payload, "sessionId")
-        self.sessions.get(session_id)
+        owner_type, owner_id = _media_owner_input(
+            session_id=payload.get("sessionId"),
+            room_id=payload.get("roomId"),
+        )
+        if owner_type == "session":
+            self.sessions.get(owner_id)
+        else:
+            self.rooms.get(owner_id)
         return {
             "schemaVersion": "rag-ime.agent-media-list.v1",
             "ok": True,
-            "sessionId": session_id,
-            "items": self.media.list_for_session(
-                session_id,
+            "ownerType": owner_type,
+            "ownerId": owner_id,
+            "items": self.media.list_for_owner(
+                session_id=owner_id if owner_type == "session" else "",
+                room_id=owner_id if owner_type == "room" else "",
                 limit=_integer(payload.get("limit"), default=100, minimum=1, maximum=500),
             ),
         }
 
-    def media_receipt(self, media_id: str, *, session_id: str) -> dict[str, object]:
-        self.sessions.get(session_id)
+    def media_receipt(
+        self,
+        media_id: str,
+        *,
+        session_id: str = "",
+        room_id: str = "",
+    ) -> dict[str, object]:
+        owner_type, owner_id = _media_owner_input(
+            session_id=session_id,
+            room_id=room_id,
+        )
+        if owner_type == "session":
+            self.sessions.get(owner_id)
+        else:
+            self.rooms.get(owner_id)
         return {
             "schemaVersion": "rag-ime.agent-media-get.v1",
             "ok": True,
-            "media": self.media.receipt(media_id, session_id=session_id),
+            "media": self.media.receipt(
+                media_id,
+                session_id=owner_id if owner_type == "session" else "",
+                room_id=owner_id if owner_type == "room" else "",
+            ),
         }
 
-    def media_content(self, media_id: str, *, session_id: str) -> tuple[dict[str, object], bytes]:
-        self.sessions.get(session_id)
-        return self.media.read(media_id, session_id=session_id)
+    def media_content(
+        self,
+        media_id: str,
+        *,
+        session_id: str = "",
+        room_id: str = "",
+    ) -> tuple[dict[str, object], bytes]:
+        owner_type, owner_id = _media_owner_input(
+            session_id=session_id,
+            room_id=room_id,
+        )
+        if owner_type == "session":
+            self.sessions.get(owner_id)
+        else:
+            self.rooms.get(owner_id)
+        return self.media.read(
+            media_id,
+            session_id=owner_id if owner_type == "session" else "",
+            room_id=owner_id if owner_type == "room" else "",
+        )
 
     def file_preview(
         self,
@@ -2551,10 +3369,25 @@ class AgentService:
         context_source: str = "user",
         delivery: str = "prompt",
         transient_context: str = "",
+        media_owner_room_id: str = "",
         on_accepted: (
             Callable[[Mapping[str, object]], None] | None
         ) = None,
     ) -> dict[str, object]:
+        if media_owner_room_id:
+            if context_source != "room":
+                raise ValueError(
+                    "Room-owned media requires a Room prompt context"
+                )
+            self._resolve_room_attachments(
+                media_owner_room_id,
+                [session_id],
+                attachment_ids,
+            )
+        elif context_source == "room" and attachment_ids:
+            raise ValueError(
+                "Room prompt attachments require a Room media owner"
+            )
         if context_source == "room":
             return self.prompt_application.prompt_with_checkpoint(
                 session_id=session_id,
@@ -2568,6 +3401,7 @@ class AgentService:
                 context_source=context_source,
                 delivery=delivery,
                 transient_context=transient_context,
+                media_owner_room_id=media_owner_room_id,
                 on_accepted=on_accepted,
             )
         with self._direct_agent_entry(session_id):
@@ -2583,6 +3417,7 @@ class AgentService:
                 context_source=context_source,
                 delivery=delivery,
                 transient_context=transient_context,
+                media_owner_room_id=media_owner_room_id,
                 on_accepted=on_accepted,
             )
 
@@ -2925,6 +3760,34 @@ class AgentService:
     def resolve_review(self, session_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         return self.approval_application.resolve_review(session_id, payload)
 
+    def resolve_ui_request(
+        self,
+        session_id: str,
+        payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        request_id = str(payload.get("requestId") or "").strip()
+        if not request_id:
+            raise ValueError("UI requestId must not be empty")
+        response = {
+            key: payload[key]
+            for key in (
+                "value",
+                "confirmed",
+                "cancelled",
+                "resolutionSource",
+            )
+            if key in payload
+        }
+        if response.get("cancelled") is not True and not (
+            "value" in response or isinstance(response.get("confirmed"), bool)
+        ):
+            raise ValueError("UI response must include a value, confirmation, or cancellation")
+        return self.runtime.resolve_ui_request(
+            session_id,
+            request_id,
+            response=response,
+        )
+
     def decide_approval(self, approval_id: str, payload: Mapping[str, object]) -> dict[str, object]:
         return self.approval_application.decide_approval(approval_id, payload)
 
@@ -3076,6 +3939,7 @@ class AgentService:
             accept_runtime_context=self.room_kernel_runtime.accept_runtime_context,
             revoke_session=self.room_kernel_runtime.revoke_session,
             invalidate_room_approvals=self.sessions.invalidate_room_approvals,
+            image_provider=self._room_dispatch_images,
             learning_observer=self.room_kernel_runtime.record_learning_signal,
         )
         self.room_kernel_commands = KernelCommandBus(
@@ -3104,6 +3968,7 @@ class AgentService:
             session_mode_gate=self.session_mode_gate,
             wake_worker=self.room_kernel_worker_loop.wake,
             restore_participant_sessions=self._restore_legacy_room_participant_sessions,
+            resolve_attachments=self._resolve_room_attachments,
         )
         self.room_kernel_application = RoomKernelApplicationService(
             rooms=self.rooms,
@@ -3123,6 +3988,9 @@ class AgentService:
                 media_id,
                 session_id=session_id,
             ),
+            root_state_observer=(
+                self._project_room_work_from_kernel_root
+            ),
         )
         self.room_settle_lifecycle = RoomSettleLifecycleService(
             rooms=self.rooms,
@@ -3137,11 +4005,36 @@ class AgentService:
         for room_id in self.room_kernel.room_ids():
             self.room_kernel_projection.sync_room(room_id)
             for root_id in self.room_kernel.root_ids(room_id):
-                self.room_public_timeline.sync_terminal_root(
-                    self.room_kernel.root(root_id)
-                )
+                root = self.room_kernel.root(root_id)
+                self.room_public_timeline.sync_terminal_root(root)
+                self._project_room_work_from_kernel_root(root)
         self._run_room_learning_maintenance()
         self._consume_room_knowledge_cache_tombstones()
+
+    def _reconcile_room_work_from_kernel(self) -> int:
+        projected = 0
+        for room_id in self.room_kernel.room_ids():
+            for root_id in self.room_kernel.root_ids(room_id):
+                projected += self._project_room_work_from_kernel_root(
+                    self.room_kernel.root(root_id)
+                )
+        return projected
+
+    def _project_room_work_from_kernel_root(
+        self,
+        root: Mapping[str, object],
+    ) -> int:
+        projected = self.room_work.project_kernel_root(root)
+        for work in projected:
+            state = str(work.get("state") or "")
+            self._publish_room_work_activity(
+                work,
+                phase="completed" if state == "done" else state,
+                actor=self.rooms.participant(
+                    str(work["currentOwnerParticipantId"])
+                ),
+            )
+        return len(projected)
 
     def _consume_room_knowledge_cache_tombstones(self) -> int:
         """Clear process-local recall state after durable knowledge invalidation.
@@ -3232,13 +4125,15 @@ class AgentService:
 
     def close(self) -> None:
         self.room_kernel_worker_loop.close()
+        self.runtime.stop()
+        self.delegation.close()
+        self.background_jobs.close()
+        self.events.close()
         self._remove_observation_room_observer()
         self.observations.close()
         self._remove_wake_observer()
         self.wake_scheduler.close()
         self.room_intercom.close()
-        self.delegation.close()
-        self.runtime.stop()
 
     def reconfigure_runtime(self, config: PiRuntimeConfig) -> dict[str, object]:
         self.room_kernel_worker_loop.close()
@@ -3295,6 +4190,8 @@ class AgentService:
         self.event_projection_application.record(event)
 
     def _mirror_event_to_room(self, event: AgentEventEnvelope) -> None:
+        if not self.room_turns.allows_room_event(event):
+            return
         self.event_projection_application.mirror_to_room(
             event
         )
@@ -3320,11 +4217,19 @@ class AgentService:
         session_turn_id: str,
         room_turn_id: str,
     ) -> None:
-        self.room_turns.accept(
-            session_id,
-            session_turn_id,
-            room_turn_id,
-        )
+        with self.room_turns.lock:
+            buffered = self.room_turns.accept(
+                session_id,
+                session_turn_id,
+                room_turn_id,
+            )
+            for event in buffered:
+                self._mirror_event_to_room(event)
+                if event.event_type in {
+                    "turn_completed",
+                    "turn_failed",
+                }:
+                    break
 
     def _cancel_room_turn(self, session_id: str, room_turn_id: str) -> None:
         self.room_turns.cancel(session_id, room_turn_id)
@@ -3545,6 +4450,7 @@ def agent_service_from_settings(
     memory_embedding_provider: EmbeddingProvider | None = None,
     wake_scheduler_enabled: bool = True,
     room_kernel_worker_enabled: bool = True,
+    runtime_execution_owner: bool = True,
 ) -> AgentService:
     runtime_config = pi_runtime_config_from_settings(settings)
     agent = settings.get("agent") if isinstance(settings.get("agent"), Mapping) else {}
@@ -3558,6 +4464,10 @@ def agent_service_from_settings(
     return AgentService(
         db_path=db_path,
         runtime_config=runtime_config,
+        runtime_factory=PiRuntimeDriverFactory(
+            runtime_config,
+            execution_owner=runtime_execution_owner,
+        ),
         configuration_defaults=default_agent_configuration(
             enabled=runtime_config.enabled,
             idle_timeout_seconds=runtime_config.idle_timeout_seconds,
@@ -3577,6 +4487,7 @@ def agent_service_from_settings(
         wake_scheduler_enabled=wake_scheduler_enabled,
         room_kernel_mode=room_kernel_mode,
         room_kernel_worker_enabled=room_kernel_worker_enabled,
+        background_job_execution_owner=runtime_execution_owner,
         room_runner_secrets=_room_runner_secrets_from_provider(),
         room_delivery_gate_enforcement=_room_delivery_gate_enforcement(room_kernel_mode),
         room_artifact_hash_provider=_room_artifact_hash_provider_from_environment(),
@@ -3692,6 +4603,34 @@ def _room_runtime_binding_hash(
     )
 
 
+def _approval_user_request_text(
+    message: Mapping[str, object],
+) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    text = message.get("text")
+    if isinstance(text, str):
+        return text.strip()
+    blocks = message.get("blocks")
+    if not isinstance(blocks, Sequence) or isinstance(
+        blocks,
+        (str, bytes, bytearray),
+    ):
+        return ""
+    parts: list[str] = []
+    for block in blocks:
+        if not isinstance(block, Mapping):
+            continue
+        block_type = str(block.get("type") or "")
+        if block_type not in {"text", "input_text"}:
+            continue
+        value = block.get("text") or block.get("content")
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    return "\n".join(parts)
+
+
 def _room_effective_tool_profile(
     session_profile: str,
 ) -> str:
@@ -3700,11 +4639,158 @@ def _room_effective_tool_profile(
     return str(session_profile or CONTROL_CENTER_TOOL_PROFILE).strip()
 
 
+def _lifecycle_cancellation_request_id(
+    *,
+    session_id: str,
+    scope_kind: str,
+    scope_id: str,
+    source_revision: int,
+    action: str,
+) -> str:
+    canonical = json.dumps(
+        {
+            "sessionId": session_id,
+            "scopeKind": scope_kind,
+            "scopeId": scope_id,
+            "sourceRevision": int(source_revision),
+            "action": action,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return (
+        "lifecycle:"
+        + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    )
+
+
+def _lifecycle_owner(
+    audit: Mapping[str, object],
+    owner: str,
+) -> Mapping[str, object]:
+    owners = audit.get("owners")
+    if not isinstance(owners, Mapping):
+        return {"status": "pending", "receipt": {}}
+    value = owners.get(owner)
+    return value if isinstance(value, Mapping) else {
+        "status": "pending",
+        "receipt": {},
+    }
+
+
+def _lifecycle_public_receipt(value: object) -> dict[str, object]:
+    forbidden = {
+        "pid",
+        "processid",
+        "processhandle",
+        "processgroupid",
+    }
+
+    def project(item: object) -> object:
+        if isinstance(item, Mapping):
+            result: dict[str, object] = {}
+            for raw_key, child in item.items():
+                key = str(raw_key)
+                normalized = "".join(
+                    character
+                    for character in key.casefold()
+                    if character.isalnum()
+                )
+                if normalized in forbidden:
+                    continue
+                result[key] = project(child)
+            return result
+        if isinstance(item, (list, tuple)):
+            return [project(child) for child in item]
+        if item is None or isinstance(item, (str, int, float, bool)):
+            return item
+        return str(item)
+
+    projected = project(value)
+    return projected if isinstance(projected, dict) else {}
+
+
+def _runtime_lifecycle_status(receipt: Mapping[str, object]) -> str:
+    if not receipt:
+        return "unknown"
+    lifecycle = receipt.get("lifecycle")
+    if isinstance(lifecycle, Mapping):
+        if (
+            lifecycle.get("drained") is False
+            or bool(lifecycle.get("failedOperationIds"))
+            or bool(lifecycle.get("pendingOperations"))
+        ):
+            return "partial"
+    return "succeeded"
+
+
+def _job_lifecycle_status(receipt: Mapping[str, object]) -> str:
+    jobs = receipt.get("jobs")
+    if not isinstance(jobs, list):
+        return "unknown"
+    statuses = {
+        str(item.get("status") or "")
+        for item in jobs
+        if isinstance(item, Mapping)
+    }
+    if statuses & {"queued", "running", "cancelling", "failed", "orphaned"}:
+        return "partial"
+    return "succeeded"
+
+
+def _delegation_lifecycle_status(
+    receipt: Mapping[str, object],
+) -> str:
+    if not receipt:
+        return "unknown"
+    if (
+        str(receipt.get("state") or "") == "requested"
+        or bool(receipt.get("pendingRunIds"))
+    ):
+        return "partial"
+    return "succeeded"
+
+
 def _required_text(payload: Mapping[str, object], key: str) -> str:
     value = str(payload.get(key) or "").strip()
     if not value:
         raise ValueError(f"{key} must not be empty")
     return value
+
+
+def _media_owner_input(
+    *,
+    session_id: object = "",
+    room_id: object = "",
+) -> tuple[str, str]:
+    session = str(session_id or "").strip()
+    room = str(room_id or "").strip()
+    if bool(session) == bool(room):
+        raise ValueError("exactly one sessionId or roomId is required")
+    owner_id = session or room
+    if (
+        len(owner_id) > 160
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9:._-]*", owner_id)
+    ):
+        raise ValueError("media owner id is invalid")
+    return ("session", session) if session else ("room", room)
+
+
+def _room_attachment_ids(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("attachmentIds must be an array")
+    if len(value) > 8:
+        raise ValueError("a Room message supports at most 8 images")
+    result: list[str] = []
+    for item in value:
+        media_id = str(item or "").strip()
+        if not re.fullmatch(r"media_[A-Za-z0-9_-]{12,80}", media_id):
+            raise ValueError("attachmentIds must contain managed mediaId values")
+        if media_id not in result:
+            result.append(media_id)
+    return result
 
 
 

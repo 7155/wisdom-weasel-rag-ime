@@ -30,25 +30,31 @@ WORKSPACE_SCOPE_CONFIRMATION = "APPROVE_WORKSPACE_SCOPE"
 APPROVAL_DENY = "deny"
 APPROVAL_ASK = "ask"
 APPROVAL_AUTO = "auto"
+APPROVAL_MODEL = "model"
 
 _WORKSPACE_EFFECTS = frozenset(
     {
         ("workspace_edit", "apply"),
         ("workspace_patch", "apply"),
+        ("workspace_lsp", "rename"),
+        ("workspace_lsp", "code_action_apply"),
         ("workspace_shell", "run"),
+        ("workspace_job", "start"),
+        ("workspace_job", "cancel"),
         ("workspace_write", "apply"),
     }
 )
 
-# Full trust removes routine approval interruptions, not the last human gate for
-# process restarts, OS-level actions, or a whole-product configuration restore.
+# Full automation is model-arbitrated, never policy auto-approval. Product
+# runtime replacement and whole-product restore stay human-gated in other
+# execution modes; Luna Max judges them only after explicit full automation is
+# enabled. The model cannot create workspace scope or bypass hard fences.
 _ALWAYS_MANUAL_EFFECTS = frozenset(
     {
-        ("ime_runtime", "restart_sidecar"),
-        ("ime_runtime", "restart_predictor"),
-        ("ime_runtime", "redeploy_rime"),
-        ("ime_configuration", "restore_apply"),
-        ("desktop_semantic", "act"),
+        ("runtime", "restart_sidecar"),
+        ("runtime", "restart_predictor"),
+        ("runtime", "redeploy_rime"),
+        ("configuration", "restore_apply"),
     }
 )
 
@@ -128,6 +134,10 @@ def approval_strategy(
         return APPROVAL_DENY
     if mode == PER_ACTION_EXECUTION_MODE:
         return APPROVAL_ASK
+    if mode == FULL_TRUST_EXECUTION_MODE:
+        if effect in _WORKSPACE_EFFECTS and not workspace_scope_is_granted(session):
+            return APPROVAL_DENY
+        return APPROVAL_MODEL
     if effect in _ALWAYS_MANUAL_EFFECTS:
         return APPROVAL_ASK
     if mode == WORKSPACE_MANAGED_EXECUTION_MODE:
@@ -136,10 +146,6 @@ def approval_strategy(
             if effect in _WORKSPACE_EFFECTS and workspace_scope_is_granted(session)
             else APPROVAL_ASK
         )
-    if mode == FULL_TRUST_EXECUTION_MODE:
-        if effect in _WORKSPACE_EFFECTS and not workspace_scope_is_granted(session):
-            return APPROVAL_ASK
-        return APPROVAL_AUTO
     return APPROVAL_ASK
 
 
@@ -148,7 +154,7 @@ def execution_mode_label(mode: object) -> str:
         READ_ONLY_EXECUTION_MODE: "只读",
         PER_ACTION_EXECUTION_MODE: "每次确认",
         WORKSPACE_MANAGED_EXECUTION_MODE: "工作区托管",
-        FULL_TRUST_EXECUTION_MODE: "完全信任",
+        FULL_TRUST_EXECUTION_MODE: "全自动",
     }[normalize_execution_mode(mode)]
 
 
@@ -180,20 +186,23 @@ def execution_policy_prompt(session: Mapping[str, object]) -> str:
         ),
         FULL_TRUST_EXECUTION_MODE: (
             (
-                "本轮是完全信任模式。当前工作区内符合策略的动作可以直接完成；\n"
-                "越出工作区、危险系统动作和整库恢复仍需确认。"
+                "本轮是全自动模式。无需审批的查看和检索可以直接进行；\n"
+                "所有原本需要审批的操作都由独立的 Luna Max 模型判定。它只接收明确用户请求、"
+                "当前任务、结构化操作预览和既有裁决，不接收本 Agent 的输出或推理。\n"
+                "Luna 拒绝或判定失败时原操作不执行；读取回执后改用范围更小、只读或可逆方案，"
+                "不要原样重试，也不要转为人工审批。"
             )
             if scope_granted
             else (
-                "本轮选择完全信任，但工作区边界尚未确认。查看、检索和分析可以直接进行；\n"
-                "第一次写入或 Shell 等待一次原生范围批准；确认后范围内自动，"
-                "危险系统动作和整库恢复仍需确认。"
+                "本轮选择全自动，但工作区边界尚未确认。查看、检索和分析可以直接进行；\n"
+                "工作区变更会失败关闭；其他待审批操作仍由 Luna Max 根据用户请求、当前任务和"
+                "结构化审批历史判定，不接收本 Agent 的输出或推理。"
             )
         ),
     }[mode]
     return (
         f'<execution-mode mode="{mode}">\n'
         f"{guidance}\n\n"
-        "取消、审计和迟到写入保护始终有效。\n"
+        "范围和哈希硬边界始终有效；取消、审计和迟到写入保护始终有效；删库、灾难性破坏和敏感数据外传由代码硬阻止。\n"
         "</execution-mode>"
     )

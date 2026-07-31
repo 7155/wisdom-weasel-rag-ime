@@ -52,6 +52,7 @@ export function ConversationForkDialog({
   initialEntryId,
   branchAvailable,
   branchBlocked,
+  branchUnavailableReason,
   onOpenChange,
   onJump,
   onCreated,
@@ -64,6 +65,7 @@ export function ConversationForkDialog({
   initialEntryId?: string;
   branchAvailable: boolean;
   branchBlocked: boolean;
+  branchUnavailableReason?: string;
   onOpenChange: (open: boolean) => void;
   onJump: (entryId: string) => void;
   onCreated: (session: SessionSummary, selectedText: string) => void;
@@ -149,7 +151,11 @@ export function ConversationForkDialog({
       <DialogContent className="agent-fork-dialog">
         <DialogHeader>
           <DialogTitle><GitBranch size={18} />对话路径</DialogTitle>
-          <DialogDescription>所有公开消息都可跳转和创建分支；用户输入会回到草稿，助手回答会作为新分支的已有上下文。</DialogDescription>
+          <DialogDescription>
+            {branchAvailable
+              ? '所有公开消息都可跳转和创建分支；用户输入会回到草稿，助手回答会作为新分支的已有上下文。'
+              : '公开消息仍可在当前路径中跳转；这段对话不允许创建普通对话分支。'}
+          </DialogDescription>
         </DialogHeader>
         {pathNodes.length ? (
           <RadioGroup.Root className="agent-fork-dialog__list" aria-label="对话分支点" value={selectedId} onValueChange={setSelectedId}>
@@ -178,7 +184,11 @@ export function ConversationForkDialog({
         )}
         {loading ? <p className="agent-fork-dialog__status"><LoaderCircle size={14} />正在核对 Pi 分支锚点</p> : null}
         {branchBlocked ? <p className="agent-fork-dialog__status">当前回合结束后可创建分支，历史节点仍可直接跳转。</p> : null}
-        {!branchAvailable ? <p className="agent-fork-dialog__status">当前运行时未提供分支能力，历史节点仍可直接跳转。</p> : null}
+        {!branchAvailable ? (
+          <p className="agent-fork-dialog__status">
+            {branchUnavailableReason ?? '当前运行时未提供分支能力，历史节点仍可直接跳转。'}
+          </p>
+        ) : null}
         {error ? <p className="agent-fork-dialog__error" role="alert">{error} 历史节点仍可直接跳转。</p> : null}
         <footer>
           <Button variant="quiet" onClick={() => onOpenChange(false)} disabled={creating}>取消</Button>

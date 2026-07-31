@@ -34,6 +34,7 @@ const canonicalPathIds = [
   'agent.session.rename',
   'agent.session.archive',
   'agent.session.mode.update',
+  'agent.session.capability-policy.update',
   'agent.session.delete',
   'agent.session.prompt',
   'agent.session.rewrite',
@@ -41,12 +42,17 @@ const canonicalPathIds = [
   'agent.session.forks.create',
   'agent.session.abort',
   'agent.session.review.resolve',
+  'agent.session.ui.resolve',
   'agent.session.compact',
   'agent.session.commands',
   'agent.session.models',
   'agent.session.model.select',
   'agent.session.thinking.select',
   'agent.session.events',
+  'agent.session.backgroundJobs.list',
+  'agent.session.backgroundJob.get',
+  'agent.session.backgroundJob.logs',
+  'agent.session.backgroundJob.cancel',
   'agent.session.workflow.get',
   'agent.session.plan.mutate',
   'agent.session.goal.mutate',
@@ -156,6 +162,15 @@ const canonicalPathIds = [
   'planning.task.action',
   'planning.taskEvent.undo',
   'planning.mutation.rollback',
+  'workDocuments.list',
+  'workDocuments.history.search',
+  'workDocuments.get',
+  'workDocuments.register',
+  'workDocuments.archive',
+  'workDocuments.repair',
+  'workDocuments.reopen',
+  'workDocuments.erase.preview',
+  'workDocuments.erase',
   'memory.summary',
   'memory.pages',
   'memory.reference.get',
@@ -348,6 +363,60 @@ describe('control route policy', () => {
     } as never)).toThrow(/body field/);
   });
 
+  it('keeps active, history, archive, reopen, and erase work-document routes distinct', () => {
+    expect(CONTROL_ROUTES['workDocuments.list']).toMatchObject({
+      method: 'GET',
+      path: '/api/agent/work-documents',
+      query: ['limit'],
+      responseContract: 'work-document-list.v1',
+    });
+    expect(CONTROL_ROUTES['workDocuments.history.search']).toMatchObject({
+      method: 'GET',
+      path: '/api/agent/work-documents/history/search',
+      query: ['query', 'limit'],
+      responseContract: 'work-document-list.v1',
+    });
+    expect(CONTROL_ROUTES['workDocuments.get'].responseContract).toBe('work-document-detail.v1');
+    expect(CONTROL_ROUTES['workDocuments.archive'].responseContract).toBe('work-document-command.v1');
+    expect(CONTROL_ROUTES['workDocuments.repair'].responseContract).toBe('work-document-command.v1');
+    expect(CONTROL_ROUTES['workDocuments.reopen'].responseContract).toBe('work-document-command.v1');
+    expect(CONTROL_ROUTES['workDocuments.erase.preview'].responseContract).toBe('work-document-command.v1');
+    expect(CONTROL_ROUTES['workDocuments.erase'].responseContract).toBe('work-document-command.v1');
+    expect(() => assertControlRequest({
+      pathId: 'workDocuments.list',
+      query: { limit: 100, scope: 'archived' },
+    } as never)).toThrow(/query field/);
+    expect(() => assertControlRequest({
+      pathId: 'workDocuments.archive',
+      params: { documentId: 'work-document-1' },
+      body: { terminalReceiptId: 'terminal-receipt-1' },
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'workDocuments.archive',
+      params: { documentId: 'work-document-1' },
+      body: {},
+    } as never)).toThrow(/required body/);
+    expect(() => assertControlRequest({
+      pathId: 'workDocuments.reopen',
+      params: { documentId: 'work-document-1' },
+      body: { authorityRevision: 8, transitionReceiptId: 'archive-receipt-1' },
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'workDocuments.erase',
+      params: { documentId: 'work-document-1' },
+      body: {
+        sessionId: 'session-1',
+        approvalId: 'approval-1',
+        payloadSha256: 'sha256:payload',
+      },
+    })).not.toThrow();
+    expect(() => assertControlRequest({
+      pathId: 'workDocuments.erase',
+      params: { documentId: 'work-document-1' },
+      body: { sessionId: 'session-1', approvalId: 'approval-1' },
+    } as never)).toThrow(/required body/);
+  });
+
   it('allows only stable-id local memory edit fields', () => {
     expect(() =>
       assertControlRequest({
@@ -531,6 +600,7 @@ describe('control route policy', () => {
     expect(resolveControlPath('memory.pages', { kind: 'evidence' })).toBe(
       '/api/memory/evidence',
     );
+    expect(CONTROL_ROUTES['memory.reference.get'].responseContract).toBe('memory-reference.v1');
     expect(resolveControlPath('memory.reference.get', {
       kind: 'evidence',
       referenceId: 'evidence:agent:42',

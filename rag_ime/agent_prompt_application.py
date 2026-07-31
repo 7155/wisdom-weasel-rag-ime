@@ -5,7 +5,6 @@ from datetime import datetime
 from typing import Any
 
 from .agent_command_receipts import (
-    AgentCommandReceiptFailed,
     AgentCommandReceiptPending,
 )
 from .agent_prompt_delivery import (
@@ -177,10 +176,10 @@ class AgentPromptApplicationService:
                     **replay,
                     "idempotentReplay": True,
                 }
-            raise AgentCommandReceiptFailed(
-                str(exc),
+            raise self.command_receipts.failed_receipt(
+                command_scope="session_prompt",
+                scope_id=session_id,
                 client_message_id=client_message_id,
-                cause_code=cause_code,
             ) from exc
         command_receipt: dict[str, object] = {
             "state": "accepted",
@@ -401,6 +400,7 @@ class AgentPromptApplicationService:
         context_source: str = "user",
         delivery: str = "prompt",
         transient_context: str = "",
+        media_owner_room_id: str = "",
         on_accepted: (
             Callable[[Mapping[str, object]], None] | None
         ) = None,
@@ -414,13 +414,15 @@ class AgentPromptApplicationService:
         )
         self._validate_images(session_id, attachment_ids)
         images = self.media.pi_images(
-            session_id,
+            "" if media_owner_room_id else session_id,
             attachment_ids,
+            room_id=media_owner_room_id,
         )
         attachments = [
             self.media.receipt(
                 media_id,
-                session_id=session_id,
+                session_id="" if media_owner_room_id else session_id,
+                room_id=media_owner_room_id,
             )
             for media_id in dict.fromkeys(attachment_ids)
         ]
@@ -436,14 +438,15 @@ class AgentPromptApplicationService:
                 on_accepted=on_accepted,
             )
         )
-        self.media.bind_to_pi_entry(
-            session_id=session_id,
-            pi_entry_id=str(
-                accepted.get("piEntryId") or ""
-            ),
-            turn_id=str(accepted.get("turnId") or ""),
-            media_ids=attachment_ids,
-        )
+        if not media_owner_room_id:
+            self.media.bind_to_pi_entry(
+                session_id=session_id,
+                pi_entry_id=str(
+                    accepted.get("piEntryId") or ""
+                ),
+                turn_id=str(accepted.get("turnId") or ""),
+                media_ids=attachment_ids,
+            )
         turn_id = str(accepted.get("turnId") or "")
         self._publish_user_message(
             session_id=session_id,
@@ -541,6 +544,11 @@ class AgentPromptApplicationService:
                 payload.get("delivery")
             ),
             "attachmentIds": attachment_ids,
+            "mediaOwnerRoomId": (
+                str(payload.get("_mediaOwnerRoomId") or "").strip()[:160]
+                if trusted and str(payload.get("_contextSource") or "") == "room"
+                else ""
+            ),
             "contextSource": (
                 str(payload.get("_contextSource") or "user")
                 if trusted
@@ -694,6 +702,7 @@ def _checkpoint_arguments(
         "attachment_ids": list(
             request["attachmentIds"]
         ),
+        "media_owner_room_id": str(request["mediaOwnerRoomId"]),
         "client_message_id": str(
             request["clientMessageId"]
         ),

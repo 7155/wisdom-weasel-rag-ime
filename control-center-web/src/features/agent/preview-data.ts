@@ -1,6 +1,7 @@
 import type { AgentSnapshot } from '@/contracts/agent-reducer';
 import type { UiAgentEvent } from '@/contracts/ui-events';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import type { AgentBackgroundJobV1 } from '@/contracts/generated/agent-background-job.v1';
 import type { AgentTemplateV1 } from '@/contracts/generated/agent-template.v1';
 import type { ModelCatalog, SessionSummary } from './types';
 
@@ -13,7 +14,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     summary: '站在长期时间线上深思的构筑者，默认主持复杂任务，串联证据、工具、角色、实现与验收。',
     traits: ['沉稳', '工具编排'],
     visualProfile: { avatarAssetId: 'rag-ime-timeline-future-v1', symbolName: 'point.3.connected.trianglepath.dotted', accentToken: 'rose' },
-    defaults: { modelPolicy: 'fixed', memoryPolicy: 'personal-evidence-v1', toolProfileVersion: 'control-center-v1', modelProfile: 'gpt/gpt-5.6-sol', thinkingLevel: 'max' },
+    defaults: { modelPolicy: 'fixed', memoryPolicy: 'personal-evidence-v1', toolProfileVersion: 'control-center-v1', modelProfile: 'openai-codex/gpt-5.6-sol', thinkingLevel: 'max' },
     runtimeCharacteristics: { intelligence: '最高', speed: '较慢', context: '超长上下文，面向长期时间线', suitableTasks: ['复杂架构与深度实现', '多 Agent 主持和独立验收'], unsuitableTasks: ['只需快速扫读的低风险整理'], isDefault: true },
     safetyPolicyVersion: 'agent-core-v2', selectableModes: ['assistant', 'coordinator'],
   },
@@ -34,7 +35,7 @@ export const previewPersonas: AgentPersonaV1[] = [
       modelPolicy: 'fixed',
       memoryPolicy: 'personal-evidence-v1',
       toolProfileVersion: 'control-center-v1',
-      modelProfile: 'gpt/gpt-5.6-luna', thinkingLevel: 'max',
+      modelProfile: 'openai-codex/gpt-5.6-terra', thinkingLevel: 'max',
     },
     runtimeCharacteristics: { intelligence: '高', speed: '均衡', context: '长上下文，聚焦当前现场', suitableTasks: ['日常协作与项目推进', '整理证据并形成下一步'], unsuitableTasks: ['需要最深推演的复杂实现主持'], isDefault: false },
     safetyPolicyVersion: 'agent-core-v2',
@@ -57,7 +58,7 @@ export const previewPersonas: AgentPersonaV1[] = [
       modelPolicy: 'fixed',
       memoryPolicy: 'personal-evidence-v1',
       toolProfileVersion: 'control-center-v1',
-      modelProfile: 'gpt/gpt-5.6-luna', thinkingLevel: 'max',
+      modelProfile: 'openai-codex/gpt-5.6-luna', thinkingLevel: 'max',
     },
     runtimeCharacteristics: { intelligence: '中高', speed: '快速', context: '长上下文，擅长线索巡检', suitableTasks: ['快速理解意图与初步检索', '轻量执行和下一步整理'], unsuitableTasks: ['复杂架构主持', '高风险独立决策'], isDefault: false },
     safetyPolicyVersion: 'agent-core-v2',
@@ -69,7 +70,7 @@ export const previewPersonas: AgentPersonaV1[] = [
     summary: '超长档案的高速侦察与整理者，极快提取、聚类和交接线索，但不独自承担复杂实现与高风险结论。',
     traits: ['极速', '线索整理'],
     visualProfile: { avatarAssetId: 'rag-ime-timeline-flash-v1', symbolName: 'bolt', accentToken: 'neutral' },
-    defaults: { modelPolicy: 'fixed', memoryPolicy: 'personal-evidence-v1', toolProfileVersion: 'control-center-v1', modelProfile: 'gpt/gpt-5.6-luna', thinkingLevel: 'low' },
+    defaults: { modelPolicy: 'fixed', memoryPolicy: 'personal-evidence-v1', toolProfileVersion: 'control-center-v1', modelProfile: 'openai-codex/gpt-5.6-luna', thinkingLevel: 'low' },
     runtimeCharacteristics: { intelligence: '普通', speed: '极速', context: '超长上下文，擅长高速扫描', suitableTasks: ['超长材料高速扫读与提取', '归类、去重和格式转换'], unsuitableTasks: ['复杂推理', '复杂实现', '高风险决定', '最终验收'], isDefault: false },
     safetyPolicyVersion: 'agent-core-v2', selectableModes: ['assistant', 'coordinator'],
   },
@@ -149,7 +150,7 @@ export const previewSessions: SessionSummary[] = [
     updatedAtMs: previewNow,
     workspaceRoots: ['/Users/example/Projects/personal-agent-workbench'],
     messageCount: 4,
-    lastMessagePreview: '三条 Lane 已经收束到同一个 ControlTransport。',
+    lastMessagePreview: '三条工作线已经收束到同一个控制入口。',
     modelProfile: 'openai/gpt-5.4',
   },
   {
@@ -345,6 +346,23 @@ export function previewModelCatalog(sessionId: string): ModelCatalog {
         ],
       },
       {
+        id: 'gpt',
+        displayName: 'GPT',
+        models: [
+          {
+            provider: 'gpt',
+            id: 'gpt-5.6-luna',
+            name: 'GPT-5.6 Luna',
+            api: 'responses',
+            reasoning: true,
+            thinkingLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+            supportsImages: true,
+            contextWindow: 1_050_000,
+            maxTokens: 128_000,
+          },
+        ],
+      },
+      {
         id: 'deepseek',
         displayName: 'DeepSeek',
         models: [
@@ -404,7 +422,7 @@ function previewRendererGallery(sessionId: string) {
       block('gal-u-a', 'text', { text: '把这次改动的结果按类型完整呈现一遍：清单、表格、状态、进度、差异、产物、证据和审批。' }),
     ], previewNow - 300_000),
     message(sessionId, turn('a'), 'gal-assist-a', 'assistant', [
-      block('gal-md', 'text', { text: '### 本轮结论\n\n先给判定，再给证据：\n\n1. 迁移链路已收敛到同一个 ControlTransport。\n2. 渲染族覆盖仍缺少差异与审批的真实样例。\n3. 下面按类型逐项展开。' }),
+      block('gal-md', 'text', { text: '### 本轮结论\n\n先给判定，再给证据：\n\n1. 迁移链路已收敛到同一个控制入口。\n2. 内容展示仍缺少差异与审批的真实样例。\n3. 下面按类型逐项展开。' }),
       block('gal-checklist', 'checklist', { title: '验收清单', items: [
         { id: 'c1', text: '事件状态不重建', status: 'done' },
         { id: 'c2', text: '工具与审批同容器', status: 'done' },
@@ -582,6 +600,166 @@ function previewReportDelivery(sessionId: string) {
   ];
 }
 
+export function previewBackgroundJobs(
+  sessionId: string,
+  nowMs = Date.now(),
+): AgentBackgroundJobV1[] {
+  if (sessionId !== 'session-states') return [];
+
+  type JobFixture = {
+    jobId: string;
+    label: string;
+    status: AgentBackgroundJobV1['status'];
+    command: string;
+    digestCharacter: string;
+    createdAgoMs: number;
+    updatedAgoMs: number;
+    startedAgoMs?: number;
+    endedAgoMs?: number;
+    cancelRequestedAgoMs?: number;
+    exitCode?: number | null;
+    pid?: number | null;
+    outputBytes?: number;
+    logStartCursor?: number;
+    logTruncated?: boolean;
+    error?: string;
+    maxRunSeconds?: number;
+  };
+
+  const fixture = (input: JobFixture): AgentBackgroundJobV1 => ({
+    schemaVersion: 'rag-ime.agent-background-job.v1',
+    jobId: input.jobId,
+    sessionId,
+    label: input.label,
+    status: input.status,
+    command: input.command,
+    commandSha256: input.digestCharacter.repeat(64),
+    cwd: '/Users/example/Projects/personal-agent-workbench',
+    networkAllowed: false,
+    maxRunSeconds: input.maxRunSeconds ?? 600,
+    pid: input.pid ?? null,
+    createdAtMs: nowMs - input.createdAgoMs,
+    startedAtMs: input.startedAgoMs ? nowMs - input.startedAgoMs : 0,
+    updatedAtMs: nowMs - input.updatedAgoMs,
+    endedAtMs: input.endedAgoMs ? nowMs - input.endedAgoMs : 0,
+    exitCode: input.exitCode ?? null,
+    outputBytes: input.outputBytes ?? 0,
+    logStartCursor: input.logStartCursor ?? 0,
+    logTruncated: input.logTruncated ?? false,
+    cancelRequestedAtMs: input.cancelRequestedAgoMs
+      ? nowMs - input.cancelRequestedAgoMs
+      : 0,
+    error: input.error ?? '',
+    approvalId: `approval-preview-${input.jobId.slice(-4)}`,
+    causalMetadata: {
+      planId: `plan:${sessionId}`,
+      planRevision: 2,
+      goalId: `goal:${sessionId}`,
+      goalRevision: 1,
+      turnId: `${sessionId}:turn-architecture`,
+      roomBound: false,
+    },
+  });
+
+  return [
+    fixture({
+      jobId: 'bg_00000000000000000000000000000001',
+      label: '前端生产构建',
+      status: 'running',
+      command: 'pnpm build',
+      digestCharacter: 'a',
+      createdAgoMs: 38_000,
+      startedAgoMs: 37_000,
+      updatedAgoMs: 1_000,
+      pid: 48_120,
+      outputBytes: 392_000,
+      logStartCursor: 260_000,
+      logTruncated: true,
+    }),
+    fixture({
+      jobId: 'bg_00000000000000000000000000000002',
+      label: '停止中的索引刷新',
+      status: 'cancelling',
+      command: 'python3 scripts/refresh_index.py',
+      digestCharacter: 'b',
+      createdAgoMs: 66_000,
+      startedAgoMs: 65_000,
+      updatedAgoMs: 2_000,
+      cancelRequestedAgoMs: 2_000,
+      pid: 48_105,
+      outputBytes: 18_420,
+    }),
+    fixture({
+      jobId: 'bg_00000000000000000000000000000003',
+      label: '等待可用执行槽',
+      status: 'queued',
+      command: 'python3 scripts/export_report.py',
+      digestCharacter: 'c',
+      createdAgoMs: 12_000,
+      updatedAgoMs: 12_000,
+      maxRunSeconds: 300,
+    }),
+    fixture({
+      jobId: 'bg_00000000000000000000000000000004',
+      label: '类型检查',
+      status: 'completed',
+      command: 'pnpm typecheck',
+      digestCharacter: 'd',
+      createdAgoMs: 125_000,
+      startedAgoMs: 124_000,
+      updatedAgoMs: 94_000,
+      endedAgoMs: 94_000,
+      exitCode: 0,
+      pid: 48_074,
+      outputBytes: 6_812,
+    }),
+    fixture({
+      jobId: 'bg_00000000000000000000000000000005',
+      label: '后台回归测试',
+      status: 'failed',
+      command: 'python3 -m unittest tests.test_agent_routes',
+      digestCharacter: 'e',
+      createdAgoMs: 182_000,
+      startedAgoMs: 181_000,
+      updatedAgoMs: 142_000,
+      endedAgoMs: 142_000,
+      exitCode: 1,
+      pid: 48_041,
+      outputBytes: 2_193,
+      error: '命令退出码为 1',
+    }),
+    fixture({
+      jobId: 'bg_00000000000000000000000000000006',
+      label: '已停止的依赖扫描',
+      status: 'cancelled',
+      command: 'python3 scripts/scan_dependencies.py',
+      digestCharacter: 'f',
+      createdAgoMs: 248_000,
+      startedAgoMs: 247_000,
+      updatedAgoMs: 220_000,
+      endedAgoMs: 220_000,
+      cancelRequestedAgoMs: 221_000,
+      exitCode: 143,
+      pid: 48_003,
+      outputBytes: 31_744,
+    }),
+    fixture({
+      jobId: 'bg_00000000000000000000000000000007',
+      label: '断开宿主的文档导出',
+      status: 'orphaned',
+      command: 'python3 scripts/render_documents.py',
+      digestCharacter: '1',
+      createdAgoMs: 312_000,
+      startedAgoMs: 311_000,
+      updatedAgoMs: 280_000,
+      endedAgoMs: 280_000,
+      pid: 47_982,
+      outputBytes: 12_880,
+      error: '服务重启后无法确认原任务归属',
+    }),
+  ];
+}
+
 export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
   // The fresh demo session stays genuinely empty so the preview can render
   // the welcome state; every other id keeps the full scripted transcript.
@@ -598,7 +776,15 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
        turn it rides on, which destroys the running state this scenario exists
        to show. Faking it with tool_started would render 进行中 and lie about
        what the tool is doing, so the boundary is documented instead. */
-    return { lastSequence: 0, resumeToken: `${sessionId}:0`, status: 'idle', liveEvents: [], plan: null, messages: [] };
+    return {
+      lastSequence: 0,
+      resumeToken: `${sessionId}:0`,
+      status: 'idle',
+      liveEvents: [],
+      plan: null,
+      messages: [],
+      backgroundJobs: previewBackgroundJobs(sessionId),
+    };
   }
   if (sessionId === 'session-report') {
     const messages = previewReportDelivery(sessionId);
@@ -640,15 +826,15 @@ export function previewAgentSnapshot(sessionId: string): AgentSnapshot {
           text: [
             '### 当前结论',
             '',
-            '三条 Lane 已经收束到同一个 `ControlTransport`，Agent 时间线只按 **Turn** 更新。',
+            '三条工作线已经收束到同一个控制入口，任务记录只在每次往返完成后更新。',
             '',
             '| 边界 | 状态 |',
             '| --- | --- |',
-            '| 事件投影 | 已接入 reducer + batcher |',
-            '| 原生能力 | 继续由窄 Bridge 守门 |',
+            '| 对话进度 | 已接入 |',
+            '| 本机辅助能力 | 继续由受控连接守门 |',
             '',
-            '- Session 切换不会重建第二套事件状态。',
-            '- 工具、RAG、Memory 和审批都留在同一活动容器。',
+            '- 切换对话不会重建第二套状态。',
+            '- 工具、记忆与审批都留在同一活动区。',
           ].join('\n'),
         }),
         block('answer-code', 'code', {
@@ -704,14 +890,14 @@ function previewStateEvents(sessionId: string): UiAgentEvent[] {
   const abortedTurn = `${sessionId}:turn-aborted`;
   const rows: Array<[string, string, Record<string, unknown>]> = [
     // A tool still in flight: started with no matching finish.
-    [runningTurn, 'tool_started', { toolCallId: 'tool-run-1', toolId: 'ime_knowledge', operation: 'search', summary: '正在检索实现证据', args: { query: 'reducer batching' } }],
-    [runningTurn, 'tool_progress', { toolCallId: 'tool-run-1', toolId: 'ime_knowledge', operation: 'search', summary: '已扫描 24 / 48 段', progress: 0.5 }],
+    [runningTurn, 'tool_started', { toolCallId: 'tool-run-1', toolId: 'knowledge', operation: 'search', summary: '正在检索实现证据', args: { query: 'reducer batching' } }],
+    [runningTurn, 'tool_progress', { toolCallId: 'tool-run-1', toolId: 'knowledge', operation: 'search', summary: '已扫描 24 / 48 段', progress: 0.5 }],
     // A tool that ran and failed, then the turn itself failed.
-    [failedTurn, 'tool_started', { toolCallId: 'tool-fail-1', toolId: 'ime_knowledge', operation: 'open', summary: '读取文档片段', args: { path: 'docs/agent/runtime-and-debug.md' } }],
-    [failedTurn, 'tool_finished', { toolCallId: 'tool-fail-1', toolId: 'ime_knowledge', operation: 'open', summary: '读取失败：检索服务超时', status: 'failed', error: '检索服务在第 2 次尝试后超时' }],
+    [failedTurn, 'tool_started', { toolCallId: 'tool-fail-1', toolId: 'knowledge', operation: 'open', summary: '读取文档片段', args: { path: 'docs/agent/runtime-and-debug.md' } }],
+    [failedTurn, 'tool_finished', { toolCallId: 'tool-fail-1', toolId: 'knowledge', operation: 'open', summary: '读取失败：检索服务超时', status: 'failed', error: '检索服务在第 2 次尝试后超时' }],
     [failedTurn, 'turn_failed', { error: '检索服务在第 2 次尝试后超时；本轮没有完成，可以直接重试。' }],
     // A turn the user stopped: aborted must read differently from failed.
-    [abortedTurn, 'tool_started', { toolCallId: 'tool-abort-1', toolId: 'ime_knowledge', operation: 'search', summary: '正在检索长文档', args: { query: 'migration plan' } }],
+    [abortedTurn, 'tool_started', { toolCallId: 'tool-abort-1', toolId: 'knowledge', operation: 'search', summary: '正在检索长文档', args: { query: 'migration plan' } }],
     [abortedTurn, 'turn_completed', { summary: '已停止', status: 'aborted', aborted: true }],
   ];
   return rows.map(([turnId, eventType, payload], index) => ({
@@ -743,7 +929,7 @@ export function previewAgentEvents(sessionId: string): UiAgentEvent[] {
       'tool_started',
       {
         toolCallId: 'tool-rag-1',
-        toolId: 'ime_knowledge',
+        toolId: 'knowledge',
         operation: 'search',
         summary: '检索 8 条实现证据',
         query: 'ControlTransport reducer batcher',
@@ -754,7 +940,7 @@ export function previewAgentEvents(sessionId: string): UiAgentEvent[] {
       'tool_finished',
       {
         toolCallId: 'tool-rag-1',
-        toolId: 'ime_knowledge',
+        toolId: 'knowledge',
         operation: 'search',
         summary: '找到 8 条实现证据',
         args: { query: 'ControlTransport reducer batcher' },
@@ -766,7 +952,7 @@ export function previewAgentEvents(sessionId: string): UiAgentEvent[] {
       'tool_finished',
       {
         toolCallId: 'tool-memory-1',
-        toolId: 'ime_memory',
+        toolId: 'memory',
         operation: 'read',
         summary: '已读取输入法工具书',
         args: { bookId: 'book:topic:input-method' },

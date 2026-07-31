@@ -5,10 +5,10 @@ from collections.abc import Mapping
 from .contracts.json_schema import validate_contract
 
 
-ROOT_EXECUTION_SCHEMA_VERSION = "wisdom-weasel.room-root-execution.v2"
-ROOM_TASK_SCHEMA_VERSION = "wisdom-weasel.room-task.v2"
+ROOT_EXECUTION_SCHEMA_VERSION = "wisdom-weasel.room-root-execution.v3"
+ROOM_TASK_SCHEMA_VERSION = "wisdom-weasel.room-task.v3"
 DISPATCH_ENVELOPE_SCHEMA_VERSION = "wisdom-weasel.room-dispatch-envelope.v2"
-ROOM_COMMIT_SCHEMA_VERSION = "wisdom-weasel.room-commit.v3"
+ROOM_COMMIT_SCHEMA_VERSION = "wisdom-weasel.room-commit.v4"
 ROOM_QUALITY_GATE_RECEIPT_SCHEMA_VERSION = (
     "wisdom-weasel.room-quality-gate-receipt.v1"
 )
@@ -21,6 +21,10 @@ KERNEL_RECEIPT_SCHEMA_VERSION = "wisdom-weasel.room-kernel-receipt.v1"
 ROOM_POST_SCHEMA_VERSION = "wisdom-weasel.room-post.v2"
 ROOM_SETTLE_RECEIPT_SCHEMA_VERSION = "wisdom-weasel.room-settle-receipt.v1"
 ROOM_SETTLE_RESULT_SCHEMA_VERSION = "wisdom-weasel.room-settle-result.v1"
+ROOM_PEER_INVITATION_SCHEMA_VERSION = "wisdom-weasel.room-peer-invitation.v1"
+AGENT_APPROVAL_MODEL_DECISION_SCHEMA_VERSION = (
+    "rag-ime.agent-approval-model-decision.v1"
+)
 # Default value of the `runtimeProfileRevision` field carried by a dispatch
 # envelope. It lives with the other versioned contract identifiers because both
 # the application that opens a Root and the domain that builds a continuation
@@ -29,10 +33,10 @@ ROOM_SETTLE_RESULT_SCHEMA_VERSION = "wisdom-weasel.room-settle-result.v1"
 DEFAULT_RUNTIME_PROFILE_REVISION = "room-runtime-profile:interactive-v1"
 
 CONTRACT_FILES = {
-    "rootExecution": "room-root-execution.v2.json",
-    "roomTask": "room-task.v2.json",
+    "rootExecution": "room-root-execution.v3.json",
+    "roomTask": "room-task.v3.json",
     "dispatchEnvelope": "room-dispatch-envelope.v2.json",
-    "roomCommit": "room-commit.v3.json",
+    "roomCommit": "room-commit.v4.json",
     "roomQualityGateReceipt": "room-quality-gate-receipt.v1.json",
     "eventEnvelope": "room-event-envelope.v2.json",
     "roomBinding": "room-binding.v2.json",
@@ -43,6 +47,8 @@ CONTRACT_FILES = {
     "roomPost": "room-post.v2.json",
     "roomSettleReceipt": "room-settle-receipt.v1.json",
     "roomSettleResult": "room-settle-result.v1.json",
+    "peerInvitation": "room-peer-invitation.v1.json",
+    "agentApprovalModelDecision": "agent-approval-model-decision.v1.json",
 }
 
 

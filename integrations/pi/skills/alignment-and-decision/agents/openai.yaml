@@ -1,0 +1,4 @@
+interface:
+  display_name: "Align and Decide"
+  short_description: "Preserve the user's words, clarify the work, and settle choices"
+  default_prompt: "Use $alignment-and-decision to preserve the original request and vision, investigate uncertainty, ask one useful question at a time, and make the work ready for planning."

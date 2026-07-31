@@ -23,6 +23,11 @@ export interface AgentSessionV1 {
   mode: 'assistant' | 'coordinator';
   status: 'idle' | 'active' | 'busy' | 'faulted' | 'archived';
   sessionKind?: 'conversation' | 'subagent_runtime';
+  roomParticipant?: {
+    roomId: string;
+    participantId: string;
+    status: 'active' | 'muted' | 'removed';
+  };
   roleId: string;
   roleVersion: string;
   roleBookRevisionId: string;
@@ -35,6 +40,10 @@ export interface AgentSessionV1 {
   workspaceScopeGrantedAtMs: number;
   toolAllowlistMode?: 'profile' | 'explicit';
   allowedTools?: string[];
+  capabilityDisclosurePreferences: {
+    [k: string]: 'inherit' | 'enabled' | 'disabled';
+  };
+  policyRevision: number;
   projectContextEnabled: boolean;
   piSkillsEnabled: boolean;
   codexSkillsEnabled: boolean;

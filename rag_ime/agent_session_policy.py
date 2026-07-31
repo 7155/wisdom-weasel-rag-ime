@@ -186,6 +186,11 @@ class AgentSessionPolicyService:
         payload: Mapping[str, object],
     ) -> dict[str, object]:
         session = self.sessions.get(session_id)
+        runtime_policy_update = _has_runtime_policy_update(payload)
+        disclosure_update = "capabilityDisclosurePreferences" in payload
+        if runtime_policy_update or disclosure_update:
+            self._validate_room_runtime_policy(session_id)
+            self._validate_session_idle(session_id)
         self._validate_archive(session_id, payload)
         if "title" in payload:
             session = self.sessions.rename(
@@ -197,13 +202,32 @@ class AgentSessionPolicyService:
                 session_id,
                 archived=_bool(payload.get("archived")),
             )
-        if _has_runtime_policy_update(payload):
-            self._validate_room_runtime_policy(session_id)
+        if runtime_policy_update:
             session = self._update_runtime_policy(
                 session_id,
                 session,
                 payload,
             )
+        if disclosure_update:
+            preferences = payload.get("capabilityDisclosurePreferences")
+            if not isinstance(preferences, Mapping):
+                raise ValueError(
+                    "capabilityDisclosurePreferences must be an object"
+                )
+            session = self.sessions.set_disclosure_preferences(
+                session_id,
+                preferences,
+            )
+            self.events.publish(
+                session_id,
+                "session_configuration_changed",
+                {
+                    "kind": "capability_disclosure_preferences",
+                    "policyRevision": session.get("policyRevision"),
+                },
+            )
+        if runtime_policy_update or disclosure_update:
+            self._retire_target_idle_runtime(session_id)
         maintenance = (
             self.probe_memory_maintenance(
                 session_id,
@@ -217,6 +241,7 @@ class AgentSessionPolicyService:
             "ok": True,
             "session": session,
             "memoryMaintenance": maintenance,
+            "policyRevision": int(session.get("policyRevision") or 1),
         }
 
     def _validate_room_runtime_policy(self, session_id: str) -> None:
@@ -235,6 +260,29 @@ class AgentSessionPolicyService:
         raise ValueError(
             "Active Room participant runtime permissions are managed by the Room"
         )
+    def _validate_session_idle(self, session_id: str) -> None:
+        session = self.sessions.get(session_id)
+        runtime = self.runtime_status()
+        if str(session.get("status") or "") == "busy" or (
+            str(runtime.get("status") or "") == "busy"
+            and str(runtime.get("activeSessionId") or "") == session_id
+        ):
+            raise ValueError("结束当前 Agent Loop 后才能调整运行权限")
+
+    def _retire_target_idle_runtime(self, session_id: str) -> None:
+        runtime = self.runtime_status()
+        if (
+            runtime.get("activeSessionId") != session_id
+            and session_id
+            not in {
+                str(value)
+                for value in runtime.get("openSessionIds") or []
+            }
+        ):
+            return
+        close_session = getattr(self.runtime, "close_session", None)
+        if callable(close_session):
+            close_session(session_id)
 
     def _validate_archive(
         self,
@@ -277,26 +325,6 @@ class AgentSessionPolicyService:
                 f"agent role {role.role_id}@{role.version} "
                 f"is not available for {requested_mode} sessions"
             )
-        if str(session.get("status") or "") == "busy":
-            raise ValueError(
-                "结束当前 Agent Loop 后才能调整运行权限"
-            )
-        runtime = self.runtime_status()
-        if (
-            runtime.get("activeSessionId") == session_id
-            or session_id
-            in {
-                str(value)
-                for value in runtime.get("openSessionIds") or []
-            }
-        ):
-            close_session = getattr(self.runtime, "close_session", None)
-            if callable(close_session):
-                close_session(session_id)
-            else:
-                # Third-party Runtime drivers may only implement the stable
-                # stop boundary. Pi v2 retires the one affected Session.
-                self.runtime.stop()
         roots = payload.get("workspaceRoots")
         if roots is not None and not isinstance(roots, list):
             raise ValueError("workspaceRoots must be an array")

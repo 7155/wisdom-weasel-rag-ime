@@ -1,5 +1,7 @@
 import type { UiAgentEvent, UiAgentMessage } from './ui-events';
 import type { AgentSessionTelemetryV1 } from './generated/agent-session-telemetry.v1';
+import type { AgentBackgroundJobV1 } from './generated/agent-background-job.v1';
+import type { AgentLifecycleCancellationAuditV1 } from './generated/agent-lifecycle-cancellation-audit.v1';
 import type {
   ActGate as AgentActGateProjection,
   Goal as AgentGoalProjection,
@@ -86,6 +88,10 @@ export interface AgentProjectionState {
   plan: AgentPlanProjection;
   goal: AgentGoalProjection;
   actGate: AgentActGateProjection;
+  backgroundJobsById: Record<string, AgentBackgroundJobV1>;
+  backgroundJobOrder: string[];
+  lifecycleCancellationAuditsById: Record<string, AgentLifecycleCancellationAuditV1>;
+  lifecycleCancellationAuditOrder: string[];
 }
 
 export interface AgentMessageQueue {
@@ -147,6 +153,8 @@ export interface AgentSnapshot {
   plan?: unknown;
   goal?: unknown;
   actGate?: unknown;
+  backgroundJobs?: unknown;
+  lifecycleCancellationAudits?: unknown;
 }
 
 export interface OptimisticAgentMessageInput {
@@ -182,6 +190,10 @@ export function createAgentProjection(sessionId: string): AgentProjectionState {
     plan: emptyAgentPlan(),
     goal: emptyAgentGoal(),
     actGate: closedActGate(),
+    backgroundJobsById: {},
+    backgroundJobOrder: [],
+    lifecycleCancellationAuditsById: {},
+    lifecycleCancellationAuditOrder: [],
   };
 }
 
@@ -191,6 +203,20 @@ export function reduceAgentEvent(
 ): ProjectionReduction<AgentProjectionState> {
   if (event.sessionId !== state.sessionId) {
     return { state, disposition: 'ignored-foreign' };
+  }
+  if (event.eventType === 'snapshot_required') {
+    return {
+      state: {
+        ...state,
+        needsSnapshot: true,
+        gap: {
+          expectedSequence: state.lastSequence + 1,
+          receivedSequence: event.sequence,
+          receivedEventId: event.eventId,
+        },
+      },
+      disposition: 'snapshot-required',
+    };
   }
   if (event.sequence <= state.lastSequence) {
     return { state, disposition: 'ignored-duplicate' };
@@ -272,25 +298,66 @@ export function reduceAgentEvent(
     case 'workflow_changed':
       next.plan = parseAgentPlan(payload.plan) ?? next.plan;
       next.goal = parseAgentGoal(payload.goal) ?? next.goal;
-      next.actGate = parseActGate(payload.actGate) ?? next.actGate;
+      next.actGate = parseActGate(
+        payload.actGate,
+        next.plan.revision,
+        next.goal.revision,
+      ) ?? next.actGate;
       break;
-    case 'reasoning_summary':
-      upsertActivity(next, event, payload, 'completed');
+    case 'lifecycle_cancellation_changed': {
+      const audit = parseLifecycleCancellationAudit(payload.audit);
+      if (audit && audit.sessionId === state.sessionId) upsertLifecycleCancellationAudit(next, audit);
       break;
+    }
+    case 'reasoning_summary': {
+      const reasoningState = text(payload.state);
+      const reasoningStatus: AgentActivityProjection['status'] = reasoningState === 'running'
+        ? 'running'
+        : reasoningState === 'failed'
+          ? 'failed'
+          : 'completed';
+      upsertActivity(next, event, payload, reasoningStatus);
+      if (reasoningStatus === 'running') next.status = 'analyzing';
+      break;
+    }
     case 'tool_started':
     case 'tool_progress':
       upsertActivity(next, event, payload, payload.isError === true ? 'failed' : 'running');
       next.status = payload.isError === true ? 'failed' : 'working';
       break;
-    case 'tool_finished':
-      upsertActivity(next, event, payload, payload.isError === true ? 'failed' : 'completed');
+    case 'tool_finished': {
+      const expectedNoop = expectedToolNoop(payload);
+      const projectedPayload = expectedNoop
+        ? {
+            ...payload,
+            isError: false,
+            expectedNoop: true,
+            ...(expectedNoop.kind === 'act_gate' ? { governanceBlocked: true } : {}),
+            summary: expectedNoop.summary,
+          }
+        : payload;
+      upsertActivity(
+        next,
+        event,
+        projectedPayload,
+        expectedNoop || payload.isError !== true ? 'completed' : 'failed',
+      );
       break;
+    }
     case 'approval_required':
-    case 'user_input_required':
       upsertActivity(next, event, payload, 'waiting');
       next.status = 'waiting';
       touchTurn(next, event.turnId, 'waiting', event.createdAtMs);
       break;
+    case 'user_input_required': {
+      const resolved = ['resolved', 'cancelled'].includes(text(payload.resolutionState));
+      upsertActivity(next, event, payload, resolved ? 'completed' : 'waiting');
+      if (!resolved) {
+        next.status = 'waiting';
+        touchTurn(next, event.turnId, 'waiting', event.createdAtMs);
+      }
+      break;
+    }
     case 'approval_resolved':
       upsertActivity(
         next,
@@ -301,6 +368,15 @@ export function reduceAgentEvent(
           : 'failed',
       );
       break;
+    case 'background_job_started':
+    case 'background_job_progress':
+    case 'background_job_completed':
+    case 'background_job_failed':
+    case 'background_job_cancelled': {
+      const job = parseBackgroundJob(payload.job);
+      if (job) upsertBackgroundJob(next, job);
+      break;
+    }
     case 'memory_checkpointed':
       // Older journals may contain a bookkeeping event for every captured
       // user message. Capturing a source is not memory recall or context
@@ -330,14 +406,6 @@ export function reduceAgentEvent(
       next.status = 'failed';
       upsertActivity(next, event, payload, 'failed');
       break;
-    case 'snapshot_required':
-      next.needsSnapshot = true;
-      next.gap = {
-        expectedSequence: state.lastSequence + 1,
-        receivedSequence: event.sequence,
-        receivedEventId: event.eventId,
-      };
-      return { state: next, disposition: 'snapshot-required' };
     case 'unknown':
       appendDiagnostic(next, {
         id: event.eventId,
@@ -396,6 +464,52 @@ export function reduceAgentEvents(
     index = end;
   }
   return next;
+}
+
+export function rewriteOptimisticAgentMessage(
+  state: AgentProjectionState,
+  targetMessageId: string,
+  input: OptimisticAgentMessageInput,
+): AgentProjectionState {
+  const target = state.messagesById[targetMessageId];
+  if (!target || target.role !== 'user' || targetMessageId.startsWith('local:')) {
+    throw new TypeError('rewrite target must be a durable user message');
+  }
+  const targetMessageIndex = state.messageOrder.indexOf(targetMessageId);
+  if (targetMessageIndex < 0) throw new TypeError('rewrite target is not in the visible branch');
+
+  const next = cloneState(state);
+  const targetTurnIndex = next.turnOrder.indexOf(target.turnId);
+  const removedTurnIds = new Set(
+    targetTurnIndex >= 0
+      ? next.turnOrder.slice(targetTurnIndex)
+      : [target.turnId],
+  );
+  const removedMessageIds = new Set(
+    next.messageOrder.filter((messageId, index) => {
+      const message = next.messagesById[messageId];
+      return index >= targetMessageIndex || (message ? removedTurnIds.has(message.turnId) : false);
+    }),
+  );
+  for (const messageId of removedMessageIds) delete next.messagesById[messageId];
+  next.messageOrder = next.messageOrder.filter((messageId) => !removedMessageIds.has(messageId));
+
+  const removedActivityIds = new Set(
+    next.activityOrder.filter((activityId) => {
+      const activity = next.activitiesById[activityId];
+      return activity ? removedTurnIds.has(activity.turnId) : false;
+    }),
+  );
+  for (const activityId of removedActivityIds) delete next.activitiesById[activityId];
+  next.activityOrder = next.activityOrder.filter((activityId) => !removedActivityIds.has(activityId));
+  for (const turnId of removedTurnIds) delete next.turnsById[turnId];
+  next.turnOrder = next.turnOrder.filter((turnId) => !removedTurnIds.has(turnId));
+  for (const [clientMessageId, messageId] of Object.entries(next.optimisticByClientMessageId)) {
+    if (removedMessageIds.has(messageId)) delete next.optimisticByClientMessageId[clientMessageId];
+  }
+  next.messageQueue = { steering: [], followUp: [] };
+  next.status = 'idle';
+  return appendOptimisticAgentMessage(next, input);
 }
 
 export function appendOptimisticAgentMessage(
@@ -539,7 +653,19 @@ export function applyAgentSnapshot(
   next.messageQueue = parseMessageQueue(snapshot.messageQueue);
   next.plan = parseAgentPlan(snapshot.plan) ?? state.plan;
   next.goal = parseAgentGoal(snapshot.goal) ?? state.goal;
-  next.actGate = parseActGate(snapshot.actGate) ?? state.actGate;
+  next.actGate = parseActGate(
+    snapshot.actGate,
+    next.plan.revision,
+    next.goal.revision,
+  ) ?? state.actGate;
+  for (const value of Array.isArray(snapshot.backgroundJobs) ? snapshot.backgroundJobs : []) {
+    const job = parseBackgroundJob(value);
+    if (job && job.sessionId === state.sessionId) upsertBackgroundJob(next, job);
+  }
+  for (const value of Array.isArray(snapshot.lifecycleCancellationAudits) ? snapshot.lifecycleCancellationAudits : []) {
+    const audit = parseLifecycleCancellationAudit(value);
+    if (audit && audit.sessionId === state.sessionId) upsertLifecycleCancellationAudit(next, audit);
+  }
 
   const serverClientIds = new Set<string>();
   const transcriptMessageIds = new Set<string>();
@@ -646,6 +772,29 @@ export function applyAgentSnapshot(
   return next;
 }
 
+export function applyAgentBackgroundJobReceipt(
+  state: AgentProjectionState,
+  value: unknown,
+): AgentProjectionState {
+  const job = parseBackgroundJob(record(value).job);
+  if (!job || job.sessionId !== state.sessionId) return state;
+  const current = state.backgroundJobsById[job.jobId];
+  if (
+    current
+    && (
+      current.updatedAtMs > job.updatedAtMs
+      || (
+        current.updatedAtMs === job.updatedAtMs
+        && BACKGROUND_JOB_STATUS_PRECEDENCE[current.status]
+          > BACKGROUND_JOB_STATUS_PRECEDENCE[job.status]
+      )
+    )
+  ) return state;
+  const next = cloneState(state);
+  upsertBackgroundJob(next, job);
+  return next;
+}
+
 function reconcileTranscriptReplayMessages(
   state: AgentProjectionState,
   transcriptMessageIds: ReadonlySet<string>,
@@ -663,6 +812,7 @@ function reconcileTranscriptReplayMessages(
   }
 
   const claimedTranscriptIds = new Set<string>();
+  const replayTurnAnchors = new Map<string, string>();
   for (const messageId of [...state.messageOrder]) {
     if (transcriptMessageIds.has(messageId)) continue;
     const replay = state.messagesById[messageId];
@@ -680,6 +830,12 @@ function reconcileTranscriptReplayMessages(
     if (!candidate) continue;
 
     claimedTranscriptIds.add(candidate.id);
+    if (replay.turnId !== candidate.turnId) {
+      const existingAnchor = replayTurnAnchors.get(replay.turnId);
+      if (!existingAnchor || existingAnchor === candidate.turnId) {
+        replayTurnAnchors.set(replay.turnId, candidate.turnId);
+      }
+    }
     const clientMessageId = candidate.clientMessageId || replay.clientMessageId;
     state.messagesById[candidate.id] = {
       ...candidate,
@@ -690,6 +846,67 @@ function reconcileTranscriptReplayMessages(
     };
     if (clientMessageId) serverClientIds.add(clientMessageId);
     removeProjectedMessage(state, replay);
+  }
+  reconcileReplayTurnAnchors(state, replayTurnAnchors);
+}
+
+/**
+ * A restored snapshot has two identifiers for one logical turn: Pi's durable
+ * transcript uses `history:<user-message-id>`, while the bounded Runtime
+ * journal retains the original request turnId. Matching a replayed completed
+ * message to its transcript anchor proves those identifiers are aliases.
+ * Move the remaining Tool/reasoning metadata to that anchor so a settled turn
+ * cannot render as a second, message-less "waiting for reply" turn.
+ */
+function reconcileReplayTurnAnchors(
+  state: AgentProjectionState,
+  replayTurnAnchors: ReadonlyMap<string, string>,
+): void {
+  for (const [replayTurnId, transcriptTurnId] of replayTurnAnchors) {
+    if (replayTurnId === transcriptTurnId) continue;
+    const replayTurn = writableTurn(state, replayTurnId);
+    if (!replayTurn) continue;
+    const transcriptTurn = ensureTurn(
+      state,
+      transcriptTurnId,
+      replayTurn.createdAtMs,
+    );
+
+    for (const messageId of replayTurn.messageIds) {
+      const message = state.messagesById[messageId];
+      if (!message) continue;
+      state.messagesById[messageId] = {
+        ...message,
+        turnId: transcriptTurnId,
+      };
+      if (!transcriptTurn.messageIds.includes(messageId)) {
+        transcriptTurn.messageIds.push(messageId);
+      }
+    }
+    for (const activityId of replayTurn.activityIds) {
+      const activity = state.activitiesById[activityId];
+      if (!activity) continue;
+      state.activitiesById[activityId] = {
+        ...activity,
+        turnId: transcriptTurnId,
+      };
+      if (!transcriptTurn.activityIds.includes(activityId)) {
+        transcriptTurn.activityIds.push(activityId);
+      }
+    }
+    transcriptTurn.createdAtMs = Math.min(
+      transcriptTurn.createdAtMs,
+      replayTurn.createdAtMs,
+    );
+    transcriptTurn.updatedAtMs = Math.max(
+      transcriptTurn.updatedAtMs,
+      replayTurn.updatedAtMs,
+    );
+    if (replayTurn.failure && !transcriptTurn.failure) {
+      transcriptTurn.failure = replayTurn.failure;
+    }
+    delete state.turnsById[replayTurnId];
+    state.turnOrder = state.turnOrder.filter((turnId) => turnId !== replayTurnId);
   }
 }
 
@@ -739,6 +956,8 @@ export function agentSnapshotFromResponse(value: unknown): AgentSnapshot {
     ...(payload.plan === undefined ? {} : { plan: payload.plan }),
     ...(payload.goal === undefined ? {} : { goal: payload.goal }),
     ...(payload.actGate === undefined ? {} : { actGate: payload.actGate }),
+    ...(payload.backgroundJobs === undefined ? {} : { backgroundJobs: payload.backgroundJobs }),
+    ...(payload.lifecycleCancellationAudits === undefined ? {} : { lifecycleCancellationAudits: payload.lifecycleCancellationAudits }),
   };
 }
 
@@ -750,11 +969,12 @@ function applyTextDelta(
   const delta = text(payload.delta);
   if (!delta) return;
   const baseMessageId = text(payload.messageId) || `${event.turnId}:assistant`;
+  const replaceContent = payload.replaceContent === true;
   const messageId = streamingAssistantSegmentId(
     state,
     event.turnId,
     baseMessageId,
-    payload.replaceBlock === true,
+    payload.replaceBlock === true && !replaceContent,
     event.sequence,
   );
   const blockId = messageId === baseMessageId
@@ -765,7 +985,7 @@ function applyTextDelta(
   const blockIndex = blocks.findIndex((block) => block.id === blockId || block.type === 'text');
   if (blockIndex >= 0) {
     const block = blocks[blockIndex];
-    const previous = text(record(block.data).text);
+    const previous = replaceContent ? '' : text(record(block.data).text);
     blocks[blockIndex] = {
       ...block,
       status: 'running',
@@ -1110,6 +1330,39 @@ function toolProgressSummary(
   return `${toolName}正在处理`;
 }
 
+function expectedToolNoop(
+  payload: Record<string, unknown>,
+): { kind: 'act_gate' | 'schema_active'; summary: string } | undefined {
+  const carrier = record(payload.result ?? payload.partialResult);
+  const details = record(carrier.details);
+  const domain = record(details.result ?? carrier.result);
+  const content = Array.isArray(carrier.content)
+    ? carrier.content.map((item) => text(record(item).text))
+    : [];
+  const messages = [
+    payload.error,
+    payload.summary,
+    details.error,
+    details.summary,
+    domain.error,
+    domain.summary,
+    ...content,
+  ].filter((value): value is string => typeof value === 'string');
+  if (messages.some((value) => value.startsWith('Act Gate blocked workspace mutation ('))) {
+    return {
+      kind: 'act_gate',
+      summary: '工作区变更未执行：请先提交执行计划并等待用户批准。',
+    };
+  }
+  if (messages.some((value) => value.startsWith('Tool schema is already active;'))) {
+    return {
+      kind: 'schema_active',
+      summary: '工具已经可直接调用，无需重复加载。',
+    };
+  }
+  return undefined;
+}
+
 function boundedToolProgressText(value: unknown): string {
   if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return '';
   const normalized = String(value)
@@ -1275,6 +1528,58 @@ function snapshotFromEvent(event: UiAgentEvent, fallbackSequence: number): Agent
   };
 }
 
+function parseBackgroundJob(value: unknown): AgentBackgroundJobV1 | undefined {
+  const parsed = validateContract('agent-background-job.v1', value);
+  return parsed.ok ? parsed.value : undefined;
+}
+
+// Timestamps remain authoritative across retry attempts; this order only
+// breaks equal-time ties so terminal states cannot regress to active states.
+const BACKGROUND_JOB_STATUS_PRECEDENCE: Readonly<
+  Record<AgentBackgroundJobV1['status'], number>
+> = {
+  queued: 0,
+  running: 1,
+  cancelling: 2,
+  completed: 3,
+  failed: 4,
+  cancelled: 5,
+  orphaned: 6,
+};
+
+function upsertBackgroundJob(
+  state: AgentProjectionState,
+  job: AgentBackgroundJobV1,
+): void {
+  state.backgroundJobsById[job.jobId] = job;
+  if (!state.backgroundJobOrder.includes(job.jobId)) {
+    state.backgroundJobOrder = [job.jobId, ...state.backgroundJobOrder];
+  }
+}
+
+function parseLifecycleCancellationAudit(
+  value: unknown,
+): AgentLifecycleCancellationAuditV1 | undefined {
+  const parsed = validateContract('agent-lifecycle-cancellation-audit.v1', value);
+  return parsed.ok ? parsed.value : undefined;
+}
+
+function upsertLifecycleCancellationAudit(
+  state: AgentProjectionState,
+  audit: AgentLifecycleCancellationAuditV1,
+): void {
+  const current = state.lifecycleCancellationAuditsById[audit.requestId];
+  if (current && current.updatedAtMs > audit.updatedAtMs) return;
+  state.lifecycleCancellationAuditsById[audit.requestId] = audit;
+  state.lifecycleCancellationAuditOrder = [
+    audit.requestId,
+    ...state.lifecycleCancellationAuditOrder.filter((requestId) => requestId !== audit.requestId),
+  ].sort((leftId, rightId) => (
+    (state.lifecycleCancellationAuditsById[rightId]?.updatedAtMs ?? 0)
+    - (state.lifecycleCancellationAuditsById[leftId]?.updatedAtMs ?? 0)
+  ));
+}
+
 function turnStatusFromRuntime(status: string): AgentTurnStatus {
   if (status === 'waiting') return 'waiting';
   if (status === 'failed' || status === 'faulted') return 'failed';
@@ -1298,6 +1603,10 @@ function cloneState(state: AgentProjectionState): AgentProjectionState {
     activityOrder: [...state.activityOrder],
     optimisticByClientMessageId: { ...state.optimisticByClientMessageId },
     diagnostics: [...state.diagnostics],
+    backgroundJobsById: { ...state.backgroundJobsById },
+    backgroundJobOrder: [...state.backgroundJobOrder],
+    lifecycleCancellationAuditsById: { ...state.lifecycleCancellationAuditsById },
+    lifecycleCancellationAuditOrder: [...state.lifecycleCancellationAuditOrder],
     messageQueue: {
       steering: [...state.messageQueue.steering],
       followUp: [...state.messageQueue.followUp],
@@ -1466,12 +1775,15 @@ function emptyAgentGoal(): AgentGoalProjection {
     goalId: '',
     revision: 0,
     objective: '',
+    successCriteria: '',
+    evidenceExpectations: [],
     status: 'cleared',
     budget: { tokenLimit: null, timeLimitMs: null },
     usage: { tokens: 0, elapsedMs: 0 },
     remaining: { tokens: null, timeMs: null },
     budgetExceeded: false,
     completionAudit: null,
+    cancellationAudit: null,
     updatedAtMs: 0,
   };
 }
@@ -1481,6 +1793,8 @@ function closedActGate(): AgentActGateProjection {
     allowed: false,
     reason: 'plan_required',
     message: '先创建执行计划并提交审阅。',
+    planRevision: 0,
+    goalRevision: 0,
   };
 }
 
@@ -1488,11 +1802,12 @@ function parseAgentGoal(value: unknown): AgentGoalProjection | undefined {
   const source = record(value);
   if (source.schemaVersion !== 'rag-ime.agent-goal.v1') return undefined;
   const status = text(source.status);
-  if (!['active', 'paused', 'completed', 'cleared'].includes(status)) return undefined;
+  if (!['active', 'paused', 'completed', 'cancelled', 'cleared'].includes(status)) return undefined;
   const budget = record(source.budget);
   const usage = record(source.usage);
   const remaining = record(source.remaining);
   const auditSource = record(source.completionAudit);
+  const cancellationSource = record(source.cancellationAudit);
   const evidence = Array.isArray(auditSource.evidence)
     ? auditSource.evidence.flatMap((rawEvidence) => {
       const item = record(rawEvidence);
@@ -1511,6 +1826,13 @@ function parseAgentGoal(value: unknown): AgentGoalProjection | undefined {
     goalId: text(source.goalId),
     revision: integer(source.revision),
     objective: text(source.objective).slice(0, 4_000),
+    successCriteria: text(source.successCriteria).slice(0, 2_000),
+    evidenceExpectations: (Array.isArray(source.evidenceExpectations)
+      ? source.evidenceExpectations
+        .map((item) => text(item).trim().slice(0, 600))
+        .filter(Boolean)
+        .slice(0, 20)
+      : []) as AgentGoalProjection['evidenceExpectations'],
     status: status as AgentGoalProjection['status'],
     budget: {
       tokenLimit: nullableInteger(budget.tokenLimit),
@@ -1531,15 +1853,28 @@ function parseAgentGoal(value: unknown): AgentGoalProjection | undefined {
           createdAtMs: integer(auditSource.createdAtMs),
         }
       : null,
+    cancellationAudit: cancellationSource.auditId && cancellationSource.reason
+      ? {
+          auditId: text(cancellationSource.auditId),
+          reason: text(cancellationSource.reason).slice(0, 1_000),
+          cancelledBy: text(cancellationSource.cancelledBy).slice(0, 120),
+          createdAtMs: integer(cancellationSource.createdAtMs),
+        }
+      : null,
     updatedAtMs: integer(source.updatedAtMs),
   };
 }
 
-function parseActGate(value: unknown): AgentActGateProjection | undefined {
+function parseActGate(
+  value: unknown,
+  fallbackPlanRevision = 0,
+  fallbackGoalRevision = 0,
+): AgentActGateProjection | undefined {
   const source = record(value);
   const reason = text(source.reason);
   if (![
     'approved',
+    'user_execution_request',
     'plan_required',
     'plan_not_approved',
     'plan_completed',
@@ -1547,11 +1882,18 @@ function parseActGate(value: unknown): AgentActGateProjection | undefined {
     'goal_paused',
     'goal_completed',
     'goal_budget_exhausted',
+    'goal_cancelled',
   ].includes(reason)) return undefined;
   return {
     allowed: source.allowed === true,
     reason: reason as AgentActGateProjection['reason'],
     message: text(source.message),
+    planRevision: source.planRevision === undefined
+      ? fallbackPlanRevision
+      : integer(source.planRevision),
+    goalRevision: source.goalRevision === undefined
+      ? fallbackGoalRevision
+      : integer(source.goalRevision),
   };
 }
 

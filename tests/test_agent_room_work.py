@@ -113,6 +113,11 @@ class AgentRoomWorkTests(unittest.TestCase):
             self.rooms.get(str(self.room["id"]))["workItems"][0]["state"],
             "done",
         )
+        with self.assertRaisesRegex(ValueError, "active or review"):
+            self.work.authoritative_owner(
+                str(completed["id"]),
+                room_id=str(self.room["id"]),
+            )
         with sqlite3.connect(self.db_path) as conn:
             events = [
                 row[0]
@@ -127,6 +132,122 @@ class AgentRoomWorkTests(unittest.TestCase):
         self.assertEqual(
             events,
             ["assigned", "accepted", "submitted", "completed"],
+        )
+
+    def test_kernel_root_lifecycle_projects_claimed_work_once(self) -> None:
+        notifications: list[tuple[str, str]] = []
+        self.work.set_terminal_observer(
+            lambda kind, identifier: notifications.append(
+                (kind, identifier)
+            )
+        )
+        assigned, _ = self.work.assign(
+            str(self.coordinator["id"]),
+            self._assignment(
+                "kernel-root-work",
+                self.worker_participant["id"],
+            ),
+            created_at_ms=10,
+        )
+        active = self.work.accept_assignment(
+            str(assigned["id"]),
+            target_participant_id=str(self.worker_participant["id"]),
+            accepted_turn_id="turn:worker",
+            updated_at_ms=20,
+        )
+        root_id = "room-root:kernel-complete"
+        claimed = self.work.claim_dispatch(
+            str(active["id"]),
+            room_id=str(self.room["id"]),
+            owner_participant_id=str(self.worker_participant["id"]),
+            assignment_key=str(active["assignmentKey"]),
+            previous_accepted_turn_id=str(active["acceptedTurnId"]),
+            room_turn_id=root_id,
+            claimed_at_ms=30,
+        )
+
+        blocked = self.work.project_kernel_root(
+            {
+                "rootId": root_id,
+                "roomId": self.room["id"],
+                "state": "blocked",
+                "terminalReceiptId": None,
+                "updatedAtMs": 35,
+            }
+        )
+        self.assertEqual(blocked[0]["state"], "blocked")
+        self.assertEqual(
+            blocked[0]["blocker"]["kernelRootState"],
+            "blocked",
+        )
+        self.assertEqual(
+            self.work.project_kernel_root(
+                {
+                    "rootId": root_id,
+                    "roomId": self.room["id"],
+                    "state": "blocked",
+                    "terminalReceiptId": None,
+                    "updatedAtMs": 36,
+                }
+            ),
+            [],
+        )
+        resumed = self.work.project_kernel_root(
+            {
+                "rootId": root_id,
+                "roomId": self.room["id"],
+                "state": "running",
+                "terminalReceiptId": None,
+                "updatedAtMs": 37,
+            }
+        )
+        self.assertEqual(resumed[0]["state"], "active")
+        self.assertEqual(resumed[0]["blocker"], {})
+
+        settled = self.work.project_kernel_root(
+            {
+                "rootId": root_id,
+                "roomId": self.room["id"],
+                "state": "completed",
+                "terminalReceiptId": "room-receipt:complete",
+                "updatedAtMs": 40,
+            }
+        )
+
+        self.assertEqual(len(settled), 1)
+        self.assertEqual(settled[0]["state"], "done")
+        self.assertEqual(settled[0]["completedAtMs"], 40)
+        self.assertEqual(
+            settled[0]["evidenceRefs"],
+            ["room-receipt:complete"],
+        )
+        self.assertEqual(
+            notifications,
+            [("room_work_item", str(claimed["id"]))],
+        )
+        self.assertEqual(
+            [event["eventType"] for event in self.work.list_events(
+                str(claimed["id"])
+            )],
+            ["assigned", "accepted", "accepted", "blocked", "accepted", "completed"],
+        )
+        self.assertEqual(
+            self.work.list_events(str(claimed["id"]))[-1]["payload"][
+                "source"
+            ],
+            "room_kernel",
+        )
+        self.assertEqual(
+            self.work.project_kernel_root(
+                {
+                    "rootId": root_id,
+                    "roomId": self.room["id"],
+                    "state": "completed",
+                    "terminalReceiptId": "room-receipt:complete",
+                    "updatedAtMs": 50,
+                }
+            ),
+            [],
         )
 
     def test_assignment_is_idempotent_and_rejects_ancestor_bounce(self) -> None:

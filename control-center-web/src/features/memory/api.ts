@@ -1,6 +1,10 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
+import type {
+  MemoryReferenceV1,
+  ReferenceKind as MemoryReferenceKind,
+} from '@/contracts/generated/memory-reference.v1';
 import type { MutationAvailability } from '@/features/overview/management-mutation';
 import { asRecord, stringValue } from '@/features/overview/management-ui';
 import type { ControlTransport, JsonValue } from '@/platform/transport';
@@ -15,13 +19,7 @@ export type MemoryKind =
   | 'groups'
   | 'negative';
 export type MemoryEntityKind = 'tag' | 'group' | 'book';
-export type MemoryReferenceKind =
-  | 'event'
-  | 'evidence'
-  | 'atom'
-  | 'book'
-  | 'timeline'
-  | 'role_book_revision';
+export type { MemoryReferenceKind };
 
 export const memoryQueryKeys = {
   root: ['memory'] as const,
@@ -139,7 +137,7 @@ export function useMemoryReference(
   return useQuery({
     enabled: enabled && Boolean(referenceId),
     queryKey: memoryQueryKeys.reference(kind, referenceId),
-    queryFn: ({ signal }) => transport.request({
+    queryFn: ({ signal }) => transport.request<MemoryReferenceV1>({
       pathId: 'memory.reference.get',
       params: { kind, referenceId },
       signal,

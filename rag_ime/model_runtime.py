@@ -25,6 +25,7 @@ from .model_registry import (
     normalize_model_endpoint,
     normalize_model_runtime,
 )
+from .model_profiles import canonical_runtime_profile_id, profile_by_id
 
 
 MODEL_RUNTIME_PLAN_SCHEMA_VERSION = "rag-ime.model-runtime-plan.v1"
@@ -64,13 +65,26 @@ class ModelRuntimePlan:
 def plan_model_runtime(deployment: ModelDeployment) -> ModelRuntimePlan:
     runtime = normalize_model_runtime(deployment.runtime or infer_model_runtime(deployment.format))
     endpoint = normalize_model_endpoint(runtime, deployment.endpoint)
+    runtime_profile = canonical_runtime_profile_id(deployment.profile)
+    profile = profile_by_id(runtime_profile)
+    prompt_mode = deployment.prompt_mode or profile.prompt_mode
+    max_tokens = deployment.max_tokens or profile.max_tokens
+    temperature = (
+        profile.temperature
+        if deployment.temperature is None
+        else float(deployment.temperature)
+    )
+    top_p = profile.top_p if deployment.top_p is None else float(deployment.top_p)
     errors: list[str] = []
     warnings: list[str] = []
     provider_env = {
         "RAG_IME_MODEL_ID": deployment.model_id,
         "RAG_IME_MODEL_FINGERPRINT": deployment.fingerprint,
-        "RAG_IME_PREDICTOR_PROFILE": deployment.profile,
-        "RAG_IME_PREDICTOR_PROMPT_MODE": deployment.prompt_mode,
+        "RAG_IME_PREDICTOR_PROFILE": runtime_profile,
+        "RAG_IME_PREDICTOR_PROMPT_MODE": prompt_mode,
+        "RAG_IME_PREDICTOR_MAX_TOKENS": str(max_tokens),
+        "RAG_IME_PREDICTOR_TEMPERATURE": str(temperature),
+        "RAG_IME_PREDICTOR_TOP_P": str(top_p),
     }
     managed_service = ""
     lifecycle = "external"
@@ -102,8 +116,11 @@ def plan_model_runtime(deployment: ModelDeployment) -> ModelRuntimePlan:
                 "RAG_IME_PREDICTOR_BASE_URL": mlx_endpoint,
                 "RAG_IME_PREDICTOR_MODEL": str(model_path),
                 "RAG_IME_MLX_MODEL": str(model_path),
-                "RAG_IME_MLX_PROFILE": deployment.profile,
-                "RAG_IME_MLX_PROMPT_MODE": deployment.prompt_mode,
+                "RAG_IME_MLX_PROFILE": runtime_profile,
+                "RAG_IME_MLX_PROMPT_MODE": prompt_mode,
+                "RAG_IME_MLX_MAX_TOKENS": str(max_tokens),
+                "RAG_IME_MLX_TEMPERATURE": str(temperature),
+                "RAG_IME_MLX_TOP_P": str(top_p),
                 "RAG_IME_MLX_HOST": mlx_host,
                 "RAG_IME_MLX_PORT": str(mlx_port),
             }

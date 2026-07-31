@@ -175,6 +175,13 @@ export const contractSchemas = {
       "candidates": {
         "type": "array"
       },
+      "evidence": {
+        "type": "array",
+        "maxItems": 8,
+        "items": {
+          "$ref": "#/$defs/redactedEvidence"
+        }
+      },
       "stored": {
         "type": "boolean"
       },
@@ -287,6 +294,9 @@ export const contractSchemas = {
                 "minimum": 0
               }
             }
+          },
+          "contextView": {
+            "$ref": "#/$defs/contextView"
           },
           "progress": {
             "type": "object",
@@ -416,6 +426,119 @@ export const contractSchemas = {
       },
       "traceEvents": {
         "type": "array"
+      }
+    },
+    "$defs": {
+      "redactedEvidence": {
+        "type": "object",
+        "required": [
+          "evidenceId",
+          "sourceType",
+          "sourceLane",
+          "score",
+          "confidence",
+          "tags",
+          "hasPreview"
+        ],
+        "properties": {
+          "evidenceId": {
+            "type": "string"
+          },
+          "sourceType": {
+            "type": "string"
+          },
+          "sourceLane": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "type": "string"
+            }
+          },
+          "hasPreview": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "contextView": {
+        "type": "object",
+        "required": [
+          "schemaVersion",
+          "source",
+          "currentRequest",
+          "currentContext",
+          "selectedText",
+          "taskMode",
+          "groundingMode",
+          "windowContext",
+          "recentCompleteInputs",
+          "planning",
+          "activityTimeline",
+          "groundingEvidence",
+          "evidenceHints",
+          "contextBudget"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": "rag-ime.active-rag-context-view.v1"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "frontend_request",
+              "provider_request"
+            ]
+          },
+          "currentRequest": {
+            "type": "string"
+          },
+          "currentContext": {
+            "type": "string"
+          },
+          "selectedText": {
+            "type": "string"
+          },
+          "taskMode": {
+            "type": "string"
+          },
+          "groundingMode": {
+            "type": "string"
+          },
+          "windowContext": {
+            "type": "object"
+          },
+          "recentCompleteInputs": {
+            "type": "array",
+            "maxItems": 4
+          },
+          "planning": {
+            "type": "object"
+          },
+          "activityTimeline": {
+            "type": "object"
+          },
+          "groundingEvidence": {
+            "type": "array",
+            "maxItems": 12
+          },
+          "evidenceHints": {
+            "type": "array",
+            "maxItems": 12
+          },
+          "contextBudget": {
+            "type": "object"
+          }
+        },
+        "additionalProperties": false
       }
     }
   },
@@ -651,6 +774,169 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-approval-model-decision.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/agent-approval-model-decision.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "receiptId",
+      "approvalId",
+      "sessionId",
+      "mode",
+      "contextKind",
+      "contextId",
+      "historyEntryCount",
+      "automatic",
+      "decision",
+      "status",
+      "modelProvider",
+      "modelId",
+      "modelProfile",
+      "thinkingLevel",
+      "promptVersion",
+      "payloadSha256",
+      "inputSha256",
+      "scopeSha256",
+      "reasonCodes",
+      "rationaleSummary",
+      "createdAtMs",
+      "decidedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.agent-approval-model-decision.v1"
+      },
+      "receiptId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "approvalId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "contextKind": {
+        "type": "string",
+        "enum": [
+          "session",
+          "room"
+        ]
+      },
+      "contextId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      },
+      "historyEntryCount": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 32
+      },
+      "mode": {
+        "const": "model"
+      },
+      "automatic": {
+        "const": true
+      },
+      "decision": {
+        "type": "string",
+        "enum": [
+          "approve",
+          "deny"
+        ]
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "decided",
+          "failed_closed"
+        ]
+      },
+      "modelProvider": {
+        "const": "openai-codex"
+      },
+      "modelId": {
+        "const": "gpt-5.6-luna"
+      },
+      "modelProfile": {
+        "const": "openai-codex/gpt-5.6-luna"
+      },
+      "thinkingLevel": {
+        "const": "max"
+      },
+      "promptVersion": {
+        "type": "string",
+        "enum": [
+          "approval-arbiter-v1",
+          "approval-arbiter-v2"
+        ]
+      },
+      "payloadSha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "inputSha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "scopeSha256": {
+        "type": "string",
+        "pattern": "^(?:[a-f0-9]{64})?$"
+      },
+      "reasonCodes": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "bounded_operation",
+            "authorized_scope",
+            "requested_effect_matches_preview",
+            "destructive_effect",
+            "sensitive_target",
+            "network_effect",
+            "irreversible_effect",
+            "cross_workspace",
+            "insufficient_evidence",
+            "scope_not_authorized",
+            "prompt_injection_detected",
+            "policy_boundary",
+            "model_unavailable",
+            "model_timeout",
+            "model_invalid_response",
+            "approval_stale"
+          ]
+        }
+      },
+      "rationaleSummary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      },
+      "failureCode": {
+        "type": "string",
+        "maxLength": 80
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "decidedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "agent-approval.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-approval.v1",
@@ -667,7 +953,8 @@ export const contractSchemas = {
       "state",
       "requestedAtMs",
       "expiresAtMs",
-      "decidedBy"
+      "decidedBy",
+      "causalMetadata"
     ],
     "properties": {
       "schemaVersion": {
@@ -741,6 +1028,43 @@ export const contractSchemas = {
           "object",
           "null"
         ]
+      },
+      "causalMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "planId",
+          "planRevision",
+          "goalId",
+          "goalRevision",
+          "turnId",
+          "roomBound"
+        ],
+        "properties": {
+          "planId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "planRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "goalId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "goalRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "turnId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "roomBound": {
+            "type": "boolean"
+          }
+        }
       }
     }
   },
@@ -894,6 +1218,180 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-background-job.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-background-job.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "jobId",
+      "sessionId",
+      "label",
+      "status",
+      "command",
+      "commandSha256",
+      "cwd",
+      "networkAllowed",
+      "maxRunSeconds",
+      "pid",
+      "createdAtMs",
+      "startedAtMs",
+      "updatedAtMs",
+      "endedAtMs",
+      "exitCode",
+      "outputBytes",
+      "logStartCursor",
+      "logTruncated",
+      "cancelRequestedAtMs",
+      "error",
+      "approvalId",
+      "causalMetadata"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.agent-background-job.v1"
+      },
+      "jobId": {
+        "type": "string",
+        "pattern": "^bg_[a-f0-9]{32}$"
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "cancelling",
+          "completed",
+          "failed",
+          "cancelled",
+          "orphaned"
+        ]
+      },
+      "command": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      },
+      "commandSha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      },
+      "cwd": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "networkAllowed": {
+        "type": "boolean"
+      },
+      "maxRunSeconds": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 86400
+      },
+      "pid": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 1
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "startedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "endedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "exitCode": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "outputBytes": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "logStartCursor": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "logTruncated": {
+        "type": "boolean"
+      },
+      "cancelRequestedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "error": {
+        "type": "string",
+        "maxLength": 500
+      },
+      "approvalId": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "causalMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "planId",
+          "planRevision",
+          "goalId",
+          "goalRevision",
+          "turnId",
+          "roomBound"
+        ],
+        "properties": {
+          "planId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "planRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "goalId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "goalRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "turnId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "roomBound": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "additionalProperties": false
+  },
   "agent-configuration.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-configuration.v1",
@@ -957,7 +1455,8 @@ export const contractSchemas = {
               "roleId",
               "roleVersion",
               "modelProfile",
-              "toolProfileVersion"
+              "toolProfileVersion",
+              "capabilityDisclosurePreferences"
             ],
             "properties": {
               "resumeLastSession": {
@@ -978,6 +1477,17 @@ export const contractSchemas = {
               "toolProfileVersion": {
                 "type": "string",
                 "minLength": 1
+              },
+              "capabilityDisclosurePreferences": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "enum": [
+                    "inherit",
+                    "enabled",
+                    "disabled"
+                  ]
+                }
               }
             }
           },
@@ -1625,11 +2135,17 @@ export const contractSchemas = {
           "session_configuration_changed",
           "message_queue_updated",
           "workflow_changed",
+          "lifecycle_cancellation_changed",
           "tool_started",
           "tool_progress",
           "tool_finished",
           "approval_required",
           "approval_resolved",
+          "background_job_started",
+          "background_job_progress",
+          "background_job_completed",
+          "background_job_failed",
+          "background_job_cancelled",
           "memory_checkpointed",
           "memory_maintenance_updated",
           "user_input_required",
@@ -1828,17 +2344,19 @@ export const contractSchemas = {
     "type": "object",
     "additionalProperties": false,
     "required": [
-      "action"
+      "action",
+      "expectedRevision"
     ],
     "properties": {
       "action": {
         "type": "string",
         "enum": [
-          "set",
+          "confirm_setup",
           "update",
           "pause",
           "resume",
           "complete",
+          "cancel",
           "clear"
         ]
       },
@@ -1846,10 +2364,26 @@ export const contractSchemas = {
         "type": "integer",
         "minimum": 0
       },
+      "confirmed": {
+        "const": true
+      },
       "objective": {
         "type": "string",
         "minLength": 1,
         "maxLength": 4000
+      },
+      "successCriteria": {
+        "type": "string",
+        "maxLength": 2000
+      },
+      "evidenceExpectations": {
+        "type": "array",
+        "maxItems": 20,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        }
       },
       "tokenBudget": {
         "type": [
@@ -1871,6 +2405,11 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1,
         "maxLength": 2000
+      },
+      "reason": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
       },
       "evidence": {
         "type": "array",
@@ -1908,7 +2447,62 @@ export const contractSchemas = {
           }
         }
       }
-    }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "action": {
+              "const": "confirm_setup"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        },
+        "then": {
+          "required": [
+            "confirmed",
+            "objective"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "action": {
+              "const": "complete"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        },
+        "then": {
+          "required": [
+            "summary",
+            "evidence"
+          ]
+        }
+      },
+      {
+        "if": {
+          "properties": {
+            "action": {
+              "const": "cancel"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        },
+        "then": {
+          "required": [
+            "reason"
+          ]
+        }
+      }
+    ]
   },
   "agent-goal-settle-request.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2106,6 +2700,138 @@ export const contractSchemas = {
       }
     }
   },
+  "agent-lifecycle-cancellation-audit.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.agent-lifecycle-cancellation-audit.v1",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "requestId",
+      "sessionId",
+      "scopeKind",
+      "scopeId",
+      "sourceRevision",
+      "transitionRevision",
+      "action",
+      "reason",
+      "state",
+      "sourceTurnId",
+      "owners",
+      "createdAtMs",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "const": "rag-ime.agent-lifecycle-cancellation-audit.v1"
+      },
+      "requestId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "scopeKind": {
+        "enum": [
+          "plan",
+          "goal"
+        ]
+      },
+      "scopeId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "transitionRevision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "action": {
+        "enum": [
+          "cancel",
+          "pause"
+        ]
+      },
+      "reason": {
+        "type": "string",
+        "maxLength": 1000
+      },
+      "state": {
+        "enum": [
+          "pending",
+          "completed",
+          "partial",
+          "unknown"
+        ]
+      },
+      "sourceTurnId": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "owners": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "runtime",
+          "approval",
+          "job",
+          "delegation"
+        ],
+        "properties": {
+          "runtime": {
+            "$ref": "#/$defs/owner"
+          },
+          "approval": {
+            "$ref": "#/$defs/owner"
+          },
+          "job": {
+            "$ref": "#/$defs/owner"
+          },
+          "delegation": {
+            "$ref": "#/$defs/owner"
+          }
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "owner": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "receipt"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "pending",
+              "succeeded",
+              "excluded",
+              "partial",
+              "unknown"
+            ]
+          },
+          "receipt": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  },
   "agent-media.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "rag-ime.contract.agent-media.v1",
@@ -2113,7 +2839,8 @@ export const contractSchemas = {
     "required": [
       "schemaVersion",
       "mediaId",
-      "sessionId",
+      "ownerType",
+      "ownerId",
       "mimeType",
       "byteSize",
       "sha256",
@@ -2129,7 +2856,23 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1
       },
+      "ownerType": {
+        "type": "string",
+        "enum": [
+          "session",
+          "room"
+        ]
+      },
+      "ownerId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 160
+      },
       "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
         "type": "string",
         "minLength": 1
       },
@@ -3662,7 +4405,32 @@ export const contractSchemas = {
           }
         }
       }
-    }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "action": {
+              "const": "return_to_draft"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        },
+        "then": {
+          "required": [
+            "expectedRevision",
+            "note"
+          ],
+          "properties": {
+            "note": {
+              "minLength": 1
+            }
+          }
+        }
+      }
+    ]
   },
   "agent-role-book-tool-result.v1": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -5567,6 +6335,8 @@ export const contractSchemas = {
       "workspaceScopeGranted",
       "workspaceScopeSha256",
       "workspaceScopeGrantedAtMs",
+      "capabilityDisclosurePreferences",
+      "policyRevision",
       "projectContextEnabled",
       "piSkillsEnabled",
       "codexSkillsEnabled",
@@ -5664,6 +6434,33 @@ export const contractSchemas = {
           "subagent_runtime"
         ]
       },
+      "roomParticipant": {
+        "type": "object",
+        "required": [
+          "roomId",
+          "participantId",
+          "status"
+        ],
+        "properties": {
+          "roomId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "participantId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "muted",
+              "removed"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "roleId": {
         "type": "string",
         "minLength": 1
@@ -5732,6 +6529,21 @@ export const contractSchemas = {
         },
         "uniqueItems": true
       },
+      "capabilityDisclosurePreferences": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string",
+          "enum": [
+            "inherit",
+            "enabled",
+            "disabled"
+          ]
+        }
+      },
+      "policyRevision": {
+        "type": "integer",
+        "minimum": 1
+      },
       "projectContextEnabled": {
         "type": "boolean"
       },
@@ -5788,10 +6600,12 @@ export const contractSchemas = {
       "parentSessionId",
       "parentRunId",
       "contextMode",
+      "resultDeliveryMode",
       "state",
       "depth",
       "maxDepth",
       "abortRequested",
+      "causalMetadata",
       "createdAtMs",
       "updatedAtMs",
       "completedAtMs",
@@ -5820,6 +6634,13 @@ export const contractSchemas = {
           "fork"
         ]
       },
+      "resultDeliveryMode": {
+        "type": "string",
+        "enum": [
+          "inline",
+          "next_turn"
+        ]
+      },
       "state": {
         "type": "string",
         "enum": [
@@ -5843,6 +6664,38 @@ export const contractSchemas = {
       },
       "abortRequested": {
         "type": "boolean"
+      },
+      "causalMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "planId",
+          "planRevision",
+          "goalId",
+          "goalRevision",
+          "roomBound"
+        ],
+        "properties": {
+          "planId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "planRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "goalId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "goalRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "roomBound": {
+            "type": "boolean"
+          }
+        }
       },
       "createdAtMs": {
         "type": "integer",
@@ -5879,15 +6732,20 @@ export const contractSchemas = {
       "id",
       "batchId",
       "childSessionId",
+      "planItemId",
+      "planItemTitle",
       "templateId",
       "templateVersion",
       "ordinal",
       "task",
+      "expectedOutput",
+      "acceptanceCriteria",
       "state",
       "budget",
       "usage",
       "result",
       "error",
+      "resultContextScheduledAtMs",
       "createdAtMs",
       "startedAtMs",
       "updatedAtMs",
@@ -5909,6 +6767,14 @@ export const contractSchemas = {
       "childSessionId": {
         "type": "string",
         "minLength": 1
+      },
+      "planItemId": {
+        "type": "string",
+        "maxLength": 160
+      },
+      "planItemTitle": {
+        "type": "string",
+        "maxLength": 240
       },
       "templateId": {
         "type": "string",
@@ -5933,6 +6799,23 @@ export const contractSchemas = {
         "type": "string",
         "minLength": 1,
         "maxLength": 8000
+      },
+      "expectedOutput": {
+        "type": "string",
+        "maxLength": 2000
+      },
+      "acceptanceCriteria": {
+        "type": "array",
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      },
+      "outputSchema": {
+        "type": "object"
       },
       "state": {
         "type": "string",
@@ -6085,6 +6968,13 @@ export const contractSchemas = {
             "maximum": 30000
           }
         }
+      },
+      "resultContextScheduledAtMs": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "minimum": 0
       },
       "createdAtMs": {
         "type": "integer",
@@ -6306,29 +7196,32 @@ export const contractSchemas = {
       "tool": {
         "type": "string",
         "enum": [
-          "ime_overview",
-          "ime_input",
-          "ime_voice",
-          "ime_planning",
+          "overview",
+          "input",
+          "voice",
+          "planning",
           "agent_schedule",
-          "ime_memory",
+          "memory",
           "agent_role_book",
-          "ime_knowledge",
-          "ime_models",
-          "ime_runtime",
-          "ime_configuration",
-          "ime_agents",
-          "ime_browser",
+          "knowledge",
+          "models",
+          "runtime",
+          "configuration",
+          "agents",
+          "browser",
           "agent_plan",
+          "plugins",
+          "work_documents",
           "desktop_semantic",
-          "ime_plugins",
           "workspace_list",
+          "workspace_lsp",
           "workspace_read",
           "workspace_search",
           "workspace_patch",
           "workspace_edit",
           "workspace_write",
           "workspace_shell",
+          "workspace_job",
           "room_state",
           "room_collaborate",
           "room_post",
@@ -6430,29 +7323,32 @@ export const contractSchemas = {
       "tool": {
         "type": "string",
         "enum": [
-          "ime_overview",
-          "ime_input",
-          "ime_voice",
-          "ime_planning",
+          "overview",
+          "input",
+          "voice",
+          "planning",
           "agent_schedule",
-          "ime_memory",
+          "memory",
           "agent_role_book",
-          "ime_knowledge",
-          "ime_models",
-          "ime_runtime",
-          "ime_configuration",
-          "ime_agents",
-          "ime_browser",
+          "knowledge",
+          "models",
+          "runtime",
+          "configuration",
+          "agents",
+          "browser",
           "agent_plan",
           "desktop_semantic",
-          "ime_plugins",
+          "plugins",
+          "work_documents",
           "workspace_list",
+          "workspace_lsp",
           "workspace_read",
           "workspace_search",
           "workspace_patch",
           "workspace_edit",
           "workspace_write",
-          "workspace_shell"
+          "workspace_shell",
+          "workspace_job"
         ]
       },
       "operation": {
@@ -6508,6 +7404,13 @@ export const contractSchemas = {
           "propose_revision",
           "review",
           "list",
+          "history.search",
+          "register",
+          "archive",
+          "repair",
+          "reopen",
+          "erase.preview",
+          "erase",
           "inspect",
           "act",
           "update",
@@ -6555,7 +7458,16 @@ export const contractSchemas = {
           "wait",
           "stop",
           "run",
-          "apply"
+          "apply",
+          "start",
+          "logs",
+          "symbols",
+          "hover",
+          "definition",
+          "references",
+          "diagnostics",
+          "rename",
+          "code_action_apply"
         ]
       },
       "result": {
@@ -6825,6 +7737,37 @@ export const contractSchemas = {
           }
         }
       },
+      "cancellationAudit": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "auditId",
+          "reason",
+          "cancelledBy",
+          "createdAtMs"
+        ],
+        "properties": {
+          "auditId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "cancelledBy": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "goal": {
         "type": "object",
         "additionalProperties": false,
@@ -6835,12 +7778,15 @@ export const contractSchemas = {
           "goalId",
           "revision",
           "objective",
+          "successCriteria",
+          "evidenceExpectations",
           "status",
           "budget",
           "usage",
           "remaining",
           "budgetExceeded",
           "completionAudit",
+          "cancellationAudit",
           "updatedAtMs"
         ],
         "properties": {
@@ -6867,12 +7813,26 @@ export const contractSchemas = {
             "type": "string",
             "maxLength": 4000
           },
+          "successCriteria": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "evidenceExpectations": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 600
+            }
+          },
           "status": {
             "type": "string",
             "enum": [
               "active",
               "paused",
               "completed",
+              "cancelled",
               "cleared"
             ]
           },
@@ -6955,6 +7915,16 @@ export const contractSchemas = {
               }
             ]
           },
+          "cancellationAudit": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/cancellationAudit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updatedAtMs": {
             "type": "integer",
             "minimum": 0
@@ -6967,7 +7937,9 @@ export const contractSchemas = {
         "required": [
           "allowed",
           "reason",
-          "message"
+          "message",
+          "planRevision",
+          "goalRevision"
         ],
         "properties": {
           "allowed": {
@@ -6977,12 +7949,14 @@ export const contractSchemas = {
             "type": "string",
             "enum": [
               "approved",
+              "user_execution_request",
               "plan_required",
               "plan_not_approved",
               "plan_completed",
               "plan_cancelled",
               "goal_paused",
               "goal_completed",
+              "goal_cancelled",
               "goal_budget_exhausted"
             ]
           },
@@ -6990,6 +7964,14 @@ export const contractSchemas = {
             "type": "string",
             "minLength": 1,
             "maxLength": 300
+          },
+          "planRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "goalRevision": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }
@@ -7195,6 +8177,367 @@ export const contractSchemas = {
           "metadata": {
             "type": "object"
           }
+        }
+      }
+    }
+  },
+  "capability-catalog.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.capability-catalog.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "ok",
+      "revision",
+      "effectiveAtMs",
+      "projectScope",
+      "items"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.capability-catalog.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "revision": {
+        "type": "string",
+        "pattern": "^sha256:[a-f0-9]{64}$"
+      },
+      "effectiveAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "projectScope": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "supported",
+              "identityKind",
+              "projectId",
+              "reason"
+            ],
+            "properties": {
+              "supported": {
+                "type": "boolean",
+                "const": true
+              },
+              "identityKind": {
+                "type": "string",
+                "const": "workspace_scope_sha256"
+              },
+              "projectId": {
+                "type": "string",
+                "pattern": "^workspace-[a-f0-9]{64}$"
+              },
+              "reason": {
+                "type": "string",
+                "const": "session_workspace_scope"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": [
+              "supported",
+              "identityKind",
+              "reason"
+            ],
+            "properties": {
+              "supported": {
+                "type": "boolean",
+                "const": false
+              },
+              "identityKind": {
+                "type": "string",
+                "const": "none"
+              },
+              "reason": {
+                "type": "string",
+                "const": "stable_project_identity_unavailable"
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "sessionPolicy": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "mode",
+          "executionMode",
+          "workspaceScopeGranted",
+          "toolProfileVersion",
+          "toolAllowlistMode",
+          "allowedTools",
+          "policyRevision",
+          "disclosurePreferences",
+          "effectiveAtMs"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "assistant",
+              "coordinator"
+            ]
+          },
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "per_action",
+              "workspace_managed",
+              "full_trust"
+            ]
+          },
+          "workspaceScopeGranted": {
+            "type": "boolean"
+          },
+          "toolProfileVersion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "toolAllowlistMode": {
+            "type": "string",
+            "enum": [
+              "profile",
+              "explicit"
+            ]
+          },
+          "allowedTools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "policyRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "effectiveAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "disclosurePreferences": {
+            "type": "object",
+            "required": [
+              "globalDefault",
+              "projectDefault",
+              "session",
+              "effective"
+            ],
+            "properties": {
+              "globalDefault": {
+                "$ref": "#/$defs/preferences"
+              },
+              "projectDefault": {
+                "$ref": "#/$defs/preferences"
+              },
+              "session": {
+                "$ref": "#/$defs/preferences"
+              },
+              "effective": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string",
+                  "enum": [
+                    "enabled",
+                    "disabled"
+                  ]
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "canonicalId",
+            "kind",
+            "source",
+            "status",
+            "risk",
+            "requiredPermissions",
+            "authorization",
+            "disclosure",
+            "effectiveScope",
+            "reasons",
+            "revision",
+            "effectiveAtMs"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "canonicalId": {
+              "type": "string",
+              "pattern": "^(tool|skill|extension):.+$"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "tool",
+                "skill",
+                "extension"
+              ]
+            },
+            "source": {
+              "type": "object",
+              "required": [
+                "kind",
+                "label"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "status": {
+              "type": "string",
+              "minLength": 1
+            },
+            "risk": {
+              "type": "string",
+              "minLength": 1
+            },
+            "requiredPermissions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "authorization": {
+              "type": "object",
+              "required": [
+                "state",
+                "reason"
+              ],
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "authorized",
+                    "denied",
+                    "not_applicable"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            },
+            "disclosure": {
+              "type": "object",
+              "required": [
+                "preference",
+                "effective",
+                "state",
+                "reason",
+                "scope"
+              ],
+              "properties": {
+                "preference": {
+                  "type": "string",
+                  "enum": [
+                    "inherit",
+                    "enabled",
+                    "disabled"
+                  ]
+                },
+                "effective": {
+                  "type": "string",
+                  "enum": [
+                    "enabled",
+                    "disabled"
+                  ]
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "disclosed",
+                    "hidden"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "session",
+                    "project_default",
+                    "global_default",
+                    "built_in_default"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            "effectiveScope": {
+              "type": "string",
+              "enum": [
+                "session",
+                "project_default",
+                "global_default",
+                "built_in_default"
+              ]
+            },
+            "reasons": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "revision": {
+              "type": "string",
+              "minLength": 1
+            },
+            "effectiveAtMs": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "$defs": {
+      "preferences": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string",
+          "enum": [
+            "inherit",
+            "enabled",
+            "disabled"
+          ]
         }
       }
     }
@@ -7999,6 +9342,11 @@ export const contractSchemas = {
       "summary",
       "eventCount",
       "segmentCount",
+      "observedStartMs",
+      "observedEndMs",
+      "spanSemantics",
+      "ordinaryActivityCount",
+      "consolidatedActivityCount",
       "approvedBookId",
       "approvedBy",
       "approvedAtMs",
@@ -8065,6 +9413,26 @@ export const contractSchemas = {
         "type": "integer",
         "minimum": 1
       },
+      "observedStartMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "observedEndMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "spanSemantics": {
+        "type": "string",
+        "const": "first_to_last_source_event"
+      },
+      "ordinaryActivityCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "consolidatedActivityCount": {
+        "type": "integer",
+        "minimum": 0
+      },
       "approvedBookId": {
         "type": "string"
       },
@@ -8086,6 +9454,7 @@ export const contractSchemas = {
       "segmentationMode": {
         "type": "string",
         "enum": [
+          "semantic_task_v5",
           "semantic_task_v4",
           "semantic_task_v3",
           "semantic_task_v2",
@@ -8105,7 +9474,8 @@ export const contractSchemas = {
           "derivedFromInputEvents",
           "longTermFact",
           "automaticPromotion",
-          "explicitApprovalRequired"
+          "explicitApprovalRequired",
+          "minimumConsolidatedSpanMs"
         ],
         "properties": {
           "derivedFromInputEvents": {
@@ -8123,6 +9493,10 @@ export const contractSchemas = {
           "explicitApprovalRequired": {
             "type": "boolean",
             "const": false
+          },
+          "minimumConsolidatedSpanMs": {
+            "type": "integer",
+            "minimum": 1
           }
         }
       }
@@ -8144,7 +9518,9 @@ export const contractSchemas = {
           "sourceEventIds",
           "sourceEventHash",
           "summary",
-          "redactedEventCount"
+          "redactedEventCount",
+          "activityKind",
+          "spanSemantics"
         ],
         "properties": {
           "segmentId": {
@@ -8216,6 +9592,17 @@ export const contractSchemas = {
             "type": "integer",
             "minimum": 0
           },
+          "activityKind": {
+            "type": "string",
+            "enum": [
+              "ordinary_activity",
+              "consolidated_activity"
+            ]
+          },
+          "spanSemantics": {
+            "type": "string",
+            "const": "first_to_last_source_event"
+          },
           "title": {
             "type": "string",
             "minLength": 1,
@@ -8285,7 +9672,7 @@ export const contractSchemas = {
           "app",
           "sourceKind",
           "occurredAtMs",
-          "preview"
+          "redacted"
         ],
         "properties": {
           "sourceType": {
@@ -8312,10 +9699,8 @@ export const contractSchemas = {
             "type": "integer",
             "minimum": 0
           },
-          "preview": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 180
+          "redacted": {
+            "type": "boolean"
           }
         }
       }
@@ -12299,6 +13684,47 @@ export const contractSchemas = {
           "occurredAtMs": {
             "type": "integer",
             "minimum": 0
+          },
+          "sourceContextAvailable": {
+            "type": "boolean"
+          },
+          "sourceContext": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "recentContext",
+              "preedit",
+              "redacted",
+              "scopeProject",
+              "usedFor"
+            ],
+            "properties": {
+              "recentContext": {
+                "type": "string",
+                "maxLength": 32000
+              },
+              "preedit": {
+                "type": "string",
+                "maxLength": 32000
+              },
+              "redacted": {
+                "type": "boolean"
+              },
+              "scopeProject": {
+                "type": "string"
+              },
+              "usedFor": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "source_fingerprint",
+                    "semantic_grouping"
+                  ]
+                },
+                "uniqueItems": true
+              }
+            }
           }
         }
       },
@@ -14635,6 +16061,14 @@ export const contractSchemas = {
               "question": {
                 "type": "string",
                 "minLength": 1
+              },
+              "questionOptions": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 5,
+                "items": {
+                  "$ref": "#/$defs/questionOption"
+                }
               }
             },
             "allOf": [
@@ -14693,6 +16127,27 @@ export const contractSchemas = {
                   "required": [
                     "waitingForParticipantId",
                     "waitingForDispatchId"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "questionOptions"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "decision": {
+                      "const": "wait"
+                    },
+                    "waitingFor": {
+                      "const": "user"
+                    }
+                  },
+                  "required": [
+                    "question",
+                    "waitingFor"
                   ]
                 }
               }
@@ -14822,6 +16277,449 @@ export const contractSchemas = {
             "minimum": 0
           }
         }
+      },
+      "questionOption": {
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "recommended": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "room-commit.v4": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-commit.v4.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "commitId",
+      "dispatchId",
+      "action",
+      "contentHash",
+      "postProposal",
+      "qualityGateReceipt",
+      "evidenceRefs",
+      "requirementCoverage",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-commit.v4"
+      },
+      "commitId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "dispatchId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "action": {
+        "type": "string",
+        "enum": [
+          "post",
+          "dispatch",
+          "wait",
+          "complete",
+          "block"
+        ]
+      },
+      "contentHash": {
+        "type": "string",
+        "minLength": 1
+      },
+      "postProposal": {
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "postInvocationReceiptId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "continuation": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "decision"
+            ],
+            "properties": {
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "dispatch",
+                  "wait",
+                  "block",
+                  "complete"
+                ]
+              },
+              "taskTransfer": {
+                "$ref": "#/$defs/taskTransfer"
+              },
+              "childDispatch": {
+                "type": "object"
+              },
+              "waitForDispatchIds": {
+                "type": "array",
+                "maxItems": 32,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "waitingFor": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "participant",
+                  "external"
+                ]
+              },
+              "waitingForParticipantId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "waitingForDispatchId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resumeCondition": {
+                "type": "string",
+                "minLength": 1
+              },
+              "question": {
+                "type": "string",
+                "minLength": 1
+              },
+              "questionOptions": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 5,
+                "items": {
+                  "$ref": "#/$defs/questionOption"
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "decision": {
+                      "const": "dispatch"
+                    }
+                  },
+                  "required": [
+                    "decision"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "taskTransfer",
+                    "childDispatch"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "decision": {
+                      "const": "wait"
+                    }
+                  },
+                  "required": [
+                    "decision"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "waitingFor",
+                    "resumeCondition"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "decision": {
+                      "const": "wait"
+                    },
+                    "waitingFor": {
+                      "const": "participant"
+                    }
+                  },
+                  "required": [
+                    "decision",
+                    "waitingFor"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "waitingForParticipantId",
+                    "waitingForDispatchId"
+                  ]
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "questionOptions"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "decision": {
+                      "const": "wait"
+                    },
+                    "waitingFor": {
+                      "const": "user"
+                    }
+                  },
+                  "required": [
+                    "question",
+                    "waitingFor"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "qualityGateReceipt": {
+        "$ref": "#/$defs/qualityGateReceipt"
+      },
+      "evidenceRefs": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "requirementCoverage": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "$defs": {
+      "taskTransfer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "taskId",
+          "fromParticipantId",
+          "toParticipantId",
+          "objective",
+          "expectedOutput",
+          "acceptanceCriterionIds",
+          "contextEvidenceRefs",
+          "ownershipRevision"
+        ],
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "fromParticipantId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "toParticipantId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "objective": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expectedOutput": {
+            "type": "string",
+            "minLength": 1
+          },
+          "acceptanceCriterionIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "contextEvidenceRefs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "ownershipRevision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "qualityGateReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "receiptId",
+          "rootId",
+          "taskId",
+          "dispatchId",
+          "generation",
+          "originalRequestChecked",
+          "verdict",
+          "items",
+          "residualRisks",
+          "createdAtMs"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "wisdom-weasel.room-quality-gate-receipt.v1"
+          },
+          "receiptId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "rootId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "taskId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "dispatchId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "originalRequestChecked": {
+            "type": "boolean"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "ready_to_deliver",
+              "not_ready"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "criterionId",
+                "status",
+                "evidenceRefs"
+              ],
+              "properties": {
+                "criterionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pass",
+                    "fail",
+                    "not_verified"
+                  ]
+                },
+                "evidenceRefs": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "residualRisks": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "questionOption": {
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "recommended": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
       }
     }
   },
@@ -14993,6 +16891,15 @@ export const contractSchemas = {
       "runtimeProfileRevision": {
         "type": "string",
         "minLength": 1
+      },
+      "attachmentIds": {
+        "type": "array",
+        "maxItems": 8,
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "pattern": "^media_[A-Za-z0-9_-]{12,80}$"
+        }
       },
       "state": {
         "type": "string",
@@ -15202,6 +17109,7 @@ export const contractSchemas = {
           "panic",
           "runtime_accepted",
           "runtime_failed",
+          "runtime_retry_scheduled",
           "dispatch_unknown",
           "dead_letter",
           "settle_retry_required",
@@ -15364,6 +17272,146 @@ export const contractSchemas = {
       }
     }
   },
+  "room-peer-invitation.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-peer-invitation.v1.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "invitationId",
+      "rootId",
+      "parentTaskId",
+      "parentDispatchId",
+      "openedByParticipantId",
+      "offeredToParticipantId",
+      "winnerParticipantId",
+      "intent",
+      "objective",
+      "expectedOutput",
+      "acceptanceCriterionIds",
+      "contextEvidenceRefs",
+      "state",
+      "revision",
+      "responseReceiptId",
+      "availableActions",
+      "createdAtMs",
+      "updatedAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-peer-invitation.v1"
+      },
+      "invitationId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "parentTaskId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "parentDispatchId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "openedByParticipantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "offeredToParticipantId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "winnerParticipantId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "intent": {
+        "type": "string",
+        "enum": [
+          "execute",
+          "review",
+          "revise"
+        ]
+      },
+      "objective": {
+        "type": "string",
+        "minLength": 1
+      },
+      "expectedOutput": {
+        "type": "string",
+        "minLength": 1
+      },
+      "acceptanceCriterionIds": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "contextEvidenceRefs": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "open",
+          "offered",
+          "accepted",
+          "returned",
+          "counterproposed",
+          "review_ready",
+          "cancelled",
+          "expired"
+        ]
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "responseReceiptId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "availableActions": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "accept",
+            "return",
+            "counterproposal",
+            "review_ready"
+          ]
+        }
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
   "room-post.v2": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://wisdom-weasel.local/contracts/room-post.v2.json",
@@ -15426,6 +17474,28 @@ export const contractSchemas = {
       "content": {
         "type": "string",
         "minLength": 1
+      },
+      "question": {
+        "type": "object",
+        "required": [
+          "prompt",
+          "options"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/$defs/questionOption"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "mentions": {
         "type": "array",
@@ -15531,6 +17601,105 @@ export const contractSchemas = {
           }
         }
       },
+      "attachments": {
+        "type": "array",
+        "maxItems": 8,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schemaVersion",
+            "mediaId",
+            "ownerType",
+            "ownerId",
+            "roomId",
+            "fileName",
+            "mimeType",
+            "byteSize",
+            "sha256",
+            "origin",
+            "createdAtMs"
+          ],
+          "properties": {
+            "schemaVersion": {
+              "const": "rag-ime.agent-media.v1"
+            },
+            "mediaId": {
+              "type": "string",
+              "pattern": "^media_[A-Za-z0-9_-]{12,80}$"
+            },
+            "ownerType": {
+              "const": "room"
+            },
+            "ownerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "roomId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "fileName": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "mimeType": {
+              "enum": [
+                "image/png",
+                "image/jpeg",
+                "image/gif",
+                "image/webp"
+              ]
+            },
+            "byteSize": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20971520
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "width": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "height": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "durationMs": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "thumbnailMediaId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "origin": {
+              "const": "user_attachment"
+            },
+            "originTool": {
+              "type": "string"
+            },
+            "originReceiptId": {
+              "type": "string"
+            },
+            "createdAtMs": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
       "idempotencyKey": {
         "type": "string",
         "minLength": 1
@@ -15559,6 +17728,36 @@ export const contractSchemas = {
       "createdAtMs": {
         "type": "integer",
         "minimum": 0
+      }
+    },
+    "$defs": {
+      "questionOption": {
+        "type": "object",
+        "required": [
+          "value",
+          "label"
+        ],
+        "properties": {
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "recommended": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
       }
     },
     "additionalProperties": false
@@ -15844,6 +18043,104 @@ export const contractSchemas = {
       "owner": {
         "type": "string",
         "minLength": 1
+      },
+      "requirementAnchorRef": {
+        "type": "string",
+        "minLength": 1
+      },
+      "createdByActorRef": {
+        "type": "string",
+        "minLength": 1
+      },
+      "terminalReceiptId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "activeProfileRef": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "budgetPolicyRef": {
+        "type": "string",
+        "minLength": 1
+      },
+      "createdAtMs": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "room-root-execution.v3": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-root-execution.v3.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "rootId",
+      "roomId",
+      "generation",
+      "state",
+      "facilitatorParticipantId",
+      "reporterParticipantId",
+      "reporterSelectionReceiptId",
+      "requirementAnchorRef",
+      "createdByActorRef",
+      "terminalReceiptId",
+      "activeProfileRef",
+      "budgetPolicyRef",
+      "createdAtMs"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-root-execution.v3"
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "roomId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "generation": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "running",
+          "waiting",
+          "blocked",
+          "cancelling",
+          "cancelled",
+          "cancelled_with_unknowns",
+          "completed",
+          "failed"
+        ]
+      },
+      "facilitatorParticipantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "reporterParticipantId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "reporterSelectionReceiptId": {
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "requirementAnchorRef": {
         "type": "string",
@@ -16391,6 +18688,153 @@ export const contractSchemas = {
           "type": "string",
           "minLength": 1
         }
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "active",
+          "review",
+          "waiting",
+          "blocked",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      }
+    }
+  },
+  "room-task.v3": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://wisdom-weasel.local/contracts/room-task.v3.json",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "schemaVersion",
+      "taskId",
+      "rootId",
+      "parentTaskId",
+      "taskKind",
+      "currentOwnerParticipantId",
+      "ownershipRevision",
+      "ownershipReceiptId",
+      "objective",
+      "expectedOutput",
+      "requirementItemIds",
+      "acceptanceCriterionIds",
+      "contextEvidenceRefs",
+      "invitationId",
+      "reviewOfTaskIds",
+      "reviewAuthorParticipantIds",
+      "reviewState",
+      "revision",
+      "state"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "wisdom-weasel.room-task.v3"
+      },
+      "taskId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "rootId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "parentTaskId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "taskKind": {
+        "type": "string",
+        "enum": [
+          "work",
+          "invitation",
+          "review"
+        ]
+      },
+      "currentOwnerParticipantId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "ownershipRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "ownershipReceiptId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "objective": {
+        "type": "string",
+        "minLength": 1
+      },
+      "expectedOutput": {
+        "type": "string",
+        "minLength": 1
+      },
+      "requirementItemIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "acceptanceCriterionIds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "contextEvidenceRefs": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "invitationId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "reviewOfTaskIds": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "reviewAuthorParticipantIds": {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "reviewState": {
+        "type": "string",
+        "enum": [
+          "not_required",
+          "required",
+          "in_review",
+          "accepted",
+          "changes_requested"
+        ]
       },
       "revision": {
         "type": "integer",
@@ -16993,67 +19437,27 @@ export const contractSchemas = {
         "additionalProperties": false,
         "required": [
           "schemaVersion",
-          "originalRequirement",
-          "currentTask",
-          "acceptanceCriteria",
-          "acceptanceSource",
-          "blockers",
-          "handoff",
-          "latestProgress",
-          "planStatus",
+          "summaryPresent",
+          "summarySha256",
+          "summaryChars",
           "skills",
           "tools"
         ],
         "properties": {
           "schemaVersion": {
-            "const": "rag-ime.agent-compaction-recovery.v1"
+            "const": "rag-ime.agent-compaction-recovery.v2"
           },
-          "originalRequirement": {
+          "summaryPresent": {
+            "type": "boolean"
+          },
+          "summarySha256": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 4000
+            "pattern": "^[0-9a-f]{64}$"
           },
-          "currentTask": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 1200
-          },
-          "acceptanceCriteria": {
-            "type": "array",
-            "maxItems": 8,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 300
-            }
-          },
-          "acceptanceSource": {
-            "enum": [
-              "structured_task",
-              "original_requirement"
-            ]
-          },
-          "blockers": {
-            "type": "array",
-            "maxItems": 8,
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 300
-            }
-          },
-          "handoff": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 300
-          },
-          "latestProgress": {
-            "type": "string",
-            "maxLength": 1200
-          },
-          "planStatus": {
-            "type": "string",
-            "maxLength": 40
+          "summaryChars": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8000
           },
           "skills": {
             "type": "array",
@@ -17547,6 +19951,899 @@ export const contractSchemas = {
         "minimum": 0
       }
     }
+  },
+  "work-document-command.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.work-document-command.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "ok",
+      "operation",
+      "document"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.work-document-command.v1"
+      },
+      "ok": {
+        "type": "boolean",
+        "const": true
+      },
+      "operation": {
+        "type": "string",
+        "enum": [
+          "register",
+          "archive",
+          "repair",
+          "reopen",
+          "erase-preview",
+          "erase"
+        ]
+      },
+      "document": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/document"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "receipt": {
+        "$ref": "#/$defs/receipt"
+      },
+      "approval": {
+        "type": "object"
+      },
+      "payloadSha256": {
+        "type": "string",
+        "pattern": "^[a-f0-9]{64}$"
+      }
+    },
+    "additionalProperties": false,
+    "allOf": [
+      {
+        "if": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "erase-preview"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "approval",
+            "payloadSha256"
+          ]
+        },
+        "else": {
+          "required": [
+            "receipt"
+          ]
+        }
+      },
+      {
+        "if": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "const": "erase"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "document": {
+              "type": "null"
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "document": {
+              "$ref": "#/$defs/document"
+            }
+          }
+        }
+      }
+    ],
+    "$defs": {
+      "receipt": {
+        "type": "object",
+        "required": [
+          "receiptId",
+          "operation",
+          "status",
+          "idempotent",
+          "createdAtMs"
+        ],
+        "properties": {
+          "receiptId": {
+            "type": "string",
+            "pattern": "^workdoc-receipt:[a-f0-9]{32}$"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "register",
+              "archive",
+              "repair",
+              "reopen",
+              "erase"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "applied",
+              "failed"
+            ]
+          },
+          "idempotent": {
+            "type": "boolean"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "document": {
+        "type": "object",
+        "required": [
+          "documentId",
+          "authorityKind",
+          "authorityId",
+          "authorityRevision",
+          "authorityKey",
+          "documentRevision",
+          "contentSha256",
+          "workspaceRoot",
+          "path",
+          "activePath",
+          "archivePath",
+          "state",
+          "title",
+          "terminalReceiptId",
+          "error",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "pattern": "^workdoc_[a-f0-9]{32}$"
+          },
+          "authorityKind": {
+            "type": "string",
+            "enum": [
+              "session_plan",
+              "session_goal",
+              "room_work_item"
+            ]
+          },
+          "authorityId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "authorityRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "authorityKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "documentRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contentSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "workspaceRoot": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "activePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "archivePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archive_pending",
+              "archived",
+              "reopen_pending",
+              "error"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "terminalReceiptId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "error": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "work-document-context.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.work-document-context.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "items"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.work-document-context.v1"
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 200,
+        "items": {
+          "type": "object",
+          "required": [
+            "documentId",
+            "title",
+            "path",
+            "contentSha256",
+            "authorityKey"
+          ],
+          "properties": {
+            "documentId": {
+              "type": "string",
+              "pattern": "^workdoc_[a-f0-9]{32}$"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 240
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "contentSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "authorityKey": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 320
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "additionalProperties": false
+  },
+  "work-document-detail.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.work-document-detail.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "document"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.work-document-detail.v1"
+      },
+      "document": {
+        "$ref": "#/$defs/document"
+      }
+    },
+    "additionalProperties": false,
+    "$defs": {
+      "document": {
+        "type": "object",
+        "required": [
+          "documentId",
+          "authorityKind",
+          "authorityId",
+          "authorityRevision",
+          "authorityKey",
+          "documentRevision",
+          "contentSha256",
+          "workspaceRoot",
+          "path",
+          "activePath",
+          "archivePath",
+          "state",
+          "title",
+          "terminalReceiptId",
+          "error",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "pattern": "^workdoc_[a-f0-9]{32}$"
+          },
+          "authorityKind": {
+            "type": "string",
+            "enum": [
+              "session_plan",
+              "session_goal",
+              "room_work_item"
+            ]
+          },
+          "authorityId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "authorityRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "authorityKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "documentRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contentSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "workspaceRoot": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "activePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "archivePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archive_pending",
+              "archived",
+              "reopen_pending",
+              "error"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "terminalReceiptId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "error": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "work-document-list.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.work-document-list.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "items",
+      "total"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.work-document-list.v1"
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 200,
+        "items": {
+          "$ref": "#/$defs/document"
+        }
+      },
+      "total": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "additionalProperties": false,
+    "$defs": {
+      "document": {
+        "type": "object",
+        "required": [
+          "documentId",
+          "authorityKind",
+          "authorityId",
+          "authorityRevision",
+          "authorityKey",
+          "documentRevision",
+          "contentSha256",
+          "workspaceRoot",
+          "path",
+          "activePath",
+          "archivePath",
+          "state",
+          "title",
+          "terminalReceiptId",
+          "error",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "pattern": "^workdoc_[a-f0-9]{32}$"
+          },
+          "authorityKind": {
+            "type": "string",
+            "enum": [
+              "session_plan",
+              "session_goal",
+              "room_work_item"
+            ]
+          },
+          "authorityId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "authorityRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "authorityKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 320
+          },
+          "documentRevision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "contentSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "workspaceRoot": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "activePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "archivePath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archive_pending",
+              "archived",
+              "reopen_pending",
+              "error"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "terminalReceiptId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "error": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAtMs": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "workspace-lsp-mutation-receipt.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.workspace-lsp-mutation-receipt.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "mutationApplied",
+      "summary",
+      "operation",
+      "root",
+      "server",
+      "changedFiles",
+      "undoAvailable"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.workspace-lsp-mutation-receipt.v1"
+      },
+      "mutationApplied": {
+        "type": "boolean",
+        "const": true
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      },
+      "operation": {
+        "type": "string",
+        "enum": [
+          "rename",
+          "code_action_apply"
+        ]
+      },
+      "root": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "server": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "changedFiles": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 16,
+        "items": {
+          "type": "object",
+          "required": [
+            "path",
+            "preimageSha256",
+            "postimageSha256"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "preimageSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "postimageSha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "undoAvailable": {
+        "type": "boolean",
+        "const": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "workspace-lsp-result.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.workspace-lsp-result.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "summary",
+      "operation",
+      "root",
+      "server"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.workspace-lsp-result.v1"
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      },
+      "operation": {
+        "type": "string",
+        "enum": [
+          "symbols",
+          "hover",
+          "definition",
+          "references",
+          "diagnostics"
+        ]
+      },
+      "root": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "server": {
+        "type": "string",
+        "maxLength": 1000
+      },
+      "items": {
+        "type": "array",
+        "maxItems": 200,
+        "items": {
+          "type": "object"
+        }
+      },
+      "content": {
+        "type": "string",
+        "maxLength": 16384
+      },
+      "range": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "column": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "endLine": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "endColumn": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "line",
+          "column",
+          "endLine",
+          "endColumn"
+        ],
+        "additionalProperties": false
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "additionalProperties": false
+  },
+  "workspace-lsp-status.v1": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "rag-ime.contract.workspace-lsp-status.v1",
+    "type": "object",
+    "required": [
+      "schemaVersion",
+      "runtimeInstanceId",
+      "runtimeEpoch",
+      "observedAtMs",
+      "heartbeatExpiresAtMs",
+      "current",
+      "summary",
+      "state",
+      "roots"
+    ],
+    "properties": {
+      "schemaVersion": {
+        "type": "string",
+        "const": "rag-ime.workspace-lsp-status.v1"
+      },
+      "runtimeInstanceId": {
+        "type": "string",
+        "pattern": "^workspace-lsp-[0-9a-f]{32}$"
+      },
+      "runtimeEpoch": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "observedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "heartbeatExpiresAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "current": {
+        "type": "boolean"
+      },
+      "summary": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      },
+      "state": {
+        "type": "string",
+        "enum": [
+          "ready",
+          "available",
+          "degraded",
+          "unavailable"
+        ]
+      },
+      "roots": {
+        "type": "array",
+        "maxItems": 64,
+        "items": {
+          "type": "object",
+          "required": [
+            "root",
+            "state",
+            "servers"
+          ],
+          "properties": {
+            "root": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "ready",
+                "available",
+                "degraded",
+                "unavailable"
+              ]
+            },
+            "errorCode": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "error": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "servers": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "state",
+                  "languageIds",
+                  "fileExtensions"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "ready",
+                      "available",
+                      "degraded",
+                      "unavailable"
+                    ]
+                  },
+                  "languageIds": {
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 120
+                    }
+                  },
+                  "fileExtensions": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {
+                      "type": "string",
+                      "maxLength": 32
+                    }
+                  },
+                  "errorCode": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "error": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "additionalProperties": false
   },
 } as const;
 

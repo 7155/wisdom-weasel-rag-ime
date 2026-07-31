@@ -65,7 +65,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
     init(routePolicy: NativeRoutePolicy) {
         self.routePolicy = routePolicy
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 120
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.requestSession = URLSession(configuration: configuration)
@@ -338,7 +338,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func pickFiles(id: String, payload: [String: Any]) {
         do {
-            let allowedKeys: Set<String> = ["accepts", "multiple", "purpose", "selection", "sessionId", "kbId", "parserProvider", "maxFiles"]
+            let allowedKeys: Set<String> = ["accepts", "multiple", "purpose", "selection", "sessionId", "roomId", "kbId", "parserProvider", "maxFiles"]
             guard Set(payload.keys).isSubset(of: allowedKeys) else {
                 throw NativeMediaImportError.rejected("File picker payload contained an unsupported field")
             }
@@ -385,21 +385,19 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 throw NativeMediaImportError.rejected("File picker maxFiles is outside the allowed range")
             }
             if purpose == "attachment" {
-                let sessionId = try requiredString("sessionId", in: payload)
-                guard sessionId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$", options: .regularExpression) != nil else {
-                    throw NativeMediaImportError.rejected("Attachment sessionId is invalid")
-                }
+                let owner = try managedMediaOwner(in: payload)
                 presentAgentImagePicker(
                     id: id,
-                    sessionId: sessionId,
+                    ownerKey: owner.key,
+                    ownerId: owner.id,
                     maxFiles: requestedCount,
                     multiple: multiple
                 )
                 return
             }
             if purpose == "knowledge-import" {
-                guard payload["sessionId"] == nil else {
-                    throw NativeMediaImportError.rejected("sessionId is only accepted for Agent attachments")
+                guard payload["sessionId"] == nil, payload["roomId"] == nil else {
+                    throw NativeMediaImportError.rejected("Media owners are only accepted for managed attachments")
                 }
                 let kbId = try requiredString("kbId", in: payload)
                 guard kbId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$", options: .regularExpression) != nil else {
@@ -419,8 +417,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 )
                 return
             }
-            guard payload["sessionId"] == nil else {
-                throw NativeMediaImportError.rejected("sessionId is only accepted for Agent attachments")
+            guard payload["sessionId"] == nil, payload["roomId"] == nil else {
+                throw NativeMediaImportError.rejected("Media owners are only accepted for managed attachments")
             }
             guard payload["kbId"] == nil, payload["parserProvider"] == nil else {
                 throw NativeMediaImportError.rejected("Knowledge import fields require the knowledge-import purpose")
@@ -439,14 +437,11 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func pasteImages(id: String, payload: [String: Any]) {
         do {
-            let allowedKeys: Set<String> = ["sessionId", "maxFiles"]
+            let allowedKeys: Set<String> = ["sessionId", "roomId", "maxFiles"]
             guard Set(payload.keys).isSubset(of: allowedKeys) else {
                 throw NativeMediaImportError.rejected("Image paste payload contained an unsupported field")
             }
-            let sessionId = try requiredString("sessionId", in: payload)
-            guard sessionId.range(of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$", options: .regularExpression) != nil else {
-                throw NativeMediaImportError.rejected("Attachment sessionId is invalid")
-            }
+            let owner = try managedMediaOwner(in: payload)
             guard let number = payload["maxFiles"] as? NSNumber,
                   CFGetTypeID(number) != CFBooleanGetTypeID(),
                   number.doubleValue == Double(number.intValue),
@@ -457,7 +452,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             guard !selected.isEmpty else {
                 throw NativeMediaImportError.rejected("The clipboard does not contain a supported image")
             }
-            uploadAgentImages(id: id, sessionId: sessionId, files: selected)
+            uploadAgentImages(id: id, ownerKey: owner.key, ownerId: owner.id, files: selected)
         } catch {
             replyError(id: id, code: "agent_media_paste_rejected", message: error.localizedDescription)
         }
@@ -849,7 +844,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func presentAgentImagePicker(
         id: String,
-        sessionId: String,
+        ownerKey: String,
+        ownerId: String,
         maxFiles: Int,
         multiple: Bool
     ) {
@@ -875,7 +871,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                 guard !selected.isEmpty else {
                     throw NativeMediaImportError.rejected("No image was selected")
                 }
-                self.uploadAgentImages(id: id, sessionId: sessionId, files: Array(selected))
+                self.uploadAgentImages(id: id, ownerKey: ownerKey, ownerId: ownerId, files: Array(selected))
             } catch {
                 self.replyError(id: id, code: "agent_media_selection_rejected", message: error.localizedDescription)
             }
@@ -1238,7 +1234,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func uploadAgentImages(
         id: String,
-        sessionId: String,
+        ownerKey: String,
+        ownerId: String,
         files: [SelectedAgentImage],
         index: Int = 0,
         receipts: [[String: Any]] = []
@@ -1249,7 +1246,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             return
         }
         let file = files[index]
-        guard let request = agentMediaImportRequest(sessionId: sessionId, selected: file) else {
+        guard let request = agentMediaImportRequest(ownerKey: ownerKey, ownerId: ownerId, selected: file) else {
             replyError(id: id, code: "agent_media_import_rejected", message: "Managed media import URL could not be constructed")
             return
         }
@@ -1262,14 +1259,16 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
                         data: data,
                         response: response,
                         error: error,
-                        sessionId: sessionId,
+                        ownerKey: ownerKey,
+                        ownerId: ownerId,
                         selected: file
                     )
                     var nextReceipts = receipts
                     nextReceipts.append(receipt)
                     self.uploadAgentImages(
                         id: id,
-                        sessionId: sessionId,
+                        ownerKey: ownerKey,
+                        ownerId: ownerId,
                         files: files,
                         index: index + 1,
                         receipts: nextReceipts
@@ -1298,7 +1297,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
     }
 
     private func agentMediaImportRequest(
-        sessionId: String,
+        ownerKey: String,
+        ownerId: String,
         selected: SelectedAgentImage
     ) -> URLRequest? {
         var components = URLComponents()
@@ -1307,7 +1307,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         components.port = 8766
         components.path = "/api/agent/media/import"
         components.queryItems = [
-            URLQueryItem(name: "sessionId", value: sessionId),
+            URLQueryItem(name: ownerKey, value: ownerId),
             URLQueryItem(name: "fileName", value: selected.name),
         ]
         guard let url = components.url,
@@ -1328,7 +1328,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         data: Data?,
         response: URLResponse?,
         error: Error?,
-        sessionId: String,
+        ownerKey: String,
+        ownerId: String,
         selected: SelectedAgentImage
     ) throws -> [String: Any] {
         if let error { throw error }
@@ -1351,7 +1352,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
               media["schemaVersion"] as? String == "rag-ime.agent-media.v1",
               let mediaId = media["mediaId"] as? String,
               mediaId.range(of: "^media_[A-Za-z0-9_-]{12,80}$", options: .regularExpression) != nil,
-              media["sessionId"] as? String == sessionId,
+              media[ownerKey] as? String == ownerId,
+              media["ownerType"] as? String == (ownerKey == "roomId" ? "room" : "session"),
+              media["ownerId"] as? String == ownerId,
               media["mimeType"] as? String == selected.mimeType,
               (media["byteSize"] as? NSNumber)?.intValue == selected.byteSize,
               let sha256 = media["sha256"] as? String,
@@ -1368,7 +1371,7 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             "name": name,
             "mimeType": selected.mimeType,
             "byteSize": selected.byteSize,
-            "sessionId": sessionId,
+            ownerKey: ownerId,
             "sha256": sha256,
         ]
     }
@@ -1597,14 +1600,14 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             executable = URL(fileURLWithPath: "/bin/launchctl")
             arguments = ["kickstart", "-k", "gui/\(getuid())/com.rag-ime.sidecar"]
         case "restart_predictor":
-            executable = URL(fileURLWithPath: "/bin/launchctl")
-            arguments = ["kickstart", "-k", "gui/\(getuid())/com.rag-ime.mlx-predictor"]
+            executable = URL(fileURLWithPath: "/bin/bash")
+            arguments = [try trustedDiagnosticsHelper(named: "apply_predictor_configuration.sh").path]
         case "register_input_source":
             executable = URL(fileURLWithPath: "/bin/bash")
             arguments = [try trustedDiagnosticsHelper(named: "refresh_squirrel_input_source_registration.sh").path]
         case "redeploy_rime":
             executable = URL(fileURLWithPath: "/bin/bash")
-            arguments = [try trustedDiagnosticsHelper(named: "install_squirrel_rag_config.sh").path]
+            arguments = [try trustedDiagnosticsHelper(named: "apply_input_method_configuration.sh").path]
         default:
             throw NativeMediaImportError.rejected("External action is not allowlisted")
         }
@@ -1632,7 +1635,8 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
         let completed = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in completed.signal() }
         try process.run()
-        if completed.wait(timeout: .now() + 90) == .timedOut {
+        let timeoutSeconds: Double = action == "restart_predictor" ? 115 : 90
+        if completed.wait(timeout: .now() + timeoutSeconds) == .timedOut {
             process.terminate()
             _ = completed.wait(timeout: .now() + 2)
             return (124, "The approved external action timed out")
@@ -1647,8 +1651,9 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
 
     private func trustedDiagnosticsHelper(named name: String) throws -> URL {
         let allowedNames = Set([
+            "apply_input_method_configuration.sh",
+            "apply_predictor_configuration.sh",
             "refresh_squirrel_input_source_registration.sh",
-            "install_squirrel_rag_config.sh",
         ])
         guard allowedNames.contains(name) else {
             throw NativeMediaImportError.rejected("Diagnostics helper is not allowlisted")
@@ -1690,6 +1695,23 @@ final class NativeBridge: NSObject, WKScriptMessageHandler {
             return resolved
         }
         throw NativeMediaImportError.rejected("The trusted diagnostics helper is not installed")
+    }
+
+    private func managedMediaOwner(in payload: [String: Any]) throws -> (key: String, id: String) {
+        let sessionId = payload["sessionId"] as? String
+        let roomId = payload["roomId"] as? String
+        guard (sessionId == nil) != (roomId == nil) else {
+            throw NativeMediaImportError.rejected("Exactly one sessionId or roomId is required")
+        }
+        let key = sessionId == nil ? "roomId" : "sessionId"
+        let ownerId = sessionId ?? roomId ?? ""
+        guard ownerId.range(
+            of: "^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$",
+            options: .regularExpression
+        ) != nil else {
+            throw NativeMediaImportError.rejected("Managed media owner id is invalid")
+        }
+        return (key, ownerId)
     }
 
     private func requiredString(_ key: String, in payload: [String: Any]) throws -> String {

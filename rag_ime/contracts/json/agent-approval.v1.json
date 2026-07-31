@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "rag-ime.contract.agent-approval.v1",
   "type": "object",
-  "required": ["schemaVersion", "approvalId", "sessionId", "toolId", "operation", "payloadSha256", "preview", "riskLevel", "state", "requestedAtMs", "expiresAtMs", "decidedBy"],
+  "required": ["schemaVersion", "approvalId", "sessionId", "toolId", "operation", "payloadSha256", "preview", "riskLevel", "state", "requestedAtMs", "expiresAtMs", "decidedBy", "causalMetadata"],
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.agent-approval.v1"},
     "approvalId": {"type": "string", "minLength": 1},
@@ -17,6 +17,19 @@
     "expiresAtMs": {"type": "integer", "minimum": 0},
     "decidedBy": {"type": "string", "maxLength": 120},
     "decidedAtMs": {"type": ["integer", "null"]},
-    "receipt": {"type": ["object", "null"]}
+    "receipt": {"type": ["object", "null"]},
+    "causalMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planId", "planRevision", "goalId", "goalRevision", "turnId", "roomBound"],
+      "properties": {
+        "planId": {"type": "string", "maxLength": 240},
+        "planRevision": {"type": "integer", "minimum": 0},
+        "goalId": {"type": "string", "maxLength": 240},
+        "goalRevision": {"type": "integer", "minimum": 0},
+        "turnId": {"type": "string", "maxLength": 240},
+        "roomBound": {"type": "boolean"}
+      }
+    }
   }
 }

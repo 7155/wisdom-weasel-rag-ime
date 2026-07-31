@@ -18,7 +18,7 @@ Preserve the original finding and add, never replace:
 
 | Status | Meaning |
 |---|---|
-| `fixed` | implementation changed and original path now has regression evidence |
+| `fixed` | implementation changed and the original path has a behavioral regression or a focused verifier that would fail on the original non-behavioral defect |
 | `evidenced` | implementation was correct; new evidence proves the requested behavior |
 | `clarified` | scope or wording was ambiguous; no defect claim is silently erased |
 | `disputed` | requirement or evidence contradicts the finding |
@@ -31,19 +31,33 @@ Preserve the original finding and add, never replace:
    outcome. Never edit history to make a fix look easier.
 2. Classify the current response as `fixed`, `evidenced`, `clarified`,
    `disputed`, `deferred`, or `blocked`.
-3. For a fix, reproduce the reported path, make the smallest supported change,
-   and add a regression that would detect the original defect.
+3. For a behavioral fix, reproduce the path, make the smallest supported
+   change, and add a regression that detects the original behavior. For a
+   documentation, configuration, or contract-text fix, use a focused verifier
+   that would fail on the original defect; do not invent a behavioral test.
 4. For a dispute, answer the requirement and evidence rather than the reviewer.
    New evidence may change a finding; confidence or tone may not.
 5. Link every changed artifact and verification result, then mark the finding
    ready for its required re-review. Never self-approve separation-of-duty work.
 
+## Repeated-Failure Sweep
+
+When two verified findings share the same invariant class, state that invariant
+once, sweep bounded sibling call sites and state transitions for the same
+failure mode, and report affected references plus prevention evidence.
+Unrelated findings do not trigger this sweep. If a third review round finds the
+same invariant failure on the same state object, stop patching instances and
+return an advisory planning/requirement gap packet with the original findings,
+object, missing transition or invariant, and evidence. The existing Runtime
+owner decides routing and state. This Skill creates neither.
+
 ## Per-Finding Packet
 
 Include original text and severity, chosen status, response, changed artifacts,
-fresh evidence, regression for the original path, unresolved disagreement,
-residual risk, and required re-review owner. Resolve findings one by one; a
-passing broad suite does not answer a specific behavioral finding.
+fresh evidence, behavioral regression or focused failing verifier as
+applicable, sweep/escalation result, unresolved disagreement, residual risk,
+and required re-review owner. Resolve findings one by one; a passing broad
+suite does not answer a specific finding.
 
 ## Output Contract
 

@@ -620,7 +620,35 @@ BROWSER_ROUTES: tuple[RouteDescriptor, ...] = (
     _post("/api/browser/managed/stop", "browser_control.stop_managed", takes_arguments=False),
 )
 
+WORK_DOCUMENT_ROUTES: tuple[RouteDescriptor, ...] = (
+    RouteDescriptor(
+        method="GET",
+        path="/api/agent/work-documents",
+        handler="agent.work_documents.list",
+        query_args=("limit",),
+        takes_arguments=True,
+        response_contract="work-document-list.v1.json",
+    ),
+    RouteDescriptor(
+        method="GET",
+        path="/api/agent/work-documents/history/search",
+        handler="agent.work_documents.history_search",
+        query_args=("query", "limit"),
+        takes_arguments=True,
+        response_contract="work-document-list.v1.json",
+    ),
+    RouteDescriptor(
+        method="POST",
+        path="/api/agent/work-documents",
+        handler="agent.work_documents.register",
+        status=201,
+        response_contract="work-document-command.v1.json",
+    ),
+)
+
+
 MIGRATED_ROUTES: tuple[RouteDescriptor, ...] = (
+    *WORK_DOCUMENT_ROUTES,
     *VOCABULARY_ROUTES,
     *BROWSER_ROUTES,
     *READ_ROUTES,

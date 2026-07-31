@@ -76,22 +76,36 @@ def _sibling_repository_root(root: Path) -> Path:
 def _deterministic_evidence_root(root: Path) -> Path:
     """Where the machine-local deterministic Provider evidence lives.
 
-    The evidence directory is gitignored, so a physical worktree never has a
-    copy of its own; it exists only where it was captured, normally the
-    canonical checkout. A locally captured copy still wins -- the renderer
-    writes to `root`, and re-rendering must read what it just wrote -- and
-    when neither location has evidence the historical local path is
-    returned so the absence is reported against the same directory as
-    before.
+    The evidence directory is gitignored, so a physical worktree normally has
+    only the tracked audit report. Prefer a worktree-local directory only when
+    it contains captured Provider evidence; otherwise use the canonical
+    checkout's capture. This keeps source-only worktrees portable without
+    silently dropping runtime prompt ledger entries.
     """
 
     relative = Path("docs") / "agent" / "audits" / "agent-prompt-system-current"
+    scenario_directories = (
+        "provider-agent-deterministic",
+        "provider-room-deterministic",
+    )
+
+    def has_provider_evidence(directory: Path) -> bool:
+        for scenario in scenario_directories:
+            scenario_root = directory / scenario
+            if (scenario_root / "audit.json").is_file():
+                return True
+            calls_root = scenario_root / "calls"
+            if calls_root.is_dir() and next(calls_root.glob("*.json"), None) is not None:
+                return True
+        return False
+
     local = root / relative
-    if local.is_dir():
+    if has_provider_evidence(local):
         return local
     repository = _canonical_repository(root)
-    if repository is not None and (repository / relative).is_dir():
-        return repository / relative
+    canonical = repository / relative if repository is not None else None
+    if canonical is not None and has_provider_evidence(canonical):
+        return canonical
     return local
 
 
@@ -105,6 +119,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.agent_prompt_audit_html import render_audit_html  # noqa: E402
+from rag_ime.agent_approval_model import (  # noqa: E402
+    APPROVAL_MODEL_PROMPT_VERSION,
+    _arbiter_prompt,
+    _model_input,
+)
 from rag_ime.agent_core_policy import (  # noqa: E402
     core_agent_policy_prompt,
     durable_memory_policy_prompt,
@@ -243,6 +262,7 @@ PI_RUNTIME_PROMPT_PRODUCERS = {
 
 PROMPT_TITLE_OVERRIDES = {
     "agent.core.safety": "Agent 安全与权限硬边界",
+    "agent.approval.model-arbiter-example": "Luna Max 无人值守审批裁决 Prompt 示例",
     "agent.core.work": "普通 Agent 请求分类与交付闭环",
     "agent.core.durable-memory": "长期记忆稳定治理边界",
     "agent.core.managed-work": "Goal、Task 与受管工作闭环",
@@ -256,7 +276,7 @@ PROMPT_TITLE_OVERRIDES = {
     "agent.execution.full_trust.granted": "执行权限：完全信任（边界已批准）",
     "agent.composed.assistant-example": "普通 Agent 最终稳定 Prompt 示例",
     "agent.composed.coordinator-example": "协调 Agent 最终稳定 Prompt 示例",
-    "room.dynamic.requirement-alignment": "Room 执行前需求对齐上下文",
+    "room.dynamic.alignment-and-decision": "Room 执行前对齐与决策上下文",
     "room.dynamic.managed-task": "Room 当前受管任务上下文",
     "room.dynamic.intercom-question": "Room 成员间受管提问",
     "room.dynamic.intercom-reply": "Room 成员间受管答复",
@@ -340,6 +360,27 @@ MODEL_REQUEST_ROUTE_SPECS: tuple[dict[str, object], ...] = (
             "pi.runtime.session-memory.agent-example",
         ],
         "notes": "普通 Agent 与子 Session 共用此生命周期；是否协调由 Session/template 决定。",
+    },
+    {
+        "id": "approval-model-arbiter",
+        "title": "完全自动审批裁决",
+        "sourceRoot": "product",
+        "sourcePath": "rag_ime/agent_approval_model.py::ApprovalModelArbiter.decide",
+        "reachability": "production-conditional",
+        "owner": "AgentService / ApprovalModelArbiter",
+        "model": "openai-codex/gpt-5.6-luna（固定，不继承当前 Session）",
+        "thinking": "固定 max",
+        "transport": "Pi 无会话 completion.once：用户请求、当前任务、结构化审批历史、操作预览与决策协议；无 tools",
+        "systemInstruction": "user-message instruction",
+        "tools": "none",
+        "promptIds": [
+            "agent.approval.model-arbiter-example",
+        ],
+        "notes": (
+            "仅在 full_trust 的待审批路径调用；Session 历史按 Session 隔离，Room 历史按 Room "
+            "共享，且不包含主 Agent 输出。模型拒绝、超时、取消、协议错误和运行时错误均 "
+            "fail closed，不执行原操作。"
+        ),
     },
     {
         "id": "agent-deep-search",
@@ -657,6 +698,15 @@ def _prompt_metadata_defaults(
             "model_route": "确定性 Provider 对象快照",
             "thinking_requirement": "沿用被审计 Session；此记录本身不发起模型调用",
         }
+    if category == "approval-arbitration":
+        return {
+            "display_group": "approval-arbitration",
+            "runtime_scope": "agent",
+            "reachability": "conditional",
+            "owner": "AgentService / ApprovalModelArbiter",
+            "model_route": "固定 openai-codex/gpt-5.6-luna",
+            "thinking_requirement": "固定 max；无 tools；单次无会话裁决",
+        }
     if category == "memory-governance":
         compatibility = status.startswith("legacy")
         historical = prompt_id == "memory.historical-curation"
@@ -812,6 +862,9 @@ def _prompt_metadata_defaults(
 # merely transport a user message. Every discovered symbol must be classified
 # so a new prompt producer cannot silently bypass this audit.
 PROMPT_SYMBOL_CLASSIFICATION = {
+    "agent_approval_model.py::APPROVAL_MODEL_PROMPT_VERSION": "prompt-version",
+    "agent_approval_model.py::_arbiter_prompt": "dynamic-prompt",
+    "agent_approval_model.py::_model_input": "bounded-prompt-input",
     "agent_context_runtime.py::RUNTIME_PROMPT_ENVELOPE_PREFIX": "transport-envelope",
     "agent_context_runtime.py::compose_runtime_prompt": "transport-assembler",
     "agent_core_policy.py::core_agent_policy_prompt": "stable-assembler",
@@ -1102,6 +1155,73 @@ def _ordinary_prompt_records() -> list[PromptRecord]:
             status="conditional",
         ),
     ]
+    records.append(
+        _record(
+            "agent.approval.model-arbiter-example",
+            "approval-arbitration",
+            "rag_ime/agent_approval_model.py",
+            "_arbiter_prompt",
+            "isolated stateless user message",
+            "executionMode=full_trust and one immutable approval preview is pending",
+            _arbiter_prompt(
+                _model_input(
+                    {
+                        "approvalId": "approval:example",
+                        "sessionId": "session:example",
+                        "toolName": "workspace_shell",
+                        "operation": "run",
+                        "riskLevel": "R2",
+                        "payloadSha256": "a" * 64,
+                        "preview": {
+                            "title": "运行工作区命令",
+                            "summary": "清理当前工作区内的构建目录",
+                            "actionPayload": {
+                                "cwd": "/workspace/project",
+                                "command": "rm -rf build",
+                            },
+                        },
+                    },
+                    {
+                        **_granted_workspace_session("full_trust"),
+                        "id": "session:example",
+                    },
+                    context={
+                        "contextAvailable": True,
+                        "contextKind": "session",
+                        "contextId": "session:example",
+                        "userRequests": [
+                            {
+                                "role": "user",
+                                "text": "清理构建产物后继续验证。",
+                            }
+                        ],
+                        "currentTask": {
+                            "kind": "agent_workflow",
+                            "activeUserRequest": "清理构建产物后继续验证。",
+                        },
+                        "actor": {"sessionId": "session:example"},
+                    },
+                    history=[
+                        {
+                            "approvalId": "approval:earlier",
+                            "decision": "approve",
+                            "status": "decided",
+                            "tool": "workspace_shell",
+                            "operation": "run",
+                            "reasonCodes": ["bounded_operation"],
+                            "rationaleSummary": "此前的受限验证命令可执行。",
+                        }
+                    ],
+                )
+            ),
+            status="representative",
+            notes=(
+                "The complete bounded input is hash-audited before this call. User requests and "
+                "structured decision history are included; primary-Agent messages are excluded. "
+                "The model returns strict JSON only; the immutable receipt is payload-hash-bound."
+            ),
+        )
+    )
     for mode in ("read_only", "per_action", "workspace_managed", "full_trust"):
         records.append(
             _record(
@@ -1358,7 +1478,7 @@ def _room_prompt_records() -> list[PromptRecord]:
     records.extend(
         (
             _record(
-                "room.dynamic.requirement-alignment",
+                "room.dynamic.alignment-and-decision",
                 "room-dynamic",
                 "rag_ime/agent_room_prompt_context.py",
                 "room_participant_prompt",
@@ -1507,7 +1627,18 @@ def _room_prompt_records() -> list[PromptRecord]:
                 "new bounded child Session",
                 "ordinary Agent delegation, not Room collaboration",
                 _subagent_prompt(
-                    {"task": "只读核对一个明确接口并返回证据"},
+                    {
+                        "task": "只读核对一个明确接口并返回证据",
+                        "expectedOutput": "接口边界、证据引用和未决风险",
+                        "acceptanceCriteria": [
+                            "结论区分已观察事实与推断",
+                            "引用真实回执且不宣称父任务已验收",
+                        ],
+                        "outputSchema": {
+                            "type": "object",
+                            "required": ["claims", "evidence", "uncertainties"],
+                        },
+                    },
                     {"contextMode": "fresh", "depth": 1, "maxDepth": 2},
                 ),
                 status="representative",
@@ -2049,6 +2180,7 @@ def _tool_payloads() -> dict[str, object]:
         project="wisdom-weasel-rag-ime",
     )
     session = {
+        "id": "agent:prompt-audit",
         "mode": "coordinator",
         "executionMode": "workspace_managed",
         "workspaceScopeGranted": True,
@@ -2088,10 +2220,10 @@ def _tool_payloads() -> dict[str, object]:
         "modelVisibleMemoryCapture": {
             "name": "memory_capture",
             "source": "pi-rag-ime-runtime/packages/rag-ime-runtime-host/src/memory-capture-tool.ts",
-            "projectionTarget": {"name": "ime_memory", "operation": "capture"},
+            "projectionTarget": {"name": "memory", "operation": "capture"},
             "note": (
                 "The Product manifest keeps the backend capture branch for authorization; "
-                "Pi removes that branch from ime_memory's public schema and exposes this "
+                "Pi removes that branch from memory's public schema and exposes this "
                 "single runtime-owned Tool instead."
             ),
         },
@@ -2129,9 +2261,14 @@ def discovered_prompt_symbols(root: Path = ROOT) -> dict[str, str]:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                symbol = f"{filename}::{node.name}"
                 normalized_name = node.name.lower()
-                if "prompt" in normalized_name or "instruction" in normalized_name:
-                    result[f"{filename}::{node.name}"] = "function"
+                if (
+                    "prompt" in normalized_name
+                    or "instruction" in normalized_name
+                    or PROMPT_SYMBOL_CLASSIFICATION.get(symbol) == "bounded-prompt-input"
+                ):
+                    result[symbol] = "function"
                 continue
             if not isinstance(node, (ast.Assign, ast.AnnAssign)):
                 continue
@@ -2566,23 +2703,18 @@ def _reference_comparison(cafe_root: Path, vcp_root: Path) -> dict[str, object]:
             "residualRisk": "真实 Provider KV cache 仍必须在 Prompt 冻结后实测；对象顺序正确不能单独证明上游实际命中。",
         },
         {
-            "id": "requirement-alignment",
-            "title": "需求澄清、追问与执行门",
+            "id": "alignment-and-decision",
+            "title": "对齐、追问、方案决策与执行门",
             "question": "用户只给目标时，什么时候追问、追问到什么程度、何时才允许创建执行任务？",
             "status": "实现完成，待用户审定",
-            "localPromptIds": ["room.dynamic.requirement-alignment"],
-            "localSkillNames": [
-                "requirement-alignment",
-                "grill-me",
-                "grill-me-docs",
-                "solution-convergence",
-            ],
+            "localPromptIds": ["room.dynamic.alignment-and-decision"],
+            "localSkillNames": ["alignment-and-decision"],
             "upstreamSnapshotIds": [
                 "cafe.requirement-interview",
                 "vcp.agent-assistant-manifest",
             ],
-            "decision": "采用 Cafe 和 grill-me 的采访式一次一问与确认门，并用 requirement-alignment 组织范围、验收与禁区；grill-me-docs 只是同一决策流程的持久记录模式，只有用户明确需要术语表、ADR 或决策文档时才按需加载，不能成为固定 Room 阶段。",
-            "whyBetter": "先查源码和运行事实，再由用户决定真实取舍；普通澄清留在 requirement-alignment，无需落盘的挑战留在 grill-me，只有用户确认的重大决定和明确未决问题进入文档。确认不会创建任务或授予实施权限，Kernel 仍独占执行状态。",
+            "decision": "采用单一 alignment-and-decision：先查事实、一次只问一个关键问题、冻结需求后再收敛方案；只有用户明确要求时才把直接确认的决定写入术语表、ADR 或决策文档。",
+            "whyBetter": "一个受管技能同时覆盖范围、验收、重大方案取舍和可选持久记录，避免四个入口重复提问；需求与方案仍由内部阶段门隔离，确认不会创建任务或授予实施权限，Kernel 继续独占执行状态。",
             "residualRisk": "当前追问质量仍依赖 Skill 文案；需要用模糊需求、已明确需求和用户拒绝继续澄清三类对话验收。",
         },
         {
@@ -2655,7 +2787,7 @@ def _reference_comparison(cafe_root: Path, vcp_root: Path) -> dict[str, object]:
                 "room.settle.repair",
             ],
             "localSkillNames": [
-                "managed-task-execution",
+                "implementation-execution",
                 "quality-gate",
             ],
             "upstreamSnapshotIds": [
@@ -2673,7 +2805,7 @@ def _reference_comparison(cafe_root: Path, vcp_root: Path) -> dict[str, object]:
             "question": "中途询问、正确移交和完成后的责任边界怎样写进 Prompt？",
             "status": "实现完成，待用户审定",
             "localPromptIds": [
-                "room.dynamic.requirement-alignment",
+                "room.dynamic.alignment-and-decision",
                 "room.dynamic.intercom-question",
                 "room.dispatch.trigger",
                 "agent.delegation.subagent-example",
@@ -3138,7 +3270,7 @@ def build_audit(
             {
                 "status": "fixed",
                 "issue": "记忆候选捕获曾有两条模型可见语义路径",
-                "result": "memory_capture 是唯一公开捕获 Tool；ime_memory.capture 只作为隐藏投影目标",
+                "result": "memory_capture 是唯一公开捕获 Tool；memory.capture 只作为隐藏投影目标",
             },
             {
                 "status": "fixed",

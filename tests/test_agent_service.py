@@ -17,6 +17,7 @@ from rag_ime.agent_command_receipts import (
     AgentCommandReceiptPending,
 )
 from rag_ime.agent_context_runtime import RUNTIME_PROMPT_ENVELOPE_PREFIX
+from rag_ime.agent_prompt_delivery import AgentPromptAcceptanceUnknown
 from rag_ime.agent_service import AgentService, pi_runtime_config_from_settings
 from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_tools import ControlToolGateway
@@ -190,12 +191,12 @@ class AgentServiceTests(unittest.TestCase):
             {
                 "mode": "assistant",
                 "toolProfileVersion": "subagent-readonly-v1",
-                "allowedTools": ["ime_overview", "ime_memory"],
+                "allowedTools": ["overview", "memory"],
             },
         )["session"]
         self.assertEqual(restricted["toolProfileVersion"], "subagent-readonly-v1")
         self.assertEqual(restricted["toolAllowlistMode"], "explicit")
-        self.assertEqual(restricted["allowedTools"], ["ime_overview", "ime_memory"])
+        self.assertEqual(restricted["allowedTools"], ["overview", "memory"])
         restored_profile = self.service.update_session(
             session_id,
             {
@@ -399,15 +400,28 @@ class AgentServiceTests(unittest.TestCase):
 
         listed = self.service.list_sessions()
         visible = {
-            str(session["id"]): str(session["sessionKind"])
+            str(session["id"]): session
             for session in listed["items"]
         }
 
         self.assertTrue(member_session_ids.issubset(visible))
         self.assertEqual(
-            {visible[session_id] for session_id in member_session_ids},
+            {
+                str(visible[session_id]["sessionKind"])
+                for session_id in member_session_ids
+            },
             {"conversation"},
         )
+        for participant in room["participants"]:
+            session = visible[str(participant["sessionId"])]
+            self.assertEqual(
+                session["roomParticipant"],
+                {
+                    "roomId": room["id"],
+                    "participantId": participant["id"],
+                    "status": "active",
+                },
+            )
 
     def test_execution_modes_require_scope_confirmation_and_keep_one_policy_owner(self) -> None:
         with self.assertRaisesRegex(ValueError, "workspace scope confirmation"):
@@ -577,7 +591,148 @@ class AgentServiceTests(unittest.TestCase):
         self.assertTrue(deleted["ok"])
         stop.assert_called_once_with()
 
-    def test_dangerous_auto_approval_applies_and_audits_a_hash_bound_preview(self) -> None:
+    def test_approval_context_uses_user_requests_and_excludes_agent_messages(self) -> None:
+        session = self.service.create_session(
+            {"title": "审批上下文测试"}
+        )["session"]
+        session_id = str(session["id"])
+        with patch.object(
+            self.service.message_snapshot,
+            "messages",
+            return_value={
+                "messages": [
+                    {
+                        "id": "message:user",
+                        "role": "user",
+                        "content": "只修改授权工作区并完成验证。",
+                        "createdAtMs": 10,
+                    },
+                    {
+                        "id": "message:assistant",
+                        "role": "assistant",
+                        "content": "PRIMARY_AGENT_OUTPUT_MUST_BE_EXCLUDED",
+                        "createdAtMs": 11,
+                    },
+                ]
+            },
+        ):
+            context = self.service._approval_model_context(
+                {"sessionId": session_id},
+                session,
+            )
+
+        self.assertTrue(context["contextAvailable"])
+        self.assertEqual(context["contextKind"], "session")
+        self.assertEqual(context["contextId"], session_id)
+        self.assertEqual(
+            context["userRequests"],
+            [
+                {
+                    "role": "user",
+                    "text": "只修改授权工作区并完成验证。",
+                    "turnId": "message:user",
+                    "createdAtMs": 10,
+                }
+            ],
+        )
+        self.assertEqual(
+            context["currentTask"]["activeUserRequest"],
+            "只修改授权工作区并完成验证。",
+        )
+        self.assertNotIn(
+            "PRIMARY_AGENT_OUTPUT_MUST_BE_EXCLUDED",
+            json.dumps(context, ensure_ascii=False),
+        )
+
+    def test_room_approval_context_is_room_global_and_task_bound(self) -> None:
+        session = self.service.create_session(
+            {"title": "Room 审批上下文"}
+        )["session"]
+        session_id = str(session["id"])
+        with (
+            patch.object(
+                self.service.rooms,
+                "participant_for_session",
+                return_value={
+                    "id": "participant:reviewer",
+                    "roomId": "room:shared",
+                },
+            ),
+            patch.object(
+                self.service.rooms,
+                "list_events",
+                return_value=[
+                    {
+                        "eventType": "user_message",
+                        "payload": {"text": "先检查实现边界。"},
+                        "turnId": "root:1",
+                        "createdAtMs": 10,
+                    },
+                    {
+                        "eventType": "participant_message",
+                        "payload": {
+                            "message": "PRIMARY_ROOM_AGENT_OUTPUT_MUST_BE_EXCLUDED"
+                        },
+                        "turnId": "root:1",
+                        "createdAtMs": 11,
+                    },
+                    {
+                        "eventType": "user_message",
+                        "payload": {"text": "然后完成受限修改。"},
+                        "turnId": "root:2",
+                        "createdAtMs": 12,
+                    },
+                ],
+            ),
+            patch.object(
+                self.service.room_capabilities,
+                "runtime_identity",
+                return_value={"dispatchId": "dispatch:1"},
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "dispatch",
+                return_value={
+                    "dispatchId": "dispatch:1",
+                    "taskId": "task:1",
+                },
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "task",
+                return_value={
+                    "rootId": "root:2",
+                    "taskId": "task:1",
+                    "state": "active",
+                    "objective": "完成受限修改",
+                    "expectedOutput": "验证回执",
+                    "acceptanceCriterionIds": ["criterion:1"],
+                },
+            ),
+        ):
+            context = self.service._approval_model_context(
+                {"sessionId": session_id},
+                session,
+            )
+
+        self.assertTrue(context["contextAvailable"])
+        self.assertEqual(context["contextKind"], "room")
+        self.assertEqual(context["contextId"], "room:shared")
+        self.assertEqual(
+            [request["text"] for request in context["userRequests"]],
+            ["先检查实现边界。", "然后完成受限修改。"],
+        )
+        self.assertEqual(context["currentTask"]["taskId"], "task:1")
+        self.assertEqual(
+            context["currentTask"]["acceptanceCriterionIds"],
+            ["criterion:1"],
+        )
+        self.assertNotIn(
+            "PRIMARY_ROOM_AGENT_OUTPUT_MUST_BE_EXCLUDED",
+            json.dumps(context, ensure_ascii=False),
+        )
+
+    def test_full_automation_model_approval_applies_and_audits_a_hash_bound_preview(self) -> None:
         session = self.service.create_session({"title": "完全信任测试"})["session"]
         session_id = str(session["id"])
         self.service.update_session(
@@ -591,7 +746,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         approval = self.service.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_planning",
+            tool_name="planning",
             operation="task_action",
             payload_sha256="a" * 64,
             preview={"title": "测试预览", "summary": "自动批准测试"},
@@ -608,13 +763,73 @@ class AgentServiceTests(unittest.TestCase):
             }
         )
 
-        result = self.service.auto_approve_pending(approval)
+        with patch.object(
+            self.service.approval_model,
+            "decide",
+            return_value={
+                "receiptId": "approval-model-decision:test",
+                "decision": "approve",
+                "rationaleSummary": "操作预览已绑定且位于授权范围。",
+            },
+        ):
+            result = self.service.auto_approve_pending(approval)
 
         self.assertTrue(result["autoApproved"])
         self.assertFalse(result["approvalRequired"])
         self.assertEqual(result["approval"]["state"], "applied")
+        self.assertEqual(result["decisionMode"], "model")
         self.assertIsNotNone(
             self.service.sessions.get_approval(str(approval["approvalId"]))["decidedAtMs"]
+        )
+
+    def test_full_automation_model_rejection_is_terminal_without_human_approval(self) -> None:
+        session = self.service.create_session(
+            {"title": "模型拒绝测试"}
+        )["session"]
+        session_id = str(session["id"])
+        self.service.update_session(
+            session_id,
+            {
+                "mode": "coordinator",
+                "workspaceRoots": [self.root.as_posix()],
+                "toolProfileVersion": "control-center-auto-approve-v1",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            },
+        )
+        approval = self.service.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_shell",
+            operation="run",
+            payload_sha256="b" * 64,
+            preview={"title": "危险操作", "summary": "删除数据库"},
+            risk_level="R3",
+        )
+        with patch.object(
+            self.service.approval_model,
+            "decide",
+            return_value={
+                "receiptId": "approval-model-decision:deny",
+                "decision": "deny",
+                "status": "decided",
+                "reasonCodes": ["destructive_effect"],
+                "rationaleSummary": "该操作会产生灾难性破坏。",
+            },
+        ):
+            result = self.service.auto_approve_pending(approval)
+
+        self.assertFalse(result["autoApproved"])
+        self.assertFalse(result["approvalRequired"])
+        self.assertTrue(result["modelDecided"])
+        self.assertEqual(result["decisionMode"], "model")
+        self.assertEqual(result["approvalModelDecision"]["decision"], "deny")
+        self.assertIn("灾难性破坏", result["summary"])
+        stored = self.service.sessions.get_approval(
+            str(approval["approvalId"])
+        )
+        self.assertEqual(stored["state"], "rejected")
+        self.assertEqual(
+            stored["decidedBy"],
+            "approval-model:approval-model-decision:deny",
         )
 
     def test_paused_or_exhausted_goal_blocks_provider_prompt_before_runtime(self) -> None:
@@ -624,7 +839,9 @@ class AgentServiceTests(unittest.TestCase):
         goal = self.service.sessions.mutate_agent_goal(
             session_id,
             {
-                "action": "set",
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
                 "objective": "在预算内完成实现",
                 "tokenBudget": 10,
             },
@@ -656,6 +873,20 @@ class AgentServiceTests(unittest.TestCase):
                 self.service.prompt(session_id, {"message": "继续执行"})
             provider.assert_not_called()
 
+        cancelled = self.service.mutate_goal(
+            session_id,
+            {
+                "action": "cancel",
+                "expectedRevision": exhausted["revision"],
+                "reason": "用户明确终止该 Goal",
+            },
+        )["goal"]
+        self.assertEqual(cancelled["status"], "cancelled")
+        with patch.object(self.service, "_prompt_with_checkpoint") as provider:
+            with self.assertRaisesRegex(ValueError, "goal_cancelled"):
+                self.service.prompt(session_id, {"message": "不要继续执行"})
+            provider.assert_not_called()
+
     def test_goal_settle_continuation_is_deterministic_for_one_active_revision(
         self,
     ) -> None:
@@ -682,7 +913,9 @@ class AgentServiceTests(unittest.TestCase):
         goal = self.service.sessions.mutate_agent_goal(
             session_id,
             {
-                "action": "set",
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
                 "objective": "完成剩余验收并提供证据",
                 "tokenBudget": 10_000,
             },
@@ -835,6 +1068,17 @@ class AgentServiceTests(unittest.TestCase):
                     "budgetExceeded": False,
                 },
                 {"allowed": False, "reason": "goal_completed"},
+            ),
+            (
+                "cancelled",
+                {
+                    "configured": True,
+                    "goalId": "goal:cancelled",
+                    "revision": 4,
+                    "status": "cancelled",
+                    "budgetExceeded": False,
+                },
+                {"allowed": False, "reason": "goal_cancelled"},
             ),
             (
                 "budget_exhausted",
@@ -1065,6 +1309,7 @@ class AgentServiceTests(unittest.TestCase):
             },
             turn_id="turn:bootstrap:2",
         )
+        self.assertTrue(self.service.events.flush())
         evidence = self.service.memory_evidence.list(
             role_id=str(session["roleId"]),
             session_id=session_id,
@@ -1230,10 +1475,16 @@ class AgentServiceTests(unittest.TestCase):
         context = refreshed["result"]["sessionContext"]
         self.assertIn("## 当前计划", context)
         self.assertIn("验证压缩后的 Provider 上下文", context)
-        self.assertIn("## 压缩恢复包（本 epoch 唯一）", context)
-        self.assertEqual(context.count("## 压缩恢复包（本 epoch 唯一）"), 1)
-        self.assertIn("ORIGINAL-RECOVERY-AC", context)
-        self.assertIn("我已经完成首轮召回", context)
+        history_heading = "## 压缩恢复回执（非任务状态）"
+        self.assertIn(history_heading, context)
+        self.assertEqual(context.count(history_heading), 1)
+        self.assertNotIn("ORIGINAL-RECOVERY-AC", context)
+        self.assertNotIn("我已经完成首轮召回", context)
+        self.assertIn(
+            "当前用户消息、本轮 workflow_control、当前任务与当前计划",
+            context,
+        )
+        self.assertIn("sha256:", context)
         self.assertIn("notfor@sha256:" + "a" * 64, context)
         self.assertIn("workspace_read@sha256:" + "c" * 64, context)
         self.assertNotIn("## 最近对话", context)
@@ -1244,7 +1495,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         active = self.service.context_runtime.materialize(session_id)
         self.assertEqual(active["itemIds"], [refreshed["result"]["itemId"]])
-        self.assertEqual(active["prompt"].count("ORIGINAL-RECOVERY-AC"), 1)
+        self.assertNotIn("ORIGINAL-RECOVERY-AC", active["prompt"])
         self.assertIn("workspace_read@sha256:" + "c" * 64, active["prompt"])
         self.assertEqual(
             len(self.service.context_runtime.list_items(session_id, status="expired")),
@@ -1273,10 +1524,7 @@ class AgentServiceTests(unittest.TestCase):
             session_id,
             {"action": "approve", "note": "批准执行计划"},
         )
-        self.service.sessions.mutate_agent_plan(
-            session_id,
-            {"action": "start_execution", "note": "开始执行"},
-        )
+        self.service.sessions.record_agent_plan_execution_started(session_id)
         for item_id in (
             "plan-item:baseline",
             "plan-item:patch",
@@ -1320,13 +1568,16 @@ class AgentServiceTests(unittest.TestCase):
 
         context = refreshed["result"]["sessionContext"]
         self.assertTrue(refreshed["result"]["compactionRecoveryPacket"])
-        self.assertIn("当前任务：已完成；不要重复执行。", context)
-        self.assertIn("计划状态：completed", context)
-        self.assertIn("任务已由本 Session 完成；无待交接责任。", context)
+        history_heading = "## 压缩恢复回执（非任务状态）"
+        self.assertIn(history_heading, context)
+        self.assertNotIn("TERMINAL-RECOVERY-AC", context)
+        self.assertNotIn("当前任务：已完成；不要重复执行。", context)
+        self.assertNotIn("计划状态：completed", context)
+        self.assertNotIn("任务已由本 Session 完成；无待交接责任。", context)
         self.assertNotIn("继续执行上述原始需求。", context)
         self.assertNotIn("## 当前计划", context)
         self.assertNotIn("[待办]", context)
-        self.assertEqual(context.count("## 压缩恢复包（本 epoch 唯一）"), 1)
+        self.assertEqual(context.count(history_heading), 1)
 
     def test_manual_compaction_does_not_repeat_runtime_context_refresh(self) -> None:
         session = self.service.create_session({"title": "压缩去重"})["session"]
@@ -1732,7 +1983,7 @@ class AgentServiceTests(unittest.TestCase):
                 "mode": "assistant",
                 "roleId": "companion-firstlight-v1",
                 "roleVersion": "1",
-                "modelProfile": "gpt/gpt-5.6-luna",
+                "modelProfile": "openai-codex/gpt-5.6-luna",
                 "toolProfileVersion": "subagent-readonly-v1",
             }
         )["session"]
@@ -1741,7 +1992,7 @@ class AgentServiceTests(unittest.TestCase):
             {
                 "mode": "assistant",
                 "toolProfileVersion": "subagent-readonly-v1",
-                "allowedTools": ["ime_overview", "ime_memory"],
+                "allowedTools": ["overview", "memory"],
             },
         )["session"]
         runtime = _ForkRuntime(self.service.sessions, self.root)
@@ -1830,6 +2081,9 @@ class AgentServiceTests(unittest.TestCase):
             "message_completed",
             {"message": {"id": "old-branch-message"}},
         )
+        stream = self.service.events.subscribe(session_id)
+        self.assertEqual(next(stream), b": connected\n\n")
+        self.assertIn(old_event.event_id.encode(), next(stream))
         with (
             patch.object(
                 self.service.runtime,
@@ -1865,10 +2119,17 @@ class AgentServiceTests(unittest.TestCase):
         replay, gap = self.service.events.replay(session_id)
         self.assertFalse(gap)
         self.assertNotIn(old_event.event_id, [event.event_id for event in replay])
-        self.assertEqual(
-            [event.payload["message"]["id"] for event in replay if event.event_type == "message_completed"],
-            ["pi-entry:rewrite:1"],
+        self.assertEqual(replay, [])
+        invalidation = json.loads(
+            next(
+                line
+                for line in next(stream).decode("utf-8").splitlines()
+                if line.startswith("data: ")
+            ).removeprefix("data: ")
         )
+        self.assertEqual(invalidation["eventType"], "snapshot_required")
+        self.assertEqual(invalidation["payload"]["reason"], "session_rewritten")
+        stream.close()
 
         with (
             patch.object(self.service.runtime, "rewind_session") as replay_rewind,
@@ -1886,6 +2147,59 @@ class AgentServiceTests(unittest.TestCase):
         replay_prompt.assert_not_called()
         self.assertTrue(replay_response["idempotentReplay"])
 
+    def test_conversation_rewrite_invalidates_to_durable_branch_when_replacement_prompt_fails(
+        self,
+    ) -> None:
+        session = self.service.create_session({"title": "原位修改失败"})["session"]
+        session_id = str(session["id"])
+        old_event = self.service.events.publish(
+            session_id,
+            "message_completed",
+            {"message": {"id": "old-durable-leaf"}},
+        )
+        stream = self.service.events.subscribe(session_id)
+        self.assertEqual(next(stream), b": connected\n\n")
+        self.assertIn(old_event.event_id.encode(), next(stream))
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "rewind_session",
+                return_value={"entryId": "entry-user-1", "leafId": "parent-entry"},
+            ),
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                side_effect=RuntimeError("replacement admission failed"),
+            ),
+            self.assertRaisesRegex(
+                AgentPromptAcceptanceUnknown,
+                "Pi acceptance is unknown",
+            ),
+        ):
+            self.service.rewrite_session(
+                session_id,
+                {
+                    "entryId": "entry-user-1",
+                    "message": "不会被接纳的问题",
+                    "clientMessageId": "rewrite-command-failed",
+                },
+            )
+
+        invalidation = json.loads(
+            next(
+                line
+                for line in next(stream).decode("utf-8").splitlines()
+                if line.startswith("data: ")
+            ).removeprefix("data: ")
+        )
+        self.assertEqual(invalidation["eventType"], "snapshot_required")
+        self.assertEqual(invalidation["payload"]["reason"], "session_rewrite_failed")
+        replay, gap = self.service.events.replay(session_id)
+        self.assertFalse(gap)
+        self.assertEqual(replay, [])
+        stream.close()
+
     def test_kernel_configuration_drives_new_sessions_and_runtime_policy(self) -> None:
         initial_runtime = self.service.runtime
         initial = self.service.configuration()["configuration"]
@@ -1901,7 +2215,7 @@ class AgentServiceTests(unittest.TestCase):
         )
         session = self.service.create_session({"title": "默认角色"})["session"]
         self.assertEqual(session["roleId"], "companion-firstlight-v1")
-        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(session["modelProfile"], "openai-codex/gpt-5.6-luna")
 
         runtime = self.service.update_configuration(
             {
@@ -1918,6 +2232,10 @@ class AgentServiceTests(unittest.TestCase):
         self.assertIsNot(self.service.runtime, initial_runtime)
         self.assertIs(
             self.service.role_application.runtime,
+            self.service.runtime,
+        )
+        self.assertIs(
+            self.service.session_branching.runtime,
             self.service.runtime,
         )
         self.assertIs(
@@ -1939,7 +2257,7 @@ class AgentServiceTests(unittest.TestCase):
 
             self.assertEqual(runtime["runtimeKind"], "gateway_http")
             self.assertEqual(runtime["driverId"], "test-gateway")
-            self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-sol")
+            self.assertEqual(session["modelProfile"], "openai-codex/gpt-5.6-sol")
             self.assertEqual(factory.created_for, ["interactive"])
         finally:
             service.close()
@@ -1957,7 +2275,7 @@ class AgentServiceTests(unittest.TestCase):
 
         self.assertEqual(created["roleId"], "companion-firstlight-v1")
         self.assertEqual(created["roleVersion"], "1")
-        self.assertEqual(created["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(created["modelProfile"], "openai-codex/gpt-5.6-luna")
         self.assertEqual(created["toolProfileVersion"], "control-center-v1")
         renamed = self.service.update_session(str(created["id"]), {"title": "推进任务"})["session"]
         self.assertEqual(renamed["roleId"], "companion-firstlight-v1")
@@ -2014,6 +2332,7 @@ class AgentServiceTests(unittest.TestCase):
             {},
             turn_id="turn:wake",
         )
+        self.assertTrue(self.service.events.flush())
         finished = self.service.get_wake_schedule(str(schedule["id"]))
         self.assertEqual(finished["status"], "completed")
         self.assertEqual(finished["latestRun"]["state"], "completed")
@@ -2165,8 +2484,8 @@ class AgentServiceTests(unittest.TestCase):
         source, target = room["participants"]
         source_session = self.service.sessions.get(str(source["sessionId"]))
         target_session = self.service.sessions.get(str(target["sessionId"]))
-        self.assertEqual(source_session["modelProfile"], "gpt/gpt-5.6-luna")
-        self.assertEqual(target_session["modelProfile"], "gpt/gpt-5.6-sol")
+        self.assertEqual(source_session["modelProfile"], "openai-codex/gpt-5.6-luna")
+        self.assertEqual(target_session["modelProfile"], "openai-codex/gpt-5.6-sol")
         item = {
             "id": "room-message:test",
             "kind": "ask",
@@ -2195,7 +2514,7 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(accepted["turnId"], "turn:intercom")
         self.assertIn("房间协作消息", prompt.call_args.args[1])
         self.assertIn("room_post", prompt.call_args.args[1])
-        self.assertNotIn("ime_agents.room_reply", prompt.call_args.args[1])
+        self.assertNotIn("agents.room_reply", prompt.call_args.args[1])
         checkpoint.assert_not_called()
 
     def test_plain_room_notice_runs_once_without_public_or_a2a_echo(
@@ -2334,6 +2653,634 @@ class AgentServiceTests(unittest.TestCase):
         self.assertEqual(response["liveEvents"], [event.to_payload()])
         self.assertEqual(response["plan"]["items"][0]["title"], "恢复可见计划")
         self.assertEqual(response["plan"]["items"][0]["status"], "in_progress")
+
+    def test_message_snapshot_uses_active_room_workflow_authorization(self) -> None:
+        session = self.service.create_session({"title": "Room 快照授权"})["session"]
+        session_id = str(session["id"])
+        live = {
+            "rootId": "root:active",
+            "dispatchId": "dispatch:active",
+            "generation": 7,
+        }
+        manifest = {
+            "rootId": "root:active",
+            "dispatchId": "dispatch:active",
+            "generation": 7,
+        }
+        binding = {"state": "active"}
+
+        with (
+            patch.object(
+                self.service.room_kernel,
+                "session_binding",
+                return_value=live,
+            ),
+            patch.object(
+                self.service.room_capabilities,
+                "manifest_for_runtime",
+                return_value=(manifest, binding),
+            ),
+            patch.object(self.service.runtime, "messages", return_value=[]),
+        ):
+            workflow = self.service.workflow_state(session_id)
+            response = self.service.messages(session_id)
+
+        self.assertEqual(response["plan"], workflow["plan"])
+        self.assertEqual(response["goal"], workflow["goal"])
+        self.assertEqual(response["actGate"], workflow["actGate"])
+        self.assertTrue(response["actGate"]["allowed"])
+        self.assertEqual(response["actGate"]["reason"], "approved")
+
+    def test_message_snapshot_falls_back_to_user_request_when_room_authority_is_fenced(self) -> None:
+        session = self.service.create_session({"title": "Room 快照撤权"})["session"]
+        session_id = str(session["id"])
+        live = {
+            "rootId": "root:current",
+            "dispatchId": "dispatch:current",
+            "generation": 8,
+        }
+        stale_manifest = {
+            "rootId": "root:current",
+            "dispatchId": "dispatch:current",
+            "generation": 7,
+        }
+        cases = {
+            "revoked": None,
+            "generation_fenced": (stale_manifest, {"state": "active"}),
+        }
+
+        for name, bound in cases.items():
+            with self.subTest(name=name):
+                with (
+                    patch.object(
+                        self.service.room_kernel,
+                        "session_binding",
+                        return_value=live,
+                    ),
+                    patch.object(
+                        self.service.room_capabilities,
+                        "manifest_for_runtime",
+                        return_value=bound,
+                    ),
+                    patch.object(self.service.runtime, "messages", return_value=[]),
+                ):
+                    workflow = self.service.workflow_state(session_id)
+                    response = self.service.messages(session_id)
+
+                self.assertEqual(response["plan"], workflow["plan"])
+                self.assertEqual(response["goal"], workflow["goal"])
+                self.assertEqual(response["actGate"], workflow["actGate"])
+                self.assertTrue(response["actGate"]["allowed"])
+                self.assertEqual(
+                    response["actGate"]["reason"],
+                    "user_execution_request",
+                )
+
+    def test_message_snapshot_reconciles_provider_loop_count_to_visible_messages(self) -> None:
+        session = self.service.create_session({"title": "可见消息计数"})["session"]
+        session_id = str(session["id"])
+        self.service.sessions.set_status(session_id, "idle", message_count=42)
+        visible = {
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "message:visible",
+            "sessionId": session_id,
+            "turnId": "history:visible",
+            "role": "user",
+            "status": "completed",
+            "blocks": [{
+                "id": "message:visible:text",
+                "type": "text",
+                "status": "completed",
+                "presentationKind": "markdown",
+                "data": {"text": "恢复这条消息"},
+            }],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 10,
+            "completedAtMs": 10,
+        }
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value={
+                "messages": [visible],
+                "toolHistoryEvents": [],
+                "telemetry": None,
+                "messageQueue": None,
+            },
+        ):
+            response = self.service.messages(session_id)
+
+        self.assertEqual(len(response["items"]), 1)
+        self.assertEqual(self.service.sessions.get(session_id)["messageCount"], 1)
+
+    def test_message_snapshot_keeps_ordinary_session_messages_unchanged(
+        self,
+    ) -> None:
+        session = self.service.create_session(
+            {"title": "普通 Session 快照"}
+        )["session"]
+        session_id = str(session["id"])
+        history = [
+            {
+                "schemaVersion": "rag-ime.agent-message.v1",
+                "id": "message:ordinary",
+                "sessionId": session_id,
+                "turnId": "turn:ordinary",
+                "role": "assistant",
+                "status": "completed",
+                "blocks": [
+                    {
+                        "id": "message:ordinary:text",
+                        "type": "text",
+                        "status": "completed",
+                        "presentationKind": "markdown",
+                        "data": {"text": "普通私有对话保持原样"},
+                    }
+                ],
+                "attachments": [],
+                "citations": [],
+                "createdAtMs": 10,
+                "completedAtMs": 11,
+            }
+        ]
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value={
+                "messages": history,
+                "toolHistoryEvents": [],
+                "telemetry": None,
+                "messageQueue": None,
+            },
+        ):
+            response = self.service.messages(session_id)
+
+        self.assertEqual(response["items"], history)
+
+    def test_room_message_snapshot_projects_public_conversation_once(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "公开等待快照",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    },
+                ],
+            }
+        )["room"]
+        target = room["participants"][0]
+        other = room["participants"][1]
+        room_id = str(room["id"])
+        session_id = str(target["sessionId"])
+        user_event = self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="user_message",
+            payload={"text": "请先确认采用哪一种方案"},
+            turn_id="root:wait",
+            created_at_ms=10,
+        )
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="participant_message",
+            payload={
+                "resultPublic": False,
+                "data": {
+                    "message": {
+                        "text": "PRIVATE-PARTICIPANT-OUTPUT",
+                    }
+                },
+            },
+            turn_id="root:wait",
+            participant_id=str(target["id"]),
+            source_session_id=session_id,
+            created_at_ms=20,
+        )
+        first_post_event = self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            payload={
+                "post": {
+                    "postId": "post:wait",
+                    "content": "我需要你选择稳妥方案或快速方案。",
+                }
+            },
+            turn_id="root:wait",
+            participant_id=str(target["id"]),
+            source_session_id=session_id,
+            created_at_ms=30,
+        )
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            payload={
+                "post": {
+                    "postId": "post:wait",
+                    "content": "我需要你选择稳妥方案或快速方案。",
+                }
+            },
+            turn_id="root:wait",
+            participant_id=str(target["id"]),
+            source_session_id=session_id,
+            created_at_ms=31,
+        )
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            payload={
+                "post": {
+                    "postId": "post:other",
+                    "content": "这是另一位参与者的公开内容。",
+                }
+            },
+            turn_id="root:other",
+            participant_id=str(other["id"]),
+            source_session_id=str(other["sessionId"]),
+            created_at_ms=32,
+        )
+        bootstrap = {
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "message:room-bootstrap",
+            "sessionId": session_id,
+            "turnId": "root:wait",
+            "role": "user",
+            "status": "completed",
+            "blocks": [
+                {
+                    "id": "message:room-bootstrap:text",
+                    "type": "text",
+                    "status": "completed",
+                    "presentationKind": "markdown",
+                    "data": {
+                        "text": (
+                            "<room-context>\n"
+                            "用户在 Room 中的请求：\n"
+                            "请先确认采用哪一种方案\n"
+                            "</room-context>"
+                        )
+                    },
+                }
+            ],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 10,
+            "completedAtMs": 10,
+        }
+        empty_tool_turn = {
+            "schemaVersion": "rag-ime.agent-message.v1",
+            "id": "message:empty-tool-turn",
+            "sessionId": session_id,
+            "turnId": "root:wait",
+            "role": "assistant",
+            "status": "completed",
+            "blocks": [
+                {
+                    "id": "message:empty-tool-turn:tool",
+                    "type": "tool_call",
+                    "status": "completed",
+                    "presentationKind": "tool_call",
+                    "data": {
+                        "toolName": "room_commit",
+                        "toolCallId": "tool:room-wait",
+                    },
+                }
+            ],
+            "attachments": [],
+            "citations": [],
+            "createdAtMs": 20,
+            "completedAtMs": 20,
+        }
+        runtime_snapshot = {
+            "messages": [bootstrap, empty_tool_turn],
+            "toolHistoryEvents": [],
+            "telemetry": None,
+            "messageQueue": None,
+        }
+        event_count = len(self.service.rooms.list_events(room_id))
+
+        with patch.object(
+            self.service.runtime,
+            "session_snapshot",
+            create=True,
+            return_value=runtime_snapshot,
+        ):
+            first = self.service.messages(session_id)
+            second = self.service.messages(session_id)
+
+        expected_ids = [
+            f"room-event:{user_event['eventId']}",
+            "message:empty-tool-turn",
+            "room-post:post:wait",
+        ]
+        self.assertEqual(
+            [message["id"] for message in first["items"]],
+            expected_ids,
+        )
+        self.assertEqual(first["items"], second["items"])
+        self.assertEqual(
+            [
+                message["role"]
+                for message in first["items"]
+            ],
+            ["user", "assistant", "assistant"],
+        )
+        visible_text = [
+            str(block.get("data", {}).get("text") or "")
+            for message in first["items"]
+            for block in message.get("blocks", [])
+            if block.get("type") == "text"
+        ]
+        self.assertEqual(
+            visible_text,
+            [
+                "请先确认采用哪一种方案",
+                "我需要你选择稳妥方案或快速方案。",
+            ],
+        )
+        serialized = json.dumps(first["items"], ensure_ascii=False)
+        self.assertNotIn("<room-context>", serialized)
+        self.assertNotIn("这是另一位参与者的公开内容", serialized)
+        self.assertNotIn(
+            "PRIVATE-PARTICIPANT-OUTPUT",
+            serialized,
+        )
+        self.assertEqual(
+            sum(
+                message["id"] == "room-post:post:wait"
+                for message in first["items"]
+            ),
+            1,
+        )
+        self.assertEqual(
+            first_post_event["payload"]["post"]["postId"],
+            "post:wait",
+        )
+        self.assertEqual(
+            len(self.service.rooms.list_events(room_id)),
+            event_count,
+        )
+        self.assertEqual(
+            self.service.sessions.get(session_id)["messageCount"],
+            len(expected_ids),
+        )
+
+    def test_revoked_room_session_context_recovers_only_own_public_turn(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "结算后 Session 连续性",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    },
+                ],
+            }
+        )["room"]
+        target = room["participants"][0]
+        other = room["participants"][1]
+        room_id = str(room["id"])
+        session_id = str(target["sessionId"])
+        root_id = "room-root:continuity"
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="user_message",
+            payload={
+                "text": "完成三成员协作任务并核对测试结果",
+            },
+            turn_id=root_id,
+            created_at_ms=10,
+        )
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="participant_message",
+            payload={
+                "resultPublic": False,
+                "data": {
+                    "message": {
+                        "text": "PRIVATE-LATE-RESULT-MUST-NOT-LEAK",
+                    }
+                },
+            },
+            turn_id=root_id,
+            participant_id=str(target["id"]),
+            source_session_id=session_id,
+            created_at_ms=20,
+        )
+        own_post = {
+            "postId": "post:continuity:delivery",
+            "rootId": root_id,
+            "dispatchId": "dispatch:continuity",
+            "generation": 3,
+            "content": "三成员任务已完成，聚焦测试全部通过。",
+        }
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            payload={"post": own_post},
+            turn_id=root_id,
+            participant_id=str(target["id"]),
+            source_session_id=session_id,
+            created_at_ms=30,
+        )
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            payload={"post": own_post},
+            turn_id=root_id,
+            participant_id=str(target["id"]),
+            source_session_id=session_id,
+            created_at_ms=31,
+        )
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            payload={
+                "post": {
+                    "postId": "post:wrong-dispatch",
+                    "rootId": root_id,
+                    "dispatchId": "dispatch:other-attempt",
+                    "generation": 3,
+                    "content": (
+                        "WRONG-DISPATCH-POST-MUST-NOT-LEAK"
+                    ),
+                }
+            },
+            turn_id=root_id,
+            participant_id=str(target["id"]),
+            source_session_id=session_id,
+            created_at_ms=31,
+        )
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            payload={
+                "post": {
+                    "postId": "post:other",
+                    "rootId": root_id,
+                    "content": "OTHER-PARTICIPANT-MUST-NOT-LEAK",
+                }
+            },
+            turn_id=root_id,
+            participant_id=str(other["id"]),
+            source_session_id=str(other["sessionId"]),
+            created_at_ms=32,
+        )
+        self.service.rooms.append_event(
+            room_id=room_id,
+            event_type="room_post",
+            payload={
+                "post": {
+                    "postId": "post:wrong-root",
+                    "rootId": "room-root:later",
+                    "content": "WRONG-ROOT-LATE-POST-MUST-NOT-LEAK",
+                }
+            },
+            turn_id="room-root:later",
+            participant_id=str(target["id"]),
+            source_session_id=session_id,
+            created_at_ms=33,
+        )
+        tombstone = {
+            "manifestId": "manifest:continuity",
+            "manifestHash": "a" * 64,
+            "capabilityEpoch": 8,
+            "state": "revoked",
+        }
+        identity = {
+            "roomId": room_id,
+            "rootId": root_id,
+            "dispatchId": "dispatch:continuity",
+            "generation": 3,
+        }
+
+        with (
+            patch.object(
+                self.service.room_capabilities,
+                "manifest_for_runtime",
+                return_value=None,
+            ),
+            patch.object(
+                self.service.room_capabilities,
+                "runtime_binding",
+                return_value=tombstone,
+            ),
+            patch.object(
+                self.service.room_capabilities,
+                "runtime_identity",
+                return_value=identity,
+            ),
+            patch.object(
+                self.service.context_runtime,
+                "materialize",
+                return_value={
+                    "itemIds": [],
+                    "items": [],
+                    "prompt": "",
+                    "charCount": 0,
+                },
+            ),
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value={
+                    "accepted": True,
+                    "turnId": "turn:continuity",
+                    "piEntryId": "entry:continuity",
+                    "response": {"success": True},
+                },
+            ) as runtime_prompt,
+        ):
+            accepted, _trace_id, _context_count = (
+                self.service.prompt_delivery_application.deliver(
+                    session_id,
+                    (
+                        "SESSION-CONTINUITY-AFTER-ROOM："
+                        "确认刚才的三成员任务和测试结果"
+                    ),
+                    client_message_id="continuity:1",
+                    source_kind="user",
+                )
+            )
+
+        self.assertTrue(accepted["accepted"])
+        runtime_message = str(runtime_prompt.call_args.args[1])
+        self.assertTrue(
+            runtime_message.startswith(RUNTIME_PROMPT_ENVELOPE_PREFIX)
+        )
+        envelope = json.loads(
+            runtime_message[len(RUNTIME_PROMPT_ENVELOPE_PREFIX):]
+        )
+        self.assertEqual(
+            envelope["message"],
+            (
+                "SESSION-CONTINUITY-AFTER-ROOM："
+                "确认刚才的三成员任务和测试结果"
+            ),
+        )
+        self.assertEqual(
+            runtime_message.count("SESSION-CONTINUITY-AFTER-ROOM"),
+            1,
+        )
+        session_context = str(envelope["sessionContext"])
+        self.assertEqual(
+            session_context.count("完成三成员协作任务并核对测试结果"),
+            1,
+        )
+        self.assertEqual(
+            session_context.count("三成员任务已完成，聚焦测试全部通过。"),
+            1,
+        )
+        for private_text in (
+            "PRIVATE-LATE-RESULT-MUST-NOT-LEAK",
+            "OTHER-PARTICIPANT-MUST-NOT-LEAK",
+            "WRONG-DISPATCH-POST-MUST-NOT-LEAK",
+            "WRONG-ROOT-LATE-POST-MUST-NOT-LEAK",
+        ):
+            self.assertNotIn(private_text, session_context)
+        encoded_packet = session_context.split(
+            "<room-public-recovery>\n",
+            1,
+        )[1].split("\n</room-public-recovery>", 1)[0]
+        packet = json.loads(encoded_packet)
+        self.assertLessEqual(
+            len(encoded_packet.encode("utf-8")),
+            3_600,
+        )
+        self.assertFalse(packet["activeRoomDispatch"])
+        self.assertEqual(packet["rootId"], root_id)
+        self.assertEqual(
+            packet["dispatchId"],
+            "dispatch:continuity",
+        )
+        self.assertEqual(packet["generation"], 3)
+        self.assertEqual(packet["capabilityEpoch"], 8)
+        self.assertEqual(
+            [
+                (message["role"], message.get("postId"))
+                for message in packet["messages"]
+            ],
+            [
+                ("user", None),
+                ("assistant", "post:continuity:delivery"),
+            ],
+        )
 
     def test_message_snapshot_keeps_completed_tools_after_replay_eviction(self) -> None:
         session = self.service.create_session({"title": "工具历史恢复"})["session"]
@@ -2605,21 +3552,21 @@ class AgentServiceTests(unittest.TestCase):
         )
         available_models = [
             {
-                "provider": "gpt",
+                "provider": "openai-codex",
                 "id": "gpt-5.6-luna",
                 "name": "GPT-5.6 Luna",
                 "reasoning": True,
                 "thinkingLevels": ["off", "max"],
             },
             {
-                "provider": "gpt",
+                "provider": "openai-codex",
                 "id": "gpt-5.6-terra",
                 "name": "GPT-5.6 Terra",
                 "reasoning": True,
                 "thinkingLevels": ["off", "max"],
             },
             {
-                "provider": "gpt",
+                "provider": "openai-codex",
                 "id": "gpt-5.6-sol",
                 "name": "GPT-5.6 Sol",
                 "reasoning": True,
@@ -2636,41 +3583,41 @@ class AgentServiceTests(unittest.TestCase):
                 "modelPolicy": "fixed",
                 "memoryPolicy": "personal-evidence-v1",
                 "toolProfileVersion": "control-center-v1",
-                "modelProfile": "gpt/gpt-5.6-luna",
+                "modelProfile": "openai-codex/gpt-5.6-luna",
                 "thinkingLevel": "max",
             },
         )
-        self.assertEqual(initial_roles["companion-present-v1"]["modelProfile"], "gpt/gpt-5.6-terra")
+        self.assertEqual(initial_roles["companion-present-v1"]["modelProfile"], "openai-codex/gpt-5.6-terra")
         self.assertEqual(initial_roles["companion-present-v1"]["thinkingLevel"], "max")
-        self.assertEqual(initial_roles["companion-future-v1"]["modelProfile"], "gpt/gpt-5.6-sol")
+        self.assertEqual(initial_roles["companion-future-v1"]["modelProfile"], "openai-codex/gpt-5.6-sol")
         self.assertEqual(initial_roles["companion-future-v1"]["thinkingLevel"], "max")
-        self.assertEqual(initial_roles["companion-flash-v1"]["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(initial_roles["companion-flash-v1"]["modelProfile"], "openai-codex/gpt-5.6-luna")
         self.assertEqual(initial_roles["companion-flash-v1"]["thinkingLevel"], "low")
         with patch.object(service.runtime, "available_models", return_value=available_models):
             catalog = service.role_model_catalog()
         self.assertEqual(catalog["providers"][0]["models"][0]["name"], "GPT-5.6 Luna")
         with patch.object(service.runtime, "available_models", return_value=available_models):
             updated = service.update_role_runtime_defaults(
-                {"roleId": "companion-present-v1", "roleVersion": "1", "provider": "gpt",
+                {"roleId": "companion-present-v1", "roleVersion": "1", "provider": "openai-codex",
                  "modelId": "gpt-5.6-luna", "thinkingLevel": "max"}
             )
             with self.assertRaisesRegex(ValueError, "必须启用"):
                 service.update_role_runtime_defaults(
-                    {"roleId": "companion-present-v1", "roleVersion": "1", "provider": "gpt",
+                    {"roleId": "companion-present-v1", "roleVersion": "1", "provider": "openai-codex",
                      "modelId": "gpt-5.6-luna", "thinkingLevel": "off"}
                 )
-        self.assertEqual(updated["defaults"]["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(updated["defaults"]["modelProfile"], "openai-codex/gpt-5.6-luna")
         with patch.object(service.runtime, "set_thinking_level") as set_thinking:
             session = service.create_session(
                 {"title": "继承角色默认", "roleId": "companion-present-v1", "roleVersion": "1"}
             )["session"]
-        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-luna")
+        self.assertEqual(session["modelProfile"], "openai-codex/gpt-5.6-luna")
         self.assertEqual(session["thinkingLevel"], "max")
         set_thinking.assert_not_called()
 
         with self.assertRaisesRegex(ValueError, "cannot be overridden"):
             service.create_session({"title": "本轮显式模型", "roleId": "companion-present-v1",
-                                    "roleVersion": "1", "modelProfile": "gpt/gpt-5.6-sol"})
+                                    "roleVersion": "1", "modelProfile": "openai-codex/gpt-5.6-sol"})
 
         with patch.object(
             service.runtime,
@@ -2869,6 +3816,170 @@ class AgentServiceTests(unittest.TestCase):
         deleted = self.service.delete_session(session_id)
         self.assertEqual(deleted["mediaFilesDeleted"], 1)
         self.assertEqual(list(self.service.media.root.glob("*.blob")), [])
+
+    def test_room_prompt_checkpoint_preserves_room_media_ownership(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room 图片检查点",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-future-v1",
+                        "roleVersion": "1",
+                    },
+                ],
+            }
+        )["room"]
+        room_id = str(room["id"])
+        target_session_id = str(
+            room["participants"][0]["sessionId"]
+        )
+        imported = self.service.import_media(
+            room_id=room_id,
+            data=PNG_1X1,
+            mime_type="image/png",
+            file_name="room.png",
+        )["media"]
+        payload = {
+            "message": "检查 Room 图片",
+            "attachments": [imported["mediaId"]],
+            "clientMessageId": "room-image-checkpoint-1",
+            "_contextSourceToken": (
+                self.service._context_source_token
+            ),
+            "_contextSource": "room",
+            "_checkpointText": "检查 Room 图片",
+            "_mediaOwnerRoomId": room_id,
+        }
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "model_catalog",
+                return_value={
+                    "selected": {"supportsImages": True}
+                },
+            ),
+            patch.object(
+                self.service.runtime,
+                "prompt",
+                return_value={
+                    "accepted": True,
+                    "turnId": "turn:room-image:1",
+                    "piEntryId": "pi-entry:room-image:1",
+                },
+            ) as runtime_prompt,
+            patch.object(
+                self.service.media,
+                "bind_to_pi_entry",
+            ) as bind_to_session_entry,
+        ):
+            accepted = self.service.prompt(
+                target_session_id,
+                payload,
+            )
+            replay = self.service.prompt(
+                target_session_id,
+                payload,
+            )
+
+        delivered = runtime_prompt.call_args.kwargs["images"]
+        self.assertEqual(
+            base64.b64decode(delivered[0]["data"]),
+            PNG_1X1,
+        )
+        self.assertEqual(
+            accepted["attachments"][0]["roomId"],
+            room_id,
+        )
+        self.assertNotIn(
+            "sessionId",
+            accepted["attachments"][0],
+        )
+        self.assertTrue(replay["idempotentReplay"])
+        runtime_prompt.assert_called_once()
+        bind_to_session_entry.assert_not_called()
+
+    def test_room_media_checkpoint_rejects_owner_bypass(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room 图片所有权",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-future-v1",
+                        "roleVersion": "1",
+                    },
+                ],
+            }
+        )["room"]
+        room_id = str(room["id"])
+        imported = self.service.import_media(
+            room_id=room_id,
+            data=PNG_1X1,
+            mime_type="image/png",
+            file_name="private-room.png",
+        )["media"]
+        unrelated = self.service.create_session(
+            {"title": "非 Room 成员"}
+        )["session"]
+        unrelated_session_id = str(unrelated["id"])
+        payload = {
+            "message": "不应读取 Room 图片",
+            "attachments": [imported["mediaId"]],
+            "_contextSourceToken": (
+                self.service._context_source_token
+            ),
+            "_contextSource": "room",
+            "_mediaOwnerRoomId": room_id,
+        }
+
+        with (
+            patch.object(
+                self.service.runtime,
+                "model_catalog",
+                return_value={
+                    "selected": {"supportsImages": True}
+                },
+            ),
+            patch.object(
+                self.service.runtime,
+                "prompt",
+            ) as runtime_prompt,
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "active participant",
+            ):
+                self.service.prompt(
+                    unrelated_session_id,
+                    payload,
+                )
+            with self.assertRaisesRegex(
+                KeyError,
+                "not found for this session",
+            ):
+                self.service.prompt(
+                    unrelated_session_id,
+                    {
+                        key: value
+                        for key, value in payload.items()
+                        if key != "_contextSourceToken"
+                    },
+                )
+        runtime_prompt.assert_not_called()
 
     def test_prompt_client_message_id_is_durable_and_idempotent(self) -> None:
         session = self.service.create_session({"title": "多端幂等"})["session"]
@@ -3146,11 +4257,14 @@ class AgentServiceTests(unittest.TestCase):
                 session_id,
                 payload,
             )
+            self.assertTrue(self.service.events.flush())
         runtime_prompt.assert_called_once()
-        self.assertEqual(recovered["projectionState"], "partial")
-        self.assertTrue(
-            recovered["recoveredFromDurableReceipt"]
-        )
+        self.assertTrue(recovered["accepted"])
+        self.assertEqual(recovered["commandReceipt"]["state"], "accepted")
+        with patch.object(self.service.runtime, "prompt") as replay_prompt:
+            replay = self.service.prompt(session_id, payload)
+        replay_prompt.assert_not_called()
+        self.assertTrue(replay["idempotentReplay"])
 
     def test_remote_accept_before_local_evidence_is_unresolved(
         self,
@@ -3477,7 +4591,7 @@ class AgentServiceTests(unittest.TestCase):
         session = self.service.create_session({"title": "审批"})["session"]
         approval = self.service.sessions.create_approval(
             session_id=str(session["id"]),
-            tool_name="ime_input",
+            tool_name="input",
             operation="apply_settings",
             payload_sha256="a" * 64,
             preview={"summary": "关闭模糊音"},
@@ -3494,7 +4608,7 @@ class AgentServiceTests(unittest.TestCase):
 
         forged = self.service.sessions.create_approval(
             session_id=str(session["id"]),
-            tool_name="ime_runtime",
+            tool_name="runtime",
             operation="restart",
             payload_sha256="b" * 64,
             preview={"summary": "重启"},
@@ -3515,7 +4629,7 @@ class AgentServiceTests(unittest.TestCase):
         session_id = str(session["id"])
         expired = self.service.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_input",
+            tool_name="input",
             operation="apply_settings",
             payload_sha256="e" * 64,
             preview={"summary": "过期变更"},
@@ -3541,7 +4655,7 @@ class AgentServiceTests(unittest.TestCase):
 
         stale = self.service.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_input",
+            tool_name="input",
             operation="apply_settings",
             payload_sha256="a" * 64,
             preview={"summary": "哈希已变化"},
@@ -3567,7 +4681,7 @@ class AgentServiceTests(unittest.TestCase):
         session = self.service.create_session({"title": "任务审批"})["session"]
         approval = self.service.sessions.create_approval(
             session_id=str(session["id"]),
-            tool_name="ime_planning",
+            tool_name="planning",
             operation="task_action",
             payload_sha256="c" * 64,
             preview={"summary": "完成接入 Pi"},
@@ -3631,7 +4745,7 @@ class AgentServiceTests(unittest.TestCase):
             {
                 "schemaVersion": "rag-ime.agent-tool-call.v1",
                 "sessionId": session["id"],
-                "tool": "ime_memory",
+                "tool": "memory",
                 "toolCallId": "tool:memory-recovery:preview",
                 "args": {
                     "op": "remember_preview",
@@ -3645,7 +4759,7 @@ class AgentServiceTests(unittest.TestCase):
             {
                 "schemaVersion": "rag-ime.agent-tool-call.v1",
                 "sessionId": session["id"],
-                "tool": "ime_memory",
+                "tool": "memory",
                 "toolCallId": "tool:memory-recovery:apply",
                 "args": {
                     "op": "remember_apply",
@@ -3746,7 +4860,7 @@ class AgentServiceTests(unittest.TestCase):
         session = self.service.create_session({"title": "Sidecar 两阶段重启"})["session"]
         approval = self.service.sessions.create_approval(
             session_id=str(session["id"]),
-            tool_name="ime_runtime",
+            tool_name="runtime",
             operation="restart_sidecar",
             payload_sha256="d" * 64,
             preview={
@@ -3770,7 +4884,7 @@ class AgentServiceTests(unittest.TestCase):
                 "mutationApplied": False,
                 "externalActionPending": True,
                 "approvalId": value["approvalId"],
-                "toolId": "ime_runtime",
+                "toolId": "runtime",
                 "operation": "restart_sidecar",
                 "summary": "等待 Pi 回合结束",
                 "externalAction": "restart_sidecar",

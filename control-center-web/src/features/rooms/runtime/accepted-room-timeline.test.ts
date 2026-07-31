@@ -14,6 +14,14 @@ describe('mergeAcceptedRoomTimeline', () => {
     const optimistic = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
       clientMessageId: 'client-1',
       text: '请检查当前实现',
+      attachments: [{
+        mediaId: 'media_room_attachment01',
+        roomId: 'room-1',
+        fileName: 'diagram.png',
+        mimeType: 'image/png',
+        byteSize: 128,
+        sha256: 'a'.repeat(64),
+      }],
       nowMs: 1,
     });
     const timelineEvents = [
@@ -23,6 +31,19 @@ describe('mergeAcceptedRoomTimeline', () => {
         clientMessageId: 'client-1',
         rootId: 'root-1',
         text: '请检查当前实现',
+        attachmentReceipts: [{
+          schemaVersion: 'rag-ime.agent-media.v1',
+          mediaId: 'media_room_attachment01',
+          ownerType: 'room',
+          ownerId: 'room-1',
+          roomId: 'room-1',
+          fileName: 'diagram.png',
+          mimeType: 'image/png',
+          byteSize: 128,
+          sha256: 'a'.repeat(64),
+          origin: 'user_attachment',
+          createdAtMs: 1,
+        }],
       }),
       event(2, 'route_decision', {
         rootId: 'root-1',
@@ -38,6 +59,12 @@ describe('mergeAcceptedRoomTimeline', () => {
     expect(accepted.lastSequence).toBe(2);
     expect(accepted.messageOrder).toEqual(['post-user-1']);
     expect(accepted.messagesById['post-user-1'].clientMessageId).toBe('client-1');
+    expect(accepted.messagesById['post-user-1'].message?.attachments).toEqual([
+      'media_room_attachment01',
+    ]);
+    expect(accepted.messagesById['post-user-1'].message?.blocks.filter(
+      (block) => block.type === 'image',
+    )).toHaveLength(1);
     expect(accepted.activityOrder).toHaveLength(1);
     expect(accepted.activitiesById[accepted.activityOrder[0]].summary).toBe('澄·今 已接手');
 

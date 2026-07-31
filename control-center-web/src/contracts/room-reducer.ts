@@ -1,4 +1,5 @@
 import type { ProjectionDiagnostic, ProjectionGap, ProjectionReduction } from './agent-reducer';
+import { approvalNeedsHumanDecision } from './approval-decision';
 import type { AgentRoomSnapshotV1, RoomPostV2 } from './generated';
 import type { UiAgentMessage, UiRoomEvent } from './ui-events';
 import { parseContract, parseRoomEvent, tryParseAgentMessage } from './validators';
@@ -17,7 +18,10 @@ export interface RoomMessageProjection {
   projectionKind?: 'optimistic' | 'execution' | 'post';
   rootId?: string;
   dispatchId?: string;
+  sourceMessageId?: string;
+  sourceBlockId?: string;
   createdAtMs: number;
+  postKind?: RoomPostV2['kind'];
   completedAtMs?: number;
 }
 
@@ -27,7 +31,7 @@ export interface RoomActivityProjection {
   participantId: string | null;
   sourceSessionId: string;
   kind: string;
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'waiting' | 'completed' | 'failed';
   summary: string;
   payload: Record<string, unknown>;
   createdAtMs: number;
@@ -93,10 +97,22 @@ export interface RoomEventReductionOptions {
   snapshotReplay?: boolean;
 }
 
+export interface RoomAttachmentReceipt {
+  mediaId: string;
+  roomId: string;
+  fileName: string;
+  mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  byteSize: number;
+  sha256: string;
+  width?: number | null;
+  height?: number | null;
+}
+
 export interface OptimisticRoomMessageInput {
   clientMessageId: string;
   text: string;
   nowMs: number;
+  attachments?: RoomAttachmentReceipt[];
 }
 
 const diagnosticLimit = 50;
@@ -309,6 +325,16 @@ export function appendOptimisticRoomMessage(
     role: 'user',
     status: 'queued',
     text: input.text,
+    message: roomUserMessage({
+      id,
+      roomId: state.roomId,
+      turnId,
+      text: input.text,
+      status: 'queued',
+      attachments: input.attachments ?? [],
+      createdAtMs: input.nowMs,
+      clientMessageId: input.clientMessageId,
+    }),
     clientMessageId: input.clientMessageId,
     projectionKind: 'optimistic',
     rootId: turnId,
@@ -484,6 +510,7 @@ function applyUserMessage(
   payload: Record<string, unknown>,
 ): void {
   const clientMessageId = text(payload.clientMessageId);
+  const attachments = roomAttachmentReceipts(payload.attachmentReceipts, event.roomId);
   const message: RoomMessageProjection = {
     id: text(payload.messageId) || `${event.eventId}:user`,
     roomId: event.roomId,
@@ -493,6 +520,16 @@ function applyUserMessage(
     role: 'user',
     status: 'completed',
     text: text(payload.text ?? payload.message),
+    message: roomUserMessage({
+      id: text(payload.messageId) || `${event.eventId}:user`,
+      roomId: event.roomId,
+      turnId: event.turnId,
+      text: text(payload.text ?? payload.message),
+      status: 'completed',
+      attachments,
+      createdAtMs: event.createdAtMs,
+      clientMessageId,
+    }),
     projectionKind: 'post',
     rootId: text(payload.rootId) || event.turnId,
     ...(clientMessageId ? { clientMessageId } : {}),
@@ -502,6 +539,105 @@ function applyUserMessage(
   upsertMessage(state, message, clientMessageId);
 }
 
+function roomAttachmentReceipts(value: unknown, roomId: string): RoomAttachmentReceipt[] {
+  if (!Array.isArray(value)) return [];
+  const result: RoomAttachmentReceipt[] = [];
+  for (const item of value.slice(0, 8)) {
+    if (Object.keys(record(item)).length === 0) continue;
+    const mediaId = text(item.mediaId);
+    const ownerRoomId = text(item.roomId);
+    const mimeType = text(item.mimeType);
+    const sha256 = text(item.sha256);
+    const byteSize = Number(item.byteSize);
+    if (
+      item.ownerType !== 'room'
+      || ownerRoomId !== roomId
+      || !/^media_[A-Za-z0-9_-]{12,80}$/u.test(mediaId)
+      || !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(mimeType)
+      || !Number.isInteger(byteSize)
+      || byteSize < 1
+      || byteSize > 20 * 1024 * 1024
+      || !/^[0-9a-f]{64}$/u.test(sha256)
+    ) continue;
+    result.push({
+      mediaId,
+      roomId,
+      fileName: text(item.fileName).slice(0, 160) || '图片',
+      mimeType: mimeType as RoomAttachmentReceipt['mimeType'],
+      byteSize,
+      sha256,
+      width: finiteDimension(item.width),
+      height: finiteDimension(item.height),
+    });
+  }
+  return result;
+}
+
+function roomUserMessage({
+  id,
+  roomId,
+  turnId,
+  text: content,
+  status,
+  attachments,
+  createdAtMs,
+  clientMessageId,
+}: {
+  id: string;
+  roomId: string;
+  turnId: string;
+  text: string;
+  status: 'queued' | 'completed';
+  attachments: RoomAttachmentReceipt[];
+  createdAtMs: number;
+  clientMessageId?: string;
+}): UiAgentMessage {
+  return {
+    schemaVersion: 'rag-ime.agent-message.v1',
+    id,
+    sessionId: `room:${roomId}`,
+    turnId,
+    role: 'user',
+    status,
+    blocks: [
+      {
+        id: `${id}:text`,
+        type: 'text',
+        status,
+        presentationKind: 'markdown',
+        data: { text: content },
+      },
+      ...attachments.map((attachment) => ({
+        id: `${id}:attachment:${attachment.mediaId}`,
+        type: 'image' as const,
+        status,
+        presentationKind: 'managed_image',
+        data: {
+          mediaId: attachment.mediaId,
+          fileName: attachment.fileName,
+          mimeType: attachment.mimeType,
+          byteSize: attachment.byteSize,
+          sha256: attachment.sha256,
+          receiptUrl: `/api/agent/media/${encodeURIComponent(attachment.mediaId)}/content?roomId=${encodeURIComponent(roomId)}`,
+          width: attachment.width,
+          height: attachment.height,
+          alt: attachment.fileName,
+        },
+      })),
+    ],
+    attachments: attachments.map((attachment) => attachment.mediaId),
+    citations: [],
+    createdAtMs,
+    ...(status === 'completed' ? { completedAtMs: createdAtMs } : {}),
+    ...(clientMessageId ? { clientMessageId } : {}),
+  };
+}
+
+function finiteDimension(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 65_535 ? parsed : null;
+}
+
 function applyParticipantDelta(
   state: RoomProjectionState,
   event: UiRoomEvent,
@@ -509,13 +645,16 @@ function applyParticipantDelta(
 ): void {
   const rootId = text(payload.rootId) || event.turnId;
   const dispatchId = text(payload.dispatchId);
+  const sourceMessageId = text(payload.messageId);
+  const sourceBlockId = text(payload.blockId);
   const id = executionMessageId(event, payload);
+  const replacesProvisional = payload.replaceBlock === true || payload.replaceContent === true;
   const existing = state.messagesById[id];
   const message: RoomMessageProjection = existing
     ? {
         ...existing,
         status: 'streaming',
-        text: existing.text + text(payload.delta),
+        text: replacesProvisional ? text(payload.delta) : existing.text + text(payload.delta),
       }
     : {
         id,
@@ -529,6 +668,8 @@ function applyParticipantDelta(
         projectionKind: 'execution',
         rootId,
         ...(dispatchId ? { dispatchId } : {}),
+        ...(sourceMessageId ? { sourceMessageId } : {}),
+        ...(sourceBlockId ? { sourceBlockId } : {}),
         createdAtMs: event.createdAtMs,
       };
   upsertMessage(state, message);
@@ -571,12 +712,19 @@ function applyParticipantMessage(
       ? {}
       : { completedAtMs: parsed.value.completedAtMs }),
   };
-  const provisionalId = executionMessageId(event, payload);
-  if (
-    provisionalId !== message.id &&
-    state.messagesById[provisionalId]?.status === 'streaming'
-  ) {
-    replaceProvisionalMessage(state, provisionalId, message);
+  const provisional = findProvisionalMessage(state, {
+    rootId: message.rootId || message.turnId,
+    dispatchId: message.dispatchId,
+    participantId: message.participantId,
+    sourceSessionId: message.sourceSessionId,
+    messageIds: [message.id, text(payload.messageId)],
+    blockIds: [
+      text(payload.blockId),
+      ...parsed.value.blocks.map((block) => block.id),
+    ],
+  });
+  if (provisional && provisional.id !== message.id) {
+    replaceProvisionalMessage(state, provisional.id, message);
     return;
   }
   upsertMessage(state, message, clientMessageId);
@@ -622,6 +770,7 @@ function applyRoomPost(
     status: 'completed',
     text: post.content,
     projectionKind: 'post',
+    postKind: post.kind,
     rootId: post.rootId,
     ...(post.dispatchId ? { dispatchId: post.dispatchId } : {}),
     message: {
@@ -640,14 +789,14 @@ function applyRoomPost(
     createdAtMs: post.createdAtMs,
     completedAtMs: post.createdAtMs,
   };
-  const provisional = Object.values(state.messagesById)
-    .filter((candidate) => (
-      candidate.projectionKind === 'execution'
-      && candidate.rootId === post.rootId
-      && candidate.dispatchId === (post.dispatchId ?? '')
-      && candidate.participantId === event.participantId
-    ))
-    .sort((left, right) => right.createdAtMs - left.createdAtMs)[0];
+  const provisional = findProvisionalMessage(state, {
+    rootId: post.rootId,
+    dispatchId: post.dispatchId,
+    participantId: event.participantId,
+    sourceSessionId: event.sourceSessionId,
+    messageIds: [post.postId, post.publicationSource.ref],
+    blockIds: (post.blocks ?? []).flatMap((block) => [block.id, block.ref]),
+  });
   if (provisional) {
     replaceProvisionalMessage(state, provisional.id, message);
   } else {
@@ -701,6 +850,43 @@ function markPublishedDispatchTerminal(
   // Publishing settles one Dispatch lane. Only the participant-less Root
   // terminal event may unlock the whole turn.
   turn.updatedAtMs = Math.max(turn.updatedAtMs, post.createdAtMs);
+}
+
+interface ProvisionalMessageIdentity {
+  rootId: string;
+  dispatchId?: string;
+  participantId: string | null;
+  sourceSessionId: string;
+  messageIds: string[];
+  blockIds: string[];
+}
+
+function findProvisionalMessage(
+  state: RoomProjectionState,
+  identity: ProvisionalMessageIdentity,
+): RoomMessageProjection | undefined {
+  const messageIds = new Set(identity.messageIds.filter(Boolean));
+  const blockIds = new Set(identity.blockIds.filter(Boolean));
+  const candidates = Object.values(state.messagesById)
+    .filter((candidate) => (
+      candidate.projectionKind === 'execution'
+      && candidate.status === 'streaming'
+      && candidate.rootId === identity.rootId
+      && (
+        candidate.participantId === identity.participantId
+        || Boolean(
+          candidate.sourceSessionId
+          && candidate.sourceSessionId === identity.sourceSessionId,
+        )
+      )
+      && (!identity.dispatchId || candidate.dispatchId === identity.dispatchId)
+    ))
+    .sort((left, right) => right.createdAtMs - left.createdAtMs);
+  const aliased = candidates.find((candidate) => (
+    Boolean(candidate.sourceMessageId && messageIds.has(candidate.sourceMessageId))
+    || Boolean(candidate.sourceBlockId && blockIds.has(candidate.sourceBlockId))
+  ));
+  return aliased ?? (candidates.length === 1 ? candidates[0] : undefined);
 }
 
 function replaceProvisionalMessage(
@@ -774,48 +960,79 @@ function upsertActivity(
 ): void {
   const participantStatus = text(payload.status);
   const sourceEventType = text(payload.sourceEventType);
+  const resolutionState = text(payload.resolutionState || payload.state);
+  const requestKind = text(payload.requestKind);
   const isCompletedRoomLifecycle =
     event.eventType === 'participant_status' &&
     ['room_created', 'room_archived', 'room_restored'].includes(
       participantStatus,
     );
-  const lifecycleId = text(
-    payload.toolCallId ?? payload.approvalId ?? payload.requestId,
+  const participantId = text(payload.participantId) || event.participantId;
+  const sourceSessionId = text(payload.sourceSessionId) || event.sourceSessionId;
+  const id = roomActivityId(event, payload);
+  const approvalId = text(payload.approvalId);
+  const unresolved = !['approved', 'rejected', 'applied', 'resolved', 'cancelled'].includes(
+    resolutionState,
   );
-  const executionScope =
-    text(payload.dispatchId)
-    || event.sourceSessionId
-    || event.participantId
-    || 'room';
-  const id = lifecycleId
-    ? `${event.turnId}:${event.participantId ?? 'participant'}:${executionScope}:${lifecycleId}`
-    : `${event.eventId}:activity`;
-  const status = forcedStatus ?? (
+  const automatedApproval = Boolean(approvalId)
+    && !approvalNeedsHumanDecision(payload)
+    && unresolved;
+  const pendingInteraction = (
+    (Boolean(approvalId) && approvalNeedsHumanDecision(payload))
+    || ['memory_review', 'plan_review', 'user_input_required'].includes(requestKind)
+    || sourceEventType === 'user_input_required'
+    || (text(payload.method) === 'select' && Array.isArray(payload.options))
+  ) && unresolved;
+  const candidateStatus = forcedStatus ?? (
     payload.isError === true || participantStatus === 'failed'
       ? 'failed'
-      : sourceEventType === 'tool_started' || sourceEventType === 'tool_progress'
+      : participantStatus === 'retry_wait' || pendingInteraction
+        ? 'waiting'
+      : automatedApproval
         ? 'running'
-        : event.eventType === 'participant_status' && !isCompletedRoomLifecycle
+        : sourceEventType === 'tool_started'
+          || sourceEventType === 'tool_progress'
+          || (
+            ['reasoning_summary', 'current_progress'].includes(sourceEventType)
+            && !['completed', 'failed', 'aborted'].includes(text(payload.state))
+          )
           ? 'running'
-          : 'completed'
+          : event.eventType === 'participant_status' && !isCompletedRoomLifecycle
+            ? 'running'
+            : 'completed'
   );
   const existing = state.activitiesById[id];
+  const staleToolStreamingUpdate = Boolean(
+    existing
+    && ['completed', 'failed'].includes(existing.status)
+    && ['tool_started', 'tool_progress'].includes(sourceEventType),
+  );
+  const status = staleToolStreamingUpdate ? existing!.status : candidateStatus;
+  const activityPayload = staleToolStreamingUpdate
+    ? existing!.payload
+    : mergeRoomActivityPayload(
+        existing,
+        event,
+        payload,
+        status,
+      );
   const activity: RoomActivityProjection = {
     id,
     turnId: event.turnId,
-    participantId: event.participantId,
-    sourceSessionId: event.sourceSessionId,
+    participantId,
+    sourceSessionId,
     kind: event.eventType,
     status,
-    summary:
-      text(payload.summary ?? payload.message ?? payload.label ?? payload.toolName)
-      || sourceEventType
-      || event.eventType,
-    payload,
+    summary: staleToolStreamingUpdate
+      ? existing!.summary
+      : text(payload.summary ?? payload.message ?? payload.label ?? payload.toolName)
+        || sourceEventType
+        || event.eventType,
+    payload: activityPayload,
     createdAtMs: existing?.createdAtMs ?? event.createdAtMs,
-    updatedAtMs: event.createdAtMs,
+    updatedAtMs: staleToolStreamingUpdate ? existing!.updatedAtMs : event.createdAtMs,
   };
-  if (!state.activitiesById[id]) state.activityOrder.push(id);
+  if (!existing) state.activityOrder.push(id);
   state.activitiesById[id] = activity;
   const turn = ensureTurn(state, event.turnId, event.createdAtMs);
   turn.rootId = text(payload.rootId) || turn.rootId || event.turnId;
@@ -824,15 +1041,101 @@ function upsertActivity(
     turn.dispatchIds ??= [];
     turn.dispatchParticipantIds ??= {};
     if (!turn.dispatchIds.includes(dispatchId)) turn.dispatchIds.push(dispatchId);
-    turn.dispatchParticipantIds[dispatchId] = event.participantId ?? '';
+    turn.dispatchParticipantIds[dispatchId] = participantId ?? '';
   }
   if (!turn.activityIds.includes(id)) turn.activityIds.push(id);
-  if (event.participantId && !turn.participantIds.includes(event.participantId)) {
-    turn.participantIds.push(event.participantId);
+  if (participantId && !turn.participantIds.includes(participantId)) {
+    turn.participantIds.push(participantId);
   }
   if (isCompletedRoomLifecycle) {
     completeTurn(state, event.turnId, 'completed', event.createdAtMs);
   }
+}
+
+function roomActivityId(
+  event: UiRoomEvent,
+  payload: Record<string, unknown>,
+): string {
+  if (
+    event.eventType === 'participant_status'
+    && ['room_created', 'room_archived', 'room_restored'].includes(text(payload.status))
+  ) return `${event.eventId}:activity`;
+  const participantId = text(payload.participantId) || event.participantId;
+  const rootId = text(payload.rootId) || event.turnId;
+  const sourceSessionId = text(payload.sourceSessionId) || event.sourceSessionId;
+  const executionScope =
+    text(payload.dispatchId)
+    || sourceSessionId
+    || participantId
+    || 'room';
+  const lifecycleId = text(
+    payload.toolCallId
+    ?? payload.approvalId
+    ?? payload.requestId
+    ?? payload.runId,
+  );
+  if (lifecycleId) {
+    return `${rootId}:${participantId ?? 'participant'}:${executionScope}:${lifecycleId}`;
+  }
+  const sourceKind = text(payload.sourceEventType || payload.activityKind);
+  if (
+    event.eventType === 'participant_status'
+    || event.eventType === 'route_decision'
+    || ['reasoning_summary', 'status_changed', 'current_progress', 'progress'].includes(
+      sourceKind,
+    )
+  ) {
+    return `${event.turnId}:${participantId ?? 'participant'}:${executionScope}:${sourceKind || event.eventType}`;
+  }
+  return `${event.eventId}:activity`;
+}
+
+function mergeRoomActivityPayload(
+  previous: RoomActivityProjection | undefined,
+  event: UiRoomEvent,
+  payload: Record<string, unknown>,
+  status: RoomActivityProjection['status'],
+): Record<string, unknown> {
+  const previousPayload = previous?.payload ?? {};
+  const sourceEventType = text(payload.sourceEventType);
+  if (!['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) {
+    return { ...previousPayload, ...payload };
+  }
+  const suppliedHistory = Array.isArray(payload.progressHistory)
+    ? payload.progressHistory
+    : Array.isArray(previousPayload.progressHistory)
+      ? previousPayload.progressHistory
+      : [];
+  const sourceEventId = text(payload.sourceEventId) || event.eventId;
+  const history = suppliedHistory.some((entry) => (
+    text(record(entry).eventId ?? record(entry).sourceEventId) === sourceEventId
+  ))
+    ? suppliedHistory
+    : [...suppliedHistory, {
+        eventId: sourceEventId,
+        kind: sourceEventType,
+        status,
+        summary: text(payload.summary ?? payload.message ?? payload.label),
+        createdAtMs: event.createdAtMs,
+      }].slice(-20);
+  const merged: Record<string, unknown> = {
+    ...previousPayload,
+    ...payload,
+    progressHistory: history,
+  };
+  if (
+    Object.keys(record(payload.arguments ?? payload.args)).length === 0
+    && Object.keys(record(previousPayload.arguments ?? previousPayload.args)).length > 0
+  ) {
+    if (previousPayload.arguments) merged.arguments = previousPayload.arguments;
+    if (previousPayload.args) merged.args = previousPayload.args;
+  }
+  if (sourceEventType === 'tool_finished') {
+    for (const field of ['summary', 'message', 'label', 'status', 'state'] as const) {
+      if (payload[field] === undefined) delete merged[field];
+    }
+  }
+  return merged;
 }
 
 function attachMessage(state: RoomProjectionState, message: RoomMessageProjection): void {
@@ -1104,6 +1407,8 @@ function canMergeRoomDelta(
     || candidate.participantId !== previous.participantId
     || candidate.sourceSessionId !== previous.sourceSessionId
     || candidate.sequence !== previous.sequence + 1
+    || candidate.payload.replaceBlock === true
+    || candidate.payload.replaceContent === true
   ) {
     return false;
   }
@@ -1175,16 +1480,25 @@ function isExecutionEventAfterRootTerminal(
 function publicRoomPayload(value: unknown): Record<string, unknown> {
   const envelope = record(value);
   if (
-    typeof envelope.sourceEventId === 'string' &&
-    typeof envelope.sourceEventType === 'string' &&
-    typeof envelope.data === 'object' &&
-    envelope.data !== null &&
-    !Array.isArray(envelope.data)
+    typeof envelope.sourceEventId === 'string'
+    && typeof envelope.sourceEventType === 'string'
+    && typeof envelope.data === 'object'
+    && envelope.data !== null
+    && !Array.isArray(envelope.data)
   ) {
+    const data = record(envelope.data);
+    const rootId = text(data.rootId) || text(envelope.rootId);
+    const dispatchId = text(data.dispatchId) || text(envelope.dispatchId);
+    const messageId = text(data.messageId) || text(envelope.messageId);
+    const blockId = text(data.blockId) || text(envelope.blockId);
     return {
-      ...record(envelope.data),
-      sourceEventId: envelope.sourceEventId,
-      sourceEventType: envelope.sourceEventType,
+      ...data,
+      ...(rootId ? { rootId } : {}),
+      ...(dispatchId ? { dispatchId } : {}),
+      ...(messageId ? { messageId } : {}),
+      ...(blockId ? { blockId } : {}),
+      sourceEventId: text(data.sourceEventId) || envelope.sourceEventId,
+      sourceEventType: text(data.sourceEventType) || envelope.sourceEventType,
     };
   }
   return envelope;

@@ -296,6 +296,45 @@ class PersonalContextMaintenanceRunnerTests(unittest.TestCase):
         self.assertEqual(target["lastSucceededAtMs"], 0)
         self.assertIn("role book apply unavailable", target["error"])
 
+    def test_successful_retry_clears_the_previous_run_error_from_the_report(self) -> None:
+        self._seed_role("architect", "role-v1", created_at_ms=10)
+        self._record_work(
+            "project-a",
+            "architect",
+            "receipt:retry-success",
+            "这一条先失败，再由后续维护重试成功",
+            occurred_at_ms=100,
+        )
+
+        def failing_applier(request: object) -> object:
+            del request
+            raise RuntimeError("temporary role book apply failure")
+
+        config = PersonalContextMaintenanceConfig(
+            project="project-a",
+            apply_safe_recent_work=True,
+            min_interval_ms=86_400_000,
+        )
+        failed = PersonalContextMaintenanceRunner(
+            self.db_path,
+            config=config,
+            role_book_applier=failing_applier,
+        ).run_once(now_ms=1_000)
+        recovered = PersonalContextMaintenanceRunner(
+            self.db_path,
+            config=config,
+        ).run_once(now_ms=1_001)
+
+        self.assertEqual(failed["targets"][0]["runStatus"], "failed")
+        self.assertTrue(recovered["ok"])
+        target = recovered["targets"][0]
+        self.assertEqual(target["runStatus"], "succeeded")
+        self.assertEqual(target["lastRunStatus"], "succeeded")
+        self.assertEqual(target["status"], "idle")
+        self.assertEqual(target["error"], "")
+        self.assertTrue(target["artifacts"]["userMemoryDraftId"])
+        self.assertTrue(target["artifacts"]["roleBookDraftId"])
+
     def test_configuration_defaults_to_enabled_draft_only_and_report_is_atomic(
         self,
     ) -> None:

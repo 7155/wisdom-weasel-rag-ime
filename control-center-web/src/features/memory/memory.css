@@ -519,6 +519,17 @@
   min-height: 0;
 }
 
+.memory-reference-dialog .ui-dialog__description {
+  overflow-wrap: anywhere;
+}
+
+.memory-reference-dialog__feedback {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
 .memory-reference-view {
   display: grid;
   min-width: 0;
@@ -566,6 +577,23 @@
 .memory-reference-view__facts > div:nth-child(3n) { border-right: 0; }
 .memory-reference-view__facts dt { color: var(--color-text-tertiary); font-size: 12px; }
 .memory-reference-view__facts dd { margin: 3px 0 0; font-size: 12px; font-weight: 700; overflow-wrap: anywhere; }
+
+.memory-reference-view__source-context {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-subtle);
+}
+.memory-reference-view__source-context > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.memory-reference-view__source-context > header span { display: inline-flex; align-items: center; gap: 6px; }
+.memory-reference-view__source-context > header small { color: var(--color-text-tertiary); }
+.memory-reference-view__source-context > dl { display: grid; margin: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.memory-reference-view__source-context > dl > div { min-width: 0; }
+.memory-reference-view__source-context dt { color: var(--color-text-tertiary); font-size: 12px; }
+.memory-reference-view__source-context dd { margin: 3px 0 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.memory-reference-view__source-context > p { margin: 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 
 .memory-reference-view__children { display: grid; min-width: 0; }
 .memory-reference-view__children > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0; }

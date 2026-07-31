@@ -225,8 +225,9 @@ class RequirementGovernanceTests(unittest.TestCase):
             {
                 "taskId": "task:1",
                 "parentTaskId": None,
-                "ownerParticipantId": "participant:owner",
-                "assigneeParticipantId": "participant:target",
+                "currentOwnerParticipantId": "participant:owner",
+                "ownershipRevision": 0,
+                "ownershipReceiptId": None,
                 "objective": "完成有证据的交付",
                 "expectedOutput": "可复核结果",
                 "requirementItemIds": ["requirement:1"],
@@ -302,8 +303,9 @@ class RequirementGovernanceTests(unittest.TestCase):
             {
                 "taskId": "task:1",
                 "parentTaskId": None,
-                "ownerParticipantId": "participant:owner",
-                "assigneeParticipantId": "participant:target",
+                "currentOwnerParticipantId": "participant:owner",
+                "ownershipRevision": 0,
+                "ownershipReceiptId": None,
                 "objective": "验证需求投影去重",
                 "expectedOutput": "原文只出现一次",
                 "requirementItemIds": ["requirement:1"],

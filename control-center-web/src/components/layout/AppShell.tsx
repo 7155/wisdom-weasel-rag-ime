@@ -11,7 +11,7 @@ import { routeGroupLabels } from '@/app/route-registry';
 import { router } from '@/app/router';
 import { ConnectionIndicator, GlobalNoticeRegion } from '@/components/feedback';
 import { useProductIdentity } from '@/features/identity/product-identity';
-import { DesktopNavigation, MobileBottomNavigation, MobileRouteMenu } from './Navigation';
+import { DesktopNavigation, MobileBottomNavigation } from './Navigation';
 import { ShellSidebarResizer } from './ShellSidebarResizer';
 import { ThemeMenu } from './ThemeMenu';
 import { useHashRoute } from './useHashRoute';
@@ -55,7 +55,17 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="control-shell" data-sidebar-collapsed={collapsed || undefined}>
-      <a className="shell-skip-link" href="#workspace-main">跳到主工作区</a>
+      <a
+        className="shell-skip-link"
+        href="#workspace-main"
+        onClick={(event) => {
+          event.preventDefault();
+          routeStageRef.current?.focus();
+          routeStageRef.current?.scrollIntoView({ block: 'start' });
+        }}
+      >
+        跳到主工作区
+      </a>
       <DesktopNavigation
         activeRouteId={activeRoute.id}
         collapsed={collapsed}
@@ -65,9 +75,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       <ShellSidebarResizer />
       <div className="shell-workspace">
         <header className="shell-topbar">
-          <div className="shell-topbar__mobile-brand">
-            <MobileRouteMenu activeRouteId={activeRoute.id} />
-          </div>
           <div className="shell-topbar__title" key={activeRoute.id}>
             <h1>{activeRoute.label}</h1>
             <span>{routeGroupLabels[activeRoute.group]}</span>

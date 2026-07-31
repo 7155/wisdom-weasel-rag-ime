@@ -48,7 +48,7 @@ def default_agent_configuration(
     idle_timeout_seconds: int = 900,
     role_id: str = "companion-future-v1",
     role_version: str = "1",
-    model_profile: str = "gpt/gpt-5.6-sol",
+    model_profile: str = "openai-codex/gpt-5.6-sol",
     tool_profile_version: str = "control-center-v1",
     resume_last_session: bool = True,
     coordinator_enabled: bool = False,
@@ -82,8 +82,10 @@ def default_agent_configuration(
                 field="sessionDefaults.toolProfileVersion",
                 maximum=80,
             ),
+            "capabilityDisclosurePreferences": {},
         },
         "coordination": {"enabled": bool(coordinator_enabled)},
+        "capabilityDisclosure": {"projectPreferences": {}},
     }
     _validate_configuration(configuration)
     return configuration
@@ -117,6 +119,13 @@ class AgentConfigurationStore:
         if self._initialized:
             return
         configuration = copy.deepcopy(dict(seed))
+        defaults = configuration.get("sessionDefaults")
+        if isinstance(defaults, dict):
+            defaults.setdefault("capabilityDisclosurePreferences", {})
+        configuration.setdefault(
+            "capabilityDisclosure",
+            {"projectPreferences": {}},
+        )
         _validate_configuration(configuration)
         with self._initialize_lock:
             if self._initialized:
@@ -581,10 +590,18 @@ def _configuration_from_row(
     raw = json.loads(str(row["configuration_json"]))
     if not isinstance(raw, dict):
         raise RuntimeError("agent configuration row is invalid")
-    if canonicalize_role_id:
-        defaults = raw.get("sessionDefaults")
-        if isinstance(defaults, dict):
-            defaults["roleId"] = canonical_agent_role_id(defaults.get("roleId"))
+    defaults = raw.get("sessionDefaults")
+    if isinstance(defaults, dict):
+        defaults["roleId"] = (
+            canonical_agent_role_id(defaults.get("roleId"))
+            if canonicalize_role_id
+            else str(defaults.get("roleId") or "")
+        )
+        defaults.setdefault("capabilityDisclosurePreferences", {})
+    raw.setdefault(
+        "capabilityDisclosure",
+        {"projectPreferences": {}},
+    )
     _validate_configuration(raw)
     return raw
 
@@ -621,17 +638,30 @@ def _normalize_changes(changes: Mapping[str, object]) -> dict[str, object]:
             )
         elif key == "sessionDefaults.modelProfile":
             normalized[key] = _model_profile(value)
+        elif key == "sessionDefaults.capabilityDisclosurePreferences":
+            normalized[key] = _capability_disclosure_preferences(value)
+        elif key == "capabilityDisclosure.projectPreferences":
+            normalized[key] = _project_disclosure_preferences(value)
         else:
             raise ValueError(f"unsupported agent configuration key: {key}")
     return normalized
 
 
 def _validate_configuration(configuration: Mapping[str, object]) -> None:
-    if set(configuration) != {"runtime", "sessionDefaults", "coordination"}:
+    if set(configuration) != {
+        "runtime",
+        "sessionDefaults",
+        "coordination",
+        "capabilityDisclosure",
+    }:
         raise ValueError("agent configuration sections are invalid")
     runtime = _mapping(configuration.get("runtime"), field="runtime")
     defaults = _mapping(configuration.get("sessionDefaults"), field="sessionDefaults")
     coordination = _mapping(configuration.get("coordination"), field="coordination")
+    disclosure = _mapping(
+        configuration.get("capabilityDisclosure"),
+        field="capabilityDisclosure",
+    )
     if set(runtime) != {"enabled", "startup", "idleTimeoutSeconds"}:
         raise ValueError("agent runtime configuration fields are invalid")
     if set(defaults) != {
@@ -640,10 +670,13 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
         "roleVersion",
         "modelProfile",
         "toolProfileVersion",
+        "capabilityDisclosurePreferences",
     }:
         raise ValueError("agent session default fields are invalid")
     if set(coordination) != {"enabled"}:
         raise ValueError("agent coordination configuration fields are invalid")
+    if set(disclosure) != {"projectPreferences"}:
+        raise ValueError("agent capability disclosure fields are invalid")
     runtime_policy_from_configuration(configuration)
     _boolean(defaults.get("resumeLastSession"), field="sessionDefaults.resumeLastSession")
     _identifier(defaults.get("roleId"), field="sessionDefaults.roleId", maximum=80)
@@ -654,7 +687,33 @@ def _validate_configuration(configuration: Mapping[str, object]) -> None:
         field="sessionDefaults.toolProfileVersion",
         maximum=80,
     )
+    _capability_disclosure_preferences(
+        defaults.get("capabilityDisclosurePreferences")
+    )
+    _project_disclosure_preferences(disclosure.get("projectPreferences"))
     _boolean(coordination.get("enabled"), field="coordination.enabled")
+
+
+def _project_disclosure_preferences(value: object) -> dict[str, dict[str, str]]:
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            "capabilityDisclosure.projectPreferences must be an object"
+        )
+    if len(value) > 64:
+        raise ValueError(
+            "capabilityDisclosure.projectPreferences contains too many projects"
+        )
+    normalized: dict[str, dict[str, str]] = {}
+    for raw_project_id, raw_preferences in value.items():
+        project_id = _identifier(
+            raw_project_id,
+            field="capabilityDisclosure.projectPreferences project id",
+            maximum=120,
+        )
+        normalized[project_id] = _capability_disclosure_preferences(
+            raw_preferences
+        )
+    return dict(sorted(normalized.items()))
 
 
 def _set_dotted(target: dict[str, object], key: str, value: object) -> None:
@@ -669,6 +728,39 @@ def _get_dotted(target: Mapping[str, object], key: str) -> object:
     section, leaf = key.split(".", 1)
     branch = target.get(section)
     return branch.get(leaf) if isinstance(branch, Mapping) else None
+
+
+def _capability_disclosure_preferences(value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            "sessionDefaults.capabilityDisclosurePreferences must be an object"
+        )
+    if len(value) > 512:
+        raise ValueError(
+            "sessionDefaults.capabilityDisclosurePreferences contains too many items"
+        )
+    normalized: dict[str, str] = {}
+    for raw_id, raw_preference in value.items():
+        capability_id = str(raw_id or "").strip()
+        if (
+            not capability_id
+            or len(capability_id) > 240
+            or any(
+                character
+                not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:._-"
+                for character in capability_id
+            )
+        ):
+            raise ValueError(
+                "sessionDefaults.capabilityDisclosurePreferences contains an invalid capability id"
+            )
+        preference = str(raw_preference or "").strip().lower()
+        if preference not in {"inherit", "enabled", "disabled"}:
+            raise ValueError(
+                "capability disclosure preference must be inherit, enabled, or disabled"
+            )
+        normalized[capability_id] = preference
+    return dict(sorted(normalized.items()))
 
 
 def _mapping(value: object, *, field: str) -> Mapping[str, object]:

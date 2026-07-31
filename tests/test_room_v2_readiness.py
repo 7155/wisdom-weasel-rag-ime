@@ -32,7 +32,7 @@ class RoomV2ReadinessTests(unittest.TestCase):
                 baseline = apply_database_migrations(conn, migrations_dir=old_migrations, applied_at_ms=1)
                 upgraded = apply_database_migrations(conn, applied_at_ms=2)
                 self.assertEqual(baseline.current_version, 65)
-                self.assertEqual(upgraded.current_version, 110)
+                self.assertEqual(upgraded.current_version, 126)
                 self.assertEqual(
                     upgraded.applied_versions,
                     tuple(migration.version for migration in load_migrations() if migration.version > 65),
@@ -47,7 +47,7 @@ class RoomV2ReadinessTests(unittest.TestCase):
             value = json.loads(path.read_text(encoding="utf-8"))
             canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
             hashes[path.name] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        self.assertEqual(len(hashes), 142)
+        self.assertEqual(len(hashes), 157)
         self.assertTrue(all(len(value) == 64 for value in hashes.values()))
 
     def test_capability_probe_and_no_binding_smoke(self) -> None:

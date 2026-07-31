@@ -146,6 +146,8 @@ class DesktopBridgeClientTests(unittest.TestCase):
         self.assertIn("semanticChildren", source)
         self.assertIn("AXObserverAddNotification", source)
         self.assertIn("refreshSnapshotForAction", source)
+        self.assertIn("nodeActionStateSha256", source)
+        self.assertIn("refreshed.nodeActionHashes[nodeRef] == expectedActionHash", source)
         self.assertIn("desktop_changed_after_approval", source)
         self.assertIn("AXUIElementCopyElementAtPosition", source)
         self.assertIn("ax_bounds_hit_test_changed", source)

@@ -98,8 +98,8 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             {"name": "memory_capture", "operation": "capture"},
         ]
         memory["modelVisible"] = False
-        registry = {**self._registry(), "ime_memory": memory}
-        names = (*ROOM_TOOLS, "ime_memory")
+        registry = {**self._registry(), "memory": memory}
+        names = (*ROOM_TOOLS, "memory")
 
         manifest, _ = self.store.compile_manifest(
             manifest_id="manifest:memory-projection",
@@ -115,7 +115,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             created_at_ms=1,
         )
         tool = next(
-            item for item in manifest["tools"] if item["name"] == "ime_memory"
+            item for item in manifest["tools"] if item["name"] == "memory"
         )
         self.assertEqual(
             tool["runtimeProjections"],
@@ -130,7 +130,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             created_at_ms=2,
         )
         route = next(
-            item for item in searched["items"] if item["name"] == "ime_memory"
+            item for item in searched["items"] if item["name"] == "memory"
         )
         self.assertNotIn("runtimeProjections", route)
 
@@ -214,7 +214,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
                 {"receiptId": "load:state", "toolName": "room_state"},
             ),
             runtime_registry=self._registry(),
-            created_at_ms=3,
+            created_at_ms=99,
         )
         self.assertFalse(replay_created)
         self.assertEqual(replayed, receipts)
@@ -260,7 +260,10 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         tool = room_runtime_registry()["room_collaborate"]
         schema = tool["inputSchema"]
         self.assertTrue(
-            any("最终验收" in value for value in tool["notFor"])
+            any("等待各自结果" in value for value in tool["when"])
+        )
+        self.assertFalse(
+            any("必须等对方结果" in value for value in tool["notFor"])
         )
         self.assertIn("acceptance", schema["required"])
         self.assertIn(
@@ -293,7 +296,13 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         )
         self.assertEqual(
             set(schema["required"]),
-            {"decision", "summary", "evidence", "residualRisks"},
+            {
+                "decision",
+                "summary",
+                "publicSummary",
+                "evidence",
+                "residualRisks",
+            },
         )
         self.assertFalse(
             {"qualityGate", "verdict", "originalRequestChecked"}
@@ -326,6 +335,14 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             schema["properties"]["publicSummary"]["description"],
         )
         self.assertIn(
+            "不输出私有推理",
+            schema["properties"]["publicSummary"]["description"],
+        )
+        self.assertIn(
+            "不作为公开消息",
+            schema["properties"]["summary"]["description"],
+        )
+        self.assertIn(
             "即将 room_commit",
             " ".join(room_runtime_registry()["room_post"]["notFor"]),
         )
@@ -338,6 +355,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             "summary": "当前责任说明",
             "evidence": [],
             "residualRisks": [],
+            "publicSummary": "给用户的自然语言终态报告",
         }
         valid = (
             {**base, "decision": "deliver"},
@@ -396,6 +414,81 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             with self.assertRaises(ContractValidationError):
                 validate_contract(payload, schema)
 
+    def test_room_commit_schema_owns_structured_questions_for_user_waits(
+        self,
+    ) -> None:
+        schema = room_runtime_registry()["room_commit"]["inputSchema"]
+        base = {
+            "summary": "需要用户澄清",
+            "evidence": [],
+            "residualRisks": [],
+            "publicSummary": "需要用户选择后才能继续",
+            "decision": "wait",
+            "waitingFor": "user",
+            "resumeCondition": "用户选择一个方案",
+            "question": "采用哪个方案？",
+        }
+        options = [
+            {
+                "value": "safe",
+                "label": "稳妥方案",
+                "description": "保留现有边界",
+                "recommended": True,
+            },
+            {
+                "value": "fast",
+                "label": "快速方案",
+            },
+        ]
+        validate_contract({**base, "questionOptions": options}, schema)
+
+        invalid = (
+            {
+                **base,
+                "decision": "deliver",
+                "questionOptions": options,
+            },
+            {
+                **base,
+                "waitingFor": "external",
+                "questionOptions": options,
+            },
+            {
+                key: value
+                for key, value in {
+                    **base,
+                    "questionOptions": options,
+                }.items()
+                if key != "question"
+            },
+            {**base, "questionOptions": options[:1]},
+            {**base, "questionOptions": [*options, *options, *options]},
+            {
+                **base,
+                "questionOptions": [
+                    {**options[0], "value": "v" * 81},
+                    options[1],
+                ],
+            },
+            {
+                **base,
+                "questionOptions": [
+                    {**options[0], "label": "l" * 121},
+                    options[1],
+                ],
+            },
+            {
+                **base,
+                "questionOptions": [
+                    {**options[0], "description": "d" * 501},
+                    options[1],
+                ],
+            },
+        )
+        for payload in invalid:
+            with self.assertRaises(ContractValidationError):
+                validate_contract(payload, schema)
+
     def test_disclosure_does_not_grant_authorization(self) -> None:
         manifest = self._compile(user=("room_state", "room_post"))
         loaded, _ = self.store.tool_load(
@@ -438,6 +531,7 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             {
                 "decision": "deliver",
                 "summary": "done",
+                "publicSummary": "用户可见的完成报告",
                 "evidence": [
                     {
                         "acceptance": "AC-1",

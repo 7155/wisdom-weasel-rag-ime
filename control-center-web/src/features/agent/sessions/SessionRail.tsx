@@ -5,12 +5,13 @@ import {
   ChevronRight,
   Folder,
   MessageSquarePlus,
+  LoaderCircle,
   MoreHorizontal,
   Search,
   Trash2,
   X,
 } from 'lucide-react';
-import { forwardRef, useEffect, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Button,
   Dialog,
@@ -33,6 +34,7 @@ export const SessionRail = forwardRef<HTMLElement, {
   sessions: SessionSummary[];
   selectedId: string;
   loading: boolean;
+  error?: string;
   open?: boolean;
   modal?: boolean;
   blocked?: boolean;
@@ -42,11 +44,13 @@ export const SessionRail = forwardRef<HTMLElement, {
   onShowArchivedChange?: (value: boolean) => void;
   onArchive?: (sessionId: string, archived: boolean) => void;
   onDelete?: (sessionId: string) => void | Promise<void>;
+  onRetry?: () => void;
   onClose?: () => void;
 }>(function SessionRail({
   sessions,
   selectedId,
   loading,
+  error = '',
   open = true,
   modal = false,
   blocked = false,
@@ -56,6 +60,7 @@ export const SessionRail = forwardRef<HTMLElement, {
   onShowArchivedChange,
   onArchive,
   onDelete,
+  onRetry,
   onClose,
 }, ref) {
   const [query, setQuery] = useState('');
@@ -114,9 +119,39 @@ export const SessionRail = forwardRef<HTMLElement, {
       </header>
       <label className="agent-session-search">
         <Search size={14} aria-hidden="true" />
-        <input data-drawer-autofocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话或项目" />
+        <input aria-label="搜索对话或项目" data-drawer-autofocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索对话或项目" />
       </label>
       <div className="agent-session-list" aria-busy={loading || undefined}>
+        {loading && sessions.length === 0 ? (
+          <SessionRailState
+            icon={<LoaderCircle className="ui-spin" size={18} />}
+            message="正在读取这台设备上的对话"
+            role="status"
+            title="正在加载"
+          />
+        ) : null}
+        {error ? (
+          <SessionRailState
+            action={onRetry ? <Button size="small" onClick={onRetry}>重新读取</Button> : null}
+            message={error}
+            role="alert"
+            title="对话列表暂时不可用"
+          />
+        ) : null}
+        {!loading && !error && sessions.length === 0 ? (
+          <SessionRailState
+            action={<Button size="small" onClick={onCreate}>新建第一段对话</Button>}
+            message={showArchived ? '当前没有可显示的对话。' : '新建一段对话开始工作；历史归档不会混入当前列表。'}
+            title="还没有对话"
+          />
+        ) : null}
+        {!loading && !error && sessions.length > 0 && groups.length === 0 ? (
+          <SessionRailState
+            action={<Button size="small" variant="quiet" onClick={() => setQuery('')}>清除搜索</Button>}
+            message="换一个关键词，或清除搜索查看全部对话。"
+            title="没有匹配的对话"
+          />
+        ) : null}
         {groups.map((group, groupIndex) => {
           const collapsed = collapsedRoots.has(group.root);
           const groupId = `agent-session-project-${groupIndex}`;
@@ -136,52 +171,73 @@ export const SessionRail = forwardRef<HTMLElement, {
                 <small>{group.sessions.length}</small>
               </button>
               <div className="agent-session-project__sessions" hidden={collapsed} id={groupId}>
-                {group.sessions.map((session, sessionIndex) => (
-                  <div className="agent-session-row-shell" data-selected={selectedId === session.id || undefined} key={session.id}>
-                    <button
-                      type="button"
-                      className="agent-session-row"
-                      aria-current={selectedId === session.id ? 'true' : undefined}
-                      onClick={() => onSelect(session.id)}
-                      title={session.title}
-                    >
-                      <span className="agent-session-row__status" data-status={session.status} aria-hidden="true" />
-                      <span className="agent-session-row__copy">
-                        <strong id={`agent-session-title-${groupIndex}-${sessionIndex}`}>{session.title}</strong>
-                        <small title={session.lastMessagePreview || undefined}>
-                          {session.messageCount ?? 0} 条消息
-                          {session.lastMessagePreview ? ` · ${session.lastMessagePreview}` : ''}
-                        </small>
-                      </span>
-                      <time>{relativeTime(session.updatedAtMs)}</time>
-                    </button>
-                    {onArchive ? (
-                      <IconButton
-                        className="agent-session-row__archive"
-                        label={session.status === 'archived' ? '恢复此对话' : '归档此对话'}
-                        aria-describedby={`agent-session-title-${groupIndex}-${sessionIndex}`}
-                        title={`${session.status === 'archived' ? '恢复' : '归档'} ${session.title}`}
-                        icon={session.status === 'archived' ? <ArchiveRestore size={15} /> : <Archive size={15} />}
-                        onClick={() => onArchive(session.id, session.status !== 'archived')}
-                        size="small"
-                      />
-                    ) : null}
-                    <Menu>
-                      <MenuTrigger asChild>
-                        <IconButton className="agent-session-row__menu" label="更多对话操作" icon={<MoreHorizontal size={16} />} size="small" title={session.title} />
-                      </MenuTrigger>
-                      <MenuContent align="end">
-                        <MenuItem className="agent-session-row__delete" onSelect={() => {
-                          setDeleteError('');
-                          setDeleteTarget(session);
-                        }}>
-                          <Trash2 size={15} />
-                          删除对话
-                        </MenuItem>
-                      </MenuContent>
-                    </Menu>
-                  </div>
-                ))}
+                {group.sessions.map((session, sessionIndex) => {
+                  const titleId = `agent-session-title-${groupIndex}-${sessionIndex}`;
+                  const previewId = `${titleId}-preview`;
+                  const timeId = `${titleId}-time`;
+                  const preview = session.lastMessagePreview || `${session.messageCount ?? 0} 条消息`;
+                  const updated = relativeTime(session.updatedAtMs);
+                  const updatedDate = new Date(session.updatedAtMs);
+                  const archived = session.status === 'archived';
+                  return (
+                    <div className="agent-session-row-shell" data-selected={selectedId === session.id || undefined} key={session.id}>
+                      <button
+                        type="button"
+                        className="agent-session-row"
+                        aria-current={selectedId === session.id ? 'true' : undefined}
+                        aria-labelledby={titleId}
+                        aria-describedby={`${previewId} ${timeId}`}
+                        onClick={() => onSelect(session.id)}
+                        title={`${session.title} · ${updated}`}
+                      >
+                        <span className="agent-session-row__status" data-status={session.status} aria-hidden="true" />
+                        <span className="agent-session-row__copy">
+                          <span className="agent-session-row__heading">
+                            <strong id={titleId}>{session.title}</strong>
+                            <time id={timeId} dateTime={updatedDate.toISOString()} title={updatedDate.toLocaleString()}>
+                              {updated}
+                            </time>
+                          </span>
+                          <small id={previewId} title={session.lastMessagePreview || undefined}>{preview}</small>
+                        </span>
+                      </button>
+                      {!session.roomParticipant ? (
+                        <Menu>
+                          <MenuTrigger asChild>
+                            <IconButton
+                              className="agent-session-row__menu"
+                              label={`更多“${session.title}”操作`}
+                              icon={<MoreHorizontal size={16} />}
+                              size="small"
+                              title={`更多“${session.title}”操作`}
+                            />
+                          </MenuTrigger>
+                          <MenuContent align="end" aria-label={`${session.title} 对话操作`}>
+                            {onArchive ? (
+                              <>
+                                <MenuItem
+                                  aria-describedby={titleId}
+                                  onSelect={() => onArchive(session.id, !archived)}
+                                >
+                                  {archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+                                  {archived ? '恢复对话' : '归档对话'}
+                                </MenuItem>
+                                <MenuSeparator />
+                              </>
+                            ) : null}
+                            <MenuItem className="agent-session-row__delete" aria-describedby={titleId} onSelect={() => {
+                              setDeleteError('');
+                              setDeleteTarget(session);
+                            }}>
+                              <Trash2 size={15} />
+                              删除对话
+                            </MenuItem>
+                          </MenuContent>
+                        </Menu>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             </section>
           );
@@ -225,6 +281,29 @@ export const SessionRail = forwardRef<HTMLElement, {
     </aside>
   );
 });
+
+function SessionRailState({
+  action,
+  icon,
+  message,
+  role,
+  title,
+}: {
+  action?: ReactNode;
+  icon?: ReactNode;
+  message: string;
+  role?: 'alert' | 'status';
+  title: string;
+}) {
+  return (
+    <div className="agent-session-list__state" role={role}>
+      {icon ? <span aria-hidden="true">{icon}</span> : null}
+      <strong>{title}</strong>
+      <small>{message}</small>
+      {action ? <div>{action}</div> : null}
+    </div>
+  );
+}
 
 function projectGroups(sessions: SessionSummary[], query: string): Array<{ root: string; label: string; sessions: SessionSummary[] }> {
   const needle = query.trim().toLowerCase();

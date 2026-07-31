@@ -1,48 +1,70 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { ControlTransportProvider } from '@/app/control-transport';
+import { createPreviewTransport } from '@/app/preview-control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type { ControlPathId } from '@/platform/routes';
+import type { ControlTransport } from '@/platform/transport';
 import { MockControlTransport, type MockRouteHandler } from '@/test/mock-transport';
 import { PluginsFeature } from '.';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  onlineManager.setOnline(true);
+});
 
 describe('PluginsFeature', () => {
-  it('keeps the catalog full width until a tool is selected, then opens a closable detail', async () => {
+  it('keeps a stable catalog split while opening and closing capability details', async () => {
     const user = userEvent.setup();
     renderPlugins();
 
-    expect(await screen.findByRole('heading', { name: '技能与工具', level: 1 })).toBeInTheDocument();
-    const list = await screen.findByRole('group', { name: '工具列表' });
-    expect(within(list).getByRole('button', { name: /我的记忆/ })).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.queryByRole('complementary', { name: '工具详情' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '工具、技能与扩展', level: 1 })).toBeInTheDocument();
+    const list = await screen.findByRole('group', { name: '能力列表' });
+    expect(within(list).getByRole('button', { name: /记忆与工具书/ })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('complementary', { name: '能力详情占位' })).toBeInTheDocument();
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'false');
 
-    await user.click(within(list).getByRole('button', { name: /设置与记录/ }));
-    const detail = screen.getByRole('complementary', { name: '工具详情' });
+    await user.click(within(list).getByRole('button', { name: /历史与配置/ }));
+    const detail = screen.getByRole('complementary', { name: '能力详情' });
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'true');
-    expect(detail).toHaveTextContent('敏感操作仍受额外禁区与确认保护');
+    expect(detail).toHaveTextContent('受禁区保护');
+    expect(detail).toHaveTextContent('native_approval');
     expect(detail).toHaveTextContent('恢复备份');
-    expect(detail).toHaveTextContent('缺少关键信息时先向你确认');
-    expect(detail).toHaveTextContent('不用于绕过当前权限');
-    expect(detail).toHaveTextContent('需要进一步操作时，再选择精确工具');
-    expect(detail).toHaveTextContent('操作影响');
-    expect(screen.getAllByText('还没有具体对话回执').length).toBeGreaterThanOrEqual(5);
+    expect(detail).toHaveTextContent('执行授权');
+    expect(detail).toHaveTextContent('当前披露');
+    expect(within(detail).getByRole('combobox', { name: '历史与配置的所有对话默认披露' })).toBeEnabled();
 
-    expect(document.body).not.toHaveTextContent('ime_configuration');
+    expect(document.body).not.toHaveTextContent('configuration');
     expect(document.body).not.toHaveTextContent('restore_apply');
     expect(document.body).not.toHaveTextContent('/api/private/tools');
     expect(document.body).not.toHaveTextContent('R3');
     expect(document.body).not.toHaveTextContent('assistant');
     expect(document.body).not.toHaveTextContent('coordinator');
 
-    await user.click(screen.getByRole('button', { name: '关闭工具详情' }));
-    expect(screen.queryByRole('complementary', { name: '工具详情' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '关闭能力详情' }));
+    expect(screen.queryByRole('complementary', { name: '能力详情' })).not.toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: '能力详情占位' })).toBeInTheDocument();
     expect(list.parentElement).toHaveAttribute('data-detail-open', 'false');
+  });
+
+  it('reports an installed backend catalog version mismatch and never renders legacy items as controls', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlugins({
+      'agent.tools.list': {
+        schemaVersion: 'rag-ime.control-tool-list.v1',
+        ok: true,
+        items: [{ id: 'legacy-tool', displayName: '旧工具' }],
+      },
+    });
+
+    expect(await screen.findByText(/后端返回 rag-ime\.control-tool-list\.v1/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: /旧工具/ })).not.toBeInTheDocument();
+    const before = transport.requests.filter((call) => call.request.pathId === 'agent.tools.list').length;
+    await user.click(screen.getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(transport.requests.filter((call) => call.request.pathId === 'agent.tools.list')).toHaveLength(before + 1));
   });
 
   it('opens Agent with a review-only plugin-authoring skill request', async () => {
@@ -56,24 +78,130 @@ describe('PluginsFeature', () => {
     expect(screen.getByTestId('test-location')).toHaveTextContent('%E4%B8%8D%E8%A6%81%E5%A3%B0%E7%A7%B0%E5%AE%83%E5%B7%B2%E8%8E%B7%E5%87%86%E6%89%A7%E8%A1%8C');
   });
 
-  it('filters tools by readable purpose, availability and supported mode', async () => {
+  it('filters capabilities by readable purpose, availability and kind', async () => {
     const user = userEvent.setup();
     renderPlugins();
-    await screen.findByRole('heading', { name: '技能与工具', level: 1 });
+    await screen.findByRole('heading', { name: '工具、技能与扩展', level: 1 });
 
     const search = await screen.findByRole('textbox', { name: '搜索' });
     await user.type(search, '语音');
     expect(screen.getByRole('button', { name: /语音输入/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /我的记忆/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /记忆与工具书/ })).not.toBeInTheDocument();
 
     await user.clear(search);
     await user.click(screen.getByRole('combobox', { name: '状态' }));
     await user.click(await screen.findByRole('option', { name: '需要处理' }));
-    expect(screen.getByRole('button', { name: /读取项目文件/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /工作区读取/ })).toBeInTheDocument();
     await user.click(screen.getByRole('combobox', { name: '状态' }));
     await user.click(await screen.findByRole('option', { name: '全部状态' }));
-    await user.click(screen.getByRole('radio', { name: '日常对话' }));
-    expect(screen.queryByRole('button', { name: /读取项目文件/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: '技能' }));
+    expect(screen.queryByRole('button', { name: /工作区读取/ })).not.toBeInTheDocument();
+  });
+
+  it('re-reads the backend catalog and defaults after connectivity returns', async () => {
+    let catalogReads = 0;
+    let defaultReads = 0;
+    renderPlugins({
+      'agent.tools.list': () => {
+        catalogReads += 1;
+        return capabilityCatalog(toolItems());
+      },
+      'agent.configuration.get': () => {
+        defaultReads += 1;
+        return capabilityDefaults();
+      },
+    });
+
+    await waitFor(() => {
+      expect(catalogReads).toBe(1);
+      expect(defaultReads).toBe(1);
+    });
+    act(() => onlineManager.setOnline(false));
+    act(() => onlineManager.setOnline(true));
+    await waitFor(() => {
+      expect(catalogReads).toBe(2);
+      expect(defaultReads).toBe(2);
+    });
+  });
+
+  it('persists global disclosure defaults without changing authorization', async () => {
+    const user = userEvent.setup();
+    const transport = renderPlugins();
+    await user.click(await screen.findByRole('button', { name: /记忆与工具书/ }));
+    const preference = screen.getByRole('combobox', {
+      name: '记忆与工具书的所有对话默认披露',
+    });
+    await user.click(preference);
+    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.configuration.update'
+      && typeof call.request.body === 'object'
+      && call.request.body !== null
+      && !Array.isArray(call.request.body)
+      && JSON.stringify(call.request.body).includes('"tool:memory":"disabled"')
+    ))).toBe(true));
+    expect(screen.getByRole('complementary', { name: '能力详情' })).toHaveTextContent('不适用');
+    expect(await screen.findByText('默认设置已保存')).toBeVisible();
+    expect(screen.getByText(/后台已确认保存所有对话默认/)).toBeVisible();
+  });
+
+  it('loads and persists a project default from an Agent Session context', async () => {
+    const user = userEvent.setup();
+    const projectId = `workspace-${'b'.repeat(64)}`;
+    const transport = renderPlugins({
+      'agent.tools.list': capabilityCatalog(toolItems(), {
+        supported: true,
+        identityKind: 'workspace_scope_sha256',
+        projectId,
+        reason: 'session_workspace_scope',
+      }, 'session-project'),
+      'agent.configuration.get': capabilityDefaults({
+        [projectId]: { 'tool:memory': 'enabled' },
+      }),
+    }, '/plugins?sessionId=session-project');
+
+    await user.click(await screen.findByRole('button', { name: /记忆与工具书/ }));
+    const projectPreference = screen.getByRole('combobox', {
+      name: '记忆与工具书的当前项目默认披露',
+    });
+    expect(projectPreference).toHaveTextContent('向伙伴披露');
+    expect(screen.getByRole('region', { name: '能力披露优先级' })).toHaveTextContent('由当前授权工作区控制 · workspace-bb…bbbb');
+    await user.click(projectPreference);
+    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+
+    await waitFor(() => expect(transport.requests.some((call) => (
+      call.request.pathId === 'agent.configuration.update'
+      && JSON.stringify(call.request.body).includes(`"${projectId}"`)
+      && JSON.stringify(call.request.body).includes('"tool:memory":"disabled"')
+    ))).toBe(true));
+    expect(transport.requests.find((call) => call.request.pathId === 'agent.tools.list')?.request.query)
+      .toEqual({ sessionId: 'session-project' });
+    expect(await screen.findByText('默认设置已保存')).toBeVisible();
+    expect(screen.getByText(/后台已确认保存当前项目默认/)).toBeVisible();
+  });
+
+  it('keeps the failed persistent change owner-scoped and retries the same preference', async () => {
+    let attempts = 0;
+    const user = userEvent.setup();
+    const transport = renderPlugins({
+      'agent.configuration.update': () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('配置修订冲突');
+        return { ok: true };
+      },
+    });
+
+    await user.click(await screen.findByRole('button', { name: /记忆与工具书/ }));
+    await user.click(screen.getByRole('combobox', { name: '记忆与工具书的所有对话默认披露' }));
+    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+    expect(await screen.findByText('默认设置没有保存')).toBeVisible();
+    expect(screen.getAllByText('配置修订冲突').length).toBeGreaterThan(0);
+
+    await user.click(screen.getAllByRole('button', { name: '重试这次更改' })[0]!);
+    await waitFor(() => expect(attempts).toBe(2));
+    expect(transport.requests.filter((call) => call.request.pathId === 'agent.configuration.update')).toHaveLength(2);
+    expect(await screen.findByText('默认设置已保存')).toBeVisible();
   });
 
   it('validates, previews and explicitly applies a first-party catalog plugin', async () => {
@@ -195,10 +323,35 @@ describe('PluginsFeature', () => {
     await user.click(await screen.findByRole('button', { name: /Session Review/ }));
     expect(screen.getByText('v1.1.0 · 需要的权限：session.read · 当前已启用 · 校验标记 0123456789ab…cdef')).toBeVisible();
   });
+  it('shows installed display names and disables rollback after the visible version transition', async () => {
+    const user = userEvent.setup();
+    const transport = createPreviewTransport();
+    renderPluginsWithTransport(transport);
+
+    await user.click(await screen.findByRole('button', { name: '管理扩展与自动整理' }));
+    await screen.findByText('Timeline Inspector');
+
+    await user.click(screen.getByRole('button', { name: '停用' }));
+    expect(await screen.findByText('停用插件：Timeline Inspector')).toBeVisible();
+    expect(screen.queryByText('停用插件：timeline-inspector')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '取消' }));
+
+    const rollback = screen.getByRole('button', { name: '恢复上一版本' });
+    expect(rollback).toBeEnabled();
+    await user.click(rollback);
+    expect(await screen.findByText('回滚插件：Timeline Inspector')).toBeVisible();
+    expect(screen.getByText('v0.9.0 · 无额外权限')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: '确认更改' }));
+
+    expect(await screen.findByText('v0.9.0')).toBeVisible();
+    expect(screen.getByRole('button', { name: '恢复上一版本' })).toBeDisabled();
+  });
+
 });
 
 function renderPlugins(
   overrides: Partial<Record<ControlPathId, MockRouteHandler>> = {},
+  initialEntry = '/plugins',
 ) {
   const transport = new MockControlTransport({
     pickedFiles: [{
@@ -209,7 +362,9 @@ function renderPlugins(
       path: '/trusted/guided-plugin',
     }],
     routes: {
-      'agent.tools.list': { ok: true, items: toolItems() },
+      'agent.tools.list': capabilityCatalog(toolItems()),
+      'agent.configuration.get': capabilityDefaults(),
+      'agent.configuration.update': { ok: true },
       'agent.extensions.list': { ok: true, items: [] },
       'agent.extensions.catalog': {
         ok: true,
@@ -250,9 +405,16 @@ function renderPlugins(
       ...overrides,
     },
   });
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<MemoryRouter initialEntries={['/plugins']}><LocationProbe /><TooltipProvider delayDuration={0}><ControlTransportProvider transport={transport}><QueryClientProvider client={client}><PluginsFeature /></QueryClientProvider></ControlTransportProvider></TooltipProvider></MemoryRouter>);
+  renderPluginsWithTransport(transport, initialEntry);
   return transport;
+}
+
+function renderPluginsWithTransport(
+  transport: ControlTransport,
+  initialEntry = '/plugins',
+): void {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(<MemoryRouter initialEntries={[initialEntry]}><LocationProbe /><TooltipProvider delayDuration={0}><ControlTransportProvider transport={transport}><QueryClientProvider client={client}><PluginsFeature /></QueryClientProvider></ControlTransportProvider></TooltipProvider></MemoryRouter>);
 }
 
 function LocationProbe() {
@@ -262,13 +424,90 @@ function LocationProbe() {
 
 function toolItems() {
   return [
-    tool({ id: 'ime_memory', displayName: '记忆与工具书', description: '搜索与维护长期记忆', domain: 'memory', riskLevel: 'R1', operations: ['search', 'maintenance_apply'], sessionModes: ['assistant', 'coordinator'] }),
-    tool({ id: 'ime_configuration', displayName: '历史与配置', description: '查看历史并恢复便携备份', domain: 'configuration', riskLevel: 'R3', operations: ['history', 'restore_apply'], sessionModes: ['assistant', 'coordinator'], privatePath: '/api/private/tools' }),
-    tool({ id: 'ime_voice', displayName: '语音输入', description: '查看语音状态与服务连接', domain: 'voice', riskLevel: 'R1', operations: ['provider_status'], sessionModes: ['assistant', 'coordinator'] }),
+    tool({ id: 'memory', displayName: '记忆与工具书', description: '搜索与维护长期记忆', domain: 'memory', riskLevel: 'R1', operations: ['search', 'maintenance_apply'], sessionModes: ['assistant', 'coordinator'] }),
+    tool({ id: 'configuration', displayName: '历史与配置', description: '查看历史并恢复便携备份', domain: 'configuration', riskLevel: 'R3', operations: ['history', 'restore_apply'], sessionModes: ['assistant', 'coordinator'], privatePath: '/api/private/tools' }),
+    tool({ id: 'voice', displayName: '语音输入', description: '查看语音状态与服务连接', domain: 'voice', riskLevel: 'R1', operations: ['provider_status'], sessionModes: ['assistant', 'coordinator'] }),
     tool({ id: 'workspace_read', displayName: '工作区读取', description: '读取已授权工作区中的文本', domain: 'workspace', riskLevel: 'R0', operations: ['read'], sessionModes: ['coordinator'], availability: 'offline' }),
   ];
 }
 
 function tool(overrides: Record<string, unknown>) {
-  return { category: overrides.domain, operationRisks: {}, resultPresentation: 'tool_result', availability: 'online', version: '1', ...overrides };
+  const id = String(overrides.id);
+  const risk = String(overrides.riskLevel ?? 'R0');
+  const status = String(overrides.availability ?? 'online');
+  return {
+    category: overrides.domain,
+    operationRisks: {},
+    resultPresentation: 'tool_result',
+    availability: status,
+    version: '1',
+    ...overrides,
+    canonicalId: `tool:${id}`,
+    kind: 'tool' as const,
+    source: { kind: 'product', label: 'Personal Agent Workbench' },
+    status,
+    risk,
+    requiredPermissions: [
+      ...(risk === 'R0' ? [] : ['native_approval']),
+      ...(id.startsWith('workspace_') ? ['workspace_scope'] : []),
+    ],
+    authorization: { state: 'not_applicable' as const, reason: 'session_context_required' },
+    disclosure: {
+      preference: 'inherit' as const,
+      effective: 'enabled' as const,
+      state: 'disclosed' as const,
+      reason: 'inherited_built_in_default',
+    },
+    effectiveScope: 'built_in_default' as const,
+    reasons: ['inherited_built_in_default', 'tool_not_authorized_by_existing_session_policy'],
+    revision: 'tool-spec:1',
+    effectiveAtMs: 1,
+  };
+}
+
+function capabilityCatalog(
+  items: ReturnType<typeof toolItems>,
+  projectScope: Record<string, unknown> = {
+    supported: false,
+    identityKind: 'none',
+    reason: 'stable_project_identity_unavailable',
+  },
+  sessionId = '',
+) {
+  return {
+    schemaVersion: 'rag-ime.capability-catalog.v1',
+    ok: true,
+    revision: `sha256:${'a'.repeat(64)}`,
+    effectiveAtMs: 1,
+    projectScope,
+    ...(sessionId ? {
+      sessionPolicy: {
+        sessionId,
+        policyRevision: 1,
+        disclosurePreferences: {
+          globalDefault: {},
+          projectDefault: { 'tool:memory': 'enabled' },
+          session: {},
+          effective: Object.fromEntries(items.map((item) => [item.canonicalId, item.disclosure.effective])),
+        },
+        effectiveAtMs: 1,
+      },
+    } : {}),
+    items,
+  };
+}
+
+function capabilityDefaults(
+  projectPreferences: Record<string, Record<string, string>> = {},
+) {
+  return {
+    ok: true,
+    configuration: {
+      revision: 1,
+      configuration: {
+        sessionDefaults: { capabilityDisclosurePreferences: {} },
+        capabilityDisclosure: { projectPreferences },
+      },
+    },
+  };
 }

@@ -17,13 +17,22 @@ export interface DailyActivityTimelineV1 {
   summary: string;
   eventCount: number;
   segmentCount: number;
+  observedStartMs: number;
+  observedEndMs: number;
+  spanSemantics: 'first_to_last_source_event';
+  ordinaryActivityCount: number;
+  consolidatedActivityCount: number;
   approvedBookId: string;
   approvedBy: string;
   approvedAtMs: number;
   createdAtMs: number;
   updatedAtMs: number;
   segmentationMode?:
-    'semantic_task_v4' | 'semantic_task_v3' | 'semantic_task_v2' | 'legacy_app_interval_v1';
+    | 'semantic_task_v5'
+    | 'semantic_task_v4'
+    | 'semantic_task_v3'
+    | 'semantic_task_v2'
+    | 'legacy_app_interval_v1';
   source?: Source;
   ref?: Ref;
   policy: {
@@ -31,6 +40,7 @@ export interface DailyActivityTimelineV1 {
     longTermFact: false;
     automaticPromotion: true;
     explicitApprovalRequired: false;
+    minimumConsolidatedSpanMs: number;
   };
 }
 export interface Segment {
@@ -47,6 +57,8 @@ export interface Segment {
   sourceEventHash: string;
   summary: string;
   redactedEventCount: number;
+  activityKind: 'ordinary_activity' | 'consolidated_activity';
+  spanSemantics: 'first_to_last_source_event';
   title?: string;
   apps?: string[];
   evidenceRefs?: EvidenceRef[];
@@ -60,7 +72,7 @@ export interface EvidenceRef {
   app: string;
   sourceKind: string;
   occurredAtMs: number;
-  preview: string;
+  redacted: boolean;
 }
 export interface Source {
   type: string;

@@ -9,10 +9,29 @@ export interface AgentSubagentRunV1 {
   id: string;
   batchId: string;
   childSessionId: string;
+  planItemId: string;
+  planItemTitle: string;
   templateId: 'researcher' | 'planner' | 'worker' | 'reviewer' | 'delegate';
   templateVersion: '1';
   ordinal: number;
   task: string;
+  expectedOutput: string;
+  /**
+   * @maxItems 8
+   */
+  acceptanceCriteria:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string];
+  outputSchema?: {
+    [k: string]: unknown;
+  };
   state: 'queued' | 'running' | 'completed' | 'failed' | 'aborted' | 'timed_out';
   budget: {
     maxTurns: number;
@@ -45,6 +64,7 @@ export interface AgentSubagentRunV1 {
     requestedAtMs: number | null;
     graceMs: number;
   };
+  resultContextScheduledAtMs: number | null;
   createdAtMs: number;
   startedAtMs: number | null;
   updatedAtMs: number;

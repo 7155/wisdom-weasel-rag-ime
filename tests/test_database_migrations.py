@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import shutil
 import tempfile
@@ -8,6 +9,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
+from rag_ime.agent_command_receipts import AgentCommandReceiptStore
 from rag_ime.db.migration_runner import (
     DEFAULT_MIGRATIONS_DIR,
     MigrationChecksumError,
@@ -33,11 +35,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
                     41, 42, 43, 44, 45, 46, 47,
                     51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                    61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+                    61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126,
                 ),
             )
             self.assertEqual(second.applied_versions, ())
-            self.assertEqual(status["currentVersion"], 110)
+            self.assertEqual(status["currentVersion"], 126)
             self.assertEqual(status["pendingVersions"], [])
             self.assertTrue(status["ok"])
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -123,6 +125,14 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIn("agent_goal_usage_receipts", tables)
             self.assertIn("agent_goal_continuation_budgets", tables)
             self.assertIn("agent_goal_continuation_receipts", tables)
+            self.assertIn("agent_goal_cancellation_audits", tables)
+            self.assertIn("agent_background_jobs", tables)
+            self.assertIn("work_documents", tables)
+            self.assertIn("work_document_terminal_receipts", tables)
+            self.assertIn("work_document_outbox", tables)
+            self.assertIn("work_document_observer_failures", tables)
+            self.assertIn("work_document_operation_receipts", tables)
+            self.assertIn("agent_lifecycle_cancellation_audits", tables)
             self.assertIn("agent_context_traces", tables)
             self.assertIn("agent_context_trace_nodes", tables)
             self.assertIn("agent_context_items", tables)
@@ -240,6 +250,450 @@ class DatabaseMigrationTests(unittest.TestCase):
                 }.issubset(persona_columns)
             )
 
+    def test_0122_backfills_failed_command_for_explicit_retry_lineage(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="rag-ime-migrations-0109-"
+        ) as temporary:
+            root = Path(temporary)
+            migrations_0109 = root / "migrations-0109"
+            migrations_0110 = root / "migrations-0110"
+            migrations_0109.mkdir()
+            migrations_0110.mkdir()
+            for migration in load_migrations():
+                if migration.version <= 109:
+                    shutil.copy2(
+                        migration.path,
+                        migrations_0109 / migration.path.name,
+                    )
+                if migration.version <= 110:
+                    shutil.copy2(
+                        migration.path,
+                        migrations_0110 / migration.path.name,
+                    )
+
+            database_path = root / "agent.sqlite"
+            payload = {
+                "message": "retry after durable failure",
+                "attachments": [],
+            }
+            payload_sha256 = hashlib.sha256(
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+
+            with closing(sqlite3.connect(database_path)) as conn:
+                initial = apply_database_migrations(
+                    conn,
+                    migrations_dir=migrations_0109,
+                    applied_at_ms=109,
+                )
+                self.assertEqual(initial.current_version, 109)
+                conn.execute(
+                    """
+                    INSERT INTO agent_command_receipts(
+                        command_scope, scope_id, client_message_id,
+                        payload_sha256, claim_token, state, response_json,
+                        error, created_at_ms, updated_at_ms
+                    ) VALUES(
+                        'session_prompt', 'session-legacy-retry',
+                        'legacy-failed', ?, 'legacy-claim', 'failed', NULL,
+                        'durable pre-accept failure', 108, 109
+                    )
+                    """,
+                    (payload_sha256,),
+                )
+                conn.commit()
+
+                original_0110 = apply_database_migrations(
+                    conn,
+                    migrations_dir=migrations_0110,
+                    applied_at_ms=110,
+                )
+                self.assertEqual(original_0110.applied_versions, (110,))
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT semantic_payload_sha256,
+                               retry_of_client_message_id
+                        FROM agent_command_receipts
+                        WHERE command_scope = 'session_prompt'
+                          AND scope_id = 'session-legacy-retry'
+                          AND client_message_id = 'legacy-failed'
+                        """
+                    ).fetchone(),
+                    ("", ""),
+                )
+                migration_0110 = next(
+                    migration
+                    for migration in load_migrations()
+                    if migration.version == 110
+                )
+                self.assertTrue(
+                    migration_0110.checksum.startswith("0c14909d")
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT name, checksum
+                        FROM schema_migrations
+                        WHERE version = 110
+                        """
+                    ).fetchone(),
+                    (
+                        "agent_command_retry_lineage",
+                        migration_0110.checksum,
+                    ),
+                )
+
+                upgraded = apply_database_migrations(
+                    conn,
+                    applied_at_ms=122,
+                )
+                replay = apply_database_migrations(
+                    conn,
+                    applied_at_ms=123,
+                )
+
+                self.assertEqual(
+                    upgraded.applied_versions,
+                    (111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
+                )
+                self.assertEqual(replay.applied_versions, ())
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT semantic_payload_sha256,
+                               retry_of_client_message_id
+                        FROM agent_command_receipts
+                        WHERE command_scope = 'session_prompt'
+                          AND scope_id = 'session-legacy-retry'
+                          AND client_message_id = 'legacy-failed'
+                        """
+                    ).fetchone(),
+                    (payload_sha256, ""),
+                )
+                column_defaults = {
+                    str(row[1]): str(row[4])
+                    for row in conn.execute(
+                        "PRAGMA table_info(agent_command_receipts)"
+                    )
+                }
+                self.assertEqual(
+                    column_defaults["semantic_payload_sha256"],
+                    "''",
+                )
+                self.assertEqual(
+                    column_defaults["retry_of_client_message_id"],
+                    "''",
+                )
+                migration_0122 = next(
+                    migration
+                    for migration in load_migrations()
+                    if migration.version == 122
+                )
+                self.assertEqual(
+                    conn.execute(
+                        """
+                        SELECT name, checksum
+                        FROM schema_migrations
+                        WHERE version = 122
+                        """
+                    ).fetchone(),
+                    (
+                        "agent_command_retry_lineage_backfill",
+                        migration_0122.checksum,
+                    ),
+                )
+
+            store = AgentCommandReceiptStore(database_path)
+            successor = store.begin(
+                command_scope="session_prompt",
+                scope_id="session-legacy-retry",
+                client_message_id="explicit-retry",
+                payload={
+                    **payload,
+                    "retryOfClientMessageId": "legacy-failed",
+                },
+            )
+            self.assertFalse(successor.is_replay)
+
+    def test_0111_through_0126_preserve_legacy_rows_and_upgrade_task_ownership(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0110-") as temporary:
+            migrations_0110 = Path(temporary) / "migrations"
+            migrations_0110.mkdir()
+            for migration in load_migrations():
+                if migration.version <= 110:
+                    shutil.copy2(migration.path, migrations_0110 / migration.path.name)
+
+            with closing(sqlite3.connect(":memory:")) as conn:
+                conn.execute("PRAGMA foreign_keys = ON")
+                initial = apply_database_migrations(
+                    conn,
+                    migrations_dir=migrations_0110,
+                    applied_at_ms=110,
+                )
+                self.assertEqual(initial.current_version, 110)
+                conn.execute(
+                    """
+                    INSERT INTO agent_sessions(
+                        id,title,session_mode,role_id,role_version,model_profile,
+                        tool_profile_version,created_at_ms,updated_at_ms,
+                        last_opened_at_ms,status
+                    ) VALUES(
+                        'session-legacy','Legacy Session','assistant','assistant',
+                        'v1','pi/default','tool-profile-v1',1,2,3,'idle'
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_rooms(
+                        id,title,routing_policy,status,room_file,
+                        created_at_ms,updated_at_ms
+                    ) VALUES(
+                        'room-legacy','Legacy Room','manual_mentions','active',
+                        'room-legacy.jsonl',4,5
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_room_participants(
+                        id,room_id,session_id,role_id,role_version,display_name,
+                        participant_status,ordinal,created_at_ms
+                    ) VALUES(
+                        'participant-legacy','room-legacy','session-legacy',
+                        'assistant','v1','Legacy Agent','active',0,6
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_session_tool_policies(
+                        session_id,allowed_tools_json,updated_at_ms
+                    ) VALUES('session-legacy','null',7)
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_plan_state_events(
+                        event_id,session_id,sequence,title,status,actor,created_at_ms
+                    ) VALUES(
+                        'plan-state-legacy','session-legacy',1,'Legacy Plan',
+                        'draft','legacy-user',8
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_thread_goal_events(
+                        event_id,session_id,goal_id,sequence,objective,status,
+                        token_budget,time_budget_ms,tokens_used,elapsed_ms,
+                        actor,created_at_ms
+                    ) VALUES(
+                        'goal-event-legacy','session-legacy','goal-legacy',1,
+                        'Preserve the goal','active',1000,60000,10,20,
+                        'legacy-user',9
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO agent_goal_usage_receipts(
+                        receipt_id,session_id,goal_id,idempotency_key,turn_id,
+                        token_delta,elapsed_delta_ms,goal_event_id,created_at_ms
+                    ) VALUES(
+                        'goal-usage-legacy','session-legacy','goal-legacy',
+                        'usage-legacy','turn-legacy',10,20,'goal-event-legacy',10
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO room_kernel_roots(
+                        root_id,room_id,generation,state,owner,
+                        requirement_anchor_ref,budget_remaining,budget_reserved,
+                        max_hops,max_depth,acceptance_criteria_json,
+                        covered_criteria_json,terminal_receipt_id,payload_json,
+                        created_at_ms,updated_at_ms
+                    ) VALUES(
+                        'root-legacy','room-legacy',0,'running',
+                        'participant-facilitator','requirement:legacy',10,0,
+                        3,2,'["criterion:legacy"]','[]',NULL,'{}',11,11
+                    )
+                    """
+                )
+                legacy_task_payload = {
+                    "schemaVersion": "wisdom-weasel.room-task.v2",
+                    "taskId": "task-legacy",
+                    "rootId": "root-legacy",
+                    "parentTaskId": None,
+                    "ownerParticipantId": "participant-facilitator",
+                    "assigneeParticipantId": "participant-worker",
+                    "objective": "Preserve one legacy Task.",
+                    "expectedOutput": "An upgraded Task.",
+                    "requirementItemIds": ["requirement:legacy"],
+                    "acceptanceCriterionIds": ["criterion:legacy"],
+                    "contextEvidenceRefs": ["evidence:legacy"],
+                    "revision": 0,
+                    "state": "active",
+                }
+                conn.execute(
+                    """
+                    INSERT INTO room_kernel_tasks(
+                        task_id,root_id,parent_task_id,state,payload_json,
+                        updated_at_ms
+                    ) VALUES('task-legacy','root-legacy',NULL,'active',?,11)
+                    """,
+                    (
+                        json.dumps(
+                            legacy_task_payload,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    ),
+                )
+
+                upgraded = apply_database_migrations(conn, applied_at_ms=118)
+                replay = apply_database_migrations(conn, applied_at_ms=119)
+
+                self.assertEqual(
+                    upgraded.applied_versions,
+                    (111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
+                )
+                self.assertEqual(replay.applied_versions, ())
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT id,title FROM agent_sessions WHERE id='session-legacy'"
+                    ).fetchone(),
+                    ("session-legacy", "Legacy Session"),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT id,title FROM agent_rooms WHERE id='room-legacy'"
+                    ).fetchone(),
+                    ("room-legacy", "Legacy Room"),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT room_id,session_id FROM agent_room_participants "
+                        "WHERE id='participant-legacy'"
+                    ).fetchone(),
+                    ("room-legacy", "session-legacy"),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT disclosure_preferences_json,policy_revision "
+                        "FROM agent_session_tool_policies "
+                        "WHERE session_id='session-legacy'"
+                    ).fetchone(),
+                    ("{}", 1),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT success_criteria,evidence_expectations_json,"
+                        "cancellation_audit_id FROM agent_thread_goal_events "
+                        "WHERE event_id='goal-event-legacy'"
+                    ).fetchone(),
+                    ("", "[]", None),
+                )
+                self.assertEqual(
+                    conn.execute(
+                        "SELECT goal_event_id,source_event_id "
+                        "FROM agent_goal_usage_receipts "
+                        "WHERE receipt_id='goal-usage-legacy'"
+                    ).fetchone(),
+                    ("goal-event-legacy", ""),
+                )
+                task_row = conn.execute(
+                    """
+                    SELECT current_owner_participant_id,ownership_revision,
+                           ownership_receipt_id,payload_json
+                    FROM room_kernel_tasks
+                    WHERE task_id='task-legacy'
+                    """
+                ).fetchone()
+                self.assertIsNotNone(task_row)
+                assert task_row is not None
+                self.assertEqual(task_row[0], "participant-worker")
+                self.assertEqual(task_row[1], 0)
+                self.assertIsNone(task_row[2])
+                upgraded_task_payload = json.loads(str(task_row[3]))
+                self.assertEqual(
+                    upgraded_task_payload["schemaVersion"],
+                    "wisdom-weasel.room-task.v3",
+                )
+                self.assertEqual(
+                    upgraded_task_payload["currentOwnerParticipantId"],
+                    "participant-worker",
+                )
+                self.assertEqual(
+                    upgraded_task_payload["contextEvidenceRefs"],
+                    ["evidence:legacy"],
+                )
+                self.assertNotIn(
+                    "ownerParticipantId",
+                    upgraded_task_payload,
+                )
+                self.assertNotIn(
+                    "assigneeParticipantId",
+                    upgraded_task_payload,
+                )
+                indexes = {
+                    str(row[0])
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index'"
+                    )
+                }
+                self.assertTrue(
+                    {
+                        "idx_agent_background_jobs_session_updated",
+                        "idx_agent_background_jobs_live",
+                        "idx_work_documents_state_updated",
+                        "idx_work_document_outbox_pending",
+                        "idx_agent_thread_goal_events_goal_sequence",
+                    }.issubset(indexes)
+                )
+                background_job_foreign_keys = {
+                    str(row[3]): (str(row[2]), str(row[6]))
+                    for row in conn.execute(
+                        "PRAGMA foreign_key_list(agent_background_jobs)"
+                    )
+                }
+                goal_usage_foreign_keys = {
+                    str(row[3]): str(row[2])
+                    for row in conn.execute(
+                        "PRAGMA foreign_key_list(agent_goal_usage_receipts)"
+                    )
+                }
+                work_document_outbox_foreign_keys = {
+                    str(row[3]): (str(row[2]), str(row[6]))
+                    for row in conn.execute(
+                        "PRAGMA foreign_key_list(work_document_outbox)"
+                    )
+                }
+                self.assertEqual(
+                    background_job_foreign_keys["session_id"],
+                    ("agent_sessions", "CASCADE"),
+                )
+                self.assertEqual(
+                    goal_usage_foreign_keys["goal_event_id"],
+                    "agent_thread_goal_events",
+                )
+                self.assertEqual(
+                    work_document_outbox_foreign_keys["document_id"],
+                    ("work_documents", "CASCADE"),
+                )
+                self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+
     def test_applied_0093_checksum_upgrades_to_0094_without_history_rewrite(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0093-") as temporary:
             migrations_0093 = Path(temporary) / "migrations"
@@ -274,8 +728,8 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 upgraded = apply_database_migrations(conn)
 
-                self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110))
-                self.assertEqual(upgraded.current_version, 110)
+                self.assertEqual(upgraded.applied_versions, (94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126))
+                self.assertEqual(upgraded.current_version, 126)
                 self.assertEqual(
                     conn.execute(
                         "SELECT checksum FROM schema_migrations WHERE version=93"
@@ -342,7 +796,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 upgraded = apply_database_migrations(conn)
 
-                self.assertEqual(upgraded.applied_versions, (97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110))
+                self.assertEqual(upgraded.applied_versions, (97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126))
                 self.assertEqual(
                     conn.execute(
                         "SELECT file_name, mime_type FROM agent_media WHERE media_id='media_legacytext01'"
@@ -407,12 +861,12 @@ class DatabaseMigrationTests(unittest.TestCase):
                     )
 
                 appended = apply_database_migrations(conn)
-                self.assertEqual(appended.applied_versions, (63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110))
+                self.assertEqual(appended.applied_versions, (63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126))
                 self.assertEqual(conn.execute("PRAGMA quick_check").fetchone()[0], "ok")
                 self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
                 status = migration_status(conn)
                 self.assertTrue(status["ok"])
-                self.assertEqual(status["currentVersion"], 110)
+                self.assertEqual(status["currentVersion"], 126)
 
     def test_legacy_atoms_preserve_supersession_lineage_and_require_evidence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-migrations-0058-") as temporary:
@@ -502,7 +956,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertEqual(
                 result.applied_versions,
-                (59, 60, 61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110),
+                (59, 60, 61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
             )
             self.assertEqual(
                 rows["atom:legacy-old"],
@@ -631,7 +1085,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                 (
                     39, 40, 41, 42, 43, 44, 45, 46, 47,
                     51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                    61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110,
+                    61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126,
                 ),
             )
             self.assertEqual(
@@ -696,7 +1150,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    (61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110),
+                    (61, 62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
                 )
                 self.assertEqual(
                     conn.execute(
@@ -788,7 +1242,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    (62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110),
+                    (62, 63, 64, 65, 66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
                 )
                 self.assertEqual(
                     conn.execute(
@@ -885,7 +1339,7 @@ class DatabaseMigrationTests(unittest.TestCase):
 
                 self.assertEqual(
                     result.applied_versions,
-                    (66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110),
+                    (66, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126),
                 )
                 self.assertEqual(
                     rows,

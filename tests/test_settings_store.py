@@ -22,16 +22,20 @@ class SettingsStoreTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_settings_update_writes_audit_and_reset_restores_defaults(self) -> None:
-        result = self.store.update_settings({"interaction.postCommit.numberKeys": "select_prediction"})
+        result = self.store.update_settings({"interaction.postCommit.optionNumber": "disabled"})
 
         self.assertGreater(result.audit_id, 0)
-        self.assertEqual(result.settings["interaction"]["postCommit"]["numberKeys"], "select_prediction")
-        self.assertIn("interaction.postCommit.numberKeys", result.changed_keys)
+        self.assertEqual(result.settings["interaction"]["postCommit"]["optionNumber"], "disabled")
+        self.assertIn("interaction.postCommit.optionNumber", result.changed_keys)
         self.assertEqual(self._audit_count("settings_update"), 1)
 
         reset = self.store.reset_section("interaction")
 
         self.assertGreater(reset.audit_id, result.audit_id)
+        self.assertEqual(
+            reset.settings["interaction"]["postCommit"]["optionNumber"],
+            "select_prediction_by_ordinal",
+        )
         self.assertEqual(reset.settings["interaction"]["postCommit"]["numberKeys"], "pass_through")
         self.assertEqual(self._audit_count("settings_reset_section"), 1)
 
@@ -166,7 +170,43 @@ class SettingsStoreTests(unittest.TestCase):
 
         settings = self.store.get_settings(include_sensitive=True)
 
-        self.assertEqual(settings["models"], {"hot": "minimind_ime_v2"})
+        self.assertEqual(settings["models"]["hot"], "minimind_ime_v2")
+        self.assertEqual(settings["models"]["modelId"], "")
+        self.assertEqual(settings["models"]["maxTokens"], 8)
+        self.assertNotIn("activeRag", settings["models"])
+        self.assertNotIn("offlineCleanup", settings["models"])
+
+    def test_local_predictor_settings_are_bounded_and_paths_are_absolute(self) -> None:
+        model_path = Path(self.tmp.name) / "MiniMind"
+        result = self.store.update_settings(
+            {
+                "models.modelId": "minimind-ime-v2",
+                "models.hot": "minimind_ime_v2",
+                "models.path": str(model_path),
+                "models.promptMode": "base-completion",
+                "models.maxTokens": 12,
+                "models.temperature": 0.2,
+                "models.topP": 0.9,
+                "interaction.postCommit.modelBudgetMs": 1200,
+                "interaction.postCommit.optionNumber": "disabled",
+            }
+        )
+
+        self.assertEqual(result.settings["models"]["modelId"], "minimind-ime-v2")
+        self.assertEqual(result.settings["models"]["path"], str(model_path))
+        self.assertEqual(result.settings["models"]["maxTokens"], 12)
+        self.assertEqual(result.settings["models"]["temperature"], 0.2)
+        self.assertEqual(result.settings["models"]["topP"], 0.9)
+        self.assertEqual(result.settings["interaction"]["postCommit"]["modelBudgetMs"], 1200)
+        self.assertEqual(result.settings["interaction"]["postCommit"]["optionNumber"], "disabled")
+        with self.assertRaisesRegex(ValueError, "absolute or ~/ path"):
+            self.store.update_settings({"models.path": "relative/MiniMind"})
+        with self.assertRaisesRegex(ValueError, "bounded model directory"):
+            self.store.update_settings({"models.path": str(Path.home())})
+        with self.assertRaisesRegex(ValueError, "must be <= 64"):
+            self.store.update_settings({"models.maxTokens": 65})
+        with self.assertRaisesRegex(ValueError, "must be finite"):
+            self.store.update_settings({"models.temperature": float("nan")})
 
     def test_lightning_off_setting_is_preserved(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as conn, conn:

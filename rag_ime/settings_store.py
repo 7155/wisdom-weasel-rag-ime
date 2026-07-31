@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 import sqlite3
@@ -667,6 +668,23 @@ def _validated_setting_value(
         else:
             normalized = value
 
+    if key.startswith("models.") and isinstance(normalized, str):
+        normalized = normalized.strip()
+
+    if key in {"models.modelId", "models.path"} and isinstance(normalized, str):
+        if any(ord(character) < 32 for character in normalized):
+            raise ValueError(f"setting {key} contains control characters")
+        if key == "models.path" and normalized:
+            model_path = Path(normalized).expanduser()
+            if not model_path.is_absolute():
+                raise ValueError("setting models.path must be an absolute or ~/ path")
+            resolved_model_path = model_path.resolve(strict=False)
+            if (
+                resolved_model_path in {Path("/"), Path.home().resolve(strict=False)}
+                or ".." in model_path.parts
+            ):
+                raise ValueError("setting models.path must name a bounded model directory")
+
     if key == "privacy.debugContextDirectory" and isinstance(normalized, str):
         normalized = normalized.strip()
         if normalized:
@@ -688,18 +706,25 @@ def _validated_setting_value(
     if field_type in {"enum", "pi-thinking"} and isinstance(options, list) and normalized not in options:
         raise ValueError(f"setting {key} must be one of: {', '.join(str(item) for item in options)}")
     if field_type in {"pi-model", "pi-model-or-inherit"} and isinstance(normalized, str):
+        if (
+            field_type == "pi-model"
+            and key in {
+                "memory.automaticOrganization.model",
+                "memory.dreaming.model",
+            }
+            and "/" not in normalized
+            and normalized.strip().lower().replace("_", "-").startswith("deepseek-v4")
+        ):
+            # Preserve the old explicit DeepSeek V4 choice while adding the
+            # provider prefix required by the governed Pi catalog.
+            normalized = f"deepseek/{normalized.strip()}"
         if not (field_type == "pi-model-or-inherit" and normalized == "inherit"):
             provider, separator, model_id = normalized.partition("/")
             if not separator or not provider or not model_id or any(character.isspace() for character in normalized):
                 raise ValueError(f"setting {key} must be a Pi provider/model reference")
-    if key in {
-        "memory.automaticOrganization.model",
-        "memory.dreaming.model",
-    } and isinstance(normalized, str):
-        model_id = normalized.partition("/")[2] if "/" in normalized else normalized
-        if not model_id.strip().lower().replace("_", "-").startswith("deepseek-v4"):
-            raise ValueError(f"setting {key} must use a DeepSeek V4 model")
     if isinstance(normalized, (int, float)) and not isinstance(normalized, bool):
+        if not math.isfinite(float(normalized)):
+            raise ValueError(f"setting {key} must be finite")
         minimum = field.get("min")
         maximum = field.get("max")
         if isinstance(minimum, (int, float)) and normalized < minimum:

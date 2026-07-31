@@ -45,10 +45,19 @@ ROOM_ROUTE_OWNER_CENSUS = (
 )
 
 
-def room_message_owner(*, work_item_id: str) -> str:
-    """Resolve the two intentionally different Room message semantics."""
+def room_message_owner(
+    *,
+    work_item_id: str,
+    room_kind: str = "roleplay",
+) -> str:
+    """Resolve conversation versus managed collaboration ingress."""
 
-    return "kernel" if str(work_item_id or "").strip() else "session"
+    return (
+        "kernel"
+        if str(work_item_id or "").strip()
+        or str(room_kind or "").strip() == "collaboration"
+        else "session"
+    )
 
 
 def room_route_owner(route_id: str, *, has_room_binding: bool) -> str:

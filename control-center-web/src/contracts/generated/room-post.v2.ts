@@ -16,6 +16,18 @@ export interface RoomPostV2 {
   kind: string;
   visibility: 'room' | 'root';
   content: string;
+  question?: {
+    prompt: string;
+    /**
+     * @minItems 2
+     * @maxItems 5
+     */
+    options:
+      | [QuestionOption, QuestionOption]
+      | [QuestionOption, QuestionOption, QuestionOption]
+      | [QuestionOption, QuestionOption, QuestionOption, QuestionOption]
+      | [QuestionOption, QuestionOption, QuestionOption, QuestionOption, QuestionOption];
+  };
   /**
    * @maxItems 16
    */
@@ -153,10 +165,721 @@ export interface RoomPostV2 {
     generation: number;
     [k: string]: unknown;
   }[];
+  /**
+   * @maxItems 8
+   */
+  attachments?:
+    | []
+    | [
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+      ]
+    | [
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+      ]
+    | [
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+      ]
+    | [
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+      ]
+    | [
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+      ]
+    | [
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+      ]
+    | [
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+      ]
+    | [
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+        {
+          schemaVersion: 'rag-ime.agent-media.v1';
+          mediaId: string;
+          ownerType: 'room';
+          ownerId: string;
+          roomId: string;
+          fileName: string;
+          mimeType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+          byteSize: number;
+          sha256: string;
+          width?: number | null;
+          height?: number | null;
+          durationMs?: number | null;
+          thumbnailMediaId?: string | null;
+          origin: 'user_attachment';
+          originTool?: string;
+          originReceiptId?: string;
+          createdAtMs: number;
+        },
+      ];
   idempotencyKey: string;
   publicationSource: {
     kind: 'user' | 'room_commit' | 'room_post';
     ref: string;
   };
   createdAtMs: number;
+}
+export interface QuestionOption {
+  value: string;
+  label: string;
+  description?: string;
+  recommended?: boolean;
 }

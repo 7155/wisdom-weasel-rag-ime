@@ -185,6 +185,55 @@ class RimeSidecarV1ContractTests(unittest.TestCase):
     def _adapter(self, core: CuratedMemoryCore) -> InputMethodAdapter:
         return InputMethodAdapter(core)
 
+    def test_post_commit_model_budget_prefers_live_runtime_settings(self) -> None:
+        snapshot = rime_sidecar_module.parse_rime_context_payload(
+            self._post_commit_payload(),
+            default_project="wisdom-weasel-rag-ime",
+        )
+        runtime_config = SimpleNamespace(
+            post_commit=SimpleNamespace(model_budget_ms=1300)
+        )
+
+        budget = rime_sidecar_module._model_lane_budget_for_request(
+            900,
+            snapshot=snapshot,
+            runtime_config=runtime_config,
+        )
+
+        self.assertEqual(budget, 1300)
+
+    def test_post_commit_async_job_uses_model_budget_as_late_result_deadline(self) -> None:
+        snapshot = rime_sidecar_module.parse_rime_context_payload(
+            self._post_commit_payload(),
+            default_project="wisdom-weasel-rag-ime",
+        )
+        runtime_config = SimpleNamespace(
+            snapshot_hash="sha256:runtime",
+            post_commit=SimpleNamespace(
+                completion_ttl_ms=4000,
+                model_budget_ms=1300,
+                model_hard_timeout_ms=12000,
+            ),
+            memory=SimpleNamespace(enabled=True),
+        )
+        with patch.object(
+            rime_sidecar_module._POST_COMMIT_COMPLETION_CACHE,
+            "poll_or_start",
+            return_value=([], {}),
+        ) as poll:
+            rime_sidecar_module.run_post_commit_completion_async(
+                core=object(),  # type: ignore[arg-type]
+                predictor=object(),  # type: ignore[arg-type]
+                snapshot=snapshot,
+                explicit_recent_context="继续整理输入法",
+                project="wisdom-weasel-rag-ime",
+                max_candidates=3,
+                model_budget_ms=1300,
+                runtime_config=runtime_config,  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(poll.call_args.kwargs["hard_timeout_ms"], 1300)
+
     def test_model_lane_exposes_context_and_decode_observability(self) -> None:
         prediction = ModelPrediction(
             text="候选不要重复",

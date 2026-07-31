@@ -75,10 +75,12 @@ export interface RagImeNativeMessageHandler {
 }
 
 export interface NativePickFilesPayload extends FilePickOptions {}
-export interface NativePasteImagesPayload {
-  sessionId: string;
+export type NativePasteImagesPayload = {
   maxFiles: number;
-}
+} & (
+  | { sessionId: string; roomId?: never }
+  | { roomId: string; sessionId?: never }
+);
 export interface NativeKnowledgeAssetPayload {
   kbId: string;
   fileId: string;

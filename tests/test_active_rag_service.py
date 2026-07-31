@@ -54,7 +54,7 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertNotIn("frontend-supplied-secret-hash", blob)
         self.assertNotIn("sha256:", blob)
 
-    def test_sensitive_text_guard_blocks_credential_words_even_without_secure_flag(self) -> None:
+    def test_sensitive_text_guard_blocks_credential_value_even_without_secure_flag(self) -> None:
         service = ActiveRagService()
         secret = "请保存 API key sk-example-secret"
         request = ActiveRagStartRequest(
@@ -72,6 +72,23 @@ class ActiveRagServiceTests(unittest.TestCase):
         self.assertEqual(blocked["evidenceCount"], 0)
         self.assertEqual(blocked["candidateCount"], 0)
         self.assertNotIn(secret, json.dumps(blocked, ensure_ascii=False))
+
+    def test_sensitive_text_guard_allows_discussion_of_credential_settings(self) -> None:
+        service = ActiveRagService()
+        discussion = "检查 API Key 设置说明，以及 access token 配置页面的交互"
+        request = ActiveRagStartRequest(
+            selected_text=discussion,
+            selected_text_hash=stable_text_hash(discussion),
+            frontend_revision=1,
+            selection_epoch=1,
+            context=discussion,
+            remote_model_allowed=False,
+        )
+
+        preview = service.preview(request, local_only=True)
+
+        self.assertNotEqual(preview["status"], "blocked")
+        self.assertNotEqual(preview.get("error"), "sensitive_field_blocked")
 
     def test_active_rag_local_evidence_pack_runs_without_deepseek_flag(self) -> None:
         provider = FakeActiveRagProvider(("DeepSeek不应调用",))

@@ -2,6 +2,7 @@ import AppKit
 import QuartzCore
 
 final class RagImeSuggestionRowView: NSView {
+  private static let maximumEvidenceTooltipCharacters = 180
   private let sourceBar = NSView()
   private let sourceIcon = NSImageView()
   private let sourceLabel = NSTextField(labelWithString: "")
@@ -115,8 +116,7 @@ final class RagImeSuggestionRowView: NSView {
       pointSize: candidateLabel.font?.pointSize ?? RagImeAssistantTypography.defaultCandidateSize,
       primary: isPrimary
     )
-    let contextHint = modelContextHint(for: candidate)
-    toolTip = contextHint ?? (candidate.evidencePreview.isEmpty ? nil : candidate.evidencePreview)
+    toolTip = modelContextHint(for: candidate) ?? readableEvidenceHint(candidate.evidencePreview)
     let accessibilityShortcut = isPrimary ? "Tab 或 Option+1" : shortcut
     shortcutLabel.toolTip = accessibilityShortcut
     hitButton.setAccessibilityLabel("\(sourceLabel.stringValue) \(candidateLabel.stringValue), \(accessibilityShortcut)")
@@ -197,6 +197,16 @@ final class RagImeSuggestionRowView: NSView {
       return "本地预测 · 上下文 \(Int(total)) 字，含连续输入 \(groupChars) 字"
     }
     return "本地预测 · 上下文 \(Int(total)) 字"
+  }
+
+  private func readableEvidenceHint(_ evidence: String) -> String? {
+    let compact = evidence
+      .split(whereSeparator: \.isWhitespace)
+      .joined(separator: " ")
+    guard !compact.isEmpty else { return nil }
+    let limit = Self.maximumEvidenceTooltipCharacters
+    let preview = compact.count > limit ? String(compact.prefix(limit)) + "…" : compact
+    return "依据 · \(preview)"
   }
 
   private func sourceColor(for candidate: RagImeDisplayCandidate) -> NSColor {

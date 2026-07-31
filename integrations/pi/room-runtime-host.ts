@@ -28,9 +28,15 @@ export type RoomDispatchParams = {
   rootId: string;
   dispatchId: string;
   generation: number;
+  dispatchAttempt: number;
   idempotencyKey: string;
   leaseToken: string;
   message: string;
+  images?: Array<{
+    type: "image";
+    data: string;
+    mimeType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  }>;
 };
 
 export type RoomCancelParams = {

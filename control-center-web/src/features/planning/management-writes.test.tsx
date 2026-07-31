@@ -113,9 +113,9 @@ describe('Planning WorkContract UI', () => {
     expect(workflow).not.toBeNull();
     await user.click(within(workflow as HTMLElement).getByRole('button', { name: '查看影响' }));
     await within(workflow as HTMLElement).findByText('任务状态影响');
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认这些更改' }));
-    await user.click(within(workflow as HTMLElement).getByRole('checkbox'));
-    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '确认执行' }));
+    expect(within(workflow as HTMLElement).queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(within(workflow as HTMLElement).queryByRole('button', { name: '确认执行' })).not.toBeInTheDocument();
+    await user.click(within(workflow as HTMLElement).getByRole('button', { name: '完成所选任务' }));
     expect(await within(workflow as HTMLElement).findByText('这次更改已安全记录')).toBeInTheDocument();
 
     expect(findRequest(transport, 'planning.task.action')).toMatchObject({
@@ -225,7 +225,11 @@ describe('Planning WorkContract UI', () => {
   it('creates and pauses a durable Agent wake schedule from the planning page', async () => {
     const user = userEvent.setup();
     const transport = renderPlanning();
-    await user.click(await screen.findByRole('button', { name: '添加安排' }));
+    const createSchedule = await screen.findByRole('button', { name: '添加安排' });
+    await user.click(createSchedule);
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(createSchedule).toHaveFocus());
+    await user.click(createSchedule);
 
     await user.type(screen.getByLabelText('安排名称 *'), '稍后继续迁移');
     await user.type(screen.getByLabelText('到点后做什么 *'), '检查构建结果并汇报剩余问题');

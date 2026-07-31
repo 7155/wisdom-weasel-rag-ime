@@ -1064,6 +1064,7 @@ def memory_book_plan_from_compile_output(
             "sourceCursor": dict((source_bundle or {}).get("cursor") or {}),
             "legalContextGroupIds": list((source_bundle or {}).get("legalContextGroupIds") or []),
             "legalSourceEventIds": _legal_source_event_ids(source_bundle),
+            "sourceInputRefs": _source_input_refs(source_bundle),
             "existingSemanticGroupIds": [
                 str(item.get("groupId") or "")
                 for item in _list_of_dicts((source_bundle or {}).get("existingSemanticGroups"))
@@ -4462,6 +4463,62 @@ def _legal_source_event_ids(source_bundle: dict[str, object] | None) -> list[int
                 if event_id not in result:
                     result.append(event_id)
     return result
+
+def _source_input_refs(
+    source_bundle: dict[str, object] | None,
+) -> list[dict[str, object]]:
+    """Persist bounded pointers to source inputs without copying their text."""
+    if not source_bundle:
+        return []
+    collection = _list_of_dicts(source_bundle.get("inputs"))
+    if not collection:
+        collection = _list_of_dicts(source_bundle.get("recentEvents"))
+    result: list[dict[str, object]] = []
+    seen: set[tuple[int, ...]] = set()
+    for item in collection:
+        event_ids = _positive_ints(
+            item.get("sourceEventIds") or [item.get("eventId")]
+        )
+        if not event_ids:
+            continue
+        event_key = tuple(event_ids)
+        if event_key in seen:
+            continue
+        seen.add(event_key)
+        result.append(
+            {
+                "sourceRef": compact_whitespace(
+                    str(item.get("sourceRef") or "")
+                )[:80],
+                "sourceId": compact_whitespace(
+                    str(item.get("sourceId") or "")
+                )[:240],
+                "sourceIds": _unique_strings(
+                    item.get("sourceIds") or [],
+                    limit=50_000,
+                ),
+                "sourceEventIds": event_ids,
+                "sourceKind": compact_whitespace(
+                    str(item.get("sourceKind") or item.get("source") or "")
+                )[:80],
+                "source": compact_whitespace(
+                    str(item.get("source") or "")
+                )[:80],
+                "createdAtMs": _optional_int(item.get("createdAtMs")),
+                "sourceOccurredAtMs": (
+                    _optional_int(item.get("sourceOccurredAtMs"))
+                    or _optional_int(item.get("createdAtMs"))
+                ),
+                "app": compact_whitespace(str(item.get("app") or ""))[:160],
+                "contextGroupId": compact_whitespace(
+                    str(item.get("contextGroupId") or "")
+                )[:240],
+            }
+        )
+        if len(result) >= 64:
+            break
+    return result
+
 
 
 def _semantic_group_id(value: object, *, title: str) -> str:

@@ -24,6 +24,7 @@ def agent_session_route(path: str) -> tuple[str, str]:
         "forks",
         "abort",
         "review",
+        "ui-response",
         "compact",
         "commands",
         "models",
@@ -39,6 +40,43 @@ def agent_session_route(path: str) -> tuple[str, str]:
     }:
         return "", ""
     return session_id, action
+
+def agent_background_job_route(path: str) -> tuple[str, str, str]:
+    prefix = "/api/agent/sessions/"
+    if not path.startswith(prefix):
+        return "", "", ""
+    parts = path[len(prefix) :].strip("/").split("/")
+    if len(parts) == 2 and parts[1] == "background-jobs":
+        session_id = unquote(parts[0]).strip()
+        return (session_id, "", "collection") if session_id else ("", "", "")
+    if len(parts) == 3 and parts[1] == "background-jobs":
+        session_id = unquote(parts[0]).strip()
+        job_id = unquote(parts[2]).strip()
+        return (
+            (session_id, job_id, "status")
+            if session_id and _valid_background_job_id(job_id)
+            else ("", "", "")
+        )
+    if (
+        len(parts) == 4
+        and parts[1] == "background-jobs"
+        and parts[3] in {"logs", "cancel"}
+    ):
+        session_id = unquote(parts[0]).strip()
+        job_id = unquote(parts[2]).strip()
+        return (
+            (session_id, job_id, parts[3])
+            if session_id and _valid_background_job_id(job_id)
+            else ("", "", "")
+        )
+    return "", "", ""
+
+def _valid_background_job_id(value: str) -> bool:
+    return (
+        len(value) == 35
+        and value.startswith("bg_")
+        and all(character in "0123456789abcdef" for character in value[3:])
+    )
 
 
 def agent_context_item_route(path: str) -> tuple[str, str, str]:
@@ -86,6 +124,25 @@ def agent_approval_route(path: str) -> tuple[str, str]:
     if not approval_id or action not in {"", "decision", "external-result"}:
         return "", ""
     return approval_id, action
+
+
+def agent_work_document_route(path: str) -> tuple[str, str]:
+    prefix = "/api/agent/work-documents/"
+    if not path.startswith(prefix):
+        return "", ""
+    parts = path[len(prefix) :].strip("/").split("/")
+    if not parts or parts[:2] == ["history", "search"] or len(parts) > 2:
+        return "", ""
+    document_id = unquote(parts[0]).strip()
+    action = parts[1] if len(parts) == 2 else "detail"
+    if (
+        len(document_id) != 40
+        or not document_id.startswith("workdoc_")
+        or action
+        not in {"detail", "archive", "repair", "reopen", "erase-preview", "erase"}
+    ):
+        return "", ""
+    return document_id, action
 
 
 def agent_media_route(path: str) -> tuple[str, str]:

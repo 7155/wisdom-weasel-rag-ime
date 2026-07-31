@@ -84,7 +84,8 @@ describe('control center shell', () => {
     expect(window.localStorage.getItem('rag-ime-control-sidebar-collapsed')).toBe('true');
   });
 
-  it('offers a keyboard shortcut to the active workspace', () => {
+  it('moves keyboard focus to the active workspace without changing routes', async () => {
+    const user = userEvent.setup();
     render(
       <ThemeProvider>
         <MotionProvider>
@@ -97,7 +98,13 @@ describe('control center shell', () => {
       </ThemeProvider>,
     );
 
-    expect(screen.getByRole('link', { name: '跳到主工作区' })).toHaveAttribute('href', '#workspace-main');
+    const skipLink = screen.getByRole('link', { name: '跳到主工作区' });
+    expect(skipLink).toHaveAttribute('href', '#workspace-main');
     expect(document.querySelector('#workspace-main')).toHaveAttribute('tabindex', '-1');
+
+    await user.click(skipLink);
+
+    expect(window.location.hash).toBe('#/');
+    expect(document.activeElement).toHaveAttribute('id', 'workspace-main');
   });
 });

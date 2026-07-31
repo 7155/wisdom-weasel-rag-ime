@@ -164,13 +164,23 @@ async function collectRouteEvidence(page: Page, routeId: string, title: string):
     const visibleBottom = mobileNavigation && isVisible(mobileNavigation)
       ? mobileNavigation.getBoundingClientRect().top
       : window.innerHeight;
+    const mainBounds = main.getBoundingClientRect();
+    const persistentTopLayers = [...main.querySelectorAll<HTMLElement>(
+      '.agent-conversation__header, .room-workspace > header',
+    )].filter(isVisible);
+    const visibleTopAt = (centerX: number) => persistentTopLayers.reduce((visibleTop, layer) => {
+      const layerBounds = layer.getBoundingClientRect();
+      return centerX >= layerBounds.left && centerX < layerBounds.right
+        ? Math.max(visibleTop, layerBounds.bottom)
+        : visibleTop;
+    }, Math.max(0, mainBounds.top));
     const inViewport = interactives.filter((element) => {
       const rect = element.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
       return centerX >= 0
         && centerX < window.innerWidth
-        && centerY >= 0
+        && centerY >= visibleTopAt(centerX)
         && centerY < visibleBottom
         && centerInsideClippingAncestors(element);
     });

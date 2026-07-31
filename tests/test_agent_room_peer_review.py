@@ -204,13 +204,17 @@ class RoomPeerReviewTests(unittest.TestCase):
         task_id, dispatch_id = f"task:{root_id}", f"dispatch:{root_id}"
         kernel.create_root(
             {"schemaVersion": ROOT_EXECUTION_SCHEMA_VERSION, "rootId": root_id, "roomId": "room:1", "generation": 0,
-             "state": "running", "owner": "author", "requirementAnchorRef": "anchor:1", "createdByActorRef": "user:test",
+             "state": "running", "facilitatorParticipantId": "author", "reporterParticipantId": None,
+             "reporterSelectionReceiptId": None, "requirementAnchorRef": "anchor:1", "createdByActorRef": "user:test",
              "terminalReceiptId": None, "activeProfileRef": None, "budgetPolicyRef": "budget:test", "createdAtMs": 1},
             budget=1, max_hops=1, max_depth=1, acceptance_criteria=("criterion:journey",), now_ms=1,
         )
         kernel.create_task(
             {"schemaVersion": ROOM_TASK_SCHEMA_VERSION, "taskId": task_id, "rootId": root_id, "parentTaskId": None,
-             "ownerParticipantId": "author", "assigneeParticipantId": "author", "objective": "Verify the user journey.",
+             "taskKind": "work", "currentOwnerParticipantId": "author", "ownershipRevision": 0,
+             "ownershipReceiptId": None, "invitationId": None, "reviewState": "not_required",
+             "reviewOfTaskIds": [], "reviewAuthorParticipantIds": [], "objective": "Verify the user journey.",
+             "contextEvidenceRefs": [],
              "expectedOutput": "A signed browser receipt.", "requirementItemIds": ["req:1"],
              "acceptanceCriterionIds": ["criterion:journey"], "revision": 0, "state": "active"},
             now_ms=1,
@@ -230,7 +234,7 @@ class RoomPeerReviewTests(unittest.TestCase):
             lease_token=str(lease["leaseToken"]),
             runtime_receipt={"schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
                              "receiptKind": "dispatch_accepted", "status": "accepted", "rootId": root_id,
-                             "dispatchId": dispatch_id, "generation": 0},
+                             "dispatchId": dispatch_id, "generation": 0, "turnId": f"turn:{dispatch_id}"},
             now_ms=3,
         )
         gate_item = {"criterionId": "criterion:journey", "status": "pass", "evidenceRefs": ["receipt:" + root_id]}

@@ -93,10 +93,28 @@ class AgentSessionApplicationService:
                 maximum=500,
             ),
         )
+        room_participants = self.rooms.participants_for_sessions(
+            [
+                str(session.get("id") or "")
+                for session in sessions
+            ],
+            active_only=False,
+        )
+        projected_sessions: list[dict[str, object]] = []
+        for session in sessions:
+            projected = dict(session)
+            participant = room_participants.get(str(session.get("id") or ""))
+            if participant is not None:
+                projected["roomParticipant"] = {
+                    "roomId": str(participant["roomId"]),
+                    "participantId": str(participant["id"]),
+                    "status": str(participant["status"]),
+                }
+            projected_sessions.append(projected)
         return {
             "schemaVersion": "rag-ime.agent-session-list.v1",
             "ok": True,
-            "items": sessions,
+            "items": projected_sessions,
             "activeSessionId": self.runtime_status().get("activeSessionId"),
         }
 

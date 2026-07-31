@@ -1,15 +1,18 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import { ActivitySummary } from './ActivitySummary';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+});
 
 describe('Agent tool activity details', () => {
   it('renders an interleaved tool group as an inline disclosure with the real result', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-inline-result',
-      toolName: 'ime_overview',
+      toolName: 'overview',
       result: { details: { ok: true, operation: 'status', result: { summary: '运行状态已读取' } } },
     });
 
@@ -18,7 +21,7 @@ describe('Agent tool activity details', () => {
     expect(group).not.toBeNull();
     expect(group).not.toHaveAttribute('open');
     const summary = group!.querySelector('summary')!;
-    expect(within(summary).getByText('已完成 1 项操作')).toBeInTheDocument();
+    expect(within(summary).getByText('1 项操作')).toBeInTheDocument();
     expect(within(summary).getByText('运行状态已读取')).toBeInTheDocument();
     expect(within(summary).getByText('完成')).toBeInTheDocument();
     expect(summary.querySelector('.agent-activity__inline-icon')).toBeInTheDocument();
@@ -27,13 +30,84 @@ describe('Agent tool activity details', () => {
 
     fireEvent.click(summary);
     expect(group).toHaveAttribute('open');
-    const row = group!.querySelector<HTMLDetailsElement>('.agent-activity-row');
+    expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
+    const details = within(group!).getByLabelText('操作记录详情');
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row');
     fireEvent.click(row!.querySelector('summary')!);
     expect(row).toHaveAttribute('open');
-    expect(group).toHaveTextContent('运行状态已读取');
+    expect(details).toHaveTextContent('运行状态已读取');
   });
 
-  it('lets a running inline group stay closed while its status keeps updating', () => {
+  it('preserves the scroll anchor and summary focus when an inline group changes height', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-anchored-disclosure',
+      toolName: 'overview',
+      result: { details: { result: { summary: '运行状态已读取' } } },
+    });
+    const { container } = render(
+      <div data-testid="timeline-scrollport" style={{ maxHeight: 300, overflowY: 'auto' }}>
+        <ActivitySummary activities={[activity]} inline />
+      </div>,
+    );
+    const scrollport = screen.getByTestId('timeline-scrollport');
+    Object.defineProperty(scrollport, 'scrollHeight', { configurable: true, value: 1_000 });
+    Object.defineProperty(scrollport, 'clientHeight', { configurable: true, value: 300 });
+    scrollport.scrollTop = 320;
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    const summary = group.querySelector<HTMLElement>('summary')!;
+    vi.spyOn(summary, 'getBoundingClientRect').mockImplementation(() => {
+      const top = group.hasAttribute('open')
+        ? 130 + (320 - scrollport.scrollTop)
+        : 180;
+      return {
+        bottom: top + 42,
+        height: 42,
+        left: 0,
+        right: 600,
+        top,
+        width: 600,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      };
+    });
+
+    summary.focus();
+    fireEvent.click(summary);
+
+    expect(group).toHaveAttribute('open');
+    expect(summary).toHaveAttribute('aria-expanded', 'true');
+    expect(scrollport.scrollTop).toBe(270);
+    expect(document.activeElement).toBe(summary);
+  });
+
+  it('expands a large tool group downward below its summary without a screen dialog', () => {
+    const activities = Array.from({ length: 34 }, (_, index) => toolActivity(
+      'tool_finished',
+      index === 17 ? 'failed' : 'completed',
+      {
+        toolCallId: `call-large-${index}`,
+        toolName: index === 17 ? 'workspace_edit' : 'workspace_read',
+        result: { details: index === 17
+          ? { error: '执行计划尚未批准，写入未执行' }
+          : { result: { summary: `已读取文件 ${index + 1}` } } },
+      },
+    ));
+    const { container } = render(<ActivitySummary activities={activities} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+
+    expect(group).not.toHaveAttribute('open');
+    expect(group.querySelector('.agent-activity-row')).not.toBeInTheDocument();
+    fireEvent.click(group.querySelector('summary')!);
+
+    expect(group).toHaveAttribute('open');
+    expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
+    expect(group).toHaveAttribute('data-state', 'mixed');
+    expect(group).toHaveTextContent('33 已完成 · 1 未完成');
+    expect(group.querySelectorAll('.agent-activity-row')).toHaveLength(34);
+  });
+
+  it('keeps a live inline group collapsed by default while its status keeps updating', () => {
     const activity = toolActivity('tool_progress', 'running', {
       toolCallId: 'call-running-disclosure',
       toolName: 'workspace_search',
@@ -42,8 +116,6 @@ describe('Agent tool activity details', () => {
     const { container, rerender } = render(<ActivitySummary activities={[activity]} inline />);
     const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
 
-    expect(group).toHaveAttribute('open');
-    fireEvent.click(group.querySelector('summary')!);
     expect(group).not.toHaveAttribute('open');
     expect(group.querySelector('.agent-activity-row')).not.toBeInTheDocument();
 
@@ -55,6 +127,20 @@ describe('Agent tool activity details', () => {
     );
     expect(group).not.toHaveAttribute('open');
     expect(group.querySelector('.agent-activity-row')).not.toBeInTheDocument();
+
+    fireEvent.click(group.querySelector('summary')!);
+    expect(group).toHaveAttribute('open');
+    expect(within(group).getByLabelText('正在处理详情')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '正在处理' })).not.toBeInTheDocument();
+
+    rerender(
+      <ActivitySummary
+        activities={[{ ...activity, status: 'completed', updatedAtMs: activity.updatedAtMs + 2_000 }]}
+        inline
+      />,
+    );
+    expect(group).toHaveAttribute('open');
+    expect(within(group).getByLabelText('操作记录详情')).toBeInTheDocument();
   });
 
   it('keeps a failed inline group collapsed until the user asks for evidence', () => {
@@ -73,12 +159,36 @@ describe('Agent tool activity details', () => {
     expect(summary).toHaveTextContent('搜索参数超出允许范围');
     fireEvent.click(summary);
     expect(group).toHaveAttribute('open');
-    expect(group.querySelector('.agent-activity-row')).toBeInTheDocument();
-    fireEvent.click(summary);
-    expect(group).not.toHaveAttribute('open');
+    expect(group).toHaveAttribute('data-state', 'mixed');
+    expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
 
     rerender(<ActivitySummary activities={[{ ...activity, updatedAtMs: 3 }]} inline />);
-    expect(group).not.toHaveAttribute('open');
+    expect(group).toHaveAttribute('open');
+  });
+
+  it('renders an Act Gate refusal as an expected no-op rather than a Tool failure', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-plan-required',
+      toolName: 'edit',
+      isError: false,
+      governanceBlocked: true,
+      summary: '工作区变更未执行：请先提交执行计划并等待用户批准。',
+      result: {
+        details: {
+          ok: false,
+          error: 'Act Gate blocked workspace mutation (plan_required): 先创建执行计划并提交审阅。',
+        },
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    expect(group).toHaveTextContent('1 项操作');
+    expect(group).toHaveTextContent('工作区变更未执行');
+    expect(group).not.toHaveTextContent('失败');
+    const dialog = openInlineActivity(container);
+    expect(dialog).not.toHaveTextContent('失败原因');
+    expect(dialog).not.toHaveTextContent('未成功');
   });
 
   it('shows the exact safe coding-tool request and meaningful returned lines', () => {
@@ -104,9 +214,10 @@ describe('Agent tool activity details', () => {
     });
 
     const { container } = render(<ActivitySummary activities={[activity]} inline />);
-    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
-    fireEvent.click(group.querySelector('summary')!);
-    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    const dialog = openInlineActivity(container);
+    const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    expect(row.querySelector('summary')).toHaveTextContent('在 …/project/rag_ime 搜索 “rime_lexicon_review”');
+    expect(within(row.querySelector('summary')!).getByText('搜索文本', { selector: 'strong' })).toBeInTheDocument();
     fireEvent.click(row.querySelector('summary')!);
 
     const request = within(row).getByLabelText('工具调用参数');
@@ -117,15 +228,90 @@ describe('Agent tool activity details', () => {
     expect(request).toHaveTextContent('100');
     expect(request).toHaveTextContent('2');
     const output = within(row).getByLabelText('工具返回片段');
+    expect(within(request).getByRole('button', { name: '复制参数' })).toBeInTheDocument();
     expect(output).toHaveTextContent('rag_ime/agent_tools.py:41');
     expect(output).toHaveTextContent('tests/test_rime_lexicon_review.py:12');
     expect(output).toHaveTextContent('完整结果仍由本机工具回执保留');
   });
 
+  it('bounds long public output and copies exactly the visible safe fragment', async () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-bounded-output',
+      toolName: 'grep',
+      publicResult: {
+        outputPreview: '/Users/private/project/output apiKey=secret-value --token raw-token safe-output-line\n'.repeat(700),
+        outputTruncated: false,
+      },
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const { container } = render(
+      <div data-testid="output-scrollport" style={{ maxHeight: 300, overflowY: 'auto' }}>
+        <ActivitySummary activities={[activity]} inline />
+      </div>,
+    );
+    const group = openInlineActivity(container);
+    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+    const output = within(row).getByLabelText('工具返回片段');
+    const visibleOutput = within(output).getByLabelText('工具返回内容');
+    const scrollport = screen.getByTestId('output-scrollport');
+    scrollport.scrollTop = 180;
+
+    expect(visibleOutput.textContent?.length).toBeLessThanOrEqual(6_000);
+    expect(visibleOutput.textContent?.split('\n')).toHaveLength(40);
+    expect(visibleOutput).not.toHaveTextContent('/Users/private');
+    expect(visibleOutput).not.toHaveTextContent('secret-value');
+    expect(visibleOutput).not.toHaveTextContent('raw-token');
+    expect(output).toHaveTextContent('完整结果仍由本机工具回执保留');
+    expect(visibleOutput).toHaveTextContent('apiKey=[REDACTED_SECRET]');
+    expect(visibleOutput).toHaveAttribute('tabindex', '0');
+    fireEvent.click(within(output).getByRole('button', { name: '复制结果' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(visibleOutput.textContent));
+    expect(scrollport.scrollTop).toBe(180);
+    expect(within(output).getByRole('button', { name: '已复制结果' })).toBeInTheDocument();
+  });
+
+  it('unwraps legacy managed evidence JSON without exposing its internal envelope', () => {
+    const activity = toolActivity('tool_finished', 'completed', {
+      toolCallId: 'call-managed-evidence',
+      toolName: 'grep',
+      publicResult: {
+        outputPreview: JSON.stringify({
+          evidenceHandle: 'private-evidence-handle',
+          evidenceRequest: {
+            path: '/Volumes/private/project/rag_ime',
+            pattern: 'agent_plan',
+            limit: 40,
+          },
+          evidenceSummary: 'rag_ime/agent_tools.py:81:def agent_plan(...):',
+          evidenceBytes: 2_048,
+          evidenceSha256: 'a'.repeat(64),
+        }),
+        outputTruncated: true,
+      },
+    });
+
+    const { container } = render(<ActivitySummary activities={[activity]} inline />);
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    expect(group).toHaveTextContent('在 rag_ime 搜索 “agent_plan”');
+    const dialog = openInlineActivity(container);
+    const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+
+    expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('rag_ime');
+    expect(within(row).getByLabelText('工具调用参数')).toHaveTextContent('agent_plan');
+    expect(within(row).getByLabelText('工具返回片段')).toHaveTextContent('agent_tools.py:81');
+    expect(container).not.toHaveTextContent('evidenceHandle');
+    expect(container).not.toHaveTextContent('private-evidence-handle');
+    expect(container).not.toHaveTextContent('evidenceSha256');
+  });
+
   it('keeps the timeline compact and opens full activity details in a dialog', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-compact-dialog',
-      toolName: 'ime_overview',
+      toolName: 'overview',
       result: { details: { ok: true, operation: 'status', result: { summary: '运行状态已读取' } } },
     });
 
@@ -133,8 +319,8 @@ describe('Agent tool activity details', () => {
 
     expect(container.querySelector('details.agent-activity')).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /查看活动详情：活动已完成/ }));
-    expect(screen.getByRole('dialog', { name: '活动已完成' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /查看活动详情：操作记录/ }));
+    expect(screen.getByRole('dialog', { name: '操作记录' })).toBeInTheDocument();
     expect(screen.getByRole('dialog')).toHaveTextContent('当前状态');
   });
 
@@ -158,10 +344,10 @@ describe('Agent tool activity details', () => {
     expect(screen.queryByText(/Console Go|Upstream request failed/)).not.toBeInTheDocument();
   });
 
-  it('renders the public ime_overview capability result without raw tool material', () => {
+  it('renders the public overview capability result without raw tool material', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-overview-capabilities',
-      toolName: 'ime_overview',
+      toolName: 'overview',
       args: {
         op: 'capabilities',
         path: '/Users/private/project',
@@ -177,17 +363,17 @@ describe('Agent tool activity details', () => {
         details: {
           schemaVersion: 'rag-ime.agent-tool-result.v1',
           ok: true,
-          tool: 'ime_overview',
+          tool: 'overview',
           operation: 'capabilities',
           result: {
             summary: '已连接 9 个控制中心领域',
             toolCount: 13,
             tools: [
-              { id: 'ime_overview', displayName: '控制中心概览', operations: ['status'] },
-              { id: 'ime_input', displayName: '输入法', operations: ['get_settings'] },
-              { id: 'ime_voice', displayName: '语音输入', operations: ['status'] },
+              { id: 'overview', displayName: '控制中心概览', operations: ['status'] },
+              { id: 'input', displayName: '输入法', operations: ['get_settings'] },
+              { id: 'voice', displayName: '语音输入', operations: ['status'] },
             ],
-            approvalGatedOperations: ['ime_input.apply_settings', 'ime_voice.provider_apply'],
+            approvalGatedOperations: ['input.apply_settings', 'voice.provider_apply'],
             writePolicy: '写入操作必须经过本机确认并保存回执',
           },
         },
@@ -204,7 +390,7 @@ describe('Agent tool activity details', () => {
     expect(screen.getByText('当前状态、输入法与词库、语音输入')).toBeInTheDocument();
     expect(screen.getByText('2 项操作')).toBeInTheDocument();
     expect(screen.getByText('写入操作必须经过本机确认并保存回执')).toBeInTheDocument();
-    expect(container).not.toHaveTextContent('ime_overview');
+    expect(container).not.toHaveTextContent('overview');
     expect(container).not.toHaveTextContent('do-not-render');
     expect(container).not.toHaveTextContent('/Users/private/project');
     expect(container).not.toHaveTextContent('private chain of thought');
@@ -214,7 +400,7 @@ describe('Agent tool activity details', () => {
   it('shows bounded status and progress fields while hiding nested metadata', () => {
     const completed = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-overview-status',
-      toolName: 'ime_overview',
+      toolName: 'overview',
       result: {
         details: {
           ok: true,
@@ -238,7 +424,7 @@ describe('Agent tool activity details', () => {
     });
     const progress = toolActivity('tool_progress', 'running', {
       toolCallId: 'call-overview-progress',
-      toolName: 'ime_overview',
+      toolName: 'overview',
       args: { op: 'status', token: 'hidden-token' },
       partialResult: {
         content: [{ type: 'text', text: 'raw progress content' }],
@@ -270,7 +456,7 @@ describe('Agent tool activity details', () => {
     const activity: AgentActivityProjection = {
       ...toolActivity('tool_finished', 'completed', {
         toolCallId: 'call-progress-history',
-        toolName: 'ime_knowledge',
+        toolName: 'knowledge',
         result: { details: { result: { summary: '知识检索完成' } } },
         progressHistory: [
           { eventId: 'event-1', kind: 'tool_started', status: 'running', summary: '开始检索知识库', createdAtMs: 1_000 },
@@ -298,7 +484,7 @@ describe('Agent tool activity details', () => {
   it('summarizes document knowledge citations without expanding raw chunks or paths', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-document-knowledge',
-      toolName: 'ime_knowledge',
+      toolName: 'knowledge',
       result: {
         details: {
           ok: true,
@@ -378,7 +564,7 @@ describe('Agent tool activity details', () => {
   it('renders a memory book as a semantic expandable preview', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-memory-book',
-      toolName: 'ime_memory',
+      toolName: 'memory',
       operation: 'read',
       result: {
         book: {
@@ -398,9 +584,8 @@ describe('Agent tool activity details', () => {
     });
 
     const { container } = render(<ActivitySummary activities={[activity]} inline />);
-    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
-    fireEvent.click(group.querySelector('summary')!);
-    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    const dialog = openInlineActivity(container);
+    const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
 
     expect(within(row).getByLabelText('《输入法与 Agent 上下文》内容')).toHaveTextContent('输入缓冲与长期记忆之间的边界。');
@@ -418,7 +603,7 @@ describe('Agent tool activity details', () => {
   it('uses the stable ref kind before an Atom semantic kind when building memory links', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-memory-atom-ref',
-      toolName: 'ime_memory',
+      toolName: 'memory',
       operation: 'search',
       result: {
         summary: '命中 1 条当前事实',
@@ -435,9 +620,8 @@ describe('Agent tool activity details', () => {
     });
 
     const { container } = render(<ActivitySummary activities={[activity]} inline />);
-    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
-    fireEvent.click(group.querySelector('summary')!);
-    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    const dialog = openInlineActivity(container);
+    const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
 
     expect(within(row).getByRole('link', { name: /输入法首候选延迟/ })).toHaveAttribute(
@@ -449,7 +633,7 @@ describe('Agent tool activity details', () => {
   it('deep-links memory catalog entries through their stable Book reference', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-memory-catalog-ref',
-      toolName: 'ime_memory',
+      toolName: 'memory',
       operation: 'catalog',
       result: {
         summary: '查询到 1 本主题书',
@@ -468,9 +652,8 @@ describe('Agent tool activity details', () => {
     });
 
     const { container } = render(<ActivitySummary activities={[activity]} inline />);
-    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
-    fireEvent.click(group.querySelector('summary')!);
-    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    const dialog = openInlineActivity(container);
+    const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
 
     expect(within(row).getByRole('link', { name: /输入法产品与上下文边界/ })).toHaveAttribute(
@@ -482,7 +665,7 @@ describe('Agent tool activity details', () => {
   it('renders governed timeline recall as a deep-linked semantic result', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-memory-timeline',
-      toolName: 'ime_memory',
+      toolName: 'memory',
       operation: 'search',
       result: {
         summary: '命中 1 条时间线记忆',
@@ -496,9 +679,8 @@ describe('Agent tool activity details', () => {
     });
 
     const { container } = render(<ActivitySummary activities={[activity]} inline />);
-    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
-    fireEvent.click(group.querySelector('summary')!);
-    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    const dialog = openInlineActivity(container);
+    const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
 
     expect(within(row).getByLabelText('记忆召回结果内容')).toHaveTextContent('CAS 切换 Codex 账号');
@@ -511,7 +693,7 @@ describe('Agent tool activity details', () => {
   it('deep-links a governed memory preview to its target Atom and Evidence', () => {
     const activity = toolActivity('tool_finished', 'completed', {
       toolCallId: 'call-memory-correct-preview',
-      toolName: 'ime_memory',
+      toolName: 'memory',
       operation: 'correct_preview',
       result: {
         summary: '已生成事实更正预览',
@@ -523,9 +705,8 @@ describe('Agent tool activity details', () => {
     });
 
     const { container } = render(<ActivitySummary activities={[activity]} inline />);
-    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
-    fireEvent.click(group.querySelector('summary')!);
-    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    const dialog = openInlineActivity(container);
+    const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
 
     expect(within(row).getByRole('link', { name: /当前使用 100M/ })).toHaveAttribute(
@@ -559,9 +740,8 @@ describe('Agent tool activity details', () => {
     });
 
     const { container } = render(<ActivitySummary activities={[activity]} inline />);
-    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
-    fireEvent.click(group.querySelector('summary')!);
-    const row = group.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    const dialog = openInlineActivity(container);
+    const row = dialog.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
     fireEvent.click(row.querySelector('summary')!);
 
     expect(row).toHaveTextContent('伙伴记忆');
@@ -624,7 +804,8 @@ describe('Agent tool activity details', () => {
     );
     openActivity(container);
 
-    expect(screen.getByLabelText('工具错误')).toHaveTextContent('工作区不在授权目录内，当前权限不足。');
+    expect(screen.getByLabelText('工具未完成')).toHaveTextContent('工作区不在授权目录内，当前权限不足。');
+    expect(within(screen.getByLabelText('工具未完成')).getByRole('button', { name: '复制错误' })).toBeInTheDocument();
     expect(container).not.toHaveTextContent('/Users/private/project');
     expect(container).not.toHaveTextContent('sk-do-not-render');
     fireEvent.click(screen.getByRole('button', { name: '请求权限' }));
@@ -635,7 +816,7 @@ describe('Agent tool activity details', () => {
     const onOpenApproval = vi.fn();
     const activity = toolActivity('tool_finished', 'failed', {
       toolCallId: 'call-approval-failed',
-      toolName: 'ime_input',
+      toolName: 'input',
       approvalId: 'approval-bound-1',
       payloadSha256: 'a'.repeat(64),
       preview: { title: '应用输入法设置', summary: '需要本机审批后才能应用。' },
@@ -653,11 +834,92 @@ describe('Agent tool activity details', () => {
     );
     openActivity(container);
 
-    expect(screen.getByLabelText('工具错误')).toHaveTextContent('该操作需要本机审批后继续。');
+    expect(screen.getByLabelText('工具未完成')).toHaveTextContent('该操作需要本机审批后继续。');
     fireEvent.click(screen.getByRole('button', { name: '去审批' }));
     expect(onOpenApproval).toHaveBeenCalledOnce();
     expect(onOpenApproval).toHaveBeenCalledWith(activity);
   });
+  it('shows the independent Luna approval agent without exposing human controls', () => {
+    const onApprovalDecision = vi.fn();
+    const activity: AgentActivityProjection = {
+      id: 'approval-model-1',
+      turnId: 'turn-model-approval',
+      kind: 'approval_required',
+      status: 'waiting',
+      summary: '',
+      payload: {
+        approvalId: 'approval-model-1',
+        payloadSha256: 'b'.repeat(64),
+        decisionMode: 'model',
+        automatic: true,
+        approvalModelDecision: {
+          status: 'pending',
+          model: 'openai-codex/gpt-5.6-luna',
+          receiptId: 'approval-model-decision:1',
+        },
+      },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+
+    const { container } = render(
+      <ActivitySummary activities={[activity]} inline onApprovalDecision={onApprovalDecision} />,
+    );
+
+    expect(container).toHaveTextContent('独立审批 Agent（Luna Max）正在评估这次操作');
+    expect(screen.queryByRole('button', { name: '批准' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '拒绝' })).not.toBeInTheDocument();
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+    expect(row).toHaveTextContent('不读取当前 Agent 的输出或推理');
+    expect(row).toHaveTextContent('无需人工操作');
+    expect(row).toHaveTextContent('approval-model-decision:1');
+    expect(onApprovalDecision).not.toHaveBeenCalled();
+  });
+  it('shows a fail-closed Luna verdict with rationale, reason, and history', () => {
+    const activity: AgentActivityProjection = {
+      id: 'approval-model-denied',
+      turnId: 'turn-model-denied',
+      kind: 'approval_resolved',
+      status: 'failed',
+      summary: '',
+      payload: {
+        approvalId: 'approval-model-denied',
+        decisionMode: 'model',
+        automatic: true,
+        approvalModelDecision: {
+          decision: 'deny',
+          status: 'failed_closed',
+          modelProfile: 'openai-codex/gpt-5.6-luna',
+          receiptId: 'approval-model-decision:denied',
+          reasonCodes: ['model_timeout', 'insufficient_evidence'],
+          rationaleSummary: '审批模型未能形成可验证裁决。',
+          contextKind: 'session',
+          contextId: 'session-1',
+          historyEntryCount: 4,
+        },
+      },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+
+    const { container } = render(
+      <ActivitySummary activities={[activity]} inline />,
+    );
+
+    expect(container).toHaveTextContent('独立审批 Agent（Luna Max）已拒绝这次操作');
+    const details = openInlineActivity(container);
+    const row = details.querySelector<HTMLDetailsElement>('.agent-activity-row')!;
+    fireEvent.click(row.querySelector('summary')!);
+    expect(row).toHaveTextContent('已按拒绝处理');
+    expect(row).toHaveTextContent('审批模型未能形成可验证裁决');
+    expect(row).toHaveTextContent('审批模型超时');
+    expect(row).toHaveTextContent('已参考 4 条同一 Session 审批历史');
+    expect(screen.queryByRole('button', { name: '批准' })).not.toBeInTheDocument();
+  });
+
+
 });
 
 function toolActivity(
@@ -675,6 +937,17 @@ function toolActivity(
     createdAtMs: 1,
     updatedAtMs: 2,
   };
+}
+
+function openInlineActivity(container: HTMLElement): HTMLElement {
+  const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline');
+  expect(group).not.toBeNull();
+  fireEvent.click(group!.querySelector('summary')!);
+  expect(group).toHaveAttribute('open');
+  expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
+  const details = group!.querySelector<HTMLElement>('.agent-activity__inline-timeline');
+  expect(details).not.toBeNull();
+  return details!;
 }
 
 function openActivity(container: HTMLElement): void {

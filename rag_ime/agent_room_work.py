@@ -5,7 +5,7 @@ import json
 import sqlite3
 import time
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -30,8 +30,22 @@ class AgentRoomWorkAssignmentChanged(RuntimeError):
 class AgentRoomWorkStore:
     """Durable Room responsibility ledger with append-only transition evidence."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        terminal_observer: Callable[[str, str], object] | None = None,
+    ) -> None:
         self.db_path = Path(db_path)
+        self._terminal_observer = terminal_observer
+
+    def set_terminal_observer(
+        self,
+        observer: Callable[[str, str], object] | None,
+    ) -> None:
+        """Observe committed terminal evidence without sharing Room ownership."""
+
+        self._terminal_observer = observer
 
     def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -450,7 +464,9 @@ class AgentRoomWorkStore:
                 actor_participant_id=actor_participant_id,
                 created_at_ms=timestamp,
             )
-        return work_item_payload(row)
+        payload = work_item_payload(row)
+        self._notify_terminal(payload)
+        return payload
 
     def submit(
         self,
@@ -645,7 +661,9 @@ class AgentRoomWorkStore:
                 actor_participant_id=str(actor["id"]),
                 created_at_ms=timestamp,
             )
-        return work_item_payload(row)
+        payload = work_item_payload(row)
+        self._notify_terminal(payload)
+        return payload
 
     def list(
         self,
@@ -688,9 +706,11 @@ class AgentRoomWorkStore:
         room_id: str,
     ) -> tuple[dict[str, object], str]:
         item = self.get(work_id, room_id=room_id)
-        owner_id = ""
-        if str(item["state"]) in AUTHORITATIVE_WORK_STATES:
-            owner_id = str(item["currentOwnerParticipantId"])
+        state = str(item["state"])
+        if state not in AUTHORITATIVE_WORK_STATES:
+            raise ValueError("only active or review work items can be dispatched")
+        owner_id = str(item["currentOwnerParticipantId"])
+        if owner_id:
             with self._connect() as conn:
                 assignment = conn.execute(
                     """
@@ -804,11 +824,18 @@ class AgentRoomWorkStore:
                 raise AgentRoomWorkAssignmentChanged("WorkItem assignment changed before dispatch")
             cursor = conn.execute(
                 """
-                UPDATE agent_room_work_items SET accepted_turn_id = ?, updated_at_ms = ?
+                UPDATE agent_room_work_items
+                SET accepted_turn_id = ?,
+                    root_turn_id = CASE
+                        WHEN root_turn_id = '' THEN ?
+                        ELSE root_turn_id
+                    END,
+                    updated_at_ms = ?
                 WHERE id = ? AND room_id = ? AND current_owner_participant_id = ?
                   AND assignment_key = ? AND accepted_turn_id = ?
                 """,
                 (
+                    str(room_turn_id),
                     str(room_turn_id),
                     timestamp,
                     work_id,
@@ -864,6 +891,186 @@ class AgentRoomWorkStore:
                 created_at_ms=timestamp,
             )
         return work_item_payload(row)
+
+    def project_kernel_root(
+        self,
+        root: Mapping[str, object],
+        *,
+        observed_at_ms: int | None = None,
+    ) -> list[dict[str, object]]:
+        """Project canonical Kernel lifecycle state into its claimed WorkItem."""
+
+        root_id = _required_text(root.get("rootId"), "rootId", maximum=320)
+        room_id = _required_text(root.get("roomId"), "roomId", maximum=320)
+        kernel_state = str(root.get("state") or "").strip()
+        target_state = {
+            "pending": "active",
+            "running": "active",
+            "waiting": "blocked",
+            "blocked": "blocked",
+            "cancelling": "blocked",
+            "cancelled_with_unknowns": "blocked",
+            "completed": "done",
+            "failed": "failed",
+            "cancelled": "cancelled",
+        }.get(kernel_state)
+        if target_state is None:
+            return []
+        terminal_receipt_id = _optional_text(
+            root.get("terminalReceiptId"),
+            maximum=1_000,
+        )
+        root_updated_at = root.get("updatedAtMs")
+        timestamp = _timestamp(
+            observed_at_ms
+            if observed_at_ms is not None
+            else (
+                root_updated_at
+                if isinstance(root_updated_at, int)
+                and not isinstance(root_updated_at, bool)
+                else None
+            )
+        )
+        terminal = target_state in {"done", "failed", "cancelled"}
+        changed: list[dict[str, object]] = []
+        with self._connect(immediate=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM agent_room_work_items
+                WHERE room_id = ? AND accepted_turn_id = ?
+                  AND state IN ('active', 'review', 'blocked')
+                ORDER BY created_at_ms ASC
+                """,
+                (room_id, root_id),
+            ).fetchall()
+            for row in rows:
+                current_state = str(row["state"])
+                current_blocker = dict(
+                    json.loads(str(row["blocker_json"] or "{}"))
+                )
+                if target_state == "active":
+                    if (
+                        current_state != "blocked"
+                        or current_blocker.get("source")
+                        != "room_kernel"
+                    ):
+                        continue
+                elif target_state == "blocked":
+                    if current_state == "blocked":
+                        if current_blocker.get("source") != "room_kernel":
+                            continue
+                        if (
+                            current_blocker.get("kernelRootState")
+                            == kernel_state
+                        ):
+                            continue
+                elif target_state == "done":
+                    open_children = conn.execute(
+                        """
+                        SELECT COUNT(*) FROM agent_room_work_items
+                        WHERE parent_work_id = ?
+                          AND state IN ('queued', 'active', 'review', 'blocked')
+                        """,
+                        (str(row["id"]),),
+                    ).fetchone()
+                    if int(open_children[0] if open_children else 0) > 0:
+                        continue
+                evidence_refs = [
+                    str(value)
+                    for value in json.loads(
+                        str(row["evidence_refs_json"] or "[]")
+                    )
+                ]
+                if (
+                    terminal_receipt_id
+                    and terminal_receipt_id not in evidence_refs
+                ):
+                    evidence_refs.append(terminal_receipt_id)
+                blocker: dict[str, object] = {}
+                if target_state == "blocked":
+                    blocker = {
+                        "reason": {
+                            "waiting": "Room 正在等待继续条件。",
+                            "blocked": "Room 执行已阻塞。",
+                            "cancelling": "Room 正在等待取消完成。",
+                            "cancelled_with_unknowns": (
+                                "Room 取消仍有未确认的运行面。"
+                            ),
+                        }[kernel_state],
+                        "nextStep": (
+                            "在任务流转与验收中检查阻塞证据，再继续或取消。"
+                        ),
+                        "source": "room_kernel",
+                        "rootId": root_id,
+                        "kernelRootState": kernel_state,
+                    }
+                elif target_state in {"failed", "cancelled"}:
+                    blocker = {
+                        "reason": f"Room Kernel Root {kernel_state}",
+                        "source": "room_kernel",
+                        "rootId": root_id,
+                        "kernelRootState": kernel_state,
+                    }
+                    if terminal_receipt_id:
+                        blocker["terminalReceiptId"] = (
+                            terminal_receipt_id
+                        )
+                cursor = conn.execute(
+                    """
+                    UPDATE agent_room_work_items
+                    SET state = ?, evidence_refs_json = ?, blocker_json = ?,
+                        updated_at_ms = ?, completed_at_ms = ?
+                    WHERE id = ? AND accepted_turn_id = ? AND state = ?
+                    """,
+                    (
+                        target_state,
+                        json.dumps(
+                            evidence_refs,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        json.dumps(
+                            blocker,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                        timestamp,
+                        timestamp if terminal else None,
+                        str(row["id"]),
+                        root_id,
+                        current_state,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    continue
+                updated = self._row(conn, str(row["id"]))
+                self._append_event(
+                    conn,
+                    updated,
+                    event_type=(
+                        "completed"
+                        if target_state == "done"
+                        else (
+                            "accepted"
+                            if target_state == "active"
+                            else target_state
+                        )
+                    ),
+                    actor_participant_id=str(
+                        updated["current_owner_participant_id"]
+                    ),
+                    created_at_ms=timestamp,
+                    payload={
+                        "source": "room_kernel",
+                        "rootId": root_id,
+                        "kernelRootState": kernel_state,
+                        "terminalReceiptId": terminal_receipt_id,
+                    },
+                )
+                changed.append(work_item_payload(updated))
+        for work in changed:
+            self._notify_terminal(work)
+        return changed
 
     def list_for_session(
         self,
@@ -1067,7 +1274,21 @@ class AgentRoomWorkStore:
                 actor_participant_id=str(actor["id"]),
                 created_at_ms=timestamp,
             )
-        return work_item_payload(row)
+        result = work_item_payload(row)
+        self._notify_terminal(result)
+        return result
+
+    def _notify_terminal(self, work: Mapping[str, object]) -> None:
+        if str(work.get("state") or "") not in {"done", "failed", "cancelled"}:
+            return
+        observer = self._terminal_observer
+        if observer is None:
+            return
+        try:
+            observer("room_work_item", str(work["id"]))
+        except Exception:
+            # The WorkItem event is canonical. Its observer owns durable retry.
+            pass
 
     def _require_reviewer(
         self,

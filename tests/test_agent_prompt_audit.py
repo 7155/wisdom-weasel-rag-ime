@@ -10,7 +10,11 @@ from rag_ime.agent_definitions import (
 )
 from rag_ime.agent_roles import agent_role, agent_role_catalog
 from rag_ime.agent_prompt_plans import compose_persona_layer
-from rag_ime.agent_templates import agent_template, agent_template_catalog
+from rag_ime.agent_templates import (
+    agent_template,
+    agent_template_catalog,
+    progressive_capability_policy,
+)
 from rag_ime.deepseek_memory_organizer import (
     DEFAULT_MEMORY_ORGANIZATION_INSTRUCTION,
     _memory_book_recovery_prompt,
@@ -78,30 +82,21 @@ class AgentPromptAuditTests(unittest.TestCase):
             self.assertIn("产物格式", template.prompt)
             self.assertNotIn("收工前", template.prompt)
             self.assertNotIn("已交付、已交接", template.prompt)
-            self.assertIn("<capability-policy>", template.runtime_prompt)
-            self.assertIn("能力家族索引在同一 Context Epoch 内保持稳定", template.runtime_prompt)
-            self.assertIn("真正的已激活状态只看本轮 tools", template.runtime_prompt)
-            self.assertIn("Skill 用 skill_search", template.runtime_prompt)
-            self.assertIn("Tool 用 tool_search", template.runtime_prompt)
-            self.assertIn("notFor 命中时不要加载", template.runtime_prompt)
-            self.assertIn("skill_load", template.runtime_prompt)
-            self.assertIn("tool_load", template.runtime_prompt)
-            self.assertIn("每个 skill_load 调用一个精确 Skill", template.runtime_prompt)
-            self.assertIn("不表示整个任务只能使用一个 Skill", template.runtime_prompt)
-            self.assertIn("同一模型轮次并列调用，最多两份", template.runtime_prompt)
-            self.assertIn("不要同时加载互相竞争的完整流程", template.runtime_prompt)
-            self.assertIn("tool_load 一次加载 1 至 4 个精确", template.runtime_prompt)
-            self.assertIn("不要为盘点、预热或猜测后续用途加载", template.runtime_prompt)
+            policy = progressive_capability_policy()
+            self.assertTrue(template.runtime_prompt.endswith(policy))
+            self.assertEqual(template.room_runtime_prompt, policy)
             self.assertNotIn(template.prompt, template.room_runtime_prompt)
             self.assertNotIn("当前 Room 的责任", template.room_runtime_prompt)
-            self.assertIn("skill_load", template.room_runtime_prompt)
-            self.assertIn("tool_load", template.room_runtime_prompt)
 
         for item in collaboration_role_catalog():
             prompt = collaboration_role(item["roleId"], item["version"]).system_prompt
             self.assertIn("<work-lens", prompt)
             self.assertIn("<room-work>", prompt)
             self.assertIn("room_commit", prompt)
+            self.assertEqual(prompt.count("## 公开报告"), 1)
+            self.assertIn("方法与原因", prompt)
+            self.assertIn("不包含隐藏", prompt)
+            self.assertIn("准确接手指令只写结构化字段", prompt)
             self.assertNotIn("收工前", prompt)
             positive = sum(
                 prompt.count(token)
@@ -122,6 +117,64 @@ class AgentPromptAuditTests(unittest.TestCase):
             self.assertNotIn("收工前", prompt)
             self.assertNotIn("skill_load", prompt)
             self.assertNotIn("原生控制中心", prompt)
+
+    def test_progressive_capability_policy_is_bounded_and_runtime_authoritative(
+        self,
+    ) -> None:
+        policy = progressive_capability_policy()
+
+        self.assertLessEqual(len(policy), 669)
+        self.assertLessEqual(len(policy.encode("utf-8")), 1_383)
+        for token in (
+            "routing card",
+            "catalog revision",
+            "元数据",
+            "nextCandidates 仅建议",
+            "加载精确正文一次",
+            "<loaded_skill> 同 revision 不重载",
+            "禁止重构",
+            "注入无关正文",
+            "另建/取代 Runtime owner",
+            "Runtime 实际能力/审批/取消/工作区/生命周期/owner",
+            "deliverable",
+            "新鲜、权威 evidence receipt",
+            "缺失即未完成",
+        ):
+            with self.subTest(contract=token):
+                self.assertIn(token, policy)
+
+    def test_skill_composition_prompt_allows_only_complementary_pairing(
+        self,
+    ) -> None:
+        policy = progressive_capability_policy()
+
+        self.assertIn("通常一主 Skill，最多两个", policy)
+        self.assertIn("代码切片用 test-driven-implementation", policy)
+        self.assertIn("故障先 systematic-debugging", policy)
+
+    def test_skill_composition_prompt_rejects_overlapping_authority(self) -> None:
+        policy = progressive_capability_policy()
+
+        self.assertIn("禁止重复", policy)
+        execution = policy.index("项目连续性归 implementation-execution")
+        memory = policy.index("memory-curation")
+        authority_overlap = policy.index("争夺同一持久化事实")
+        self.assertLess(execution, memory)
+        self.assertLess(memory, authority_overlap)
+
+    def test_routing_prompt_does_not_gate_clear_reversible_work_on_confirmation(
+        self,
+    ) -> None:
+        policy = progressive_capability_policy()
+
+        self.assertIn("无实质歧义且授权内可逆即执行", policy)
+        self.assertIn("仅实质取舍才提 AI 生成的简短选择题", policy)
+        self.assertIn("禁索取裸“确认”", policy)
+        self.assertIn(
+            "Goal/In scope/Readiness 内部模板原样作最终聊天",
+            policy,
+        )
+        self.assertIn("只提交计划不算完成", policy)
 
     def test_room_lifecycle_keeps_root_requirements_as_boundary_not_child_work(self) -> None:
         prompt = collaboration_role("implementer", "1").system_prompt

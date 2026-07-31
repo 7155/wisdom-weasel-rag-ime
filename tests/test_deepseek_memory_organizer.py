@@ -96,6 +96,12 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
         self.assertIn("review-only", system_prompt)
         self.assertIn("原始 user/assistant 消息", system_prompt)
         self.assertIn("不能单独", system_prompt)
+        self.assertIn("数分钟内", system_prompt)
+        self.assertIn("ephemeral activity", system_prompt)
+        self.assertIn("durable consolidation", system_prompt)
+        self.assertIn("sourceEvidenceIds 必须只列出实际支持", system_prompt)
+        self.assertIn("必须 abstain", system_prompt)
+        self.assertIn("activeRoleBook 中已有语义等价项时不得重复提案", system_prompt)
         model_input = json.loads(request_payload["messages"][1]["content"])
         self.assertEqual(
             model_input["bundle"]["policy"]["allowedEvidenceIds"],
@@ -528,6 +534,14 @@ class DeepSeekMemoryOrganizerTests(unittest.TestCase):
         self.assertIn("重复问句", system_prompt)
         self.assertIn("禁止 project_question", system_prompt)
         self.assertIn("不能原封不动复制长输入", system_prompt)
+        self.assertIn("数分钟内连续出现", system_prompt)
+        self.assertIn("不能单独支持 remember", system_prompt)
+        self.assertIn("sourceDecisions.sourceRef", system_prompt)
+        self.assertIn("必须 needs_review", system_prompt)
+        recovery_prompt = captured["payloads"][1]["messages"][0]["content"]
+        self.assertIn("数分钟内重复出现", recovery_prompt)
+        self.assertIn("不证明内容持久", recovery_prompt)
+        self.assertIn("证据不足或冲突时 needs_review，并 abstain", recovery_prompt)
 
     def test_owner_curator_recovers_truncated_output_with_compact_retry(self) -> None:
         config = load_deepseek_config(

@@ -9,7 +9,7 @@
     "receiptId": {"type": "string", "minLength": 1},
     "rootId": {"type": ["string", "null"]},
     "commandId": {"type": ["string", "null"]},
-    "receiptKind": {"type": "string", "enum": ["accepted", "duplicate", "rejected", "target_cancelled", "root_cancelled", "panic", "runtime_accepted", "runtime_failed", "dispatch_unknown", "dead_letter", "settle_retry_required", "settle_blocked", "terminal"]},
+    "receiptKind": {"type": "string", "enum": ["accepted", "duplicate", "rejected", "target_cancelled", "root_cancelled", "panic", "runtime_accepted", "runtime_failed", "runtime_retry_scheduled", "dispatch_unknown", "dead_letter", "settle_retry_required", "settle_blocked", "terminal"]},
     "status": {"type": "string", "enum": ["applied", "noop", "rejected", "unknown"]},
     "generation": {"type": "integer", "minimum": 0},
     "details": {"type": "object"},

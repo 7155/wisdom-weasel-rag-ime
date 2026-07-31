@@ -8,6 +8,8 @@ from .agent_prompt_support import bounded_text
 from .agent_protocol import AgentEventEnvelope
 from .agent_room_kernel import kernel_owns_room_execution
 from .agent_room_public_timeline import RoomPublicTimelineProjector
+from .pi_runtime_public import public_code_tool_activity, redact_mapping
+from .contracts.json_schema import validate_contract
 
 
 _TRANSIENT_RUNTIME_EVENT_TYPES = frozenset(
@@ -79,9 +81,11 @@ class AgentEventProjectionService:
         if event.event_type != "message_completed":
             return
         message = event.payload.get("message")
-        if isinstance(message, Mapping):
-            self._bind_and_persist_blocks(event, message)
-        self.record_assistant_evidence(event)
+        if (
+            isinstance(message, Mapping)
+            and self._bind_and_persist_blocks(event, message)
+        ):
+            self.record_assistant_evidence(event)
 
     def mirror_to_room(
         self,
@@ -135,6 +139,11 @@ class AgentEventProjectionService:
             else ""
         )
         if kernel_owns_room_execution(self.room_kernel.mode) and binding is not None:
+            runtime_turn_id = str(
+                binding.get("runtimeTurnId") or ""
+            )
+            if not runtime_turn_id or event.turn_id != runtime_turn_id:
+                return
             mapped_type, public_data = room_event_projection(event)
             if event.event_type == "message_completed":
                 mapped_type = "participant_activity"
@@ -163,6 +172,47 @@ class AgentEventProjectionService:
                 )
             room_id = str(binding["roomId"])
             room = self.rooms.get(room_id)
+            runtime_failure_receipt: Mapping[str, object] | None = None
+            if (
+                event.event_type == "turn_failed"
+                and self.record_runtime_failure is not None
+            ):
+                runtime_failure_receipt = self.record_runtime_failure(
+                    room_id=room_id,
+                    dispatch_id=str(binding["dispatchId"]),
+                    generation=int(binding["generation"]),
+                    source_event_id=event.event_id,
+                    runtime_turn_id=event.turn_id,
+                    dispatch_attempt=int(binding["attempt"]),
+                    created_at_ms=event.created_at_ms,
+                    retryable=event.payload.get("retryable") is True,
+                    had_tool_activity=(
+                        event.payload.get("hadToolActivity") is not False
+                    ),
+                    reason_code=str(
+                        event.payload.get("reasonCode") or ""
+                    ),
+                )
+                if (
+                    runtime_failure_receipt.get("receiptKind")
+                    == "runtime_retry_scheduled"
+                ):
+                    mapped_type = "participant_activity"
+                    details = runtime_failure_receipt.get("details")
+                    public_data = {
+                        "status": "retry_wait",
+                        "summary": (
+                            "模型连接中断，已进入有界重试等待"
+                        ),
+                        "requestId": (
+                            f"{str(binding['dispatchId'])}:provider"
+                        ),
+                        "retryAttempt": (
+                            int(details.get("attempt") or 0)
+                            if isinstance(details, Mapping)
+                            else 0
+                        ),
+                    }
             self.public_timeline.publish_runtime(
                 event=event,
                 binding=binding,
@@ -171,17 +221,6 @@ class AgentEventProjectionService:
                 public_data=public_data,
                 topic_id=str(room.get("activeTopicId") or ""),
             )
-            if (
-                event.event_type == "turn_failed"
-                and self.record_runtime_failure is not None
-            ):
-                self.record_runtime_failure(
-                    room_id=room_id,
-                    dispatch_id=str(binding["dispatchId"]),
-                    generation=int(binding["generation"]),
-                    source_event_id=event.event_id,
-                    created_at_ms=event.created_at_ms,
-                )
             if event.event_type not in _TRANSIENT_RUNTIME_EVENT_TYPES:
                 self.room_kernel_projection.sync_room(
                     room_id,
@@ -249,26 +288,34 @@ class AgentEventProjectionService:
         self,
         event: AgentEventEnvelope,
         message: Mapping[str, object],
-    ) -> None:
+    ) -> bool:
         binding = self.room_kernel.session_binding(
             event.session_id
         )
-        participant = self.rooms.participant_for_session(
-            event.session_id,
-            active_only=False,
+        managed_turn_lookup = getattr(
+            self.room_kernel,
+            "is_managed_runtime_turn",
+            None,
         )
-        kernel_room = (
-            participant is not None
-            and bool(
-                self.room_kernel.root_ids(
-                    str(participant.get("roomId") or "")
+        managed_turn = (
+            bool(
+                managed_turn_lookup(
+                    event.session_id,
+                    event.turn_id,
                 )
             )
+            if callable(managed_turn_lookup)
+            else (
+                binding is not None
+                and binding.get("runtimeTurnId") == event.turn_id
+            )
         )
-        write_allowed = not kernel_room or (
+        active_exact_turn = (
             binding is not None
             and binding.get("state") == "running"
+            and binding.get("runtimeTurnId") == event.turn_id
         )
+        write_allowed = not managed_turn or active_exact_turn
         generation = (
             int(binding.get("generation") or 0)
             if binding
@@ -288,10 +335,11 @@ class AgentEventProjectionService:
             generation=generation,
         )
         event.payload["message"] = bound_message
-        self.append_recent_message(
-            event.session_id,
-            bound_message,
-        )
+        if write_allowed:
+            self.append_recent_message(
+                event.session_id,
+                bound_message,
+            )
         if write_allowed and any(
             isinstance(block, Mapping)
             and block.get("schemaVersion")
@@ -318,6 +366,7 @@ class AgentEventProjectionService:
                 generation=generation,
                 created_at_ms=event.created_at_ms,
             )
+        return write_allowed
 
 
 def room_event_projection(
@@ -325,26 +374,27 @@ def room_event_projection(
 ) -> tuple[str, dict[str, object]]:
     payload = event.payload
     if event.event_type == "text_delta":
-        return (
-            "participant_delta",
-            {
-                "messageId": bounded_text(
-                    payload.get("messageId"),
-                    maximum=200,
-                ),
-                "blockId": bounded_text(
-                    payload.get("blockId"),
-                    maximum=240,
-                ),
-                "contentIndex": _signed_integer(
-                    payload.get("contentIndex"),
-                    default=0,
-                ),
-                "delta": str(
-                    payload.get("delta") or ""
-                )[:32_000],
-            },
-        )
+        data: dict[str, object] = {
+            "messageId": bounded_text(
+                payload.get("messageId"),
+                maximum=200,
+            ),
+            "blockId": bounded_text(
+                payload.get("blockId"),
+                maximum=240,
+            ),
+            "contentIndex": _signed_integer(
+                payload.get("contentIndex"),
+                default=0,
+            ),
+            "delta": str(
+                payload.get("delta") or ""
+            )[:32_000],
+        }
+        for flag in ("replaceBlock", "replaceContent"):
+            if isinstance(payload.get(flag), bool):
+                data[flag] = bool(payload[flag])
+        return "participant_delta", data
     if event.event_type == "message_completed":
         message = _public_room_message(
             payload.get("message")
@@ -383,11 +433,31 @@ def room_event_projection(
             "riskLevel",
             "trigger",
             "sourceRole",
+            "toolId",
+            "operation",
+            "decisionMode",
         ),
     )
     for flag in ("ok", "isError", "due"):
         if isinstance(payload.get(flag), bool):
             data[flag] = bool(payload[flag])
+    if event.event_type in {"approval_required", "approval_resolved"}:
+        if isinstance(payload.get("automatic"), bool):
+            data["automatic"] = bool(payload["automatic"])
+        model_decision = payload.get("approvalModelDecision")
+        if isinstance(model_decision, Mapping):
+            public_decision = dict(model_decision)
+            try:
+                validate_contract(
+                    public_decision,
+                    "agent-approval-model-decision.v1.json",
+                )
+            except ValueError:
+                pass
+            else:
+                data["approvalModelDecision"] = public_decision
+    if event.event_type == "user_input_required":
+        data.update(_room_user_input_disclosure(payload))
     if event.event_type in {
         "tool_started",
         "tool_progress",
@@ -397,6 +467,7 @@ def room_event_projection(
         if summary:
             data["summary"] = summary
         data.update(references)
+        data.update(_room_tool_disclosure(payload, event.event_type))
     return "participant_activity", data
 
 
@@ -618,6 +689,457 @@ def _room_scalar_projection(
             continue
         projected[key] = bounded_text(value, maximum=500)
     return projected
+
+
+_ROOM_TOOL_REQUEST_KEYS = (
+    "fileName",
+    "path",
+    "root",
+    "cwd",
+    "op",
+    "operation",
+    "mode",
+    "patternKind",
+    "server",
+    "label",
+    "jobId",
+    "status",
+    "reason",
+    "query",
+    "pattern",
+    "glob",
+    "title",
+    "newName",
+    "offset",
+    "limit",
+    "context",
+    "timeout",
+    "line",
+    "column",
+    "timeoutMs",
+    "timeoutSeconds",
+    "cursor",
+    "limitBytes",
+    "command",
+)
+
+_ROOM_TOOL_RESULT_KEYS = (
+    "outputPreview",
+    "outputTruncated",
+    "summary",
+    "status",
+    "message",
+    "lineCount",
+    "additions",
+    "deletions",
+    "decisionMode",
+    "approvalModelDecision",
+    "automatic",
+)
+
+_ROOM_TOOL_NAMES = frozenset(
+    {
+        "room_state",
+        "room_collaborate",
+        "room_post",
+        "room_commit",
+    }
+)
+
+_ROOM_REQUEST_TEXT_LIMITS = {
+    "targetParticipantRef": 240,
+    "intent": 120,
+    "objective": 1_000,
+    "expectedOutput": 1_000,
+    "kind": 120,
+    "action": 120,
+    "summary": 500,
+    "waitingFor": 120,
+    "blocker": 1_000,
+}
+
+_ROOM_REQUEST_LIST_KEYS = frozenset(
+    {
+        "acceptance",
+        "mentions",
+    }
+)
+
+_ROOM_RESULT_KEYS_BY_TOOL = {
+    "room_state": (
+        "ok",
+        "created",
+        "evidenceRef",
+        "unchanged",
+        "stateRevision",
+        "currentResponsibility",
+        "summary",
+        "status",
+    ),
+    "room_collaborate": (
+        "accepted",
+        "enqueued",
+        "deduplicated",
+        "targetParticipantRef",
+        "currentResponsibilityContinues",
+    ),
+    "room_post": (
+        "published",
+        "postRef",
+        "deduplicated",
+        "currentResponsibilityContinues",
+    ),
+    "room_commit": (
+        "accepted",
+        "executionPerformed",
+        "settlementStaged",
+        "terminalForModelTurn",
+        "canonicalTool",
+    ),
+}
+
+_ROOM_RESULT_BOOLEAN_KEYS = frozenset(
+    {
+        "ok",
+        "created",
+        "unchanged",
+        "accepted",
+        "enqueued",
+        "deduplicated",
+        "published",
+        "currentResponsibilityContinues",
+        "executionPerformed",
+        "settlementStaged",
+        "terminalForModelTurn",
+    }
+)
+
+_ROOM_RESULT_TEXT_LIMITS = {
+    "evidenceRef": 240,
+    "stateRevision": 160,
+    "summary": 500,
+    "status": 160,
+    "targetParticipantRef": 240,
+    "postRef": 240,
+    "canonicalTool": 120,
+}
+
+
+def _room_tool_request_projection(
+    raw_args: Mapping[str, object],
+) -> dict[str, object]:
+    projected: dict[str, object] = {}
+    for key, maximum in _ROOM_REQUEST_TEXT_LIMITS.items():
+        value = raw_args.get(key)
+        if not isinstance(value, str):
+            continue
+        text = _redacted_room_text(value, maximum=maximum)
+        if text:
+            projected[key] = text
+    for key in _ROOM_REQUEST_LIST_KEYS:
+        raw_values = raw_args.get(key)
+        if not isinstance(raw_values, list):
+            continue
+        values = [
+            text
+            for value in raw_values[:32]
+            if isinstance(value, str)
+            and (text := _redacted_room_text(value, maximum=240))
+        ]
+        if values:
+            projected[key] = values
+    return projected
+
+
+def _room_tool_result_layers(
+    value: object,
+) -> tuple[Mapping[str, object], ...]:
+    if not isinstance(value, Mapping):
+        return ()
+    redacted = redact_mapping(value)
+    layers: list[Mapping[str, object]] = []
+
+    def visit(layer: Mapping[str, object], depth: int) -> None:
+        if depth > 3:
+            return
+        layers.append(layer)
+        for key in ("details", "result"):
+            child = layer.get(key)
+            if isinstance(child, Mapping):
+                visit(child, depth + 1)
+
+    visit(redacted, 0)
+    return tuple(layers)
+
+
+def _room_current_responsibility(
+    value: object,
+) -> dict[str, str] | str | None:
+    if isinstance(value, Mapping):
+        state = _redacted_room_text(
+            value.get("state"),
+            maximum=160,
+        )
+        return {"state": state} if state else None
+    text = _redacted_room_text(value, maximum=500)
+    return text or None
+
+
+def _room_tool_result_projection(
+    tool_name: str,
+    raw_result: object,
+) -> dict[str, object]:
+    keys = _ROOM_RESULT_KEYS_BY_TOOL.get(
+        str(tool_name or "").strip().lower()
+    )
+    if not keys:
+        return {}
+    layers = _room_tool_result_layers(raw_result)
+    if not layers:
+        return {}
+    projected: dict[str, object] = {}
+    for key in keys:
+        value = next(
+            (
+                layer[key]
+                for layer in layers
+                if key in layer
+            ),
+            None,
+        )
+        if value is None:
+            continue
+        if key == "currentResponsibility":
+            current = _room_current_responsibility(value)
+            if current is not None:
+                projected[key] = current
+            continue
+        if key in _ROOM_RESULT_BOOLEAN_KEYS:
+            if isinstance(value, bool):
+                projected[key] = value
+            continue
+        maximum = _ROOM_RESULT_TEXT_LIMITS.get(key)
+        if maximum is None or not isinstance(value, str):
+            continue
+        text = _redacted_room_text(value, maximum=maximum)
+        if text:
+            projected[key] = text
+    return projected
+
+
+def _room_user_input_disclosure(
+    payload: Mapping[str, object],
+) -> dict[str, object]:
+    """Expose only the bounded public question contract owned by the runtime."""
+
+    method = bounded_text(payload.get("method"), maximum=40)
+    if method not in {"select", "confirm", "input", "editor"}:
+        method = ""
+    request_kind = bounded_text(
+        payload.get("requestKind"),
+        maximum=120,
+    ) or "user_input_required"
+    disclosure: dict[str, object] = {"requestKind": request_kind}
+    if method:
+        disclosure["method"] = method
+    for field, maximum in (
+        ("title", 160),
+        ("message", 500),
+        ("placeholder", 500),
+        ("prefill", 4_000),
+        ("defaultValue", 4_000),
+    ):
+        if payload.get(field) is not None:
+            disclosure[field] = bounded_text(
+                payload.get(field),
+                maximum=maximum,
+            )
+    raw_options = payload.get("options")
+    if isinstance(raw_options, list):
+        disclosure["options"] = [
+            option
+            for value in raw_options[:100]
+            if (
+                option := bounded_text(
+                    value,
+                    maximum=240,
+                )
+            )
+        ]
+    timeout = payload.get("timeout")
+    if (
+        isinstance(timeout, (int, float))
+        and not isinstance(timeout, bool)
+    ):
+        disclosure["timeout"] = max(0, int(timeout))
+    for field, allowed in (
+        (
+            "resolutionState",
+            frozenset({"resolved", "cancelled"}),
+        ),
+        (
+            "resolutionSource",
+            frozenset(
+                {
+                    "direct_user",
+                    "user_cancelled",
+                    "timeout",
+                    "runtime_cancelled",
+                }
+            ),
+        ),
+    ):
+        value = bounded_text(
+            payload.get(field),
+            maximum=40,
+        )
+        if value in allowed:
+            disclosure[field] = value
+    return disclosure
+
+
+def _redacted_room_text(
+    value: object,
+    *,
+    maximum: int,
+) -> str:
+    redacted = redact_mapping({"value": value}).get("value")
+    return bounded_text(redacted, maximum=maximum)
+
+
+def _room_tool_disclosure(
+    payload: Mapping[str, object],
+    event_type: str,
+) -> dict[str, object]:
+    raw_args = (
+        payload.get("args")
+        if isinstance(payload.get("args"), Mapping)
+        else {}
+    )
+    raw_result = (
+        payload.get("partialResult")
+        if event_type == "tool_progress"
+        else payload.get("result")
+    )
+    tool_name = str(payload.get("toolName") or "").strip().lower()
+    is_room_tool = tool_name in _ROOM_TOOL_NAMES
+    public_result = (
+        dict(payload["publicResult"])
+        if isinstance(payload.get("publicResult"), Mapping)
+        else public_code_tool_activity(
+            tool_name,
+            raw_args,
+            raw_result,
+        )
+    )
+    if is_room_tool:
+        arguments = _room_tool_request_projection(raw_args)
+    elif public_result:
+        arguments = {
+            key: public_result[key]
+            for key in _ROOM_TOOL_REQUEST_KEYS
+            if key in public_result
+        }
+    else:
+        redacted_args = redact_mapping(raw_args)
+        arguments = {
+            key: redacted_args[key]
+            for key in _ROOM_TOOL_REQUEST_KEYS
+            if key in redacted_args and key != "context"
+        }
+
+    disclosure: dict[str, object] = {}
+    bounded_arguments = _bounded_room_tool_value(arguments)
+    if isinstance(bounded_arguments, Mapping) and bounded_arguments:
+        disclosure["arguments"] = bounded_arguments
+
+    if event_type in {"tool_progress", "tool_finished"}:
+        if is_room_tool:
+            result_source = _room_tool_result_projection(
+                tool_name,
+                raw_result,
+            )
+            if not result_source and public_result:
+                result_source = _room_tool_result_projection(
+                    tool_name,
+                    public_result,
+                )
+        elif public_result:
+            result_source = {
+                key: public_result[key]
+                for key in _ROOM_TOOL_RESULT_KEYS
+                if key in public_result
+            }
+        else:
+            redacted_result = (
+                redact_mapping(raw_result)
+                if isinstance(raw_result, Mapping)
+                else {}
+            )
+            result_source = {
+                key: redacted_result[key]
+                for key in _ROOM_TOOL_RESULT_KEYS
+                if key in redacted_result
+            }
+        bounded_result = _bounded_room_tool_value(result_source)
+        if isinstance(bounded_result, Mapping) and bounded_result:
+            disclosure["result"] = bounded_result
+        if bool(payload.get("isError")):
+            error = (
+                _room_tool_error(public_result)
+                or _room_tool_error(
+                    redact_mapping(raw_result)
+                    if isinstance(raw_result, Mapping)
+                    else {},
+                )
+                or _redacted_room_text(
+                    payload.get("error"),
+                    maximum=1_000,
+                )
+            )
+            if error:
+                disclosure["error"] = error
+    return disclosure
+
+
+def _bounded_room_tool_value(
+    value: object,
+    *,
+    depth: int = 0,
+) -> object:
+    if depth >= 4:
+        return "[TRUNCATED]"
+    if isinstance(value, Mapping):
+        return {
+            bounded_text(key, maximum=120): _bounded_room_tool_value(
+                child,
+                depth=depth + 1,
+            )
+            for key, child in list(value.items())[:32]
+            if bounded_text(key, maximum=120)
+        }
+    if isinstance(value, list):
+        return [
+            _bounded_room_tool_value(item, depth=depth + 1)
+            for item in value[:32]
+        ]
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return bounded_text(value, maximum=2_000)
+
+
+def _room_tool_error(value: object) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    for key in ("error", "errorMessage", "reason"):
+        error = bounded_text(value.get(key), maximum=1_000)
+        if error:
+            return error
+    for child in value.values():
+        error = _room_tool_error(child)
+        if error:
+            return error
+    return ""
 
 
 def _room_tool_summary(

@@ -1,6 +1,6 @@
 import { CircleAlert, Workflow } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { EmptyState } from '@/components/primitives';
+import { Button, EmptyState } from '@/components/primitives';
 import type { RoomEventEnvelopeV2 } from '@/contracts/generated/room-event-envelope.v2';
 import {
   applyRoomKernelSnapshot,
@@ -19,13 +19,20 @@ import { evaluateRoomKernelControlGate, type RoomKernelControlGate } from './roo
 
 type LiveState = 'loading' | 'synced' | 'reconnecting' | 'recovering' | 'denied' | 'error';
 
-export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
+export function RoomKernelLivePanel({
+  participantLabels = {},
+  roomId,
+}: {
+  participantLabels?: Record<string, string>;
+  roomId: string;
+}) {
   const transport = useOptionalControlTransport();
   const [projection, setProjection] = useState<RoomKernelProjection | null>(null);
   const [requirementsByRootId, setRequirementsByRootId] = useState<Record<string, RoomRequirementsReadProjection>>({});
   const projectionRef = useRef<RoomKernelProjection | null>(null);
   const [controlGate, setControlGate] = useState<RoomKernelControlGate | null>(null);
   const [liveState, setLiveState] = useState<LiveState>('loading');
+  const [recoveryRequest, setRecoveryRequest] = useState(0);
   const [detail, setDetail] = useState('正在验证任务状态');
   const commandTransport = useMemo(
     () => transport ? createControlRoomKernelCommandTransport(transport) : null,
@@ -134,7 +141,7 @@ export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
         setLiveState(denied ? 'denied' : 'error');
         setDetail(denied
           ? '当前连接没有查看任务进度的权限'
-          : '任务进度暂时不可用，请刷新后重试。已有对话和工作文件不会受影响。');
+          : '任务进度暂时不可用。已有对话和工作文件不会受影响。');
       }
     };
 
@@ -157,7 +164,7 @@ export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
       } catch (error) {
         if (!active) return;
         setLiveState('error');
-        setDetail('任务进度暂时不可用，请刷新后重试。已有对话和工作文件不会受影响。');
+        setDetail('任务进度暂时不可用。已有对话和工作文件不会受影响。');
       }
     };
 
@@ -168,11 +175,12 @@ export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
       snapshotController?.abort();
       unsubscribe?.();
     };
-  }, [roomId, transport]);
+  }, [recoveryRequest, roomId, transport]);
 
   return <section className="room-kernel-live" aria-label="协作任务状态" data-live-state={liveState}>
     <p className="room-kernel-live__status" role={liveState === 'error' || liveState === 'denied' ? 'alert' : 'status'}>
       <strong>{liveStateLabel(liveState)}</strong><span>{detail}</span>
+      {liveState === 'error' ? <Button onClick={() => setRecoveryRequest((current) => current + 1)} size="small" variant="quiet">重新读取</Button> : null}
     </p>
     {projection && Object.keys(projection.rootsById).length > 0 ? <RoomKernelControlPlane
       projection={projection}
@@ -182,6 +190,7 @@ export function RoomKernelLivePanel({ roomId }: { roomId: string }) {
       commandTransport={controlGate?.commandEnabled && commandTransport ? commandTransport : undefined}
       commandDisabledReason={controlGate?.reason}
       panicEnabled={controlGate?.panicEnabled === true}
+      participantLabels={participantLabels}
       requirementsByRootId={requirementsByRootId}
     /> : liveState === 'error' ? <EmptyState
       description="检查点仍保留。修复连接或运行时问题后，可以从已确认状态继续。"
@@ -232,8 +241,8 @@ export function parseSnapshot(value: unknown, roomId: string): RoomKernelSnapsho
     roomId,
     lastSequence: Number(item.lastSequence),
     snapshotHash: item.snapshotHash,
-    roots: array(item.roots).map((entry) => parseContract('room-root-execution.v2', entry)),
-    tasks: array(item.tasks).map((entry) => parseContract('room-task.v2', entry)),
+    roots: array(item.roots).map((entry) => parseContract('room-root-execution.v3', entry)),
+    tasks: array(item.tasks).map((entry) => parseContract('room-task.v3', entry)),
     dispatches: array(item.dispatches).map((entry) => parseContract('room-dispatch-envelope.v2', entry)),
     posts: array(item.posts).map((entry) => parseContract('room-post.v2', entry)),
     sessions: array(item.sessions) as RoomKernelSnapshot['sessions'],

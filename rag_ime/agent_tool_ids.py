@@ -2,30 +2,34 @@ from __future__ import annotations
 
 
 ASSISTANT_CONTROL_TOOL_IDS = (
-    "ime_overview",
-    "ime_input",
-    "ime_voice",
-    "ime_planning",
-    "ime_memory",
-    "agent_role_book",
-    "ime_knowledge",
-    "ime_models",
-    "ime_runtime",
-    "ime_configuration",
-    "ime_agents",
-    "ime_browser",
-    "agent_plan",
+    "overview",
+    "input",
+    "voice",
+    "planning",
     "agent_schedule",
+    "memory",
+    "agent_role_book",
+    "knowledge",
+    "models",
+    "runtime",
+    "configuration",
+    "agents",
+    "browser",
+    "agent_plan",
+    "plugins",
+    "work_documents",
     "desktop_semantic",
 )
 
 COORDINATOR_TOOL_IDS = (
     "workspace_list",
+    "workspace_lsp",
     "workspace_read",
     "workspace_search",
     "workspace_patch",
     "workspace_edit",
     "workspace_write",
+    "workspace_job",
     "workspace_shell",
 )
 

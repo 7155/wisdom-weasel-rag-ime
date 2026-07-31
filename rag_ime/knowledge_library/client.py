@@ -13,7 +13,7 @@ from .service import KnowledgeLibraryService
 
 
 class KnowledgeClient(Protocol):
-    """Read-only public contract consumed by the `ime_knowledge` Agent Tool."""
+    """Read-only public contract consumed by the `knowledge` Agent Tool."""
 
     def list_bases(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         ...

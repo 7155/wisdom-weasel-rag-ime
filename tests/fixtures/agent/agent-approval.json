@@ -2,7 +2,7 @@
   "schemaVersion": "rag-ime.agent-approval.v1",
   "approvalId": "approval-fixture-1",
   "sessionId": "agent-session-1",
-  "toolId": "ime_input",
+  "toolId": "input",
   "operation": "apply_settings",
   "payloadSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "preview": {
@@ -18,5 +18,13 @@
   "expiresAtMs": 1783950060000,
   "decidedBy": "",
   "decidedAtMs": null,
-  "receipt": null
+  "receipt": null,
+  "causalMetadata": {
+    "planId": "",
+    "planRevision": 0,
+    "goalId": "",
+    "goalRevision": 0,
+    "turnId": "",
+    "roomBound": false
+  }
 }

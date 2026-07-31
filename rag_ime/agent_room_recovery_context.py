@@ -25,101 +25,112 @@ def room_compaction_recovery_context(
     if not isinstance(source, Mapping):
         raise ValueError("Room task context must be an object")
 
-    requirements = _mapping(source.get("requirements"))
-    original = _unique_texts(
-        _mapping(item).get("text")
-        for item in _mappings(requirements.get("original"))[:8]
-    )
-    directory = _unique_texts(
-        _mapping(item).get("statement")
-        for item in _mappings(requirements.get("items"))[:32]
-        if bounded_text(_mapping(item).get("statement"), maximum=1_500)
-        not in original
-    )
     task = _mapping(source.get("task"))
     task_state = bounded_text(task.get("state"), maximum=40)
+    terminal = task_state in {"completed", "failed", "cancelled"}
     covered = {
         bounded_text(value, maximum=240)
         for value in covered_criterion_ids
         if bounded_text(value, maximum=240)
     }
-    internal_acceptance = _unique_records(
-        (
+    pending_acceptance: list[dict[str, object]] = []
+    seen_criteria: set[str] = set()
+    for index, item in enumerate(
+        _mappings(_mapping(source.get("acceptance")).get("criteria"))[:32],
+        start=1,
+    ):
+        criterion_id = bounded_text(item.get("criterionId"), maximum=240)
+        statement = bounded_text(item.get("statement"), maximum=1_000)
+        identity = criterion_id or statement
+        if (
+            terminal
+            or not identity
+            or identity in seen_criteria
+            or criterion_id in covered
+        ):
+            continue
+        seen_criteria.add(identity)
+        evidence_refs = _criterion_evidence_refs(item)
+        pending_acceptance.append(
             _compact_mapping(
                 {
-                    "criterionId": bounded_text(
-                        item.get("criterionId"), maximum=240
-                    ),
-                    "statement": bounded_text(
-                        item.get("statement"), maximum=1_000
-                    ),
-                    "evidenceAvailable": (
-                        item.get("passed") is True
-                        or bounded_text(
-                            item.get("criterionId"), maximum=240
-                        ) in covered
-                    ),
-                    "kernelVerified": (
-                        task_state == "completed"
-                        and bounded_text(
-                            item.get("criterionId"), maximum=240
-                        ) in covered
-                    ),
+                    # Keep the alias aligned with the complete Kernel criterion
+                    # order. Filtering first would silently renumber AC-2 to AC-1.
+                    "alias": f"AC-{index}",
+                    "statement": statement,
+                    "evidenceRefs": evidence_refs,
                 }
             )
-            for item in _mappings(
-                _mapping(source.get("acceptance")).get("criteria")
-            )[:32]
-        ),
-        key="criterionId",
-        fallback_key="statement",
-    )
-    # Provider recovery uses the same public AC aliases as room_state and
-    # room_commit. Database criterion IDs never become model instructions.
-    acceptance = [
-        {
-            "alias": f"AC-{index}",
-            "statement": bounded_text(item.get("statement"), maximum=1_000),
-            "status": (
-                "verified"
-                if item.get("kernelVerified") is True
-                else (
-                    "evidence_available"
-                    if item.get("evidenceAvailable") is True
-                    else "pending"
-                )
-            ),
-        }
-        for index, item in enumerate(internal_acceptance, start=1)
-    ]
+        )
     blockers_source = _mapping(source.get("blockers"))
     blockers = _unique_records(
         (
-            {
-                "kind": bounded_text(item.get("kind"), maximum=80),
-                "statement": bounded_text(item.get("statement"), maximum=1_000),
-            }
+            _compact_mapping(
+                {
+                    "referenceId": bounded_text(
+                        item.get("obstacleId"), maximum=240
+                    ),
+                    "kind": bounded_text(item.get("kind"), maximum=80),
+                    "statement": bounded_text(
+                        item.get("statement"), maximum=1_000
+                    ),
+                }
+            )
             for item in _mappings(blockers_source.get("obstacles"))[:32]
         ),
         key="statement",
     )
     continuation = _mapping(source.get("continuation"))
-    packet: dict[str, object] = {
-        "originalRequirements": original,
-        "requirementDirectory": directory,
-        "currentTask": {
-            "objective": bounded_text(task.get("objective"), maximum=4_000),
-            "expectedOutput": bounded_text(task.get("expectedOutput"), maximum=2_000),
-            "state": task_state,
-        },
-        "acceptance": acceptance,
-        "blockers": blockers,
-        "handoff": _compact_mapping(
+    projection_ref = _compact_mapping(
+        {
+            "rootId": bounded_text(source.get("rootId"), maximum=240),
+            "taskId": bounded_text(task.get("taskId"), maximum=240),
+            "dispatchId": bounded_text(source.get("dispatchId"), maximum=240),
+            "taskRevision": (
+                int(task.get("revision"))
+                if isinstance(task.get("revision"), int)
+                and not isinstance(task.get("revision"), bool)
+                else None
+            ),
+            "generation": (
+                int(source.get("generation"))
+                if isinstance(source.get("generation"), int)
+                and not isinstance(source.get("generation"), bool)
+                else None
+            ),
+        }
+    )
+    next_action = (
+        _compact_mapping(
             {
                 "intentKind": _recovery_intent(task_state, continuation),
+                "acceptanceAlias": (
+                    pending_acceptance[0].get("alias")
+                    if pending_acceptance
+                    else None
+                ),
+                "blockerRef": (
+                    blockers[0].get("referenceId")
+                    if blockers
+                    else None
+                ),
             }
-        ),
+        )
+        if not terminal
+        else {}
+    )
+    packet: dict[str, object] = {
+        "authoritativeProjectionRef": projection_ref,
+        "pendingAcceptance": pending_acceptance,
+        "blockers": blockers,
     }
+    if next_action:
+        packet["nextAction"] = next_action
+    evidence_refs = _unique_texts(
+        _string_values(source.get("sharedEvidenceRefs"))
+    )
+    if evidence_refs:
+        packet["evidenceRefs"] = evidence_refs
     if skill_receipt is not None:
         packet["skillReceipt"] = _compact_mapping(
             {
@@ -174,6 +185,32 @@ def _unique_texts(values: Iterable[object]) -> list[str]:
         if text and text not in result:
             result.append(text)
     return result
+
+
+def _string_values(value: object) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    return [
+        bounded_text(item, maximum=500)
+        for item in value
+        if bounded_text(item, maximum=500)
+    ]
+
+
+def _criterion_evidence_refs(
+    criterion: Mapping[str, object],
+) -> list[str]:
+    refs = _string_values(criterion.get("acceptedEvidenceRefs"))
+    for proof in _mappings(criterion.get("proofs"))[:16]:
+        refs.extend(
+            value
+            for value in (
+                bounded_text(proof.get("receiptId"), maximum=240),
+                bounded_text(proof.get("sourceCommit"), maximum=240),
+            )
+            if value
+        )
+    return _unique_texts(refs)
 
 
 def _unique_records(

@@ -1,4 +1,5 @@
 import {
+  ArrowRight,
   CircleCheck,
   Clock3,
   FileText,
@@ -7,6 +8,7 @@ import {
   ShieldCheck,
   Square,
   TriangleAlert,
+  UserRound,
   Wrench,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -14,6 +16,7 @@ import { useState } from 'react';
 import { Button } from '@/components/primitives';
 import type { RoomKernelProjection, RootProjection } from '@/contracts/room-kernel-reducer';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
+import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
 import { RoomRequirementsControlPlane } from '../requirements/RoomRequirementsControlPlane';
 import type { RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
 import {
@@ -45,6 +48,7 @@ export function RoomKernelControlPlane({
   commandTransport,
   commandDisabledReason,
   panicEnabled = false,
+  participantLabels = {},
   projection,
   requirementsByRootId = {},
 }: {
@@ -55,6 +59,7 @@ export function RoomKernelControlPlane({
   commandTransport?: RoomKernelCommandTransport;
   commandDisabledReason?: string;
   panicEnabled?: boolean;
+  participantLabels?: Record<string, string>;
   requirementsByRootId?: Record<string, RoomRequirementsReadProjection>;
 }) {
   const roots = Object.values(projection.rootsById).sort((left, right) => (
@@ -63,11 +68,12 @@ export function RoomKernelControlPlane({
       : right.updatedAtMs - left.updatedAtMs
   ));
   const [panicPending, setPanicPending] = useState(false);
+  const [panicConfirming, setPanicConfirming] = useState(false);
   const [panicReceipt, setPanicReceipt] = useState<RoomKernelReceiptV1 | null>(null);
   const [panicError, setPanicError] = useState('');
   const requestPanic = async () => {
-    if (!panicEnabled || !commandTransport || panicPending) return;
-    if (!window.confirm('“停止全部任务”会取消这个协作空间中正在运行的伙伴、工具和后续任务。确认继续？')) return;
+    if (!panicEnabled || !commandTransport || panicPending || !panicConfirming) return;
+    setPanicConfirming(false);
     setPanicPending(true);
     setPanicReceipt(null);
     setPanicError('');
@@ -84,7 +90,8 @@ export function RoomKernelControlPlane({
     }
   };
   return <section className="room-kernel-control" aria-label="协作任务进展">
-    <header className="room-kernel-control__header"><span><strong>任务进展</strong><small>{roots.length} 个任务</small></span><span className="room-kernel-control__actions">{projection.needsSnapshot ? <b data-state="warning">正在恢复状态</b> : <b data-state="healthy">状态已同步</b>}{panicEnabled ? <Button variant="quiet" size="small" leadingIcon={<TriangleAlert size={13} />} disabled={!commandTransport || panicPending} onClick={() => void requestPanic()}>{panicPending ? '正在停止' : '停止全部任务'}</Button> : null}</span></header>
+    <header className="room-kernel-control__header"><span><strong>任务进展</strong><small>{roots.length} 个任务</small></span><span className="room-kernel-control__actions">{projection.needsSnapshot ? <b data-state="warning">正在恢复状态</b> : <b data-state="healthy">状态已同步</b>}{panicEnabled && !panicConfirming ? <Button variant="quiet" size="small" leadingIcon={<TriangleAlert size={13} />} disabled={!commandTransport || panicPending} onClick={() => setPanicConfirming(true)}>{panicPending ? '正在停止' : '停止全部任务'}</Button> : null}</span></header>
+    {panicConfirming ? <div className="room-kernel-control__panic-confirmation" role="alert"><p>这会取消当前协作空间中正在运行的伙伴、工具和后续任务。</p><div><Button disabled={panicPending} onClick={() => setPanicConfirming(false)} size="small" variant="quiet">继续运行</Button><Button disabled={!commandTransport} loading={panicPending} onClick={() => void requestPanic()} size="small" variant="danger">确认停止全部</Button></div></div> : null}
     {panicReceipt ? <p className="room-kernel-control__panic-receipt" role="status" title={panicReceipt.receiptId}>{receiptStatusLabel(panicReceipt)}</p> : null}
     {panicError ? <p className="room-kernel-control__command-error" role="alert">{panicError}</p> : null}
     <div className="room-kernel-control__roots">
@@ -97,6 +104,7 @@ export function RoomKernelControlPlane({
         capabilityReceipt={capabilityReceiptsByRootId[root.rootId]}
         commandTransport={commandTransport}
         commandDisabledReason={commandDisabledReason}
+        participantLabels={participantLabels}
         requirements={requirementsByRootId[root.rootId]}
       />)}
       {!roots.length ? <p className="room-kernel-control__empty">当前没有任务。</p> : null}
@@ -111,6 +119,7 @@ function RootControlSection({
   commandTransport,
   commandDisabledReason,
   projection,
+  participantLabels,
   root,
   requirements,
 }: {
@@ -121,6 +130,7 @@ function RootControlSection({
   capabilityReceipt?: RuntimeReceiptSummary;
   commandTransport?: RoomKernelCommandTransport;
   commandDisabledReason?: string;
+  participantLabels: Record<string, string>;
   requirements?: RoomRequirementsReadProjection;
 }) {
   const posts = projection.postOrder
@@ -129,6 +139,12 @@ function RootControlSection({
   const sessions = Object.values(projection.sessionsById)
     .filter((session) => session.rootId === root.rootId)
     .sort((left, right) => left.sessionId.localeCompare(right.sessionId));
+  const tasks = Object.values(projection.tasksById)
+    .filter((task) => task.rootId === root.rootId)
+    .sort((left, right) => left.taskId.localeCompare(right.taskId));
+  const ownershipReceipts = Object.values(projection.receiptsById)
+    .filter((item) => item.rootId === root.rootId && item.details.operation === 'task_owner_transfer')
+    .sort((left, right) => left.createdAtMs - right.createdAtMs);
   const receipt = projection.terminalReceiptByRootId[root.rootId];
   const cancelReceipt = projection.cancelReceiptByRootId[root.rootId];
   const unresolvedSurfaces = projection.cancellationSurfaces.filter((item) => (
@@ -168,7 +184,7 @@ function RootControlSection({
       <ul>{unresolvedSurfaces.map((item) => <li key={`${item.cancelId}:${item.surface}`}><code>{item.surface}</code><b>{item.state}</b><small>{surfaceTargets(item.detail)}</small></li>)}</ul>
     </section> : null}
     <div className="room-kernel-root__summary">
-      <span><ShieldCheck size={14} /><small>当前负责人</small><strong>{root.owner || '等待分派'}</strong></span>
+      <span><ShieldCheck size={14} /><small>协作协调人</small><strong>{participantLabel(root.facilitatorParticipantId, participantLabels)}</strong></span>
       <BudgetMetric icon={<Gauge size={14} />} label="协作轮次" used={budget?.usedDispatches} maximum={budget?.maxDispatches} />
       <BudgetMetric icon={<FileText size={14} />} label="上下文用量" used={budget?.usedTokens} maximum={budget?.maxTokens} />
       <BudgetMetric icon={<Clock3 size={14} />} label="运行时间" used={budget?.elapsedMs} maximum={budget?.maxWallTimeMs} formatter={durationLabel} />
@@ -180,6 +196,11 @@ function RootControlSection({
       <span><ShieldCheck size={14} /><small>额外交付检查</small><strong>{receipt ? deliveryGateLabel(receipt) : '等待任务结束'}</strong></span>
       <span data-receipt-state={commandReceipt?.status ?? cancelReceipt?.status}><Square size={14} /><small>停止状态</small><strong title={commandReceipt?.receiptId ?? cancelReceipt?.receiptId}>{commandReceipt ? receiptStatusLabel(commandReceipt) : cancelReceipt ? receiptStatusLabel(cancelReceipt) : commandTransport ? '尚未请求' : '当前连接没有停止权限'}</strong></span>
     </section>
+    <TaskOwnershipFlow
+      participantLabels={participantLabels}
+      receipts={ownershipReceipts}
+      tasks={tasks}
+    />
     {commandError ? <p className="room-kernel-control__command-error" role="alert">{commandError}</p> : null}
     <div className="room-kernel-root__planes">
       <section className="room-kernel-posts" aria-label={`${root.rootId} 公开交付`}><header><strong>公开交付</strong><small>只有明确提交的结果会出现在这里</small></header>{posts.length ? posts.map((post) => <article key={post!.postId}><span><b>{postKindLabel(post!.kind)}</b><small>{post!.authorActorRef}</small></span><p>{post!.content}</p></article>) : <p className="room-kernel-control__empty">还没有公开交付。</p>}</section>
@@ -192,11 +213,83 @@ function RootControlSection({
   </article>;
 }
 
+function TaskOwnershipFlow({
+  participantLabels,
+  receipts,
+  tasks,
+}: {
+  participantLabels: Record<string, string>;
+  receipts: RoomKernelReceiptV1[];
+  tasks: RoomTaskV3[];
+}) {
+  if (!tasks.length) return null;
+  return <section className="room-kernel-tasks" aria-label={`${tasks[0]!.rootId} 任务归属`}>
+    <header>
+      <span><strong>任务归属</strong><small>每个任务只有一位当前负责人</small></span>
+      <b>{tasks.length} 个任务</b>
+    </header>
+    <ol>{tasks.map((task) => {
+      const transfers = receipts.filter((receipt) => receipt.details.taskId === task.taskId);
+      return <li key={task.taskId} data-task-state={task.state}>
+        <article>
+          <header>
+            <span><UserRound size={15} /><strong>{task.objective}</strong></span>
+            <i>{taskStateLabel(task.state)}</i>
+          </header>
+          <dl>
+            <div><dt>当前负责人</dt><dd>{participantLabel(task.currentOwnerParticipantId, participantLabels)}</dd></div>
+            <div><dt>任务标识</dt><dd title={task.taskId}>{shortHash(task.taskId)}</dd></div>
+            <div><dt>归属版本</dt><dd>第 {task.ownershipRevision} 版</dd></div>
+            {task.parentTaskId ? <div><dt>来自任务</dt><dd title={task.parentTaskId}>{shortHash(task.parentTaskId)}</dd></div> : null}
+          </dl>
+          <div className="room-kernel-tasks__handoffs">
+            <strong>交接记录</strong>
+            {transfers.length ? transfers.map((receipt) => <p key={receipt.receiptId} title={receipt.receiptId}>
+              <span>{participantLabel(textDetail(receipt, 'fromParticipantId'), participantLabels)}</span>
+              <ArrowRight size={13} aria-hidden="true" />
+              <span>{participantLabel(textDetail(receipt, 'toParticipantId'), participantLabels)}</span>
+              <small>第 {integerDetail(receipt, 'ownershipRevision')} 版</small>
+            </p>) : <small>尚未发生交接</small>}
+          </div>
+        </article>
+      </li>;
+    })}</ol>
+  </section>;
+}
+
+function taskStateLabel(value: RoomTaskV3['state']): string {
+  return ({
+    pending: '待开始',
+    active: '执行中',
+    review: '验收中',
+    waiting: '等待中',
+    blocked: '已阻塞',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已取消',
+  } as const)[value];
+}
+
+function participantLabel(participantId: string, labels: Record<string, string>): string {
+  return labels[participantId] || shortHash(participantId);
+}
+
+function textDetail(receipt: RoomKernelReceiptV1, field: string): string {
+  const value = receipt.details[field];
+  return typeof value === 'string' && value ? value : '未知伙伴';
+}
+
+function integerDetail(receipt: RoomKernelReceiptV1, field: string): number {
+  const value = receipt.details[field];
+  return typeof value === 'number' && Number.isInteger(value) ? value : 0;
+}
+
 function BudgetMetric({
   formatter = compactNumber,
   icon,
   label,
   maximum,
+
   used,
 }: {
   icon: ReactNode;

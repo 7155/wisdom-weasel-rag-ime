@@ -95,7 +95,7 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
             pi_entry_id="pi-entry:memory-workflow",
             turn_id="turn:memory-workflow",
             text=(
-                "请调用 ime_memory Tool 的 curation_prepare 操作，"
+                "请调用 memory Tool 的 curation_prepare 操作，"
                 "只生成可审阅草案并返回 runId。"
             ),
         )
@@ -163,7 +163,7 @@ class AgentMemorySourceStoreTests(unittest.TestCase):
             self.store.capture_hint(
                 session_id=str(self.session["id"]),
                 kind="fact",
-                claim="请调用 ime_memory curation_prepare 并返回 runId。",
+                claim="请调用 memory curation_prepare 并返回 runId。",
                 scope="project",
                 basis="explicit_user_statement",
                 future_use="准备记忆流程。",

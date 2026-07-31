@@ -5,12 +5,21 @@ import threading
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 
 from .agent_protocol import AgentEventEnvelope
 
 
+@dataclass(frozen=True)
+class _ProjectionBarrier:
+    completed: threading.Event
+
+
+_PROJECTION_STOP = object()
+
+
 class AgentEventHub:
-    """Per-session ordered event fan-out with bounded replay."""
+    """Per-session durable-before-live event fan-out with bounded replay."""
 
     def __init__(
         self,
@@ -19,6 +28,7 @@ class AgentEventHub:
         sequence_loader: Callable[[str], int] | None = None,
         event_recorder: Callable[[AgentEventEnvelope], None] | None = None,
         event_observer: Callable[[AgentEventEnvelope], None] | None = None,
+        background_projection: bool = False,
     ) -> None:
         self._lock = threading.RLock()
         self._replay_limit = max(32, int(replay_limit))
@@ -32,6 +42,16 @@ class AgentEventHub:
             lambda: deque(maxlen=self._replay_limit)
         )
         self._subscribers: dict[str, set[queue.Queue[AgentEventEnvelope]]] = defaultdict(set)
+        self._projection_queue: queue.Queue[object] | None = None
+        self._projection_thread: threading.Thread | None = None
+        if background_projection:
+            self._projection_queue = queue.Queue()
+            self._projection_thread = threading.Thread(
+                target=self._run_projection_lane,
+                name="rag-ime-agent-event-projection",
+                daemon=True,
+            )
+            self._projection_thread.start()
 
     def publish(
         self,
@@ -51,6 +71,7 @@ class AgentEventHub:
                 created_at_ms=created_at_ms,
             )
             subscribers = tuple(self._subscribers.get(session_id, ()))
+            observers = tuple(self._observers)
         for subscriber in subscribers:
             try:
                 subscriber.put_nowait(envelope)
@@ -60,15 +81,7 @@ class AgentEventHub:
                     subscriber.put_nowait(envelope)
                 except (queue.Empty, queue.Full):
                     pass
-        with self._lock:
-            observers = tuple(self._observers)
-        for observer in observers:
-            try:
-                observer(envelope)
-            except Exception:
-                # Room/event projections are secondary indexes. A projection
-                # failure must never break the participant's primary Pi turn.
-                pass
+        self._project(envelope, observers)
         return envelope
 
     def add_observer(
@@ -118,12 +131,36 @@ class AgentEventHub:
                 except queue.Full:
                     pass
             observers = tuple(self._observers)
-        for observer in observers:
-            try:
-                observer(envelope)
-            except Exception:
-                pass
+        self._project(envelope, observers)
         return envelope
+
+    def flush(self, *, timeout: float = 5.0) -> bool:
+        """Wait until every previously published secondary projection finishes."""
+
+        projection_queue = self._projection_queue
+        projection_thread = self._projection_thread
+        if projection_queue is None or projection_thread is None:
+            return True
+        completed = threading.Event()
+        projection_queue.put(_ProjectionBarrier(completed))
+        return completed.wait(max(0.0, float(timeout)))
+
+    def close(self, *, timeout: float = 5.0) -> bool:
+        """Drain and stop the optional background projection lane."""
+
+        projection_queue = self._projection_queue
+        projection_thread = self._projection_thread
+        if projection_queue is None or projection_thread is None:
+            return True
+        drained = self.flush(timeout=timeout)
+        projection_queue.put(_PROJECTION_STOP)
+        if projection_thread is not threading.current_thread():
+            projection_thread.join(max(0.0, float(timeout)))
+        stopped = not projection_thread.is_alive()
+        if stopped:
+            self._projection_queue = None
+            self._projection_thread = None
+        return drained and stopped
 
     def subscribe(
         self,
@@ -137,12 +174,10 @@ class AgentEventHub:
             replay, gap = self._replay_locked(session_id, after_event_id)
             if gap:
                 replay = [
-                    self._build_event_locked(
+                    self._snapshot_required_locked(
                         session_id,
-                        "snapshot_required",
-                        {"reason": "event_replay_gap", "afterEventId": after_event_id},
-                        turn_id="",
-                        created_at_ms=None,
+                        reason="event_replay_gap",
+                        after_event_id=after_event_id,
                     )
                 ]
             self._subscribers[session_id].add(subscriber)
@@ -185,7 +220,6 @@ class AgentEventHub:
         if session_id not in self._sequences:
             self._sequences[session_id] = max(0, int(self._sequence_loader(session_id)))
         sequence = self._sequences[session_id] + 1
-        self._sequences[session_id] = sequence
         event_id = f"{session_id}:{sequence}"
         envelope = AgentEventEnvelope(
             event_id=event_id,
@@ -198,10 +232,90 @@ class AgentEventHub:
             resume_token=event_id,
         )
         envelope.to_payload()
-        self._events[session_id].append(envelope)
         if self._event_recorder is not None:
-            self._event_recorder(envelope)
+            try:
+                self._event_recorder(envelope)
+            except Exception:
+                # A recorder may fail after committing its event row. Reloading
+                # the durable high-water mark prevents the next publish from
+                # reusing that event ID while still refusing live delivery.
+                self._sequences[session_id] = max(
+                    self._sequences[session_id],
+                    max(0, int(self._sequence_loader(session_id))),
+                )
+                raise
+        self._sequences[session_id] = sequence
+        self._events[session_id].append(envelope)
         return envelope
+
+    def _snapshot_required_locked(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+        after_event_id: str,
+    ) -> AgentEventEnvelope:
+        """Build a transient recovery control without moving the durable cursor."""
+
+        current_sequence = self._sequences.get(session_id)
+        if current_sequence is None:
+            current_sequence = max(0, int(self._sequence_loader(session_id)))
+            self._sequences[session_id] = current_sequence
+        sequence = max(1, current_sequence + 1)
+        event_id = f"{session_id}:snapshot-required:{current_sequence}"
+        envelope = AgentEventEnvelope(
+            event_id=event_id,
+            session_id=session_id,
+            turn_id="",
+            sequence=sequence,
+            created_at_ms=int(time.time() * 1000),
+            event_type="snapshot_required",
+            payload={
+                "reason": str(reason),
+                "afterEventId": str(after_event_id),
+            },
+            resume_token=event_id,
+        )
+        envelope.to_payload()
+        return envelope
+
+    def _project(
+        self,
+        envelope: AgentEventEnvelope,
+        observers: tuple[Callable[[AgentEventEnvelope], None], ...],
+    ) -> None:
+        projection_queue = self._projection_queue
+        if projection_queue is not None:
+            projection_queue.put((envelope, observers))
+            return
+        self._apply_projection(envelope, observers)
+
+    def _run_projection_lane(self) -> None:
+        projection_queue = self._projection_queue
+        if projection_queue is None:
+            return
+        while True:
+            item = projection_queue.get()
+            if item is _PROJECTION_STOP:
+                return
+            if isinstance(item, _ProjectionBarrier):
+                item.completed.set()
+                continue
+            envelope, observers = item
+            self._apply_projection(envelope, observers)
+
+    def _apply_projection(
+        self,
+        envelope: AgentEventEnvelope,
+        observers: tuple[Callable[[AgentEventEnvelope], None], ...],
+    ) -> None:
+        for observer in observers:
+            try:
+                observer(envelope)
+            except Exception:
+                # Room/event projections are secondary indexes. A projection
+                # failure must never break the participant's primary Pi turn.
+                pass
 
     def _replay_locked(
         self,

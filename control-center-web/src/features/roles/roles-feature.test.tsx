@@ -59,10 +59,13 @@ describe('Roles experience', () => {
     } });
     render(<MemoryRouter><ControlTransportProvider transport={transport}><TooltipProvider><RolesFeature /></TooltipProvider></ControlTransportProvider></MemoryRouter>);
 
-    await user.click(await screen.findByRole('button', { name: '复制为我的伙伴' }));
+    const copyPartner = await screen.findByRole('button', { name: '复制为我的伙伴' });
+    await user.click(copyPartner);
 
     expect(screen.getByRole('dialog', { name: '添加伙伴' })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /构筑阶段/ })).toBeChecked();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(copyPartner).toHaveFocus());
   });
 
   it('creates a Session with the selected Persona and navigates to it', async () => {

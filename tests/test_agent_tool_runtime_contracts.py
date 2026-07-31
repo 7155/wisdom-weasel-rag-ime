@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from rag_ime.agent_sessions import AgentSessionStore
-from rag_ime.agent_tools import ControlToolGateway
+from rag_ime.agent_tools import ControlToolGateway, _TOOL_SPEC_BY_ID
 
 
 class AgentToolRuntimeContractTest(unittest.TestCase):
@@ -66,8 +66,8 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
 
             manifests = gateway.runtime_manifests(session)
 
-        planning = next(item for item in manifests if item["name"] == "ime_planning")
-        self.assertIn("先用 dashboard", planning["description"])
+        planning = next(item for item in manifests if item["name"] == "planning")
+        self.assertEqual(planning["description"], "规划与任务")
         schema = planning["parameters"]
         self.assertEqual(schema["type"], "object")
         task_action = next(
@@ -129,7 +129,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
                 compatibility_branches = [
                     branch for branch in branches if branch not in operation_branches
                 ]
-                if manifest["name"] == "ime_memory":
+                if manifest["name"] == "memory":
                     self.assertEqual(len(compatibility_branches), 1)
                     self.assertEqual(compatibility_branches[0]["required"], ["query"])
                     self.assertEqual(
@@ -166,6 +166,15 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         # envelope.
         self.assertLess(len(encoded), 44_000)
         self.assertLess(len(public_encoded), 12_000)
+        self.assertTrue(all("profile" not in manifest for manifest in manifests))
+        self.assertTrue(
+            all(
+                manifest["description"]
+                == _TOOL_SPEC_BY_ID[str(manifest["name"])]["displayName"]
+                for manifest in manifests
+            )
+        )
+        self.assertIn("work_documents", {manifest["name"] for manifest in manifests})
 
     def test_runtime_contracts_require_tool_specific_identifiers_and_payloads(self) -> None:
         _catalog, manifests = self._runtime_contracts(mode="coordinator")
@@ -176,19 +185,35 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             ["op", "path", "oldText", "newText"],
         )
         self.assertEqual(
+            self._branch(tools["workspace_edit"], "apply")["required"],
+            ["op", "path", "resourceRevision", "edits"],
+        )
+        self.assertEqual(
+            self._branch(tools["workspace_write"], "apply")["required"],
+            ["op", "path", "resourceRevision", "content"],
+        )
+        self.assertEqual(
+            self._branch(tools["workspace_lsp"], "rename")["required"],
+            ["op", "path", "newName"],
+        )
+        self.assertEqual(
+            self._branch(tools["workspace_lsp"], "code_action_apply")["required"],
+            ["op", "path", "title"],
+        )
+        self.assertEqual(
             self._branch(tools["workspace_shell"], "run")["required"],
             ["op", "command"],
         )
         self.assertEqual(
-            self._branch(tools["ime_plugins"], "create_draft")["required"],
+            self._branch(tools["plugins"], "create_draft")["required"],
             ["op", "draftId", "manifest", "files"],
         )
         self.assertEqual(
-            self._branch(tools["ime_memory"], "read")["required"],
+            self._branch(tools["memory"], "read")["required"],
             ["op", "bookId"],
         )
         self.assertEqual(
-            self._branch(tools["ime_knowledge"], "search")["required"],
+            self._branch(tools["knowledge"], "search")["required"],
             ["op", "kbId", "query"],
         )
         self.assertEqual(
@@ -196,36 +221,41 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             ["op", "instruction", "targetType", "wakeAtMs"],
         )
         self.assertEqual(
-            self._branch(tools["ime_browser"], "navigate")["required"],
+            self._branch(tools["browser"], "navigate")["required"],
             ["op", "url"],
         )
         self.assertEqual(
-            self._branch(tools["ime_browser"], "type")["required"],
+            self._branch(tools["browser"], "type")["required"],
             ["op", "refId", "text"],
         )
         self.assertEqual(
             self._branch(tools["desktop_semantic"], "act")["required"],
             ["op", "snapshotId", "revision", "nodeRef", "action"],
         )
+        self.assertEqual(
+            self._branch(tools["desktop_semantic"], "inspect")["properties"]["maxNodes"]["maximum"],
+            500,
+        )
 
-        delegate = self._branch(tools["ime_agents"], "delegate")
+        delegate = self._branch(tools["agents"], "delegate")
         self.assertEqual(
             delegate["anyOf"],
             [{"required": ["tasks"]}, {"required": ["agent", "task"]}],
         )
-        abort = self._branch(tools["ime_agents"], "abort")
+        self.assertEqual(delegate["properties"]["planItemId"]["maxLength"], 160)
+        abort = self._branch(tools["agents"], "abort")
         self.assertEqual(
             abort["anyOf"],
             [{"required": ["runId"]}, {"required": ["batchId"]}],
         )
-        self.assertEqual(self._branch(tools["ime_agents"], "status")["required"], ["op"])
+        self.assertEqual(self._branch(tools["agents"], "status")["required"], ["op"])
 
         plan_update = self._branch(tools["agent_plan"], "update")
         self.assertEqual(
             plan_update["anyOf"],
             [{"required": ["title"]}, {"required": ["itemId"]}],
         )
-        model_apply = self._branch(tools["ime_models"], "profile_apply")
+        model_apply = self._branch(tools["models"], "profile_apply")
         self.assertEqual(model_apply["required"], ["op", "slot"])
         self.assertEqual(
             model_apply["anyOf"],
@@ -247,7 +277,11 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         search_properties = self._branch(tools["workspace_search"], "search")["properties"]
         self.assertIn("caseSensitive", search_properties)
         self.assertEqual(search_properties["query"]["maxLength"], 200)
-        audit_properties = self._branch(tools["ime_configuration"], "audit")["properties"]
+        lsp_properties = self._branch(tools["workspace_lsp"], "references")["properties"]
+        self.assertIn("includeDeclaration", lsp_properties)
+        self.assertEqual(lsp_properties["timeoutMs"]["maximum"], 20_000)
+        self.assertEqual(lsp_properties["query"]["maxLength"], 240)
+        audit_properties = self._branch(tools["configuration"], "audit")["properties"]
         self.assertIn("action", audit_properties)
 
     def test_readonly_profile_filters_parameter_branches_with_operations(self) -> None:
@@ -264,11 +298,24 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertEqual(effective["workspace_read"], {"read"})
         self.assertEqual(effective["workspace_search"], {"search"})
         self.assertEqual(
-            effective["ime_agents"],
+            effective["workspace_lsp"],
+            {
+                "status",
+                "symbols",
+                "hover",
+                "definition",
+                "references",
+                "diagnostics",
+            },
+        )
+        self.assertNotIn("rename", effective["workspace_lsp"])
+        self.assertNotIn("code_action_apply", effective["workspace_lsp"])
+        self.assertEqual(
+            effective["agents"],
             {"catalog", "status", "artifact"},
         )
-        self.assertNotIn("delegate", effective["ime_agents"])
-        self.assertNotIn("abort", effective["ime_agents"])
+        self.assertNotIn("delegate", effective["agents"])
+        self.assertNotIn("abort", effective["agents"])
         self.assertNotIn("workspace_patch", effective)
         self.assertNotIn("workspace_shell", effective)
 

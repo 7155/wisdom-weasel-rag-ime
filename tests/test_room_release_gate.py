@@ -21,7 +21,7 @@ class RoomReleaseGateTests(unittest.TestCase):
             subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
             subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
         contracts = self.product / "rag_ime/contracts/json"; contracts.mkdir(parents=True)
-        for index in range(142):
+        for index in range(152):
             (contracts / f"contract-{index:03}.json").write_text("{}\n", encoding="utf-8")
         for relative in ("rag_ime/agent_knowledge_promotion.py", "rag_ime/collaboration_profile_control.py", "rag_ime/agent_governance_projection.py", "rag_ime/runtime_prompt.py"):
             path = self.product / relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(relative + "\n", encoding="utf-8")
@@ -59,8 +59,8 @@ class RoomReleaseGateTests(unittest.TestCase):
             frontend_dist=self.frontend, output_dir=self.root / name, pi_build=self.pi_build) for name in ("out-a", "out-b")]
         self.assertEqual(before, self.db.read_bytes())
         self.assertEqual(reports[0]["receiptHash"], reports[1]["receiptHash"])
-        self.assertEqual(reports[0]["checks"]["migrationVersion"], 110)
-        self.assertEqual(reports[0]["checks"]["schemaCount"], 142)
+        self.assertEqual(reports[0]["checks"]["migrationVersion"], 126)
+        self.assertEqual(reports[0]["checks"]["schemaCount"], 152)
         self.assertTrue(reports[0]["checks"]["piBuildManifestValid"])
         self.assertTrue(reports[0]["checks"]["piBuildProductCommitMatches"])
         self.assertTrue(reports[0]["checks"]["piBuildSourceCommitMatches"])

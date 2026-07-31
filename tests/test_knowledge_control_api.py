@@ -201,7 +201,7 @@ class KnowledgeControlApiTests(unittest.TestCase):
             {
                 "schemaVersion": "rag-ime.agent-tool-call.v1",
                 "sessionId": session["id"],
-                "tool": "ime_knowledge",
+                "tool": "knowledge",
                 "toolCallId": "tool:knowledge-control-test",
                 "args": {"op": "search", "kbId": kb_id, "query": "winter"},
             }

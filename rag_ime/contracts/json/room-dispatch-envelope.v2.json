@@ -22,6 +22,12 @@
     "attempt": {"type": "integer", "minimum": 0},
     "capabilityEpoch": {"type": "integer", "minimum": 0},
     "runtimeProfileRevision": {"type": "string", "minLength": 1},
+    "attachmentIds": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^media_[A-Za-z0-9_-]{12,80}$"}
+    },
     "state": {"type": "string", "enum": ["pending", "leased", "running", "retry_wait", "timer_wait", "committed", "unknown", "dead_letter", "failed", "cancelled"]}
   }
 }

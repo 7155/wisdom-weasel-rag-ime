@@ -10,7 +10,8 @@ from .settings_store import ManagementSettingsStore
 from .text_utils import compact_whitespace
 
 
-DEFAULT_MAINTENANCE_MODEL = "deepseek-v4-flash"
+DEFAULT_MAINTENANCE_MODEL = "gpt/gpt-5.6-luna"
+DEFAULT_MAINTENANCE_THINKING_LEVEL = "max"
 SECONDS_PER_DAY = 24 * 60 * 60
 
 
@@ -18,10 +19,12 @@ SECONDS_PER_DAY = 24 * 60 * 60
 class MemoryMaintenanceSettings:
     automatic_organization_enabled: bool = True
     automatic_organization_model: str = DEFAULT_MAINTENANCE_MODEL
+    automatic_organization_thinking_level: str = DEFAULT_MAINTENANCE_THINKING_LEVEL
     automatic_organization_runs_per_day: int = 2
     include_agent_dialogue: bool = True
     dreaming_enabled: bool = True
     dreaming_model: str = DEFAULT_MAINTENANCE_MODEL
+    dreaming_thinking_level: str = DEFAULT_MAINTENANCE_THINKING_LEVEL
     dreaming_runs_per_day: int = 2
     recall_detail_level: str = "compact"
     timeline_recall_enabled: bool = True
@@ -41,6 +44,9 @@ class MemoryMaintenanceSettings:
             automatic_organization_model=_maintenance_model(
                 automatic.get("model")
             ),
+            automatic_organization_thinking_level=_thinking_level(
+                automatic.get("thinkingLevel")
+            ),
             automatic_organization_runs_per_day=_runs_per_day(
                 automatic.get("runsPerDay")
             ),
@@ -49,6 +55,7 @@ class MemoryMaintenanceSettings:
             ),
             dreaming_enabled=bool(dreaming.get("enabled", True)),
             dreaming_model=_maintenance_model(dreaming.get("model")),
+            dreaming_thinking_level=_thinking_level(dreaming.get("thinkingLevel")),
             dreaming_runs_per_day=_runs_per_day(dreaming.get("runsPerDay")),
             recall_detail_level=_detail_level(recall.get("detailLevel")),
             timeline_recall_enabled=bool(recall.get("timelineEnabled", True)),
@@ -77,6 +84,7 @@ class MemoryMaintenanceSettings:
             "automaticOrganization": {
                 "enabled": self.automatic_organization_enabled,
                 "model": self.automatic_organization_model,
+                "thinkingLevel": self.automatic_organization_thinking_level,
                 "runsPerDay": self.automatic_organization_runs_per_day,
                 "intervalSeconds": self.automatic_organization_interval_seconds,
                 "autoApply": True,
@@ -85,6 +93,7 @@ class MemoryMaintenanceSettings:
             "dreaming": {
                 "enabled": self.dreaming_enabled,
                 "model": self.dreaming_model,
+                "thinkingLevel": self.dreaming_thinking_level,
                 "runsPerDay": self.dreaming_runs_per_day,
                 "intervalSeconds": self.dreaming_interval_seconds,
             },
@@ -102,13 +111,23 @@ def _mapping(value: object) -> Mapping[str, object]:
 
 def _maintenance_model(value: object) -> str:
     model = compact_whitespace(str(value or DEFAULT_MAINTENANCE_MODEL))
-    if "/" in model:
-        provider, _, model_id = model.partition("/")
-        if provider.casefold() == "deepseek" and model_id:
-            model = model_id
-    if not model.casefold().replace("_", "-").startswith("deepseek-v4"):
+    if "/" not in model:
+        if model.casefold().replace("_", "-").startswith("deepseek-v4"):
+            return f"deepseek/{model}"
         return DEFAULT_MAINTENANCE_MODEL
-    return model
+    provider, _, model_id = model.partition("/")
+    if not provider or not model_id or any(character.isspace() for character in model):
+        return DEFAULT_MAINTENANCE_MODEL
+    return f"{provider}/{model_id}"
+
+
+def _thinking_level(value: object) -> str:
+    normalized = compact_whitespace(str(value or DEFAULT_MAINTENANCE_THINKING_LEVEL)).casefold()
+    return (
+        normalized
+        if normalized in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+        else DEFAULT_MAINTENANCE_THINKING_LEVEL
+    )
 
 
 def _runs_per_day(value: object) -> int:

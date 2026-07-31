@@ -45,6 +45,39 @@ class RoomKernelCoreTests(unittest.TestCase):
             now_ms=2,
         )
 
+    def accept_runtime_attempt(
+        self,
+        dispatch_id: str,
+        *,
+        turn_id: str,
+        now_ms: int,
+    ) -> None:
+        lease = self.store.lease_next(
+            now_ms=now_ms,
+            ttl_ms=30_000,
+            dispatch_id=dispatch_id,
+        )
+        self.assertIsNotNone(lease)
+        assert lease is not None
+        dispatch_payload = self.store.dispatch(dispatch_id)
+        self.store.record_runtime_dispatch_intent(
+            dispatch_id,
+            now_ms=now_ms,
+        )
+        self.store.accept_runtime_receipt(
+            lease_token=str(lease["leaseToken"]),
+            runtime_receipt={
+                "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
+                "receiptKind": "dispatch_accepted",
+                "status": "accepted",
+                "rootId": dispatch_payload["rootId"],
+                "dispatchId": dispatch_id,
+                "generation": dispatch_payload["generation"],
+                "turnId": turn_id,
+            },
+            now_ms=now_ms,
+        )
+
     def test_all_legacy_entries_normalize_to_one_shadow_dispatch(self) -> None:
         shadow = RoomKernelStore(self.db_path, mode="shadow")
         self.seed()
@@ -105,6 +138,14 @@ class RoomKernelCoreTests(unittest.TestCase):
 
     def test_multi_participant_dispatch_batch_is_atomic(self) -> None:
         self.seed(budget=2)
+        self.store.create_task(
+            child_task(
+                "task:batch:b",
+                parent="task:1",
+                target="participant:b",
+            ),
+            now_ms=3,
+        )
         first = dispatch(
             "dispatch:batch:a",
             key="batch:a",
@@ -114,6 +155,7 @@ class RoomKernelCoreTests(unittest.TestCase):
             "dispatch:batch:b",
             key="batch:b",
             target="participant:b",
+            task_id="task:batch:b",
         )
 
         queued = self.store.enqueue_dispatches((first, second), now_ms=10)
@@ -184,6 +226,22 @@ class RoomKernelCoreTests(unittest.TestCase):
 
     def test_multi_member_chain_is_bounded_by_hop_and_depth_fences(self) -> None:
         self.seed(max_hops=2, max_depth=1)
+        self.store.create_task(
+            child_task(
+                "task:chain:b",
+                parent="task:1",
+                target="participant:b",
+            ),
+            now_ms=3,
+        )
+        self.store.create_task(
+            child_task(
+                "task:chain:c",
+                parent="task:chain:b",
+                target="participant:c",
+            ),
+            now_ms=4,
+        )
         first, _ = self.store.enqueue_dispatch(
             dispatch("dispatch:a1", key="a1", target="participant:a", hop=0), now_ms=10
         )
@@ -195,6 +253,7 @@ class RoomKernelCoreTests(unittest.TestCase):
                 hop=1,
                 depth=1,
                 parent=str(first["dispatchId"]),
+                task_id="task:chain:b",
             ),
             now_ms=11,
         )
@@ -206,6 +265,7 @@ class RoomKernelCoreTests(unittest.TestCase):
                 hop=2,
                 depth=1,
                 parent=str(second["dispatchId"]),
+                task_id="task:chain:c",
             ),
             now_ms=12,
         )
@@ -223,59 +283,188 @@ class RoomKernelCoreTests(unittest.TestCase):
                 now_ms=13,
             )
 
-    def test_dispatch_commit_atomically_creates_bounded_a_to_b_to_a_continuation(self) -> None:
-        self.seed(max_hops=3, criteria=())
+    def test_dispatch_commit_atomically_transfers_one_task_a_to_b_to_a(self) -> None:
+        self.seed(max_hops=3)
         first, _ = self.store.enqueue_dispatch(
-            dispatch("dispatch:a1", key="a1", target="participant:a"), now_ms=10
+            dispatch("dispatch:a1", key="a1", target="participant:a"),
+            now_ms=10,
         )
         self.store.set_dispatch_wait_state("dispatch:a1", "running", now_ms=11)
         child_b = dispatch(
-            "dispatch:b1", key="b1", target="participant:b", hop=1,
-            parent=str(first["dispatchId"]), task_id="task:b1",
+            "dispatch:b1",
+            key="b1",
+            target="participant:b",
+            hop=1,
+            parent=str(first["dispatchId"]),
         )
-        task_b = child_task("task:b1", parent="task:1", target="participant:b")
         first_commit = {
-            **commit("commit:a-to-b", "dispatch:a1"),
+            **commit(
+                "commit:a-to-b",
+                "dispatch:a1",
+                coverage=("ac:1",),
+            ),
             "action": "dispatch",
             "continuation": {
                 "decision": "dispatch",
-                "childTask": task_b,
+                "taskTransfer": task_transfer(
+                    from_participant="participant:a",
+                    to_participant="participant:b",
+                    ownership_revision=1,
+                ),
                 "childDispatch": child_b,
             },
         }
 
         receipt = self.store.apply_commit(first_commit, generation=0, now_ms=12)
 
-        self.assertEqual(receipt["details"]["childDispatchId"], "dispatch:b1")
+        self.assertEqual(receipt["details"]["transferredTaskId"], "task:1")
+        self.assertIsNotNone(receipt["details"]["ownershipReceiptId"])
         self.assertEqual(self.store.dispatch("dispatch:b1")["state"], "pending")
-        self.assertEqual(self.store.continuation("commit:a-to-b")["decision"], "dispatch")
+        continuation = self.store.continuation("commit:a-to-b")
+        self.assertEqual(continuation["decision"], "dispatch")
+        self.assertEqual(continuation["transferredTaskId"], "task:1")
+        transferred = self.store.task("task:1")
+        self.assertEqual(
+            transferred["currentOwnerParticipantId"],
+            "participant:b",
+        )
+        self.assertEqual(transferred["ownershipRevision"], 1)
+        self.assertEqual(
+            transferred["ownershipReceiptId"],
+            receipt["details"]["ownershipReceiptId"],
+        )
         self.store.set_dispatch_wait_state("dispatch:b1", "running", now_ms=13)
         child_a = dispatch(
-            "dispatch:a2", key="a2", target="participant:a", hop=2,
-            parent="dispatch:b1", task_id="task:a2",
+            "dispatch:a2",
+            key="a2",
+            target="participant:a",
+            hop=2,
+            parent="dispatch:b1",
         )
-        task_a = child_task("task:a2", parent="task:b1", target="participant:a")
         second_commit = {
             **commit(
                 "commit:b-to-a",
                 "dispatch:b1",
-                task_id="task:b1",
+                coverage=("ac:1",),
             ),
             "action": "dispatch",
             "continuation": {
                 "decision": "dispatch",
-                "childTask": task_a,
+                "taskTransfer": task_transfer(
+                    from_participant="participant:b",
+                    to_participant="participant:a",
+                    ownership_revision=2,
+                ),
                 "childDispatch": child_a,
             },
         }
         self.store.apply_commit(second_commit, generation=0, now_ms=14)
-        self.assertEqual(self.store.dispatch("dispatch:a2")["parentDispatchId"], "dispatch:b1")
-        self.assertEqual(self.store.task("task:1")["state"], "completed")
-        self.assertEqual(self.store.task("task:b1")["state"], "completed")
-        self.assertEqual(self.store.task("task:a2")["state"], "active")
+        self.assertEqual(
+            self.store.dispatch("dispatch:a2")["parentDispatchId"],
+            "dispatch:b1",
+        )
+        self.assertEqual(self.store.counts("root:1")["tasks"], 1)
+        transferred_back = self.store.task("task:1")
+        self.assertEqual(
+            transferred_back["currentOwnerParticipantId"],
+            "participant:a",
+        )
+        self.assertEqual(transferred_back["ownershipRevision"], 2)
+        self.assertEqual(transferred_back["state"], "active")
+
+    def test_task_transfer_cancels_racing_old_owner_dispatch(self) -> None:
+        self.seed(max_hops=3)
+        self.store.enqueue_dispatches(
+            (
+                dispatch(
+                    "dispatch:a-source",
+                    key="a-source",
+                    target="participant:a",
+                    session_id="session:a-source",
+                ),
+                dispatch(
+                    "dispatch:a-stale",
+                    key="a-stale",
+                    target="participant:a",
+                    session_id="session:a-stale",
+                ),
+            ),
+            now_ms=10,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:a-source",
+            "running",
+            now_ms=11,
+        )
+        self.store.set_dispatch_wait_state(
+            "dispatch:a-stale",
+            "running",
+            now_ms=11,
+        )
+        transfer_commit = {
+            **commit(
+                "commit:a-source",
+                "dispatch:a-source",
+                coverage=("ac:1",),
+            ),
+            "action": "dispatch",
+            "continuation": {
+                "decision": "dispatch",
+                "taskTransfer": task_transfer(
+                    from_participant="participant:a",
+                    to_participant="participant:b",
+                    ownership_revision=1,
+                ),
+                "childDispatch": dispatch(
+                    "dispatch:b-owner",
+                    key="b-owner",
+                    target="participant:b",
+                    session_id="session:b-owner",
+                    hop=1,
+                    parent="dispatch:a-source",
+                ),
+            },
+        }
+
+        receipt = self.store.apply_commit(
+            transfer_commit,
+            generation=0,
+            now_ms=12,
+        )
+
+        ownership_receipt = self.store.receipt(
+            str(receipt["details"]["ownershipReceiptId"])
+        )
+        self.assertEqual(
+            ownership_receipt["details"]["supersededDispatchIds"],
+            ["dispatch:a-stale"],
+        )
+        self.assertEqual(
+            self.store.dispatch("dispatch:a-stale")["state"],
+            "cancelled",
+        )
+        self.assertEqual(
+            self.store.dispatch("dispatch:b-owner")["state"],
+            "pending",
+        )
+        stale = self.store.apply_commit(
+            commit(
+                "commit:a-stale",
+                "dispatch:a-stale",
+                coverage=("ac:1",),
+            ),
+            generation=0,
+            now_ms=13,
+        )
+        self.assertEqual(stale["status"], "rejected")
+        self.assertEqual(stale["details"]["reason"], "dispatch_not_running")
+        self.assertEqual(
+            self.store.task("task:1")["currentOwnerParticipantId"],
+            "participant:b",
+        )
 
     def test_close_barrier_waits_for_peer_public_result(self) -> None:
-        self.seed(max_hops=3, criteria=())
+        self.seed(max_hops=3)
         self.store.create_task(
             child_task(
                 "task:peer",
@@ -322,12 +511,12 @@ class RoomKernelCoreTests(unittest.TestCase):
             target="participant:c",
             hop=1,
             parent=str(first[0]["dispatchId"]),
-            task_id="task:closer",
         )
         closing_commit = {
             **commit(
                 "commit:closer-parent",
                 "dispatch:closer-parent",
+                coverage=("ac:1",),
             ),
             "action": "post",
             "postProposal": post_proposal(
@@ -338,10 +527,10 @@ class RoomKernelCoreTests(unittest.TestCase):
             ),
             "continuation": {
                 "decision": "dispatch",
-                "childTask": child_task(
-                    "task:closer",
-                    parent="task:1",
-                    target="participant:c",
+                "taskTransfer": task_transfer(
+                    from_participant="participant:a",
+                    to_participant="participant:c",
+                    ownership_revision=1,
                 ),
                 "childDispatch": closing_dispatch,
                 "waitForDispatchIds": [str(peer[0]["dispatchId"])],
@@ -576,34 +765,41 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(ready["dispatchId"], resume_dispatch_id)
 
     def test_fifteen_agent_mentions_are_stopped_by_system_hop_ceiling(self) -> None:
-        self.seed(budget=100, max_hops=12, max_depth=4, criteria=())
+        self.seed(budget=100, max_hops=12, max_depth=4)
         first, _ = self.store.enqueue_dispatch(
-            dispatch("dispatch:hop-0", key="hop-0", target="participant:0"), now_ms=10
+            dispatch(
+                "dispatch:hop-0",
+                key="hop-0",
+                target="participant:a",
+            ),
+            now_ms=10,
         )
         parent = str(first["dispatchId"])
-        parent_task = "task:1"
+        from_participant = "participant:a"
         for hop in range(1, 13):
             self.store.set_dispatch_wait_state(parent, "running", now_ms=10 + hop)
-            next_task = f"task:hop-{hop}"
+            to_participant = f"participant:{hop % 15}"
             child = dispatch(
-                f"dispatch:hop-{hop}", key=f"hop-{hop}",
-                target=f"participant:{hop % 15}", hop=hop, parent=parent,
-                task_id=next_task,
+                f"dispatch:hop-{hop}",
+                key=f"hop-{hop}",
+                target=to_participant,
+                hop=hop,
+                parent=parent,
             )
             self.store.apply_commit(
                 {
                     **commit(
                         f"commit:hop-{hop - 1}",
                         parent,
-                        task_id=parent_task,
+                        coverage=("ac:1",),
                     ),
                     "action": "dispatch",
                     "continuation": {
                         "decision": "dispatch",
-                        "childTask": child_task(
-                            next_task,
-                            parent=parent_task,
-                            target=f"participant:{hop % 15}",
+                        "taskTransfer": task_transfer(
+                            from_participant=from_participant,
+                            to_participant=to_participant,
+                            ownership_revision=hop,
                         ),
                         "childDispatch": child,
                     },
@@ -612,27 +808,30 @@ class RoomKernelCoreTests(unittest.TestCase):
                 now_ms=11 + hop,
             )
             parent = str(child["dispatchId"])
-            parent_task = next_task
+            from_participant = to_participant
         self.store.set_dispatch_wait_state(parent, "running", now_ms=29)
         with self.assertRaisesRegex(RoomKernelFenceError, "hop limit"):
             child = dispatch(
-                "dispatch:hop-13", key="hop-13", target="participant:13",
-                hop=13, parent=parent, task_id="task:hop-13",
+                "dispatch:hop-13",
+                key="hop-13",
+                target="participant:13",
+                hop=13,
+                parent=parent,
             )
             self.store.apply_commit(
                 {
                     **commit(
                         "commit:hop-12",
                         parent,
-                        task_id=parent_task,
+                        coverage=("ac:1",),
                     ),
                     "action": "dispatch",
                     "continuation": {
                         "decision": "dispatch",
-                        "childTask": child_task(
-                            "task:hop-13",
-                            parent=parent_task,
-                            target="participant:13",
+                        "taskTransfer": task_transfer(
+                            from_participant=from_participant,
+                            to_participant="participant:13",
+                            ownership_revision=13,
                         ),
                         "childDispatch": child,
                     },
@@ -644,16 +843,26 @@ class RoomKernelCoreTests(unittest.TestCase):
     def test_missing_commit_retries_are_bounded_then_block_root(self) -> None:
         self.seed(criteria=())
         self.store.enqueue_dispatch(dispatch("dispatch:settle", key="settle"), now_ms=10)
-        self.store.set_dispatch_wait_state("dispatch:settle", "running", now_ms=11)
+        self.accept_runtime_attempt(
+            "dispatch:settle",
+            turn_id="turn:settle",
+            now_ms=11,
+        )
 
         first = self.store.record_uncommitted_settle(
-            "dispatch:settle", generation=0, now_ms=12, max_attempts=3
+            "dispatch:settle", generation=0,
+            runtime_turn_id="turn:settle", dispatch_attempt=0,
+            now_ms=12, max_attempts=3,
         )
         second = self.store.record_uncommitted_settle(
-            "dispatch:settle", generation=0, now_ms=13, max_attempts=3
+            "dispatch:settle", generation=0,
+            runtime_turn_id="turn:settle", dispatch_attempt=0,
+            now_ms=13, max_attempts=3,
         )
         third = self.store.record_uncommitted_settle(
-            "dispatch:settle", generation=0, now_ms=14, max_attempts=3
+            "dispatch:settle", generation=0,
+            runtime_turn_id="turn:settle", dispatch_attempt=0,
+            now_ms=14, max_attempts=3,
         )
 
         self.assertEqual(first["receiptKind"], "settle_retry_required")
@@ -668,13 +877,9 @@ class RoomKernelCoreTests(unittest.TestCase):
             dispatch("dispatch:runtime-failure", key="runtime-failure"),
             now_ms=10,
         )
-        self.store.record_runtime_dispatch_intent(
+        self.accept_runtime_attempt(
             "dispatch:runtime-failure",
-            now_ms=10,
-        )
-        self.store.set_dispatch_wait_state(
-            "dispatch:runtime-failure",
-            "running",
+            turn_id="turn:runtime-failure",
             now_ms=11,
         )
 
@@ -682,12 +887,16 @@ class RoomKernelCoreTests(unittest.TestCase):
             "dispatch:runtime-failure",
             generation=0,
             source_event_id="event:turn-failed",
+            runtime_turn_id="turn:runtime-failure",
+            dispatch_attempt=0,
             now_ms=12,
         )
         replay = self.store.record_runtime_failure(
             "dispatch:runtime-failure",
             generation=0,
             source_event_id="event:turn-failed",
+            runtime_turn_id="turn:runtime-failure",
+            dispatch_attempt=0,
             now_ms=12,
         )
 
@@ -720,6 +929,133 @@ class RoomKernelCoreTests(unittest.TestCase):
             "failed",
         )
 
+    def test_transient_runtime_failure_without_tools_uses_root_retry_budget(
+        self,
+    ) -> None:
+        self.seed(criteria=())
+        dispatch_id = "dispatch:runtime-retry"
+        self.store.enqueue_dispatch(
+            dispatch(dispatch_id, key="runtime-retry"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(
+            dispatch_id,
+            turn_id="turn:runtime-retry:1",
+            now_ms=11,
+        )
+
+        first = self.store.record_runtime_failure(
+            dispatch_id,
+            generation=0,
+            source_event_id="event:transport-failed",
+            runtime_turn_id="turn:runtime-retry:1",
+            dispatch_attempt=0,
+            now_ms=12,
+            retryable=True,
+            had_tool_activity=False,
+            reason_code="provider_transport_failure",
+        )
+        replay = self.store.record_runtime_failure(
+            dispatch_id,
+            generation=0,
+            source_event_id="event:transport-failed",
+            runtime_turn_id="turn:runtime-retry:1",
+            dispatch_attempt=0,
+            now_ms=12,
+            retryable=True,
+            had_tool_activity=False,
+            reason_code="provider_transport_failure",
+        )
+        with self.assertRaisesRegex(
+            RoomKernelFenceError,
+            "active runtime turn",
+        ):
+            self.store.record_runtime_failure(
+                dispatch_id,
+                generation=0,
+                source_event_id="event:late-transport-failed",
+                runtime_turn_id="turn:runtime-retry:1",
+                dispatch_attempt=0,
+                now_ms=13,
+                retryable=True,
+                had_tool_activity=False,
+                reason_code="provider_transport_failure",
+            )
+
+        self.assertEqual(first, replay)
+        self.assertEqual(first["receiptKind"], "runtime_retry_scheduled")
+        self.assertEqual(first["status"], "applied")
+        self.assertEqual(first["details"]["attempt"], 1)
+        self.assertEqual(first["details"]["availableAtMs"], 1_012)
+        self.assertTrue(
+            self.store.is_managed_runtime_turn(
+                "session:participant:a",
+                "turn:runtime-retry:1",
+            )
+        )
+        self.assertFalse(
+            self.store.is_managed_runtime_turn(
+                "session:participant:a",
+                "turn:ordinary",
+            )
+        )
+        self.assertFalse(
+            self.store.is_managed_runtime_turn(
+                "session:participant:b",
+                "turn:runtime-retry:1",
+            )
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "running")
+        self.assertEqual(self.store.task("task:1")["state"], "active")
+        self.assertEqual(self.store.dispatch(dispatch_id)["state"], "retry_wait")
+        self.assertEqual(self.store.outbox(dispatch_id)["state"], "retry_wait")
+        self.assertEqual(self.store.resource_limits("root:1")["retry_used"], 1)
+        self.assertEqual(self.store.counts("root:1")["deadLetters"], 0)
+        self.assertIsNone(self.store.pending_dispatch(now_ms=1_011))
+        ready = self.store.pending_dispatch(now_ms=1_012)
+        self.assertIsNotNone(ready)
+        self.assertEqual(ready["dispatchId"], dispatch_id)
+        self.assertEqual(ready["state"], "retry_wait")
+        self.assertEqual(ready["attempt"], 1)
+        self.assertEqual(
+            self.store.outbox(dispatch_id)["payload"]["attempt"],
+            1,
+        )
+
+    def test_transient_runtime_failure_after_tool_activity_stays_fail_closed(
+        self,
+    ) -> None:
+        self.seed(criteria=())
+        dispatch_id = "dispatch:runtime-tool-failure"
+        self.store.enqueue_dispatch(
+            dispatch(dispatch_id, key="runtime-tool-failure"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(
+            dispatch_id,
+            turn_id="turn:runtime-tool-failure",
+            now_ms=11,
+        )
+
+        receipt = self.store.record_runtime_failure(
+            dispatch_id,
+            generation=0,
+            source_event_id="event:tool-then-transport-failed",
+            runtime_turn_id="turn:runtime-tool-failure",
+            dispatch_attempt=0,
+            now_ms=12,
+            retryable=True,
+            had_tool_activity=True,
+            reason_code="tool_activity_observed",
+        )
+
+        self.assertEqual(receipt["receiptKind"], "runtime_failed")
+        self.assertEqual(receipt["status"], "applied")
+        self.assertEqual(self.store.root("root:1")["state"], "blocked")
+        self.assertEqual(self.store.dispatch(dispatch_id)["state"], "failed")
+        self.assertEqual(self.store.resource_limits("root:1")["retry_used"], 0)
+        self.assertEqual(self.store.counts("root:1")["deadLetters"], 1)
+
     def test_budget_is_reserved_at_enqueue_and_released_by_cancel(self) -> None:
         self.seed(budget=10, criteria=())
         self.store.enqueue_dispatch(dispatch("dispatch:seven", key="seven", cost=7), now_ms=10)
@@ -743,7 +1079,8 @@ class RoomKernelCoreTests(unittest.TestCase):
                 dispatch(
                     f"dispatch:parallel-{index}",
                     key=f"parallel-{index}",
-                    target=f"participant:{index}",
+                    target="participant:a",
+                    session_id=f"session:parallel:{index}",
                 ),
                 now_ms=10 + index,
             )
@@ -752,7 +1089,8 @@ class RoomKernelCoreTests(unittest.TestCase):
                 dispatch(
                     "dispatch:parallel-4",
                     key="parallel-4",
-                    target="participant:4",
+                    target="participant:a",
+                    session_id="session:parallel:4",
                 ),
                 now_ms=20,
             )
@@ -765,7 +1103,8 @@ class RoomKernelCoreTests(unittest.TestCase):
             dispatch(
                 "dispatch:parallel-4",
                 key="parallel-4",
-                target="participant:4",
+                target="participant:a",
+                session_id="session:parallel:4",
             ),
             now_ms=22,
         )
@@ -847,7 +1186,8 @@ class RoomKernelCoreTests(unittest.TestCase):
                 dispatch(
                     "dispatch:second",
                     key="second",
-                    target="participant:b",
+                    target="participant:a",
+                    session_id="session:dispatch:second",
                 ),
                 now_ms=11,
             )
@@ -910,7 +1250,8 @@ class RoomKernelCoreTests(unittest.TestCase):
                 dispatch(
                     dispatch_id,
                     key=f"key:{ordinal}",
-                    target=f"participant:{ordinal}",
+                    target="participant:a",
+                    session_id=f"session:state:{ordinal}",
                 ),
                 now_ms=10 + ordinal,
             )
@@ -1069,7 +1410,9 @@ def root(root_id: str) -> dict[str, object]:
         "roomId": "room:1",
         "generation": 0,
         "state": "running",
-        "owner": "kernel-v2",
+        "facilitatorParticipantId": "kernel-v2",
+        "reporterParticipantId": None,
+        "reporterSelectionReceiptId": None,
         "requirementAnchorRef": "requirement-anchor:1@sha256:test",
         "createdByActorRef": "user:local",
         "terminalReceiptId": None,
@@ -1090,8 +1433,15 @@ def task(
         "taskId": task_id,
         "rootId": root_id,
         "parentTaskId": None,
-        "ownerParticipantId": "participant:a",
-        "assigneeParticipantId": "participant:a",
+        "taskKind": "work",
+        "currentOwnerParticipantId": "participant:a",
+        "ownershipRevision": 0,
+        "ownershipReceiptId": None,
+        "invitationId": None,
+        "reviewState": "not_required",
+        "reviewOfTaskIds": [],
+        "reviewAuthorParticipantIds": [],
+        "contextEvidenceRefs": [],
         "objective": "Complete bounded work.",
         "expectedOutput": "A tested result.",
         "requirementItemIds": ["requirement:1"],
@@ -1111,9 +1461,26 @@ def child_task(
     return {
         **task(task_id, criteria=criteria),
         "parentTaskId": parent,
-        "ownerParticipantId": target,
-        "assigneeParticipantId": target,
+        "currentOwnerParticipantId": target,
         "acceptanceCriterionIds": [],
+    }
+
+def task_transfer(
+    *,
+    from_participant: str,
+    to_participant: str,
+    ownership_revision: int,
+    criteria: tuple[str, ...] = ("ac:1",),
+) -> dict[str, object]:
+    return {
+        "taskId": "task:1",
+        "fromParticipantId": from_participant,
+        "toParticipantId": to_participant,
+        "objective": "Continue the same bounded work.",
+        "expectedOutput": "The same accepted result.",
+        "acceptanceCriterionIds": list(criteria),
+        "contextEvidenceRefs": ["evidence:handoff"],
+        "ownershipRevision": ownership_revision,
     }
 
 
@@ -1127,6 +1494,7 @@ def dispatch(
     cost: int = 1,
     parent: str | None = None,
     task_id: str = "task:1",
+    session_id: str | None = None,
 ) -> dict[str, object]:
     return {
         "schemaVersion": DISPATCH_ENVELOPE_SCHEMA_VERSION,
@@ -1138,7 +1506,7 @@ def dispatch(
         "hopCount": hop,
         "depth": depth,
         "budgetCost": cost,
-        "targetSessionId": f"session:{target}",
+        "targetSessionId": session_id or f"session:{target}",
         "targetParticipantId": target,
         "triggerId": f"trigger:{key}",
         "intentKind": "execute",

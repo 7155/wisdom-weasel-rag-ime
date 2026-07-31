@@ -35,7 +35,7 @@ class AgentConfigurationTests(unittest.TestCase):
         self.assertEqual(configuration["sessionDefaults"]["roleId"], "companion-future-v1")
         self.assertEqual(
             configuration["sessionDefaults"]["modelProfile"],
-            "gpt/gpt-5.6-sol",
+            "openai-codex/gpt-5.6-sol",
         )
         self.assertEqual(
             default_agent_configuration(role_id="vcp-v1")["sessionDefaults"]["roleId"],

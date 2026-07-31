@@ -1,20 +1,20 @@
 {
   "schemaVersion": "wisdom-weasel.room-task-effect-eval.v1",
   "passed": true,
-  "caseCount": 14,
+  "caseCount": 15,
   "metrics": {
     "skillPrecision": 1.0,
     "skillRecall": 1.0,
     "toolPrecision": 1.0,
     "toolRecall": 1.0,
-    "catalogBytes": 3398,
-    "loadBodyBytes": 27113,
-    "skillCatalogBytes": 3398,
-    "skillBodyBytes": 27113,
-    "progressiveDisclosureRatio": 0.1253,
-    "toolCatalogBytes": 1028,
-    "toolSchemaBytes": 9234,
-    "toolProgressiveDisclosureRatio": 0.1113,
+    "catalogBytes": 3070,
+    "loadBodyBytes": 35705,
+    "skillCatalogBytes": 3070,
+    "skillBodyBytes": 35705,
+    "progressiveDisclosureRatio": 0.086,
+    "toolCatalogBytes": 1055,
+    "toolSchemaBytes": 12269,
+    "toolProgressiveDisclosureRatio": 0.086,
     "promptErrorCount": 0,
     "chainBreakCount": 0,
     "contextNoiseCount": 0
@@ -59,13 +59,33 @@
       "passed": true
     },
     {
+      "id": "confirmed-requirements-direct-plan",
+      "stage": "planning",
+      "actualSkills": [
+        "implementation-planning"
+      ],
+      "expectedSkills": [
+        "implementation-planning"
+      ],
+      "forbiddenSkillHits": [],
+      "actualTools": [
+        "room_state"
+      ],
+      "expectedTools": [
+        "room_state"
+      ],
+      "missingPromptTerms": [],
+      "chainBreaks": [],
+      "passed": true
+    },
+    {
       "id": "implementation",
       "stage": "implementation",
       "actualSkills": [
-        "test-driven-implementation"
+        "implementation-execution"
       ],
       "expectedSkills": [
-        "test-driven-implementation"
+        "implementation-execution"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -102,10 +122,10 @@
       "id": "clarification",
       "stage": "requirements",
       "actualSkills": [
-        "requirement-alignment"
+        "alignment-and-decision"
       ],
       "expectedSkills": [
-        "requirement-alignment"
+        "alignment-and-decision"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -129,10 +149,10 @@
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
-        "room_post"
+        "room_commit"
       ],
       "expectedTools": [
-        "room_post"
+        "room_commit"
       ],
       "missingPromptTerms": [],
       "chainBreaks": [],
@@ -169,10 +189,10 @@
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
-        "room_post"
+        "room_commit"
       ],
       "expectedTools": [
-        "room_post"
+        "room_commit"
       ],
       "missingPromptTerms": [],
       "chainBreaks": [],
@@ -214,10 +234,10 @@
       "id": "debug-not-implement",
       "stage": "debugging",
       "actualSkills": [
-        "systematic-debugging"
+        "implementation-execution"
       ],
       "expectedSkills": [
-        "systematic-debugging"
+        "implementation-execution"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -234,10 +254,10 @@
       "id": "solution-not-plan",
       "stage": "solution",
       "actualSkills": [
-        "solution-convergence"
+        "alignment-and-decision"
       ],
       "expectedSkills": [
-        "solution-convergence"
+        "alignment-and-decision"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [
@@ -254,10 +274,10 @@
       "id": "feedback-not-review",
       "stage": "feedback",
       "actualSkills": [
-        "review-feedback-resolution"
+        "implementation-execution"
       ],
       "expectedSkills": [
-        "review-feedback-resolution"
+        "implementation-execution"
       ],
       "forbiddenSkillHits": [],
       "actualTools": [

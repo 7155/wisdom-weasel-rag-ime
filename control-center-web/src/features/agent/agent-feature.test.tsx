@@ -23,6 +23,8 @@ import type { UiAgentMessage } from '@/contracts/ui-events';
 const virtuosoMock = vi.hoisted(() => ({
   scrollToIndex: vi.fn(),
   atBottomStateChange: undefined as ((atBottom: boolean) => void) | undefined,
+  followOutput: undefined as ((isAtBottom: boolean) => 'auto' | 'smooth' | false) | undefined,
+  scroller: undefined as HTMLDivElement | undefined,
 }));
 
 vi.mock('react-virtuoso', async () => {
@@ -32,21 +34,36 @@ vi.mock('react-virtuoso', async () => {
     alignToBottom,
     atBottomStateChange,
     data,
+    followOutput,
     initialTopMostItemIndex,
     itemContent,
+    scrollerRef,
   }: {
     alignToBottom?: boolean;
     atBottomStateChange?: (atBottom: boolean) => void;
     data: string[];
+    followOutput?: (isAtBottom: boolean) => 'auto' | 'smooth' | false;
     initialTopMostItemIndex?: { index: string | number; align?: string };
     itemContent: (index: number, item: string) => ReactNode;
+    scrollerRef?: (scroller: HTMLElement | Window | null) => void;
   }, ref) => {
+    const localScrollerRef = React.useRef<HTMLDivElement>(null);
     React.useImperativeHandle(ref, () => ({
       scrollToIndex: virtuosoMock.scrollToIndex,
     }));
+    React.useLayoutEffect(() => {
+      virtuosoMock.scroller = localScrollerRef.current ?? undefined;
+      scrollerRef?.(localScrollerRef.current);
+      return () => {
+        scrollerRef?.(null);
+        virtuosoMock.scroller = undefined;
+      };
+    }, [scrollerRef]);
     virtuosoMock.atBottomStateChange = atBottomStateChange;
+    virtuosoMock.followOutput = followOutput;
     return (
       <div
+        ref={localScrollerRef}
         data-align-to-bottom={alignToBottom || undefined}
         data-initial-align={initialTopMostItemIndex?.align}
         data-testid="agent-virtuoso"
@@ -63,6 +80,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   virtuosoMock.scrollToIndex.mockReset();
   virtuosoMock.atBottomStateChange = undefined;
+  virtuosoMock.followOutput = undefined;
+  virtuosoMock.scroller = undefined;
   for (const session of previewSessions) useAgentLiveStore.getState().clear(session.id);
   useAgentLiveStore.getState().clear('session-history');
 });
@@ -74,7 +93,7 @@ describe('Agent experience', () => {
     render(<TooltipProvider><SessionRail sessions={previewSessions} selectedId="session-preview" loading={false} onSelect={onSelect} onCreate={() => {}} /></TooltipProvider>);
     expect(screen.getByText('personal-agent-workbench')).toBeInTheDocument();
     expect(screen.getByText('未指定项目')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /记忆整理/ }));
+    await user.click(screen.getByRole('button', { name: '记忆整理' }));
     expect(onSelect).toHaveBeenCalledWith('session-memory');
   });
 
@@ -96,14 +115,14 @@ describe('Agent experience', () => {
       name: /personal-agent-workbench/,
     });
     expect(project).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('button', { name: /控制中心迁移/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '控制中心迁移' })).toBeInTheDocument();
 
     await user.click(project);
     expect(project).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('button', { name: /控制中心迁移/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '控制中心迁移' })).not.toBeInTheDocument();
 
     await user.click(project);
-    expect(screen.getByRole('button', { name: /控制中心迁移/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '控制中心迁移' })).toBeInTheDocument();
   });
 
   it('offers archive, delete confirmation, and archived visibility controls per conversation', async () => {
@@ -129,10 +148,17 @@ describe('Agent experience', () => {
       .find((row) => row.textContent?.includes('记忆整理'));
     expect(targetRow).toBeDefined();
 
-    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '归档此对话' }));
+    expect(targetRow?.querySelector('.agent-session-row__archive')).toBeNull();
+    expect(targetRow?.querySelectorAll('.agent-session-row__menu')).toHaveLength(1);
+    expect(targetRow?.querySelector('.agent-session-row__copy small')).toHaveTextContent('已把最近输入整理为 3 个主题。');
+    expect(targetRow?.querySelector('time')).not.toBeNull();
+    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多“记忆整理”操作' }));
+    const menuItems = await screen.findAllByRole('menuitem');
+    expect(menuItems.map((item) => item.textContent)).toEqual(['归档对话', '删除对话']);
+    await user.click(screen.getByRole('menuitem', { name: '归档对话' }));
     expect(onArchive).toHaveBeenCalledWith('session-memory', true);
 
-    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多对话操作' }));
+    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多“记忆整理”操作' }));
     await user.click(await screen.findByRole('menuitem', { name: '删除对话' }));
     const dialog = await screen.findByRole('dialog', { name: /删除“记忆整理”/ });
     await user.click(within(dialog).getByRole('button', { name: '删除' }));
@@ -142,6 +168,69 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('button', { name: '对话列表选项' }));
     await user.click(await screen.findByRole('menuitemcheckbox', { name: '显示已归档对话' }));
     expect(onShowArchivedChange).toHaveBeenCalledWith(true);
+  });
+
+  it('keeps Room participant rows selectable while reserving lifecycle menus for ordinary conversations', async () => {
+    const ordinarySession = previewSessions.find((session) => session.id === 'session-memory')!;
+    const roomSession = {
+      ...ordinarySession,
+      id: 'session-room-present',
+      title: '迁移作战室 · 澄·今',
+      roomParticipant: {
+        roomId: 'room-preview',
+        participantId: 'participant-present',
+        status: 'active' as const,
+      },
+    };
+    const onSelect = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(
+      <TooltipProvider>
+        <SessionRail
+          sessions={[ordinarySession, roomSession]}
+          selectedId={ordinarySession.id}
+          loading={false}
+          onSelect={onSelect}
+          onCreate={() => {}}
+          onArchive={() => {}}
+          onDelete={() => {}}
+        />
+      </TooltipProvider>,
+    );
+    const rows = [...container.querySelectorAll('.agent-session-row-shell')];
+    const ordinaryRow = rows.find((row) => row.textContent?.includes(ordinarySession.title));
+    const roomRow = rows.find((row) => row.textContent?.includes(roomSession.title));
+
+    expect(ordinaryRow?.querySelectorAll('.agent-session-row__menu')).toHaveLength(1);
+    expect(roomRow?.querySelectorAll('.agent-session-row__menu')).toHaveLength(0);
+    expect(within(roomRow as HTMLElement).queryByRole('button', {
+      name: `更多“${roomSession.title}”操作`,
+    })).not.toBeInTheDocument();
+    await user.click(within(roomRow as HTMLElement).getByRole('button', {
+      name: new RegExp(roomSession.title),
+    }));
+    expect(onSelect).toHaveBeenCalledWith(roomSession.id);
+  });
+
+  it('offers restore from the same overflow menu for archived conversations', async () => {
+    const onArchive = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <SessionRail
+          sessions={[{ ...previewSessions[1], status: 'archived' }]}
+          selectedId="session-memory"
+          loading={false}
+          onSelect={() => {}}
+          onCreate={() => {}}
+          onArchive={onArchive}
+        />
+      </TooltipProvider>,
+    );
+
+    await user.click(screen.getByRole('button', { name: '更多“记忆整理”操作' }));
+    await user.click(await screen.findByRole('menuitem', { name: '恢复对话' }));
+    expect(onArchive).toHaveBeenCalledWith('session-memory', false);
   });
 
   it('keeps the delete confirmation open and shows the backend error when deletion fails', async () => {
@@ -162,7 +251,7 @@ describe('Agent experience', () => {
     const targetRow = [...container.querySelectorAll('.agent-session-row-shell')]
       .find((row) => row.textContent?.includes('记忆整理'));
 
-    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多对话操作' }));
+    await user.click(within(targetRow as HTMLElement).getByRole('button', { name: '更多“记忆整理”操作' }));
     await user.click(await screen.findByRole('menuitem', { name: '删除对话' }));
     const dialog = await screen.findByRole('dialog', { name: /删除“记忆整理”/ });
     await user.click(within(dialog).getByRole('button', { name: '删除' }));
@@ -198,60 +287,52 @@ describe('Agent experience', () => {
     expect(navigator).toHaveTextContent('澄');
   });
 
-  it('follows an in-place streaming turn only while the reader remains at the bottom', async () => {
-    let nextFrame = 1;
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-      const frame = nextFrame;
-      nextFrame += 1;
-      window.setTimeout(() => callback(0), 0);
-      return frame;
-    });
-    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+  it('preserves bottom-follow through layout growth and restores it after the reader returns', async () => {
     const transport = featureTransport();
     renderAgent(transport);
     await screen.findByRole('textbox', { name: '消息' });
     await waitFor(() => expect(transport.activeSubscriptionCount()).toBe(1));
-    virtuosoMock.scrollToIndex.mockClear();
+    const scroller = virtuosoMock.scroller!;
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 900 });
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 400 });
+    scroller.scrollTop = 100;
+    act(() => virtuosoMock.atBottomStateChange?.(true));
+    expect(virtuosoMock.followOutput?.(true)).toBe('auto');
+    expect(virtuosoMock.followOutput?.(false)).toBe('auto');
 
-    const current = useAgentLiveStore.getState().projections['session-preview'];
-    act(() => {
+    virtuosoMock.scrollToIndex.mockClear();
+    const emitDelta = (eventId: string, delta: string) => {
+      const current = useAgentLiveStore.getState().projections['session-preview'];
       useAgentLiveStore.getState().applyEvents('session-preview', [{
         schemaVersion: 'rag-ime.agent-event.v1',
-        eventId: 'stream-follow-1',
+        eventId,
         sessionId: 'session-preview',
         turnId: 'turn-stream-follow',
         sequence: current.lastSequence + 1,
         createdAtMs: Date.now(),
         streamKind: 'agent',
         eventType: 'text_delta',
-        payload: { delta: 'first' },
+        payload: { delta },
         resumeToken: `session-preview:${current.lastSequence + 1}`,
       }]);
-    });
+    };
 
-    await waitFor(() => expect(virtuosoMock.scrollToIndex).toHaveBeenCalledWith(
-      expect.objectContaining({ align: 'end', behavior: 'auto' }),
-    ));
-    virtuosoMock.scrollToIndex.mockClear();
-    act(() => virtuosoMock.atBottomStateChange?.(false));
-    const afterFirst = useAgentLiveStore.getState().projections['session-preview'];
+    act(() => emitDelta('stream-follow-1', 'first'));
+    await waitFor(() => expect(scroller.scrollTop).toBe(900));
+
+    scroller.scrollTop = 200;
     act(() => {
-      useAgentLiveStore.getState().applyEvents('session-preview', [{
-        schemaVersion: 'rag-ime.agent-event.v1',
-        eventId: 'stream-follow-2',
-        sessionId: 'session-preview',
-        turnId: 'turn-stream-follow',
-        sequence: afterFirst.lastSequence + 1,
-        createdAtMs: Date.now(),
-        streamKind: 'agent',
-        eventType: 'text_delta',
-        payload: { delta: ' second' },
-        resumeToken: `session-preview:${afterFirst.lastSequence + 1}`,
-      }]);
+      scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: -24 }));
     });
-    await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 20));
-    });
+    expect(virtuosoMock.followOutput?.(false)).toBe(false);
+    act(() => emitDelta('stream-follow-2', 'second'));
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
+    expect(scroller.scrollTop).toBe(200);
+
+    act(() => virtuosoMock.atBottomStateChange?.(true));
+    expect(virtuosoMock.followOutput?.(false)).toBe('auto');
+    act(() => emitDelta('stream-follow-3', 'third'));
+    await waitFor(() => expect(scroller.scrollTop).toBe(900));
     expect(virtuosoMock.scrollToIndex).not.toHaveBeenCalled();
   });
 
@@ -329,6 +410,7 @@ describe('Agent experience', () => {
     expect(useAgentLiveStore.getState().projections['session-preview'].resumeToken)
       .toBe(`session-preview:${latestSequence}`);
     expect(snapshotRequests).toBe(3);
+    expect(transport.subscriptionCalls).toHaveLength(2);
   });
 
   it('creates a real Pi-backed conversation branch and restores the selected message as draft', async () => {
@@ -353,7 +435,13 @@ describe('Agent experience', () => {
       }),
     })));
     expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('读取输入法工具书，并把结果作为可展开卡片保留。');
-    expect(screen.getByRole('button', { name: /控制中心迁移 · 分支/ })).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByRole('button', { name: '控制中心迁移 · 分支' })).toHaveAttribute('aria-current', 'true');
+    await waitFor(() => expect(
+      transport.subscriptionCalls.filter((call) => (
+        call.request.pathId === 'agent.session.events'
+        && call.request.params?.sessionId === 'session-forked'
+      )),
+    ).toHaveLength(1));
   });
 
   it('creates a branch directly from the selected user message', async () => {
@@ -383,6 +471,49 @@ describe('Agent experience', () => {
     expect(await screen.findByRole('textbox', { name: '消息' })).toHaveValue('读取输入法工具书，并把结果作为可展开卡片保留。');
   });
 
+  it('opens historical editing immediately while Pi resolves the branch anchor in the background', async () => {
+    const pendingForkCatalog = deferred<ReturnType<typeof forkListFixture>>();
+    const transport = featureTransport(
+      undefined, // model catalog
+      undefined, // tool catalog
+      undefined, // sessions
+      undefined, // prompt
+      undefined, // subagent
+      undefined, // approval
+      undefined, // abort
+      undefined, // runtime
+      undefined, // snapshot
+      undefined, // fork create
+      undefined, // model select
+      undefined, // thinking select
+      undefined, // mode update
+      () => pendingForkCatalog.promise,
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({ pathId: 'agent.session.forks.list' }),
+    })));
+    const actions = await screen.findAllByRole('button', { name: '修改这条消息' });
+    const action = actions.find((item) => (
+      item.closest('.agent-user-message-shell')?.getAttribute('data-agent-message-id')
+        === 'session-preview:user-media'
+    ));
+    await user.click(action!);
+
+    expect(await screen.findByText('正在修改这条消息', {}, { timeout: 500 })).toBeInTheDocument();
+    expect(screen.getByText('正在定位历史锚点；内容现在就可以编辑')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue(
+      '读取输入法工具书，并把结果作为可展开卡片保留。',
+    );
+    expect(screen.getByRole('button', { name: '发送' })).toBeDisabled();
+
+    pendingForkCatalog.resolve(forkListFixture());
+    expect(await screen.findByText('发送后将从这里重新生成后续对话')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '发送' })).toBeEnabled();
+  });
+
   it('rewinds the same conversation when double Escape edits the previous user message', async () => {
     const transport = featureTransport();
     const user = userEvent.setup();
@@ -397,6 +528,13 @@ describe('Agent experience', () => {
     await user.clear(composer);
     await user.type(composer, '改成更准确的问题');
     await user.click(screen.getByRole('button', { name: '发送' }));
+
+    // The visible branch rewinds synchronously; restoring Pi and admitting the
+    // replacement prompt may still finish later in the background.
+    expect(useAgentLiveStore.getState().projections['session-preview']
+      .messagesById['session-preview:assistant-media']).toBeUndefined();
+    expect(Object.values(useAgentLiveStore.getState().projections['session-preview'].messagesById)
+      .some((message) => message.id.startsWith('local:web-rewrite-'))).toBe(true);
 
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
@@ -599,6 +737,46 @@ describe('Agent experience', () => {
     ).toEqual([roomMember]);
   });
 
+  it('does not request ordinary forks or offer history mutation for a Room participant', async () => {
+    const roomSession = {
+      ...previewSessions[0]!,
+      id: 'session-preview',
+      title: '联调 Room · 澄',
+      roomParticipant: {
+        roomId: 'room:feature-test',
+        participantId: 'participant:feature-test',
+        status: 'active' as const,
+      },
+    };
+    const transport = featureTransport(
+      undefined,
+      undefined,
+      { ok: true, items: [roomSession] },
+    );
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    expect(await screen.findAllByText('联调 Room · 澄')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: '更多“联调 Room · 澄”操作' })).not.toBeInTheDocument();
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({ pathId: 'agent.session.snapshot' }),
+    })));
+    expect(transport.requests).not.toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({ pathId: 'agent.session.forks.list' }),
+    }));
+    expect(screen.queryByRole('button', { name: '修改这条消息' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '查看对话路径与分支' }));
+    const dialog = await screen.findByRole('dialog', { name: '对话路径' });
+    expect(dialog).toHaveTextContent(
+      '这段对话属于 Room participant，历史分支与修改由 Room 管理。',
+    );
+    expect(within(dialog).getByRole('button', { name: '创建分支' })).toBeDisabled();
+    expect(transport.requests).not.toContainEqual(expect.objectContaining({
+      request: expect.objectContaining({ pathId: 'agent.session.forks.list' }),
+    }));
+  });
+
   it('renders one persona avatar and one activity container per assistant turn without raw payloads', async () => {
     const sessionId = 'session-preview';
     const snapshot = previewAgentSnapshot(sessionId);
@@ -613,6 +791,366 @@ describe('Agent experience', () => {
     expect(document.querySelector('.agent-user-message')).toBeInTheDocument();
     expect(screen.queryByText(/do-not-render/)).not.toBeInTheDocument();
     expect(document.querySelector('.agent-assistant-message')).toHaveTextContent('正文展示工具书内容');
+  });
+
+  it('replays lifecycle cancellation owner receipts in the on-demand status panel', async () => {
+    const snapshot = {
+      ...previewAgentSnapshot('session-preview'),
+      lifecycleCancellationAudits: [{
+        schemaVersion: 'rag-ime.agent-lifecycle-cancellation-audit.v1',
+        requestId: 'lifecycle:goal:pause:1',
+        sessionId: 'session-preview',
+        scopeKind: 'goal',
+        scopeId: 'goal:session-preview',
+        sourceRevision: 2,
+        transitionRevision: 3,
+        action: 'pause',
+        reason: '用户暂停当前目标',
+        state: 'partial',
+        sourceTurnId: 'session-preview:turn-1',
+        owners: {
+          runtime: { status: 'succeeded', receipt: { lifecycle: 'aborted' } },
+          approval: { status: 'succeeded', receipt: { cancelledCount: 1 } },
+          job: { status: 'partial', receipt: { cancelled: 1, stillRunning: 1 } },
+          delegation: { status: 'excluded', receipt: { reason: 'no_active_delegation' } },
+        },
+        createdAtMs: 100,
+        updatedAtMs: 200,
+      }],
+    };
+    const transport = productionTransport({ 'agent.session.snapshot': snapshot });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
+    const statusPanel = await screen.findByLabelText('当前对话状态');
+
+    expect(await within(statusPanel).findByRole('button', { name: /取消与暂停回执/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(within(statusPanel).getByText('目标暂停')).toBeVisible();
+    expect(within(statusPanel).getByText('用户暂停当前目标')).toBeVisible();
+    expect(within(statusPanel).getByText('部分完成')).toBeVisible();
+    expect(within(statusPanel).getByText('lifecycle: aborted')).toBeVisible();
+    expect(within(statusPanel).getByText('stillRunning: 1', { exact: false })).toBeVisible();
+  });
+
+  it('keeps a failed subagent query distinct from empty and retries only its Session owner', async () => {
+    let attempts = 0;
+    const transport = productionTransport({
+      'agent.subagents.list': () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('subagent runtime offline');
+        return { ok: true, items: [] };
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
+    const statusPanel = await screen.findByLabelText('当前对话状态');
+    const sectionToggle = await within(statusPanel).findByRole('button', { name: /子智能体/ });
+    const section = sectionToggle.closest('section')!;
+
+    expect(await within(section).findByRole('alert')).toHaveTextContent('子智能体状态读取失败');
+    expect(within(section).queryByText('当前会话没有委派任务')).not.toBeInTheDocument();
+    const retry = within(section).getByRole('button', { name: '重新读取子智能体' });
+    expect(retry).toBeEnabled();
+    await user.click(retry);
+
+    await waitFor(() => expect(attempts).toBe(2));
+    expect(within(section).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(section).getByText('当前会话没有委派任务')).toBeVisible();
+  });
+
+  it('shows the full capability catalog while keeping Runtime authorization and native Skills distinct', async () => {
+    const enabled = { ...toolCatalog().find((tool) => tool.id === 'input')!, enabled: true };
+    const disabled = { ...toolCatalog().find((tool) => tool.id === 'knowledge')!, enabled: false };
+    const transport = productionTransport({
+      'agent.tools.list': capabilityToolCatalog([enabled, disabled]),
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      pathId: 'agent.tools.list',
+      query: { sessionId: 'session-preview' },
+    })));
+
+    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
+    const statusPanel = await screen.findByLabelText('当前对话状态');
+    const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
+    const capabilitySection = capabilityToggle.closest('section')!;
+    await user.click(capabilityToggle);
+    await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
+
+    const dialog = screen.getByRole('dialog', { name: '管理当前对话的工具与技能' });
+    expect(within(dialog).getByText('browser')).toBeInTheDocument();
+    expect(within(dialog).getByText('输入法')).toBeInTheDocument();
+    expect(within(dialog).getByText('知识检索')).toBeInTheDocument();
+    for (const disclosure of within(dialog).getAllByText('查看来源、权限和生效依据')) {
+      await user.click(disclosure);
+    }
+    expect(within(dialog).getByText(/Pi native Skills/)).toBeInTheDocument();
+    expect(within(dialog).getAllByText('已由现有策略授权')).toHaveLength(2);
+    expect(within(dialog).getByText('当前未获执行授权')).toBeInTheDocument();
+    expect(within(dialog).getAllByRole('combobox')).toHaveLength(3);
+  });
+  it('shows the installed backend capability version mismatch and retries without adapting the legacy list', async () => {
+    const transport = productionTransport({
+      'agent.tools.list': {
+        schemaVersion: 'rag-ime.control-tool-list.v1',
+        ok: true,
+        items: [{ id: 'legacy-input', displayName: '旧输入工具' }],
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
+    const statusPanel = await screen.findByLabelText('当前对话状态');
+    const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
+    const capabilitySection = capabilityToggle.closest('section')!;
+    await user.click(capabilityToggle);
+    expect(within(capabilitySection).getByRole('alert')).toHaveTextContent('后端返回 rag-ime.control-tool-list.v1');
+    expect(within(capabilitySection).queryByText('旧输入工具')).not.toBeInTheDocument();
+
+    const before = transport.requests.filter((call) => call.pathId === 'agent.tools.list').length;
+    await user.click(within(capabilitySection).getByRole('button', { name: '重试' }));
+    await waitFor(() => expect(transport.requests.filter((call) => call.pathId === 'agent.tools.list')).toHaveLength(before + 1));
+  });
+
+
+  it('persists a temporary capability preference and renders the backend-confirmed outcome', async () => {
+    let disabled = false;
+    const transport = productionTransport({
+      'agent.session.capability-policy.update': () => {
+        disabled = true;
+        return { ok: true };
+      },
+      'agent.tools.list': (request: ControlRequest) => {
+        const ownerSessionId = typeof request.query?.sessionId === 'string' ? request.query.sessionId : 'session-preview';
+        const catalog = capabilityToolCatalog(toolCatalog(), ownerSessionId);
+        if (!disabled) return catalog;
+        return {
+          ...catalog,
+          sessionPolicy: {
+            ...catalog.sessionPolicy,
+            disclosurePreferences: {
+              ...catalog.sessionPolicy.disclosurePreferences,
+              session: { 'tool:input': 'disabled' },
+              effective: {
+                ...catalog.sessionPolicy.disclosurePreferences.effective,
+                'tool:input': 'disabled',
+              },
+            },
+          },
+          items: catalog.items.map((item) => item.canonicalId === 'tool:input' ? {
+            ...item,
+            disclosure: {
+              preference: 'disabled',
+              effective: 'disabled',
+              state: 'hidden',
+              reason: 'session_preference',
+            },
+            effectiveScope: 'session',
+            reasons: ['session_preference'],
+          } : item),
+        };
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
+    const statusPanel = await screen.findByLabelText('当前对话状态');
+    const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
+    const capabilitySection = capabilityToggle.closest('section')!;
+    await user.click(capabilityToggle);
+    await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
+    await user.click(screen.getByRole('combobox', { name: '输入法的当前对话临时设置' }));
+    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+
+    await waitFor(() => expect(transport.requests).toContainEqual({
+      pathId: 'agent.session.capability-policy.update',
+      params: { sessionId: 'session-preview' },
+      body: {
+        capabilityDisclosurePreferences: {
+          'tool:input': 'disabled',
+        },
+      },
+    }));
+    expect(await screen.findByText('当前对话临时设置已保存')).toBeVisible();
+    expect(screen.getByText(/后端已确认隐藏/)).toBeVisible();
+    expect(screen.getByRole('combobox', { name: '输入法的当前对话临时设置' })).toHaveTextContent('不向伙伴披露');
+  });
+
+  it('keeps a failed temporary override on its Session owner and retries the exact preference', async () => {
+    let attempts = 0;
+    const transport = productionTransport({
+      'agent.session.capability-policy.update': () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('临时策略修订冲突');
+        return { ok: true };
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
+    const statusPanel = await screen.findByLabelText('当前对话状态');
+    const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
+    const capabilitySection = capabilityToggle.closest('section')!;
+    await user.click(capabilityToggle);
+    await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
+    await user.click(screen.getByRole('combobox', { name: '输入法的当前对话临时设置' }));
+    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('临时策略修订冲突');
+
+    await user.click(screen.getByRole('button', { name: '重试这项调整' }));
+    await waitFor(() => expect(attempts).toBe(2));
+    const updates = transport.requests.filter((call) => call.pathId === 'agent.session.capability-policy.update');
+    expect(updates).toHaveLength(2);
+    expect(updates[1]?.body).toEqual({
+      capabilityDisclosurePreferences: { 'tool:input': 'disabled' },
+    });
+    expect(await screen.findByText('当前对话临时设置已保存')).toBeVisible();
+  });
+
+  it('keeps an existing Runtime job visible and cancellable after hiding workspace_job from the next turn', async () => {
+    let jobDisclosureDisabled = false;
+    const runningJob = {
+      schemaVersion: 'rag-ime.agent-background-job.v1',
+      jobId: 'bg_0123456789abcdef0123456789abcdef',
+      sessionId: 'session-preview',
+      label: '构建工作区索引',
+      status: 'running',
+      command: 'pnpm build:index',
+      commandSha256: 'a'.repeat(64),
+      cwd: '/workspace',
+      networkAllowed: false,
+      maxRunSeconds: 120,
+      pid: 42,
+      createdAtMs: 100,
+      startedAtMs: 110,
+      updatedAtMs: 120,
+      endedAtMs: 0,
+      exitCode: null,
+      outputBytes: 0,
+      logStartCursor: 0,
+      logTruncated: false,
+      cancelRequestedAtMs: 0,
+      error: '',
+      approvalId: 'approval-1',
+      causalMetadata: {
+        planId: 'plan-1',
+        planRevision: 1,
+        goalId: 'goal-1',
+        goalRevision: 1,
+        turnId: 'turn-1',
+        roomBound: false,
+      },
+    } as const;
+    const cancellingJob = {
+      ...runningJob,
+      status: 'cancelling',
+      updatedAtMs: 200,
+      cancelRequestedAtMs: 200,
+      error: 'control_center_requested',
+    } as const;
+    const transport = productionTransport({
+      'agent.session.snapshot': {
+        ...previewAgentSnapshot('session-preview'),
+        backgroundJobs: [runningJob],
+      },
+      'agent.tools.list': (request: ControlRequest) => {
+        const ownerSessionId = typeof request.query?.sessionId === 'string' ? request.query.sessionId : 'session-preview';
+        const catalog = capabilityToolCatalog(toolCatalog(), ownerSessionId);
+        if (!jobDisclosureDisabled) return catalog;
+        return {
+          ...catalog,
+          sessionPolicy: {
+            ...catalog.sessionPolicy,
+            disclosurePreferences: {
+              ...catalog.sessionPolicy.disclosurePreferences,
+              session: { 'tool:workspace_job': 'disabled' },
+              effective: {
+                ...catalog.sessionPolicy.disclosurePreferences.effective,
+                'tool:workspace_job': 'disabled',
+              },
+            },
+          },
+          items: catalog.items.map((item) => item.canonicalId === 'tool:workspace_job' ? {
+            ...item,
+            disclosure: {
+              preference: 'disabled',
+              effective: 'disabled',
+              state: 'hidden',
+              reason: 'session_preference',
+            },
+            effectiveScope: 'session',
+            reasons: ['session_preference'],
+          } : item),
+        };
+      },
+      'agent.session.capability-policy.update': () => {
+        jobDisclosureDisabled = true;
+        return { ok: true };
+      },
+      'agent.session.backgroundJobs.list': {
+        schemaVersion: 'rag-ime.agent-background-job-list.v1',
+        ok: true,
+        sessionId: 'session-preview',
+        items: [runningJob],
+        activeCount: 1,
+      },
+      'agent.session.backgroundJob.logs': {
+        schemaVersion: 'rag-ime.agent-background-job-log.v1',
+        ok: true,
+        jobId: runningJob.jobId,
+        sessionId: 'session-preview',
+        cursor: 0,
+        nextCursor: 0,
+        logStartCursor: 0,
+        truncatedBeforeCursor: false,
+        hasMore: false,
+        text: '',
+      },
+      'agent.session.backgroundJob.cancel': {
+        schemaVersion: 'rag-ime.agent-background-job-cancel-receipt.v1',
+        ok: true,
+        summary: '已请求停止后台任务',
+        alreadyTerminal: false,
+        job: cancellingJob,
+        cancelReceipt: {
+          jobId: runningJob.jobId,
+          requestedAtMs: 200,
+          status: 'cancelling',
+        },
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    await user.click(await screen.findByRole('button', { name: '展开状态面板' }));
+    const statusPanel = await screen.findByLabelText('当前对话状态');
+    await within(statusPanel).findByRole('button', { name: /构建工作区索引/ });
+    const capabilityToggle = await within(statusPanel).findByRole('button', { name: /当前对话工具与技能/ });
+    const capabilitySection = capabilityToggle.closest('section')!;
+    await user.click(capabilityToggle);
+    await user.click(within(capabilitySection).getByRole('button', { name: '管理当前对话的工具与技能' }));
+    await user.click(screen.getByRole('combobox', { name: '后台任务的当前对话临时设置' }));
+    await user.click(await screen.findByRole('option', { name: '不向伙伴披露' }));
+
+    expect(await screen.findByText('当前对话临时设置已保存')).toBeVisible();
+    await user.keyboard('{Escape}');
+    const preservedJobButton = within(statusPanel).getByRole('button', { name: /构建工作区索引/ });
+    expect(preservedJobButton).toBeVisible();
+    await user.click(preservedJobButton);
+    await user.click(within(statusPanel).getByRole('button', { name: '停止任务' }));
+    await user.click(within(statusPanel).getByRole('button', { name: '确认停止' }));
+    await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
+      pathId: 'agent.session.backgroundJob.cancel',
+      params: { sessionId: 'session-preview', jobId: runningJob.jobId },
+      body: { reason: 'control_center_requested' },
+    })));
   });
 
   it('keeps live agent, knowledge-source, and ephemeral subagent status visible without adding child Sessions', async () => {
@@ -651,6 +1189,7 @@ describe('Agent experience', () => {
     expect(within(statusPanel).getByText('规划员')).toBeInTheDocument();
     expect(within(statusPanel).getByText('审阅者')).toBeInTheDocument();
     expect(within(statusPanel).getByText('执行者')).toBeInTheDocument();
+    expect(within(statusPanel).getAllByText('关联计划：接入前端')).toHaveLength(4);
     expect(statusPanel.querySelector('.agent-status-subagent[data-state="running"] .agent-status-subagent__state svg')).toBeInTheDocument();
     expect(statusPanel.querySelector('.agent-status-subagent[data-state="queued"] .agent-status-subagent__state svg')).toBeInTheDocument();
     expect(statusPanel.querySelector('.agent-status-subagent[data-state="completed"]')).toBeInTheDocument();
@@ -673,7 +1212,7 @@ describe('Agent experience', () => {
         eventType: 'tool_started',
         payload: {
           toolCallId: 'knowledge-live',
-          toolId: 'ime_knowledge',
+          toolId: 'knowledge',
           operation: 'find',
           summary: '正在检索可引用的记忆证据',
           partialResult: {
@@ -691,13 +1230,14 @@ describe('Agent experience', () => {
     expect(statusPanel.querySelector('.agent-status-turn[data-state="running"] > svg')).toBeInTheDocument();
     expect(statusPanel.querySelector('.agent-status-tool[data-state="running"] .agent-status-tool__icon svg')).toBeInTheDocument();
     await user.click(knowledgeStep);
-    expect(within(statusPanel).getByText('ime_knowledge')).toBeInTheDocument();
-    expect(within(statusPanel).getByText('find')).toBeInTheDocument();
-    expect(within(statusPanel).getByText('0 个字段')).toBeInTheDocument();
-    expect(within(statusPanel).getByText('来源 2 · 进行中')).toBeInTheDocument();
-    expect(within(statusPanel).getByText('信息来源')).toBeInTheDocument();
-    expect(within(statusPanel).getByText('memory-design.md · 42-48 行')).toBeInTheDocument();
-    expect(within(statusPanel).getByText('agent-runtime.pdf · 第 7 页')).toBeInTheDocument();
+    const knowledgeTool = knowledgeStep.closest('.agent-status-tool') as HTMLElement;
+    expect(within(knowledgeTool).getByText('knowledge')).toBeInTheDocument();
+    expect(within(knowledgeTool).getByText('find')).toBeInTheDocument();
+    expect(within(knowledgeTool).getByText('0 个字段')).toBeInTheDocument();
+    expect(within(knowledgeTool).getByText('来源 2 · 进行中')).toBeInTheDocument();
+    expect(within(knowledgeTool).getByText('信息来源')).toBeInTheDocument();
+    expect(within(knowledgeTool).getByText('memory-design.md · 42-48 行')).toBeInTheDocument();
+    expect(within(knowledgeTool).getByText('agent-runtime.pdf · 第 7 页')).toBeInTheDocument();
   });
 
   it('keeps every tool step from the current turn available in the status panel', () => {
@@ -720,7 +1260,7 @@ describe('Agent experience', () => {
       eventType: 'tool_started' as const,
       payload: {
         toolCallId: `tool-call-${index}`,
-        toolId: 'ime_knowledge',
+        toolId: 'knowledge',
         operation: 'search',
         summary: `检索步骤 ${index + 1}`,
       },
@@ -731,7 +1271,7 @@ describe('Agent experience', () => {
     useAgentLiveStore.getState().clear(sessionId);
   });
 
-  it('projects the session-local agent plan into the right status panel', () => {
+  it('keeps the durable Session plan out of current-turn progress', () => {
     const sessionId = 'session-plan-panel';
     useAgentLiveStore.getState().appendOptimistic(sessionId, {
       clientMessageId: 'plan-panel',
@@ -784,9 +1324,11 @@ describe('Agent experience', () => {
       resumeToken: 'agent-plan-result',
     }]);
 
-    expect(projectStatusPanel(useAgentLiveStore.getState().projections[sessionId]).tasks).toEqual([
-      { id: 'agent-plan:step-1', label: '核对权限边界', status: 'completed' },
-      { id: 'agent-plan:step-2', label: '验证原生交互', status: 'running' },
+    const current = useAgentLiveStore.getState().projections[sessionId];
+    expect(projectStatusPanel(current).tasks).toEqual([]);
+    expect(current.plan.items.map((item) => item.title)).toEqual([
+      '核对权限边界',
+      '验证原生交互',
     ]);
     useAgentLiveStore.getState().clear(sessionId);
   });
@@ -943,7 +1485,7 @@ describe('Agent experience', () => {
       transport.requests.filter((call) => call.request.pathId === 'agent.session.prompt'),
     ).toHaveLength(1));
 
-    await user.click(screen.getByRole('button', { name: /记忆整理/ }));
+    await user.click(screen.getByRole('button', { name: '记忆整理' }));
     await waitFor(() => expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue(''));
     await user.type(screen.getByRole('textbox', { name: '消息' }), 'B 可以独立发送');
     await user.click(screen.getByRole('button', { name: '发送' }));
@@ -958,7 +1500,7 @@ describe('Agent experience', () => {
     expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('B 的未发送草稿');
     expect(document.querySelector('.agent-conversation__header [role="alert"]')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    await user.click(screen.getByRole('button', { name: '控制中心迁移' }));
     await waitFor(() => expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('A 会迟到失败'));
     expect(Object.values(useAgentLiveStore.getState().projections['session-preview'].turnsById)
       .some((turn) => turn.failure === '当前模型不可用，请切换模型后重试。')).toBe(true);
@@ -1017,7 +1559,7 @@ describe('Agent experience', () => {
       transport.requests.filter((call) => call.request.pathId === 'agent.session.abort'),
     ).toHaveLength(1));
 
-    await user.click(screen.getByRole('button', { name: /记忆整理/ }));
+    await user.click(screen.getByRole('button', { name: '记忆整理' }));
     const composerB = await screen.findByRole('textbox', { name: '消息' });
     await user.type(composerB, 'B 不应被 A 的停止请求锁住');
     expect(screen.getByRole('button', { name: '发送' })).toBeEnabled();
@@ -1026,7 +1568,7 @@ describe('Agent experience', () => {
     expect(composerB).toHaveValue('B 不应被 A 的停止请求锁住');
     expect(screen.queryByText('A 的停止请求失败')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    await user.click(screen.getByRole('button', { name: '控制中心迁移' }));
     expect(await screen.findByText('A 的停止请求失败')).toBeInTheDocument();
   });
 
@@ -1510,7 +2052,7 @@ describe('Agent experience', () => {
         eventType: 'tool_finished',
         payload: {
           toolCallId: 'tool-approval-failed-ui',
-          toolName: 'ime_input',
+          toolName: 'input',
           isError: true,
           approvalId: 'approval-from-tool-1',
           payloadSha256: 'd'.repeat(64),
@@ -1535,6 +2077,8 @@ describe('Agent experience', () => {
       .find((item) => item.textContent?.includes('该操作需要本机审批后继续'));
     expect(activity).toBeDefined();
     fireEvent.click(activity!.querySelector('summary')!);
+    expect(activity).toHaveAttribute('open');
+    expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
     const failedRow = [...activity!.querySelectorAll<HTMLDetailsElement>('.agent-activity-row')]
       .find((row) => row.textContent?.includes('该操作需要本机审批后继续'));
     expect(failedRow).toBeDefined();
@@ -1585,6 +2129,8 @@ describe('Agent experience', () => {
       .find((item) => item.textContent?.includes('工作区不在授权目录内'));
     expect(activity).toBeDefined();
     fireEvent.click(activity!.querySelector('summary')!);
+    expect(activity).toHaveAttribute('open');
+    expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
     const failedRow = [...activity!.querySelectorAll<HTMLDetailsElement>('.agent-activity-row')]
       .find((row) => row.textContent?.includes('工作区不在授权目录内'));
     expect(failedRow).toBeDefined();
@@ -1594,7 +2140,7 @@ describe('Agent experience', () => {
     expect(await screen.findByText('对话权限')).toBeInTheDocument();
     const picker = document.querySelector('.agent-picker-popover');
     expect(picker).not.toBeNull();
-    expect(within(picker as HTMLElement).getByRole('radio', { name: /每次确认/ })).toBeInTheDocument();
+    expect(within(picker as HTMLElement).getByRole('radio', { name: /写入与命令确认/ })).toBeInTheDocument();
   });
 
   it('restores a pending approval dialog directly from the session snapshot', async () => {
@@ -1715,7 +2261,7 @@ describe('Agent experience', () => {
     // A modal blocks pointer navigation, but the selected Session can still
     // change through restored navigation/native state while the request is in
     // flight. Exercise that ownership boundary directly.
-    fireEvent.click(screen.getByRole('button', { name: /记忆整理/, hidden: true }));
+    fireEvent.click(screen.getByRole('button', { name: '记忆整理', hidden: true }));
     const composerB = await screen.findByRole('textbox', { name: '消息' });
     await user.type(composerB, 'B 的草稿不能被 A 的审批结果覆盖');
     await act(async () => pendingApproval.reject(new Error('A 的审批已经过期')));
@@ -1723,7 +2269,7 @@ describe('Agent experience', () => {
     expect(composerB).toHaveValue('B 的草稿不能被 A 的审批结果覆盖');
     expect(screen.queryByText('A 的审批已经过期')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    await user.click(screen.getByRole('button', { name: '控制中心迁移' }));
     expect(await screen.findByText('A 的审批已经过期')).toBeInTheDocument();
   });
 
@@ -1757,7 +2303,9 @@ describe('Agent experience', () => {
     expect(stopping).toBeDisabled();
     expect(stopping).toHaveAttribute('aria-busy', 'true');
     expect(useAgentLiveStore.getState().projections['session-preview']?.status).toBe('busy');
-    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.session.abort')).toHaveLength(1);
+    const abortRequests = transport.requests.filter(({ request }) => request.pathId === 'agent.session.abort');
+    expect(abortRequests).toHaveLength(1);
+    expect(abortRequests[0]?.request.body).toEqual({});
     resolveAbort({ ok: true });
   });
 
@@ -1934,7 +2482,7 @@ describe('Agent experience', () => {
       transport.requests.filter((call) => call.pathId === 'agent.session.review.resolve'),
     ).toHaveLength(1));
 
-    fireEvent.click(screen.getByRole('button', { name: /记忆整理/, hidden: true }));
+    fireEvent.click(screen.getByRole('button', { name: '记忆整理', hidden: true }));
     const composerB = await screen.findByRole('textbox', { name: '消息' });
     await user.type(composerB, 'B 的草稿不能被 A 的记忆审阅覆盖');
     await act(async () => pendingReview.reject(new Error('A 的记忆草案已经失效')));
@@ -1942,7 +2490,7 @@ describe('Agent experience', () => {
     expect(composerB).toHaveValue('B 的草稿不能被 A 的记忆审阅覆盖');
     expect(screen.queryByText('A 的记忆草案已经失效')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    await user.click(screen.getByRole('button', { name: '控制中心迁移' }));
     expect(await screen.findByText('A 的记忆草案已经失效')).toBeInTheDocument();
   });
 
@@ -1954,6 +2502,10 @@ describe('Agent experience', () => {
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.session.commands')).toBe(true));
 
     await user.type(composer, '/');
+    expect(composer).toHaveAttribute('aria-controls', 'agent-command-palette');
+    const activeCommandOptionId = composer.getAttribute('aria-activedescendant');
+    expect(activeCommandOptionId).toMatch(/^agent-command-option-\d+$/);
+    expect(document.getElementById(activeCommandOptionId!)).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('option', { name: /\/new/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/resume/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /\/name/ })).toBeInTheDocument();
@@ -1989,6 +2541,8 @@ describe('Agent experience', () => {
     await user.type(composer, '/');
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('listbox', { name: '命令面板' })).not.toBeInTheDocument();
+    expect(composer).not.toHaveAttribute('aria-controls');
+    expect(composer).not.toHaveAttribute('aria-activedescendant');
 
     await user.clear(composer);
     await user.type(composer, '/not-a-real-command');
@@ -2022,12 +2576,12 @@ describe('Agent experience', () => {
     expect(await screen.findByText('对话权限')).toBeInTheDocument();
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
-    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /每次确认/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /写入与命令确认/ })).toBeInTheDocument();
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /^只读/ })).toBeInTheDocument();
     expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /工作区托管/ })).toBeInTheDocument();
-    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /完全信任/ })).toBeInTheDocument();
+    expect(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全自动/ })).toBeInTheDocument();
     const readonlyPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /^只读/ });
-    const perActionPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /每次确认/ });
+    const perActionPermission = within(permissionPicker as HTMLElement).getByRole('radio', { name: /写入与命令确认/ });
     expect(perActionPermission).toHaveAttribute('aria-checked', 'true');
     readonlyPermission.focus();
     await user.keyboard(' ');
@@ -2050,7 +2604,7 @@ describe('Agent experience', () => {
     await user.click(screen.getByRole('option', { name: /\/tools/ }));
     const toolPicker = document.querySelector('.agent-tool-picker');
     expect(toolPicker).not.toBeNull();
-    expect(within(toolPicker as HTMLElement).getByText('可用工具')).toBeInTheDocument();
+    expect(within(toolPicker as HTMLElement).getByText('当前对话能力')).toBeInTheDocument();
     await user.keyboard('{Escape}');
 
     await openCommandPalette();
@@ -2078,6 +2632,30 @@ describe('Agent experience', () => {
     await openCommandPalette();
     await user.click(screen.getByRole('option', { name: /\/settings/ }));
     expect(window.location.hash).toBe('#/configuration');
+  });
+
+  it('closes and disables the permission picker as soon as a turn becomes busy', async () => {
+    const transport = featureTransport();
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    const permissionButton = await screen.findByRole('button', { name: '对话权限：写入与命令确认' });
+    await user.click(permissionButton);
+    expect(await screen.findByText('对话权限')).toBeInTheDocument();
+
+    act(() => {
+      useAgentLiveStore.getState().appendOptimistic('session-preview', {
+        clientMessageId: 'permission-busy-turn',
+        text: '先完成当前回合',
+        attachments: [],
+        nowMs: Date.now(),
+      });
+    });
+
+    await waitFor(() => expect(document.querySelector('.agent-picker-popover')).toBeNull());
+    expect(permissionButton).toBeDisabled();
+    expect(permissionButton).toHaveAttribute('title', '请先结束或停止当前任务，再调整运行权限。');
+    expect(transport.requests.some((call) => call.request.pathId === 'agent.session.mode.update')).toBe(false);
   });
 
   it('applies one optimistic context-resource profile through one settings request', async () => {
@@ -2242,7 +2820,7 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '对话权限：每次确认' }));
+    await user.click(await screen.findByRole('button', { name: '对话权限：写入与命令确认' }));
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
     await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /工作区托管/ }));
@@ -2268,7 +2846,7 @@ describe('Agent experience', () => {
     expect(await screen.findByRole('button', { name: '对话权限：工作区托管' })).toBeInTheDocument();
   });
 
-  it('requires an explicit native confirmation before enabling complete trust', async () => {
+  it('requires explicit confirmation before enabling Luna-arbitrated full automation', async () => {
     const assistantSession = {
       ...previewSessions[0]!,
       mode: 'assistant' as const,
@@ -2290,15 +2868,15 @@ describe('Agent experience', () => {
     const user = userEvent.setup();
     renderAgent(transport);
 
-    await user.click(await screen.findByRole('button', { name: '对话权限：每次确认' }));
+    await user.click(await screen.findByRole('button', { name: '对话权限：写入与命令确认' }));
     const permissionPicker = document.querySelector('.agent-picker-popover');
     expect(permissionPicker).not.toBeNull();
-    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /完全信任/ }));
+    await user.click(within(permissionPicker as HTMLElement).getByRole('radio', { name: /全自动/ }));
 
-    const dialog = await screen.findByRole('dialog', { name: '启用完全信任？' });
-    const confirm = within(dialog).getByRole('button', { name: '启用完全信任' });
+    const dialog = await screen.findByRole('dialog', { name: '启用全自动模式？' });
+    const confirm = within(dialog).getByRole('button', { name: '启用全自动' });
     expect(confirm).toBeDisabled();
-    await user.click(within(dialog).getByRole('checkbox', { name: '我确认让此对话自动批准工作区内的受控写入和命令' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: '我确认让此对话全自动执行，并由独立审批 Agent（Luna Max）判定所有待审批操作' }));
     expect(confirm).toBeEnabled();
     await user.click(confirm);
 
@@ -2322,7 +2900,7 @@ describe('Agent experience', () => {
         },
       }),
     })));
-    expect(await screen.findByRole('button', { name: '对话权限：完全信任' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '对话权限：全自动' })).toBeInTheDocument();
   });
 
   it('sends an advertised Pi RPC command through the prompt route', async () => {
@@ -2362,7 +2940,7 @@ describe('Agent experience', () => {
     await user.type(composer, '/');
     const toolsCommand = screen.getByRole('option', { name: /\/tools/ });
     expect(toolsCommand).toBeDisabled();
-    expect(toolsCommand).toHaveAttribute('title', '每次确认没有可用工具');
+    expect(toolsCommand).toHaveAttribute('title', '写入与命令确认没有可用工具');
     await user.keyboard('{Escape}');
 
     act(() => {
@@ -2441,7 +3019,7 @@ describe('Agent experience', () => {
     });
     await waitFor(() => expect(transport.pasteImages).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: /记忆整理/ }));
+    await user.click(screen.getByRole('button', { name: '记忆整理' }));
     const composerB = await screen.findByRole('textbox', { name: '消息' });
     await user.type(composerB, 'B 保留自己的草稿');
     await act(async () => pendingPaste.resolve([{
@@ -2456,7 +3034,7 @@ describe('Agent experience', () => {
     expect(composerB).toHaveValue('B 保留自己的草稿');
     expect(screen.queryByText('late.png')).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    await user.click(screen.getByRole('button', { name: '控制中心迁移' }));
     expect(await screen.findByText('late.png')).toBeInTheDocument();
   });
 
@@ -2559,17 +3137,17 @@ describe('Agent experience', () => {
     renderAgent(transport);
     const trigger = await screen.findByRole(
       'button',
-      { name: '这段对话可用工具：13 个' },
+      { name: '这段对话可用工具：14 个' },
       { timeout: 5_000 },
     );
 
     await user.click(trigger);
-    expect(screen.getByRole('button', { name: /当前状态/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /运行项目命令/ })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /当前状态/ }));
+    expect(screen.getByRole('button', { name: /^控制中心概览/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^受控命令/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^控制中心概览/ }));
 
     expect(screen.getByRole('textbox', { name: '消息' })).toHaveValue('帮我看看当前状态：');
-    expect(screen.queryByText('ime_overview')).not.toBeInTheDocument();
+    expect(screen.queryByText('overview')).not.toBeInTheDocument();
     expect(transport.requests.some((call) => call.request.pathId === 'agent.session.prompt')).toBe(false);
   });
 
@@ -2579,11 +3157,11 @@ describe('Agent experience', () => {
     });
     renderAgent(transport);
 
-    expect(await screen.findByRole('button', { name: /控制中心迁移/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '控制中心迁移' })).toBeInTheDocument();
     expect(await screen.findByRole('textbox', { name: '消息' })).toBeInTheDocument();
-    const unavailableTools = await screen.findByRole('button', { name: '工具列表暂不可用' });
+    const unavailableTools = await screen.findByRole('button', { name: '能力列表暂不可用' });
     expect(unavailableTools).toBeDisabled();
-    expect(unavailableTools).toHaveTextContent('工具 · 未加载');
+    expect(unavailableTools).toHaveTextContent('能力 · 未加载');
   });
 
   it('opens the backend active conversation instead of a newer empty Session', async () => {
@@ -2596,7 +3174,7 @@ describe('Agent experience', () => {
     );
     renderAgent(transport);
 
-    expect(await screen.findByRole('button', { name: /仍在继续的对话/ })).toHaveAttribute('aria-current', 'true');
+    expect(await screen.findByRole('button', { name: '仍在继续的对话' })).toHaveAttribute('aria-current', 'true');
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
         pathId: 'agent.session.snapshot',
@@ -2615,7 +3193,24 @@ describe('Agent experience', () => {
     );
     renderAgent(transport);
 
-    expect(await screen.findByRole('button', { name: /继续昨天的对话/ })).toHaveAttribute('aria-current', 'true');
+    expect(await screen.findByRole('button', { name: '继续昨天的对话' })).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('shows the conversation rail while the independent role catalog is slow', async () => {
+    const pendingRoles = deferred<unknown>();
+    const transport = productionTransport({
+      'agent.roles.list': () => pendingRoles.promise,
+    });
+    renderAgent(transport);
+
+    expect(await screen.findByRole(
+      'button',
+      { name: '控制中心迁移' },
+      { timeout: 5_000 },
+    )).toBeInTheDocument();
+    expect(await screen.findByRole('textbox', { name: '消息' })).toBeEnabled();
+
+    await act(async () => pendingRoles.resolve({ ok: true, items: previewPersonas }));
   });
 
   it('keeps persisted conversation visible when the model catalog fails', async () => {
@@ -2627,6 +3222,36 @@ describe('Agent experience', () => {
     await waitFor(() => expect(useAgentLiveStore.getState().projections['session-preview']?.messageOrder).toHaveLength(4));
     expect(useAgentLiveStore.getState().projections['session-preview']?.turnOrder).toHaveLength(2);
     expect(await screen.findByRole('alert')).toHaveTextContent('模型目录暂时不可用，对话记录仍可查看');
+  });
+
+  it('clears only the recovered catalog warning after a Session retry succeeds', async () => {
+    const first = { ...previewSessions[0]!, id: 'session-catalog-a', title: '目录恢复 A' };
+    const second = { ...previewSessions[0]!, id: 'session-catalog-b', title: '目录恢复 B' };
+    let firstModelCalls = 0;
+    const transport = productionTransport({
+      'agent.sessions.list': { ok: true, activeSessionId: first.id, items: [first, second] },
+      'agent.session.snapshot': (request: ControlRequest) => previewAgentSnapshot(request.params?.sessionId ?? first.id),
+      'agent.session.models': (request: ControlRequest) => {
+        const sessionId = request.params?.sessionId ?? first.id;
+        if (sessionId === first.id) {
+          firstModelCalls += 1;
+          if (firstModelCalls === 1) throw new Error('temporary model discovery failure');
+        }
+        return { ...previewModelCatalog(sessionId), sessionId };
+      },
+    });
+    const user = userEvent.setup();
+    renderAgent(transport);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('模型目录暂时不可用');
+    await user.click(screen.getByRole('button', { name: '目录恢复 B' }));
+    await waitFor(() => expect(transport.requests.some((request) => (
+      request.pathId === 'agent.session.models'
+      && request.params?.sessionId === second.id
+    ))).toBe(true));
+    await user.click(screen.getByRole('button', { name: '目录恢复 A' }));
+    await waitFor(() => expect(firstModelCalls).toBe(2));
+    await waitFor(() => expect(screen.queryByText(/模型目录暂时不可用/)).not.toBeInTheDocument());
   });
 
   it('keeps the last Pi-confirmed model catalog visible while a returning Session refreshes', async () => {
@@ -2658,16 +3283,16 @@ describe('Agent experience', () => {
       { name: /模型：GPT-5\.4/ },
       { timeout: 5_000 },
     );
-    await user.click(screen.getByRole('button', { name: /记忆整理/ }));
+    await user.click(screen.getByRole('button', { name: '记忆整理' }));
     await screen.findByRole(
       'button',
       { name: /模型：DeepSeek V4/ },
       { timeout: 5_000 },
     );
 
-    await user.click(screen.getByRole('button', { name: /控制中心迁移/ }));
+    await user.click(screen.getByRole('button', { name: '控制中心迁移' }));
     await waitFor(() => expect(
-      screen.getByRole('button', { name: /控制中心迁移/ }),
+      screen.getByRole('button', { name: '控制中心迁移' }),
     ).toHaveAttribute('aria-current', 'true'));
     expect(screen.getByRole('button', { name: /模型：GPT-5\.4/ })).toBeEnabled();
 
@@ -2692,6 +3317,27 @@ describe('Agent experience', () => {
     );
   });
 
+  it('makes tools ready without waiting for slow model and command catalogs', async () => {
+    const pendingModels = deferred<unknown>();
+    const pendingCommands = deferred<unknown>();
+    const transport = productionTransport({
+      'agent.session.models': () => pendingModels.promise,
+      'agent.session.commands': () => pendingCommands.promise,
+    });
+    renderAgent(transport);
+
+    expect(await screen.findByRole(
+      'button',
+      { name: /这段对话可用工具：14 个/ },
+      { timeout: 5_000 },
+    )).toBeEnabled();
+
+    await act(async () => {
+      pendingModels.resolve(previewModelCatalog('session-preview'));
+      pendingCommands.resolve(commandCatalog());
+    });
+  });
+
   it('makes the model and tool controls ready while a slow history snapshot is still loading', async () => {
     const pendingSnapshot = deferred<unknown>();
     const transport = productionTransport({
@@ -2706,7 +3352,7 @@ describe('Agent experience', () => {
     )).toBeEnabled();
     expect(await screen.findByRole(
       'button',
-      { name: /这段对话可用工具：13 个/ },
+      { name: /这段对话可用工具：14 个/ },
       { timeout: 5_000 },
     )).toBeEnabled();
     expect(useAgentLiveStore.getState().projections['session-preview']?.messageOrder ?? []).toEqual([]);
@@ -2743,7 +3389,7 @@ describe('Agent experience', () => {
     expect(persistedMessages.some((message) => message.role === 'user'
       && message.blocks.some((block) => String(block.data.text).includes('把迁移进度按真实代码链整理一下')))).toBe(true);
     expect(persistedMessages.some((message) => message.role === 'assistant'
-      && message.blocks.some((block) => String(block.data.text).includes('三条 Lane 已经收束到同一个')))).toBe(true);
+      && message.blocks.some((block) => String(block.data.text).includes('三条工作线已经收束到同一个')))).toBe(true);
   });
 
   it('uses the Pi runtime selection without deriving the Persona from the model name', async () => {
@@ -3183,19 +3829,15 @@ describe('Agent experience', () => {
     const lastSession = sessionRows.item(sessionRows.length - 1);
     const lastSessionArchive = lastSession.parentElement?.querySelector<HTMLButtonElement>('.agent-session-row__archive');
     const lastSessionMenu = lastSession.parentElement?.querySelector<HTMLButtonElement>('.agent-session-row__menu');
-    expect(lastSessionArchive).not.toBeNull();
+    expect(lastSessionArchive).toBeNull();
     expect(lastSessionMenu).not.toBeNull();
     lastSession.focus();
-    await user.tab();
-    expect(lastSessionArchive).toHaveFocus();
     await user.tab();
     expect(lastSessionMenu).toHaveFocus();
     await user.tab();
     expect(within(rail).getByRole('button', { name: '新建对话' })).toHaveFocus();
     await user.tab({ shift: true });
     expect(lastSessionMenu).toHaveFocus();
-    await user.tab({ shift: true });
-    expect(lastSessionArchive).toHaveFocus();
     await user.tab({ shift: true });
     expect(lastSession).toHaveFocus();
 
@@ -3214,11 +3856,11 @@ describe('Agent experience', () => {
 
     await user.click(toggle);
     expect(document.querySelector('.agent-rail-backdrop')).toBeInTheDocument();
-    await user.click(await screen.findByRole('button', { name: /记忆整理/ }));
+    await user.click(await screen.findByRole('button', { name: '记忆整理' }));
     expect(feature()).toHaveAttribute('data-rail-open', 'false');
   });
 
-  it('treats the responsive status panel as a focus-managed dialog', async () => {
+  it('opens the authoritative responsive status panel from the compact header trigger', async () => {
     vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
       matches: query.includes('max-width: 1360px'),
     })));
@@ -3231,6 +3873,7 @@ describe('Agent experience', () => {
     renderAgent(featureTransport());
 
     const toggle = await screen.findByRole('button', { name: '展开状态面板' });
+    expect(screen.queryByRole('button', { name: /打开当前对话状态面板/ })).not.toBeInTheDocument();
     await user.click(toggle);
     const panel = screen.getByRole('dialog', { name: '当前对话状态' });
     const conversation = document.querySelector('.agent-conversation');
@@ -3283,7 +3926,7 @@ describe('Agent experience', () => {
     const transport = featureTransport();
     renderAgent(transport, '/agent?session=session-memory');
 
-    expect(await screen.findByRole('button', { name: /记忆整理/ })).toHaveAttribute('aria-current', 'true');
+    expect(await screen.findByRole('button', { name: '记忆整理' })).toHaveAttribute('aria-current', 'true');
     await waitFor(() => expect(transport.requests).toContainEqual(expect.objectContaining({
       request: expect.objectContaining({
         pathId: 'agent.session.snapshot',
@@ -3312,8 +3955,46 @@ describe('Agent experience', () => {
       expect.arrayContaining(['agent.sessions.list', 'agent.roles.list']),
     ));
     expect(screen.getByText('0 段对话 · 0 个项目')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '还没有对话' })).toBeVisible();
+    expect(within(screen.getByLabelText('对话与项目')).getByRole('button', { name: '新建对话' })).toBeEnabled();
     expect(screen.queryByText('控制中心迁移')).not.toBeInTheDocument();
     expect(screen.queryByText('记忆整理')).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a Session load error from an authoritative empty result and can retry', async () => {
+    let attempts = 0;
+    const transport = new StubControlTransport('native', {
+      'agent.sessions.list': () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('Session 服务暂不可用');
+        return { ok: true, items: [] };
+      },
+      'agent.roles.list': { ok: true, items: [] },
+      'agent.tools.list': { ok: true, items: [] },
+    });
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/agent']}>
+        <ControlTransportProvider transport={transport}>
+          <QueryClientProvider client={testQueryClient()}>
+            <TooltipProvider><AgentFeature /></TooltipProvider>
+          </QueryClientProvider>
+        </ControlTransportProvider>
+      </MemoryRouter>,
+    );
+
+    const shellHeading = await screen.findByRole('heading', { name: '无法读取对话' });
+    const rail = screen.getByLabelText('对话与项目');
+    expect(shellHeading).toBeVisible();
+    expect(shellHeading.closest('[role="alert"]')).toBeNull();
+    expect(within(rail).getByRole('alert')).toHaveTextContent('Session 服务暂不可用');
+    expect(within(rail).getByRole('button', { name: '重新读取' })).toBeEnabled();
+    expect(screen.queryByRole('heading', { name: '还没有对话' })).not.toBeInTheDocument();
+
+    await user.click(within(rail).getByRole('button', { name: '重新读取' }));
+
+    expect(await screen.findByRole('heading', { name: '还没有对话' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: '无法读取对话' })).not.toBeInTheDocument();
   });
 });
 
@@ -3345,7 +4026,7 @@ function deferred<T>() {
 
 function featureTransport(
   modelCatalog: unknown = previewModelCatalog('session-preview'),
-  toolRoute: unknown = { ok: true, items: toolCatalog() },
+  toolRoute: unknown = undefined,
   sessionRoute: unknown = { ok: true, items: previewSessions },
   promptRoute: unknown = { ok: true },
   subagentRoute: unknown = { ok: true, items: [] },
@@ -3385,7 +4066,15 @@ function featureTransport(
   modelSelectRoute: unknown = { ok: true },
   thinkingSelectRoute: unknown = { ok: true },
   modeUpdateRoute: unknown = { ok: true },
+  forkListRoute: unknown = forkListFixture(),
+  rewriteRoute: unknown = { ok: true },
 ): MockControlTransport {
+  const normalizedToolRoute = toolRoute === undefined
+    ? (request: ControlRequest) => capabilityToolCatalog(
+      toolCatalog(),
+      typeof request.query?.sessionId === 'string' ? request.query.sessionId : 'session-preview',
+    )
+    : normalizeCapabilityToolRoute(toolRoute);
   return new MockControlTransport({
     pickedFiles: [{
       id: 'media_fixture_attachment_01',
@@ -3406,7 +4095,7 @@ function featureTransport(
     routes: {
       'agent.sessions.list': sessionRoute,
       'agent.roles.list': { ok: true, items: previewPersonas },
-      'agent.tools.list': toolRoute,
+      'agent.tools.list': normalizedToolRoute,
       'agent.runtime.get': runtimeRoute,
       'agent.session.snapshot': snapshotRoute,
       'agent.session.workflow.get': workflowRouteFixture(),
@@ -3415,19 +4104,8 @@ function featureTransport(
       'agent.session.models': modelCatalog,
       'agent.session.commands': commandCatalog(),
       'agent.session.prompt': promptRoute,
-      'agent.session.rewrite': { ok: true },
-      'agent.session.forks.list': {
-        schemaVersion: 'rag-ime.agent-session-fork-candidates.v1',
-        ok: true,
-        sessionId: 'session-preview',
-        items: [
-          { entryId: 'session-preview:user-architecture', text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。', role: 'user', createdAtMs: 0 },
-          { entryId: 'session-preview:assistant-architecture', text: '三条 Lane 已经收束到同一个可执行计划。', role: 'assistant', createdAtMs: 0 },
-          { entryId: 'session-preview:user-media', text: '读取输入法工具书，并把结果作为可展开卡片保留。', role: 'user', createdAtMs: 0 },
-          { entryId: 'session-preview:assistant-media', text: '已完成。正文展示工具书内容，精确接口与参数继续留在右侧运行状态中。', role: 'assistant', createdAtMs: 0 },
-          { entryId: 'internal-context', text: '<rag-ime-deep-search-context>private deep-search evidence</rag-ime-deep-search-context>', role: 'user', createdAtMs: 0 },
-        ],
-      },
+      'agent.session.rewrite': rewriteRoute,
+      'agent.session.forks.list': forkListRoute,
       'agent.session.forks.create': forkCreateRoute,
       'agent.sessions.create': { ok: true },
       'agent.session.rename': { ok: true },
@@ -3451,6 +4129,21 @@ function featureTransport(
       'knowledge.database.apply': { ok: true },
     },
   });
+}
+
+function forkListFixture() {
+  return {
+    schemaVersion: 'rag-ime.agent-session-fork-candidates.v1',
+    ok: true,
+    sessionId: 'session-preview',
+    items: [
+      { entryId: 'session-preview:user-architecture', text: '把迁移进度按真实代码链整理一下，别把工具日志当回答。', role: 'user', createdAtMs: 0 },
+      { entryId: 'session-preview:assistant-architecture', text: '三条工作线已经收束到同一个可执行计划。', role: 'assistant', createdAtMs: 0 },
+      { entryId: 'session-preview:user-media', text: '读取输入法工具书，并把结果作为可展开卡片保留。', role: 'user', createdAtMs: 0 },
+      { entryId: 'session-preview:assistant-media', text: '已完成。正文展示工具书内容，精确接口与参数继续留在右侧运行状态中。', role: 'assistant', createdAtMs: 0 },
+      { entryId: 'internal-context', text: '<rag-ime-deep-search-context>private deep-search evidence</rag-ime-deep-search-context>', role: 'user', createdAtMs: 0 },
+    ],
+  };
 }
 
 function workflowRouteFixture() {
@@ -3484,15 +4177,24 @@ function workflowRouteFixture() {
       goalId: '',
       revision: 0,
       objective: '',
+      successCriteria: '',
+      evidenceExpectations: [],
       status: 'cleared',
       budget: { tokenLimit: null, timeLimitMs: null },
       usage: { tokens: 0, elapsedMs: 0 },
       remaining: { tokens: null, timeMs: null },
       budgetExceeded: false,
       completionAudit: null,
+      cancellationAudit: null,
       updatedAtMs: 0,
     },
-    actGate: { allowed: true, reason: 'approved', message: 'Plan 已批准，可以执行。' },
+    actGate: {
+      allowed: true,
+      reason: 'approved',
+      message: 'Plan 已批准，可以执行。',
+      planRevision: 4,
+      goalRevision: 0,
+    },
   };
 }
 
@@ -3508,6 +4210,8 @@ function subagentListFixture() {
     id,
     batchId: 'batch-status-panel',
     childSessionId: `session-child-${id}`,
+    planItemId: 'plan:item:2',
+    planItemTitle: '接入前端',
     templateId,
     templateVersion: '1',
     ordinal: 0,
@@ -3571,7 +4275,10 @@ function productionTransport(
   return new StubControlTransport('native', {
     'agent.sessions.list': { ok: true, activeSessionId: 'session-preview', items: previewSessions },
     'agent.roles.list': { ok: true, items: previewPersonas },
-    'agent.tools.list': { ok: true, items: toolCatalog() },
+    'agent.tools.list': (request: ControlRequest) => capabilityToolCatalog(
+      toolCatalog(),
+      typeof request.query?.sessionId === 'string' ? request.query.sessionId : 'session-preview',
+    ),
     'agent.session.snapshot': previewAgentSnapshot('session-preview'),
     'agent.session.models': previewModelCatalog('session-preview'),
     'agent.session.commands': commandCatalog(),
@@ -3617,19 +4324,20 @@ function modelFixture(id: string, name: string, thinkingLevels: ThinkingLevel[] 
 
 function toolCatalog() {
   const tools = [
-    ['ime_overview', '控制中心概览', 'overview'],
-    ['ime_input', '输入法', 'input'],
-    ['ime_voice', '语音输入', 'voice'],
-    ['ime_planning', '规划与任务', 'planning'],
-    ['ime_memory', '记忆与工具书', 'memory'],
-    ['ime_knowledge', '知识检索', 'knowledge'],
-    ['ime_models', '模型', 'models'],
-    ['ime_runtime', '诊断与运行时', 'runtime'],
-    ['ime_configuration', '历史与配置', 'configuration'],
-    ['ime_agents', '多 Agent 协作', 'agents'],
+    ['overview', '控制中心概览', 'overview'],
+    ['input', '输入法', 'input'],
+    ['voice', '语音输入', 'voice'],
+    ['planning', '规划与任务', 'planning'],
+    ['memory', '记忆与工具书', 'memory'],
+    ['knowledge', '知识检索', 'knowledge'],
+    ['models', '模型', 'models'],
+    ['runtime', '诊断与运行时', 'runtime'],
+    ['configuration', '历史与配置', 'configuration'],
+    ['agents', '多 Agent 协作', 'agents'],
     ['workspace_list', '工作区浏览', 'workspace'],
     ['workspace_read', '工作区读取', 'workspace'],
     ['workspace_shell', '受控命令', 'workspace'],
+    ['workspace_job', '后台任务', 'workspace'],
   ] as const;
   return tools.map(([id, displayName, category]) => ({
     schemaVersion: 'rag-ime.control-tool-manifest.v1',
@@ -3637,15 +4345,116 @@ function toolCatalog() {
     domain: category,
     displayName,
     description: `${displayName}真实能力`,
-    category,
-    riskLevel: id === 'workspace_shell' ? 'R2' : 'R0',
-    operationRisks: { status: id === 'workspace_shell' ? 'R2' : 'R0' },
+    riskLevel: id === 'workspace_shell' || id === 'workspace_job' ? 'R2' : 'R0',
+    operationRisks: { status: id === 'workspace_shell' || id === 'workspace_job' ? 'R2' : 'R0' },
     sessionModes: id.startsWith('workspace_') ? ['coordinator'] : ['assistant', 'coordinator'],
     operations: ['status'],
     resultPresentation: 'tool_result',
     availability: 'online',
     version: '1',
   }));
+}
+
+type ToolCatalogFixture = ReturnType<typeof toolCatalog>[number] & { enabled?: boolean };
+
+function normalizeCapabilityToolRoute(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  const route = value as Record<string, unknown>;
+  if (route.schemaVersion !== undefined || !Array.isArray(route.items)) return value;
+  return (request: ControlRequest) => capabilityToolCatalog(
+    route.items as ToolCatalogFixture[],
+    typeof request.query?.sessionId === 'string' ? request.query.sessionId : 'session-preview',
+  );
+}
+
+function capabilityToolCatalog(tools: readonly ToolCatalogFixture[] = toolCatalog(), sessionId = 'session-preview') {
+  const effectiveAtMs = 1;
+  const toolItems = tools.map((tool) => {
+    const enabled = tool.enabled !== false;
+    const canonicalId = `tool:${tool.id}`;
+    return {
+      ...tool,
+      canonicalId,
+      kind: 'tool',
+      source: { kind: 'product', label: 'Personal Agent Workbench' },
+      status: tool.availability,
+      risk: tool.riskLevel,
+      requiredPermissions: [],
+      authorization: {
+        state: enabled ? 'authorized' : 'denied',
+        reason: enabled
+          ? 'existing_session_policy_authorizes_tool'
+          : 'existing_session_policy_does_not_authorize_tool',
+      },
+      disclosure: {
+        preference: 'inherit',
+        effective: 'enabled',
+        state: 'disclosed',
+        reason: 'inherited_built_in_default',
+      },
+      effectiveScope: 'built_in_default',
+      reasons: [
+        'inherited_built_in_default',
+        enabled
+          ? 'tool_authorized_by_existing_session_policy'
+          : 'tool_not_authorized_by_existing_session_policy',
+      ],
+      revision: `tool-spec:${tool.version}`,
+      effectiveAtMs,
+    };
+  });
+  const items = [
+    ...toolItems,
+    {
+      id: 'browser',
+      canonicalId: 'skill:browser',
+      kind: 'skill',
+      displayName: 'browser',
+      description: '按需加载浏览器 Skill',
+      source: { kind: 'governed_native', label: 'Pi native Skills' },
+      status: 'ready',
+      risk: 'R0',
+      requiredPermissions: ['skill_load'],
+      authorization: {
+        state: 'authorized',
+        reason: 'existing_skill_policy_authorizes_load',
+      },
+      disclosure: {
+        preference: 'inherit',
+        effective: 'enabled',
+        state: 'disclosed',
+        reason: 'inherited_built_in_default',
+      },
+      effectiveScope: 'built_in_default',
+      reasons: ['inherited_built_in_default', 'skill_authorized_by_existing_room_policy'],
+      revision: 'skill:1',
+      effectiveAtMs,
+    },
+  ];
+  return {
+    schemaVersion: 'rag-ime.capability-catalog.v1',
+    ok: true,
+    revision: `sha256:${'a'.repeat(64)}`,
+    effectiveAtMs,
+    projectScope: {
+      supported: true,
+      identityKind: 'workspace_scope_sha256',
+      projectId: `workspace-${'b'.repeat(64)}`,
+      reason: 'session_workspace_scope',
+    },
+    sessionPolicy: {
+      sessionId,
+      policyRevision: 1,
+      disclosurePreferences: {
+        globalDefault: {},
+        projectDefault: {},
+        session: {},
+        effective: Object.fromEntries(items.map((item) => [item.canonicalId, 'enabled'])),
+      },
+      effectiveAtMs,
+    },
+    items,
+  };
 }
 
 function historyMessage(

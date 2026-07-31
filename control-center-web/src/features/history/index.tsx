@@ -208,7 +208,12 @@ export function HistoryFeature() {
           </ManagementSection>
         ) : null}
       </QueryState>
-      <HistoryDetailDialog eventId={detailEventId} onOpenChange={(open) => { if (!open) setDetailEventId(null); }} productName={identity.productName} />
+      <HistoryDetailDialog
+        eventId={detailEventId}
+        onOpenChange={(open) => { if (!open) setDetailEventId(null); }}
+        productName={identity.productName}
+        returnFocusId={selectedId}
+      />
     </ManagementPage>
   );
 }
@@ -233,22 +238,15 @@ function HistoryTable({
             const label = `查看 ${stringValue(row.created, '这条记录')} 的输入详情`;
             return (
               <tr
-                aria-label={label}
                 key={id}
                 onClick={() => onOpen(row)}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter' && event.key !== ' ') return;
-                  event.preventDefault();
-                  onOpen(row);
-                }}
-                tabIndex={0}
               >
                 <td>{stringValue(row.created, '未记录')}</td>
                 <td>{stringValue(row.sourceLabel, '未知来源')}</td>
                 <td className="history-table__preview">{stringValue(row.text, '没有可显示的摘要')}</td>
                 <td>{stringValue(row.app, '未记录')}</td>
                 <td>{projectLabel(stringValue(row.project), productName)}</td>
-                <td><button aria-label={label} className="history-table__open" onClick={(event) => { event.stopPropagation(); onOpen(row); }} type="button"><Eye aria-hidden="true" size={15} /></button></td>
+                <td><button aria-label={label} className="history-table__open" data-history-event-id={id} onClick={(event) => { event.stopPropagation(); onOpen(row); }} type="button"><Eye aria-hidden="true" size={15} /><span>查看</span></button></td>
               </tr>
             );
           })}
@@ -262,10 +260,12 @@ function HistoryDetailDialog({
   eventId,
   onOpenChange,
   productName,
+  returnFocusId,
 }: {
   eventId: number | null;
   onOpenChange: (open: boolean) => void;
   productName: string;
+  returnFocusId: string;
 }) {
   const detail = useHistoryDetail(eventId);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -305,7 +305,17 @@ function HistoryDetailDialog({
       setContextCopyState('idle');
       onOpenChange(open);
     }} open={eventId !== null}>
-      <DialogContent className="history-detail-dialog">
+      <DialogContent
+        className="history-detail-dialog"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          window.setTimeout(() => {
+            document.querySelector<HTMLButtonElement>(
+              `.history-table__open[data-history-event-id="${CSS.escape(returnFocusId)}"]`,
+            )?.focus({ preventScroll: true });
+          });
+        }}
+      >
         <DialogHeader>
           <DialogTitle>输入详情</DialogTitle>
           <DialogDescription>{response.ok === true ? `${formatTime(item.createdAtMs)} 保存的内容` : '读取已保存的完整输入内容'}</DialogDescription>
@@ -359,7 +369,7 @@ function HistoryDetailDialog({
               {contextCopyState === 'failed' ? <p className="history-detail__copy-error" role="status">复制失败，可直接选择上方内容复制。</p> : null}
             </section>
             <section aria-labelledby="history-detail-feedback" className="history-detail__feedback">
-              <div className="history-detail__section-heading"><div><h3 id="history-detail-feedback">反馈与状态</h3><small>服务端已保存的真实状态</small></div></div>
+              <div className="history-detail__section-heading"><div><h3 id="history-detail-feedback">反馈与状态</h3><small>已经保存的真实状态</small></div></div>
               {hasFeedback ? (
                 <dl className="history-detail__feedback-grid">
                   <DetailFact label="采用" value={`${numberValue(feedback.acceptedCount)} 次`} />
@@ -432,7 +442,7 @@ function groupLevelLabel(level: string): string {
 
 function captureSourceLabel(source: string, mode: string): string {
   if (mode === 'terminal_visible_range') return '终端可见范围';
-  if (mode === 'accessibility_semantics' || source === 'accessibility') return 'Accessibility 文本';
+  if (mode === 'accessibility_semantics' || source === 'accessibility') return '辅助功能读取';
   if (source === 'text_input_client') return '当前输入控件';
   if (source === 'ime_active_buffer') return '输入法缓冲区';
   if (source === 'stored_event_context') return '事件上下文';

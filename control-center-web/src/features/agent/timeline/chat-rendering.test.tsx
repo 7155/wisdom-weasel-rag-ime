@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TooltipProvider } from '@/components/primitives';
 import type { UiAgentBlock, UiAgentMessage } from '@/contracts/ui-events';
 import { agentEventFixture } from '@/test/fixtures/events';
@@ -84,7 +84,7 @@ describe('Agent chat rendering', () => {
       kind: 'tool_finished',
       status: 'completed' as const,
       summary: '工具完成',
-      payload: { toolName: 'ime_overview' },
+      payload: { toolName: 'overview' },
       createdAtMs: 100,
       updatedAtMs: 100,
       timelineSequence: 9,
@@ -114,11 +114,11 @@ describe('Agent chat rendering', () => {
       }),
       agentEventFixture(3, 'tool_started', {
         toolCallId: 'call-interleaved-overview',
-        toolName: 'ime_overview',
+        toolName: 'overview',
       }),
       agentEventFixture(4, 'tool_finished', {
         toolCallId: 'call-interleaved-overview',
-        toolName: 'ime_overview',
+        toolName: 'overview',
         result: { details: { ok: true, operation: 'status', result: { summary: '运行状态正常' } } },
       }),
       agentEventFixture(5, 'text_delta', { delta: '读取完成，当前运行正常。', replaceBlock: true }),
@@ -138,6 +138,167 @@ describe('Agent chat rendering', () => {
     expect(entries[1]).toHaveTextContent('运行状态正常');
     expect(entries[2]).toHaveTextContent('读取完成，当前运行正常。');
     expect(entries[0]).not.toHaveTextContent('读取完成');
+  });
+
+  it('aggregates Provider usage once after the whole Tool Loop settles', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'idle',
+    });
+    const first = {
+      ...assistantMessage(sessionId, turnId, '先检查工具。', 10),
+      id: 'turn-1:assistant:provider:1',
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+      usage: { input: 100, output: 10, cacheRead: 50, cacheWrite: 0, totalTokens: 160 },
+    };
+    const second = {
+      ...assistantMessage(sessionId, turnId, '检查完成。', 20),
+      id: 'turn-1:assistant:provider:2',
+      provider: 'openai-codex',
+      model: 'gpt-5.6-luna',
+      usage: { input: 200, output: 20, cacheRead: 100, cacheWrite: 10, totalTokens: 330 },
+    };
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'message_completed', { message: first }),
+      agentEventFixture(2, 'tool_finished', {
+        toolCallId: 'usage-tool',
+        toolName: 'overview',
+        result: { details: { ok: true, operation: 'status', result: { summary: '状态已读取' } } },
+      }),
+      agentEventFixture(3, 'message_completed', { message: second }),
+    ]);
+
+    const view = render(
+      <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+    expect(screen.queryByLabelText('本轮模型与 Token 用量')).not.toBeInTheDocument();
+
+    act(() => useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(4, 'turn_completed', { status: 'completed' }),
+    ]));
+    view.rerender(
+      <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+
+    const usage = screen.getByLabelText('本轮模型与 Token 用量');
+    expect(screen.getAllByLabelText('本轮模型与 Token 用量')).toHaveLength(1);
+    expect(usage).toHaveTextContent('gpt-5.6-luna');
+    expect(usage).toHaveTextContent('openai-codex');
+    expect(usage).toHaveTextContent('输入 460');
+    expect(usage).toHaveTextContent('输出 30');
+    expect(usage).toHaveTextContent('缓存 33%');
+  });
+
+  it('shows provider reasoning summaries and the live Agent state in the timeline', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'idle',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'reasoning_summary', {
+        requestId: 'reasoning:turn-1:0',
+        summary: '正在分析问题与下一步',
+        items: [],
+        source: 'runtime_status',
+        state: 'running',
+      }),
+    ]);
+
+    const view = render(
+      <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+
+    const runningSummary = screen.getByRole('button', { name: /查看 Agent 思考摘要/ });
+    expect(runningSummary).toHaveTextContent('正在思考');
+    expect(runningSummary).toHaveTextContent('正在分析问题与下一步');
+    expect(document.querySelector('details.agent-activity--inline')).not.toBeInTheDocument();
+
+    act(() => useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(2, 'reasoning_summary', {
+        requestId: 'reasoning:turn-1:0',
+        summary: 'Implementing durable history reconstruction',
+        items: [
+          'Analyzing session message discrepancies',
+          'Implementing durable history reconstruction',
+        ],
+        source: 'provider_reasoning_summary',
+        state: 'completed',
+      }),
+      agentEventFixture(3, 'turn_completed', { status: 'completed' }),
+    ]));
+    view.rerender(
+      <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+
+    const summary = screen.getByRole('button', { name: /查看 Agent 思考摘要/ });
+    expect(summary).toHaveTextContent('思考摘要');
+    expect(summary).toHaveTextContent('Implementing durable history reconstruction');
+    expect(summary).not.toHaveTextContent('Analyzing session message discrepancies');
+    fireEvent.click(summary);
+    const reasoningDialog = screen.getByRole('dialog', { name: '思考摘要' });
+    expect(reasoningDialog).toHaveTextContent('Analyzing session message discrepancies');
+    expect(reasoningDialog).toHaveTextContent('Implementing durable history reconstruction');
+    expect(reasoningDialog).not.toHaveTextContent('provider_reasoning_summary');
+  });
+
+  it('keeps reasoning outside Tool counts and expanded Tool rows', () => {
+    const sessionId = 'session-1';
+    const turnId = 'turn-1';
+    useAgentLiveStore.getState().hydrateSnapshot(sessionId, {
+      messages: [userMessage(sessionId, turnId)],
+      liveEvents: [],
+      lastSequence: 0,
+      resumeToken: '',
+      status: 'idle',
+    });
+    useAgentLiveStore.getState().applyEvents(sessionId, [
+      agentEventFixture(1, 'reasoning_summary', {
+        requestId: 'reasoning:separate',
+        summary: '先分析代码路径',
+        items: ['先分析代码路径'],
+        state: 'completed',
+      }),
+      agentEventFixture(2, 'tool_started', {
+        toolCallId: 'one-real-tool',
+        toolName: 'grep',
+        args: { pattern: 'AgentTurn', path: 'control-center-web' },
+      }),
+      agentEventFixture(3, 'tool_finished', {
+        toolCallId: 'one-real-tool',
+        toolName: 'grep',
+        publicResult: {
+          pattern: 'AgentTurn',
+          path: 'control-center-web',
+          outputPreview: 'AgentTimeline.tsx:342:export function AgentTurn',
+        },
+      }),
+      agentEventFixture(4, 'turn_completed', { status: 'completed' }),
+    ]);
+
+    const { container } = render(
+      <AgentTurn sessionId={sessionId} turnId={turnId} onApprovalDecision={() => {}} />,
+    );
+
+    expect(screen.getByRole('button', { name: /查看 Agent 思考摘要/ })).toHaveTextContent('先分析代码路径');
+    const group = container.querySelector<HTMLDetailsElement>('details.agent-activity--inline')!;
+    expect(group.querySelector('summary')).toHaveTextContent('1 项操作');
+    fireEvent.click(group.querySelector('summary')!);
+    expect(group).toHaveAttribute('open');
+    expect(screen.queryByRole('dialog', { name: '操作记录' })).not.toBeInTheDocument();
+    const details = within(group).getByLabelText('操作记录详情');
+    expect(details.querySelectorAll('.agent-activity-row')).toHaveLength(1);
+    expect(details).not.toHaveTextContent('处理说明');
   });
 
   it('renders headings, lists, GFM tables, inline code, and fenced code blocks', () => {
@@ -283,6 +444,55 @@ describe('Agent chat rendering', () => {
     expect(screen.getByText('协议相对地址').closest('a')).toBeNull();
     expect(screen.getByText('不可点击').closest('a')).toBeNull();
     expect(screen.getByRole('region', { name: 'Runtime' })).toHaveTextContent('全部收束');
+  });
+
+  it('keeps a structured Tool disclosure anchored and focused when opened', () => {
+    const block: UiAgentBlock = {
+      id: 'tool-result-anchor',
+      type: 'tool_result',
+      status: 'completed',
+      presentationKind: 'tool_result.v1',
+      data: {
+        toolName: 'overview',
+        status: 'completed',
+        summary: '运行状态已读取',
+      },
+    };
+    const { container } = render(
+      <div data-testid="structured-tool-scrollport" style={{ maxHeight: 240, overflowY: 'auto' }}>
+        <AgentBlock block={block} />
+      </div>,
+    );
+    const scrollport = screen.getByTestId('structured-tool-scrollport');
+    Object.defineProperty(scrollport, 'scrollHeight', { configurable: true, value: 800 });
+    Object.defineProperty(scrollport, 'clientHeight', { configurable: true, value: 240 });
+    scrollport.scrollTop = 220;
+    const details = container.querySelector<HTMLDetailsElement>('details.agent-tool-activity')!;
+    const summary = details.querySelector<HTMLElement>('summary')!;
+    vi.spyOn(summary, 'getBoundingClientRect').mockImplementation(() => {
+      const top = details.hasAttribute('open')
+        ? 96 + (220 - scrollport.scrollTop)
+        : 132;
+      return {
+        bottom: top + 38,
+        height: 38,
+        left: 0,
+        right: 600,
+        top,
+        width: 600,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      };
+    });
+
+    summary.focus();
+    fireEvent.click(summary);
+
+    expect(details).toHaveAttribute('open');
+    expect(summary).toHaveAttribute('aria-expanded', 'true');
+    expect(scrollport.scrollTop).toBe(184);
+    expect(document.activeElement).toBe(summary);
   });
 
   it('keeps partial JSON as streaming text, collapses large code, and degrades unknown blocks readably', () => {

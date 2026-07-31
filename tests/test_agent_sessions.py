@@ -81,7 +81,7 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(session["title"], "输入助手 今天")
         self.assertEqual(session["mode"], "assistant")
         self.assertEqual(session["roleId"], "companion-future-v1")
-        self.assertEqual(session["modelProfile"], "gpt/gpt-5.6-sol")
+        self.assertEqual(session["modelProfile"], "openai-codex/gpt-5.6-sol")
         self.assertEqual(session["thinkingLevel"], "max")
         self.assertEqual(session["executionMode"], "per_action")
         self.assertFalse(session["workspaceScopeGranted"])
@@ -389,6 +389,55 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertEqual(promoted["plan"]["counts"]["inProgress"], 1)
         self.assertEqual(promoted["plan"]["counts"]["completed"], 1)
 
+    def test_agent_plan_serializes_concurrent_in_progress_transitions(self) -> None:
+        session_id = str(self.store.create(title="concurrent plan")["id"])
+        first_id = str(
+            self.store.update_agent_plan_item(
+                session_id,
+                title="第一项",
+                status="pending",
+            )["event"]["itemId"]
+        )
+        second_id = str(
+            self.store.update_agent_plan_item(
+                session_id,
+                title="第二项",
+                status="pending",
+            )["event"]["itemId"]
+        )
+
+        def promote(item_id: str) -> str:
+            try:
+                self.store.update_agent_plan_item(
+                    session_id,
+                    item_id=item_id,
+                    status="in_progress",
+                )
+            except ValueError as exc:
+                self.assertIn("only one", str(exc))
+                return "blocked"
+            return "promoted"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(promote, (first_id, second_id)))
+
+        self.assertEqual(sorted(outcomes), ["blocked", "promoted"])
+        plan = self.store.agent_plan(session_id)
+        self.assertEqual(plan["counts"]["inProgress"], 1)
+        self.assertEqual(plan["revision"], 3)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            sequences = [
+                int(row[0])
+                for row in conn.execute(
+                    """
+                    SELECT sequence FROM agent_plan_events
+                    WHERE session_id = ? ORDER BY sequence
+                    """,
+                    (session_id,),
+                ).fetchall()
+            ]
+        self.assertEqual(sequences, [1, 2, 3])
+
     def test_agent_plan_keeps_creation_order_when_item_status_changes(self) -> None:
         session = self.store.create(title="stable plan", created_at_ms=100)
         session_id = str(session["id"])
@@ -465,7 +514,9 @@ class AgentSessionStoreTests(unittest.TestCase):
             updated_at_ms=400,
         )["plan"]
         self.assertEqual(review["status"], "review")
-        self.assertEqual(self.store.workflow_state(session_id)["actGate"]["reason"], "plan_not_approved")
+        review_gate = self.store.workflow_state(session_id)["actGate"]
+        self.assertTrue(review_gate["allowed"])
+        self.assertEqual(review_gate["reason"], "user_execution_request")
         with self.assertRaisesRegex(ValueError, "while plan is review"):
             self.store.update_agent_plan_item(session_id, item_id=second_id, status="in_progress")
 
@@ -485,8 +536,12 @@ class AgentSessionStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot add new items"):
             self.store.update_agent_plan_item(session_id, title="未审阅步骤", status="pending")
 
-        executing = self.store.begin_agent_plan_execution(session_id)["plan"]
+        executing = self.store.record_agent_plan_execution_started(session_id)["plan"]
         self.assertEqual(executing["status"], "executing")
+        replayed_execution = self.store.record_agent_plan_execution_started(
+            session_id
+        )["plan"]
+        self.assertEqual(replayed_execution["revision"], executing["revision"])
         self.store.update_agent_plan_item(session_id, item_id=second_id, status="completed")
         finished_items = self.store.update_agent_plan_item(
             session_id,
@@ -506,11 +561,11 @@ class AgentSessionStoreTests(unittest.TestCase):
             "agent-workflow-state.v1.json",
         )
         completed_gate = completed_state["actGate"]
-        self.assertEqual(completed_gate["reason"], "plan_completed")
-        self.assertIn("计划已经完成", completed_gate["message"])
-        self.assertNotIn("尚未获得用户批准", completed_gate["message"])
+        self.assertTrue(completed_gate["allowed"])
+        self.assertEqual(completed_gate["reason"], "user_execution_request")
+        self.assertIn("原有策略审批", completed_gate["message"])
 
-    def test_cancelled_plan_gate_is_terminal_and_contract_valid(self) -> None:
+    def test_cancelled_plan_does_not_revoke_a_new_user_execution_request(self) -> None:
         session_id = str(self.store.create(title="cancelled")["id"])
         saved = self.store.mutate_agent_plan(
             session_id,
@@ -530,8 +585,113 @@ class AgentSessionStoreTests(unittest.TestCase):
 
         state = self.store.workflow_state(session_id)
         validate_contract(state, "agent-workflow-state.v1.json")
-        self.assertEqual(state["actGate"]["reason"], "plan_cancelled")
-        self.assertIn("计划已经取消", state["actGate"]["message"])
+        self.assertTrue(state["actGate"]["allowed"])
+        self.assertEqual(state["actGate"]["reason"], "user_execution_request")
+
+
+    def test_plan_return_to_draft_requires_provenance_and_rejects_replay(
+        self,
+    ) -> None:
+        session_id = str(self.store.create(title="review provenance")["id"])
+        review = self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "submit_review",
+                "title": "审阅计划",
+                "items": [{"title": "修复反馈", "status": "pending"}],
+            },
+        )["plan"]
+        with self.assertRaisesRegex(ValueError, "note must not be empty"):
+            self.store.mutate_agent_plan(
+                session_id,
+                {
+                    "action": "return_to_draft",
+                    "expectedRevision": review["revision"],
+                },
+                actor="reviewer:alice",
+            )
+
+        returned = self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "return_to_draft",
+                "expectedRevision": review["revision"],
+                "note": "补充失败路径与验收证据",
+            },
+            actor="reviewer:alice",
+            updated_at_ms=777,
+        )["plan"]
+        self.assertEqual(returned["status"], "draft")
+        self.assertEqual(returned["actor"], "reviewer:alice")
+        self.assertEqual(returned["note"], "补充失败路径与验收证据")
+        with self.assertRaisesRegex(ValueError, "changed; refresh"):
+            self.store.mutate_agent_plan(
+                session_id,
+                {
+                    "action": "return_to_draft",
+                    "expectedRevision": review["revision"],
+                    "note": "重复提交",
+                },
+                actor="reviewer:alice",
+            )
+        self.assertEqual(
+            AgentSessionStore(self.db_path).agent_plan(session_id),
+            returned,
+        )
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            self.store.mutate_agent_plan(
+                session_id,
+                {
+                    "action": "start_execution",
+                    "expectedRevision": returned["revision"],
+                },
+            )
+
+    def test_plan_and_goal_mutation_contracts_require_review_and_setup_fences(
+        self,
+    ) -> None:
+        validate_contract(
+            {
+                "action": "return_to_draft",
+                "expectedRevision": 4,
+                "note": "补充验收证据",
+            },
+            "agent-plan-mutation.v1.json",
+        )
+        with self.assertRaisesRegex(ValueError, "missing required field"):
+            validate_contract(
+                {"action": "return_to_draft", "expectedRevision": 4},
+                "agent-plan-mutation.v1.json",
+            )
+        validate_contract(
+            {
+                "action": "confirm_setup",
+                "expectedRevision": 0,
+                "confirmed": True,
+                "objective": "交付可验证结果",
+                "successCriteria": "验收通过",
+                "evidenceExpectations": ["测试回执"],
+            },
+            "agent-goal-mutation.v1.json",
+        )
+        with self.assertRaisesRegex(ValueError, "missing required field"):
+            validate_contract(
+                {
+                    "action": "confirm_setup",
+                    "confirmed": True,
+                    "objective": "缺少 revision",
+                },
+                "agent-goal-mutation.v1.json",
+            )
+        with self.assertRaisesRegex(ValueError, "missing required field"):
+            validate_contract(
+                {
+                    "action": "cancel",
+                    "expectedRevision": 1,
+                },
+                "agent-goal-mutation.v1.json",
+            )
+
 
     def test_fenced_room_dispatch_is_a_work_authority_without_rewriting_the_plan(self) -> None:
         session = self.store.create(title="Room worker", created_at_ms=100)
@@ -543,7 +703,8 @@ class AgentSessionStoreTests(unittest.TestCase):
             room_dispatch_authorized=True,
         )
 
-        self.assertEqual(ordinary["actGate"]["reason"], "plan_required")
+        self.assertTrue(ordinary["actGate"]["allowed"])
+        self.assertEqual(ordinary["actGate"]["reason"], "user_execution_request")
         self.assertEqual(room["plan"]["status"], "draft")
         self.assertTrue(room["actGate"]["allowed"])
         self.assertIn("当前 Room 任务已经开始", room["actGate"]["message"])
@@ -567,12 +728,35 @@ class AgentSessionStoreTests(unittest.TestCase):
         goal = self.store.mutate_agent_goal(
             session_id,
             {
-                "action": "set",
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "successCriteria": "所有计划项完成并有可核验回执",
+                "evidenceExpectations": ["聚焦测试结果", "交付产物引用"],
                 "objective": "在固定预算内交付可验证实现",
                 "tokenBudget": 1_000,
                 "timeBudgetMs": 60_000,
             },
         )["workflow"]["goal"]
+        self.assertEqual(
+            goal["successCriteria"],
+            "所有计划项完成并有可核验回执",
+        )
+        self.assertEqual(
+            goal["evidenceExpectations"],
+            ["聚焦测试结果", "交付产物引用"],
+        )
+        reconnected_goal = AgentSessionStore(self.db_path).agent_goal(session_id)
+        self.assertEqual(reconnected_goal, goal)
+        workflow = self.store.workflow_state(session_id)
+        self.assertEqual(
+            workflow["actGate"]["planRevision"],
+            workflow["plan"]["revision"],
+        )
+        self.assertEqual(
+            workflow["actGate"]["goalRevision"],
+            workflow["goal"]["revision"],
+        )
         usage = self.store.record_agent_goal_usage(
             session_id,
             idempotency_key="turn:1:usage",
@@ -659,6 +843,108 @@ class AgentSessionStoreTests(unittest.TestCase):
         self.assertFalse(cleared["goal"]["configured"])
         self.assertTrue(cleared["actGate"]["allowed"])
 
+    def test_cancelled_goal_is_terminal_audited_and_blocks_future_work(
+        self,
+    ) -> None:
+        session_id = str(self.store.create(title="cancelled goal")["id"])
+        review = self.store.mutate_agent_plan(
+            session_id,
+            {
+                "action": "submit_review",
+                "title": "可取消 Goal",
+                "items": [{"title": "执行工作", "status": "in_progress"}],
+            },
+        )["plan"]
+        self.store.mutate_agent_plan(
+            session_id,
+            {"action": "approve", "expectedRevision": review["revision"]},
+        )
+        goal = self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "objective": "在用户终止前持续执行",
+                "successCriteria": "用户验收",
+                "evidenceExpectations": ["运行回执"],
+            },
+            actor="control-center-user",
+        )["workflow"]["goal"]
+        cancelled = self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "cancel",
+                "expectedRevision": goal["revision"],
+                "reason": "目标优先级已经变化",
+            },
+            actor="user:owner",
+            updated_at_ms=900,
+        )["workflow"]
+
+        self.assertEqual(cancelled["goal"]["status"], "cancelled")
+        self.assertEqual(cancelled["actGate"]["reason"], "goal_cancelled")
+        self.assertEqual(
+            cancelled["goal"]["cancellationAudit"]["reason"],
+            "目标优先级已经变化",
+        )
+        self.assertEqual(
+            cancelled["goal"]["cancellationAudit"]["cancelledBy"],
+            "user:owner",
+        )
+        validate_contract(cancelled, "agent-workflow-state.v1.json")
+        reconnected = AgentSessionStore(self.db_path).workflow_state(session_id)
+        self.assertEqual(reconnected, cancelled)
+        with self.assertRaisesRegex(ValueError, "goal_cancelled"):
+            self.store.require_goal_execution(session_id)
+        with self.assertRaisesRegex(ValueError, "active goal"):
+            self.store.record_agent_goal_usage(
+                session_id,
+                idempotency_key="cancelled:usage",
+                token_delta=1,
+            )
+        continuation = self.store.claim_agent_goal_continuation(
+            session_id,
+            goal_id=str(goal["goalId"]),
+            request_key="cancelled:continuation",
+            limit=4,
+        )
+        self.assertFalse(continuation["claimed"])
+        self.assertEqual(continuation["reason"], "goal_cancelled")
+        with self.assertRaisesRegex(ValueError, "changed; refresh"):
+            self.store.mutate_agent_goal(
+                session_id,
+                {
+                    "action": "cancel",
+                    "expectedRevision": goal["revision"],
+                    "reason": "重复提交",
+                },
+            )
+        self.assertEqual(
+            self.store.agent_goal(session_id)["cancellationAudit"],
+            cancelled["goal"]["cancellationAudit"],
+        )
+        with self.assertRaisesRegex(ValueError, "active or paused"):
+            self.store.mutate_agent_goal(
+                session_id,
+                {
+                    "action": "update",
+                    "expectedRevision": cancelled["goal"]["revision"],
+                    "objective": "不能复活的目标",
+                },
+            )
+        cleared = self.store.mutate_agent_goal(
+            session_id,
+            {
+                "action": "clear",
+                "expectedRevision": cancelled["goal"]["revision"],
+            },
+        )["workflow"]
+        self.assertFalse(cleared["goal"]["configured"])
+        self.assertEqual(cleared["goal"]["status"], "cleared")
+        self.assertTrue(cleared["actGate"]["allowed"])
+
+
     def test_goal_continuation_budget_persists_and_resets_only_on_lifecycle(
         self,
     ) -> None:
@@ -678,7 +964,12 @@ class AgentSessionStoreTests(unittest.TestCase):
         )
         goal = self.store.mutate_agent_goal(
             session_id,
-            {"action": "set", "objective": "跨运行时保持续投上限"},
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": 0,
+                "objective": "跨运行时保持续投上限",
+            },
         )["workflow"]["goal"]
         goal_id = str(goal["goalId"])
 
@@ -798,7 +1089,12 @@ class AgentSessionStoreTests(unittest.TestCase):
         )["workflow"]["goal"]
         replacement = self.store.mutate_agent_goal(
             session_id,
-            {"action": "set", "objective": "新的持久 Goal"},
+            {
+                "action": "confirm_setup",
+                "confirmed": True,
+                "expectedRevision": cleared["revision"],
+                "objective": "新的持久 Goal",
+            },
             updated_at_ms=402,
         )["workflow"]["goal"]
         replacement_budget = self.store.agent_goal_continuation_budget(
@@ -840,7 +1136,12 @@ class AgentSessionStoreTests(unittest.TestCase):
         goal_id = str(
             self.store.mutate_agent_goal(
                 session_id,
-                {"action": "set", "objective": "并发请求最多续投四次"},
+                {
+                    "action": "confirm_setup",
+                    "confirmed": True,
+                    "expectedRevision": 0,
+                    "objective": "并发请求最多续投四次",
+                },
             )["workflow"]["goal"]["goalId"]
         )
 
@@ -892,7 +1193,7 @@ class AgentSessionStoreTests(unittest.TestCase):
         session_id = str(session["id"])
         approval = self.store.create_approval(
             session_id=session_id,
-            tool_name="ime_input",
+            tool_name="input",
             operation="apply_settings",
             payload_sha256="a" * 64,
             preview={"summary": "关闭模糊音", "changes": [{"field": "pinyin.fuzzy", "after": False}]},
@@ -936,7 +1237,7 @@ class AgentSessionStoreTests(unittest.TestCase):
 
         external = self.store.create_approval(
             session_id=session_id,
-            tool_name="ime_runtime",
+            tool_name="runtime",
             operation="restart_sidecar",
             payload_sha256="e" * 64,
             preview={"summary": "重启 Sidecar"},
@@ -970,7 +1271,7 @@ class AgentSessionStoreTests(unittest.TestCase):
 
         stale = self.store.create_approval(
             session_id=session_id,
-            tool_name="ime_input",
+            tool_name="input",
             operation="apply_settings",
             payload_sha256="b" * 64,
             preview={"summary": "变更已过期"},
@@ -988,7 +1289,7 @@ class AgentSessionStoreTests(unittest.TestCase):
 
         expired = self.store.create_approval(
             session_id=session_id,
-            tool_name="ime_runtime",
+            tool_name="runtime",
             operation="restart",
             payload_sha256="d" * 64,
             preview={"summary": "重启运行组件"},

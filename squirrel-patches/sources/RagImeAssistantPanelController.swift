@@ -1,7 +1,7 @@
 import AppKit
 import QuartzCore
 
-final class RagImeAssistantPanelController {
+final class RagImeAssistantPanelController: NSObject {
   typealias TraceHandler = (_ event: String, _ fields: [String: Any]) -> Void
   private static weak var activeOwner: RagImeAssistantPanelController?
   private static var activeOwnerGeneration = 0
@@ -31,9 +31,17 @@ final class RagImeAssistantPanelController {
   private var onDismiss: ((String) -> Void)?
   private var onTrace: TraceHandler?
   private weak var contextMenuAnchor: NSView?
-  private var contextPopover: NSPopover?
+  private var contextInspectorWindowController: NSWindowController?
+  private var contextMenuDocument: RagImeAssistantContextInspectorDocument?
+  private var contextInspectorPresentation: ContextInspectorPresentation?
 
-  init() {
+  private struct ContextInspectorPresentation {
+    let snapshotId: String
+    let panelFrame: NSRect
+    let resultViewport: RagImeSuggestionCardView.ResultViewportSnapshot?
+  }
+
+  override init() {
     panel = RagImeNonActivatingPanel(
       contentRect: NSRect(x: 0, y: 0, width: 240, height: RagImeSuggestionCardView.compactHeight),
       styleMask: [.borderless, .nonactivatingPanel],
@@ -41,6 +49,7 @@ final class RagImeAssistantPanelController {
       defer: false
     )
     cardView = RagImeSuggestionCardView(frame: panel.contentView?.bounds ?? .zero)
+    super.init()
     panel.isReleasedWhenClosed = false
     panel.isFloatingPanel = true
     panel.level = .floating
@@ -71,10 +80,10 @@ final class RagImeAssistantPanelController {
     pendingUpdate?.cancel()
     ttlDismissWorkItem?.cancel()
     generatingTimer?.invalidate()
-    let popover = contextPopover
+    let inspectorWindowController = contextInspectorWindowController
     let window = panel
     let closeUI = {
-      popover?.close()
+      inspectorWindowController?.close()
       window.orderOut(nil)
     }
     if Thread.isMainThread {
@@ -162,8 +171,6 @@ final class RagImeAssistantPanelController {
     let duration = visibleSince.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
     currentPayload = nil
     currentRestore = nil
-    contextPopover?.close()
-    contextPopover = nil
     contextMenuAnchor = nil
     currentState = .hidden
     renderedSnapshotId = ""
@@ -548,19 +555,43 @@ final class RagImeAssistantPanelController {
 
   private func showMoreMenu(relativeTo sourceView: NSView) {
     contextMenuAnchor = sourceView
+    contextMenuDocument = currentPayload.map {
+      RagImeAssistantContextInspectorDocument.make(payload: $0)
+    }
+    let unavailableReason = contextMenuDocument?.unavailableReason
+      ?? "当前结果已失效，请重新生成后再查看"
     let menu = NSMenu()
+    menu.autoenablesItems = false
+
     let copy = NSMenuItem(title: "复制", action: #selector(copyResult), keyEquivalent: "")
     copy.target = self
+    copy.isEnabled = currentPayload?.candidates.contains(where: RagImeSuggestionCardView.isRealCandidate) == true
     menu.addItem(copy)
-    let context = NSMenuItem(title: "查看输入与依据", action: #selector(showContextInspector), keyEquivalent: "")
+
+    let context = NSMenuItem(title: "查看输入与依据", action: #selector(showContextInspector), keyEquivalent: "e")
+    context.keyEquivalentModifierMask = [.command, .option]
     context.target = self
+    context.isEnabled = contextMenuDocument != nil
+    context.toolTip = contextMenuDocument?.isAvailable == true
+      ? "查看本轮实际输入、连续历史与知识依据"
+      : "打开后查看本轮输入或依据为何不可用"
+    context.setAccessibilityLabel("查看本轮输入与依据")
     menu.addItem(context)
+    if contextMenuDocument?.isAvailable != true {
+      let reason = NSMenuItem(title: "内容状态：\(unavailableReason)", action: nil, keyEquivalent: "")
+      reason.isEnabled = false
+      reason.toolTip = unavailableReason
+      menu.addItem(reason)
+    }
+
     menu.addItem(.separator())
     let remember = NSMenuItem(title: "记住", action: #selector(rememberResult), keyEquivalent: "")
     remember.target = self
+    remember.isEnabled = true
     menu.addItem(remember)
     let suppress = NSMenuItem(title: "不再推荐", action: #selector(suppressResult), keyEquivalent: "")
     suppress.target = self
+    suppress.isEnabled = true
     menu.addItem(suppress)
     menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sourceView.bounds.height), in: sourceView)
   }
@@ -572,27 +603,108 @@ final class RagImeAssistantPanelController {
   }
 
   @objc private func showContextInspector() {
-    guard let payload = currentPayload else { return }
-    let document = RagImeAssistantContextInspectorDocument.make(payload: payload)
-    let viewController = RagImeAssistantContextInspectorViewController(document: document)
-    let popover = NSPopover()
-    popover.behavior = .transient
-    popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    popover.contentSize = RagImeAssistantContextInspectorViewController.preferredSize
-    popover.contentViewController = viewController
-    contextPopover?.close()
-    contextPopover = popover
+    let document = contextMenuDocument ?? currentPayload.map {
+      RagImeAssistantContextInspectorDocument.make(payload: $0)
+    }
+    contextMenuDocument = nil
+    guard let document else {
+      trace("assistant_context_inspector_unavailable", [
+        "reason": "current_result_missing",
+        "traceIncludesText": false,
+      ])
+      return
+    }
+    if let previousWindowController = contextInspectorWindowController {
+      closeContextInspector(previousWindowController, reason: "replaced")
+    }
+    contextInspectorPresentation = ContextInspectorPresentation(
+      snapshotId: document.snapshotId,
+      panelFrame: panel.frame,
+      resultViewport: cardView.captureResultViewport()
+    )
+    let inspectorPanel = RagImeNonActivatingPanel(
+      contentRect: NSRect(origin: .zero, size: RagImeAssistantContextInspectorViewController.preferredSize),
+      styleMask: [.borderless, .nonactivatingPanel],
+      backing: .buffered,
+      defer: false
+    )
+    inspectorPanel.isReleasedWhenClosed = false
+    inspectorPanel.isFloatingPanel = true
+    inspectorPanel.level = .floating
+    inspectorPanel.backgroundColor = .clear
+    inspectorPanel.isOpaque = false
+    inspectorPanel.hasShadow = true
+    inspectorPanel.hidesOnDeactivate = false
+    inspectorPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+    let windowController = NSWindowController(window: inspectorPanel)
+    let viewController = RagImeAssistantContextInspectorViewController(
+      document: document,
+      onClose: { [weak self, weak windowController] in
+        guard let self, let windowController,
+          self.contextInspectorWindowController === windowController else { return }
+        self.closeContextInspector(windowController, reason: "explicit_close")
+      },
+      onRetry: { [weak self, weak windowController] in
+        guard let self, let windowController,
+          self.contextInspectorWindowController === windowController else { return }
+        self.closeContextInspector(windowController, reason: "retry")
+        self.onAction?(.retry)
+      }
+    )
+    inspectorPanel.contentViewController = viewController
+    contextInspectorWindowController = windowController
     let anchor = contextMenuAnchor ?? cardView
     DispatchQueue.main.async { [weak self] in
-      guard let self, anchor.window != nil, self.contextPopover === popover else { return }
-      popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minX)
+      guard let self,
+        self.contextInspectorWindowController === windowController else { return }
+      self.positionContextInspector(inspectorPanel, relativeTo: anchor)
+      inspectorPanel.orderFront(nil)
       self.trace("assistant_context_inspector_opened", [
-        "snapshotId": payload.snapshotId,
+        "snapshotId": document.snapshotId,
         "contextSource": document.source,
+        "contentState": document.state.rawValue,
         "sectionCount": document.sectionCount,
         "traceIncludesText": false,
       ])
     }
+  }
+
+  private func positionContextInspector(_ inspectorPanel: NSPanel, relativeTo anchor: NSView) {
+    let size = RagImeAssistantContextInspectorViewController.preferredSize
+    let anchorFrame = anchor.window.map {
+      $0.convertToScreen(anchor.convert(anchor.bounds, to: nil))
+    } ?? panel.frame
+    let visibleFrame = (anchor.window?.screen ?? panel.screen ?? NSScreen.main)?.visibleFrame
+      ?? NSRect(origin: .zero, size: size)
+    let spacing: CGFloat = 8
+    var x = anchorFrame.maxX + spacing
+    if x + size.width > visibleFrame.maxX {
+      x = anchorFrame.minX - size.width - spacing
+    }
+    x = min(max(x, visibleFrame.minX), max(visibleFrame.minX, visibleFrame.maxX - size.width))
+    let y = min(
+      max(anchorFrame.maxY - size.height, visibleFrame.minY),
+      max(visibleFrame.minY, visibleFrame.maxY - size.height)
+    )
+    inspectorPanel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+  }
+
+  private func closeContextInspector(_ windowController: NSWindowController, reason: String) {
+    guard contextInspectorWindowController === windowController else { return }
+    let presentation = contextInspectorPresentation
+    contextInspectorWindowController = nil
+    contextInspectorPresentation = nil
+    windowController.close()
+    if let presentation,
+      currentPayload?.snapshotId == presentation.snapshotId,
+      panel.isVisible {
+      panel.setFrame(presentation.panelFrame, display: false)
+      cardView.restoreResultViewport(presentation.resultViewport)
+    }
+    trace("assistant_context_inspector_closed", [
+      "reason": reason,
+      "traceIncludesText": false,
+    ])
   }
 
   @objc private func rememberResult() { onAction?(.remember) }
@@ -777,11 +889,41 @@ final class RagImeAssistantPanelController {
   private func trace(_ event: String, _ fields: [String: Any]) { onTrace?(event, fields) }
 }
 
+private enum RagImeAssistantContextInspectorState: String {
+  case content
+  case loading
+  case empty
+  case error
+
+  var title: String {
+    switch self {
+    case .content: return "本轮输入与依据"
+    case .loading: return "正在准备输入与依据"
+    case .empty: return "没有可显示的输入与依据"
+    case .error: return "输入与依据暂不可用"
+    }
+  }
+
+  var accessibilityLabel: String {
+    switch self {
+    case .content: return "输入与依据已就绪"
+    case .loading: return "输入与依据正在加载"
+    case .empty: return "输入与依据为空"
+    case .error: return "输入与依据加载失败"
+    }
+  }
+}
+
 private struct RagImeAssistantContextInspectorDocument {
+  let snapshotId: String
   let attributedText: NSAttributedString
   let plainText: String
   let source: String
+  let summary: String
   let sectionCount: Int
+  let state: RagImeAssistantContextInspectorState
+  let isAvailable: Bool
+  let unavailableReason: String
 
   static func make(payload: RagImeAssistantOverlayPayload) -> RagImeAssistantContextInspectorDocument {
     let transaction = payload.frontendTransaction ?? [:]
@@ -790,28 +932,35 @@ private struct RagImeAssistantContextInspectorDocument {
     let attributed = NSMutableAttributedString(string: "")
     var plainSections: [String] = []
     var sectionCount = 0
+    var inputCount = 0
+    var historyCount = 0
+    var ragCount = 0
+    var knowledgeCount = 0
+    var evidenceStateOnly = false
+    let diagnosticStatus = string(transaction["diagnosticStatus"]).lowercased()
+    let progressStage = string(transaction["progressStage"]).lowercased()
 
     func appendSection(_ title: String, _ body: String) {
       let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !trimmed.isEmpty else { return }
       let headingStyle = NSMutableParagraphStyle()
-      headingStyle.paragraphSpacingBefore = sectionCount == 0 ? 0 : 14
+      headingStyle.paragraphSpacingBefore = sectionCount == 0 ? 0 : 16
       headingStyle.paragraphSpacing = 6
       attributed.append(NSAttributedString(
-        string: "\(title)\n",
+        string: "\(title.uppercased())\n",
         attributes: [
-          .font: NSFont.systemFont(ofSize: 12.5, weight: .semibold),
+          .font: RagImeAssistantTypography.inspectorSection,
           .foregroundColor: NSColor.secondaryLabelColor,
           .paragraphStyle: headingStyle,
         ]
       ))
       let bodyStyle = NSMutableParagraphStyle()
       bodyStyle.lineSpacing = 3
-      bodyStyle.paragraphSpacing = 0
+      bodyStyle.paragraphSpacing = 2
       attributed.append(NSAttributedString(
         string: trimmed + "\n",
         attributes: [
-          .font: NSFont.systemFont(ofSize: 13.5, weight: .regular),
+          .font: RagImeAssistantTypography.inspectorBody,
           .foregroundColor: NSColor.labelColor,
           .paragraphStyle: bodyStyle,
         ]
@@ -820,105 +969,97 @@ private struct RagImeAssistantContextInspectorDocument {
       sectionCount += 1
     }
 
-    let currentRequest = string(contextView["currentRequest"])
-    let currentContext = string(contextView["currentContext"])
-    appendSection("本轮请求", currentRequest.isEmpty ? "本轮请求文本未返回" : currentRequest)
-    appendSection("前台文本", currentContext.isEmpty ? "前台文本未返回" : currentContext)
+    let currentRequest = boundedParagraph(string(contextView["currentRequest"]), limit: 2_400)
+    let currentContext = boundedParagraph(string(contextView["currentContext"]), limit: 4_800)
+    let selectedText = boundedParagraph(string(contextView["selectedText"]), limit: 2_400)
+    if !currentRequest.isEmpty {
+      appendSection("本轮输入", currentRequest)
+      inputCount += 1
+    }
+    if !selectedText.isEmpty, selectedText != currentRequest {
+      appendSection("选中文本", selectedText)
+      inputCount += 1
+    }
+    if !currentContext.isEmpty, currentContext != currentRequest, currentContext != selectedText {
+      appendSection("前台承接文本", currentContext)
+      inputCount += 1
+    }
 
     let windowContext = object(contextView["windowContext"])
-    let windowNodes = array(windowContext["nodes"])
-    let sourceNodeCount = integer(windowContext["sourceNodeCount"])
-    let windowApplication = object(windowContext["application"])
-    var windowLines: [String] = []
-    let appName = string(windowApplication["name"])
-    let windowTitle = string(windowApplication["windowTitle"])
-    if !appName.isEmpty || !windowTitle.isEmpty {
-      windowLines.append([appName, windowTitle].filter { !$0.isEmpty }.joined(separator: " · "))
-    }
-    let applicationSemantics = object(windowContext["applicationSemantics"])
-    if string(applicationSemantics["source"]) == "zed_workspace_state" {
-      let projectName = string(applicationSemantics["projectName"])
-      let activeFile = string(applicationSemantics["activeFile"])
-      let contentOrigin = string(applicationSemantics["contentOrigin"])
-      let excerptStartLine = integer(applicationSemantics["editorExcerptStartLine"])
-      let editorExcerpt = string(applicationSemantics["editorExcerpt"])
-      let projectEntries = array(applicationSemantics["projectEntries"])
-        .map { string($0) }
-        .filter { !$0.isEmpty }
-      windowLines.append("Zed 工作区状态 · 只读本地语义，可能滞后")
-      if !projectName.isEmpty { windowLines.append("项目：\(projectName)") }
-      if !activeFile.isEmpty { windowLines.append("活动文件：\(activeFile)") }
-      if !editorExcerpt.isEmpty {
-        let lineLabel = excerptStartLine > 0 ? "（从第 \(excerptStartLine) 行附近）" : ""
-        windowLines.append("编辑区\(lineLabel)：\n\(editorExcerpt)")
+    if !windowContext.isEmpty {
+      let windowNodes = array(windowContext["nodes"])
+      let sourceNodeCount = integer(windowContext["sourceNodeCount"])
+      let windowApplication = object(windowContext["application"])
+      var windowLines: [String] = []
+      let appName = compactLine(string(windowApplication["name"]), limit: 80)
+      let windowTitle = compactLine(string(windowApplication["windowTitle"]), limit: 160)
+      if !appName.isEmpty || !windowTitle.isEmpty {
+        windowLines.append([appName, windowTitle].filter { !$0.isEmpty }.joined(separator: " · "))
       }
-      if !projectEntries.isEmpty {
-        windowLines.append("项目根目录：\n" + projectEntries.map { "• \($0)" }.joined(separator: "\n"))
+
+      let applicationSemantics = object(windowContext["applicationSemantics"])
+      if string(applicationSemantics["source"]) == "zed_workspace_state" {
+        let projectName = compactLine(string(applicationSemantics["projectName"]), limit: 120)
+        let activeFile = compactLine(string(applicationSemantics["activeFile"]), limit: 180)
+        let contentOrigin = string(applicationSemantics["contentOrigin"])
+        let excerptStartLine = integer(applicationSemantics["editorExcerptStartLine"])
+        let editorExcerpt = boundedParagraph(string(applicationSemantics["editorExcerpt"]), limit: 1_600)
+        windowLines.append("Zed 工作区 · 只读本地语义，可能滞后")
+        if !projectName.isEmpty { windowLines.append("项目：\(projectName)") }
+        if !activeFile.isEmpty { windowLines.append("活动文件：\(activeFile)") }
+        if !editorExcerpt.isEmpty {
+          let lineLabel = excerptStartLine > 0 ? "（第 \(excerptStartLine) 行附近）" : ""
+          windowLines.append("编辑区\(lineLabel)：\n\(editorExcerpt)")
+        }
+        if contentOrigin == "workspace_file" {
+          windowLines.append("内容来源：磁盘文件；未保存修改可能尚未包含")
+        } else if contentOrigin == "zed_recovery_buffer" {
+          windowLines.append("内容来源：Zed 恢复缓冲")
+        } else if contentOrigin == "sensitive_file_blocked" {
+          windowLines.append("内容来源：敏感文件，正文未读取")
+        }
       }
-      if contentOrigin == "workspace_file" {
-        windowLines.append("编辑内容来源：磁盘文件，未保存修改可能尚未包含")
-      } else if contentOrigin == "zed_recovery_buffer" {
-        windowLines.append("编辑内容来源：Zed 恢复缓冲")
-      } else if contentOrigin == "sensitive_file_blocked" {
-        windowLines.append("编辑内容来源：敏感文件，正文已阻止读取")
+
+      let readableNodes = windowNodes.prefix(4).compactMap { value -> String? in
+        let node = object(value)
+        let label = compactLine(string(node["label"]), limit: 120)
+        let valueText = boundedParagraph(string(node["value"]), limit: 480)
+        if bool(node["secure"]) {
+          return label.isEmpty ? "• 安全字段，内容未读取" : "• \(label)：安全字段，内容未读取"
+        }
+        if label.isEmpty { return valueText.isEmpty ? nil : "• \(valueText)" }
+        if valueText.isEmpty || valueText == label { return "• \(label)" }
+        return "• \(label)：\(valueText)"
       }
-    }
-    if windowNodes.isEmpty,
-      sourceNodeCount <= 1,
-      applicationSemantics.isEmpty,
-      appName.caseInsensitiveCompare("Zed") == .orderedSame {
-      windowLines.append(
-        "Zed 当前未返回可读 AX 节点，本轮仅保留应用和窗口标题。"
-      )
-    }
-    for (index, value) in windowNodes.enumerated() {
-      let node = object(value)
-      let role = string(node["role"])
-      let label = string(node["label"])
-      let nodeValue = string(node["value"])
-      let focused = bool(node["focused"])
-      let secure = bool(node["secure"])
-      let nodeRef = string(node["nodeRef"])
-      var heading = "\(index + 1). \(role.isEmpty ? "AX 节点" : role)"
-      if focused { heading += " · 焦点" }
-      if !nodeRef.isEmpty { heading += " · \(nodeRef)" }
-      windowLines.append(heading)
-      if !label.isEmpty { windowLines.append("   标签：\(label)") }
-      if secure {
-        windowLines.append("   内容：安全字段，未读取")
-      } else if !nodeValue.isEmpty {
-        windowLines.append("   内容：\(nodeValue)")
+      if !readableNodes.isEmpty {
+        windowLines.append("可读前台内容：\n" + readableNodes.joined(separator: "\n"))
+      } else {
+        let semanticText = boundedParagraph(string(windowContext["semanticText"]), limit: 900)
+        if !semanticText.isEmpty { windowLines.append(semanticText) }
       }
-      let actions = array(node["actions"]).map { string($0) }.filter { !$0.isEmpty }
-      if !actions.isEmpty { windowLines.append("   动作：\(actions.joined(separator: ", "))") }
+      if sourceNodeCount > readableNodes.count {
+        windowLines.append(
+          "从 \(sourceNodeCount) 个 AX 元素中仅展示 \(readableNodes.count) 个可读文本片段；控件、动作与内部节点未发送给模型。"
+        )
+      }
+      if windowLines.isEmpty {
+        let captureMode = compactLine(string(windowContext["captureMode"]), limit: 80)
+        windowLines.append(captureMode.isEmpty
+          ? "当前窗口没有返回可读文本"
+          : "当前窗口没有返回可读文本（\(captureMode)）")
+      }
+      appendSection("窗口语义", windowLines.joined(separator: "\n"))
     }
-    if sourceNodeCount > windowNodes.count {
-      windowLines.insert(
-        "已从 \(sourceNodeCount) 个 AX 元素中提取 \(windowNodes.count) 个可读文本节点；控件与结构节点未发送给模型。",
-        at: 0
-      )
-    }
-    if windowNodes.isEmpty {
-      let semanticText = string(windowContext["semanticText"])
-      if !semanticText.isEmpty { windowLines.append(semanticText) }
-    }
-    if windowLines.isEmpty {
-      let captureMode = string(windowContext["captureMode"])
-      let nodeCount = integer(windowContext["nodeCount"])
-      let detail = captureMode.isEmpty ? "AX 未返回可读节点" : "AX 未返回可读节点（\(captureMode)，\(nodeCount) 个节点）"
-      windowLines.append(detail)
-    }
-    appendSection("窗口语义上下文", windowLines.joined(separator: "\n"))
 
     let planning = object(contextView["planning"])
-    let planningItems = array(planning["items"])
-    var planningLines: [String] = []
-    for (index, value) in planningItems.enumerated() {
-      let item = object(value)
-      let title = firstNonEmptyString(item, keys: ["title", "detail", "notes"])
-      if !title.isEmpty { planningLines.append("\(index + 1). \(title)") }
+    let planningLines = array(planning["items"]).prefix(4).compactMap { value -> String? in
+      let text = evidenceDisplayText(value)
+      return text.isEmpty ? nil : "• \(text)"
     }
-    if !planningLines.isEmpty { appendSection("当前规划与任务", planningLines.joined(separator: "\n")) }
+    if !planningLines.isEmpty {
+      appendSection("当前规划与任务", planningLines.joined(separator: "\n"))
+      historyCount += planningLines.count
+    }
 
     let activityTimeline = object(contextView["activityTimeline"])
     let timelineFallback = object(contextView["timeline"])
@@ -926,14 +1067,13 @@ private struct RagImeAssistantContextInspectorDocument {
       activityTimeline.isEmpty ? timelineFallback : activityTimeline,
       keys: ["recentActivities", "semanticTasks", "items", "recentDecisions"]
     )
-    var timelineLines: [String] = []
-    for (index, value) in timelineItems.enumerated() {
-      let item = object(value)
-      let text = evidenceDisplayText(item)
-      if !text.isEmpty { timelineLines.append("\(index + 1). \(text)") }
+    let timelineLines = timelineItems.prefix(4).compactMap { value -> String? in
+      let text = evidenceDisplayText(value)
+      return text.isEmpty ? nil : "• \(text)"
     }
     if !timelineLines.isEmpty {
       appendSection("最近批准时间线", timelineLines.joined(separator: "\n"))
+      historyCount += timelineLines.count
     }
 
     let groundingEvidence = array(contextView["groundingEvidence"])
@@ -941,101 +1081,168 @@ private struct RagImeAssistantContextInspectorDocument {
     var bookLines: [String] = []
     var otherEvidenceLines: [String] = []
     var seenEvidence = Set<String>()
-    for value in groundingEvidence {
+    for value in groundingEvidence.prefix(8) {
       let item = object(value)
       let text = evidenceDisplayText(item)
       let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !normalized.isEmpty, seenEvidence.insert(normalized).inserted else { continue }
-      let sourceType = firstNonEmptyString(item, keys: ["documentType", "docType", "sourceType", "sourceLane"]).lowercased()
+      let sourceType = firstNonEmptyString(
+        item,
+        keys: ["documentType", "docType", "sourceType", "sourceLane"]
+      ).lowercased()
       if sourceType.contains("atom") || sourceType.contains("fact") {
-        factLines.append("\(factLines.count + 1). \(normalized)")
+        factLines.append("• \(normalized)")
       } else if sourceType.contains("book") {
-        bookLines.append("\(bookLines.count + 1). \(normalized)")
+        bookLines.append("• \(normalized)")
       } else {
-        otherEvidenceLines.append("\(otherEvidenceLines.count + 1). \(normalized)")
+        otherEvidenceLines.append("• \(normalized)")
       }
     }
-    if !factLines.isEmpty { appendSection("当前事实 · Atom", factLines.joined(separator: "\n")) }
-    if !bookLines.isEmpty { appendSection("主题书 · Book", bookLines.joined(separator: "\n")) }
 
     if groundingEvidence.isEmpty {
-      for value in array(contextView["evidenceHints"]) {
+      for value in array(contextView["evidenceHints"]).prefix(6) {
         let item = object(value)
-        let text = item.isEmpty ? string(value) : evidenceDisplayText(item)
+        let text = item.isEmpty
+          ? compactLine(string(value), limit: 520)
+          : evidenceDisplayText(item)
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !normalized.isEmpty, seenEvidence.insert(normalized).inserted {
-          otherEvidenceLines.append("\(otherEvidenceLines.count + 1). \(normalized)")
+          otherEvidenceLines.append("• \(normalized)")
         }
       }
     }
     if factLines.isEmpty && bookLines.isEmpty && otherEvidenceLines.isEmpty {
-      for card in payload.sourceCards {
-        let text = [card.title, card.evidencePreview].filter { !$0.isEmpty }.joined(separator: "：")
+      for card in payload.sourceCards.prefix(6) {
+        let title = compactLine(card.title, limit: 140)
+        let preview = boundedParagraph(card.evidencePreview, limit: 520)
+        let text = [title, preview].filter { !$0.isEmpty }.joined(separator: "：")
         if !text.isEmpty, seenEvidence.insert(text).inserted {
-          otherEvidenceLines.append("\(otherEvidenceLines.count + 1). \(text)")
+          otherEvidenceLines.append("• \(text)")
         }
       }
     }
-    if otherEvidenceLines.isEmpty && factLines.isEmpty && bookLines.isEmpty {
-      let evidenceCount = integer(transaction["evidenceCount"])
-      otherEvidenceLines.append(evidenceCount > 0
-        ? "已召回 \(evidenceCount) 条依据，但本轮未返回可显示片段"
-        : "本轮没有注入 RAG 依据")
+    if factLines.isEmpty && bookLines.isEmpty && otherEvidenceLines.isEmpty {
+      let candidates = payload.candidates
+        .filter(RagImeSuggestionCardView.isRealCandidate)
+        .prefix(6)
+      for candidate in candidates {
+        let preview = boundedParagraph(candidate.evidencePreview, limit: 520)
+        if !preview.isEmpty, seenEvidence.insert(preview).inserted {
+          otherEvidenceLines.append("• \(preview)")
+        }
+      }
+    }
+
+    if !factLines.isEmpty {
+      appendSection("知识库事实 · Atom", factLines.joined(separator: "\n"))
+      knowledgeCount += factLines.count
+    }
+    if !bookLines.isEmpty {
+      appendSection("知识主题 · Book", bookLines.joined(separator: "\n"))
+      knowledgeCount += bookLines.count
     }
     if !otherEvidenceLines.isEmpty {
-      appendSection("其他 RAG 依据", otherEvidenceLines.joined(separator: "\n"))
+      appendSection("RAG 依据", otherEvidenceLines.joined(separator: "\n"))
+      ragCount += otherEvidenceLines.count
+    } else {
+      let evidenceCount = integer(transaction["evidenceCount"])
+      let retrievalAttempted = bool(transaction["retrievalAttempted"])
+      if evidenceCount > 0 {
+        appendSection("RAG 依据", "已召回 \(evidenceCount) 条依据，但本轮没有返回可安全显示的来源片段。")
+        ragCount += evidenceCount
+      } else if retrievalAttempted {
+        appendSection("依据状态", "本轮没有召回可显示的知识依据；结果仅使用已授权的输入与上下文。")
+        evidenceStateOnly = true
+      }
     }
 
-    let recentInputs = array(contextView["recentCompleteInputs"])
-    var recentLines: [String] = []
-    for (index, value) in recentInputs.prefix(4).enumerated() {
-      let item = object(value)
-      let text = firstNonEmptyString(item, keys: ["textPreview", "text", "summary", "title"])
-      if !text.isEmpty { recentLines.append("\(index + 1). \(text)") }
+    let recentLines = array(contextView["recentCompleteInputs"]).prefix(3).compactMap { value -> String? in
+      let text = boundedParagraph(evidenceDisplayText(value), limit: 600)
+      return text.isEmpty ? nil : "• \(text)"
     }
-    if recentLines.isEmpty {
+    if !recentLines.isEmpty {
+      appendSection("最近完整输入 · 仅用于承接", recentLines.joined(separator: "\n"))
+      historyCount += recentLines.count
+    } else {
       let reportedCount = integer(transaction["timelineRecentInputRecordCount"])
-      recentLines.append(reportedCount > 0
-        ? "存在最近完整输入，但本轮模型请求未注入可显示原文"
-        : "本轮没有追加最近完整输入")
-    }
-    appendSection("最近完整输入 · 仅用于承接", recentLines.joined(separator: "\n"))
-
-    let contextBudget = object(contextView["contextBudget"])
-    if !contextBudget.isEmpty {
-      var budgetLines: [String] = []
-      let budgetLabels = [
-        ("tokenBudget", "总预算"),
-        ("reservedOutputTokens", "预留输出"),
-        ("availableContextTokens", "可用上下文"),
-        ("estimatedContextTokens", "已估算使用"),
-        ("remainingContextTokens", "剩余"),
-      ]
-      for (key, label) in budgetLabels {
-        if case .number(let value)? = contextBudget[key] {
-          budgetLines.append("\(label)：\(Int(value)) tokens")
-        }
+      if reportedCount > 0 {
+        appendSection(
+          "最近完整输入 · 仅用于承接",
+          "记录了 \(reportedCount) 条最近输入，但本轮模型请求没有注入可显示原文。"
+        )
+        historyCount += reportedCount
       }
-      if case .bool(let withinBudget)? = contextBudget["withinSoftBudget"] {
-        budgetLines.append("软预算：\(withinBudget ? "未超出" : "已超出")")
-      }
-      let sourceTokens = object(contextBudget["contextSourceTokens"])
-      if !sourceTokens.isEmpty {
-        let details = sourceTokens.keys.sorted().compactMap { key -> String? in
-          guard case .number(let value)? = sourceTokens[key] else { return nil }
-          return "\(key) \(Int(value))"
-        }
-        if !details.isEmpty { budgetLines.append("来源：\(details.joined(separator: " · "))") }
-      }
-      if !budgetLines.isEmpty { appendSection("上下文预算", budgetLines.joined(separator: "\n")) }
     }
 
-    if sectionCount == 0 { appendSection("上下文", "本轮上下文不可用") }
+    let substantiveSectionCount = max(0, sectionCount - (evidenceStateOnly ? 1 : 0))
+    let loadingStages: Set<String> = [
+      "capturing_context",
+      "retrieving",
+      "retrieval_complete",
+      "generating",
+      "streaming",
+      "quality_retry",
+    ]
+    let contextSchemaVersion = string(contextView["schemaVersion"])
+    let contextSchemaUnsupported = !contextSchemaVersion.isEmpty
+      && contextSchemaVersion != "rag-ime.active-rag-context-view.v1"
+    let state: RagImeAssistantContextInspectorState
+    if substantiveSectionCount > 0 {
+      state = .content
+    } else if diagnosticStatus.contains("error")
+      || diagnosticStatus.contains("failed")
+      || contextSchemaUnsupported {
+      state = .error
+    } else if loadingStages.contains(progressStage) {
+      state = .loading
+    } else {
+      state = .empty
+    }
+    let isAvailable = state == .content
+    let unavailableReason: String
+    switch state {
+    case .content:
+      unavailableReason = ""
+    case .loading:
+      unavailableReason = "本轮授权快照仍在准备，请稍后重新打开。"
+    case .error:
+      unavailableReason = contextSchemaUnsupported
+        ? "本轮输入与依据使用了不受支持的快照格式，请重新生成。"
+        : "本轮授权快照读取失败，请重新生成后再试。"
+    case .empty:
+      unavailableReason = contextView.isEmpty
+        ? "本轮结果没有附带可安全显示的输入或依据快照。"
+        : "本轮快照没有返回可安全显示的输入或来源片段。"
+    }
+    if state != .content {
+      let noticeStyle = NSMutableParagraphStyle()
+      noticeStyle.lineSpacing = 3
+      noticeStyle.paragraphSpacingBefore = sectionCount == 0 ? 0 : RagImeAssistantMetrics.spacingL
+      attributed.append(NSAttributedString(
+        string: unavailableReason,
+        attributes: [
+          .font: RagImeAssistantTypography.inspectorBody,
+          .foregroundColor: state == .error ? NSColor.systemRed : NSColor.secondaryLabelColor,
+          .paragraphStyle: noticeStyle,
+        ]
+      ))
+      plainSections.append("状态\n\(unavailableReason)")
+    }
+    var summaryParts: [String] = []
+    if inputCount > 0 { summaryParts.append("\(inputCount) 段输入") }
+    if historyCount > 0 { summaryParts.append("\(historyCount) 条连续历史") }
+    if knowledgeCount > 0 { summaryParts.append("\(knowledgeCount) 条知识来源") }
+    if ragCount > 0 { summaryParts.append("\(ragCount) 条 RAG 依据") }
     return RagImeAssistantContextInspectorDocument(
+      snapshotId: payload.snapshotId,
       attributedText: attributed,
       plainText: plainSections.joined(separator: "\n\n"),
       source: source.isEmpty ? "unknown" : source,
-      sectionCount: sectionCount
+      summary: summaryParts.isEmpty ? state.accessibilityLabel : summaryParts.joined(separator: " · "),
+      sectionCount: sectionCount,
+      state: state,
+      isAvailable: isAvailable,
+      unavailableReason: unavailableReason
     )
   }
 
@@ -1086,27 +1293,108 @@ private struct RagImeAssistantContextInspectorDocument {
     return []
   }
 
+  private static func boundedParagraph(_ text: String, limit: Int) -> String {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.count > limit else { return trimmed }
+    return String(trimmed.prefix(limit)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+  }
+
+  private static func compactLine(_ text: String, limit: Int) -> String {
+    boundedParagraph(
+      text.split(whereSeparator: \.isWhitespace).joined(separator: " "),
+      limit: limit
+    )
+  }
+
+  private static func evidenceDisplayText(_ value: RagImeJSONValue) -> String {
+    switch value {
+    case .string(let text):
+      return boundedParagraph(text, limit: 560)
+    case .object(let item):
+      return evidenceDisplayText(item)
+    case .array(let values):
+      var seen = Set<String>()
+      return values.prefix(4).compactMap { value -> String? in
+        let text = evidenceDisplayText(value).trimmingCharacters(in: .whitespacesAndNewlines)
+        return !text.isEmpty && seen.insert(text).inserted ? text : nil
+      }.joined(separator: " · ")
+    case .number, .bool, .null:
+      return ""
+    }
+  }
+
   private static func evidenceDisplayText(_ item: [String: RagImeJSONValue]) -> String {
-    let title = firstNonEmptyString(item, keys: ["title", "label"])
-    let detail = firstNonEmptyString(item, keys: ["preview", "text", "summary", "detail"])
-    if title.isEmpty { return detail }
-    if detail.isEmpty || detail == title || detail.contains(title) { return detail.isEmpty ? title : detail }
-    if title.contains(detail) { return title }
-    return "\(title)：\(detail)"
+    let title = compactLine(firstNonEmptyString(item, keys: ["title", "label"]), limit: 140)
+    let detail = boundedParagraph(
+      firstNonEmptyString(item, keys: ["evidencePreview", "preview", "textPreview", "text", "summary", "detail"]),
+      limit: 560
+    )
+    let sourceLane = compactLine(firstNonEmptyString(item, keys: ["sourceLane", "sourceType"]), limit: 80)
+    let sourceReference = boundedParagraph(
+      firstNonEmptyString(item, keys: ["ref", "citation", "source", "id"]),
+      limit: 800
+    )
+    let reference = [sourceLane, sourceReference]
+      .filter { !$0.isEmpty }
+      .joined(separator: " · ")
+    let body: String
+    if title.isEmpty {
+      body = detail
+    } else if detail.isEmpty || detail == title || detail.contains(title) {
+      body = detail.isEmpty ? title : detail
+    } else if title.contains(detail) {
+      body = title
+    } else {
+      body = "\(title)：\(detail)"
+    }
+    guard !body.isEmpty else { return "" }
+    return reference.isEmpty ? body : "\(body)\n  来源：\(reference)"
+  }
+}
+private final class RagImeAssistantContextInspectorRootView: NSVisualEffectView {
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    wantsLayer = true
+    updateDynamicChrome()
+  }
+
+  @available(*, unavailable)
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func viewDidChangeEffectiveAppearance() {
+    super.viewDidChangeEffectiveAppearance()
+    updateDynamicChrome()
+  }
+
+  private func updateDynamicChrome() {
+    layer?.borderWidth = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 1 : 0.5
+    layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.72).cgColor
   }
 }
 
+
 private final class RagImeAssistantContextInspectorViewController: NSViewController {
-  static let preferredSize = NSSize(width: 560, height: 520)
+  static let preferredSize = NSSize(width: 520, height: 480)
   private let document: RagImeAssistantContextInspectorDocument
-  private let titleLabel = NSTextField(labelWithString: "本轮输入与依据")
+  private let onClose: () -> Void
+  private let onRetry: (() -> Void)?
+  private let titleLabel = NSTextField(labelWithString: "")
+  private let stateIcon = NSImageView()
   private let subtitleLabel = NSTextField(labelWithString: "")
-  private let copyButton = NSButton()
+  private let copyButton = NSButton(title: "复制全部", target: nil, action: nil)
+  private let retryButton = NSButton(title: "重新生成", target: nil, action: nil)
+  private let closeButton = NSButton()
+  private let divider = NSBox(frame: .zero)
   private let scrollView = NSScrollView()
   private let textView = NSTextView(frame: .zero)
-
-  init(document: RagImeAssistantContextInspectorDocument) {
+  init(
+    document: RagImeAssistantContextInspectorDocument,
+    onClose: @escaping () -> Void,
+    onRetry: (() -> Void)? = nil
+  ) {
     self.document = document
+    self.onClose = onClose
+    self.onRetry = onRetry
     super.init(nibName: nil, bundle: nil)
   }
 
@@ -1114,56 +1402,152 @@ private final class RagImeAssistantContextInspectorViewController: NSViewControl
   required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
   override func loadView() {
-    let root = NSView(frame: NSRect(origin: .zero, size: Self.preferredSize))
-    root.wantsLayer = true
+    let root = RagImeAssistantContextInspectorRootView(
+      frame: NSRect(origin: .zero, size: Self.preferredSize)
+    )
+    root.material = .contentBackground
+    root.blendingMode = .withinWindow
+    root.state = .inactive
+    root.layer?.cornerRadius = RagImeAssistantMetrics.inspectorCornerRadius
+    root.layer?.masksToBounds = true
+    root.setAccessibilityLabel(document.state.title)
     view = root
 
-    titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+    titleLabel.stringValue = document.state.title
+    titleLabel.font = RagImeAssistantTypography.inspectorTitle
     titleLabel.textColor = .labelColor
-    subtitleLabel.font = NSFont.systemFont(ofSize: 11.5, weight: .regular)
+    subtitleLabel.font = RagImeAssistantTypography.inspectorSubtitle
     subtitleLabel.textColor = .secondaryLabelColor
-    subtitleLabel.stringValue = document.source == "provider_request"
-      ? "本轮实际模型请求 · 仅保留于当前结果"
-      : "前台请求快照 · 模型上下文尚未返回"
+    let sourceLabel = document.source == "provider_request"
+      ? "实际模型请求"
+      : (document.source == "frontend_request" ? "前台授权快照" : "授权来源未标明")
+    subtitleLabel.stringValue = "\(sourceLabel) · \(document.summary)"
+    subtitleLabel.lineBreakMode = .byTruncatingTail
+    stateIcon.imageScaling = .scaleProportionallyDown
+    stateIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+    switch document.state {
+    case .content:
+      stateIcon.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)
+      stateIcon.contentTintColor = .systemGreen
+    case .loading:
+      stateIcon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
+      stateIcon.contentTintColor = .controlAccentColor
+    case .empty:
+      stateIcon.image = NSImage(systemSymbolName: "tray", accessibilityDescription: nil)
+      stateIcon.contentTintColor = .secondaryLabelColor
+    case .error:
+      stateIcon.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+      stateIcon.contentTintColor = .systemRed
+    }
+    stateIcon.setAccessibilityLabel(document.state.accessibilityLabel)
 
     copyButton.isBordered = false
     copyButton.bezelStyle = .inline
-    copyButton.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "复制全部上下文")
-    copyButton.toolTip = "复制全部上下文"
+    copyButton.focusRingType = .exterior
+    copyButton.font = RagImeAssistantTypography.action
+    copyButton.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: "复制可读输入与依据")
+    copyButton.imagePosition = .imageLeading
+    copyButton.toolTip = document.isAvailable
+      ? "复制当前显示的可读输入与依据"
+      : document.unavailableReason
+    copyButton.setAccessibilityLabel("复制全部可读输入与依据")
+    copyButton.isEnabled = document.isAvailable
     copyButton.target = self
     copyButton.action = #selector(copyAllContext)
 
+    retryButton.isBordered = false
+    retryButton.bezelStyle = .inline
+    retryButton.focusRingType = .exterior
+    retryButton.font = RagImeAssistantTypography.action
+    retryButton.image = NSImage(
+      systemSymbolName: "arrow.clockwise",
+      accessibilityDescription: "重新生成输入与依据"
+    )
+    retryButton.imagePosition = .imageLeading
+    retryButton.toolTip = "重新生成本轮结果后再次查看输入与依据"
+    retryButton.setAccessibilityLabel("重新生成本轮输入与依据")
+    retryButton.isHidden = document.state != .error
+    retryButton.isEnabled = document.state == .error && onRetry != nil
+    retryButton.target = self
+    retryButton.action = #selector(retryInspector)
+
+    closeButton.isBordered = false
+    closeButton.bezelStyle = .inline
+    closeButton.focusRingType = .exterior
+    closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "关闭输入与依据")
+    closeButton.toolTip = "关闭输入与依据"
+    closeButton.setAccessibilityLabel("关闭输入与依据")
+    closeButton.target = self
+    closeButton.action = #selector(closeInspector)
+
+    divider.boxType = .separator
     scrollView.drawsBackground = false
     scrollView.borderType = .noBorder
     scrollView.hasVerticalScroller = true
+    scrollView.hasHorizontalScroller = false
     scrollView.autohidesScrollers = true
+    scrollView.scrollerStyle = .overlay
     textView.isEditable = false
     textView.isSelectable = true
     textView.drawsBackground = false
-    textView.textContainerInset = NSSize(width: 8, height: 8)
+    textView.textContainerInset = NSSize(width: 8, height: 10)
     textView.isHorizontallyResizable = false
     textView.isVerticallyResizable = true
     textView.autoresizingMask = [.width]
+    textView.textContainer?.lineBreakMode = .byCharWrapping
     textView.textContainer?.widthTracksTextView = true
     textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
     textView.textStorage?.setAttributedString(document.attributedText)
+    textView.setAccessibilityLabel("本轮授权输入与依据正文")
+    scrollView.setAccessibilityLabel("本轮授权输入与依据")
     scrollView.documentView = textView
 
-    [titleLabel, subtitleLabel, copyButton, scrollView].forEach { root.addSubview($0) }
+    [titleLabel, stateIcon, subtitleLabel, copyButton, retryButton, closeButton, divider, scrollView].forEach {
+      root.addSubview($0)
+    }
   }
+
 
   override func viewDidLayout() {
     super.viewDidLayout()
+    let inset = RagImeAssistantMetrics.spacingL
     let bounds = view.bounds
-    titleLabel.frame = NSRect(x: 16, y: bounds.height - 32, width: bounds.width - 72, height: 18)
-    subtitleLabel.frame = NSRect(x: 16, y: bounds.height - 52, width: bounds.width - 72, height: 16)
-    copyButton.frame = NSRect(x: bounds.width - 44, y: bounds.height - 45, width: 28, height: 28)
-    scrollView.frame = NSRect(x: 8, y: 8, width: bounds.width - 16, height: bounds.height - 68)
+    let gap = RagImeAssistantMetrics.spacingS
+    let hitTarget = RagImeAssistantMetrics.minimumHitTarget
+    let closeX = bounds.width - inset - hitTarget
+    let copyWidth: CGFloat = 92
+    let copyX = closeX - gap - copyWidth
+    let retryWidth: CGFloat = 96
+    let retryX = copyX - gap - retryWidth
+    let actionStartX = retryButton.isHidden ? copyX : retryX
+    titleLabel.frame = NSRect(
+      x: inset,
+      y: bounds.height - 38,
+      width: max(120, closeX - gap - inset),
+      height: 20
+    )
+    stateIcon.frame = NSRect(x: inset, y: bounds.height - 62, width: 16, height: 16)
+    subtitleLabel.frame = NSRect(
+      x: inset + 24,
+      y: bounds.height - 64,
+      width: max(96, actionStartX - gap - inset - 24),
+      height: 18
+    )
+    retryButton.frame = NSRect(x: retryX, y: bounds.height - 60, width: retryWidth, height: hitTarget)
+    copyButton.frame = NSRect(x: copyX, y: bounds.height - 60, width: copyWidth, height: hitTarget)
+    closeButton.frame = NSRect(x: closeX, y: bounds.height - 60, width: hitTarget, height: hitTarget)
+    divider.frame = NSRect(x: inset, y: bounds.height - 76, width: bounds.width - inset * 2, height: 1)
+    scrollView.frame = NSRect(
+      x: RagImeAssistantMetrics.spacingS,
+      y: RagImeAssistantMetrics.spacingS,
+      width: bounds.width - RagImeAssistantMetrics.spacingL,
+      height: bounds.height - 92
+    )
     let contentWidth = max(0, scrollView.contentSize.width)
     if let textContainer = textView.textContainer, let layoutManager = textView.layoutManager {
       textContainer.containerSize = NSSize(width: max(0, contentWidth - 16), height: CGFloat.greatestFiniteMagnitude)
       layoutManager.ensureLayout(for: textContainer)
-      let contentHeight = ceil(layoutManager.usedRect(for: textContainer).height) + 16
+      let contentHeight = ceil(layoutManager.usedRect(for: textContainer).height) + 20
       textView.frame = NSRect(
         x: 0,
         y: 0,
@@ -1174,7 +1558,17 @@ private final class RagImeAssistantContextInspectorViewController: NSViewControl
   }
 
   @objc private func copyAllContext() {
+    guard document.isAvailable else { return }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(document.plainText, forType: .string)
+  }
+
+  @objc private func retryInspector() {
+    guard document.state == .error, let onRetry else { return }
+    onRetry()
+  }
+
+  @objc private func closeInspector() {
+    onClose()
   }
 }

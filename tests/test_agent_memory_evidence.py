@@ -38,7 +38,7 @@ class AgentMemoryEvidenceServiceTests(unittest.TestCase):
             session_id="session:1",
             pi_entry_id="entry:1",
             turn_id="turn:1",
-            text="请调用 ime_memory 的 curation_prepare 并返回 runId。",
+            text="请调用 memory 的 curation_prepare 并返回 runId。",
         )
 
         self.assertEqual(

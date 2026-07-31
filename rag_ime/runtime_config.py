@@ -149,11 +149,24 @@ class ActiveRagRuntimeConfig:
 
 @dataclass(frozen=True)
 class ModelRuntimeConfig:
+    model_id: str
     profile_id: str
     model_path: str
+    prompt_mode: str
+    max_tokens: int
+    temperature: float
+    top_p: float
 
     def payload(self) -> dict[str, object]:
-        return {"profileId": self.profile_id, "modelPath": self.model_path}
+        return {
+            "modelId": self.model_id,
+            "profileId": self.profile_id,
+            "modelPath": self.model_path,
+            "promptMode": self.prompt_mode,
+            "maxTokens": self.max_tokens,
+            "temperature": self.temperature,
+            "topP": self.top_p,
+        }
 
 
 @dataclass(frozen=True)
@@ -288,8 +301,13 @@ class RuntimeConfigSnapshot:
         active_rag["shortcut"] = self.active_rag.shortcut
 
         models = _mapping(settings.setdefault("models", {}))
+        models["modelId"] = self.model.model_id
         models["hot"] = self.model.profile_id
         models["path"] = self.model.model_path
+        models["promptMode"] = self.model.prompt_mode
+        models["maxTokens"] = self.model.max_tokens
+        models["temperature"] = self.model.temperature
+        models["topP"] = self.model.top_p
         return settings
 
 
@@ -361,7 +379,7 @@ class RuntimeConfigResolver:
         )
         post_commit = PostCommitRuntimeConfig(
             enabled=post_commit_enabled,
-            idle_trigger_ms=_bounded_int(post_commit_settings.get("idleTriggerMs"), 180, 40, 3000),
+            idle_trigger_ms=_bounded_int(post_commit_settings.get("idleTriggerMs"), 180, 40, 1000),
             min_delta_chars=_bounded_int(post_commit_settings.get("minDeltaChars"), 1, 1, 32),
             max_calls_per_10s=_bounded_int(post_commit_settings.get("maxCallsPer10s"), 6, 0, 10),
             cooldown_ms=_bounded_int(post_commit_settings.get("cooldownMs"), 0, 0, 10000),
@@ -372,7 +390,12 @@ class RuntimeConfigResolver:
             panel_ttl_ms=_bounded_int(post_commit_settings.get("panelTtlMs"), 4000, 500, 30000),
             max_candidates=max_candidates,
             completion_ttl_ms=profile.post_commit_completion_ttl_ms,
-            model_budget_ms=profile.post_commit_model_budget_ms,
+            model_budget_ms=_bounded_int(
+                post_commit_settings.get("modelBudgetMs"),
+                profile.post_commit_model_budget_ms,
+                300,
+                min(12000, profile.post_commit_model_hard_timeout_ms),
+            ),
             model_hard_timeout_ms=profile.post_commit_model_hard_timeout_ms,
         )
 
@@ -429,6 +452,9 @@ class RuntimeConfigResolver:
         )
         memory = MemoryRuntimeConfig(enabled=_bool_value(memory_settings.get("enabled"), True))
 
+        model_id = _string_value(
+            self.environ.get("RAG_IME_MODEL_ID") or models.get("modelId")
+        )
         profile_id = _string_value(
             self.environ.get("RAG_IME_RUNTIME_OVERRIDE_MODEL_PROFILE")
             or self.environ.get("RAG_IME_MLX_PROFILE")
@@ -446,7 +472,38 @@ class RuntimeConfigResolver:
         )
         if "RAG_IME_RUNTIME_OVERRIDE_MODEL_PATH" in self.environ:
             experiment_overrides.append("RAG_IME_RUNTIME_OVERRIDE_MODEL_PATH")
-        model = ModelRuntimeConfig(profile_id=profile_id, model_path=model_path)
+        model = ModelRuntimeConfig(
+            model_id=model_id,
+            profile_id=profile_id,
+            model_path=model_path,
+            prompt_mode=_string_value(
+                self.environ.get("RAG_IME_MLX_PROMPT_MODE")
+                or self.environ.get("RAG_IME_PREDICTOR_PROMPT_MODE")
+                or models.get("promptMode")
+                or "chat-json"
+            ),
+            max_tokens=_bounded_int(
+                self.environ.get("RAG_IME_PREDICTOR_MAX_TOKENS")
+                or models.get("maxTokens"),
+                8,
+                1,
+                64,
+            ),
+            temperature=_bounded_float(
+                self.environ.get("RAG_IME_PREDICTOR_TEMPERATURE")
+                or models.get("temperature"),
+                0.15,
+                0.0,
+                2.0,
+            ),
+            top_p=_bounded_float(
+                self.environ.get("RAG_IME_PREDICTOR_TOP_P")
+                or models.get("topP"),
+                0.85,
+                0.05,
+                1.0,
+            ),
+        )
 
         source_badges = SourceBadgeRuntimeConfig(
             enabled=_bool_override(
@@ -474,13 +531,16 @@ class RuntimeConfigResolver:
                 30000,
             ),
         )
-        post_commit_number_keys = _enum_override(
+        requested_post_commit_number_keys = _enum_override(
             self.environ,
             "RAG_IME_RUNTIME_OVERRIDE_POST_COMMIT_NUMBER_KEYS",
             _string_value(post_commit_settings.get("numberKeys") or "pass_through"),
             {"pass_through", "select_prediction"},
             experiment_overrides,
         )
+        post_commit_number_keys = "pass_through"
+        if requested_post_commit_number_keys != post_commit_number_keys:
+            safety_clamps.append("ordinary_number_keys_reserved_for_rime")
         key_policy = KeyPolicyRuntimeConfig(
             composition_number_keys="select_rime_candidate",
             composition_tab="rime_default",
@@ -492,8 +552,10 @@ class RuntimeConfigResolver:
                 {"accept_top_prediction", "rime_default", "disabled"},
                 "accept_top_prediction",
             ),
-            option_number=_string_value(
-                post_commit_settings.get("optionNumber") or "select_prediction_by_ordinal"
+            option_number=_enum_value(
+                post_commit_settings.get("optionNumber"),
+                {"select_prediction_by_ordinal", "disabled"},
+                "select_prediction_by_ordinal",
             ),
             escape=_string_value(post_commit_settings.get("escape") or "dismiss_prediction"),
         )

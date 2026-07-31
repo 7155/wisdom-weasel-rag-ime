@@ -14,7 +14,11 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .activity_timeline import activity_timeline_period
+from .activity_timeline import (
+    ACTIVITY_SPAN_SEMANTICS,
+    activity_timeline_kind,
+    activity_timeline_period,
+)
 from .agent_memory_sources import AgentMemorySourceStore
 from .config_portability import (
     apply_user_configuration,
@@ -3643,9 +3647,10 @@ class ManagementService:
         row = conn.execute(
             """
             SELECT event.id, event.created_at_ms, event.source,
-                   event.committed_text, event.app, event.project,
-                   event.provider_name, event.tags_json, event.context_group_id,
-                   event.context_group_level, event.capture_metadata_json
+                   event.committed_text, event.recent_context, event.preedit,
+                   event.app, event.project, event.provider_name, event.tags_json,
+                   event.context_group_id, event.context_group_level,
+                   event.capture_metadata_json
             FROM input_events AS event
             LEFT JOIN memory_state AS state ON state.event_id = event.id
             WHERE event.id = ?
@@ -3670,6 +3675,12 @@ class ManagementService:
             return None
         raw_text = compact_whitespace(str(row["committed_text"] or ""))
         sensitive = _reference_text_is_sensitive(raw_text)
+        recent_context = compact_whitespace(str(row["recent_context"] or ""))
+        preedit = compact_whitespace(str(row["preedit"] or ""))
+        context_sensitive = sensitive or _reference_text_is_sensitive(
+            " ".join((recent_context, preedit))
+        )
+        owning_scope = str(row["project"] or "") == self.project
         canonical_id = str(int(row["id"]))
         item = {
             "id": canonical_id,
@@ -3689,6 +3700,18 @@ class ManagementService:
             "captureMetadata": _sanitize_reference_value(
                 _json_mapping(row["capture_metadata_json"])
             ),
+            "sourceContextAvailable": owning_scope,
+            "sourceContext": (
+                {
+                    "recentContext": "" if context_sensitive else recent_context,
+                    "preedit": "" if context_sensitive else preedit,
+                    "redacted": context_sensitive,
+                    "scopeProject": str(row["project"] or ""),
+                    "usedFor": ["source_fingerprint", "semantic_grouping"],
+                }
+                if owning_scope
+                else {}
+            ),
             "status": "active",
             "ownerKind": "user",
             "ownerId": "default",
@@ -3696,6 +3719,8 @@ class ManagementService:
             "createdAtMs": int(row["created_at_ms"] or 0),
             "updatedAtMs": int(row["created_at_ms"] or 0),
         }
+        if not owning_scope:
+            item.pop("sourceContext", None)
         return {
             "item": item,
             "source": {
@@ -4024,6 +4049,18 @@ class ManagementService:
             conn,
             source_event_ids,
         )
+        segments = _safe_timeline_segments(
+            _json_list(row["segments_json"]),
+            timezone_name=str(row["timezone"] or ""),
+        )
+        observed_start_ms = min(
+            (int(segment["startMs"]) for segment in segments),
+            default=0,
+        )
+        observed_end_ms = max(
+            (int(segment["endMs"]) for segment in segments),
+            default=observed_start_ms,
+        )
         return {
             "item": {
                 "id": reference_id,
@@ -4040,10 +4077,18 @@ class ManagementService:
                 "ownerId": "default",
                 "eventCount": int(row["event_count"] or 0),
                 "taskCount": int(row["segment_count"] or 0),
-                "segments": _safe_timeline_segments(
-                    _json_list(row["segments_json"]),
-                    timezone_name=str(row["timezone"] or ""),
+                "observedStartMs": observed_start_ms,
+                "observedEndMs": observed_end_ms,
+                "spanSemantics": ACTIVITY_SPAN_SEMANTICS,
+                "ordinaryActivityCount": sum(
+                    segment["activityKind"] == "ordinary_activity"
+                    for segment in segments
                 ),
+                "consolidatedActivityCount": sum(
+                    segment["activityKind"] == "consolidated_activity"
+                    for segment in segments
+                ),
+                "segments": segments,
                 "sourceEventHash": str(row["source_event_hash"] or ""),
                 "approvedBookId": str(row["approved_book_id"] or ""),
                 "approvedAtMs": int(row["approved_at_ms"] or 0),
@@ -4311,7 +4356,7 @@ class ManagementService:
         uid = str(os.getuid())
         commands = {
             "restart_predictor": ["launchctl", "kickstart", "-k", f"gui/{uid}/com.rag-ime.mlx-predictor"],
-            "redeploy_rime": ["/bin/bash", str(self._helper_path("install_squirrel_rag_config.sh"))],
+            "redeploy_rime": ["/bin/bash", str(self._helper_path("apply_input_method_configuration.sh"))],
             "open_accessibility_settings": ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"],
         }
         return commands[action]
@@ -4961,13 +5006,13 @@ _RUNTIME_ACTION_PREVIEWS: dict[str, dict[str, object]] = {
         "risk": "R2",
     },
     "restart_predictor": {
-        "title": "重启本机模型",
-        "items": ["重新启动当前用户的 MLX 预测服务。", "模型重新载入期间会暂时没有智能候选。"],
+        "title": "应用并重启本机模型",
+        "items": ["把已校验的本机模型设置写入模型注册表。", "依次重启 MLX 预测器和 Sidecar，并等待两端健康检查一致。", "模型重新载入期间会暂时没有智能候选。"],
         "risk": "R2",
     },
     "redeploy_rime": {
-        "title": "重新部署 Rime 配置",
-        "items": ["运行受信任的 Rime 配置部署脚本。", "用户词典和输入历史不会被清空。"],
+        "title": "应用输入法前端设置",
+        "items": ["把已校验的候选数量和触发延迟投影到受管理的 Rime 配置块。", "构建并重新载入 Squirrel。", "用户词典、输入历史和用户自有配置不会被清空。"],
         "risk": "R3",
     },
     "open_accessibility_settings": {
@@ -5534,6 +5579,8 @@ def _safe_timeline_segments(
                 "startMs": start_ms,
                 "endMs": end_ms,
                 "period": period,
+                "activityKind": activity_timeline_kind(start_ms, end_ms),
+                "spanSemantics": ACTIVITY_SPAN_SEMANTICS,
                 "eventCount": max(0, int(raw.get("eventCount") or len(event_ids))),
                 "redactedEventCount": max(
                     0, int(raw.get("redactedEventCount") or 0)

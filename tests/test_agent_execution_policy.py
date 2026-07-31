@@ -6,6 +6,7 @@ from rag_ime.agent_execution_policy import (
     APPROVAL_ASK,
     APPROVAL_AUTO,
     APPROVAL_DENY,
+    APPROVAL_MODEL,
     FULL_TRUST_EXECUTION_MODE,
     PER_ACTION_EXECUTION_MODE,
     READ_ONLY_EXECUTION_MODE,
@@ -71,6 +72,8 @@ class AgentExecutionPolicyTests(unittest.TestCase):
         workspace_effects = (
             ("workspace_patch", "apply"),
             ("workspace_shell", "run"),
+            ("workspace_lsp", "rename"),
+            ("workspace_lsp", "code_action_apply"),
         )
 
         for tool, operation in workspace_effects:
@@ -104,7 +107,7 @@ class AgentExecutionPolicyTests(unittest.TestCase):
                     tool=tool,
                     operation=operation,
                 ),
-                APPROVAL_AUTO,
+                APPROVAL_MODEL,
             )
 
         ungranted = {
@@ -122,8 +125,16 @@ class AgentExecutionPolicyTests(unittest.TestCase):
         )
         self.assertEqual(
             approval_strategy(
+                {**ungranted, "executionMode": FULL_TRUST_EXECUTION_MODE},
+                tool="workspace_patch",
+                operation="apply",
+            ),
+            APPROVAL_DENY,
+        )
+        self.assertEqual(
+            approval_strategy(
                 {**base, "executionMode": WORKSPACE_MANAGED_EXECUTION_MODE},
-                tool="ime_planning",
+                tool="planning",
                 operation="task_action",
             ),
             APPROVAL_ASK,
@@ -131,13 +142,13 @@ class AgentExecutionPolicyTests(unittest.TestCase):
         self.assertEqual(
             approval_strategy(
                 {**base, "executionMode": FULL_TRUST_EXECUTION_MODE},
-                tool="ime_planning",
+                tool="planning",
                 operation="task_action",
             ),
-            APPROVAL_AUTO,
+            APPROVAL_MODEL,
         )
 
-    def test_full_trust_keeps_hard_manual_gates(self) -> None:
+    def test_full_trust_routes_every_approval_gate_to_the_model_arbiter(self) -> None:
         session = {
             "executionMode": FULL_TRUST_EXECUTION_MODE,
             "toolProfileVersion": "control-center-v1",
@@ -148,11 +159,10 @@ class AgentExecutionPolicyTests(unittest.TestCase):
             "workspaceScopeGrantedAtMs": 100,
         }
         for tool, operation in (
-            ("ime_runtime", "restart_sidecar"),
-            ("ime_runtime", "restart_predictor"),
-            ("ime_runtime", "redeploy_rime"),
-            ("ime_configuration", "restore_apply"),
-            ("desktop_semantic", "act"),
+            ("runtime", "restart_sidecar"),
+            ("runtime", "restart_predictor"),
+            ("runtime", "redeploy_rime"),
+            ("configuration", "restore_apply"),
         ):
             self.assertEqual(
                 approval_strategy(
@@ -160,8 +170,16 @@ class AgentExecutionPolicyTests(unittest.TestCase):
                     tool=tool,
                     operation=operation,
                 ),
-                APPROVAL_ASK,
+                APPROVAL_MODEL,
             )
+        self.assertEqual(
+            approval_strategy(
+                session,
+                tool="desktop_semantic",
+                operation="act",
+            ),
+            APPROVAL_MODEL,
+        )
 
     def test_prompt_describes_the_mode_without_leaking_internal_credentials(self) -> None:
         ungranted = execution_policy_prompt(
@@ -200,9 +218,13 @@ class AgentExecutionPolicyTests(unittest.TestCase):
         self.assertIn("工作区范围尚未确认", ungranted)
         self.assertIn("等待一次原生范围批准", ungranted)
         self.assertIn("已批准工作区内", managed)
-        self.assertIn("完全信任", trusted_without_scope)
+        self.assertIn("全自动", trusted_without_scope)
         self.assertIn("工作区边界尚未确认", trusted_without_scope)
-        self.assertIn("当前工作区内符合策略的动作可以直接完成", trusted)
+        self.assertIn("工作区变更会失败关闭", trusted_without_scope)
+        self.assertIn("所有原本需要审批的操作都由独立 Luna Max 审批历史判定", trusted)
+        self.assertIn("不接收本 Agent 的输出或推理", trusted)
+        self.assertIn("不要原样重试，也不要转为人工审批", trusted)
+        self.assertIn("删库、灾难性破坏和敏感数据外传由代码硬阻止", trusted)
         for prompt in (ungranted, managed, trusted_without_scope, trusted):
             self.assertIn("取消、审计和迟到写入保护", prompt)
             self.assertNotIn("sha256", prompt.lower())

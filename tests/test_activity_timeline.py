@@ -168,6 +168,11 @@ class DailyActivityTimelineTests(unittest.TestCase):
         self.assertEqual(timeline["segments"][-1]["redactedEventCount"], 1)
         self.assertNotIn("secret-value", json.dumps(timeline, ensure_ascii=False))
         self.assertFalse(timeline["policy"]["longTermFact"])
+        self.assertEqual(timeline["ordinaryActivityCount"], 2)
+        self.assertEqual(timeline["consolidatedActivityCount"], 0)
+        self.assertEqual(timeline["observedStartMs"], self._ms(9, 0))
+        self.assertEqual(timeline["observedEndMs"], self._ms(9, 18))
+        self.assertEqual(timeline["spanSemantics"], "first_to_last_source_event")
         self.assertTrue(timeline["policy"]["automaticPromotion"])
         self.assertFalse(timeline["policy"]["explicitApprovalRequired"])
 
@@ -292,6 +297,9 @@ class DailyActivityTimelineTests(unittest.TestCase):
             [reference["eventId"] for reference in segment["evidenceRefs"]],
             event_ids,
         )
+        self.assertEqual(segment["activityKind"], "ordinary_activity")
+        self.assertEqual(segment["spanSemantics"], "first_to_last_source_event")
+        self.assertTrue(all("preview" not in ref for ref in segment["evidenceRefs"]))
 
     def test_short_cas_burst_and_large_followup_have_distinct_task_titles(
         self,
@@ -408,6 +416,10 @@ class DailyActivityTimelineTests(unittest.TestCase):
         self.assertEqual(segment["startMs"], self._ms(9, 0))
         self.assertEqual(segment["endMs"], self._ms(15, 0))
         self.assertEqual(segment["period"], "day")
+        self.assertEqual(segment["activityKind"], "consolidated_activity")
+        self.assertEqual(segment["spanSemantics"], "first_to_last_source_event")
+        self.assertEqual(timeline["ordinaryActivityCount"], 0)
+        self.assertEqual(timeline["consolidatedActivityCount"], 1)
 
     def test_draft_excludes_both_forgotten_event_tombstone_shapes(self) -> None:
         source_tombstoned_id = self._record(
@@ -527,7 +539,7 @@ class DailyActivityTimelineTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(
             json.loads(str(row[0]))["segmentationMode"],
-            "semantic_task_v4",
+            "semantic_task_v5",
         )
 
     def test_one_off_fragment_is_evidence_not_a_standalone_task(self) -> None:
@@ -572,7 +584,7 @@ class DailyActivityTimelineTests(unittest.TestCase):
             generated_at_ms=self._ms(10, 30),
         )["timeline"]
 
-        self.assertEqual(timeline["segmentationMode"], "semantic_task_v4")
+        self.assertEqual(timeline["segmentationMode"], "semantic_task_v5")
         self.assertNotIn("ku", [item["title"] for item in timeline["segments"]])
         self.assertLessEqual(timeline["segmentCount"], 3)
         self.assertEqual(timeline["eventCount"], 10)
@@ -867,6 +879,42 @@ class DailyActivityTimelineTests(unittest.TestCase):
         self.assertEqual(context["deduplicatedEventCount"], 1)
         self.assertEqual(context["redactedEventCount"], 1)
         self.assertEqual(context["retainedEventCount"], 1)
+
+    def test_model_timeline_context_bounds_long_derived_titles(self) -> None:
+        long_text = "记忆整理标题必须在受治理投影边界稳定限长" * 12
+        self._record(
+            18,
+            20,
+            app="com.openai.codex",
+            source="codex_history",
+            text=long_text,
+            context_group_id="task:memory-title-boundary",
+        )
+        store = DailyActivityTimelineStore(
+            self.db_path,
+            project=self.project,
+            timezone_name="Asia/Shanghai",
+        )
+        timeline = store.build_draft(
+            "2026-07-17",
+            generated_at_ms=self._ms(18, 21),
+        )["timeline"]
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            context = load_activity_timeline_context(
+                conn,
+                project=self.project,
+                timeline_date="2026-07-17",
+                timeline_id=timeline["timelineId"],
+            )
+
+        self.assertEqual(len(context["segments"]), 1)
+        segment = context["segments"][0]
+        self.assertEqual(len(segment["title"]), 160)
+        self.assertTrue(segment["title"].startswith(long_text[:140]))
+        self.assertTrue(segment["title"].endswith("…"))
+        self.assertGreater(len(segment["summary"]), len(segment["title"]))
+        self.assertEqual(segment["source"]["id"], timeline["timelineId"])
 
     def test_model_timeline_context_filters_both_event_tombstone_shapes(self) -> None:
         source_event_id = self._record(

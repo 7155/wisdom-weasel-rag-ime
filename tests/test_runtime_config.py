@@ -80,7 +80,8 @@ class RuntimeConfigResolverTests(unittest.TestCase):
         self.assertEqual(snapshot.model.profile_id, "minimind_ime_v2")
         self.assertEqual(snapshot.model.model_path, "/tmp/minimind-ime-v2")
         self.assertFalse(snapshot.source_badges.enabled)
-        self.assertEqual(snapshot.key_policy.post_commit_number_keys, "select_prediction")
+        self.assertEqual(snapshot.key_policy.post_commit_number_keys, "pass_through")
+        self.assertIn("ordinary_number_keys_reserved_for_rime", snapshot.safety_clamps)
         self.assertNotIn("RAG_IME_UNRELATED_OVERRIDE", snapshot.experiment_overrides)
 
     def test_default_post_commit_budget_and_panel_ttl_match_persisted_targets(self) -> None:
@@ -91,8 +92,39 @@ class RuntimeConfigResolverTests(unittest.TestCase):
 
         self.assertEqual(snapshot.post_commit.max_calls_per_10s, 6)
         self.assertEqual(snapshot.post_commit.panel_ttl_ms, 4000)
+        self.assertEqual(snapshot.post_commit.model_budget_ms, 900)
         self.assertEqual(snapshot.hybrid_rag.lane_weight("bm25_raw"), 1.0)
         self.assertEqual(snapshot.hybrid_rag.lane_weight("vector_raw"), 1.05)
+
+    def test_local_predictor_and_interaction_settings_flow_into_runtime_snapshot(self) -> None:
+        self.store.update_settings(
+            {
+                "interaction.postCommit.modelBudgetMs": 1300,
+                "interaction.postCommit.optionNumber": "disabled",
+                "models.modelId": "minimind-ime-v2",
+                "models.path": "/tmp/minimind-ime-v2",
+                "models.hot": "minimind_ime_v2",
+                "models.promptMode": "base-completion",
+                "models.maxTokens": 12,
+                "models.temperature": 0.2,
+                "models.topP": 0.9,
+            }
+        )
+
+        snapshot = RuntimeConfigResolver(
+            self.store,
+            environ={"RAG_IME_RUNTIME_PROFILE": "v1-proof"},
+        ).resolve()
+
+        self.assertEqual(snapshot.post_commit.model_budget_ms, 1300)
+        self.assertEqual(snapshot.key_policy.option_number, "disabled")
+        self.assertEqual(snapshot.model.model_id, "minimind-ime-v2")
+        self.assertEqual(snapshot.model.profile_id, "minimind_ime_v2")
+        self.assertEqual(snapshot.model.model_path, "/tmp/minimind-ime-v2")
+        self.assertEqual(snapshot.model.prompt_mode, "base-completion")
+        self.assertEqual(snapshot.model.max_tokens, 12)
+        self.assertEqual(snapshot.model.temperature, 0.2)
+        self.assertEqual(snapshot.model.top_p, 0.9)
 
     def test_snapshot_contains_effective_memory_rag_overlay_and_active_rag_config(self) -> None:
         self.store.update_settings(

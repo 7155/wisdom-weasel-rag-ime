@@ -3,14 +3,14 @@ name: memory-curation
 description: Review evidence and prepare governed changes to durable personal memory when the user explicitly asks, a verified task yields reusable knowledge, or the idle curator runs.
 when:
   - 用户明确要求整理、纠正、遗忘、应用或回滚记忆
-  - 已验证任务结束后，需要把少量可复用事实整理成待审草案
-  - 低频后台维护正在审阅候选记忆
-does: 区分 Evidence、Current Atom、Topic Book 与 Timeline，生成可审阅草案并保留来源。
+  - 任务验收后整理少量可复用事实草案
+  - 低频维护审阅候选记忆
+does: 区分证据、记忆、主题与时间线，生成带来源的待审草案。
 input: 用户意图、已授权 Evidence、当前记忆状态、冲突、作用域和治理回执。
 output: 待审记忆变更、证据引用、冲突说明、审批状态和可用回滚点。
 notFor:
-  - 普通聊天、每轮自动整理、临时进度、失败回执、一次性命令或 Room 私有过程
-  - 直接写数据库、自动批准草案或把原始对话整段永久化
+  - 普通聊天、临时进度、失败回执、一次性命令或 Room 私有过程
+  - 直写数据库、自动批准或永久保存整段原始对话
 ---
 
 # Memory Curation
@@ -58,13 +58,17 @@ Agent identity and behavior -> Role Book, governed separately
    correction, duplicate, conflict, forget request, and organizational update.
 4. Preserve the narrowest valid user or project scope and human-readable
    provenance. Synthesize one normalized claim; do not paste a long source.
-5. Use the exact `ime_memory` operation disclosed for preview, review, apply,
-   rollback, or maintenance. A preview or candidate is never an applied Atom.
+5. Call `memory` with the exact operation family disclosed by the Tool:
+   user changes use `remember_preview|remember_apply`,
+   `correct_preview|correct_apply`, or `forget_preview|forget_apply`;
+   maintenance uses `maintenance_preview|maintenance_review`,
+   `maintenance_apply`, or `maintenance_rollback`. `list`, `search`, `get`,
+   `review`, and explanation operations never mutate memory.
 6. Stop for the native review boundary whenever the Tool says approval is
    required. A chat message saying "approved" is not an approval receipt.
 7. Report what was proposed or applied, its evidence, conflicts, current state,
-   and rollback availability. Never claim a Book, Timeline, or Role Book
-   revision became active without its authoritative receipt.
+   and rollback availability. Never claim a Book, Timeline, Role Book, or Atom
+   revision became active without its authoritative Tool receipt.
 
 ## Candidate Decision Table
 
@@ -90,9 +94,11 @@ Agent identity and behavior -> Role Book, governed separately
 
 ## Output Contract
 
-Return the proposed or applied operation, normalized claim or organization
-change, human-readable evidence source, conflict/duplicate decision, approval
-state, affected scope, and rollback status.
+Return one operation result with the normalized claim or organization change,
+human-readable evidence source, conflict/duplicate decision, approval state,
+affected scope, authoritative receipt when present, and rollback status. A
+preview, review, rejection, or apply receipt is terminal for this Skill turn;
+never continue into another mutation without the Tool's required authority.
 
 ## Self-Check
 

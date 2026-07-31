@@ -25,10 +25,12 @@ if TYPE_CHECKING:
 
 DAILY_ACTIVITY_TIMELINE_SCHEMA_VERSION = "rag-ime.daily-activity-timeline.v1"
 DEFAULT_SEGMENT_GAP_MS = 45 * 60 * 1_000
+MIN_CONSOLIDATED_ACTIVITY_SPAN_MS = 30 * 60 * 1_000
+ACTIVITY_SPAN_SEMANTICS = "first_to_last_source_event"
 _SEMANTIC_TASK_MAX_GAP_MS = 6 * 60 * 60 * 1_000
 _MAX_SEMANTIC_TASKS_PER_DAY = 3
 _FRAGMENT_BURST_GAP_MS = 20 * 1_000
-TIMELINE_SEGMENTATION_MODE = "semantic_task_v4"
+TIMELINE_SEGMENTATION_MODE = "semantic_task_v5"
 _TIMELINE_SEGMENTATION_MODE = TIMELINE_SEGMENTATION_MODE
 
 _INTERNAL_EVENT_SOURCES = frozenset(
@@ -63,6 +65,7 @@ class ActivityTimelineSegment:
     redacted_event_count: int
     title: str
     apps: tuple[str, ...]
+    activity_kind: str
     evidence_refs: tuple[dict[str, object], ...]
 
     def payload(self) -> dict[str, object]:
@@ -82,6 +85,8 @@ class ActivityTimelineSegment:
             "redactedEventCount": self.redacted_event_count,
             "title": self.title,
             "apps": list(self.apps),
+            "activityKind": self.activity_kind,
+            "spanSemantics": ACTIVITY_SPAN_SEMANTICS,
             "evidenceRefs": [dict(value) for value in self.evidence_refs],
             "source": {
                 "type": "input_event_bundle",
@@ -696,12 +701,11 @@ def _segments(
                 fallback=_safe_label(event.source, fallback="unknown-app"),
             )
             event_source = _safe_label(event.source, fallback="unknown-source")
-            text = compact_whitespace(event.text)
-            if contains_sensitive_content(text):
+            raw_text = compact_whitespace(event.text)
+            redacted = contains_sensitive_content(raw_text)
+            text = "[敏感内容已脱敏]" if redacted else truncate_text(raw_text, 180)
+            if redacted:
                 redacted_count += 1
-                text = "[敏感内容已脱敏]"
-            else:
-                text = truncate_text(text, 180)
             if text and text not in snippets:
                 snippets.append(text)
             evidence_refs.append(
@@ -712,7 +716,7 @@ def _segments(
                     "app": event_app,
                     "sourceKind": event_source,
                     "occurredAtMs": event.created_at_ms,
-                    "preview": text or "[无可显示文本]",
+                    "redacted": redacted,
                 }
             )
         if not snippets:
@@ -759,6 +763,10 @@ def _segments(
                 redacted_event_count=redacted_count,
                 title=title,
                 apps=apps,
+                activity_kind=activity_timeline_kind(
+                    group[0].created_at_ms,
+                    group[-1].created_at_ms,
+                ),
                 evidence_refs=tuple(evidence_refs),
             )
         )
@@ -819,6 +827,7 @@ def _timeline_payload(row: sqlite3.Row) -> dict[str, object]:
     )
     if segmentation_mode not in {
         _TIMELINE_SEGMENTATION_MODE,
+        "semantic_task_v4",
         "semantic_task_v3",
         "semantic_task_v2",
     }:
@@ -826,6 +835,26 @@ def _timeline_payload(row: sqlite3.Row) -> dict[str, object]:
     segments = _timeline_segments_payload(
         row["segments_json"],
         timezone_name=str(row["timezone"] or ""),
+    )
+    observed_starts = [
+        _safe_timestamp(segment.get("startMs"))
+        for segment in segments
+        if _safe_timestamp(segment.get("startMs")) > 0
+    ]
+    observed_ends = [
+        _safe_timestamp(segment.get("endMs"))
+        for segment in segments
+        if _safe_timestamp(segment.get("endMs")) > 0
+    ]
+    observed_start_ms = min(observed_starts, default=0)
+    observed_end_ms = max(observed_ends, default=observed_start_ms)
+    ordinary_activity_count = sum(
+        segment.get("activityKind") == "ordinary_activity"
+        for segment in segments
+    )
+    consolidated_activity_count = sum(
+        segment.get("activityKind") == "consolidated_activity"
+        for segment in segments
     )
     return {
         "schemaVersion": DAILY_ACTIVITY_TIMELINE_SCHEMA_VERSION,
@@ -840,6 +869,11 @@ def _timeline_payload(row: sqlite3.Row) -> dict[str, object]:
         "summary": str(row["summary_text"]),
         "eventCount": int(row["event_count"]),
         "segmentCount": int(row["segment_count"]),
+        "observedStartMs": observed_start_ms,
+        "observedEndMs": observed_end_ms,
+        "spanSemantics": ACTIVITY_SPAN_SEMANTICS,
+        "ordinaryActivityCount": ordinary_activity_count,
+        "consolidatedActivityCount": consolidated_activity_count,
         "approvedBookId": str(row["approved_book_id"] or ""),
         "approvedBy": str(row["approved_by"] or ""),
         "approvedAtMs": int(row["approved_at_ms"] or 0),
@@ -859,6 +893,7 @@ def _timeline_payload(row: sqlite3.Row) -> dict[str, object]:
             "longTermFact": False,
             "automaticPromotion": True,
             "explicitApprovalRequired": False,
+            "minimumConsolidatedSpanMs": MIN_CONSOLIDATED_ACTIVITY_SPAN_MS,
         },
     }
 
@@ -868,7 +903,7 @@ def _timeline_segments_payload(
     *,
     timezone_name: str,
 ) -> list[dict[str, object]]:
-    """Expose an explicit period for both new and legacy stored segments."""
+    """Project source-owned span semantics and reference-only evidence."""
 
     timezone = _payload_timezone(timezone_name)
     segments: list[dict[str, object]] = []
@@ -885,8 +920,52 @@ def _timeline_segments_payload(
             )
         segment.pop("dayPart", None)
         segment["period"] = period
+        start_ms = _safe_timestamp(segment.get("startMs"))
+        end_ms = max(start_ms, _safe_timestamp(segment.get("endMs")))
+        segment["activityKind"] = activity_timeline_kind(start_ms, end_ms)
+        segment["spanSemantics"] = ACTIVITY_SPAN_SEMANTICS
+        segment["evidenceRefs"] = _timeline_evidence_refs(segment.get("evidenceRefs"))
         segments.append(segment)
     return segments
+
+
+def activity_timeline_kind(start_ms: int, end_ms: int) -> str:
+    span_ms = max(0, end_ms - start_ms)
+    return (
+        "consolidated_activity"
+        if span_ms >= MIN_CONSOLIDATED_ACTIVITY_SPAN_MS
+        else "ordinary_activity"
+    )
+
+
+def _timeline_evidence_refs(raw: object) -> list[dict[str, object]]:
+    refs: list[dict[str, object]] = []
+    for value in raw if isinstance(raw, list) else []:
+        if not isinstance(value, Mapping):
+            continue
+        try:
+            event_id = int(value.get("eventId") or 0)
+        except (TypeError, ValueError):
+            continue
+        if event_id <= 0:
+            continue
+        preview = compact_whitespace(str(value.get("preview") or ""))
+        refs.append(
+            {
+                "sourceType": "input_event",
+                "sourceId": f"event:{event_id}",
+                "eventId": event_id,
+                "app": _safe_label(str(value.get("app") or ""), fallback="unknown-app"),
+                "sourceKind": _safe_label(
+                    str(value.get("sourceKind") or ""),
+                    fallback="unknown-source",
+                ),
+                "occurredAtMs": _safe_timestamp(value.get("occurredAtMs")),
+                "redacted": bool(value.get("redacted"))
+                or contains_sensitive_content(preview),
+            }
+        )
+    return refs
 
 
 def _payload_timezone(value: str) -> tzinfo:

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.work-document-detail.v1",
+  "type": "object",
+  "required": ["schemaVersion", "document"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.work-document-detail.v1"},
+    "document": {"$ref": "#/$defs/document"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "document": {
+      "type": "object",
+      "required": ["documentId", "authorityKind", "authorityId", "authorityRevision", "authorityKey", "documentRevision", "contentSha256", "workspaceRoot", "path", "activePath", "archivePath", "state", "title", "terminalReceiptId", "error", "createdAtMs", "updatedAtMs"],
+      "properties": {
+        "documentId": {"type": "string", "pattern": "^workdoc_[a-f0-9]{32}$"},
+        "authorityKind": {"type": "string", "enum": ["session_plan", "session_goal", "room_work_item"]},
+        "authorityId": {"type": "string", "minLength": 1, "maxLength": 240},
+        "authorityRevision": {"type": "integer", "minimum": 0},
+        "authorityKey": {"type": "string", "minLength": 1, "maxLength": 320},
+        "documentRevision": {"type": "integer", "minimum": 1},
+        "contentSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "workspaceRoot": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "path": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "activePath": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "archivePath": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "state": {"type": "string", "enum": ["active", "archive_pending", "archived", "reopen_pending", "error"]},
+        "title": {"type": "string", "maxLength": 240},
+        "terminalReceiptId": {"type": "string", "maxLength": 240},
+        "error": {"type": "string", "maxLength": 500},
+        "createdAtMs": {"type": "integer", "minimum": 0},
+        "updatedAtMs": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    }
+  }
+}

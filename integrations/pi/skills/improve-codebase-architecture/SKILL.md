@@ -49,10 +49,10 @@ testable. File size, naming taste, and abstract "cleanliness" are not evidence.
      unnecessary afterward;
    - verification that would prove the change.
 6. Recommend an order, but do not implement until the user selects a candidate.
-   If the choice depends on a product tradeoff, use `grill-me-docs` only when
-   the user also wants a durable glossary, ADR, or decision record; otherwise
-   follow `grill-me`. Load only the selected exact Skill and resolve one
-   decision at a time.
+   If the choice depends on a consequential product tradeoff, return it to
+   `alignment-and-decision`. That Skill asks one evidence-informed question and
+   persists an ADR, glossary, or decision record only when the user explicitly
+   requests durable documentation.
 
 ## Candidate Card
 

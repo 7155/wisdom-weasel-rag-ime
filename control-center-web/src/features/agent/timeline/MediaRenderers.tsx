@@ -155,9 +155,15 @@ function safeManagedImageReceipt(value: string): string | null {
     const url = new URL(value, 'http://rag-ime.local');
     if (!/^\/api\/agent\/media\/[^/]+\/content$/u.test(url.pathname) || url.hash) return null;
     const sessionIds = url.searchParams.getAll('sessionId');
-    if (sessionIds.length !== 1 || !/^[A-Za-z0-9._:-]{1,240}$/u.test(sessionIds[0] ?? '')) return null;
-    if ([...url.searchParams.keys()].some((key) => key !== 'sessionId')) return null;
-    return `${url.pathname}?sessionId=${encodeURIComponent(sessionIds[0]!)}`;
+    const roomIds = url.searchParams.getAll('roomId');
+    const ownerValues = sessionIds.length === 1 && roomIds.length === 0
+      ? { key: 'sessionId', values: sessionIds }
+      : roomIds.length === 1 && sessionIds.length === 0
+        ? { key: 'roomId', values: roomIds }
+        : undefined;
+    if (!ownerValues || !/^[A-Za-z0-9._:-]{1,240}$/u.test(ownerValues.values[0] ?? '')) return null;
+    if ([...url.searchParams.keys()].some((key) => key !== ownerValues.key)) return null;
+    return `${url.pathname}?${ownerValues.key}=${encodeURIComponent(ownerValues.values[0]!)}`;
   } catch {
     return null;
   }

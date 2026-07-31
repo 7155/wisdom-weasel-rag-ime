@@ -7,7 +7,10 @@
 export interface AgentMediaV1 {
   schemaVersion: 'rag-ime.agent-media.v1';
   mediaId: string;
-  sessionId: string;
+  ownerType: 'session' | 'room';
+  ownerId: string;
+  sessionId?: string;
+  roomId?: string;
   fileName?: string;
   mimeType:
     | 'image/png'

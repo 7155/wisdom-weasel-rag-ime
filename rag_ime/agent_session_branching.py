@@ -259,17 +259,30 @@ class AgentSessionBranchingService:
                 )
             self.media.pi_images(session_id, attachment_ids)
         rewound = dict(rewind(session_id, entry_id=entry_id))
+        try:
+            accepted = self.prompt_with_checkpoint(
+                session_id=session_id,
+                message=message,
+                checkpoint_text=message,
+                attachment_ids=attachment_ids,
+                client_message_id=client_message_id,
+                context_source="conversation_rewrite",
+            )
+        except Exception:
+            # A rewind is only durable once Pi appends the replacement prompt.
+            # On admission failure the JSONL selected branch is still the old
+            # leaf, so force clients back to that authoritative snapshot.
+            self.events.invalidate_projection(
+                session_id,
+                reason="session_rewrite_failed",
+            )
+            raise
+        # Invalidate only after Pi has appended the replacement user message.
+        # Invalidating immediately after rewind lets an eager snapshot read the
+        # previous durable leaf and resurrect the future branch in the UI.
         self.events.invalidate_projection(
             session_id,
             reason="session_rewritten",
-        )
-        accepted = self.prompt_with_checkpoint(
-            session_id=session_id,
-            message=message,
-            checkpoint_text=message,
-            attachment_ids=attachment_ids,
-            client_message_id=client_message_id,
-            context_source="conversation_rewrite",
         )
         return {
             **accepted,

@@ -187,8 +187,8 @@ class ExternalApprovalFinalizer:
         payload: Mapping[str, object],
     ) -> str:
         supported_action = {
-            ("ime_runtime", "restart_sidecar"): "restart_sidecar",
-            ("ime_configuration", "restore_apply"): (
+            ("runtime", "restart_sidecar"): "restart_sidecar",
+            ("configuration", "restore_apply"): (
                 PORTABLE_RESTORE_ACTION
             ),
         }.get(

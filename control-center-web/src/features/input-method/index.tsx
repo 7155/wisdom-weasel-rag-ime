@@ -8,8 +8,35 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button, EmptyState, Field, Input, SegmentedControl, Select, Switch } from '@/components/primitives';
-import { inputSettingsMutationPathIds, useInputMethodQueries } from './api';
+import {
+  inputSettingsMutationPathIds,
+  useInputMethodQueries,
+  type LexiconOrganizationStatus,
+} from './api';
+import {
+  applyModeLabel,
+  componentStatus,
+  formatSetting,
+  inferInputMode,
+  inputFieldFallback,
+  inputOptionLabel,
+  inputSourceDetail,
+  inputSourceMessage,
+  modeSettingLabel,
+  modelConfigValue,
+  modelTokenLabel,
+  numericDraftValue,
+  profileLabel,
+  publicInputText,
+  readinessLabel,
+  sectionLabel,
+  validInputSettingValue,
+  type DraftValue,
+  type InputMode,
+  type StatusTone,
+} from './input-method-presentation';
 import { LexiconWorkflow } from './lexicon-workflow';
+import { DiagnosticsRuntimeWorkflow } from '@/features/diagnostics/runtime-actions';
 import {
   ManagementMutationWorkflow,
   parseManagementWorkPreview,
@@ -25,7 +52,6 @@ import {
   arrayRecords,
   asRecord,
   booleanValue,
-  configuredLabel,
   publicErrorText,
   stringValue,
   valueAt,
@@ -33,9 +59,6 @@ import {
 import { useProductIdentity } from '@/features/identity/product-identity';
 import './input-method.css';
 
-type StatusTone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
-type DraftValue = string | number | boolean;
-type InputMode = '安全模式' | '标准模式' | '记忆增强' | '调试模式';
 
 const inputModes = [
   { value: '安全模式', label: '安全' },
@@ -73,14 +96,27 @@ const inputModeChanges: Record<InputMode, Record<string, DraftValue>> = {
 const commonInputSettingKeys = new Set([
   'interaction.postCommit.enabled',
   'interaction.postCommit.idleTriggerMs',
+  'interaction.postCommit.minDeltaChars',
+  'interaction.postCommit.maxCallsPer10s',
+  'interaction.postCommit.cooldownMs',
   'interaction.postCommit.panelTtlMs',
-  'interaction.postCommit.numberKeys',
+  'interaction.postCommit.modelBudgetMs',
   'interaction.postCommit.tabAction',
+  'interaction.postCommit.optionNumber',
   'display.maxPostCommitCandidates',
   'display.panelStyle',
   'activeRag.defaultPlacement',
   'activeRag.latencyBudgetMs',
   'pinyin.fuzzyProfile',
+  'lexiconOrganization.enabled',
+  'lexiconOrganization.runsPerDay',
+  'models.modelId',
+  'models.hot',
+  'models.path',
+  'models.promptMode',
+  'models.maxTokens',
+  'models.temperature',
+  'models.topP',
 ]);
 
 export function InputMethodFeature() {
@@ -92,6 +128,15 @@ export function InputMethodFeature() {
   const settingsPayload = asRecord(queries.settings.data);
   const settings = asRecord(settingsPayload.settings);
   const runtimeConfig = asRecord(settingsPayload.runtimeConfig);
+  const modelsStatus = asRecord(queries.models.data);
+  const activeModelConfig = asRecord(modelsStatus.activeConfig);
+  const availableModels = arrayRecords(modelsStatus.availableModels);
+  const availableModelIds = availableModels
+    .map((item) => modelConfigValue(item.id))
+    .filter((item) => item !== '由本机注册表决定');
+  const modelHealthAgreement = asRecord(modelsStatus.healthAgreement);
+  const modelConfigurationPending = booleanValue(modelsStatus.configurationPending);
+  const modelHealthReady = booleanValue(modelHealthAgreement.ok);
   const rawRuntimeRevision = settingsPayload.runtimeRevision ?? runtimeConfig.runtimeRevision;
   const runtimeRevision = typeof rawRuntimeRevision === 'number'
     && Number.isInteger(rawRuntimeRevision)
@@ -99,7 +144,7 @@ export function InputMethodFeature() {
     ? rawRuntimeRevision
     : null;
   const sections = arrayRecords(asRecord(queries.schema.data).sections).filter((section) =>
-    ['interaction', 'display', 'activeRag', 'pinyin'].includes(stringValue(section.id)),
+    ['interaction', 'display', 'activeRag', 'pinyin', 'models', 'lexiconOrganization'].includes(stringValue(section.id)),
   );
   const settingsGroups = sections
     .map((section) => ({
@@ -109,6 +154,25 @@ export function InputMethodFeature() {
     .filter((section) => section.fields.length > 0);
   const fieldCount = settingsGroups.reduce((count, section) => count + section.fields.length, 0);
   const [changes, setChanges] = useState<Record<string, DraftValue>>({});
+  const updateSettingChange = (key: string, value: DraftValue) => {
+    setChanges((current) => {
+      const next = { ...current, [key]: value };
+      if (key !== 'models.modelId' || typeof value !== 'string') return next;
+      const selected = value
+        ? availableModels.find((item) => stringValue(item.id) === value)
+        : availableModels.find((item) => booleanValue(item.active));
+      if (!selected) return next;
+      return {
+        ...next,
+        'models.hot': stringValue(selected.profileId),
+        'models.path': stringValue(selected.path),
+        'models.promptMode': stringValue(selected.promptMode),
+        'models.maxTokens': numericDraftValue(selected.maxTokens, 8),
+        'models.temperature': numericDraftValue(selected.temperature, 0.15),
+        'models.topP': numericDraftValue(selected.topP, 0.85),
+      };
+    });
+  };
   const fields = settingsGroups.flatMap((section) => section.fields);
   const pendingChanges = useMemo(() => Object.fromEntries(
     Object.entries(changes).filter(([key, next]) => (
@@ -144,6 +208,10 @@ export function InputMethodFeature() {
     `${modeSettingLabel(key)}：${formatSetting(valueAt(settings, key), key)} → ${formatSetting(value, key)}`
   ));
   const reportedProfile = stringValue(overview.profile);
+  const nativeExternalActions = Boolean(
+    queries.capabilities.data?.native.approvedExternalActions
+      && queries.transport.runApprovedExternalAction,
+  );
   const sourceError = queries.source.error as Error | null;
   const overviewError = queries.overview.error as Error | null;
   const settingsError = [queries.settings.error, queries.schema.error].find(Boolean) as Error | null;
@@ -151,6 +219,7 @@ export function InputMethodFeature() {
   const isRefreshing = [
     queries.source,
     queries.overview,
+    queries.models,
     queries.settings,
     queries.schema,
     queries.capabilities,
@@ -161,6 +230,7 @@ export function InputMethodFeature() {
     const jobs: Promise<unknown>[] = [
       queries.source.refetch(),
       queries.overview.refetch(),
+      queries.models.refetch(),
       queries.settings.refetch(),
       queries.schema.refetch(),
       queries.capabilities.refetch(),
@@ -356,7 +426,56 @@ export function InputMethodFeature() {
       </ManagementSection>
 
       <ManagementSection
-        description="调整常用输入设置；系统会先生成绑定当前版本的预览，只有明确确认后才应用。"
+        description="模型设置保存为期望状态；只有受信任宿主完成重装且 Sidecar 与 MLX 健康回读一致后才算生效。"
+        title="本地预测"
+        trailing={(
+          <StatusBadge
+            label={queries.models.isPending ? '正在读取' : modelHealthReady && !modelConfigurationPending ? '配置已生效' : '等待应用'}
+            tone={modelHealthReady && !modelConfigurationPending ? 'success' : 'warning'}
+          />
+        )}
+      >
+        {booleanValue(modelsStatus.statusUnavailable) ? (
+          <InlineNotice title="模型状态暂不可用" tone="warning">
+            仍可编辑设置；应用前请刷新模型状态。
+          </InlineNotice>
+        ) : queries.models.isPending ? (
+          <InlineNotice title="正在读取模型状态" tone="info">正在核对模型注册表、后台服务与 MLX 预测器。</InlineNotice>
+        ) : null}
+          <dl className="mgmt-kv">
+            <dt>当前模型</dt><dd>{modelConfigValue(activeModelConfig.modelId)}</dd>
+            <dt>已登记模型</dt><dd>{availableModelIds.length ? availableModelIds.join('、') : '等待注册表状态'}</dd>
+            <dt>推理 Profile</dt><dd>{inputOptionLabel(stringValue(activeModelConfig.profileId))}</dd>
+            <dt>Prompt 模式</dt><dd>{inputOptionLabel(stringValue(activeModelConfig.promptMode))}</dd>
+            <dt>生成上限</dt><dd>{modelTokenLabel(activeModelConfig.maxTokens)}</dd>
+          </dl>
+          <InlineNotice
+            title={modelHealthReady && !modelConfigurationPending ? '模型配置一致' : modelConfigurationPending ? '设置已保存，等待应用' : '运行配置需要修复'}
+            tone={modelHealthReady && !modelConfigurationPending ? 'success' : 'warning'}
+          >
+            {modelHealthReady && !modelConfigurationPending
+              ? '模型注册表、后台服务和 MLX 预测器报告了同一组配置。'
+              : '先在下方修改并保存设置，再通过受信任操作应用；普通数字键始终保留给输入法。'}
+          </InlineNotice>
+          {runtimeRevision === null ? (
+            <InlineNotice title="正在等待运行版本" tone="warning">运行版本返回后才能安全应用模型配置。</InlineNotice>
+          ) : !nativeExternalActions ? (
+            <InlineNotice title="请在已安装的应用中操作" tone="warning">浏览器预览可以查看和保存设置，但重装本机模型只允许由已安装宿主执行。</InlineNotice>
+          ) : null}
+          <DiagnosticsRuntimeWorkflow
+            action="restart_predictor"
+            description="读取已保存设置，更新模型注册表，依次重启 MLX 与后台服务，并执行两端健康一致性检查。"
+            nativeExternalActions={nativeExternalActions}
+            onApplied={refresh}
+            risk="R2"
+            runtimeRevision={runtimeRevision ?? -1}
+            title="应用并重启本机预测"
+            transport={queries.transport}
+          />
+      </ManagementSection>
+
+      <ManagementSection
+        description="调整输入体验和本机模型；系统会先生成绑定当前版本的预览，只有明确确认后才应用。"
         title="输入设置"
         trailing={(
           <StatusBadge
@@ -391,7 +510,8 @@ export function InputMethodFeature() {
                             disabled={settingsWriteAvailability.state !== 'available'}
                             field={field}
                             key={key}
-                            onChange={(value) => setChanges((current) => ({ ...current, [key]: value }))}
+                            modelIds={key === 'models.modelId' ? availableModelIds : undefined}
+                            onChange={(value) => updateSettingChange(key, value)}
                             value={changes[key] ?? valueAt(settings, key)}
                           />
                         );
@@ -445,7 +565,7 @@ export function InputMethodFeature() {
                   )}
                   onApplied={() => {
                     setChanges({});
-                    void queries.settings.refetch();
+                    void Promise.all([queries.settings.refetch(), queries.models.refetch(), queries.overview.refetch()]);
                   }}
                   onPreview={async () => {
                     if (runtimeRevision === null || hasInvalidChanges || diffRows.length === 0) {
@@ -482,7 +602,7 @@ export function InputMethodFeature() {
                     inputSettingsMutationPathIds.rollback,
                     preview.payloadSha256,
                   )}
-                  onRolledBack={() => void queries.settings.refetch()}
+                  onRolledBack={() => void Promise.all([queries.settings.refetch(), queries.models.refetch()])}
                   risk={diffRows.some((row) => row.requiresReload) ? 'R2' : 'R1'}
                   title="应用输入设置"
                 />
@@ -496,6 +616,29 @@ export function InputMethodFeature() {
             />
           )}
         </QueryState>
+      </ManagementSection>
+
+      <ManagementSection
+        description="候选数量和触发延迟需要写入受管理的 Rime 配置块并重新载入；Tab 与 Option+数字策略由后台响应实时下发。"
+        title="应用到输入法前端"
+      >
+        {!nativeExternalActions ? (
+          <InlineNotice title="请在已安装的应用中操作" tone="warning">
+            浏览器预览不会改写 Rime 文件，也不会重载当前输入法。
+          </InlineNotice>
+        ) : runtimeRevision === null ? (
+          <InlineNotice title="正在等待运行版本" tone="warning">运行版本返回后才能生成绑定当前状态的部署预览。</InlineNotice>
+        ) : null}
+        <DiagnosticsRuntimeWorkflow
+          action="redeploy_rime"
+          description="从设置数据库读取候选数量和停顿触发时间，只更新应用拥有的 YAML 块，然后构建并重新载入 Squirrel。"
+          nativeExternalActions={nativeExternalActions}
+          onApplied={refresh}
+          risk="R3"
+          runtimeRevision={runtimeRevision ?? -1}
+          title="应用输入法前端设置"
+          transport={queries.transport}
+        />
       </ManagementSection>
 
       <ManagementSection
@@ -522,12 +665,15 @@ export function InputMethodFeature() {
             <Button onClick={() => void queries.lexiconReview.refetch()} size="small">重试审阅</Button>
           </div>
         ) : queries.lexiconReview.data ? (
-          <LexiconWorkflow
-            isFetching={queries.lexiconReview.isFetching}
-            onRefresh={() => void queries.lexiconReview.refetch()}
-            review={queries.lexiconReview.data}
-            transport={queries.transport}
-          />
+          <>
+            <LexiconOrganizationState organization={queries.lexiconReview.data.organization} />
+            <LexiconWorkflow
+              isFetching={queries.lexiconReview.isFetching}
+              onRefresh={() => void queries.lexiconReview.refetch()}
+              review={queries.lexiconReview.data}
+              transport={queries.transport}
+            />
+          </>
         ) : (
           <InlineNotice title="词库审阅不可用" tone="warning">当前没有可验证的词库审阅记录，请刷新后重试。</InlineNotice>
         )}
@@ -536,14 +682,59 @@ export function InputMethodFeature() {
   );
 }
 
+function LexiconOrganizationState({
+  organization,
+}: {
+  organization: LexiconOrganizationStatus;
+}) {
+  const lastRun = organization.lastRun;
+  const failure = lastRun.status === 'failed';
+  return (
+    <div className="mgmt-stack">
+      <dl className="mgmt-kv">
+        <dt>定期整理建议</dt>
+        <dd>{organization.enabled ? `已启用 · 每天约 ${organization.runsPerDay} 次` : '已停用'}</dd>
+        <dt>上次运行</dt>
+        <dd>{formatLexiconRunTime(organization.lastRunAtMs, '尚未运行')}</dd>
+        <dt>下次运行</dt>
+        <dd>{organization.enabled && organization.nextRunAtMs !== null ? formatLexiconRunTime(organization.nextRunAtMs, '等待下一次本机整理') : '已停用'}</dd>
+        <dt>本次结果</dt>
+        <dd>{lastRun.status === 'succeeded' ? `已整理 ${lastRun.candidateCount} 条待审阅建议` : lastRun.status === 'running' ? '正在本机整理' : failure ? '运行失败' : '等待首次运行'}</dd>
+        <dt>由谁处理</dt>
+        <dd>由本机定时任务安排；Rime 仍负责基础输入和候选排序</dd>
+      </dl>
+      {failure ? (
+        <InlineNotice title="上次定期整理失败" tone="danger">
+          {lastRun.error || '本机任务没有返回成功结果。'}
+          {lastRun.errorCode ? `（${lastRun.errorCode}）` : ''}
+        </InlineNotice>
+      ) : (
+        <InlineNotice title="只在本机整理，先审阅再写入" tone="info">
+          定期整理只根据本机实际选词反馈生成待审阅建议。页面只保存数量和校验摘要，不保存建议正文；你确认前，不会改动或重排 Rime 词库。
+        </InlineNotice>
+      )}
+    </div>
+  );
+}
+
+function formatLexiconRunTime(value: number, fallback: string): string {
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return new Intl.DateTimeFormat('zh-CN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value));
+}
+
 function InputSettingField({
   disabled,
   field,
+  modelIds,
   onChange,
   value,
 }: {
   disabled: boolean;
   field: Record<string, unknown>;
+  modelIds?: readonly string[];
   onChange: (value: DraftValue) => void;
   value: unknown;
 }) {
@@ -566,6 +757,26 @@ function InputSettingField({
           label={label}
           onCheckedChange={onChange}
         />
+      </div>
+    );
+  }
+  if (key === 'models.modelId' && modelIds?.length) {
+    const current = stringValue(value);
+    const options = [...new Set([...modelIds, ...(current ? [current] : [])])];
+    return (
+      <div className="input-setting-editor-row">
+        <Field description={description} htmlFor={id} label={label}>
+          <Select
+            disabled={disabled}
+            id={id}
+            onValueChange={(next) => onChange(next === '__active_model__' ? '' : next)}
+            options={[
+              { value: '__active_model__', label: '沿用当前 Hot 模型' },
+              ...options.map((modelId) => ({ value: modelId, label: modelId })),
+            ]}
+            value={current || '__active_model__'}
+          />
+        </Field>
       </div>
     );
   }
@@ -605,6 +816,22 @@ function InputSettingField({
       </div>
     );
   }
+  if (type === 'string') {
+    return (
+      <div className="input-setting-editor-row">
+        <Field description={description} htmlFor={id} label={label}>
+          <Input
+            disabled={disabled}
+            id={id}
+            maxLength={typeof field.maxLength === 'number' ? field.maxLength : undefined}
+            onChange={(event) => onChange(event.target.value)}
+            type="text"
+            value={stringValue(value)}
+          />
+        </Field>
+      </div>
+    );
+  }
   return (
     <div className="input-setting-editor-row input-setting-editor-row--readonly">
       <span><strong>{label}</strong><small>{description}</small></span>
@@ -638,174 +865,6 @@ function InputStatusItem({
   );
 }
 
-function componentStatus(
-  status: Record<string, unknown>,
-  label: string,
-  icon: LucideIcon,
-  pending: boolean,
-  error: Error | null,
-): {
-  detail: string;
-  icon: LucideIcon;
-  label: string;
-  tone: StatusTone;
-  value: string;
-} {
-  if (pending) return { detail: '等待运行概览返回', icon, label, tone: 'neutral', value: '正在读取' };
-  if (error) return { detail: '运行概览暂时不可用', icon, label, tone: 'danger', value: '读取失败' };
-  if (!Object.keys(status).length) return { detail: '暂未收到这项状态', icon, label, tone: 'warning', value: '未报告' };
-  const state = stringValue(status.status);
-  const ready = booleanValue(status.ok) && state !== 'degraded';
-  return {
-    detail: publicInputText(stringValue(status.detail), '暂时没有更多状态说明'),
-    icon,
-    label,
-    tone: ready ? 'success' : state === 'degraded' ? 'warning' : 'danger',
-    value: ready ? '就绪' : state === 'degraded' ? '降级' : '需检查',
-  };
-}
-
-function inferInputMode(settings: Record<string, unknown>): InputMode | '' {
-  if (
-    valueAt(settings, 'diagnostics.liveTrace') === true
-    && valueAt(settings, 'diagnostics.candidateExplain') === true
-    && valueAt(settings, 'display.showDiagnosticsInline') === true
-  ) return '调试模式';
-  if (
-    valueAt(settings, 'interaction.postCommit.enabled') === false
-    && valueAt(settings, 'memory.enabled') === false
-    && valueAt(settings, 'activeRag.allowRemoteModel') === false
-  ) return '安全模式';
-  if (
-    valueAt(settings, 'interaction.postCommit.enabled') === true
-    && valueAt(settings, 'memory.enabled') === true
-    && valueAt(settings, 'rag.lanes.tagMemo') === true
-    && valueAt(settings, 'rag.lanes.timeDailyBook') === true
-  ) return '标准模式';
-  return '';
-}
-
-function modeSettingLabel(key: string): string {
-  return ({
-    'interaction.postCommit.enabled': '提交后预测',
-    'memory.enabled': '记忆增强',
-    'activeRag.allowRemoteModel': '远程生成',
-    'rag.lanes.tagMemo': '标签记忆',
-    'rag.lanes.timeDailyBook': '时间与日记召回',
-    'diagnostics.liveTrace': '实时诊断',
-    'diagnostics.candidateExplain': '候选解释',
-    'display.showDiagnosticsInline': '候选行内诊断',
-  } as Record<string, string>)[key] ?? '运行设置';
-}
-
-function formatSetting(value: unknown, key: string): string {
-  if (/token|secret|password|api.?key|authorization|cookie/i.test(key)) return configuredLabel(value);
-  if (typeof value === 'boolean') return value ? '已启用' : '已关闭';
-  if (typeof value === 'number') return String(value);
-  if (typeof value === 'string') return inputOptionLabel(value);
-  return value === undefined ? '使用默认值' : '结构化配置';
-}
-
-function validInputSettingValue(field: Record<string, unknown>, value: DraftValue): boolean {
-  const type = stringValue(field.type);
-  if (type === 'boolean') return typeof value === 'boolean';
-  if (Array.isArray(field.options)) return field.options.some((option) => String(option) === value);
-  if (type === 'integer' || type === 'number') {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return false;
-    if (type === 'integer' && !Number.isInteger(value)) return false;
-    if (typeof field.min === 'number' && value < field.min) return false;
-    if (typeof field.max === 'number' && value > field.max) return false;
-  }
-  return true;
-}
-
-function publicInputText(value: string, fallback: string): string {
-  const text = value.trim();
-  if (!text || text.length > 120 || /pathId|schema|revision|hash|receipt|provider|policy|profile|\/api\/|https?:\/\//i.test(text)) return fallback;
-  return text
-    .replace(/Post-commit/gi, '输入完成后')
-    .replace(/Active RAG/gi, '主动知识生成')
-    .replace(/RAG/gi, '知识检索')
-    .replace(/Rime/gi, '输入法')
-    .replace(/fallback/gi, '备用方式')
-    .replace(/TTL/gi, '保留时间')
-    .replace(/patch/gi, '支持');
-}
-
-function inputFieldFallback(key: string): string {
-  return ({
-    'interaction.postCommit.enabled': '提交后预测',
-    'interaction.postCommit.idleTriggerMs': '停顿多久开始预测',
-    'interaction.postCommit.panelTtlMs': '生成结果停留时间',
-    'interaction.postCommit.numberKeys': '预测出现时的数字键',
-    'interaction.postCommit.tabAction': 'Tab 键行为',
-    'display.maxPostCommitCandidates': '续写候选数量',
-    'display.panelStyle': '候选界面样式',
-    'activeRag.defaultPlacement': '结果插入方式',
-    'activeRag.latencyBudgetMs': '生成框最长等待',
-    'pinyin.fuzzyProfile': '模糊音方案',
-  } as Record<string, string>)[key] ?? '输入设置';
-}
-
-function sectionLabel(value: string): string {
-  return ({ interaction: '输入体验', display: '候选界面', activeRag: '主动知识生成', pinyin: '拼音设置' } as Record<string, string>)[value] ?? publicInputText(value, '输入设置');
-}
-
-function inputOptionLabel(value: string): string {
-  if (!value) return '未设置';
-  return ({
-    pass_through: '保持输入法默认行为',
-    select_prediction: '选择对应的续写候选',
-    accept_top_prediction: '接受首个续写候选',
-    rime_default: '保持输入法默认行为',
-    disabled: '关闭',
-    compact: '紧凑',
-    expanded: '展开',
-    replace_selection: '替换选中内容',
-    insert_after_selection: '插入到选中内容后',
-    show_only: '只显示，不插入',
-    'sichuan-mild': '四川轻度模糊音',
-    none: '关闭',
-  } as Record<string, string>)[value] ?? (/[\u3400-\u9fff]/u.test(value) ? value : '自定义设置');
-}
-
-function readinessLabel(source: Record<string, unknown>): string {
-  if (booleanValue(source.typingReady)) return '系统检查通过';
-  return ({ not_selected: '尚未选择', not_registered: '尚未注册', unavailable: '不可用', unknown: '等待状态' } as Record<string, string>)[stringValue(source.readinessState)] ?? '需检查';
-}
-
-function inputSourceDetail(source: Record<string, unknown>): string {
-  if (booleanValue(source.typingReady)) return '系统检查已确认';
-  if (booleanValue(source.selected)) return '当前已选择';
-  if (stringValue(source.inputSourceId)) return '已识别，尚未选择';
-  return '系统尚未识别输入源';
-}
-
-function inputSourceMessage(source: Record<string, unknown>): string {
-  if (booleanValue(source.typingReady)) return '输入源已被系统识别并选中；真实应用中的输入与选词结果仍是最终验收。';
-  const state = stringValue(source.readinessState);
-  if (state === 'not_selected') return '请先在系统输入法菜单中选择澄输入法，再进行前台输入实测。';
-  if (state === 'not_registered') return '输入法尚未完成系统注册，请重新安装后再试。';
-  if (state === 'unavailable') return '输入法服务暂时不可用，请稍后重试。';
-  return '正在等待系统确认输入法状态。';
-}
-
-function applyModeLabel(value: string): string {
-  return ({
-    live: '立即生效',
-    reload: '需重新载入',
-    restart: '需重启',
-    restart_input_method: '重新载入输入法',
-    redeploy_rime: '重新部署输入法',
-    restart_sidecar: '重启后台服务',
-    restart_predictor: '重启本机模型',
-  } as Record<string, string>)[value] ?? '应用后生效';
-}
-
-function profileLabel(value: string): string {
-  if (!value) return '尚未读取到运行模式';
-  return ['安全模式', '标准模式', '记忆增强', '调试模式'].includes(value) ? value : '自定义模式';
-}
 
 function lexiconSectionStatus({
   capabilityError,

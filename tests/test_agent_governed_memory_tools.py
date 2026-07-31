@@ -106,12 +106,12 @@ class GovernedMemoryToolTests(unittest.TestCase):
         }
         previews = [
             self._execute(
-                "ime_memory",
+                "memory",
                 "remember_preview",
                 **remember_args,
             ),
             self._execute(
-                "ime_memory",
+                "memory",
                 "correct_preview",
                 targetId="atom:model-choice",
                 text="当前使用的是 100M 自训练模型",
@@ -123,7 +123,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
                 ],
             ),
             self._execute(
-                "ime_memory",
+                "memory",
                 "forget_preview",
                 targetId="atom:old-model-choice",
                 reason="该事实已被新证据取代",
@@ -131,7 +131,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
             ),
         ]
         repeated = self._execute(
-            "ime_memory",
+            "memory",
             "remember_preview",
             **remember_args,
         )
@@ -185,7 +185,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         )["evidence"]
 
         preview = self._execute(
-            "ime_memory",
+            "memory",
             "remember_preview",
             text="模型切换已经完成",
             memoryKind="fact",
@@ -231,12 +231,12 @@ class GovernedMemoryToolTests(unittest.TestCase):
                 ValueError,
                 "sensitive text|prompt injection|unsupported fields",
             ):
-                self._execute("ime_memory", "remember_preview", **args)
+                self._execute("memory", "remember_preview", **args)
 
         manifest = next(
             item
             for item in self.gateway.manifests(session_id=str(self.session["id"]))["items"]
-            if item["id"] == "ime_memory"
+            if item["id"] == "memory"
         )
         self.assertTrue(
             {"search", "read", "maintenance_preview", "maintenance_apply"}.issubset(
@@ -269,7 +269,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         )["evidence"]
 
         preview = self._execute(
-            "ime_memory",
+            "memory",
             "remember_preview",
             text="个人上下文核心是当前主线",
             memoryKind="decision",
@@ -396,7 +396,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
             )
         with self.assertRaisesRegex(ValueError, "not for memory"):
             self._execute(
-                "ime_memory",
+                "memory",
                 "remember_preview",
                 text="这条记忆不得写入",
                 evidenceIds=[preview_evidence_id],
@@ -404,13 +404,13 @@ class GovernedMemoryToolTests(unittest.TestCase):
 
         apply_event_id, apply_evidence_id = event_evidence("应用前仍需重新验明来源")
         preview = self._execute(
-            "ime_memory",
+            "memory",
             "remember_preview",
             text="应用时必须重新校验来源事件",
             evidenceIds=[apply_evidence_id],
         )["result"]
         prepared = self._execute(
-            "ime_memory",
+            "memory",
             "remember_apply",
             proposalId=preview["proposalId"],
         )["result"]
@@ -446,14 +446,14 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self,
     ) -> None:
         preview = self._execute(
-            "ime_memory",
+            "memory",
             "remember_preview",
             text="当前优先完成个人上下文核心",
             memoryKind="decision",
             evidenceIds=[self.evidence_ids["remember"]],
         )["result"]
         prepared = self._execute(
-            "ime_memory",
+            "memory",
             "remember_apply",
             proposalId=preview["proposalId"],
         )["result"]
@@ -510,7 +510,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self,
     ) -> None:
         preview = self._execute(
-            "ime_memory",
+            "memory",
             "correct_preview",
             targetId="atom:model-choice",
             text="当前使用的是 100M 自训练模型",
@@ -526,7 +526,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
             proposal_id=str(preview["proposalId"]),
         )
         self.assertEqual(receipt["previousMemoryId"], "atom:model-choice")
-        current = self._execute("ime_memory", "search")["result"]
+        current = self._execute("memory", "search")["result"]
         self.assertEqual(current["mode"], "current")
         self.assertNotIn(
             "atom:model-choice",
@@ -545,13 +545,13 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self.assertEqual(current_item["ref"]["referenceKind"], "atom")
         self.assertEqual(current_item["ref"]["referenceId"], receipt["memoryId"])
         hidden = self._execute(
-            "ime_memory",
+            "memory",
             "get",
             targetId="atom:model-choice",
         )["result"]
         self.assertFalse(hidden["found"])
         historical = self._execute(
-            "ime_memory",
+            "memory",
             "get",
             targetId="atom:model-choice",
             mode="historical",
@@ -559,14 +559,14 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self.assertTrue(historical["found"])
         self.assertEqual(historical["item"]["claimState"], "superseded")
         changes = self._execute(
-            "ime_memory",
+            "memory",
             "search",
             mode="change",
         )["result"]
         self.assertEqual(changes["count"], 1)
         self.assertEqual(changes["items"][0]["oldMemoryId"], "atom:model-choice")
         explanation = self._execute(
-            "ime_memory",
+            "memory",
             "explain",
             targetId="atom:model-choice",
         )["result"]
@@ -614,7 +614,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         )["timeline"]
         self.assertEqual(
             self._execute(
-                "ime_memory",
+                "memory",
                 "search",
                 kind="timelines",
                 query="CAS",
@@ -630,7 +630,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         )
 
         result = self._execute(
-            "ime_memory",
+            "memory",
             "search",
             kind="timelines",
             query="CAS",
@@ -700,7 +700,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
 
         for mode in ("current", "historical"):
             search = self._execute(
-                "ime_memory",
+                "memory",
                 "search",
                 mode=mode,
             )["result"]
@@ -710,7 +710,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
             self.assertNotIn("do-not-return", encoded)
         for operation in ("get", "explain"):
             result = self._execute(
-                "ime_memory",
+                "memory",
                 operation,
                 targetId="atom:sensitive-content",
                 mode="historical",
@@ -722,7 +722,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
             )
 
         changes = self._execute(
-            "ime_memory",
+            "memory",
             "search",
             mode="change",
         )["result"]
@@ -730,7 +730,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self.assertNotIn("supersession:cross-project", encoded_changes)
         self.assertNotIn("另一个项目的新值", encoded_changes)
         direct = self._execute(
-            "ime_memory",
+            "memory",
             "get",
             targetId="supersession:cross-project",
             mode="change",
@@ -739,7 +739,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
 
     def test_forget_apply_tombstones_and_controlled_rollback_restores_atom(self) -> None:
         preview = self._execute(
-            "ime_memory",
+            "memory",
             "forget_preview",
             targetId="atom:old-model-choice",
             reason="用户明确撤回过期事实",
@@ -752,7 +752,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         self.assertEqual(applied["memoryId"], "atom:old-model-choice")
         self.assertFalse(
             self._execute(
-                "ime_memory",
+                "memory",
                 "get",
                 targetId="atom:old-model-choice",
             )["result"]["found"]
@@ -763,7 +763,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         )
         self.assertEqual(rolled_back["status"], "rolled_back")
         restored = self._execute(
-            "ime_memory",
+            "memory",
             "get",
             targetId="atom:old-model-choice",
         )["result"]
@@ -801,7 +801,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
             )
 
         preview = self._execute(
-            "ime_memory",
+            "memory",
             "correct_preview",
             targetId="atom:model-choice",
             text="更新后的模型事实",
@@ -816,7 +816,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
             conn.commit()
         with self.assertRaisesRegex(ValueError, "changed after preview"):
             self._execute(
-                "ime_memory",
+                "memory",
                 "correct_apply",
                 proposalId=preview["proposalId"],
             )
@@ -921,7 +921,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
             draftId=output["roleBookDraft"]["draftId"],
         )["result"]["result"]
         memory_review = self._execute(
-            "ime_memory",
+            "memory",
             "review",
             draftId=output["userMemoryDraft"]["draftId"],
         )["result"]
@@ -960,7 +960,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
                 {
                     "schemaVersion": "rag-ime.agent-tool-call.v1",
                     "sessionId": other_role["id"],
-                    "tool": "ime_memory",
+                    "tool": "memory",
                     "toolCallId": "tool:other-role:draft-review",
                     "args": {
                         "op": "review",
@@ -1059,7 +1059,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
             str(self.session["id"]),
             mode="assistant",
             tool_profile_version="subagent-readonly-v1",
-            allowed_tools=["ime_memory", "agent_role_book"],
+            allowed_tools=["memory", "agent_role_book"],
         )
         manifests = {
             item["id"]: item
@@ -1078,7 +1078,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
                 "remember_preview",
                 "correct_preview",
                 "forget_preview",
-            }.issubset(set(manifests["ime_memory"]["effectiveOperations"]))
+            }.issubset(set(manifests["memory"]["effectiveOperations"]))
         )
 
     def _execute(self, tool: str, operation: str, **args: object) -> dict[str, object]:
@@ -1099,7 +1099,7 @@ class GovernedMemoryToolTests(unittest.TestCase):
         proposal_id: str,
     ) -> dict[str, object]:
         prepared = self._execute(
-            "ime_memory",
+            "memory",
             operation,
             proposalId=proposal_id,
         )["result"]

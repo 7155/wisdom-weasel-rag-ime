@@ -1,12 +1,33 @@
 {
   "schemaVersion": "rag-ime.skill-routing-card-catalog.v1",
   "scope": {
-    "codexVisibleEntries": 48,
-    "piInstalledEntries": 2,
+    "bundledSkillEntries": 13,
+    "projectedBundledCards": 3,
     "canonicalCards": 39
   },
+  "collisionPolicy": {
+    "default": "reject",
+    "bundledWins": {
+      "configured": [],
+      "pi-installed": [
+        "alignment-and-decision",
+        "implementation-execution",
+        "implementation-planning",
+        "improve-codebase-architecture",
+        "independent-review",
+        "memory-curation",
+        "plugin-creator",
+        "quality-gate",
+        "review-feedback-resolution",
+        "structured-handoff",
+        "systematic-debugging",
+        "test-driven-implementation",
+        "work-document-archive"
+      ]
+    }
+  },
   "coverage": {
-    "representedSourceEntries": 50,
+    "representedSourceEntries": 48,
     "duplicateSourceMultiplicity": {
       "openai-docs": 2,
       "codeagent": 2,
@@ -14,8 +35,7 @@
       "notion:meeting-intelligence": 2,
       "notion:research-documentation": 3,
       "notion:spec-to-implementation": 2,
-      "pdf": 2,
-      "project-devlog": 2
+      "pdf": 2
     }
   },
   "cards": [
@@ -46,14 +66,15 @@
     {
       "name": "plugin-creator",
       "when": [
-        "用户要创建或更新 Agent Runtime 插件",
-        "需要维护 manifest、权限或安装提议"
+        "用户要求创建、更新、校验或申请安装受管插件"
       ],
-      "does": "从统一入口创建、校验并提议安装插件。",
       "notFor": [
-        "现有 Skill、Tool 或 Hook 已能满足",
-        "绕过审批、扩权或写入秘密"
-      ]
+        "绕过控制中心直接安装、启停、扩权或回滚",
+        "写入密钥、复制任意代码插件，或创建与现有 Skill、Tool 重复的入口"
+      ],
+      "does": "设计最小 manifest 和文件，通过统一受管插件工具生成、校验并提交待审提议。",
+      "input": "插件目的、正面触发、Not for、输入输出、最小权限、文件、启用请求和验证方式。",
+      "output": "插件草案、manifest 摘要、校验回执、提议/批准状态和剩余风险。"
     },
     {
       "name": "review-agent",
@@ -294,18 +315,6 @@
       "does": "创建或编辑 PowerPoint/Google Slides 演示文稿。"
     },
     {
-      "name": "project-devlog",
-      "when": [
-        "用户要求记录笔记、Todo、聊天摘要或 Git 状态",
-        "用户说记录、继续、恢复上下文、理解之前工作或类似项目连续性指令",
-        "用户说 plan、计划、仔细思考等规划触发词"
-      ],
-      "does": "维护 docs/agent 下的项目日志、摘要或按触发词创建计划文档。",
-      "notFor": [
-        "用户没有要求时更新 todo.md"
-      ]
-    },
-    {
       "name": "screenshot",
       "when": [
         "用户明确要求截取桌面、系统、应用窗口或指定像素区域",
@@ -399,13 +408,30 @@
     {
       "name": "memory-curation",
       "when": [
-        "用户要求审阅、整理、纠正或遗忘长期记忆",
-        "已验证结果要形成待审记忆"
+        "用户明确要求整理、纠正、遗忘、应用或回滚记忆",
+        "任务验收后整理少量可复用事实草案",
+        "低频维护审阅候选记忆"
       ],
-      "does": "生成有来源、可审批和可回滚的记忆草案。",
       "notFor": [
-        "普通聊天、临时进度或私有 Room 过程"
-      ]
+        "普通聊天、临时进度、失败回执、一次性命令或 Room 私有过程",
+        "直写数据库、自动批准或永久保存整段原始对话"
+      ],
+      "does": "区分证据、记忆、主题与时间线，生成带来源的待审草案。",
+      "input": "用户意图、已授权 Evidence、当前记忆状态、冲突、作用域和治理回执。",
+      "output": "待审记忆变更、证据引用、冲突说明、审批状态和可用回滚点。"
+    },
+    {
+      "name": "work-document-archive",
+      "when": [
+        "明确请求工作文档归档、恢复或历史"
+      ],
+      "notFor": [
+        "文件、索引或生命周期归属",
+        "擦除或 Room 必经阶段"
+      ],
+      "does": "调用受管 WorkDocument API。",
+      "input": "Operation-specific query, document, authority, or transition refs.",
+      "output": "Normalized packet with the untouched backend response or receipt."
     }
   ]
 }

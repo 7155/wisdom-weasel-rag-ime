@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-weasel.local/contracts/room-root-execution.v3.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "rootId",
+    "roomId",
+    "generation",
+    "state",
+    "facilitatorParticipantId",
+    "reporterParticipantId",
+    "reporterSelectionReceiptId",
+    "requirementAnchorRef",
+    "createdByActorRef",
+    "terminalReceiptId",
+    "activeProfileRef",
+    "budgetPolicyRef",
+    "createdAtMs"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "wisdom-weasel.room-root-execution.v3"},
+    "rootId": {"type": "string", "minLength": 1},
+    "roomId": {"type": "string", "minLength": 1},
+    "generation": {"type": "integer", "minimum": 0},
+    "state": {"type": "string", "enum": ["pending", "running", "waiting", "blocked", "cancelling", "cancelled", "cancelled_with_unknowns", "completed", "failed"]},
+    "facilitatorParticipantId": {"type": "string", "minLength": 1},
+    "reporterParticipantId": {"type": ["string", "null"]},
+    "reporterSelectionReceiptId": {"type": ["string", "null"]},
+    "requirementAnchorRef": {"type": "string", "minLength": 1},
+    "createdByActorRef": {"type": "string", "minLength": 1},
+    "terminalReceiptId": {"type": ["string", "null"]},
+    "activeProfileRef": {"type": ["string", "null"]},
+    "budgetPolicyRef": {"type": "string", "minLength": 1},
+    "createdAtMs": {"type": "integer", "minimum": 0}
+  }
+}

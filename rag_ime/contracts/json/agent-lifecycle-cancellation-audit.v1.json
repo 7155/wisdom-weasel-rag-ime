@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-lifecycle-cancellation-audit.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "requestId", "sessionId", "scopeKind", "scopeId", "sourceRevision", "transitionRevision", "action", "reason", "state", "sourceTurnId", "owners", "createdAtMs", "updatedAtMs"],
+  "properties": {
+    "schemaVersion": {"const": "rag-ime.agent-lifecycle-cancellation-audit.v1"},
+    "requestId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "sessionId": {"type": "string", "minLength": 1},
+    "scopeKind": {"enum": ["plan", "goal"]},
+    "scopeId": {"type": "string", "minLength": 1},
+    "sourceRevision": {"type": "integer", "minimum": 0},
+    "transitionRevision": {"type": "integer", "minimum": 1},
+    "action": {"enum": ["cancel", "pause"]},
+    "reason": {"type": "string", "maxLength": 1000},
+    "state": {"enum": ["pending", "completed", "partial", "unknown"]},
+    "sourceTurnId": {"type": "string", "maxLength": 240},
+    "owners": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime", "approval", "job", "delegation"],
+      "properties": {
+        "runtime": {"$ref": "#/$defs/owner"},
+        "approval": {"$ref": "#/$defs/owner"},
+        "job": {"$ref": "#/$defs/owner"},
+        "delegation": {"$ref": "#/$defs/owner"}
+      }
+    },
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "receipt"],
+      "properties": {
+        "status": {"enum": ["pending", "succeeded", "excluded", "partial", "unknown"]},
+        "receipt": {"type": "object"}
+      }
+    }
+  }
+}

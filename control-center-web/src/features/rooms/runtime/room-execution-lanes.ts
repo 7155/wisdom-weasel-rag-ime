@@ -3,6 +3,7 @@ import {
   type RoomActivityProjection,
   type RoomProjectionState,
 } from '@/contracts/room-reducer';
+import { approvalNeedsHumanDecision } from '@/contracts/approval-decision';
 
 export interface RoomExecutionLane {
   key: string;
@@ -121,6 +122,30 @@ export function selectRoomTurnExecution(
   return { activities, lanes: [...lanes.values()], userMessageIds };
 }
 
+/** Only explicit unresolved human requests pause a Room lane for Session action. */
+export function roomActivityNeedsSessionAction(
+  activity: RoomActivityProjection,
+): boolean {
+  const resolutionState = textValue(
+    activity.payload.resolutionState || activity.payload.state,
+  );
+  if (
+    ['approved', 'rejected', 'applied', 'resolved', 'cancelled'].includes(
+      resolutionState,
+    )
+  ) return false;
+  const requestKind = textValue(activity.payload.requestKind);
+  return (Boolean(textValue(activity.payload.approvalId)) && approvalNeedsHumanDecision(activity.payload))
+    || ['memory_review', 'plan_review', 'user_input_required'].includes(
+      requestKind,
+    )
+    || textValue(activity.payload.sourceEventType) === 'user_input_required'
+    || (
+      textValue(activity.payload.method) === 'select'
+      && Array.isArray(activity.payload.options)
+    );
+}
+
 function appendLaneKey(
   index: Map<string, string[]>,
   participant: string,
@@ -147,7 +172,16 @@ function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {
     return true;
   }
   if (['intercom', 'work'].includes(textValue(activity.payload.activityKind))) return true;
-  if (textValue(activity.payload.requestKind) === 'memory_review') return true;
+  const requestKind = textValue(activity.payload.requestKind);
+  if (
+    activity.status === 'waiting'
+    || ['memory_review', 'plan_review', 'user_input_required'].includes(requestKind)
+    || sourceEventType === 'user_input_required'
+    || (
+      textValue(activity.payload.method) === 'select'
+      && Array.isArray(activity.payload.options)
+    )
+  ) return true;
   return Boolean(textValue(activity.payload.approvalId));
 }
 

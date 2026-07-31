@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { createRoomDeltaBatcher } from '@/contracts/batching';
 import {
@@ -15,6 +15,8 @@ interface RoomLiveSessionCallbacks {
   onMetadata(roomId: string, response: unknown): void;
   onConnectionRestored(roomId: string): void;
   onConnectionError(roomId: string, error: unknown, fallback: string): void;
+  onRecoveryState(roomId: string, state: 'recovering' | 'failed' | 'synced'): void;
+  onEvents(roomId: string, events: readonly UiRoomEvent[]): void;
 }
 
 export function useRoomLiveSession({
@@ -24,12 +26,15 @@ export function useRoomLiveSession({
 }: {
   roomId: string;
   transport: ControlTransport;
-} & RoomLiveSessionCallbacks): void {
+} & RoomLiveSessionCallbacks): () => void {
   const callbacksRef = useRef<RoomLiveSessionCallbacks>(callbacks);
+  const retrySnapshotRef = useRef<() => void>(() => undefined);
+  const retrySnapshot = useCallback(() => retrySnapshotRef.current(), []);
   callbacksRef.current = callbacks;
 
   useEffect(() => {
     if (!roomId) {
+      retrySnapshotRef.current = () => undefined;
       callbacksRef.current.onLoadingChange(false);
       return;
     }
@@ -54,6 +59,7 @@ export function useRoomLiveSession({
         if (active) void loadSnapshotAndSubscribe();
       });
     };
+    retrySnapshotRef.current = scheduleSnapshotReload;
     const scheduleMetadataRefresh = () => {
       if (!active) return;
       metadataRefreshPending = true;
@@ -70,6 +76,7 @@ export function useRoomLiveSession({
         .getState()
         .applyEvents(roomId, events);
       if (snapshotRequired) scheduleSnapshotReload();
+      else callbacksRef.current.onEvents(roomId, events);
     });
 
     async function refreshRoomMetadata(): Promise<void> {
@@ -100,6 +107,8 @@ export function useRoomLiveSession({
     }
 
     async function loadSnapshotAndSubscribe(): Promise<void> {
+      callbacksRef.current.onRecoveryState(roomId, 'recovering');
+      callbacksRef.current.onLoadingChange(true);
       const requestGeneration = ++generation;
       batcher.clear();
       unsubscribe?.();
@@ -117,7 +126,6 @@ export function useRoomLiveSession({
         useRoomLiveStore.getState().replaySnapshot(roomId, snapshot);
         callbacksRef.current.onLoadingChange(false);
         callbacksRef.current.onSnapshot(roomId, snapshot);
-        callbacksRef.current.onConnectionRestored(roomId);
         const subscriptionGeneration = requestGeneration;
         unsubscribe = transport.subscribe<UiRoomEvent>(
           {
@@ -157,16 +165,19 @@ export function useRoomLiveSession({
             },
           },
         );
+        callbacksRef.current.onRecoveryState(roomId, 'synced');
+        callbacksRef.current.onConnectionRestored(roomId);
       } catch (error) {
         if (
           active
           && requestGeneration === generation
           && !isAbortError(error)
         ) {
+          callbacksRef.current.onRecoveryState(roomId, 'failed');
           callbacksRef.current.onConnectionError(
             roomId,
             error,
-            '暂时无法读取 Room 对话，请稍后重试。',
+            '暂时无法同步 Room 对话；已显示的历史消息会保留，实时更新已暂停。',
           );
           callbacksRef.current.onLoadingChange(false);
         }
@@ -175,6 +186,9 @@ export function useRoomLiveSession({
 
     void loadSnapshotAndSubscribe();
     return () => {
+      if (retrySnapshotRef.current === scheduleSnapshotReload) {
+        retrySnapshotRef.current = () => undefined;
+      }
       active = false;
       generation += 1;
       snapshotController?.abort();
@@ -183,6 +197,7 @@ export function useRoomLiveSession({
       unsubscribe?.();
     };
   }, [roomId, transport]);
+  return retrySnapshot;
 }
 
 function isAbortError(value: unknown): boolean {

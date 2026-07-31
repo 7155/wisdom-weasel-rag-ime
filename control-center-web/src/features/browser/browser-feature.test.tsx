@@ -37,6 +37,7 @@ describe('BrowserFeature', () => {
       && !Array.isArray(call.request.body)
       && call.request.body.mode === 'codrive'
     ))).toBe(true));
+    expect(await screen.findByText('切换浏览器操作方式已确认')).toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: /权限/ }));
     expect(await screen.findByText('https://research.example.com')).toBeInTheDocument();
@@ -49,10 +50,44 @@ describe('BrowserFeature', () => {
       && !Array.isArray(call.request.body)
       && call.request.body.decision === 'allow_once'
     ))).toBe(true));
+    expect(await screen.findByText('允许一次已确认')).toBeInTheDocument();
+  });
+
+  it('shows accepted-but-unconfirmed receipts and keeps pairing credentials guarded', async () => {
+    const user = userEvent.setup();
+    renderBrowser();
+
+    await screen.findByText('1 个浏览器在线');
+    await user.click(screen.getByRole('button', { name: '获取截图' }));
+    expect(await screen.findByText('获取截图请求已送达，等待确认')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '停止' }));
+    expect(await screen.findByText('停止浏览器请求已送达，等待确认')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /连接/ }));
+    const credential = await screen.findByLabelText('配对凭据');
+    expect(credential).toHaveAttribute('type', 'password');
+    expect(credential).toHaveAccessibleDescription(/只复制给你正在配对的本机插件/);
+
+    await user.click(screen.getByRole('button', { name: '轮换配对凭据' }));
+    expect(await screen.findByText('轮换配对凭据请求已送达，等待确认')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '启动托管浏览器' }));
+    expect(await screen.findByText('启动托管浏览器请求已送达，等待确认')).toBeInTheDocument();
+  });
+
+  it('turns a rejected browser action into a public failure receipt', async () => {
+    const user = userEvent.setup();
+    renderBrowser(true);
+
+    await screen.findByText('1 个浏览器在线');
+    await user.click(screen.getByRole('button', { name: '获取截图' }));
+
+    expect(await screen.findByText('获取截图失败')).toBeInTheDocument();
+    expect(screen.getByText('请求未完成；当前页面状态没有改变。请刷新状态后重试。')).toBeInTheDocument();
   });
 });
 
-function renderBrowser() {
+function renderBrowser(failCommand = false) {
   const now = Date.now();
   const snapshot = {
     ok: true,
@@ -122,7 +157,11 @@ function renderBrowser() {
         promptId: 'bperm-research',
         decision: 'allow_once',
       },
-      'browser.command': { ok: true },
+      'browser.command': failCommand
+        ? async () => {
+          throw new Error('bridge failed for https://secret.example.test');
+        }
+        : { ok: true },
       'browser.stop': { ok: true },
       'browser.pairing.rotate': { ok: true },
       'browser.managed.start': { ok: true },

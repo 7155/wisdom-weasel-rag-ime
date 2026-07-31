@@ -65,13 +65,12 @@
   text-align: left;
 }
 
-.history-table th:nth-child(1) { width: 8%; }
-.history-table th:nth-child(2) { width: 18%; }
-.history-table th:nth-child(3) { width: 12%; }
-.history-table th:nth-child(4) { width: 31%; }
-.history-table th:nth-child(5) { width: 13%; }
-.history-table th:nth-child(6) { width: 14%; }
-.history-table th:nth-child(7) { width: 38px; }
+.history-table th:nth-child(1) { width: 18%; }
+.history-table th:nth-child(2) { width: 12%; }
+.history-table th:nth-child(3) { width: 31%; }
+.history-table th:nth-child(4) { width: 17%; }
+.history-table th:nth-child(5) { width: 14%; }
+.history-table th:nth-child(6) { width: 68px; }
 
 .history-table td {
   padding: 9px 10px;
@@ -86,30 +85,30 @@
   transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
-.history-table tbody tr:hover,
-.history-table tbody tr:focus-visible {
+.history-table tbody tr:hover {
   background: var(--color-surface-hover);
-  outline: none;
 }
 
-.history-table tbody tr:focus-visible { box-shadow: inset 3px 0 var(--color-accent); }
 .history-table__preview { color: var(--color-text-primary); }
 
 .history-table__open {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  padding: 0;
+  display: inline-flex;
+  min-width: 48px;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-1);
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
-  place-items: center;
+  font: inherit;
 }
 
-.history-table__open:hover,
-.history-table__open:focus-visible { background: var(--color-surface-raised); color: var(--color-accent); outline: none; }
+.history-table__open:hover { background: var(--color-surface-raised); color: var(--color-accent); }
+.history-table__open:focus-visible { background: var(--color-surface-raised); box-shadow: var(--shadow-focus); color: var(--color-accent); outline: none; }
 
 .ui-dialog.history-detail-dialog {
   width: min(760px, calc(100vw - 32px));

@@ -31,5 +31,13 @@ export interface AgentApprovalV1 {
   receipt?: {
     [k: string]: unknown;
   } | null;
+  causalMetadata: {
+    planId: string;
+    planRevision: number;
+    goalId: string;
+    goalRevision: number;
+    turnId: string;
+    roomBound: boolean;
+  };
   [k: string]: unknown;
 }

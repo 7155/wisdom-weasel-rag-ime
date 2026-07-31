@@ -34,12 +34,14 @@ from .pi_runtime_public import (
     last_assistant_error,
     last_assistant_preview,
     pi_message_id,
+    pi_message_completes_public_turn,
     pi_message_is_public,
     provider_retry_status,
     public_code_tool_activity,
     public_file_name,
     public_fork_candidate_text,
     public_pi_model,
+    public_reasoning_summaries,
     public_usage,
     redact_mapping,
     safe_scalar,
@@ -87,14 +89,15 @@ __all__ = [
 _READ_ONLY_CONTROL_TOOLS = ASSISTANT_CONTROL_TOOL_IDS
 _COORDINATOR_TOOLS = COORDINATOR_TOOL_IDS
 _SUBAGENT_READ_ONLY_TOOLS = (
-    "ime_overview",
-    "ime_memory",
-    "ime_knowledge",
-    "ime_models",
-    "ime_runtime",
-    "ime_agents",
+    "overview",
+    "memory",
+    "knowledge",
+    "models",
+    "runtime",
+    "agents",
     "agent_plan",
     "workspace_list",
+    "workspace_lsp",
     "workspace_read",
     "workspace_search",
 )
@@ -170,6 +173,27 @@ def _tools_for_session(
         for tool in selected
         if mode == "coordinator" or tool not in _COORDINATOR_TOOLS
     )
+
+
+_NATIVE_COORDINATOR_TOOL_PROJECTIONS: dict[str, tuple[str, ...]] = {
+    "workspace_list": ("ls",),
+    "workspace_read": ("read",),
+    "workspace_search": ("grep", "find"),
+    "workspace_edit": ("edit",),
+    "workspace_write": ("write",),
+    "workspace_shell": ("bash",),
+}
+
+
+def _runtime_tool_names(selected: tuple[str, ...]) -> tuple[str, ...]:
+    """Project product authorization targets onto model-facing tool names."""
+
+    projected: list[str] = []
+    for tool in selected:
+        for runtime_name in _NATIVE_COORDINATOR_TOOL_PROJECTIONS.get(tool, (tool,)):
+            if runtime_name not in projected:
+                projected.append(runtime_name)
+    return tuple(projected)
 
 
 @dataclass(frozen=True)
@@ -363,7 +387,9 @@ class PiRuntimeConfig:
                 raise PiRuntimeError("managed Pi extension does not exist")
             command.extend(["--no-builtin-tools", "-e", str(extension)])
             if self.tools:
-                selected_tools = _tools_for_session(self.tools, session)
+                selected_tools = _runtime_tool_names(
+                    _tools_for_session(self.tools, session)
+                )
                 command.extend(["--tools", ",".join(selected_tools)])
         runtime_binding = session.get("_runtimeBinding")
         session_file = ""
@@ -560,8 +586,26 @@ class PiRuntimeDriverFactory:
     runtime_kind = "pi_rpc"
     driver_id = "managed-pi"
 
-    def __init__(self, config: PiRuntimeConfig):
-        self._config = config
+    def __init__(
+        self,
+        config: PiRuntimeConfig,
+        *,
+        execution_owner: bool = True,
+    ):
+        # The Sidecar and Agent Gateway may share the same configuration DB,
+        # but only one process may own a managed Runtime Host.  Keep this
+        # process-local fence outside the persisted Agent policy so a Sidecar
+        # cannot be re-enabled when the shared `runtime.enabled` setting is
+        # applied or refreshed.
+        self._execution_owner = bool(execution_owner)
+        self._config = replace(
+            config,
+            enabled=config.enabled and self._execution_owner,
+        )
+
+    @property
+    def execution_owner(self) -> bool:
+        return self._execution_owner
 
     @property
     def session_root(self) -> Path:
@@ -614,14 +658,17 @@ class PiRuntimeDriverFactory:
     def reconfigure(self, config: object) -> None:
         if not isinstance(config, PiRuntimeConfig):
             raise TypeError("Pi runtime factory requires PiRuntimeConfig")
-        self._config = config
+        self._config = replace(
+            config,
+            enabled=config.enabled and self._execution_owner,
+        )
 
     def apply_policy(self, policy: AgentRuntimePolicy) -> None:
         if not isinstance(policy, AgentRuntimePolicy):
             raise TypeError("Pi runtime factory requires AgentRuntimePolicy")
         self._config = replace(
             self._config,
-            enabled=policy.enabled,
+            enabled=policy.enabled and self._execution_owner,
             idle_timeout_seconds=policy.idle_timeout_seconds,
         )
 
@@ -1778,10 +1825,54 @@ class PiRuntimeManager:
                     turn_id=turn_id,
                 )
             elif update_type == "thinking_start":
+                raw_message = as_mapping(raw.get("message"))
+                message_id = pi_message_id(raw_message, turn_id)
+                content_index = as_integer(update.get("contentIndex"))
+                reasoning_id = f"reasoning:{message_id}:{content_index}"
                 self.events.publish(
                     session_id,
                     "status_changed",
-                    {"status": "analyzing"},
+                    {
+                        "status": "analyzing",
+                        "phase": "reasoning",
+                        "summary": "正在分析问题与下一步",
+                    },
+                    turn_id=turn_id,
+                )
+                self.events.publish(
+                    session_id,
+                    "reasoning_summary",
+                    {
+                        "requestId": reasoning_id,
+                        "sourceMessageId": message_id,
+                        "summary": "正在分析问题与下一步",
+                        "items": [],
+                        "source": "runtime_status",
+                        "state": "running",
+                    },
+                    turn_id=turn_id,
+                )
+            elif update_type == "thinking_end":
+                raw_message = as_mapping(raw.get("message"))
+                summaries = public_reasoning_summaries(raw_message)
+                message_id = pi_message_id(raw_message, turn_id)
+                content_index = as_integer(update.get("contentIndex"))
+                reasoning_id = f"reasoning:{message_id}:{content_index}"
+                self.events.publish(
+                    session_id,
+                    "reasoning_summary",
+                    {
+                        "requestId": reasoning_id,
+                        "sourceMessageId": message_id,
+                        "summary": summaries[-1] if summaries else "分析阶段已完成",
+                        "items": summaries,
+                        "source": (
+                            "provider_reasoning_summary"
+                            if summaries
+                            else "runtime_status"
+                        ),
+                        "state": "completed",
+                    },
                     turn_id=turn_id,
                 )
             return
@@ -1798,7 +1889,7 @@ class PiRuntimeManager:
             return
         if event_type == "message_end":
             raw_message = as_mapping(raw.get("message"))
-            if not pi_message_is_public(raw_message):
+            if not pi_message_completes_public_turn(raw_message):
                 return
             role = str(raw_message.get("role") or "assistant").lower()
             trusted_blocks = raw.get("agentBlocks")
@@ -1970,12 +2061,29 @@ class PiRuntimeManager:
                     safe["timeout"] = max(0, int(raw["timeout"]))
                 except (TypeError, ValueError):
                     pass
+            timeout_timer: threading.Timer | None = None
+            stored_request = {
+                **safe,
+                "_turnId": turn_id,
+                "_createdAtMs": int(time.time() * 1000),
+            }
+            timeout_ms = int(safe.get("timeout") or 0)
+            if timeout_ms > 0:
+                timeout_timer = threading.Timer(
+                    timeout_ms / 1000,
+                    self._expire_ui_request,
+                    args=(session_id, request_id),
+                )
+                timeout_timer.daemon = True
+                stored_request["_timeoutTimer"] = timeout_timer
             with self._lock:
                 if self._client is not client or self._active_session_id != session_id:
                     client.respond_extension_ui(request_id, cancelled=True)
                     return
-                self._pending_ui_requests[request_id] = dict(safe)
+                self._pending_ui_requests[request_id] = stored_request
             self.events.publish(session_id, "user_input_required", safe, turn_id=turn_id)
+            if timeout_timer is not None:
+                timeout_timer.start()
             return
         if event_type == "agent_end":
             # A failed low-level run may still be owned by Pi's bounded retry
@@ -2060,6 +2168,40 @@ class PiRuntimeManager:
                 and self._client.running
                 and run_id in self._pending_review_requests
             )
+
+    def pending_ui_requests(self, session_id: str) -> list[dict[str, object]]:
+        with self._lock:
+            if (
+                self._active_session_id != session_id
+                or self._client is None
+                or not self._client.running
+            ):
+                return []
+            return [
+                {
+                    **{
+                        key: value
+                        for key, value in request.items()
+                        if not key.startswith("_")
+                    },
+                    "turnId": str(request.get("_turnId") or ""),
+                    "createdAtMs": int(request.get("_createdAtMs") or 0),
+                }
+                for request in self._pending_ui_requests.values()
+            ]
+
+    def _expire_ui_request(self, session_id: str, request_id: str) -> None:
+        try:
+            self.resolve_ui_request(
+                session_id,
+                request_id,
+                response={
+                    "cancelled": True,
+                    "resolutionSource": "timeout",
+                },
+            )
+        except (PiRuntimeError, ValueError):
+            return
 
     def resolve_review(
         self,
@@ -2154,38 +2296,81 @@ class PiRuntimeManager:
                 "",
             )
             if request is None and review_run_id:
-                request = {"requestId": normalized_request_id, "method": "confirm"}
-            if request is None:
+                request = {
+                    "requestId": normalized_request_id,
+                    "method": "confirm",
+                    "_turnId": self._active_turn_id,
+                }
+            if request is None or request.get("_resolving") is True:
                 raise PiRuntimeError("UI request is no longer pending")
+            request["_resolving"] = True
             client = self._client
         method = str(request.get("method") or "")
         cancelled = response.get("cancelled") is True
+        resolution_source = str(response.get("resolutionSource") or "").strip() or (
+            "user_cancelled" if cancelled else "direct_user"
+        )
+        if resolution_source not in {
+            "direct_user",
+            "user_cancelled",
+            "timeout",
+            "runtime_cancelled",
+        }:
+            with self._lock:
+                request.pop("_resolving", None)
+            raise ValueError("unsupported UI response provenance")
+        if resolution_source in {"timeout", "runtime_cancelled"} and not cancelled:
+            with self._lock:
+                request.pop("_resolving", None)
+            raise ValueError("automatic UI resolution must be a cancellation")
         value = str(response.get("value") or "")
-        if method == "confirm" and not cancelled:
-            confirmed = response.get("confirmed")
-            if not isinstance(confirmed, bool):
-                confirmed = ui_confirmation_value(value)
-            client.respond_extension_ui(
-                normalized_request_id,
-                confirmed=confirmed,
-            )
-        elif method == "select" and not cancelled:
-            options = [str(item) for item in request.get("options") or []]
-            if options and value not in options:
-                raise PiRuntimeError("UI response is not one of the offered options")
-            client.respond_extension_ui(normalized_request_id, value=value)
-        elif cancelled:
-            client.respond_extension_ui(normalized_request_id, cancelled=True)
-        else:
-            client.respond_extension_ui(normalized_request_id, value=value)
+        try:
+            if method == "confirm" and not cancelled:
+                confirmed = response.get("confirmed")
+                if not isinstance(confirmed, bool):
+                    confirmed = ui_confirmation_value(value)
+                client.respond_extension_ui(
+                    normalized_request_id,
+                    confirmed=confirmed,
+                )
+            elif method == "select" and not cancelled:
+                options = [str(item) for item in request.get("options") or []]
+                if options and value not in options:
+                    raise PiRuntimeError("UI response is not one of the offered options")
+                client.respond_extension_ui(normalized_request_id, value=value)
+            elif cancelled:
+                client.respond_extension_ui(normalized_request_id, cancelled=True)
+            else:
+                client.respond_extension_ui(normalized_request_id, value=value)
+        except Exception:
+            with self._lock:
+                request.pop("_resolving", None)
+            raise
+        timeout_timer = request.get("_timeoutTimer")
+        if isinstance(timeout_timer, threading.Timer):
+            timeout_timer.cancel()
+        turn_id = str(request.get("_turnId") or self._active_turn_id)
         with self._lock:
             self._pending_ui_requests.pop(normalized_request_id, None)
             if review_run_id:
                 self._pending_review_requests.pop(review_run_id, None)
+        self.events.publish(
+            session_id,
+            "user_input_required",
+            {
+                "requestId": normalized_request_id,
+                "method": method,
+                "resolutionState": "cancelled" if cancelled else "resolved",
+                "resolutionSource": resolution_source,
+            },
+            turn_id=turn_id,
+        )
         return {
             "requestId": normalized_request_id,
             "resolved": True,
             "method": method,
+            "resolutionState": "cancelled" if cancelled else "resolved",
+            "resolutionSource": resolution_source,
         }
 
     def _handle_process_exit(

@@ -520,14 +520,14 @@ def _approve_and_apply(
     base_state = dict(prepared["baseState"])
     digest = _approval_payload_digest(
         session_id=session_id,
-        tool="ime_memory",
+        tool="memory",
         operation=operation,
         action_payload=action_payload,
         base_state=base_state,
     )
     approval = sessions.create_approval(
         session_id=session_id,
-        tool_name="ime_memory",
+        tool_name="memory",
         operation=operation,
         payload_sha256=digest,
         preview={

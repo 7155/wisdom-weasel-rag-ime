@@ -6,24 +6,17 @@ from .contracts.json_schema import validate_contract
 
 
 _PROGRESSIVE_CAPABILITY_POLICY = """<capability-policy>
-下面的能力家族用于发现“系统能做什么”；当前阶段卡片用于判断“现在是否该用”。
-能力家族索引在同一 Context Epoch 内保持稳定，因此它可能仍列出已经加载的名称；
-真正的已激活状态只看本轮 tools 与已经出现的 <loaded_skill>。
+routing card 是 catalog revision 元数据；仅本轮 tools/<loaded_skill> 激活。nextCandidates 仅建议；notFor 命中不加载。
 
-完整 Tool schema 已经在本轮 tools 中时，直接调用，不再 load。
-完整 Skill 正文已经在 <loaded_skill> 中时，直接遵循，不再 load。
+skill_load 加载精确正文一次；<loaded_skill> 同 revision 不重载。禁止重构、注入无关正文、另建/取代 Runtime owner。
 
-先用短目录中的 when / notFor / input / output / does 判断是否匹配；
-notFor 命中时不要加载。目录不够时，Skill 用 skill_search，
-Tool 用 tool_search 找到精确名称。
+通常一主 Skill，最多两个；代码切片用 test-driven-implementation，故障先 systematic-debugging。项目连续性归 implementation-execution，个人事实归 memory-curation，禁止重复或争夺同一持久化事实。
 
-确定当前阶段需要后，每个 skill_load 调用一个精确 Skill；这只是单次调用
-的接口，不表示整个任务只能使用一个 Skill。通常只加载一个主 Skill；
-同一阶段确实需要两个互补 Skill 时，可以在同一模型轮次并列调用，最多两份，
-并以当前阶段的主 Skill 组织流程。不要同时加载互相竞争的完整流程。
-同一个下一步需要配套工具时，可以用 tool_load 一次加载 1 至 4 个精确
-Tool schema。不要为盘点、预热或猜测后续用途加载。
-加载只披露用法，不增加权限；调用仍受当前 Session 的审批、取消和工作区边界约束。
+tools 有 schema 即调用；否则 tool_load 精确 1 至 4 个，禁盘点/预热/猜测。点名协议工具缺失时，不按语义改搜其他能力；tool_search/tool_load 同名后调用。Runtime 实际能力/审批/取消/工作区/生命周期/owner 高于 Skill prose。
+
+无实质歧义且授权内可逆即执行；仅实质取舍才提 AI 生成的简短选择题。禁索取裸“确认”，禁把 Goal/In scope/Readiness 内部模板原样作最终聊天。只提交计划不算完成。
+
+完成须逐项将 deliverable 映射至新鲜、权威 evidence receipt；缺失即未完成。
 </capability-policy>"""
 
 

@@ -375,22 +375,35 @@ test('Session and Room headers float over full-height timelines without hiding t
   await expectNoHorizontalPageOverflow(page);
 });
 
-test('capability lifecycle labels stay whole on narrow screens', async ({ page }) => {
+test('capability precedence labels stay whole on narrow screens', async ({ page }) => {
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/#/plugins');
-    const labels = page.locator('.capability-stage-legend b');
-    await expect(labels).toHaveCount(6);
+    await page.getByRole('group', { name: '能力列表' }).getByRole('button').first().click();
+    const precedence = page.getByRole('region', { name: '能力披露优先级' });
+    await expect(precedence).toBeVisible();
+    const labels = precedence.locator('dt');
+    await expect(labels).toHaveText([
+      '1 · 所有对话默认',
+      '最后 · 产品内置默认',
+    ]);
     const measurements = await labels.evaluateAll((items) => items.map((item) => {
       const label = item as HTMLElement;
+      const range = document.createRange();
+      range.selectNodeContents(label);
+      const lineTops: number[] = [];
+      for (const rect of Array.from(range.getClientRects())) {
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        if (!lineTops.some((top) => Math.abs(top - rect.top) <= 1)) lineTops.push(rect.top);
+      }
       return {
-        whiteSpace: getComputedStyle(label).whiteSpace,
+        lineCount: lineTops.length,
         width: label.getBoundingClientRect().width,
         scrollWidth: label.scrollWidth,
       };
     }));
     for (const measurement of measurements) {
-      expect(measurement.whiteSpace).toBe('nowrap');
+      expect(measurement.lineCount).toBe(1);
       expect(measurement.scrollWidth).toBeLessThanOrEqual(measurement.width + 1);
     }
     await expectNoHorizontalPageOverflow(page);

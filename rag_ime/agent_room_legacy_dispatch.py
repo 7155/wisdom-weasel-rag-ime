@@ -72,9 +72,13 @@ class RoomLegacyDispatchService:
         host: LegacyRoomHost,
         *,
         build_participant_prompt: Callable[..., str],
+        resolve_attachments: Callable[
+            [str, Sequence[str], Sequence[str]], list[dict[str, object]]
+        ],
     ) -> None:
         self.host = host
         self.build_participant_prompt = build_participant_prompt
+        self.resolve_attachments = resolve_attachments
 
     def post_message(
         self,
@@ -84,6 +88,7 @@ class RoomLegacyDispatchService:
         client_message_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
+        attachment_ids: Sequence[str],
     ) -> dict[str, object]:
         route_id = (
             "room.message.execute"
@@ -97,6 +102,7 @@ class RoomLegacyDispatchService:
                 client_message_id=client_message_id,
                 requested_participant_ids=requested_participant_ids,
                 work_item_id=work_item_id,
+                attachment_ids=attachment_ids,
             )
         return self._post_session_messages(
             room_id,
@@ -104,6 +110,7 @@ class RoomLegacyDispatchService:
             client_message_id=client_message_id,
             requested_participant_ids=requested_participant_ids,
             work_item_id=work_item_id,
+            attachment_ids=attachment_ids,
             guard_legacy_route=True,
             route_id=route_id,
         )
@@ -115,8 +122,123 @@ class RoomLegacyDispatchService:
         message: str,
         client_message_id: str,
         requested_participant_ids: Sequence[str],
+        attachment_ids: Sequence[str],
     ) -> dict[str, object]:
-        """Route an unbound Room conversation through ordinary Agent Sessions."""
+        """Start managed collaboration directly; roleplay remains conversation."""
+
+        room = self.host.rooms.get(room_id)
+        if (
+            kernel_owns_room_execution(self.host.room_kernel.mode)
+            and str(room.get("roomKind") or "collaboration")
+            == "collaboration"
+        ):
+            active = [
+                value
+                for value in room.get("participants", ())
+                if isinstance(value, Mapping)
+                and str(value.get("status") or "") == "active"
+            ]
+            if not active:
+                raise ValueError(
+                    "managed Room work requires an active participant"
+                )
+            active_by_id = {
+                str(value.get("id") or ""): value
+                for value in active
+            }
+            requested_ids = list(
+                dict.fromkeys(
+                    str(value or "").strip()
+                    for value in requested_participant_ids
+                    if str(value or "").strip()
+                )
+            )
+            if any(value not in active_by_id for value in requested_ids):
+                raise ValueError("invited room participant is unavailable")
+            moderator_id = str(
+                room.get("moderatorParticipantId") or ""
+            )
+            role_coordinators = [
+                value
+                for value in active
+                if str(value.get("collaborationRole") or "") == "coordinator"
+            ]
+            coordinator = (
+                active_by_id[requested_ids[0]]
+                if len(requested_ids) == 1
+                else active_by_id.get(moderator_id)
+                or (role_coordinators[0] if len(role_coordinators) == 1 else active[0])
+            )
+            coordinator_id = str(coordinator["id"])
+            coordinator_session_id = str(coordinator["sessionId"])
+
+            def _ensure_coordinator_available(
+                _session_id: str,
+            ) -> None:
+                latest = self.host.rooms.participant(coordinator_id)
+                self.host.room_application._assert_targets_available(
+                    [latest]
+                )
+
+            try:
+                self.host.room_turns.hold_priority_if_idle(
+                    [coordinator_session_id],
+                    ensure_available=_ensure_coordinator_available,
+                )
+            except RoomSessionBusyError:
+                raise ValueError(
+                    f"{coordinator.get('displayName') or 'Room coordinator'} "
+                    "is currently busy"
+                ) from None
+            try:
+                peer_count = len(active) - 1
+                managed_client_id = (
+                    f"managed-room-ingress:v1:{peer_count}:"
+                    f"{client_message_id or uuid.uuid4()}"
+                )
+                acceptance = [
+                    (
+                        "用户的明确请求已完成，且结论由成功工具回执或受管参与者"
+                        "公开结果直接支撑。"
+                    ),
+                ]
+                expected_output = (
+                    "完成用户请求并提交可复核的结果、证据和剩余风险。"
+                )
+                if peer_count:
+                    acceptance.append(
+                        (
+                            f"协调者已通过 room_collaborate 向其余 {peer_count} 位"
+                            "可用成员分别创建受管子 Dispatch，等待公开结果后再综合。"
+                        )
+                    )
+                    expected_output = (
+                        "协调者拆分独立子任务，通过受管参与者 Dispatch 收集结果，"
+                        "等待完成后综合并复核最终交付。"
+                    )
+                work_item = self.host.room_work.create(
+                    room_id=room_id,
+                    objective=message,
+                    expected_output=expected_output,
+                    current_owner_participant_id=coordinator_id,
+                    created_by_participant_id=coordinator_id,
+                    client_message_id=managed_client_id,
+                    accountable_participant_id=coordinator_id,
+                    topic_id=str(room.get("activeTopicId") or ""),
+                    acceptance_criteria=acceptance,
+                )
+                return self.host.room_application.post_message(
+                    room_id,
+                    message=message,
+                    client_message_id=client_message_id,
+                    requested_participant_ids=[coordinator_id],
+                    work_item_id=str(work_item["id"]),
+                    attachment_ids=attachment_ids,
+                )
+            finally:
+                self.host.room_turns.release_priority_session(
+                    coordinator_session_id
+                )
 
         return self._post_session_messages(
             room_id,
@@ -124,6 +246,7 @@ class RoomLegacyDispatchService:
             client_message_id=client_message_id,
             requested_participant_ids=requested_participant_ids,
             work_item_id="",
+            attachment_ids=attachment_ids,
             guard_legacy_route=False,
             route_id="room.message.conversation",
         )
@@ -136,6 +259,7 @@ class RoomLegacyDispatchService:
         client_message_id: str,
         requested_participant_ids: Sequence[str],
         work_item_id: str,
+        attachment_ids: Sequence[str],
         guard_legacy_route: bool,
         route_id: str,
     ) -> dict[str, object]:
@@ -204,6 +328,11 @@ class RoomLegacyDispatchService:
             for decision in decisions
         ]
         target_session_ids = [str(target["sessionId"]) for target in targets]
+        attachment_receipts = self.resolve_attachments(
+            room_id,
+            target_session_ids,
+            attachment_ids,
+        )
         if len(set(target_session_ids)) != len(target_session_ids):
             raise RuntimeError("Room routing produced duplicate participant Sessions")
         if guard_legacy_route:
@@ -272,6 +401,8 @@ class RoomLegacyDispatchService:
                 user_event_payload["clientMessageId"] = client_message_id
             if work_item_id:
                 user_event_payload["workItemId"] = work_item_id
+            if attachment_receipts:
+                user_event_payload["attachmentReceipts"] = attachment_receipts
             user_room_event = self.host.room_events.publish(
                 room_id=room_id,
                 event_type="user_message",
@@ -279,6 +410,7 @@ class RoomLegacyDispatchService:
                 turn_id=room_turn_id,
                 topic_id=topic_id,
             )
+            timeline_events = [user_room_event]
             self.host._record_room_evidence_safely(
                 room_id=room_id,
                 room_event=user_room_event,
@@ -289,7 +421,7 @@ class RoomLegacyDispatchService:
                 accepted=False,
             )
             for decision, target in zip(decisions, targets, strict=True):
-                self.host.room_events.publish(
+                route_room_event = self.host.room_events.publish(
                     room_id=room_id,
                     event_type="route_decision",
                     payload=decision,
@@ -298,6 +430,7 @@ class RoomLegacyDispatchService:
                     source_session_id=str(target["sessionId"]),
                     topic_id=topic_id,
                 )
+                timeline_events.append(route_room_event)
                 self.host._begin_room_turn(
                     str(target["sessionId"]),
                     room_turn_id,
@@ -375,6 +508,7 @@ class RoomLegacyDispatchService:
                     topic_id=topic_id,
                     unread=unread_by_participant[str(target["id"])],
                     work_item=work_item,
+                    attachment_ids=attachment_ids,
                 ): index
                 for index, (decision, target) in enumerate(
                     zip(decisions, targets, strict=True)
@@ -443,6 +577,7 @@ class RoomLegacyDispatchService:
             "dispatches": dispatch_results,
             "topicId": topic_id,
             "sessionTurnId": primary_result.get("sessionTurnId", ""),
+            "timelineEvents": timeline_events,
         }
         if work_item is not None:
             response["workItem"] = work_item
@@ -459,6 +594,7 @@ class RoomLegacyDispatchService:
         topic_id: str,
         unread: Mapping[str, object],
         work_item: Mapping[str, object] | None,
+        attachment_ids: Sequence[str],
     ) -> dict[str, object]:
         session_id = str(target["sessionId"])
         participant_id = str(target["id"])
@@ -484,6 +620,8 @@ class RoomLegacyDispatchService:
                     "_contextSource": "room",
                     "_checkpointText": message,
                     "_transientContext": room_turn_context,
+                    "attachments": list(attachment_ids),
+                    "_mediaOwnerRoomId": str(room["id"]),
                 },
             )
             session_turn_id = str(accepted.get("turnId") or "")

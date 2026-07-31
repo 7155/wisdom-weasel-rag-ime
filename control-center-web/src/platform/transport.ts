@@ -81,6 +81,8 @@ export interface FilePickOptions {
   selection?: 'file' | 'directory';
   /** Required for attachment imports; the native host binds every receipt to this Agent session. */
   sessionId?: string;
+  /** Required instead of sessionId for Room-owned attachment imports. */
+  roomId?: string;
   /** Required only for a native knowledge-import picker. */
   kbId?: string;
   parserProvider?: 'auto' | 'builtin' | 'mineru_local_http';
@@ -94,22 +96,24 @@ export interface PickedFile {
   mimeType: string;
   byteSize: number;
   path?: string;
-  /** Present only for a native managed-media import receipt. */
+  /** Present only for an owner-bound managed-media import receipt. */
   sessionId?: string;
+  roomId?: string;
   sha256?: string;
 }
 
-export interface AgentImagePasteOptions {
-  /** The native host imports the current clipboard images into this Agent session. */
-  sessionId: string;
+export type AgentImagePasteOptions = {
   /**
-   * Browser-visible image files, when WebKit exposes them. The native host still
-   * reads the trusted system pasteboard rather than accepting browser file bytes.
+   * Browser transports import these File bytes through the fixed managed-media
+   * endpoint. Native transport treats them only as paste evidence and reads the
+   * trusted system pasteboard instead.
    */
   files?: readonly File[];
-  /** Required when WebKit reports an image item without exposing a File. */
   maxFiles?: number;
-}
+} & (
+  | { sessionId: string; roomId?: never }
+  | { roomId: string; sessionId?: never }
+);
 
 export interface KnowledgeDocumentImportInput {
   kbId: string;

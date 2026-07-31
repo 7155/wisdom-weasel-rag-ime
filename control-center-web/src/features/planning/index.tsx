@@ -462,6 +462,7 @@ export function PlanningFeature() {
                       [planningMutationPathIds.preview, planningMutationPathIds.taskAction, planningMutationPathIds.taskEventUndo],
                       revisionBlock || (!selectedTask ? '先从任务列表选择一项任务。' : ''),
                     )}
+                    explicitConfirmation={false}
                     description={taskAction === 'reopen' ? '重新打开所选任务；完成后仍可撤销。' : '将所选任务标记完成；完成后仍可撤销。'}
                     draftKey={JSON.stringify(taskActionDraft)}
                     mutationKey={['planning', 'mutation', 'task-complete']}

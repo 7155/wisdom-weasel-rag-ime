@@ -28,6 +28,14 @@ export interface MemoryReferenceV1 {
     createdAtMs?: number;
     updatedAtMs?: number;
     occurredAtMs?: number;
+    sourceContextAvailable?: boolean;
+    sourceContext?: {
+      recentContext: string;
+      preedit: string;
+      redacted: boolean;
+      scopeProject: string;
+      usedFor: ('source_fingerprint' | 'semantic_grouping')[];
+    };
     [k: string]: unknown;
   };
   source: Source;

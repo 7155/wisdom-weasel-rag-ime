@@ -19,6 +19,7 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertIn("rag", section_ids)
         self.assertIn("models", section_ids)
         self.assertIn("activeRag", section_ids)
+        self.assertIn("lexiconOrganization", section_ids)
         self.assertNotIn("externalMemorySources", section_ids)
         self.assertIn("agent", section_ids)
         self.assertIn("pinyin", section_ids)
@@ -58,7 +59,10 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertNotIn("visualModel", defaults["activeRag"])
         self.assertTrue(defaults["activeRag"]["allowRemoteModel"])
         self.assertTrue(defaults["privacy"]["allowRemoteModelForActiveRag"])
-        self.assertEqual(set(defaults["models"]), {"hot"})
+        self.assertEqual(
+            set(defaults["models"]),
+            {"modelId", "hot", "path", "promptMode", "maxTokens", "temperature", "topP"},
+        )
         self.assertEqual(defaults["voice"]["refinementModel"], "inherit")
         self.assertEqual(defaults["voice"]["refinementThinkingLevel"], "off")
         self.assertEqual(defaults["pinyin"]["fuzzyProfile"], "sichuan-mild")
@@ -76,16 +80,24 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(defaults["agent"]["pi"]["idleTimeoutSeconds"], 900)
         self.assertTrue(defaults["agent"]["pi"]["systemProxy"])
         self.assertEqual(defaults["agent"]["pi"]["defaultRoleId"], "companion-future-v1")
+        self.assertTrue(defaults["lexiconOrganization"]["enabled"])
+        self.assertEqual(defaults["lexiconOrganization"]["runsPerDay"], 2)
         self.assertTrue(defaults["memory"]["automaticOrganization"]["enabled"])
         self.assertEqual(
             defaults["memory"]["automaticOrganization"]["model"],
-            "deepseek-v4-flash",
+            "gpt/gpt-5.6-luna",
+        )
+        self.assertEqual(
+            defaults["memory"]["automaticOrganization"]["thinkingLevel"],
+            "max",
         )
         self.assertEqual(
             defaults["memory"]["automaticOrganization"]["runsPerDay"],
             2,
         )
         self.assertTrue(defaults["memory"]["dreaming"]["enabled"])
+        self.assertEqual(defaults["memory"]["dreaming"]["model"], "gpt/gpt-5.6-luna")
+        self.assertEqual(defaults["memory"]["dreaming"]["thinkingLevel"], "max")
         self.assertEqual(defaults["memory"]["dreaming"]["runsPerDay"], 2)
         self.assertNotIn("externalSources", defaults["memory"])
         self.assertEqual(defaults["memory"]["recall"]["detailLevel"], "compact")
@@ -100,8 +112,15 @@ class SettingsSchemaTests(unittest.TestCase):
         self.assertEqual(fields["interaction.postCommit.panelTtlMs"]["default"], 4000)
         self.assertEqual(fields["interaction.postCommit.panelTtlMs"]["max"], 30000)
         self.assertEqual(fields["models.hot"]["default"], "minimind_ime_v2")
-        self.assertEqual(fields["models.hot"]["label"], "本机预测配置 ID")
-        self.assertIn("不是 Pi Provider 模型", fields["models.hot"]["description"])
+        self.assertEqual(fields["models.hot"]["label"], "推理 Profile")
+        self.assertIn("不属于 Pi Provider 模型", fields["models.hot"]["description"])
+        self.assertEqual(fields["models.modelId"]["maxLength"], 128)
+        self.assertEqual(fields["models.path"]["maxLength"], 1024)
+        self.assertEqual(fields["models.maxTokens"]["max"], 64)
+        self.assertEqual(fields["lexiconOrganization.runsPerDay"]["min"], 1)
+        self.assertEqual(fields["lexiconOrganization.runsPerDay"]["max"], 6)
+        self.assertEqual(fields["models.temperature"]["max"], 2.0)
+        self.assertEqual(fields["models.topP"]["max"], 1.0)
         self.assertEqual(fields["privacy.debugContextMaxGiB"]["default"], 5)
         self.assertEqual(fields["privacy.debugContextMaxGiB"]["max"], 64)
         self.assertEqual(
@@ -141,12 +160,32 @@ class SettingsSchemaTests(unittest.TestCase):
             "pi-model-or-inherit",
         )
         self.assertEqual(
+            fields["memory.automaticOrganization.model"]["type"],
+            "pi-model",
+        )
+        self.assertEqual(
             fields["memory.automaticOrganization.model"]["label"],
-            "DeepSeek V4 自动整理模型 ID",
+            "自动整理模型",
         )
         self.assertIn(
-            "不是通用 Pi 模型槽位",
+            "Pi Provider",
             fields["memory.automaticOrganization.model"]["description"],
+        )
+        self.assertEqual(
+            fields["memory.automaticOrganization.thinkingLevel"]["type"],
+            "pi-thinking",
+        )
+        self.assertEqual(
+            fields["memory.automaticOrganization.thinkingLevel"]["modelKey"],
+            "memory.automaticOrganization.model",
+        )
+        self.assertEqual(
+            fields["memory.dreaming.model"]["type"],
+            "pi-model",
+        )
+        self.assertEqual(
+            fields["memory.dreaming.thinkingLevel"]["type"],
+            "pi-thinking",
         )
         self.assertEqual(
             fields["voice.refinementThinkingLevel"]["modelKey"],

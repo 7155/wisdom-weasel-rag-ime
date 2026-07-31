@@ -540,7 +540,7 @@ class AgentRoleBookTests(unittest.TestCase):
     ) -> None:
         self._seed()
         evidence_id = self.evidence_store.record_tool_receipt(
-            {"toolName": "ime_memory", "operation": "remember_apply"},
+            {"toolName": "memory", "operation": "remember_apply"},
             receipt_id="approval:concurrent",
             role_id="companion-present-v1",
             text="不要把这段回执原文直接放进 system prompt",
@@ -576,7 +576,7 @@ class AgentRoleBookTests(unittest.TestCase):
         self.assertEqual(results[0]["revisionId"], results[1]["revisionId"])
         self.assertEqual(
             results[0]["sections"]["recentWork"][0]["text"],
-            "已验证完成工具操作 ime_memory.remember_apply",
+            "已验证完成工具操作 memory.remember_apply",
         )
         self.assertNotIn(
             "不要把这段回执原文",

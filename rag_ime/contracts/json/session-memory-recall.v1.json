@@ -197,35 +197,17 @@
       "additionalProperties": false,
       "required": [
         "schemaVersion",
-        "originalRequirement",
-        "currentTask",
-        "acceptanceCriteria",
-        "acceptanceSource",
-        "blockers",
-        "handoff",
-        "latestProgress",
-        "planStatus",
+        "summaryPresent",
+        "summarySha256",
+        "summaryChars",
         "skills",
         "tools"
       ],
       "properties": {
-        "schemaVersion": {"const": "rag-ime.agent-compaction-recovery.v1"},
-        "originalRequirement": {"type": "string", "minLength": 1, "maxLength": 4000},
-        "currentTask": {"type": "string", "minLength": 1, "maxLength": 1200},
-        "acceptanceCriteria": {
-          "type": "array",
-          "maxItems": 8,
-          "items": {"type": "string", "minLength": 1, "maxLength": 300}
-        },
-        "acceptanceSource": {"enum": ["structured_task", "original_requirement"]},
-        "blockers": {
-          "type": "array",
-          "maxItems": 8,
-          "items": {"type": "string", "minLength": 1, "maxLength": 300}
-        },
-        "handoff": {"type": "string", "minLength": 1, "maxLength": 300},
-        "latestProgress": {"type": "string", "maxLength": 1200},
-        "planStatus": {"type": "string", "maxLength": 40},
+        "schemaVersion": {"const": "rag-ime.agent-compaction-recovery.v2"},
+        "summaryPresent": {"type": "boolean"},
+        "summarySha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "summaryChars": {"type": "integer", "minimum": 0, "maximum": 8000},
         "skills": {
           "type": "array",
           "maxItems": 32,

@@ -99,6 +99,21 @@ describe('VoiceFeature', () => {
     expect(screen.getByRole('button', { name: '安全保存账号' })).toBeDisabled();
   });
 
+  it('offers only hotwords that are not already in the current draft', async () => {
+    const user = userEvent.setup();
+    renderVoice(true, 'native_streaming', ['Pi', 'Agent', 'Tool']);
+
+    const codex = await screen.findByRole('button', { name: 'Codex' });
+    await screen.findByRole('heading', { name: '语音输入', level: 1 });
+    expect(screen.queryByRole('button', { name: 'Pi' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Agent' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Tool' })).not.toBeInTheDocument();
+
+    await user.click(codex);
+    expect(screen.queryByRole('button', { name: 'Codex' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '语音热词' })).toHaveValue('Pi\nAgent\nTool\nCodex');
+  });
+
   it('keeps suggestions local until preview and saves technical hotwords through WorkContract', async () => {
     const user = userEvent.setup();
     const transport = renderVoiceWithHotwordWrites();
@@ -180,6 +195,7 @@ describe('VoiceFeature', () => {
 function renderVoice(
   toolAvailable: boolean,
   provider: VoiceProviderId = 'native_streaming',
+  savedHotwords: string[] = ['澄助手'],
 ): MockControlTransport {
   const routeIds = [
     'configuration.settings',
@@ -199,7 +215,7 @@ function renderVoice(
           voice: {
             provider,
             hotkey: 'Option + Space',
-            hotwords: ['澄助手'],
+            hotwords: savedHotwords,
             hotwordsEnabled: true,
             tokenConfigured: true,
           },
@@ -217,7 +233,7 @@ function renderVoice(
       'agent.tools.list': {
         ok: true,
         items: toolAvailable ? [{
-          id: 'ime_voice',
+          id: 'voice',
           domain: 'voice',
           availability: 'online',
           operations: [
@@ -361,7 +377,7 @@ function renderVoiceWithHotwordWrites(): MockControlTransport {
       'agent.tools.list': {
         ok: true,
         items: [{
-          id: 'ime_voice',
+          id: 'voice',
           domain: 'voice',
           availability: 'online',
           operations: [

@@ -43,6 +43,7 @@ OWNER_CURATION_RUN_SCHEMA_VERSION = "rag-ime.owner-memory-curation-run.v1"
 DEFAULT_DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000
 DEFAULT_INITIAL_SETTLE_MS = 20 * 60 * 1000
 DEFAULT_RUNNING_LEASE_MS = 60 * 60 * 1000
+MIN_DURABLE_CONTEXT_SPAN_MS = 30 * 60 * 1000
 DEFAULT_MAX_SOURCES = 64
 MAX_EXTERNAL_MODEL_INPUTS_PER_RUN = 8
 MAX_OWNER_MODEL_INPUTS_PER_RUN = 6
@@ -118,7 +119,7 @@ _DURABLE_ASSERTION_RE = re.compile(
 )
 _DERIVED_PROTOCOL_NOISE_RE = re.compile(
     r"(?:user_message|assistant_message|\[敏感内容已隐藏\]|\[REDACTED:|"
-    r"请(?:调用|使用)\s*ime_memory|\bcuration_prepare\b|\brunId\b|"
+    r"请(?:调用|使用)\s*memory|\bcuration_prepare\b|\brunId\b|"
     r"可审阅草案|等待(?:原生)?审阅)",
     re.IGNORECASE,
 )
@@ -421,13 +422,15 @@ class OwnerMemoryCurator:
                             {
                                 "eventId": int(item["sourceEventIds"][0]),
                                 "sourceEventIds": list(item["sourceEventIds"]),
+                                "sourceRef": item["sourceRef"],
+                                "sourceIds": _input_source_ids(item),
                                 "createdAtMs": item["createdAtMs"],
                                 "sourceOccurredAtMs": item["sourceOccurredAtMs"],
                                 "text": item["text"],
-                                "source": item["sourceKind"],
-                                "project": self.project,
-                                "app": "RagImeControl",
-                                "contextGroupId": "",
+                                "source": item["source"],
+                                "project": item["project"],
+                                "app": item["app"],
+                                "contextGroupId": item["contextGroupId"],
                             }
                             for item in model_inputs
                         ],
@@ -700,6 +703,13 @@ class OwnerMemoryCurator:
                 if compact_whitespace(str(item.get("claimKey") or ""))
             },
         )
+        legal_model_event_ids = {
+            event_id
+            for model_input in model_inputs
+            for event_id in _positive_event_ids(
+                model_input.get("sourceEventIds")
+            )
+        }
 
         results: list[dict[str, object]] = []
         for item in model_inputs:
@@ -714,7 +724,18 @@ class OwnerMemoryCurator:
                 durable_atom_event_ids.intersection(source_event_ids)
             )
             actor_kind = "model"
-            if over_capacity_atom_event_ids.intersection(source_event_ids):
+            minute_scale_context_only = _minute_scale_context_only_evidence(
+                item.get("sourceEventIds"),
+                model_inputs=model_inputs,
+                legal_event_ids=legal_model_event_ids,
+            )
+            if minute_scale_context_only:
+                disposition = "not_for_memory"
+                confidence = 1.0
+                effective = "not_for_memory"
+                reason = "minute_scale_context_only"
+                actor_kind = "system"
+            elif over_capacity_atom_event_ids.intersection(source_event_ids):
                 # Never consolidate a dense logical source after storing only
                 # a prefix of its proposed Atoms. Keep the whole source in the
                 # review lane so an operator can split or re-curate it.
@@ -1153,7 +1174,7 @@ def _owner_scope_statuses(
         )
         next_due = int(cursor["next_due_at_ms"] or 0) if cursor is not None else 0
         if next_due <= 0:
-            next_due = int(row["first_source_ms"] or 0) + initial_settle_ms
+            next_due = int(row["last_source_ms"] or 0) + initial_settle_ms
         due = pending > 0 and not waiting_review and not running and current_ms >= next_due
         if waiting_review:
             reason = "draft_pending_review"
@@ -1689,13 +1710,15 @@ def _build_owner_source_bundle(
             {
                 "eventId": int(item["sourceEventIds"][0]),
                 "sourceEventIds": list(item["sourceEventIds"]),
+                "sourceRef": item["sourceRef"],
+                "sourceIds": _input_source_ids(item),
                 "createdAtMs": item["createdAtMs"],
                 "sourceOccurredAtMs": item["sourceOccurredAtMs"],
                 "text": item["text"],
-                "source": item["sourceKind"],
-                "project": project,
-                "app": "RagImeControl",
-                "contextGroupId": "",
+                "source": item["source"],
+                "project": item["project"],
+                "app": item["app"],
+                "contextGroupId": item["contextGroupId"],
             }
             for item in inputs
         ],
@@ -2577,6 +2600,57 @@ def _expanded_logical_atom_sources(
     return sorted(expanded), source_texts
 
 
+def _minute_scale_context_only_evidence(
+    source_event_ids: object,
+    *,
+    model_inputs: list[dict[str, object]],
+    legal_event_ids: set[int],
+) -> bool:
+    selected = _positive_event_ids(source_event_ids).intersection(
+        legal_event_ids
+    )
+    if not selected:
+        return False
+    supporting_inputs = [
+        item
+        for item in model_inputs
+        if selected.intersection(
+            _positive_event_ids(item.get("sourceEventIds"))
+        )
+    ]
+    if not supporting_inputs:
+        return False
+    # Final user statements, applied receipts, and already-curated external
+    # summaries are primary evidence. This gate is only for context summaries
+    # that describe a short-lived activity window.
+    if any(
+        compact_whitespace(str(item.get("sourceKind") or ""))
+        != "session_compaction"
+        for item in supporting_inputs
+    ):
+        return False
+    if any(
+        _DURABLE_ASSERTION_RE.search(
+            compact_whitespace(str(item.get("text") or ""))
+        )
+        for item in supporting_inputs
+    ):
+        return False
+    occurred_at_ms = [
+        int(
+            item.get("sourceOccurredAtMs")
+            or item.get("createdAtMs")
+            or 0
+        )
+        for item in supporting_inputs
+    ]
+    return (
+        max(occurred_at_ms, default=0)
+        - min(occurred_at_ms, default=0)
+        < MIN_DURABLE_CONTEXT_SPAN_MS
+    )
+
+
 def _origin_tags_for_event_ids(
     source_event_ids: object,
     *,
@@ -2629,6 +2703,12 @@ def _owner_atom_event_ids_by_capacity(
             model_inputs=model_inputs,
             legal_event_ids=legal_event_ids,
         )
+        if _minute_scale_context_only_evidence(
+            item.get("sourceEventIds"),
+            model_inputs=model_inputs,
+            legal_event_ids=legal_event_ids,
+        ):
+            continue
         if not canonical or contains_sensitive_content(canonical) or not source_ids:
             continue
         if _durable_atom_rejection_reason(
@@ -2819,6 +2899,11 @@ def _govern_owner_compile_output(
             not canonical
             or contains_sensitive_content(canonical)
             or not source_ids
+            or _minute_scale_context_only_evidence(
+                item.get("sourceEventIds"),
+                model_inputs=bundle_inputs,
+                legal_event_ids=remembered_event_ids,
+            )
             or _durable_atom_rejection_reason(
                 canonical,
                 kind=kind,

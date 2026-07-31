@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Sparkles,
 } from 'lucide-react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button, EmptyState } from '@/components/primitives';
 import { useProductIdentity } from '@/features/identity/product-identity';
@@ -32,6 +33,7 @@ export function OverviewFeature() {
   const navigate = useNavigate();
   const identity = useProductIdentity();
   const queries = useOverviewQueries();
+  const [refreshState, setRefreshState] = useState<'idle' | 'pending' | 'succeeded' | 'failed'>('idle');
   const overview = asRecord(queries.snapshot.data);
   const memory = asRecord(overview.memory);
   const lastPrediction = asRecord(overview.lastPrediction);
@@ -48,21 +50,33 @@ export function OverviewFeature() {
   const error = [queries.snapshot.error, queries.health.error].find(Boolean) as Error | null;
   const pending = queries.snapshot.isPending || queries.health.isPending;
 
-  const refresh = () => {
-    void Promise.all([
-      queries.snapshot.refetch(),
-      queries.health.refetch(),
-      queries.agentRuntime.refetch(),
-      queries.models.refetch(),
-      queries.knowledgeRoute.refetch(),
-    ]);
+  const refresh = async () => {
+    setRefreshState('pending');
+    try {
+      const results = await Promise.all([
+        queries.snapshot.refetch(),
+        queries.health.refetch(),
+        queries.agentRuntime.refetch(),
+        queries.models.refetch(),
+        queries.knowledgeRoute.refetch(),
+      ]);
+      setRefreshState(results.some((result) => result.isError) ? 'failed' : 'succeeded');
+    } catch {
+      setRefreshState('failed');
+    }
   };
 
   return (
     <ManagementPage
       actions={
-        <Button leadingIcon={<RefreshCw size={15} />} loading={queries.snapshot.isFetching} onClick={refresh} size="small">
-          刷新
+        <Button
+          aria-live="polite"
+          leadingIcon={<RefreshCw size={15} />}
+          loading={refreshState === 'pending' || queries.snapshot.isFetching}
+          onClick={() => void refresh()}
+          size="small"
+        >
+          {refreshState === 'succeeded' ? '已刷新' : refreshState === 'failed' ? '刷新失败' : '刷新'}
         </Button>
       }
       description="看看伙伴、任务、记忆和各项本机服务是否已经准备好。"

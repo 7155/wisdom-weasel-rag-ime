@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Callable, Iterable
 from threading import RLock
 
@@ -10,6 +11,7 @@ from .agent_protocol import AgentEventEnvelope
 # the dict it bounds; it is a memory cap, not a cancellation policy.
 _CANCELLED_TURN_RECEIPT_LIMIT = 2048
 _PRIVATE_INTERCOM_TURN_LIMIT = 2048
+_PENDING_ROOM_EVENT_LIMIT = 2048
 
 
 class RoomSessionBusyError(RuntimeError):
@@ -56,6 +58,11 @@ class RoomTurnRegistry:
             tuple[str, str],
             str,
         ] = {}
+        self.pending_events_by_session_turn: dict[
+            tuple[str, str],
+            deque[AgentEventEnvelope],
+        ] = {}
+        self._pending_event_order: deque[tuple[str, str]] = deque()
 
     def begin(
         self,
@@ -66,6 +73,7 @@ class RoomTurnRegistry:
         dispatch_id: str = "",
     ) -> None:
         with self.lock:
+            self._discard_pending_events_locked(session_id)
             self.cancelled_root_by_session.pop(
                 session_id,
                 None,
@@ -92,15 +100,15 @@ class RoomTurnRegistry:
         session_id: str,
         session_turn_id: str,
         room_turn_id: str,
-    ) -> None:
+    ) -> tuple[AgentEventEnvelope, ...]:
         if not session_turn_id:
-            return
+            return ()
         with self.lock:
             if (
                 self.pending_turn_by_session.get(session_id)
                 != room_turn_id
             ):
-                return
+                return ()
             self.pending_turn_by_session.pop(session_id, None)
             key = (session_id, session_turn_id)
             self.turn_by_session_turn[key] = room_turn_id
@@ -114,6 +122,10 @@ class RoomTurnRegistry:
                 self.dispatch_by_session_turn[
                     key
                 ] = dispatch_id
+            return self._discard_pending_events_locked(
+                session_id,
+                accepted_turn_id=session_turn_id,
+            )
 
     def cancel(
         self,
@@ -137,6 +149,7 @@ class RoomTurnRegistry:
                     session_id,
                     None,
                 )
+                self._discard_pending_events_locked(session_id)
             for key, value in tuple(
                 self.turn_by_session_turn.items()
             ):
@@ -434,6 +447,36 @@ class RoomTurnRegistry:
                     next(iter(self.cancelled_turns))
                 )
 
+    def allows_room_event(
+        self,
+        event: AgentEventEnvelope,
+    ) -> bool:
+        """Route only an accepted runtime turn, buffering events before ACK.
+
+        Runtime events can reach the background projection lane before
+        prompt() returns its turn id. While a Root is pending, events are
+        retained by runtime turn id instead of guessing which turn owns the
+        Root. accept() returns only the accepted turn's buffered sequence and
+        discards every older candidate for that Session.
+        """
+
+        if not event.turn_id:
+            return True
+        key = (event.session_id, event.turn_id)
+        with self.lock:
+            if (
+                key in self.turn_by_session_turn
+                or key in self.cancelled_turn_by_session_turn
+            ):
+                return True
+            if event.session_id in self.pending_turn_by_session:
+                self._buffer_pending_event_locked(key, event)
+                return False
+            return not any(
+                registered_session_id == event.session_id
+                for registered_session_id, _turn_id in self.turn_by_session_turn
+            )
+
     def turn_for_event(
         self,
         event: AgentEventEnvelope,
@@ -459,22 +502,10 @@ class RoomTurnRegistry:
             )
             if cancelled:
                 return cancelled
-            pending = self.pending_turn_by_session.get(
-                event.session_id
-            )
-            if pending:
-                self.turn_by_session_turn[key] = pending
-                dispatch_id = (
-                    self.pending_dispatch_by_session.get(
-                        event.session_id,
-                        "",
-                    )
-                )
-                if dispatch_id:
-                    self.dispatch_by_session_turn[
-                        key
-                    ] = dispatch_id
-                return pending
+            # A pending Root has no authoritative runtime turn id yet. Binding
+            # the first observed event would let a queued event from the prior
+            # Session turn claim the new Root and let its terminal clear it.
+            # accept() is the sole operation that establishes this mapping.
             cancelled_pending = (
                 self.cancelled_root_by_session.get(
                     event.session_id
@@ -500,10 +531,7 @@ class RoomTurnRegistry:
             )
             if dispatch_id:
                 return dispatch_id
-            return self.pending_dispatch_by_session.get(
-                event.session_id,
-                "",
-            )
+            return ""
 
     def finish(
         self,
@@ -527,6 +555,7 @@ class RoomTurnRegistry:
                     session_id,
                     None,
                 )
+            self._discard_pending_events_locked(session_id)
             self._drop_topic_if_idle(room_turn_id)
 
     def is_cancelled(
@@ -553,6 +582,53 @@ class RoomTurnRegistry:
     def drop_topic_if_idle(self, room_turn_id: str) -> None:
         with self.lock:
             self._drop_topic_if_idle(room_turn_id)
+
+    def _buffer_pending_event_locked(
+        self,
+        key: tuple[str, str],
+        event: AgentEventEnvelope,
+    ) -> None:
+        bucket = self.pending_events_by_session_turn.setdefault(
+            key,
+            deque(),
+        )
+        bucket.append(event)
+        self._pending_event_order.append(key)
+        while len(self._pending_event_order) > _PENDING_ROOM_EVENT_LIMIT:
+            oldest_key = self._pending_event_order.popleft()
+            oldest_bucket = self.pending_events_by_session_turn.get(
+                oldest_key
+            )
+            if not oldest_bucket:
+                continue
+            oldest_bucket.popleft()
+            if not oldest_bucket:
+                self.pending_events_by_session_turn.pop(
+                    oldest_key,
+                    None,
+                )
+
+    def _discard_pending_events_locked(
+        self,
+        session_id: str,
+        *,
+        accepted_turn_id: str = "",
+    ) -> tuple[AgentEventEnvelope, ...]:
+        accepted = tuple(
+            self.pending_events_by_session_turn.get(
+                (session_id, accepted_turn_id),
+                (),
+            )
+        )
+        for key in tuple(self.pending_events_by_session_turn):
+            if key[0] == session_id:
+                self.pending_events_by_session_turn.pop(key, None)
+        self._pending_event_order = deque(
+            key
+            for key in self._pending_event_order
+            if key[0] != session_id
+        )
+        return accepted
 
     def _drop_topic_if_idle(
         self,

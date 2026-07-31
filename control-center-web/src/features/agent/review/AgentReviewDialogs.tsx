@@ -1,5 +1,5 @@
-import { Check, CircleDashed, FileCheck2, ShieldAlert } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Check, CircleDashed, FileCheck2, MessageSquareText, ShieldAlert } from 'lucide-react';
+import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -8,6 +8,9 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  Field,
+  Input,
+  TextArea,
 } from '@/components/primitives';
 import type { AgentActivityProjection } from '@/contracts/agent-reducer';
 import { publicAgentErrorText } from '../public-error';
@@ -258,6 +261,197 @@ export function MemoryReviewDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+export function GenericUserInputDialog({
+  activity,
+  sessionId,
+  onError,
+}: {
+  activity?: AgentActivityProjection;
+  sessionId: string;
+  onError: (message: string) => void;
+}) {
+  const transport = useControlTransport();
+  const fieldId = useId();
+  const payload = activity?.payload ?? {};
+  const requestId = text(payload.requestId);
+  const method = text(payload.method);
+  const title = text(payload.title) || 'Agent 需要你的回答';
+  const message = text(payload.message);
+  const placeholder = text(payload.placeholder);
+  const prefill = text(payload.prefill);
+  const defaultValue = text(payload.defaultValue);
+  const options = Array.isArray(payload.options)
+    ? payload.options.filter((value): value is string => typeof value === 'string')
+    : [];
+  const timeoutMs = integer(payload.timeout);
+  const [value, setValue] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setValue(method === 'input' || method === 'editor' ? prefill || defaultValue : '');
+    setSubmitting(false);
+    setError('');
+  }, [activity?.id, defaultValue, method, prefill]);
+
+  if (
+    !activity
+    || !requestId
+    || !['select', 'confirm', 'input', 'editor'].includes(method)
+    || payload.requestKind === 'memory_review'
+  ) {
+    return null;
+  }
+
+  const requiresChoice = method === 'select' || method === 'confirm';
+  const canSubmit = !submitting && (!requiresChoice || Boolean(value));
+  const timeoutLabel = timeoutMs > 0
+    ? `${formatTimeout(timeoutMs)}后若仍未回答，本次请求会自动取消；建议值不会自动提交。`
+    : '';
+
+  async function respond(body: Record<string, unknown>): Promise<void> {
+    if (submitting) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      await transport.request({
+        pathId: 'agent.session.ui.resolve',
+        params: { sessionId },
+        body: { requestId, ...body },
+      });
+      // The durable user_input_required resolution event owns dismissal. The
+      // response ACK alone is not enough to infer that Pi resumed the turn.
+    } catch (reason) {
+      const messageText = publicAgentErrorText(reason, '回答没有提交，请检查当前请求后重试。');
+      setError(messageText);
+      onError(messageText);
+      setSubmitting(false);
+    }
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault();
+    if (!canSubmit) return;
+    if (method === 'confirm') {
+      void respond({
+        confirmed: value === 'yes',
+        resolutionSource: 'direct_user',
+      });
+      return;
+    }
+    void respond({ value, resolutionSource: 'direct_user' });
+  }
+
+  return (
+    <Dialog open>
+      <DialogContent
+        className="agent-user-input-dialog"
+        hideClose
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onInteractOutside={(event) => event.preventDefault()}
+      >
+        <DialogHeader>
+          <span className="agent-review-dialog__eyebrow"><MessageSquareText size={15} />等待你的回答</span>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{message || 'Agent 已暂停，收到明确回答后会继续当前回合。'}</DialogDescription>
+        </DialogHeader>
+
+        <form className="agent-user-input-dialog__form" onSubmit={submit}>
+          {method === 'select' ? (
+            <fieldset className="agent-user-input-dialog__choices">
+              <legend>选择一项</legend>
+              {options.map((option, index) => (
+                <label key={`${option}:${index}`}>
+                  <input
+                    checked={value === option}
+                    disabled={submitting}
+                    name={fieldId}
+                    onChange={() => setValue(option)}
+                    type="radio"
+                    value={option}
+                  />
+                  <span>{option}</span>
+                </label>
+              ))}
+              {options.length === 0 ? <p role="alert">此请求没有可选项，请取消并让 Agent 重新提问。</p> : null}
+            </fieldset>
+          ) : null}
+
+          {method === 'confirm' ? (
+            <fieldset className="agent-user-input-dialog__choices">
+              <legend>请明确确认</legend>
+              <label>
+                <input checked={value === 'yes'} disabled={submitting} name={fieldId} onChange={() => setValue('yes')} type="radio" value="yes" />
+                <span>确认</span>
+              </label>
+              <label>
+                <input checked={value === 'no'} disabled={submitting} name={fieldId} onChange={() => setValue('no')} type="radio" value="no" />
+                <span>不确认</span>
+              </label>
+            </fieldset>
+          ) : null}
+
+          {method === 'input' ? (
+            <Field
+              description={defaultValue ? `建议值：${defaultValue}（不会自动提交）` : undefined}
+              htmlFor={fieldId}
+              label="你的回答"
+            >
+              <Input
+                autoFocus
+                disabled={submitting}
+                id={fieldId}
+                onChange={(event) => setValue(event.target.value)}
+                placeholder={placeholder}
+                value={value}
+              />
+            </Field>
+          ) : null}
+
+          {method === 'editor' ? (
+            <Field
+              description={defaultValue ? '建议内容已填入；只有点击提交才会发送。' : '支持多行文本。'}
+              htmlFor={fieldId}
+              label="你的回答"
+            >
+              <TextArea
+                autoFocus
+                disabled={submitting}
+                id={fieldId}
+                onChange={(event) => setValue(event.target.value)}
+                placeholder={placeholder}
+                rows={9}
+                value={value}
+              />
+            </Field>
+          ) : null}
+
+          {timeoutLabel ? <p className="agent-user-input-dialog__timeout" role="status">{timeoutLabel}</p> : null}
+          {error ? <p className="agent-review-dialog__error" role="alert">{error}</p> : null}
+
+          <footer className="agent-review-dialog__actions">
+            <Button
+              disabled={submitting}
+              onClick={() => void respond({ cancelled: true, resolutionSource: 'user_cancelled' })}
+              variant="quiet"
+            >
+              取消这次提问
+            </Button>
+            <Button disabled={!canSubmit} loading={submitting} type="submit" variant="primary">
+              {method === 'confirm' ? '提交确认' : '提交回答'}
+            </Button>
+          </footer>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function formatTimeout(timeoutMs: number): string {
+  if (timeoutMs < 60_000) return `${Math.max(1, Math.ceil(timeoutMs / 1_000))} 秒`;
+  return `${Math.ceil(timeoutMs / 60_000)} 分钟`;
 }
 
 export function ApprovalReviewDialog({

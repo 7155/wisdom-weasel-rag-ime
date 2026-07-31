@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -361,9 +362,7 @@ class AgentMemoryContextService:
         )
         compaction_recovery = (
             _ordinary_compaction_recovery(
-                recent=recent,
-                task=task,
-                plan=self.sessions.agent_plan(session_id),
+                summary=summary,
                 agent_skill_recovery=payload.get(
                     "agentSkillRecovery"
                 ),
@@ -813,96 +812,26 @@ def _memory_task_projection(
 
 def _ordinary_compaction_recovery(
     *,
-    recent: Sequence[Mapping[str, object]],
-    task: Mapping[str, object],
-    plan: Mapping[str, object],
+    summary: str,
     agent_skill_recovery: object,
     agent_tool_recovery: object,
 ) -> dict[str, object]:
-    """Build one bounded, non-authorizing recovery packet per epoch."""
+    """Identify Pi's persisted summary without duplicating its contents.
 
-    original = next(
-        (
-            bounded_text(item.get("text"), maximum=4_000)
-            for item in recent
-            if str(item.get("role") or "") == "user"
-            and bounded_text(item.get("text"), maximum=4_000)
-        ),
-        "",
-    )
-    latest_progress = next(
-        (
-            bounded_text(item.get("text"), maximum=1_200)
-            for item in reversed(recent)
-            if str(item.get("role") or "") == "assistant"
-            and bounded_text(item.get("text"), maximum=1_200)
-        ),
-        "",
-    )
-    objective = bounded_text(
-        task.get("objective"),
-        maximum=1_200,
-    ) or (
-        "继续执行上述原始需求。"
-        if original
-        else ""
-    )
-    raw_criteria = task.get("acceptanceCriteria")
-    criteria = [
-        bounded_text(value, maximum=300)
-        for value in (
-            raw_criteria
-            if isinstance(raw_criteria, (list, tuple))
-            else []
-        )
-        if bounded_text(value, maximum=300)
-    ][:8]
-    raw_blockers = task.get("blockers")
-    blockers = [
-        bounded_text(value, maximum=300)
-        for value in (
-            raw_blockers
-            if isinstance(raw_blockers, (list, tuple))
-            else []
-        )
-        if bounded_text(value, maximum=300)
-    ][:8]
-    plan_status = bounded_text(plan.get("status"), maximum=40)
-    task_kind = str(task.get("kind") or "")
-    if plan_status == "completed":
-        current_task = "已完成；不要重复执行。"
-        handoff = (
-            "子任务已完成；只按父 Agent 的新指令继续。"
-            if task_kind == "subagent"
-            else "任务已由本 Session 完成；无待交接责任。"
-        )
-    elif plan_status == "cancelled":
-        current_task = "已取消；除非用户重新发起并授权，否则不要继续。"
-        handoff = "任务已取消；当前没有可继续的责任。"
-    else:
-        current_task = objective or "未登记；回看原始需求后再继续。"
-        handoff = (
-            "完成后回交父 Agent；当前责任仍由本 Session 持有。"
-            if task_kind == "subagent"
-            else "未发生正式交接，当前责任仍由本 Session 持有。"
-        )
+    Pi already places the generated compaction summary back into the active
+    conversation as a ``compactionSummary`` message.  This local packet only
+    proves which summary and capability receipts were recovered for the new
+    context epoch.  Current Task and Plan state are projected separately by
+    their authoritative owners.
+    """
+
+    summary_text = str(summary or "")
+    summary_bytes = summary_text.encode("utf-8")
     return {
-        "schemaVersion": "rag-ime.agent-compaction-recovery.v1",
-        "originalRequirement": (
-            original
-            or "未从压缩前消息取得；不得猜测。"
-        ),
-        "currentTask": current_task,
-        "acceptanceCriteria": criteria,
-        "acceptanceSource": (
-            "structured_task"
-            if criteria
-            else "original_requirement"
-        ),
-        "blockers": blockers,
-        "handoff": handoff,
-        "latestProgress": latest_progress,
-        "planStatus": plan_status,
+        "schemaVersion": "rag-ime.agent-compaction-recovery.v2",
+        "summaryPresent": bool(summary_text.strip()),
+        "summarySha256": hashlib.sha256(summary_bytes).hexdigest(),
+        "summaryChars": len(summary_text),
         "skills": _recovery_receipts(
             agent_skill_recovery,
             revision_key="contentRevision",

@@ -25,9 +25,9 @@ whether the current responsibility may settle.
 
 ## Workflow
 
-1. Re-read the immutable original request and the current confirmed
-   requirement directory. The directory is navigation; it never replaces the
-   user's words.
+1. Re-read the verbatim user text supplied by the Runtime, later append-only
+   corrections, and the current confirmed requirement directory. The directory
+   is navigation; it never replaces the user's words.
 2. List every current acceptance check using the short human-readable aliases
    supplied in task context. Do not invent backend IDs or omit an inconvenient
    item.
@@ -42,20 +42,20 @@ whether the current responsibility may settle.
    rollback where relevant.
 6. Separate product defects from test/canary defects and external Provider
    instability. Record residual risk and its owner.
-7. Translate the proposal into the active lifecycle Tool's exact public schema.
+7. Translate the proposal into the active lifecycle Tool's exact private schema.
    For `room_commit`, include only verified items as
    `{"acceptance":"AC-1","refs":["<evidenceRef>"]}` inside `evidence`.
-   Put failed or unverified observations in the summary and residual risks, then
-   continue, hand off, wait, or report blocked as appropriate. The Kernel binds
-   aliases to authoritative criteria, verifies eligible receipts and freshness,
-   derives coverage and readiness, and either accepts settlement or returns the
-   exact missing item.
-
-   For `decision=deliver`, send `decision`, `summary`, `evidence`, and
-   `residualRisks`, plus only optional `publicSummary` or `blocks`. Do not send
-   `acceptanceAliases`: that field exists only for `decision=handoff` to define
-   the next Task's acceptance. A current Task's AC coverage always belongs in
-   `evidence`.
+   Put failed or unverified observations in the private summary and residual
+   risks, then continue, hand off, wait, or report blocked. The required
+   `publicSummary` translates relevant outcome, behavioral verification,
+   uncertainty, and next step into natural language without exposing aliases
+   or reference IDs. The Kernel binds aliases to authoritative criteria,
+   verifies eligible receipts and freshness, derives coverage and readiness,
+   then accepts settlement or returns the exact missing item.
+   For `decision=deliver`, send `decision`, private `summary`, user-facing
+   `publicSummary`, `evidence`, and `residualRisks`, plus optional `blocks`.
+   Do not send `acceptanceAliases`: that field is only for `decision=handoff`;
+   current Task AC coverage always belongs in `evidence`.
 
 ## Evidence Matrix
 
@@ -68,6 +68,14 @@ For each acceptance alias, record:
 | Scope | Environment, revision, model, data, viewport, or runtime tested |
 | Result | `pass`, `fail`, or `not_verified` |
 | Gap | What remains unknown or failed |
+
+For user-facing acceptance, also record this concise visibility delta:
+| Surface | Confirmed target | Observed behavior | Missing/degraded behavior | Evidence refs | Disposition |
+|---|---|---|---|---|---|
+
+A missing named surface remains `not_verified` unless a confirmed requirement revision removes it;
+author-only deferral is not evidence. Internal-only work may state a visibility exemption.
+The table cites existing criteria/receipts and has no authority to set a result or Kernel verdict.
 
 Use evidence that matches the claim:
 

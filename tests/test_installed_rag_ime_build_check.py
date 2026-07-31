@@ -59,6 +59,48 @@ class InstalledRagImeBuildCheckTests(unittest.TestCase):
         self.assertTrue(payload["thirdPartyEnabled"])
         self.assertEqual(payload["runningProcessCount"], 0)
 
+    def test_checker_can_require_latest_while_explicitly_skipping_input_source_state(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-installed-build-") as tmp:
+            app = Path(tmp) / "Squirrel.app"
+            marker_path = app / "Contents" / "Resources" / "rag-ime-build-marker.json"
+            marker_path.parent.mkdir(parents=True)
+            marker_path.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": "rag-ime.squirrel-build-marker.v2",
+                        "patchSha256": _sha256(
+                            root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch"
+                        ),
+                        "overlaySha256": _overlay_sha256(root),
+                        "bundleId": "im.rime.inputmethod.Squirrel",
+                        "inputSourceId": "im.rime.inputmethod.Squirrel.Hans",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [
+                    str(root / "scripts" / "check_installed_rag_ime_build.py"),
+                    "--app",
+                    str(app),
+                    "--no-input-source",
+                    "--no-process",
+                    "--require-latest",
+                ],
+                cwd=root,
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+            payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["installedLatest"])
+        self.assertFalse(payload["inputSourceCheckEnabled"])
+        self.assertIsNone(payload["inputSource"])
+        self.assertTrue(payload["preferenceReady"])
+
     def test_checker_fails_require_latest_when_patch_hash_differs(self) -> None:
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-installed-build-") as tmp:

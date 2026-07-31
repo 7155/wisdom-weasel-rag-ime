@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.workspace-lsp-mutation-receipt.v1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "mutationApplied",
+    "summary",
+    "operation",
+    "root",
+    "server",
+    "changedFiles",
+    "undoAvailable"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.workspace-lsp-mutation-receipt.v1"},
+    "mutationApplied": {"type": "boolean", "const": true},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "operation": {"type": "string", "enum": ["rename", "code_action_apply"]},
+    "root": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "server": {"type": "string", "minLength": 1, "maxLength": 120},
+    "changedFiles": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["path", "preimageSha256", "postimageSha256"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+          "preimageSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "postimageSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "undoAvailable": {"type": "boolean", "const": false}
+  },
+  "additionalProperties": false
+}

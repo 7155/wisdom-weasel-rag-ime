@@ -15,7 +15,7 @@ import {
   Zap,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useControlTransport } from '@/app/control-transport';
 import {
@@ -74,6 +74,7 @@ function isReasoningLevel(level: string | undefined): level is ReasoningLevel {
 export function RolesFeature() {
   const transport = useControlTransport();
   const navigate = useNavigate();
+  const createReturnFocusRef = useRef<HTMLElement | null>(null);
   const [view, setView] = useState<'companions' | 'growth'>('companions');
   const [personas, setPersonas] = useState<AgentPersonaV1[]>(() => __CONTROL_PREVIEW__ && transport.kind === 'mock' ? previewPersonas : []);
   const [modelCatalog, setModelCatalog] = useState<RoleModelCatalog>({ providers: [] });
@@ -163,7 +164,14 @@ export function RolesFeature() {
     }
   }
 
+  function captureCreateReturnFocus(): void {
+    createReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  }
+
   function beginRoleCreation(): void {
+    captureCreateReturnFocus();
     setCreateDisplayName('');
     setCreateTagline('');
     setCreateSummary('');
@@ -180,6 +188,7 @@ export function RolesFeature() {
   }
 
   function beginRoleEdit(target: AgentPersonaV1): void {
+    captureCreateReturnFocus();
     const phase = personaPhase(target).id;
     setCreateDisplayName(target.displayName);
     setCreateTagline(target.tagline);
@@ -366,7 +375,13 @@ export function RolesFeature() {
       </div>
     </main>
     <Dialog open={createOpen} onOpenChange={(open) => { if (!roleCreating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
-      <DialogContent className="role-create-dialog">
+      <DialogContent
+        className="role-create-dialog"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          createReturnFocusRef.current?.focus();
+        }}
+      >
         <DialogHeader><DialogTitle>{editingPersona ? '编辑伙伴' : '添加伙伴'}</DialogTitle><DialogDescription>{editingPersona ? '调整她之后的称呼、表达方式和相处阶段；工具与安全边界仍由系统管理。' : '从内置伙伴出发，或创建一位更贴近你的长期伙伴。模型和工具在运行设置中独立管理。'}</DialogDescription></DialogHeader>
         <form id="role-create-form" className="role-create-form" onSubmit={(event) => { event.preventDefault(); void createRole(); }}>
           {createError ? <p className="role-create-error" role="alert">{createError}</p> : null}

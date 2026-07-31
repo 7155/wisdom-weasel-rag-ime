@@ -6,8 +6,10 @@
   "required": [
     "schemaVersion", "timelineId", "project", "date", "timezone", "status",
     "sourceEventIds", "sourceEventHash", "segments", "summary", "eventCount",
-    "segmentCount", "approvedBookId", "approvedBy", "approvedAtMs",
-    "createdAtMs", "updatedAtMs", "policy"
+    "segmentCount", "observedStartMs", "observedEndMs", "spanSemantics",
+    "ordinaryActivityCount", "consolidatedActivityCount",
+    "approvedBookId", "approvedBy", "approvedAtMs", "createdAtMs", "updatedAtMs",
+    "policy"
   ],
   "properties": {
     "schemaVersion": {
@@ -38,6 +40,11 @@
     "summary": {"type": "string", "minLength": 1},
     "eventCount": {"type": "integer", "minimum": 1},
     "segmentCount": {"type": "integer", "minimum": 1},
+    "observedStartMs": {"type": "integer", "minimum": 0},
+    "observedEndMs": {"type": "integer", "minimum": 0},
+    "spanSemantics": {"type": "string", "const": "first_to_last_source_event"},
+    "ordinaryActivityCount": {"type": "integer", "minimum": 0},
+    "consolidatedActivityCount": {"type": "integer", "minimum": 0},
     "approvedBookId": {"type": "string"},
     "approvedBy": {"type": "string"},
     "approvedAtMs": {"type": "integer", "minimum": 0},
@@ -45,7 +52,7 @@
     "updatedAtMs": {"type": "integer", "minimum": 0},
     "segmentationMode": {
       "type": "string",
-      "enum": ["semantic_task_v4", "semantic_task_v3", "semantic_task_v2", "legacy_app_interval_v1"]
+      "enum": ["semantic_task_v5", "semantic_task_v4", "semantic_task_v3", "semantic_task_v2", "legacy_app_interval_v1"]
     },
     "source": {"$ref": "#/$defs/source"},
     "ref": {"$ref": "#/$defs/ref"},
@@ -54,13 +61,14 @@
       "additionalProperties": false,
       "required": [
         "derivedFromInputEvents", "longTermFact", "automaticPromotion",
-        "explicitApprovalRequired"
+        "explicitApprovalRequired", "minimumConsolidatedSpanMs"
       ],
       "properties": {
         "derivedFromInputEvents": {"type": "boolean", "const": true},
         "longTermFact": {"type": "boolean", "const": false},
         "automaticPromotion": {"type": "boolean", "const": true},
         "explicitApprovalRequired": {"type": "boolean", "const": false}
+        ,"minimumConsolidatedSpanMs": {"type": "integer", "minimum": 1}
       }
     }
   },
@@ -71,7 +79,8 @@
       "required": [
         "segmentId", "position", "app", "sourceKinds", "contextGroupIds",
         "startMs", "endMs", "period", "eventCount", "sourceEventIds",
-        "sourceEventHash", "summary", "redactedEventCount"
+        "sourceEventHash", "summary", "redactedEventCount", "activityKind",
+        "spanSemantics"
       ],
       "properties": {
         "segmentId": {"type": "string", "minLength": 1},
@@ -105,6 +114,11 @@
         },
         "summary": {"type": "string", "minLength": 1},
         "redactedEventCount": {"type": "integer", "minimum": 0}
+        ,"activityKind": {
+          "type": "string",
+          "enum": ["ordinary_activity", "consolidated_activity"]
+        }
+        ,"spanSemantics": {"type": "string", "const": "first_to_last_source_event"}
         ,"title": {"type": "string", "minLength": 1, "maxLength": 160}
         ,"apps": {
           "type": "array", "items": {"type": "string", "minLength": 1},
@@ -129,7 +143,7 @@
     },
     "evidenceRef": {
       "type": "object", "additionalProperties": false,
-      "required": ["sourceType", "sourceId", "eventId", "app", "sourceKind", "occurredAtMs", "preview"],
+      "required": ["sourceType", "sourceId", "eventId", "app", "sourceKind", "occurredAtMs", "redacted"],
       "properties": {
         "sourceType": {"type": "string", "const": "input_event"},
         "sourceId": {"type": "string", "minLength": 1},
@@ -137,7 +151,7 @@
         "app": {"type": "string", "minLength": 1},
         "sourceKind": {"type": "string", "minLength": 1},
         "occurredAtMs": {"type": "integer", "minimum": 0},
-        "preview": {"type": "string", "minLength": 1, "maxLength": 180}
+        "redacted": {"type": "boolean"}
       }
     }
   }

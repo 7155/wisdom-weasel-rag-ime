@@ -46,6 +46,7 @@ export function ManagementMutationWorkflow<Context>({
   availability,
   description,
   draftKey,
+  explicitConfirmation = true,
   mutationKey,
   onApply,
   onApplied,
@@ -57,6 +58,7 @@ export function ManagementMutationWorkflow<Context>({
 }: {
   availability: MutationAvailability;
   description: string;
+  explicitConfirmation?: boolean;
   draftKey: string;
   mutationKey: readonly unknown[];
   onApply: (preview: ManagementWorkPreview<Context>) => Promise<ManagementWorkReceipt>;
@@ -119,12 +121,20 @@ export function ManagementMutationWorkflow<Context>({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
 
-  const steps = useMemo(() => [
-    { id: 'preview', label: '查看影响' },
-    { id: 'approval', label: '确认' },
-    { id: 'receipt', label: '完成' },
-    { id: 'rolled-back', label: '撤销' },
-  ] as const, []);
+  const steps = useMemo(() => (
+    explicitConfirmation
+      ? [
+          { id: 'preview', label: '查看影响' },
+          { id: 'approval', label: '确认' },
+          { id: 'receipt', label: '完成' },
+          { id: 'rolled-back', label: '撤销' },
+        ] as const
+      : [
+          { id: 'preview', label: '查看影响' },
+          { id: 'receipt', label: '完成' },
+          { id: 'rolled-back', label: '撤销' },
+        ] as const
+  ), [explicitConfirmation]);
   const stageIndex = stage === 'idle' ? -1 : steps.findIndex((step) => step.id === stage);
   const actionable = availability.state === 'available';
   const previewExpired = Boolean(preview && preview.expiresAtMs <= Date.now());
@@ -182,7 +192,18 @@ export function ManagementMutationWorkflow<Context>({
           {previewExpired ? <InlineNotice title="请重新查看影响" tone="warning">页面状态已经变化，旧的影响说明不会继续执行。</InlineNotice> : null}
           <div className="mgmt-workflow__buttons">
             <Button onClick={() => reset()} size="small" variant="quiet">先不更改</Button>
-            <Button disabled={previewExpired} onClick={() => setStage('approval')} size="small" variant="primary">确认这些更改</Button>
+            <Button
+              disabled={previewExpired}
+              loading={!explicitConfirmation && applyMutation.isPending}
+              onClick={() => {
+                if (explicitConfirmation) setStage('approval');
+                else applyMutation.mutate(preview);
+              }}
+              size="small"
+              variant="primary"
+            >
+              {explicitConfirmation ? '确认这些更改' : title}
+            </Button>
           </div>
         </div>
       ) : null}

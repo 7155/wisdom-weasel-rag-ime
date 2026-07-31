@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import {
+  applyAgentBackgroundJobReceipt,
   abortAgentTurn,
   agentSnapshotFromResponse,
   appendOptimisticAgentMessage,
@@ -9,6 +10,7 @@ import {
   failOptimisticAgentMessage,
   requeueOptimisticAgentMessage,
   reduceAgentEvents,
+  rewriteOptimisticAgentMessage,
   type AgentProjectionState,
   type AgentSnapshot,
 } from '@/contracts/agent-reducer';
@@ -20,11 +22,22 @@ interface AgentLiveStore {
   hydrate(sessionId: string, value: unknown): void;
   hydrateSnapshot(sessionId: string, snapshot: AgentSnapshot): void;
   applyEvents(sessionId: string, events: readonly UiAgentEvent[]): boolean;
+  applyBackgroundJobReceipt(sessionId: string, receipt: unknown): boolean;
   appendOptimistic(
     sessionId: string,
     input: {
       clientMessageId: string;
       retryOfClientMessageId?: string;
+      text: string;
+      attachments?: string[];
+      nowMs: number;
+    },
+  ): void;
+  rewriteOptimistic(
+    sessionId: string,
+    targetMessageId: string,
+    input: {
+      clientMessageId: string;
       text: string;
       attachments?: string[];
       nowMs: number;
@@ -77,9 +90,25 @@ export const useAgentLiveStore = create<AgentLiveStore>((set, get) => ({
     }));
     return projection.needsSnapshot;
   },
+  applyBackgroundJobReceipt(sessionId, receipt) {
+    const current = get().projections[sessionId] ?? createAgentProjection(sessionId);
+    const projection = applyAgentBackgroundJobReceipt(current, receipt);
+    if (projection === current) return false;
+    set((state) => ({
+      projections: { ...state.projections, [sessionId]: projection },
+    }));
+    return true;
+  },
   appendOptimistic(sessionId, input) {
     const current = get().projections[sessionId] ?? createAgentProjection(sessionId);
     const projection = appendOptimisticAgentMessage(current, input);
+    set((state) => ({
+      projections: { ...state.projections, [sessionId]: projection },
+    }));
+  },
+  rewriteOptimistic(sessionId, targetMessageId, input) {
+    const current = get().projections[sessionId] ?? createAgentProjection(sessionId);
+    const projection = rewriteOptimisticAgentMessage(current, targetMessageId, input);
     set((state) => ({
       projections: { ...state.projections, [sessionId]: projection },
     }));

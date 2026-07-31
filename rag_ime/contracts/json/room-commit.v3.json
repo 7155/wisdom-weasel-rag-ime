@@ -62,7 +62,13 @@
               "minLength": 1
             },
             "resumeCondition": {"type": "string", "minLength": 1},
-            "question": {"type": "string", "minLength": 1}
+            "question": {"type": "string", "minLength": 1},
+            "questionOptions": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 5,
+              "items": {"$ref": "#/$defs/questionOption"}
+            }
           },
           "allOf": [
             {
@@ -92,6 +98,16 @@
                   "waitingForParticipantId",
                   "waitingForDispatchId"
                 ]
+              }
+            },
+            {
+              "if": {"required": ["questionOptions"]},
+              "then": {
+                "properties": {
+                  "decision": {"const": "wait"},
+                  "waitingFor": {"const": "user"}
+                },
+                "required": ["question", "waitingFor"]
               }
             }
           ]
@@ -171,6 +187,29 @@
         },
         "createdAtMs": {"type": "integer", "minimum": 0}
       }
+    },
+    "questionOption": {
+      "type": "object",
+      "required": ["value", "label"],
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "recommended": {"type": "boolean"}
+      },
+      "additionalProperties": false
     }
   }
 }

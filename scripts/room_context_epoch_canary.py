@@ -1195,25 +1195,35 @@ def debug_evidence(
             "providerContextJournal"
         )
     ) or {}
-    cache_reads = [
-        int((call.get("usage") or {}).get("cacheRead") or 0)
+    provider_request_receipts = [
+        call
         for call in context.get("providerRequestReceipts", [])
         if isinstance(call, dict)
     ]
-    provider_usage_reported = any(
-        sum(
+    usage_keys = (
+        "input",
+        "output",
+        "cacheRead",
+        "cacheWrite",
+        "totalTokens",
+    )
+    provider_usage_totals = {
+        key: sum(
             int(usage.get(key) or 0)
-            for key in (
-                "input",
-                "output",
-                "cacheRead",
-                "cacheWrite",
-                "totalTokens",
-            )
+            for call in provider_request_receipts
+            for usage in [call.get("usage")]
+            if isinstance(usage, dict)
         )
+        for key in usage_keys
+    }
+    cache_reads = [
+        int((call.get("usage") or {}).get("cacheRead") or 0)
+        for call in provider_request_receipts
+    ]
+    provider_usage_reported = any(
+        sum(int(usage.get(key) or 0) for key in usage_keys)
         > 0
-        for call in context.get("providerRequestReceipts", [])
-        if isinstance(call, dict)
+        for call in provider_request_receipts
         for usage in [call.get("usage")]
         if isinstance(usage, dict)
     )
@@ -1272,6 +1282,18 @@ def debug_evidence(
         "cacheReads": cache_reads,
         "positiveCacheRead": any(value > 0 for value in cache_reads),
         "providerUsageReported": provider_usage_reported,
+        "providerUsage": {
+            "requestCount": len(provider_request_receipts),
+            "reportedRequestCount": sum(
+                isinstance(call.get("usage"), dict)
+                and any(
+                    int(call["usage"].get(key) or 0) > 0
+                    for key in usage_keys
+                )
+                for call in provider_request_receipts
+            ),
+            "totals": provider_usage_totals,
+        },
         "modelCallCount": len(context.get("modelCalls", [])),
         "providerPrefix": provider_prefix_evidence(context),
         "providerRoomPostVisibility": provider_room_post_visibility(
@@ -1574,6 +1596,46 @@ def latest_transition(db_path: Path, session_id: str) -> dict[str, Any]:
             "providerHashes": hashes,
         },
     }
+
+
+def governed_tool_load_receipts(
+    db_path: Path,
+    *,
+    session_id: str,
+    dispatch_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Return hash-governed schema disclosures bound before Provider use."""
+
+    identifiers = [str(value) for value in dispatch_ids if str(value).strip()]
+    if not identifiers:
+        raise RuntimeError("Room Tool disclosure audit requires a Dispatch id")
+    placeholders = ",".join("?" for _ in identifiers)
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT disclosure.receipt_id,
+                   disclosure.tool_name,
+                   disclosure.created_at_ms
+            FROM room_v2_tool_disclosure_receipts AS disclosure
+            JOIN room_v2_capability_manifests AS manifest
+              ON manifest.manifest_id = disclosure.manifest_id
+            JOIN room_v2_capability_runtime_bindings AS binding
+              ON binding.manifest_id = manifest.manifest_id
+            WHERE binding.session_id = ?
+              AND manifest.dispatch_id IN ({placeholders})
+              AND disclosure.receipt_kind = 'load'
+            ORDER BY disclosure.created_at_ms, disclosure.receipt_id
+            """,
+            (session_id, *identifiers),
+        ).fetchall()
+    return [
+        {
+            "receiptId": str(row[0]),
+            "toolName": str(row[1]),
+            "createdAtMs": int(row[2]),
+        }
+        for row in rows
+    ]
 
 
 def tool_receipt_evidence(

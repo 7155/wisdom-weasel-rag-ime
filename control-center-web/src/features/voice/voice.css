@@ -188,4 +188,35 @@ main[data-route-id='voice'] .voice-hotword-suggestions button:focus-visible {
   main[data-route-id='voice'] .voice-native-action-group > span {
     width: 100%;
   }
+
+  main[data-route-id='voice'] .ui-button,
+  main[data-route-id='voice'] .ui-input,
+  main[data-route-id='voice'] .ui-select__trigger,
+  main[data-route-id='voice'] .ui-segmented__item,
+  main[data-route-id='voice'] .voice-hotword-suggestions button {
+    min-height: 40px;
+  }
+
+  main[data-route-id='voice'] .voice-service-choice .ui-segmented {
+    width: 100%;
+  }
+
+  main[data-route-id='voice'] .ui-switch::before {
+    top: 8px;
+    left: 0;
+    width: 44px;
+    height: 28px;
+  }
+
+  main[data-route-id='voice'] .ui-switch__thumb {
+    top: 12px;
+    left: 0;
+    width: 20px;
+    height: 20px;
+    transform: translateX(3px);
+  }
+
+  main[data-route-id='voice'] .ui-switch__thumb[data-state='checked'] {
+    transform: translateX(19px);
+  }
 }

@@ -271,6 +271,11 @@ def _compaction_evidence(room_context: str, session_context: str) -> dict[str, o
         ) from exc
     if not isinstance(packet, Mapping):
         raise RoomContextEpochConflict("Room compaction recovery context must be an object")
+    projection = (
+        packet.get("authoritativeProjectionRef")
+        if isinstance(packet.get("authoritativeProjectionRef"), Mapping)
+        else {}
+    )
     skill = packet.get("skillReceipt") if isinstance(packet.get("skillReceipt"), Mapping) else {}
     tools = packet.get("toolReceipt") if isinstance(packet.get("toolReceipt"), Mapping) else {}
     tool_items = tools.get("items") if isinstance(tools.get("items"), list) else []
@@ -285,12 +290,13 @@ def _compaction_evidence(room_context: str, session_context: str) -> dict[str, o
             "session_memory",
             session,
         ),
-        "recoverySchemaVersion": "wisdom-weasel.room-compaction-recovery.v2",
-        "originalRequirementCount": len(packet.get("originalRequirements") or []),
-        "currentTaskPresent": bool(packet.get("currentTask")),
-        "acceptanceCount": len(packet.get("acceptance") or []),
+        "recoverySchemaVersion": "wisdom-weasel.room-compaction-recovery.v3",
+        "rootId": str(projection.get("rootId") or ""),
+        "taskId": str(projection.get("taskId") or ""),
+        "pendingAcceptanceCount": len(packet.get("pendingAcceptance") or []),
         "blockerCount": len(packet.get("blockers") or []),
-        "handoffPresent": bool(packet.get("handoff")),
+        "nextActionPresent": bool(packet.get("nextAction")),
+        "evidenceRefCount": len(packet.get("evidenceRefs") or []),
         "skillReceiptId": str(skill.get("restoredFromReceiptId") or ""),
         "toolReceiptIds": [
             str(item.get("receiptId") or "")

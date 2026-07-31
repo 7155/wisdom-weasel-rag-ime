@@ -61,6 +61,12 @@ class _FakeMlxEngine:
     def prompt_cache_status(self):
         return self.prompt_cache.to_payload()
 
+    def canonical_request_metadata(self, request_metadata):
+        metadata = dict(request_metadata or {})
+        metadata.pop("profile", None)
+        metadata["profileId"] = "qwen3_06b_ime_hot"
+        return metadata
+
     def predict(self, **kwargs):
         return {
             "ok": True,
@@ -441,6 +447,15 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(request["request_metadata"]["rimeCandidateCount"], 2)
         self.assertEqual(request["request_metadata"]["rimeCandidatesFingerprint"], "rime123")
 
+    def test_normalized_request_cannot_exceed_the_loaded_generation_contract(self) -> None:
+        request = _normalize_prediction_request(
+            {"maxTokens": 64},
+            default_model="fake-minimind",
+            max_tokens_limit=12,
+        )
+
+        self.assertEqual(request["max_tokens"], 12)
+
     def test_normalized_request_collapses_repeated_tail_context(self) -> None:
         request = _normalize_prediction_request(
             {
@@ -715,6 +730,108 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertEqual(health["modelProfile"]["lane"], "quality")
         self.assertTrue(health["modelProfile"]["appendOnly"])
         self.assertFalse(health["modelProfile"]["resident"])
+
+    def test_engine_health_reports_configured_generation_contract(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text='["续写候选"]')
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {"RAG_IME_MLX_PROMPT_MODE": "base-completion"},
+        ):
+            health = MlxLmEngine(
+                "fake-minimind",
+                profile_id="minimind_ime_v2",
+                max_tokens=12,
+                temperature=0.2,
+                top_p=0.9,
+            ).health()
+
+        self.assertEqual(health["modelProfile"]["maxTokens"], 12)
+        self.assertEqual(
+            health["runtimeConfig"],
+            {
+                "profileId": "minimind_ime_v2",
+                "promptMode": "base-completion",
+                "maxTokens": 12,
+                "temperature": 0.2,
+                "topP": 0.9,
+            },
+        )
+
+    def test_engine_health_canonicalizes_known_minimind_deployment_profiles(self) -> None:
+        modules, _calls = _fake_mlx_modules(generated_text='["续写候选"]')
+        for deployment_profile in ("minimind_ime_60m_v8", "minimind_ime_100m_v1"):
+            with self.subTest(deployment_profile=deployment_profile), patch.dict(
+                sys.modules,
+                modules,
+            ):
+                health = MlxLmEngine(
+                    "fake-minimind",
+                    profile_id=deployment_profile,
+                ).health()
+
+            self.assertEqual(health["modelProfile"]["id"], "minimind_ime_v2")
+            self.assertEqual(health["modelProfile"]["lane"], "hot")
+
+    def test_loaded_profile_overrides_client_alias_for_scheduler_cache_and_traces(self) -> None:
+        modules, _calls = _fake_mlx_modules(
+            generated_text=["候选排序", "来源诊断", "上下文管理"]
+        )
+        stale_metadata = {
+            "requestId": "stale-profile-request",
+            "sessionId": "session-1",
+            "panelSessionId": "panel-1",
+            "inputGeneration": 7,
+            "profileId": "minimind_ime_100m_v1",
+            "profile": "minimind_ime_60m_v8",
+        }
+        with patch.dict(sys.modules, modules), patch.dict(
+            os.environ,
+            {
+                "RAG_IME_MLX_PROMPT_MODE": "base-completion",
+                "RAG_IME_MLX_PREFIX_CACHE": "1",
+            },
+        ):
+            engine = MlxLmEngine("fake-minimind", profile_id="minimind_ime_v2")
+            with patch.object(engine._scheduler, "begin", wraps=engine._scheduler.begin) as begin:
+                payload = engine.predict(
+                    current_input="",
+                    recent_context="本地模型已经完成快速推理",
+                    max_candidates=3,
+                    max_tokens=8,
+                    temperature=0.15,
+                    top_p=0.85,
+                    request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
+                    request_metadata=stale_metadata,
+                )
+            with patch.object(
+                engine._prefix_cache,
+                "lookup_longest_prefix",
+                wraps=engine._prefix_cache.lookup_longest_prefix,
+            ) as cache_lookup:
+                "".join(
+                    engine.stream_text(
+                        current_input="",
+                        recent_context="本地模型已经完成快速推理",
+                        max_candidates=3,
+                        max_tokens=8,
+                        temperature=0.15,
+                        top_p=0.85,
+                        request_metadata=stale_metadata,
+                    )
+                )
+
+        request_token = begin.call_args.args[0]
+        self.assertEqual(request_token.profile_id, "minimind_ime_v2")
+        self.assertEqual(payload["requestMeta"]["profileId"], "minimind_ime_v2")
+        self.assertNotIn("profile", payload["requestMeta"])
+        self.assertEqual(payload["latencyTrace"]["profileId"], "minimind_ime_v2")
+        self.assertTrue(cache_lookup.called)
+        self.assertTrue(
+            all(
+                call.kwargs["profile_id"] == "minimind_ime_v2"
+                for call in cache_lookup.call_args_list
+            )
+        )
 
     def test_engine_caps_mlx_allocator_cache_and_reports_memory(self) -> None:
         modules, calls = _fake_mlx_modules(generated_text='["稳定候选"]')
@@ -1484,6 +1601,7 @@ class MlxPredictorServerTests(unittest.TestCase):
                     "contextFingerprint": "ctx123456789abcd",
                     "currentInputFingerprint": "input1234567890",
                     "stablePrefixHash": "prefix123456789",
+                    "profileId": "minimind_ime_100m_v1",
                 },
                 ensure_ascii=False,
             ).encode("utf-8")
@@ -1510,6 +1628,8 @@ class MlxPredictorServerTests(unittest.TestCase):
         self.assertFalse(events[-1]["promptCache"]["usedForGeneration"])
         self.assertEqual(events[-1]["requestMeta"]["contextFingerprint"], "ctx123456789abcd")
         self.assertEqual(events[-1]["requestMeta"]["stablePrefixHash"], "prefix123456789")
+        self.assertEqual(events[-1]["requestMeta"]["profileId"], "qwen3_06b_ime_hot")
+        self.assertEqual(events[-1]["latencyTrace"]["profileId"], "qwen3_06b_ime_hot")
 
     def test_predict_stream_write_stops_cleanly_when_client_closes(self) -> None:
         handler_cls = make_mlx_predictor_handler(_FakeMlxEngine())

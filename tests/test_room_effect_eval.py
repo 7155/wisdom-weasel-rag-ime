@@ -34,11 +34,46 @@ class RoomTaskEffectEvalTests(unittest.TestCase):
         self.assertLess(metrics["progressiveDisclosureRatio"], 0.4)
         self.assertLess(metrics["toolProgressiveDisclosureRatio"], 1.0)
 
+    def test_confirmed_requirements_can_route_directly_to_planning(self) -> None:
+        document = json.loads(self.fixtures.read_text(encoding="utf-8"))
+        case = next(
+            item
+            for item in document["cases"]
+            if item["id"] == "confirmed-requirements-direct-plan"
+        )
+        self.assertEqual(case["stage"], "planning")
+        self.assertEqual(case["expectedSkills"], ["implementation-planning"])
+        self.assertEqual(case["forbiddenSkills"], ["alignment-and-decision"])
+
+        policy = json.loads(self.policy_path.read_text(encoding="utf-8"))
+        alignment = next(
+            item
+            for item in policy["skills"]
+            if item["skillId"] == "alignment-and-decision"
+        )
+        self.assertEqual(
+            alignment["stages"],
+            ["requirements", "solution"],
+        )
+        self.assertEqual(
+            alignment["nextCandidates"],
+            ["implementation-planning"],
+        )
+        planning = next(
+            item
+            for item in policy["skills"]
+            if item["skillId"] == "implementation-planning"
+        )
+        self.assertEqual(
+            planning["nextCandidates"],
+            ["implementation-execution"],
+        )
+
     def test_skill_catalog_has_no_body_and_load_is_exact(self) -> None:
         policy = RoomSkillPolicy(self.policy_path, self.skills_root)
         catalog = policy.catalog()
         expected_keys = {"name", "when", "notFor", "input", "output", "does"}
-        self.assertEqual(len(catalog), 9)
+        self.assertEqual(len(catalog), 8)
         self.assertTrue(all(set(item) == expected_keys for item in catalog))
         loaded = policy.load_exact("structured-handoff")
         self.assertEqual(set(loaded), expected_keys | {"body", "contentRevision"})

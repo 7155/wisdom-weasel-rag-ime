@@ -145,7 +145,7 @@ class RuntimeLifecycleControlPlaneTests(unittest.TestCase):
         source_root = Path(self.tmp.name) / "source-checkout"
         scripts = source_root / "scripts"
         scripts.mkdir(parents=True)
-        redeploy = scripts / "install_squirrel_rag_config.sh"
+        redeploy = scripts / "apply_input_method_configuration.sh"
         repair = scripts / "repair_rag_ime_launch_agents.sh"
         refresh = scripts / "refresh_squirrel_input_source_registration.sh"
         redeploy.write_text("#!/bin/bash\n", encoding="utf-8")

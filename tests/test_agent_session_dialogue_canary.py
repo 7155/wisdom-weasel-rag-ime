@@ -252,6 +252,9 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
                 "preview": {
                     "actionPayload": {
                         "path": str(target),
+                        "resourceRevision": (
+                            "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
+                        ),
                         "edits": [
                             {
                                 "oldText": PATCH_OLD_TEXT,
@@ -285,6 +288,9 @@ class AgentSessionDialogueCanaryTest(unittest.TestCase):
                 "preview": {
                     "actionPayload": {
                         "path": str(target),
+                        "resourceRevision": (
+                            "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
+                        ),
                         "edits": [
                             {
                                 "oldText": PATCH_OLD_TEXT,

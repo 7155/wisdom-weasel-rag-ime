@@ -29,7 +29,10 @@ from .agent_room_kernel_projection import RoomKernelProjection
 from .agent_room_kernel_worker import KernelCommandBus
 from .agent_room_learning_governance import RoomLearningGovernanceStore
 from .agent_room_peer_review import RoomPeerReviewStore
-from .agent_room_public_timeline import RoomPublicTimelineProjector
+from .agent_room_public_timeline import (
+    RoomPublicTimelineProjector,
+    public_room_report_content,
+)
 from .agent_room_references import (
     ParticipantReferenceError,
     participant_ref_map,
@@ -60,6 +63,9 @@ class RoomKernelApplicationService:
         revoke_session: Callable[[str, int], None],
         artifact_hash_provider: Callable[[str], str] | None = None,
         media_receipt_provider: Callable[[str, str], Mapping[str, object]] | None = None,
+        root_state_observer: Callable[
+            [Mapping[str, object]], object
+        ] | None = None,
     ) -> None:
         self.rooms = rooms
         self.kernel = kernel
@@ -75,10 +81,14 @@ class RoomKernelApplicationService:
         self.revoke_session = revoke_session
         self.artifact_hash_provider = artifact_hash_provider
         self.media_receipt_provider = media_receipt_provider
+        self.root_state_observer = root_state_observer or (
+            lambda _root: None
+        )
         self.continuations = RoomContinuationFactory(
             rooms=rooms,
             kernel=kernel,
             capabilities=capabilities,
+            revoke_session=revoke_session,
         )
 
     def snapshot(self, room_id: str) -> dict[str, object]:
@@ -120,7 +130,12 @@ class RoomKernelApplicationService:
         dispatch_id: str,
         generation: int,
         source_event_id: str,
+        runtime_turn_id: str,
+        dispatch_attempt: int,
         created_at_ms: int,
+        retryable: bool = False,
+        had_tool_activity: bool = True,
+        reason_code: str = "",
     ) -> dict[str, object]:
         """Bridge a private Pi turn failure into the canonical Kernel once."""
 
@@ -138,14 +153,29 @@ class RoomKernelApplicationService:
             dispatch_id,
             generation=generation,
             source_event_id=source_event_id,
+            runtime_turn_id=runtime_turn_id,
+            dispatch_attempt=dispatch_attempt,
             now_ms=created_at_ms,
+            retryable=retryable,
+            had_tool_activity=had_tool_activity,
+            reason_code=reason_code,
         )
-        if receipt.get("status") == "applied":
+        retry_scheduled = (
+            receipt.get("receiptKind")
+            == "runtime_retry_scheduled"
+            and receipt.get("status") == "applied"
+        )
+        if receipt.get("status") == "applied" and not retry_scheduled:
             self.revoke_session(
                 str(dispatch["targetSessionId"]),
                 created_at_ms,
             )
         self.projection.sync_room(room_id)
+        self.root_state_observer(
+            self.kernel.root(str(dispatch["rootId"]))
+        )
+        if retry_scheduled:
+            self.wake_worker()
         return receipt
 
     def tool_state(
@@ -420,6 +450,13 @@ class RoomKernelApplicationService:
         receipt_id = str(invocation["receiptId"])
         post_id = _stable_id("room-post", receipt_id)
         now_ms = int(time.time() * 1000)
+        try:
+            public_content = public_room_report_content(
+                arguments.get("content"),
+                field_name="room_post.content",
+            )
+        except ValueError as exc:
+            raise RoomKernelFenceError(str(exc)) from exc
         post: dict[str, object] = {
             "schemaVersion": "wisdom-weasel.room-post.v2",
             "postId": post_id,
@@ -431,7 +468,7 @@ class RoomKernelApplicationService:
             "authorActorRef": dispatch["targetParticipantId"],
             "kind": str(arguments.get("kind") or ""),
             "visibility": "room",
-            "content": str(arguments.get("content") or "").strip(),
+            "content": public_content,
             "mentions": list(dict.fromkeys(mentions)),
             "idempotencyKey": post_id,
             "publicationSource": {
@@ -563,6 +600,7 @@ class RoomKernelApplicationService:
             target_participant_id,
             " ".join(objective.split()),
         )
+        now_ms = int(time.time() * 1000)
         try:
             continuation = self.continuations.build(
                 parent_dispatch=parent,
@@ -580,10 +618,10 @@ class RoomKernelApplicationService:
                     if str(value or "").strip()
                 ],
                 kind="collaboration",
+                now_ms=now_ms,
             )
         except RoomContinuationProposalError as exc:
             raise RoomKernelFenceError(str(exc)) from exc
-        now_ms = int(time.time() * 1000)
         kernel_receipt = self.kernel.enqueue_collaboration(
             parent_dispatch_id=parent_dispatch_id,
             child_task=continuation["childTask"],
@@ -853,6 +891,9 @@ class RoomKernelApplicationService:
         )
         self.wake_worker()
         self.projection.sync_room(room_id)
+        self.root_state_observer(
+            self.kernel.root(str(dispatch["rootId"]))
+        )
         return {"dispatch": dispatch, "created": created}
 
     def cancel_root(
@@ -867,6 +908,8 @@ class RoomKernelApplicationService:
             )
         result = self.commands.cancel_root(root_id)
         self.projection.sync_room(room_id)
+        projected_root = self.kernel.root(root_id)
+        self.root_state_observer(projected_root)
         surfaces = self.kernel.cancellation_surface_projection(room_id)
         root_surfaces = [
             item
@@ -881,7 +924,7 @@ class RoomKernelApplicationService:
         ]
         kernel_receipt = result["kernelReceipt"]
         if not pending:
-            terminal_root = self.kernel.root(root_id)
+            terminal_root = projected_root
             self.public_timeline.publish_terminal(
                 room_id=room_id,
                 root_id=root_id,
@@ -960,16 +1003,28 @@ class RoomKernelApplicationService:
             timestamp = int(
                 settle.get("createdAtMs") or int(time.time() * 1000)
             )
+            guard_reason = str(
+                payload.get("guardReason") or "missing_room_commit"
+            )
+            # A malformed RoomCommit needs one deterministic repair turn, not
+            # the longer missing-commit retry budget. The semantic reason
+            # selects the bounded policy and callers cannot raise this ceiling.
+            max_attempts = 3 if guard_reason == "missing_room_commit" else 2
             receipt = self.kernel.record_uncommitted_settle(
                 dispatch_id,
                 generation=int(settle["generation"]),
+                runtime_turn_id=str(
+                    payload.get("runtimeTurnId") or ""
+                ),
+                dispatch_attempt=int(
+                    payload.get("dispatchAttempt", -1)
+                ),
                 now_ms=timestamp,
                 settle_receipt_id=str(
                     settle.get("settleReceiptId") or ""
                 ),
-                reason=str(
-                    payload.get("guardReason") or "missing_room_commit"
-                ),
+                reason=guard_reason,
+                max_attempts=max_attempts,
                 resource_usage=(
                     settle.get("resourceUsage")
                     if isinstance(settle.get("resourceUsage"), Mapping)
@@ -1090,6 +1145,9 @@ class RoomKernelApplicationService:
                 ),
             )
         self.projection.sync_room(room_id)
+        self.root_state_observer(
+            self.kernel.root(str(root["rootId"]))
+        )
         if receipt.get("status") == "applied":
             # A child Dispatch may depend on this Commit's public Room fact.
             # Wake only after the context ledger and UI projection can both
@@ -1180,6 +1238,7 @@ class RoomKernelApplicationService:
             str(root["roomId"]),
             now_ms=timestamp,
         )
+        self.root_state_observer(root)
         if str(root.get("state") or "") in {
             "completed",
             "cancelled",

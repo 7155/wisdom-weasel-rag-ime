@@ -17,7 +17,7 @@ test('runtime observation stays bounded and filters its causal trace', async ({
   await expect(feature).toContainText(
     '开启“本机上下文快照”后，上下文检查可从你指定的目录恢复经凭证与隐藏推理脱敏的内容',
   );
-  await expect(feature).toContainText('未开启时只读取当前 Runtime');
+  await expect(feature).toContainText('未开启时只读取当前运行中的内容');
   await expect(page.getByRole('list', { name: '运行记录事件' }).getByRole('listitem')).toHaveCount(8);
 
   const bounds = await feature.evaluate((element) => ({

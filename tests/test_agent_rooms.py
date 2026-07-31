@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 import stat
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +15,10 @@ from rag_ime.agent_rooms import AgentRoomEventHub, AgentRoomStore
 from rag_ime.agent_service import AgentService
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.pi_runtime import PiRuntimeConfig
+
+PNG_1X1 = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 class AgentRoomTests(unittest.TestCase):
@@ -679,6 +685,95 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertNotIn("历史编号-00", rendered)
         self.assertIn("较早未读消息已越过本次上下文窗口", rendered)
 
+    def test_room_image_is_delivered_to_the_authorized_participant_prompt(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "图片协作 Room",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        target = room["participants"][0]
+        media = self.service.import_media(
+            room_id=str(room["id"]),
+            data=PNG_1X1,
+            mime_type="image/png",
+            file_name="room.png",
+        )["media"]
+        with (
+            patch.object(
+                self.service.runtime,
+                "model_catalog",
+                return_value={"selected": {"supportsImages": True}},
+            ),
+            patch.object(
+                self.service,
+                "prompt",
+                return_value={"turnId": "turn:room-image"},
+            ) as prompt,
+        ):
+            accepted = self.service.post_room_message(
+                str(room["id"]),
+                {
+                    "message": "请看图片",
+                    "participantIds": [str(target["id"])],
+                    "attachmentIds": [str(media["mediaId"])],
+                    "clientMessageId": "room-image-1",
+                },
+            )
+        prompt_payload = prompt.call_args.args[1]
+        self.assertEqual(prompt_payload["attachments"], [media["mediaId"]])
+        self.assertEqual(prompt_payload["_mediaOwnerRoomId"], room["id"])
+        user_event = next(
+            event for event in accepted["timelineEvents"]
+            if event["eventType"] == "user_message"
+        )
+        self.assertEqual(
+            user_event["payload"]["attachmentReceipts"][0]["mediaId"],
+            media["mediaId"],
+        )
+
+    def test_room_image_rejects_an_unsupported_target_model_before_dispatch(self) -> None:
+        room = self.service.create_room(
+            {
+                "title": "文本模型 Room",
+                "routingPolicy": "manual_mentions",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {"roleId": "companion-present-v1", "roleVersion": "1"},
+                    {"roleId": "companion-firstlight-v1", "roleVersion": "1"},
+                ],
+            }
+        )["room"]
+        target = room["participants"][0]
+        media = self.service.import_media(
+            room_id=str(room["id"]),
+            data=PNG_1X1,
+            mime_type="image/png",
+        )["media"]
+        with (
+            patch.object(
+                self.service.runtime,
+                "model_catalog",
+                return_value={"selected": {"supportsImages": False}},
+            ),
+            patch.object(self.service, "prompt") as prompt,
+        ):
+            with self.assertRaisesRegex(ValueError, "当前模型不支持图片"):
+                self.service.post_room_message(
+                    str(room["id"]),
+                    {
+                        "message": "请看图片",
+                        "participantIds": [str(target["id"])],
+                        "attachmentIds": [str(media["mediaId"])],
+                    },
+                )
+        prompt.assert_not_called()
+
     def test_room_rejects_oversized_message_instead_of_silently_truncating_it(self) -> None:
         room = self.service.create_room(
             {
@@ -772,7 +867,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             session_id,
             mode="assistant",
             tool_profile_version="subagent-readonly-v1",
-            allowed_tools=["ime_overview"],
+            allowed_tools=["overview"],
             workspace_roots=[],
         )
 
@@ -817,7 +912,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             {
                 "mode": "assistant",
                 "toolProfileVersion": "subagent-readonly-v1",
-                "allowedTools": ["ime_overview"],
+                "allowedTools": ["overview"],
             },
         )["session"]
         self.assertEqual(changed["mode"], "assistant")
@@ -1195,7 +1290,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(future_session["toolProfileVersion"], "control-center-v1")
         self.assertEqual(future_session["executionMode"], "workspace_managed")
         self.assertTrue(future_session["workspaceScopeGranted"])
-        self.assertEqual(future_session["modelProfile"], "gpt/gpt-5.6-sol")
+        self.assertEqual(future_session["modelProfile"], "openai-codex/gpt-5.6-sol")
         self.assertEqual(future_session["thinkingLevel"], "max")
         self.assertEqual(future_session["workspaceRoots"], [str(self.root.resolve())])
 
@@ -1242,6 +1337,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             turn_id="turn:hermes",
             created_at_ms=210,
         )
+        self.assertTrue(self.service.events.flush())
         events = self.service.rooms.list_events(str(room["id"]))
         self.assertEqual(
             [item["eventType"] for item in events],
@@ -1276,13 +1372,145 @@ class AgentRoomServiceTests(unittest.TestCase):
                 {
                     "mode": "assistant",
                     "toolProfileVersion": "subagent-readonly-v1",
-                    "allowedTools": ["ime_overview", "ime_memory"],
+                    "allowedTools": ["overview", "memory"],
                 },
             )
 
         with self.assertRaisesRegex(ValueError, "cannot be deleted directly"):
             self.service.delete_session(str(hermes["sessionId"]))
         self.assertEqual(len(self.service.list_rooms()["items"]), 1)
+
+    def test_pending_room_turn_rejects_queued_prior_turn_events_until_runtime_acceptance(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "Room runtime turn fence",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                    },
+                ],
+            }
+        )["room"]
+        room_id = str(room["id"])
+        participant = room["participants"][0]
+        session_id = str(participant["sessionId"])
+        root_id = "room-root:new"
+        dispatch_id = "room-dispatch:new"
+        prior_runtime_turn_id = "runtime-turn:prior"
+        accepted_runtime_turn_id = "runtime-turn:new"
+        baseline_count = len(self.service.rooms.list_events(room_id))
+
+        # Keep the projection worker behind the registry lock so an old delta
+        # crosses begin(), then both the old terminal and the real turn's
+        # complete event sequence arrive before prompt() returns its ACK.
+        with self.service.room_turns.lock:
+            old_delta = self.service.events.publish(
+                session_id,
+                "text_delta",
+                {"delta": "stale content"},
+                turn_id=prior_runtime_turn_id,
+                created_at_ms=100,
+            )
+            self.service._begin_room_turn(
+                session_id,
+                root_id,
+                str(room["activeTopicId"]),
+                dispatch_id=dispatch_id,
+            )
+            old_terminal = self.service.events.publish(
+                session_id,
+                "turn_completed",
+                {"status": "completed"},
+                turn_id=prior_runtime_turn_id,
+                created_at_ms=110,
+            )
+            real_delta = self.service.events.publish(
+                session_id,
+                "text_delta",
+                {"delta": "current content"},
+                turn_id=accepted_runtime_turn_id,
+                created_at_ms=120,
+            )
+            real_terminal = self.service.events.publish(
+                session_id,
+                "turn_completed",
+                {"status": "completed"},
+                turn_id=accepted_runtime_turn_id,
+                created_at_ms=130,
+            )
+
+        self.assertTrue(self.service.events.flush())
+        self.assertEqual(
+            self.service.room_turns.pending_turn_by_session.get(session_id),
+            root_id,
+        )
+        self.assertNotIn(
+            (session_id, prior_runtime_turn_id),
+            self.service.room_turns.turn_by_session_turn,
+        )
+        before_accept = self.service.rooms.list_events(room_id)[baseline_count:]
+        self.assertFalse(
+            {
+                old_delta.event_id,
+                old_terminal.event_id,
+                real_delta.event_id,
+                real_terminal.event_id,
+            }
+            & {
+                str(event["payload"].get("sourceEventId") or "")
+                for event in before_accept
+            }
+        )
+
+        self.service._accept_room_turn(
+            session_id,
+            accepted_runtime_turn_id,
+            root_id,
+        )
+        self.assertFalse(
+            self.service.room_turns.session_turn_active(session_id)
+        )
+        self.assertNotIn(
+            (session_id, accepted_runtime_turn_id),
+            self.service.room_turns.turn_by_session_turn,
+        )
+        self.assertEqual(
+            self.service.room_turns.pending_events_by_session_turn,
+            {},
+        )
+
+        projected = self.service.rooms.list_events(room_id)[baseline_count:]
+        self.assertEqual(
+            [event["eventType"] for event in projected],
+            ["participant_delta", "turn_completed"],
+        )
+        self.assertEqual(
+            {
+                str(event["payload"].get("sourceEventId") or "")
+                for event in projected
+            },
+            {real_delta.event_id, real_terminal.event_id},
+        )
+        self.assertEqual(
+            {event["turnId"] for event in projected},
+            {root_id},
+        )
+        self.assertEqual(
+            projected[0]["payload"]["data"]["delta"],
+            "current content",
+        )
+        self.assertEqual(
+            projected[0]["payload"]["data"]["dispatchId"],
+            dispatch_id,
+        )
 
     def test_room_execution_mode_updates_all_participants_atomically(self) -> None:
         room = self.service.create_room(
@@ -1461,7 +1689,10 @@ class AgentRoomServiceTests(unittest.TestCase):
             str(firstlight["sessionId"]): "turn:multi:firstlight",
         }
 
+        dispatch_barrier = threading.Barrier(2)
+
         def accept(session_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            dispatch_barrier.wait(timeout=2)
             return {"turnId": turns[session_id]}
 
         with patch.object(self.service, "prompt", side_effect=accept) as prompt:
@@ -1532,6 +1763,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             turn_id=turns[str(firstlight["sessionId"])],
             created_at_ms=210,
         )
+        self.assertTrue(self.service.events.flush())
 
         mirrored = self.service.rooms.list_events(str(room["id"]))[-3:]
         self.assertEqual(
@@ -1900,7 +2132,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(prompt_payload["message"], "请协调大家检查当前项目")
         moderator_context = prompt_payload["_transientContext"]
         self.assertIn("你本轮以 coordinator 视角参与", moderator_context)
-        self.assertNotIn("ime_agents.room_ask", moderator_context)
+        self.assertNotIn("agents.room_ask", moderator_context)
         self.assertNotIn("role=researcher", moderator_context)
         self.assertNotIn("role=implementer", moderator_context)
 
@@ -1932,7 +2164,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             "tool_finished",
             {
                 "toolCallId": "tool:secret",
-                "toolName": "ime_memory",
+                "toolName": "memory",
                 "args": {"apiKey": "never-copy-this"},
                 "result": {
                     "details": {
@@ -1949,14 +2181,20 @@ class AgentRoomServiceTests(unittest.TestCase):
             },
             turn_id="turn:safe",
         )
+        self.assertTrue(self.service.events.flush())
         projected = self.service.rooms.list_events(str(room["id"]))[-1]
+        data = projected["payload"]["data"]
         serialized = json.dumps(projected, ensure_ascii=False)
         self.assertEqual(projected["eventType"], "participant_activity")
-        self.assertIn("查询到一份可公开摘要", serialized)
-        self.assertIn("输入法项目", serialized)
+        self.assertEqual(data["arguments"]["apiKey"], "[REDACTED_SECRET]")
+        self.assertEqual(
+            data["summary"],
+            "查询到一份可公开摘要",
+        )
+        self.assertEqual(data["books"], ["输入法项目"])
+        self.assertEqual(data["tags"], ["Pi"])
+        self.assertNotIn("result", data)
         self.assertNotIn("never-copy-this", serialized)
-        self.assertNotIn('"args"', serialized)
-        self.assertNotIn('"result"', serialized)
 
         self.service.events.publish(
             session_id,
@@ -1993,6 +2231,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             },
             turn_id="turn:safe",
         )
+        self.assertTrue(self.service.events.flush())
         public_message = self.service.rooms.list_events(str(room["id"]))[-1]
         serialized = json.dumps(public_message, ensure_ascii=False)
         self.assertEqual(public_message["eventType"], "participant_message")
@@ -2028,6 +2267,7 @@ class AgentRoomServiceTests(unittest.TestCase):
             },
             turn_id="turn:safe",
         )
+        self.assertTrue(self.service.events.flush())
         hidden_tool_message = self.service.rooms.list_events(str(room["id"]))[-1]
         serialized = json.dumps(hidden_tool_message, ensure_ascii=False)
         self.assertEqual(hidden_tool_message["eventType"], "participant_activity")

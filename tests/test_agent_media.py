@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,6 +29,16 @@ class AgentMediaStoreTests(unittest.TestCase):
         sessions.initialize()
         self.first = str(sessions.create(title="media one")["id"])
         self.second = str(sessions.create(title="media two")["id"])
+        with sqlite3.connect(self.db_path) as conn:
+            conn.executemany(
+                """
+                INSERT INTO agent_rooms(
+                    id, title, routing_policy, status, room_file,
+                    created_at_ms, updated_at_ms, last_event_sequence
+                ) VALUES (?, ?, 'manual_mentions', 'active', '', 1, 1, 0)
+                """,
+                (("room-a", "Room A"), ("room-b", "Room B")),
+            )
         self.store = AgentMediaStore(self.db_path, root=self.root / "media")
         self.store.initialize()
 
@@ -62,6 +73,38 @@ class AgentMediaStoreTests(unittest.TestCase):
 
         with self.assertRaises(KeyError):
             self.store.read(str(receipt["mediaId"]), session_id=self.second)
+
+    def test_room_owner_is_visible_only_through_the_same_room_boundary(self) -> None:
+        receipt = self.store.import_bytes(
+            room_id="room-a",
+            data=PNG_1X1,
+            mime_type="image/png",
+            file_name="room.png",
+            created_at_ms=123,
+        )
+        media_id = str(receipt["mediaId"])
+        self.assertEqual(receipt["ownerType"], "room")
+        self.assertEqual(receipt["ownerId"], "room-a")
+        self.assertEqual(receipt["roomId"], "room-a")
+        self.assertNotIn("sessionId", receipt)
+        self.assertEqual(
+            [item["mediaId"] for item in self.store.list_for_room("room-a")],
+            [media_id],
+        )
+        images = self.store.pi_images("", [media_id], room_id="room-a")
+        self.assertEqual(base64.b64decode(images[0]["data"]), PNG_1X1)
+
+        for owner in ({"room_id": "room-b"}, {"session_id": self.first}):
+            with self.subTest(owner=owner):
+                with self.assertRaises(KeyError):
+                    self.store.read(media_id, **owner)
+                self.assertEqual(self.store.list_for_owner(**owner), [])
+                with self.assertRaises(KeyError):
+                    self.store.pi_images(
+                        str(owner.get("session_id", "")),
+                        [media_id],
+                        room_id=str(owner.get("room_id", "")),
+                    )
 
     def test_mime_spoof_oversize_and_non_image_pi_attachment_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "MIME mismatch"):

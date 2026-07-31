@@ -18,6 +18,7 @@ class LegacyCancellationHost(Protocol):
     rooms: Any
     room_events: Any
     delegation: Any
+    background_jobs: Any
     room_intercom: Any
     wake_schedules: Any
     room_turns: RoomTurnRegistry
@@ -281,6 +282,22 @@ class RoomLegacyCancellationService:
             if not added_session:
                 break
 
+        background_job_receipts: list[dict[str, object]] = []
+        background_job_pending: list[str] = []
+        for session_id in sorted(chain_session_ids):
+            try:
+                background_job_receipts.extend(
+                    self.host.background_jobs.cancel_room_root(
+                        session_id,
+                        room_turn_id=room_turn_id,
+                        reason=f"Cancelled with Room root {room_turn_id}",
+                    )
+                )
+            except Exception as exc:
+                background_job_pending.append(
+                    f"{session_id}:{_public_error(exc)}"
+                )
+
         intercom_pending: list[str] = []
         try:
             cancelled_intercom = self.host.room_intercom.store.cancel_for_sessions(
@@ -311,6 +328,19 @@ class RoomLegacyCancellationService:
             session_abort_receipts,
             expected_session_ids=primary_session_ids,
             errors=session_abort_errors,
+        )
+        surfaces["process"] = _merge_root_surface(
+            surfaces.get("process"),
+            _root_resource_surface(
+                "process",
+                "unknown" if background_job_pending else "terminated",
+                [
+                    str(receipt.get("job", {}).get("jobId") or "")
+                    for receipt in background_job_receipts
+                    if isinstance(receipt.get("job"), Mapping)
+                ],
+                background_job_pending,
+            ),
         )
         surfaces["intercom"] = _root_resource_surface(
             "intercom",

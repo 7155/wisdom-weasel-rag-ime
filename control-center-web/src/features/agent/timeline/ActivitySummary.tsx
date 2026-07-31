@@ -2,20 +2,24 @@ import {
   BookOpenText,
   Bot,
   Brain,
+  Check,
   CheckCircle2,
   ChevronRight,
   CircleDashed,
+  Copy,
   Database,
   ExternalLink,
   GitBranch,
+  MessageSquareText,
   Search,
   ShieldAlert,
+  ShieldCheck,
   TerminalSquare,
   TriangleAlert,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Button,
   Dialog,
@@ -30,7 +34,15 @@ import {
   type AgentActivityProjection,
   type AgentToolProgressEntry,
 } from '@/contracts/agent-reducer';
+import {
+  approvalDecisionView,
+  approvalDecisionReasonLabel,
+  approvalNeedsHumanDecision,
+  type ApprovalDecisionView,
+} from '@/contracts/approval-decision';
+import { writeClipboardText } from '@/platform/clipboard';
 import { SafeFieldList } from './BlockRenderer';
+import { toggleDisclosurePreservingAnchor } from './disclosure-anchor';
 import { publicToolResultView, safeSourceLabels, type PublicToolResultView } from './public-tool-result';
 import { publicAgentErrorText } from '../public-error';
 
@@ -47,51 +59,69 @@ export function ActivitySummary({
   onOpenApproval?: (activity: AgentActivityProjection) => void;
   onRequestPermission?: () => void;
 }) {
-  const running = activities.some((activity) => activity.status === 'running');
+  const automatedWaiting = activities.some((activity) => (
+    activity.status === 'waiting'
+    && activity.kind.includes('approval')
+    && !approvalNeedsHumanDecision(activity.payload)
+  ));
+  const running = automatedWaiting || activities.some((activity) => activity.status === 'running');
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const waiting = activities.some((activity) => activity.status === 'waiting');
+  const waiting = activities.some((activity) => (
+    activity.status === 'waiting'
+    && (!activity.kind.includes('approval') || approvalNeedsHumanDecision(activity.payload))
+  ));
   const failed = activities.some((activity) => activity.status === 'failed');
-  const automaticInlineOpen = running || waiting;
-  const [inlineOpen, setInlineOpen] = useState(automaticInlineOpen);
-  const inlineOpenWasChosen = useRef(false);
-  const inlineGroupKey = activities.length
-    ? `${activities[0]!.turnId}:${activities[0]!.id}`
-    : '';
-  const previousInlineGroupKey = useRef(inlineGroupKey);
-
-  useEffect(() => {
-    if (!inline) return;
-    if (previousInlineGroupKey.current !== inlineGroupKey) {
-      previousInlineGroupKey.current = inlineGroupKey;
-      inlineOpenWasChosen.current = false;
-      setInlineOpen(automaticInlineOpen);
-      return;
-    }
-    if (!inlineOpenWasChosen.current) setInlineOpen(automaticInlineOpen);
-  }, [automaticInlineOpen, inline, inlineGroupKey]);
+  const terminalFailure = activities.some((activity) => (
+    activity.kind === 'turn_failed' && activity.status === 'failed'
+  ));
+  // Live tool events arrive in rapid succession. Automatically opening a
+  // running group and closing it again at settlement repeatedly changes the
+  // virtualized row height, which makes the entire conversation flash and
+  // jump. Keep every activity group compact until the user explicitly opens
+  // it; status, the safe highlight and approval actions remain visible while
+  // collapsed.
+  const [inlineOpen, setInlineOpen] = useState(false);
 
   if (activities.length === 0) return null;
   const summary = aggregateSummary(activities);
-  const title = running ? '正在处理' : waiting ? '等待你的确认' : failed ? '活动中有失败项' : '活动已完成';
+  const title = running
+    ? '正在处理'
+    : waiting
+      ? '等待你的确认'
+      : terminalFailure
+        ? '本轮未完成'
+        : '操作记录';
   const inlineTools = compactToolSummary(activities);
   const inlineTitle = inlineTools.count
-    ? failed
-      ? `${inlineTools.count} 项操作中有失败项`
+    ? running
+      ? `正在处理 ${inlineTools.count} 项操作`
       : waiting
         ? `${inlineTools.count} 项操作等待确认`
-        : running
-          ? `正在处理 ${inlineTools.count} 项操作`
-          : `已完成 ${inlineTools.count} 项操作`
+        : `${inlineTools.count} 项操作`
     : title;
-  // Closed groups stay cheap to render, but they must still expose the useful
-  // outcome. Hiding the first safe result/error until expansion made completed
-  // calls opaque and made approval/permission recovery impossible to locate.
-  const inlineSummary = inlineTools.highlight || inlineTools.names || summary;
-  const inlineStatus = failed ? '失败' : waiting ? '等待确认' : running ? '进行中' : '完成';
+  // A long Agent loop can legitimately contain failed probes. Keep the group
+  // neutral and reserve terminal red for a turn/provider failure. The inline
+  // detail list still identifies every unfinished call and its recovery reason.
+  const inlineSummary = inlineTools.count
+    ? inlineTools.count === 1
+      ? inlineTools.highlight || inlineTools.outcome || inlineTools.names
+      : inlineTools.outcome || inlineTools.names
+    : summary;
+  const inlineStatus = terminalFailure
+    ? '未完成'
+    : waiting
+      ? '等待确认'
+      : running
+        ? '进行中'
+        : failed && inlineTools.count > 1
+          ? '查看'
+          : failed
+            ? '未完成'
+            : '完成';
   const pendingApprovals = activities.flatMap((activity) => {
     const approvalId = text(activity.payload.approvalId);
     const hash = text(activity.payload.payloadSha256);
-    if (activity.status !== 'waiting' || !approvalId || !hash || !onApprovalDecision) return [];
+    if (activity.status !== 'waiting' || !approvalId || !hash || !onApprovalDecision || !approvalNeedsHumanDecision(activity.payload)) return [];
     const presentation = activityPresentation(activity);
     return [{
       approvalId,
@@ -101,7 +131,7 @@ export function ActivitySummary({
     }];
   });
   const liveActivities = running || waiting ? activities.slice(-3) : [];
-  const state = failed ? 'failed' : waiting ? 'waiting' : running ? 'running' : 'done';
+  const state = terminalFailure ? 'failed' : waiting ? 'waiting' : running ? 'running' : failed ? 'mixed' : 'done';
   const summaryContent = (
     <>
       <span className="agent-activity__status" aria-hidden="true">
@@ -125,7 +155,7 @@ export function ActivitySummary({
     </div>
   ));
   if (inline) {
-    const InlineIcon = failed
+    const InlineIcon = terminalFailure
       ? TriangleAlert
       : waiting
         ? ShieldAlert
@@ -142,12 +172,9 @@ export function ActivitySummary({
           open={inlineOpen}
         >
           <summary
+            aria-expanded={inlineOpen}
             aria-label={`${inlineTitle}，${inlineSummary}，${inlineStatus}`}
-            onClick={(event) => {
-              event.preventDefault();
-              inlineOpenWasChosen.current = true;
-              setInlineOpen((current) => !current);
-            }}
+            onClick={(event) => toggleDisclosurePreservingAnchor(event, setInlineOpen)}
           >
             <InlineIcon aria-hidden="true" className="agent-activity__inline-icon" size={15} />
             <strong>{inlineTitle}</strong>
@@ -156,14 +183,23 @@ export function ActivitySummary({
             <ChevronRight aria-hidden="true" size={15} />
           </summary>
           {inlineOpen ? (
-            <div className="agent-activity__inline-timeline">
+            <div
+              aria-label={`${title}详情`}
+              className="agent-activity__inline-timeline"
+            >
               {activities.map((activity) => (
                 <ActivityRow
                   key={activity.id}
                   activity={activity}
                   onApprovalDecision={onApprovalDecision}
-                  onOpenApproval={onOpenApproval}
-                  onRequestPermission={onRequestPermission}
+                  onOpenApproval={(selected) => {
+                    setInlineOpen(false);
+                    onOpenApproval?.(selected);
+                  }}
+                  onRequestPermission={() => {
+                    setInlineOpen(false);
+                    onRequestPermission?.();
+                  }}
                 />
               ))}
             </div>
@@ -249,7 +285,7 @@ function ActivityRow({
     : publicActivitySummary(activity.summary, presentation.title);
   const approvalId = text(payload.approvalId);
   const hash = text(payload.payloadSha256);
-  const canDecide = activity.status === 'waiting' && approvalId && hash && onApprovalDecision;
+  const canDecide = activity.status === 'waiting' && approvalNeedsHumanDecision(payload) && approvalId && hash && onApprovalDecision;
   const progressHistory = isToolActivity ? agentToolProgressHistory(payload.progressHistory) : [];
   const [rowOpen, setRowOpen] = useState(false);
   const nowMs = useActivityClock(activity.status === 'running');
@@ -262,21 +298,21 @@ function ActivityRow({
       open={rowOpen}
     >
       <summary
-        onClick={(event) => {
-          event.preventDefault();
-          setRowOpen((current) => !current);
-        }}
+        aria-expanded={rowOpen}
+        onClick={(event) => toggleDisclosurePreservingAnchor(event, setRowOpen)}
       >
         <span className="agent-activity-row__icon" data-kind={presentation.kind}><Icon size={15} /></span>
         <span>
           <strong>{presentation.title}</strong>
           <small>
-            {activity.kind === 'reasoning_summary'
-              ? '正在整理信息与下一步'
-              : toolView?.error ?? toolView?.summary ?? visibleSummary}
+            {toolView?.error ?? toolView?.summary ?? visibleSummary}
           </small>
         </span>
-        <i data-status={activity.status}>{toolView?.sources.length ? `来源 ${toolView.sources.length} · ` : ''}{statusLabel(activity.status)}{duration ? ` · ${duration}` : ''}</i>
+        <i data-status={activity.status}>
+          {toolView?.sources.length ? `来源 ${toolView.sources.length} · ` : ''}
+          {isToolActivity && activity.status === 'failed' ? '未完成' : statusLabel(activity.status)}
+          {duration ? ` · ${duration}` : ''}
+        </i>
       </summary>
       {rowOpen ? (
         <div className="agent-activity-row__details">
@@ -285,7 +321,14 @@ function ActivityRow({
           {toolView?.request.length ? <PublicToolRequest view={toolView} /> : null}
           {toolView?.output ? <PublicToolOutput view={toolView} /> : null}
           {toolView?.preview ? <SemanticToolPreview preview={toolView.preview} /> : null}
-          {toolView ? <PublicToolFields view={toolView} /> : <SafeFieldList data={payload} />}
+          {toolView && toolView.fields.every((field) => field.id === 'status') && !toolView.request.length && !toolView.output && !toolView.preview && !toolView.error ? (
+            <p className="agent-tool-unavailable">这条历史回执未包含可公开的调用参数或返回内容。</p>
+          ) : null}
+          {activity.kind === 'reasoning_summary'
+            ? <ReasoningSummaryDetails items={reasoningItemsFromPayload(payload, visibleSummary)} />
+            : toolView
+              ? <PublicToolFields view={toolView} />
+              : <SafeFieldList data={payload} />}
           {toolView?.error ? <PublicToolError reason={toolView.error} /> : null}
           <SourceList items={toolView?.sources ?? safeSourceLabels(payload.sources ?? payload.documents ?? payload.books)} />
           {toolView?.destination ? (
@@ -312,6 +355,84 @@ function ActivityRow({
       ) : null}
     </details>
   );
+}
+
+export function ReasoningActivitySummary({
+  activities,
+}: {
+  activities: AgentActivityProjection[];
+}) {
+  const reasoning = reasoningSummaryItems(activities);
+  if (reasoning.items.length === 0) return null;
+  return (
+    <ReasoningSummaryStrip
+      items={reasoning.items}
+      running={reasoning.running}
+    />
+  );
+}
+
+function ReasoningSummaryStrip({
+  items,
+  running,
+}: {
+  items: string[];
+  running: boolean;
+}) {
+  const latest = items.at(-1) ?? '';
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <button
+          aria-label={`查看 Agent 思考摘要：${latest}`}
+          className="agent-reasoning-feed"
+          data-state={running ? 'running' : 'completed'}
+          type="button"
+        >
+          <Brain aria-hidden="true" size={15} />
+          <strong>{running ? '正在思考' : '思考摘要'}</strong>
+          <span>{latest}</span>
+          <small>{running ? '实时' : `${items.length} 项`}</small>
+          <ChevronRight aria-hidden="true" size={15} />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="agent-activity-dialog agent-reasoning-dialog">
+        <DialogHeader>
+          <DialogTitle>{running ? '正在思考' : '思考摘要'}</DialogTitle>
+          <DialogDescription>仅显示 Provider 允许公开的限长摘要；时间线保持单行，避免流式更新引起跳动。</DialogDescription>
+        </DialogHeader>
+        <ReasoningSummaryDetails items={items} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReasoningSummaryDetails({ items }: { items: string[] }) {
+  return (
+    <section className="agent-reasoning-details" aria-label="可公开的思考摘要">
+      <strong>可公开的思考摘要</strong>
+      <ol>{items.map((item, index) => <li key={`${index}:${item}`}>{item}</li>)}</ol>
+    </section>
+  );
+}
+
+function reasoningSummaryItems(activities: AgentActivityProjection[]): { items: string[]; running: boolean } {
+  const reasoning = activities.filter((activity) => activity.kind === 'reasoning_summary');
+  const items = reasoning.flatMap((activity) => reasoningItemsFromPayload(activity.payload, activity.summary));
+  return {
+    items: [...new Set(items)].slice(-12),
+    running: reasoning.some((activity) => activity.status === 'running'),
+  };
+}
+
+function reasoningItemsFromPayload(payload: Record<string, unknown>, fallback: string): string[] {
+  const values = Array.isArray(payload.items) ? payload.items : [];
+  const items = values
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => value.replace(/\s+/gu, ' ').trim())
+    .filter(Boolean);
+  const summary = fallback.replace(/\s+/gu, ' ').trim();
+  return items.length ? items.slice(0, 12) : summary ? [summary] : [];
 }
 
 function useActivityClock(running: boolean): number {
@@ -349,7 +470,13 @@ function ToolProgressTimeline({
   );
 }
 
-function PublicToolFields({ view }: { view: PublicToolResultView }) {
+export function PublicToolFields({ view }: { view: PublicToolResultView }) {
+  const fieldsText = JSON.stringify(
+    Object.fromEntries(view.fields.map((field) => [field.id, field.value])),
+    null,
+    2,
+  );
+  const { copy, state } = useCopyableText(fieldsText);
   if (view.preview) return null;
   if (view.fields.length === 0) {
     return view.error
@@ -357,18 +484,50 @@ function PublicToolFields({ view }: { view: PublicToolResultView }) {
       : <p>工具没有返回可公开展示的结构化明细。</p>;
   }
   return (
-    <dl className="agent-safe-fields">
-      {view.fields.map((field) => (
-        <div key={field.id}><dt>{field.label}</dt><dd>{field.value}</dd></div>
-      ))}
-    </dl>
+    <section className="agent-tool-result-panel" aria-label="工具结果明细">
+      <header className="agent-tool-result-panel__header">
+        <strong><TerminalSquare size={13} />结果明细</strong>
+        <Button
+          aria-live="polite"
+          leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
+          onClick={() => void copy()}
+          size="small"
+          variant="quiet"
+        >
+          {state === 'copied' ? '已复制明细' : '复制明细'}
+        </Button>
+      </header>
+      <dl className="agent-safe-fields">
+        {view.fields.map((field) => (
+          <div key={field.id}><dt>{field.label}</dt><dd>{field.value}</dd></div>
+        ))}
+      </dl>
+      {state === 'failed' ? <small role="alert">无法复制明细，请手动选择内容。</small> : null}
+    </section>
   );
 }
 
-function PublicToolRequest({ view }: { view: PublicToolResultView }) {
+export function PublicToolRequest({ view }: { view: PublicToolResultView }) {
+  const requestText = JSON.stringify(
+    Object.fromEntries(view.request.map((field) => [field.id, field.value])),
+    null,
+    2,
+  );
+  const { copy, state } = useCopyableText(requestText);
   return (
     <section className="agent-tool-result-panel" aria-label="工具调用参数">
-      <strong><TerminalSquare size={13} />调用参数</strong>
+      <header className="agent-tool-result-panel__header">
+        <strong><TerminalSquare size={13} />调用参数</strong>
+        <Button
+          aria-live="polite"
+          leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
+          onClick={() => void copy()}
+          size="small"
+          variant="quiet"
+        >
+          {state === 'copied' ? '已复制参数' : '复制参数'}
+        </Button>
+      </header>
       <dl className="agent-tool-request">
         {view.request.map((field) => (
           <div key={field.id}>
@@ -377,19 +536,34 @@ function PublicToolRequest({ view }: { view: PublicToolResultView }) {
           </div>
         ))}
       </dl>
+      {state === 'failed' ? <small role="alert">无法复制参数，请手动选择内容。</small> : null}
     </section>
   );
 }
 
-function PublicToolOutput({ view }: { view: PublicToolResultView }) {
+export function PublicToolOutput({ view }: { view: PublicToolResultView }) {
+  const outputText = view.output?.text ?? '';
+  const { copy, state } = useCopyableText(outputText);
   if (!view.output) return null;
   return (
     <section className="agent-tool-result-panel" aria-label="工具返回片段">
-      <strong><TerminalSquare size={13} />返回片段</strong>
-      <pre>{view.output.text}</pre>
+      <header className="agent-tool-result-panel__header">
+        <strong><TerminalSquare size={13} />返回片段</strong>
+        <Button
+          aria-live="polite"
+          leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
+          onClick={() => void copy()}
+          size="small"
+          variant="quiet"
+        >
+          {state === 'copied' ? '已复制结果' : '复制结果'}
+        </Button>
+      </header>
+      <pre aria-label="工具返回内容" tabIndex={0}>{outputText}</pre>
       {view.output.truncated ? (
         <small>此处显示安全截断片段；完整结果仍由本机工具回执保留。</small>
       ) : null}
+      {state === 'failed' ? <small role="alert">无法复制结果，请选择内容后手动复制。</small> : null}
     </section>
   );
 }
@@ -419,11 +593,24 @@ function SemanticToolPreview({ preview }: { preview: NonNullable<PublicToolResul
   );
 }
 
-function PublicToolError({ reason }: { reason: string }) {
+export function PublicToolError({ reason }: { reason: string }) {
+  const { copy, state } = useCopyableText(reason);
   return (
-    <section className="agent-tool-result-panel" data-tone="error" aria-label="工具错误">
-      <strong><TriangleAlert size={13} />失败原因</strong>
+    <section className="agent-tool-result-panel" data-tone="error" aria-label="工具未完成">
+      <header className="agent-tool-result-panel__header">
+        <strong><TriangleAlert size={13} />未完成原因</strong>
+        <Button
+          aria-live="polite"
+          leadingIcon={state === 'copied' ? <Check size={13} /> : <Copy size={13} />}
+          onClick={() => void copy()}
+          size="small"
+          variant="quiet"
+        >
+          {state === 'copied' ? '已复制错误' : '复制错误'}
+        </Button>
+      </header>
       <p>{reason}</p>
+      {state === 'failed' ? <small role="alert">无法复制错误，请手动选择内容。</small> : null}
     </section>
   );
 }
@@ -452,12 +639,41 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
     return { title: '模型服务请求失败', kind: 'runtime', icon: TriangleAlert, detail: '模型请求没有完成；可返回对话重试或切换模型。' };
   }
   if (activity.kind.includes('approval') || activity.kind === 'user_input_required') {
+    const decision = approvalDecisionView(payload);
+    if (decision.mode === 'model') {
+      const model = approvalModelLabel(decision.model);
+      const arbiter = `独立审批 Agent（${model}）`;
+      const settledTitle = decision.decision === 'approve'
+        ? `${arbiter}已批准这次操作`
+        : decision.decision === 'deny'
+          ? `${arbiter}已拒绝这次操作`
+          : '';
+      return {
+        title: settledTitle || `${arbiter}正在评估这次操作`,
+        kind: 'approval',
+        icon: Brain,
+        detail: approvalDecisionDetail(decision),
+      };
+    }
+    if (decision.mode === 'policy') {
+      return {
+        title: '安全策略已自动处理这次操作',
+        kind: 'approval',
+        icon: ShieldCheck,
+        detail: '只有已授权范围内的常规受控操作会直接执行；权限、哈希与沙箱边界仍会再次校验。',
+      };
+    }
     const memoryReview = activity.kind === 'user_input_required' && payload.requestKind === 'memory_review';
+    const genericInput = activity.kind === 'user_input_required' && !memoryReview;
     return {
-      title: memoryReview ? '记忆草案审阅' : '权限确认',
+      title: memoryReview ? '记忆草案审阅' : genericInput ? text(payload.title) || '等待你的回答' : '权限确认',
       kind: 'approval',
-      icon: ShieldAlert,
-      detail: memoryReview ? 'Agent 已暂停，等待你在审阅弹窗中处理草案。' : '是否执行以你的本机确认结果为准。',
+      icon: genericInput ? MessageSquareText : ShieldAlert,
+      detail: memoryReview
+        ? 'Agent 已暂停，等待你在审阅弹窗中处理草案。'
+        : genericInput
+          ? 'Agent 已暂停；回答、取消或超时后会继续当前回合。'
+          : '是否执行以你的本机确认结果为准。',
     };
   }
   if (activity.kind.includes('memory') || toolId.includes('memory')) {
@@ -477,7 +693,7 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
     return { title, kind: 'memory', icon: BookOpenText };
   }
   if (toolId.includes('knowledge') || toolId.includes('rag') || text(payload.operation) === 'search') {
-    const title = toolId === 'ime_knowledge'
+    const title = toolId === 'knowledge'
       ? ({ list_bases: '浏览知识库', search: '检索文档', find: '定位文档证据', open: '读取文档片段', status: '检查知识库' } as Record<string, string>)[operation] ?? '文档知识库'
       : '知识检索';
     return { title, kind: 'rag', icon: Search };
@@ -485,11 +701,42 @@ function activityPresentation(activity: AgentActivityProjection): ActivityPresen
   if (toolId.includes('subagent') || activity.kind.includes('subagent')) {
     return { title: '协作 Agent', kind: 'subagent', icon: GitBranch };
   }
-  if (toolId.includes('runtime') || toolId.includes('workspace')) {
-    return { title: '运行环境', kind: 'runtime', icon: toolId.includes('workspace') ? TerminalSquare : Database };
+  if (toolId.includes('runtime')) {
+    return { title: '运行环境', kind: 'runtime', icon: Database };
+  }
+  if (toolId.includes('workspace')) {
+    return { title: toolView?.toolLabel ?? '运行环境', kind: 'runtime', icon: TerminalSquare };
   }
   if (toolId.includes('planning') || toolId === 'agent_plan') return { title: toolId === 'agent_plan' ? '任务执行清单' : '规划', kind: 'tool', icon: Bot };
   return { title: toolView?.toolLabel ?? '工具操作', kind: 'tool', icon: Wrench };
+}
+
+function approvalModelLabel(model: string): string {
+  if (!model || /(?:^|[./_-])luna(?:$|[./_-])/i.test(model)) return 'Luna Max';
+  return model.split('/').at(-1)?.slice(0, 80) || '审批模型';
+}
+
+function approvalDecisionDetail(
+  decision: ApprovalDecisionView,
+): string {
+  const outcome = decision.status === 'failed_closed'
+    ? '审批模型未形成可验证裁决，系统已按拒绝处理；原操作没有执行。'
+    : decision.decision === 'approve'
+      ? '审批 Agent 认为已绑定的操作预览可执行。'
+      : decision.decision === 'deny'
+        ? '审批 Agent 认为这次操作不应执行；原操作没有获得执行权限。'
+        : '审批 Agent 只读取用户请求、当前任务、结构化预览和既有裁决，不读取当前 Agent 的输出或推理；无需人工操作。';
+  const rationale = decision.rationaleSummary
+    ? ` 裁决说明：${decision.rationaleSummary}`
+    : '';
+  const reasons = decision.reasonCodes.length
+    ? ` 判定依据：${decision.reasonCodes.map(approvalDecisionReasonLabel).join('、')}。`
+    : '';
+  const history = decision.historyEntryCount !== null
+    ? ` 已参考 ${decision.historyEntryCount} 条同一${decision.contextKind === 'room' ? ' Room' : ' Session'} 审批历史。`
+    : '';
+  const receipt = decision.receiptId ? ` 决策回执：${decision.receiptId}。` : '';
+  return `${outcome}${rationale}${reasons}${history}${receipt}`;
 }
 
 function publicActivitySummary(value: string, fallback: string): string {
@@ -513,21 +760,33 @@ function aggregateSummary(activities: AgentActivityProjection[]): string {
 }
 
 function compactToolSummary(activities: AgentActivityProjection[]) {
-  const calls = new Set<string>();
+  const calls = new Map<string, AgentActivityProjection['status']>();
   const names = new Set<string>();
   let latestResult = '';
   let latestError = '';
   for (const activity of activities) {
     if (!['tool_started', 'tool_progress', 'tool_finished'].includes(activity.kind)) continue;
-    calls.add(text(activity.payload.toolCallId) || activity.id);
+    calls.set(text(activity.payload.toolCallId) || activity.id, activity.status);
     names.add(activityPresentation(activity).title);
     const view = publicToolResultView(activity);
     if (view.summary) latestResult = boundedInlineSummary(view.summary);
     if (view.error) latestError = boundedInlineSummary(view.error);
   }
+  const statuses = [...calls.values()];
+  const completed = statuses.filter((status) => status === 'completed').length;
+  const failed = statuses.filter((status) => status === 'failed').length;
+  const waiting = statuses.filter((status) => status === 'waiting').length;
+  const running = statuses.filter((status) => status === 'running').length;
+  const outcome = [
+    completed ? `${completed} 已完成` : '',
+    failed ? `${failed} 未完成` : '',
+    waiting ? `${waiting} 待确认` : '',
+    running ? `${running} 进行中` : '',
+  ].filter(Boolean).join(' · ');
   return {
     count: calls.size,
     names: [...names].slice(0, 3).join(' · '),
+    outcome,
     highlight: latestError || latestResult,
   };
 }
@@ -559,6 +818,29 @@ function checkpointOffset(createdAtMs: number, startedAtMs: number): string {
   return `+${elapsedLabel(Math.max(0, createdAtMs - startedAtMs))}`;
 }
 
+function useCopyableText(value: string): {
+  copy: () => Promise<void>;
+  state: 'idle' | 'copied' | 'failed';
+} {
+  const [receipt, setReceipt] = useState<{
+    state: 'copied' | 'failed';
+    value: string;
+  } | null>(null);
+  const state = receipt?.value === value ? receipt.state : 'idle';
+  return {
+    state,
+    copy: async () => {
+      try {
+        await writeClipboardText(value);
+        setReceipt({ state: 'copied', value });
+      } catch {
+        setReceipt({ state: 'failed', value });
+      }
+    },
+  };
+}
+
+
 /**
  * Raw milliseconds stop being information almost immediately: a tool that has
  * been running for two minutes rendered as "98530095 ms", which a reader has to
@@ -579,6 +861,7 @@ function elapsedLabel(elapsedMs: number): string {
   const minutes = Math.round((ms % 3_600_000) / 60_000);
   return minutes ? `${hours} 小时 ${minutes} 分` : `${hours} 小时`;
 }
+
 
 function text(value: unknown): string {
   return typeof value === 'string' ? value : '';

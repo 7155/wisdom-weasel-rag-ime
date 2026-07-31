@@ -351,7 +351,7 @@ class AgentWakeApplicationService:
         )
         planning_context = (
             f"关联规划任务 ID：{planning_task_id}。"
-            "如果任务已经完成，可以通过 ime_planning "
+            "如果任务已经完成，可以通过 planning "
             "提出状态更新，但仍需用户批准。"
             if planning_task_id
             else ""

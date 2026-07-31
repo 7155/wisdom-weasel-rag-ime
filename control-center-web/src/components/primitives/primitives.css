@@ -177,6 +177,9 @@
   color: var(--color-canvas);
   font-size: 13px;
   line-height: 1.35;
+}
+.ui-tooltip[data-state='delayed-open'],
+.ui-tooltip[data-state='instant-open'] {
   animation: ui-content-in var(--duration-enter) var(--ease-standard) both;
 }
 
@@ -194,6 +197,9 @@
   background: var(--color-surface);
   box-shadow: var(--shadow-menu);
   color: var(--color-text);
+}
+.ui-menu[data-state='open'],
+.ui-popover[data-state='open'] {
   animation: ui-content-in var(--duration-enter) var(--ease-standard) both;
 }
 
@@ -272,6 +278,7 @@
 
 .ui-dialog {
   position: fixed;
+  z-index: 100;
   top: 50%;
   left: 50%;
   width: min(520px, calc(100vw - 32px));
@@ -541,6 +548,8 @@ input[type='radio']:focus-visible {
   background: var(--color-surface);
   box-shadow: var(--shadow-menu);
   color: var(--color-text);
+}
+.ui-select__content[data-state='open'] {
   animation: ui-content-in var(--duration-enter) var(--ease-standard) both;
 }
 
@@ -588,13 +597,13 @@ input[type='radio']:focus-visible {
 
 .ui-switch {
   position: relative;
-  width: 34px;
-  height: 20px;
-  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
   padding: 0;
-  border: 1px solid var(--color-border-strong);
+  border: 0;
   border-radius: var(--radius-round);
-  background: var(--color-surface-pressed);
+  background: transparent;
   cursor: pointer;
   transition:
     transform var(--duration-press) var(--ease-press),
@@ -602,15 +611,18 @@ input[type='radio']:focus-visible {
     opacity var(--duration-fast) var(--ease-standard);
 }
 
-/* The track stays 34x20 so the control keeps its optical weight in a dense
-   settings column, but a 20px-tall pressable region is below the 24px minimum
-   target size — noticeably fiddly on touch. Expanding the hit area with a
-   pseudo-element grows what the finger can land on without moving a pixel of
-   the layout. */
-.ui-switch::after {
-  content: '';
+/* The button owns a real 44x44 hit target. The compact track is painted
+   inside it, so neither hit testing nor focus geometry escapes the control. */
+.ui-switch::before {
   position: absolute;
-  inset: -4px -2px;
+  top: 12px;
+  left: 5px;
+  width: 34px;
+  height: 20px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-round);
+  background: var(--color-surface-pressed);
+  content: '';
 }
 
 .ui-switch:active:not(:disabled) {
@@ -618,12 +630,16 @@ input[type='radio']:focus-visible {
   transform: translateY(1px);
 }
 
-.ui-switch[data-state='checked'] {
+.ui-switch[data-state='checked']::before {
   border-color: var(--color-accent);
   background: var(--color-accent);
 }
 
 .ui-switch__thumb {
+  position: absolute;
+  z-index: 1;
+  top: 15px;
+  left: 5px;
   display: block;
   width: 14px;
   height: 14px;

@@ -112,6 +112,7 @@ xcodebuild_build_args=(
 
 PRODUCT_APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/Squirrel.app"
 TARGET_APP="$INSTALL_DIR/$INSTALL_APP_NAME.app"
+CONFIG_SNIPPET="$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml"
 
 if [[ "$ACTION" != "list" && "$ACTION" != "build" && "$ACTION" != "install" ]]; then
   usage >&2
@@ -131,6 +132,7 @@ product_app=$PRODUCT_APP
 install_dir=$INSTALL_DIR
 install_app_name=$INSTALL_APP_NAME
 target_app=$TARGET_APP
+config_snippet=$CONFIG_SNIPPET
 action=$ACTION
 xcodebuild=${XCODEBUILD:-<not-found>}
 preinstall=$PREINSTALL
@@ -166,6 +168,45 @@ require_file() {
     echo "$message: $path" >&2
     exit 1
   fi
+}
+
+verify_generated_config_owner() {
+  local config_path="$1"
+  "$PYTHON_BIN" - "$config_path" "$ROOT" <<'PY'
+from pathlib import Path
+import sys
+
+config_path = Path(sys.argv[1])
+expected_root = Path(sys.argv[2]).resolve()
+inside_rag_ime = False
+configured_root = ""
+for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+    line = raw_line.rstrip()
+    if line == "rag_ime:":
+        inside_rag_ime = True
+        continue
+    if not inside_rag_ime:
+        continue
+    if line and not line.startswith("  "):
+        break
+    key, separator, value = line.strip().partition(":")
+    if separator and key == "repo_root":
+        configured_root = value.strip().strip("\"'")
+        break
+
+if not configured_root:
+    raise SystemExit(
+        f"patched Squirrel config has no rag_ime.repo_root: {config_path}"
+    )
+
+actual_root = Path(configured_root).expanduser().resolve()
+if actual_root != expected_root:
+    raise SystemExit(
+        "patched Squirrel config repo_root is stale: "
+        f"{actual_root}; expected current product source root: {expected_root}. "
+        "Prepare a fresh workspace with scripts/prepare_squirrel_workspace.sh."
+    )
+PY
 }
 
 ensure_assistant_overlay_v2_sources() {
@@ -329,6 +370,8 @@ if [[ ! -d "$PROJECT_PATH" || ! -f "$PROJECT_PATH/project.pbxproj" ]]; then
   exit 1
 fi
 
+require_file "$CONFIG_SNIPPET" "patched Squirrel workdir is missing generated config snippet"
+verify_generated_config_owner "$CONFIG_SNIPPET"
 ensure_assistant_overlay_v2_sources
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" "patched Squirrel workdir is missing RAG-IME model file"
 require_file "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" "patched Squirrel workdir is missing RAG-IME client file"
@@ -340,7 +383,6 @@ require_file "$SQUIRREL_WORKDIR/sources/RagImeNonActivatingPanel.swift" "patched
 require_file "$SQUIRREL_WORKDIR/sources/RagImeAssistantPanelController.swift" "patched Squirrel workdir is missing Assistant Overlay controller file"
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelInputController.swift" "patched Squirrel workdir is missing patched SquirrelInputController"
 require_file "$SQUIRREL_WORKDIR/sources/SquirrelPanel.swift" "patched Squirrel workdir is missing patched SquirrelPanel"
-require_file "$SQUIRREL_WORKDIR/rag-ime.squirrel.custom.yaml" "patched Squirrel workdir is missing generated config snippet"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" "RagImeWindowContextSnapshot" "Accessibility-only window context contract"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSidecarClient.swift" "rime-rank-feedback" "native Rime selection feedback hook"
 require_text "$SQUIRREL_WORKDIR/sources/RagImeSidecarModels.swift" "let privacyDisposition: String" "explicit foreground privacy disposition contract"

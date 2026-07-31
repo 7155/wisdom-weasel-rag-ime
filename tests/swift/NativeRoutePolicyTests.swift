@@ -50,6 +50,155 @@ struct NativeRoutePolicyTests {
         )
         expect(fork.request.url?.absoluteString.contains("session:alpha/forks") == true, "fork route")
         expect(fork.request.httpMethod == "POST", "fork method")
+        let guidedGoal = try policy.resolveRequest(
+            pathId: "agent.session.goal.mutate",
+            parameters: ["sessionId": "session:alpha"],
+            query: [:],
+            body: [
+                "action": "confirm_setup",
+                "expectedRevision": 0,
+                "confirmed": true,
+                "objective": "Ship the governed workflow",
+                "successCriteria": "All receipts validate",
+                "evidenceExpectations": ["migration receipt"],
+                "tokenBudget": 1000,
+                "timeBudgetMs": 60000,
+                "reason": "required for cancellation parity",
+            ]
+        )
+        expect(guidedGoal.request.url?.path.contains("/session:alpha/goal") == true, "guided Goal route")
+        expect(guidedGoal.request.httpMethod == "POST", "guided Goal method")
+
+        let capabilityPolicy = try policy.resolveRequest(
+            pathId: "agent.session.capability-policy.update",
+            parameters: ["sessionId": "session:alpha"],
+            query: [:],
+            body: ["capabilityDisclosurePreferences": ["workspace.read": "enabled"]]
+        )
+        expect(capabilityPolicy.request.url?.path == "/api/agent/sessions/session:alpha", "capability policy route")
+        expect(capabilityPolicy.request.httpMethod == "PATCH", "capability policy method")
+
+        let backgroundJobs = try policy.resolveRequest(
+            pathId: "agent.session.backgroundJobs.list",
+            parameters: ["sessionId": "session:alpha"],
+            query: ["limit": "20", "status": "running"],
+            body: nil
+        )
+        expect(backgroundJobs.request.url?.path == "/api/agent/sessions/session:alpha/background-jobs", "background jobs list route")
+        expect(backgroundJobs.request.url?.query?.contains("limit=20") == true, "background jobs limit query")
+        expect(backgroundJobs.request.url?.query?.contains("status=running") == true, "background jobs status query")
+
+        let backgroundJob = try policy.resolveRequest(
+            pathId: "agent.session.backgroundJob.get",
+            parameters: ["sessionId": "session:alpha", "jobId": "bg_123"],
+            query: [:],
+            body: nil
+        )
+        expect(backgroundJob.request.url?.path == "/api/agent/sessions/session:alpha/background-jobs/bg_123", "background job detail route")
+
+        let backgroundJobLogs = try policy.resolveRequest(
+            pathId: "agent.session.backgroundJob.logs",
+            parameters: ["sessionId": "session:alpha", "jobId": "bg_123"],
+            query: ["cursor": "64", "limitBytes": "4096"],
+            body: nil
+        )
+        expect(backgroundJobLogs.request.url?.path == "/api/agent/sessions/session:alpha/background-jobs/bg_123/logs", "background job logs route")
+        expect(backgroundJobLogs.request.url?.query?.contains("cursor=64") == true, "background job logs cursor")
+        expect(backgroundJobLogs.request.url?.query?.contains("limitBytes=4096") == true, "background job logs bound")
+
+        let backgroundJobCancel = try policy.resolveRequest(
+            pathId: "agent.session.backgroundJob.cancel",
+            parameters: ["sessionId": "session:alpha", "jobId": "bg_123"],
+            query: [:],
+            body: ["reason": "user-request"]
+        )
+        expect(backgroundJobCancel.request.url?.path == "/api/agent/sessions/session:alpha/background-jobs/bg_123/cancel", "background job cancel route")
+        expect(backgroundJobCancel.request.httpMethod == "POST", "background job cancel method")
+
+        let workDocumentsList = try policy.resolveRequest(
+            pathId: "workDocuments.list",
+            parameters: [:],
+            query: ["limit": "25"],
+            body: nil
+        )
+        expect(workDocumentsList.request.url?.path == "/api/agent/work-documents", "work documents list route")
+
+        let workDocumentsHistory = try policy.resolveRequest(
+            pathId: "workDocuments.history.search",
+            parameters: [:],
+            query: ["query": "release", "limit": "10"],
+            body: nil
+        )
+        expect(workDocumentsHistory.request.url?.path == "/api/agent/work-documents/history/search", "work documents history route")
+
+        let documentParameters = ["documentId": "workdoc_123"]
+        let workDocument = try policy.resolveRequest(
+            pathId: "workDocuments.get",
+            parameters: documentParameters,
+            query: [:],
+            body: nil
+        )
+        expect(workDocument.request.url?.path == "/api/agent/work-documents/workdoc_123", "work document detail route")
+
+        let workDocumentRegister = try policy.resolveRequest(
+            pathId: "workDocuments.register",
+            parameters: [:],
+            query: [:],
+            body: [
+                "authorityKind": "session_plan",
+                "authorityId": "session:alpha",
+                "authorityRevision": 2,
+                "workspaceRoot": "/tmp/workspace",
+                "sourcePath": "docs/agent/work.md",
+                "title": "Work",
+            ]
+        )
+        expect(workDocumentRegister.request.url?.path == "/api/agent/work-documents", "work document register route")
+        expect(workDocumentRegister.request.httpMethod == "POST", "work document register method")
+
+        let workDocumentArchive = try policy.resolveRequest(
+            pathId: "workDocuments.archive",
+            parameters: documentParameters,
+            query: [:],
+            body: ["terminalReceiptId": "receipt-terminal"]
+        )
+        expect(workDocumentArchive.request.url?.path == "/api/agent/work-documents/workdoc_123/archive", "work document archive route")
+
+        let workDocumentRepair = try policy.resolveRequest(
+            pathId: "workDocuments.repair",
+            parameters: documentParameters,
+            query: [:],
+            body: [:]
+        )
+        expect(workDocumentRepair.request.url?.path == "/api/agent/work-documents/workdoc_123/repair", "work document repair route")
+
+        let workDocumentReopen = try policy.resolveRequest(
+            pathId: "workDocuments.reopen",
+            parameters: documentParameters,
+            query: [:],
+            body: ["authorityRevision": 3, "transitionReceiptId": "receipt-reopen"]
+        )
+        expect(workDocumentReopen.request.url?.path == "/api/agent/work-documents/workdoc_123/reopen", "work document reopen route")
+
+        let workDocumentErasePreview = try policy.resolveRequest(
+            pathId: "workDocuments.erase.preview",
+            parameters: documentParameters,
+            query: [:],
+            body: ["sessionId": "session:alpha"]
+        )
+        expect(workDocumentErasePreview.request.url?.path == "/api/agent/work-documents/workdoc_123/erase-preview", "work document erase preview route")
+
+        let workDocumentErase = try policy.resolveRequest(
+            pathId: "workDocuments.erase",
+            parameters: documentParameters,
+            query: [:],
+            body: [
+                "sessionId": "session:alpha",
+                "approvalId": "approval-1",
+                "payloadSha256": String(repeating: "a", count: 64),
+            ]
+        )
+        expect(workDocumentErase.request.url?.path == "/api/agent/work-documents/workdoc_123/erase", "work document erase route")
 
         let subscription = try policy.resolveSubscription(
             pathId: "agent.session.events",
@@ -92,6 +241,36 @@ struct NativeRoutePolicyTests {
         )
         expect(roomSnapshot.request.url?.absoluteString.contains("room:alpha/snapshot") == true, "room snapshot route")
         expect(roomSnapshot.request.httpMethod == "GET", "room snapshot method")
+
+        let roomCreate = try policy.resolveRequest(
+            pathId: "agent.rooms.create",
+            parameters: [:],
+            query: [:],
+            body: [
+                "title": "前端优化",
+                "roomKind": "collaboration",
+                "participants": [
+                    ["roleId": "role-a", "roleVersion": "1"],
+                    ["roleId": "role-b", "roleVersion": "1"],
+                ],
+                "workspaceRoots": ["/tmp/project"],
+                "executionMode": "workspace_managed",
+                "workspaceScopeConfirmation": "APPROVE_WORKSPACE_SCOPE",
+            ]
+        )
+        expect(roomCreate.request.url?.path == "/api/agent/rooms", "room create route accepts governed workspace fields")
+        expect(roomCreate.request.httpMethod == "POST", "room create method")
+
+        let roomUpdate = try policy.resolveRequest(
+            pathId: "agent.room.archive",
+            parameters: ["roomId": "room:alpha"],
+            query: [:],
+            body: [
+                "executionMode": "full_trust",
+                "dangerousModeConfirmation": "ENABLE_FULL_TRUST",
+            ]
+        )
+        expect(roomUpdate.request.url?.absoluteString.contains("room:alpha") == true, "room update accepts governed execution fields")
 
         let personaCreate = try policy.resolveRequest(
             pathId: "agent.roles.create",

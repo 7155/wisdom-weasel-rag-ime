@@ -180,8 +180,8 @@ function runtimeActions(aiEnabled: boolean): readonly {
   return [
     { action: 'register_input_source', title: '重新连接输入法', description: '刷新当前用户的输入源注册，不会清空个人词库或输入记录。', risk: 'R2' },
     { action: 'restart_sidecar', title: '重启后台服务', description: '由已安装的应用安全重启后台连接服务，任务边界和审计不会丢失。', risk: 'R2' },
-    { action: 'restart_predictor', title: '重启本机模型', description: '重新启动本机预测服务，并等待它确认已经恢复。', risk: 'R2' },
-    { action: 'redeploy_rime', title: '重新部署输入法配置', description: '使用应用内置的受信任流程重新部署，不接受页面传入的路径或命令。', risk: 'R3' },
+    { action: 'restart_predictor', title: '应用并重启本机模型', description: '读取已保存设置，重启 MLX 与后台服务，并等待两端配置一致。', risk: 'R2' },
+    { action: 'redeploy_rime', title: '应用输入法前端设置', description: '同步候选数量与触发延迟，重新部署受管理配置；不接受页面传入的路径或命令。', risk: 'R3' },
     { action: 'open_accessibility_settings', title: '打开辅助功能设置', description: '打开 macOS 辅助功能权限页，不自动修改权限。', risk: 'R1' },
     aiEnabled
       ? { action: 'stop_ai', title: '暂停智能候选', description: '暂停输入后的智能候选，基础输入仍然可以使用。', risk: 'R1' }

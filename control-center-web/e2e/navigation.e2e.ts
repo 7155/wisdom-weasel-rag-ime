@@ -1,6 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import {
   expectNoHorizontalPageOverflow,
+  isMobileViewport,
   openRoute,
   percentile,
   routes,
@@ -19,7 +20,7 @@ test('all registered routes commit before data work and preserve the selected st
   const routeSequence = [...routes.slice(1), routes[0]];
 
   for (const route of routeSequence) {
-    navigationLatencies.push(await openRoute(page, route.id));
+    navigationLatencies.push(await openRouteFromCurrentShell(page, route.id));
     await expect(page.locator('.shell-topbar__title h1')).toHaveText(route.label);
     await expect(page.locator(`.shell-sidebar [data-route="${route.id}"]`)).toHaveAttribute(
       'aria-current',
@@ -43,11 +44,12 @@ test('mobile route dialog is keyboard operable and restores focus', async ({ pag
   await page.goto('/#/overview');
   await expect(page.locator('main[data-route-id="overview"]')).toBeVisible();
 
-  const trigger = page.locator('.shell-topbar .shell-mobile-menu__trigger');
+  const trigger = page.getByRole('navigation', { name: '快捷导航' })
+    .getByRole('button', { name: '打开全部导航' });
   await trigger.focus();
   await page.keyboard.press('Enter');
 
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('dialog', { name: '去哪里？' });
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
 
@@ -70,3 +72,46 @@ test('desktop navigation exposes a visible focus indicator', async ({ page }, te
   const outline = await firstLink.evaluate((element) => getComputedStyle(element).outlineStyle);
   expect(outline).not.toBe('none');
 });
+
+async function openRouteFromCurrentShell(page: Page, routeId: string): Promise<number> {
+  if (!isMobileViewport(page)) return openRoute(page, routeId);
+
+  const trigger = page.getByRole('navigation', { name: '快捷导航' })
+    .getByRole('button', { name: '打开全部导航' });
+  await trigger.click();
+  const dialog = page.getByRole('dialog', { name: '去哪里？' });
+  await expect(dialog).toBeVisible();
+  const link = dialog.locator(`[data-route="${routeId}"]`);
+
+  await page.evaluate((expectedRouteId) => {
+    Reflect.set(window, '__RAG_IME_NAV_LATENCY__', null);
+    const onClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element
+        ? event.target.closest(`[data-route="${expectedRouteId}"]`)
+        : null;
+      if (!target) return;
+      document.removeEventListener('click', onClick, true);
+      const started = performance.now();
+      const poll = () => {
+        const selected = document.querySelector(
+          `.shell-nav__link[data-route="${expectedRouteId}"][aria-current="page"]`,
+        );
+        if (!selected) {
+          requestAnimationFrame(poll);
+          return;
+        }
+        requestAnimationFrame(() => {
+          Reflect.set(window, '__RAG_IME_NAV_LATENCY__', performance.now() - started);
+        });
+      };
+      requestAnimationFrame(poll);
+    };
+    document.addEventListener('click', onClick, true);
+  }, routeId);
+  await link.click();
+  await expect(page.locator(`main[data-route-id="${routeId}"]`)).toBeVisible();
+  await page.waitForFunction(
+    () => typeof Reflect.get(window, '__RAG_IME_NAV_LATENCY__') === 'number',
+  );
+  return page.evaluate(() => Number(Reflect.get(window, '__RAG_IME_NAV_LATENCY__')));
+}

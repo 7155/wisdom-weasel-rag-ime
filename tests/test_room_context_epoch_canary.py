@@ -240,6 +240,59 @@ class RoomContextEpochCanaryTest(unittest.TestCase):
             ),
         )
 
+    def test_debug_evidence_reports_bounded_provider_usage_totals(
+        self,
+    ) -> None:
+        def requester(
+            _base_url: str,
+            _method: str,
+            path: str,
+            _payload: object | None = None,
+            *,
+            timeout: float,
+        ) -> dict[str, object]:
+            del timeout
+            if path.endswith("/debug-context"):
+                return {
+                    "context": {
+                        "providerRequestReceipts": [
+                            {
+                                "usage": {
+                                    "input": 120,
+                                    "output": 30,
+                                    "cacheRead": 80,
+                                    "cacheWrite": 4,
+                                    "totalTokens": 234,
+                                }
+                            },
+                            {"usage": {}},
+                        ]
+                    },
+                    "transcript": {},
+                }
+            return {"messageQueue": {}}
+
+        evidence = CANARY.debug_evidence(
+            "http://in-process.invalid",
+            "session-usage",
+            requester=requester,
+        )
+
+        self.assertEqual(
+            evidence["providerUsage"],
+            {
+                "requestCount": 2,
+                "reportedRequestCount": 1,
+                "totals": {
+                    "input": 120,
+                    "output": 30,
+                    "cacheRead": 80,
+                    "cacheWrite": 4,
+                    "totalTokens": 234,
+                },
+            },
+        )
+
     def test_provider_prefix_evidence_proves_content_free_append_only_context(
         self,
     ) -> None:

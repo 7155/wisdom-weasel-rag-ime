@@ -117,11 +117,14 @@ class RoomTaskContextProjector:
                 ),
             },
             "responsibility": {
-                "ownerParticipantId": task.get(
-                    "ownerParticipantId"
+                "currentOwnerParticipantId": task.get(
+                    "currentOwnerParticipantId"
                 ),
-                "assigneeParticipantId": task.get(
-                    "assigneeParticipantId"
+                "ownershipRevision": int(
+                    task.get("ownershipRevision") or 0
+                ),
+                "ownershipReceiptId": task.get(
+                    "ownershipReceiptId"
                 ),
                 "currentParticipantId": dispatch.get(
                     "targetParticipantId"

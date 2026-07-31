@@ -3,14 +3,22 @@
   "$id": "rag-ime.contract.agent-goal-mutation.v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["action"],
+  "required": ["action", "expectedRevision"],
   "properties": {
-    "action": { "type": "string", "enum": ["set", "update", "pause", "resume", "complete", "clear"] },
+    "action": { "type": "string", "enum": ["confirm_setup", "update", "pause", "resume", "complete", "cancel", "clear"] },
     "expectedRevision": { "type": "integer", "minimum": 0 },
+    "confirmed": { "const": true },
     "objective": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "successCriteria": { "type": "string", "maxLength": 2000 },
+    "evidenceExpectations": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 600 }
+    },
     "tokenBudget": { "type": ["integer", "null"], "minimum": 1, "maximum": 100000000 },
     "timeBudgetMs": { "type": ["integer", "null"], "minimum": 1, "maximum": 31536000000 },
     "summary": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 1000 },
     "evidence": {
       "type": "array",
       "minItems": 1,
@@ -26,5 +34,28 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "action": { "const": "confirm_setup" } },
+        "required": ["action"]
+      },
+      "then": { "required": ["confirmed", "objective"] }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "complete" } },
+        "required": ["action"]
+      },
+      "then": { "required": ["summary", "evidence"] }
+    },
+    {
+      "if": {
+        "properties": { "action": { "const": "cancel" } },
+        "required": ["action"]
+      },
+      "then": { "required": ["reason"] }
+    }
+  ]
 }

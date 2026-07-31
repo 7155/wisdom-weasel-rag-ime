@@ -395,7 +395,7 @@ def _checkpoint(
 def _deterministic_noise_text(index: int) -> str:
     lane = index % 3
     if lane == 0:
-        return f"请调用 ime_memory 的 curation_prepare 并返回 runId live-eval-{index:03d}。"
+        return f"请调用 memory 的 curation_prepare 并返回 runId live-eval-{index:03d}。"
     if lane == 1:
         return f"为什么这个临时测试现在没有输出？编号 {index:03d}。"
     return f"测试一下 123-{index:03d}"

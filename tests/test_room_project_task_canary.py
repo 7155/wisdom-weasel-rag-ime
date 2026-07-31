@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sys
 import tempfile
@@ -453,6 +454,10 @@ class RoomProjectTaskCanaryTest(unittest.TestCase):
     ) -> dict[str, object]:
         return {
             "path": str(workspace / "calculator.py"),
+            "resourceRevision": (
+                "sha256:"
+                + hashlib.sha256((workspace / "calculator.py").read_bytes()).hexdigest()
+            ),
             "edits": [{"oldText": old_text, "newText": new_text}],
         }
 

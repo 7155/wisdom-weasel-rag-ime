@@ -23,5 +23,17 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "action": { "const": "return_to_draft" } },
+        "required": ["action"]
+      },
+      "then": {
+        "required": ["expectedRevision", "note"],
+        "properties": { "note": { "minLength": 1 } }
+      }
+    }
+  ]
 }

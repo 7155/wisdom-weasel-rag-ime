@@ -110,6 +110,8 @@ class RoomKernelWorkerTests(unittest.TestCase):
                 "最新 room_state 或成功工具结果返回的完整 evidenceRef，不得重写、拼接或"
                 "猜测；不要填写数据库 criterionId，也不要自报 "
                 "已通过或最终裁决，真实状态由 Kernel 判定。"
+                "summary、evidence 和接手指令留在结构化私有字段；publicSummary 必须遵循"
+                "系统公开报告规则，用自然语言写给用户，不暴露协议字段或私有推理。"
             ),
         )
         for internal_id in ("root:1", "dispatch:1", "task:1", "session:1"):

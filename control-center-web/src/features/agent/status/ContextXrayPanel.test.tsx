@@ -132,7 +132,7 @@ function debugResponse(): Record<string, unknown> {
     filePath: '/skills/context-inspector/SKILL.md',
   }];
   const tools = [{
-    name: 'ime_memory',
+    name: 'memory',
     description: 'Search memory',
     parameters: { type: 'object' },
   }];
@@ -156,7 +156,7 @@ function debugResponse(): Record<string, unknown> {
       prompt: 'CURRENT_USER_TEXT',
       systemPrompt,
       systemPromptOptions: { skills },
-      activeTools: ['ime_memory'],
+      activeTools: ['memory'],
       toolSchemas: tools,
       modelCalls: [{
         index: 1,

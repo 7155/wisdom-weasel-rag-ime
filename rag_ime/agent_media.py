@@ -58,7 +58,7 @@ _MEDIA_ID_RE = re.compile(r"^media_[A-Za-z0-9_-]{12,80}$")
 
 
 class AgentMediaStore:
-    """Session-scoped media sandbox for native Agent attachments and tool receipts."""
+    """Typed Session-or-Room media sandbox for managed Agent attachments."""
 
     def __init__(self, db_path: str | Path, *, root: str | Path | None = None) -> None:
         self.db_path = Path(db_path)
@@ -85,7 +85,8 @@ class AgentMediaStore:
     def import_bytes(
         self,
         *,
-        session_id: str,
+        session_id: str = "",
+        room_id: str = "",
         data: bytes,
         mime_type: str,
         file_name: str = "",
@@ -95,9 +96,7 @@ class AgentMediaStore:
         created_at_ms: int | None = None,
     ) -> dict[str, object]:
         self.initialize()
-        session = str(session_id).strip()
-        if not session:
-            raise ValueError("agent media sessionId is required")
+        owner_type, owner_id = _media_owner(session_id=session_id, room_id=room_id)
         advertised = _normalized_mime(mime_type)
         maximum = self.max_bytes_for_mime(advertised)
         raw = bytes(data)
@@ -136,15 +135,18 @@ class AgentMediaStore:
                 conn.execute(
                     """
                     INSERT INTO agent_media(
-                        media_id, session_id, file_name, storage_name, mime_type,
-                        byte_size, sha256, width, height, duration_ms,
-                        thumbnail_media_id, origin, origin_tool,
-                        origin_receipt_id, created_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
+                        media_id, session_id, room_id, owner_type, owner_id,
+                        file_name, storage_name, mime_type, byte_size, sha256,
+                        width, height, duration_ms, thumbnail_media_id, origin,
+                        origin_tool, origin_receipt_id, created_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)
                     """,
                     (
                         media_id,
-                        session,
+                        owner_id if owner_type == "session" else None,
+                        owner_id if owner_type == "room" else None,
+                        owner_type,
+                        owner_id,
                         normalized_name,
                         storage_name,
                         stored_mime,
@@ -163,25 +165,54 @@ class AgentMediaStore:
                 Path(temporary).unlink(missing_ok=True)
             target.unlink(missing_ok=True)
             raise
-        return self.receipt(media_id, session_id=session)
+        return self.receipt(media_id, session_id=session_id, room_id=room_id)
 
-    def receipt(self, media_id: str, *, session_id: str) -> dict[str, object]:
-        row = self._row(media_id, session_id=session_id)
+    def receipt(
+        self,
+        media_id: str,
+        *,
+        session_id: str = "",
+        room_id: str = "",
+    ) -> dict[str, object]:
+        row = self._row(media_id, session_id=session_id, room_id=room_id)
         payload = _receipt_payload(row)
         validate_contract(payload, "agent-media.v1.json")
         return payload
 
     def list_for_session(self, session_id: str, *, limit: int = 100) -> list[dict[str, object]]:
+        return self.list_for_owner(session_id=session_id, limit=limit)
+
+    def list_for_room(self, room_id: str, *, limit: int = 100) -> list[dict[str, object]]:
+        return self.list_for_owner(room_id=room_id, limit=limit)
+
+    def list_for_owner(
+        self,
+        *,
+        session_id: str = "",
+        room_id: str = "",
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        owner_type, owner_id = _media_owner(session_id=session_id, room_id=room_id)
         bounded = max(1, min(int(limit), 500))
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM agent_media WHERE session_id = ? ORDER BY created_at_ms DESC LIMIT ?",
-                (str(session_id), bounded),
+                """
+                SELECT * FROM agent_media
+                WHERE owner_type = ? AND owner_id = ?
+                ORDER BY created_at_ms DESC LIMIT ?
+                """,
+                (owner_type, owner_id, bounded),
             ).fetchall()
         return [_validated_receipt(row) for row in rows]
 
-    def read(self, media_id: str, *, session_id: str) -> tuple[dict[str, object], bytes]:
-        row = self._row(media_id, session_id=session_id)
+    def read(
+        self,
+        media_id: str,
+        *,
+        session_id: str = "",
+        room_id: str = "",
+    ) -> tuple[dict[str, object], bytes]:
+        row = self._row(media_id, session_id=session_id, room_id=room_id)
         target = self._storage_path(str(row["storage_name"]))
         if target.is_symlink() or not target.is_file():
             raise FileNotFoundError("agent media object is unavailable")
@@ -194,7 +225,13 @@ class AgentMediaStore:
             raise ValueError("agent media MIME no longer matches receipt")
         return _validated_receipt(row), raw
 
-    def pi_images(self, session_id: str, media_ids: Sequence[object]) -> list[dict[str, str]]:
+    def pi_images(
+        self,
+        session_id: str,
+        media_ids: Sequence[object],
+        *,
+        room_id: str = "",
+    ) -> list[dict[str, str]]:
         images: list[dict[str, str]] = []
         seen: set[str] = set()
         for value in media_ids:
@@ -202,7 +239,11 @@ class AgentMediaStore:
             if media_id in seen:
                 continue
             seen.add(media_id)
-            receipt, raw = self.read(media_id, session_id=session_id)
+            receipt, raw = self.read(
+                media_id,
+                session_id=session_id if not room_id else "",
+                room_id=room_id,
+            )
             mime = str(receipt["mimeType"])
             if mime not in IMAGE_MIME_TYPES:
                 raise ValueError("Pi RPC attachments currently accept managed images only")
@@ -299,15 +340,25 @@ class AgentMediaStore:
                 removed += 1
         return removed
 
-    def _row(self, media_id: object, *, session_id: str) -> sqlite3.Row:
+    def _row(
+        self,
+        media_id: object,
+        *,
+        session_id: str = "",
+        room_id: str = "",
+    ) -> sqlite3.Row:
         normalized = _validated_media_id(media_id)
+        owner_type, owner_id = _media_owner(session_id=session_id, room_id=room_id)
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM agent_media WHERE media_id = ? AND session_id = ?",
-                (normalized, str(session_id)),
+                """
+                SELECT * FROM agent_media
+                WHERE media_id = ? AND owner_type = ? AND owner_id = ?
+                """,
+                (normalized, owner_type, owner_id),
             ).fetchone()
         if row is None:
-            raise KeyError("agent media not found for this session")
+            raise KeyError(f"agent media not found for this {owner_type}")
         return row
 
     def _storage_path(self, storage_name: str) -> Path:
@@ -428,10 +479,13 @@ def _webp_dimensions(raw: bytes) -> tuple[int | None, int | None]:
 
 
 def _receipt_payload(row: Mapping[str, object]) -> dict[str, object]:
-    return {
+    owner_type = str(row["owner_type"] or "session")
+    owner_id = str(row["owner_id"] or row["session_id"] or row["room_id"] or "")
+    payload: dict[str, object] = {
         "schemaVersion": "rag-ime.agent-media.v1",
         "mediaId": str(row["media_id"]),
-        "sessionId": str(row["session_id"]),
+        "ownerType": owner_type,
+        "ownerId": owner_id,
         "fileName": str(row["file_name"]),
         "mimeType": str(row["mime_type"]),
         "byteSize": int(row["byte_size"]),
@@ -445,12 +499,22 @@ def _receipt_payload(row: Mapping[str, object]) -> dict[str, object]:
         "originReceiptId": str(row["origin_receipt_id"]),
         "createdAtMs": int(row["created_at_ms"]),
     }
+    payload["sessionId" if owner_type == "session" else "roomId"] = owner_id
+    return payload
 
 
 def _validated_receipt(row: Mapping[str, object]) -> dict[str, object]:
     payload = _receipt_payload(row)
     validate_contract(payload, "agent-media.v1.json")
     return payload
+
+
+def _media_owner(*, session_id: object = "", room_id: object = "") -> tuple[str, str]:
+    session = str(session_id or "").strip()
+    room = str(room_id or "").strip()
+    if bool(session) == bool(room):
+        raise ValueError("agent media requires exactly one Session or Room owner")
+    return ("session", session) if session else ("room", room)
 
 
 def _normalized_mime(value: object) -> str:

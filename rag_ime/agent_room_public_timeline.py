@@ -1,9 +1,116 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 
 from .agent_protocol import AgentEventEnvelope
 from .agent_rooms import AgentRoomEventHub
+
+
+PUBLIC_ROOM_REPORT_MAX_CHARS = 8_000
+_PUBLIC_ROOM_REPORT_INTERNAL_MARKER = re.compile(
+    r"(?:"
+    r"\b[A-Za-z][A-Za-z0-9_]*(?:Id|Ref|Hash|Receipt)\b"
+    r"|(?i:\b(?:sha256|AC-\d+)\b)"
+    r"|(?i:(?:room-(?:root|work|task|dispatch|commit|post|receipt)|"
+    r"execution:invoke|invoke|participant|agent|dispatch|task|root|"
+    r"receipt|evidence|proof|criterion|commit):[^\s`]+)"
+    r"|(?i:\b(?:qualityGateReceipt|requirementCoverage|acceptanceAliases|"
+    r"resourceUsage|commandInvocationReceipt|continuation)\b)"
+    r"|(?i:\b(?:execution|quality[_-]?gate|command|invocation|room|root|task|"
+    r"dispatch|participant|session|evidence|proof|criterion|commit)[_-]?"
+    r"(?:id|ref|hash|receipt)\b\s*(?:=|:|为))"
+    r"|(?i:(?:file://|/(?:Users|Volumes|private|tmp)/|~/|\.\.?/)\S+)"
+    r"|(?i:(?:\b[A-Z]:[\\/]|\\\\[^\\\s]+\\)\S+)"
+    r"|\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
+    r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b"
+    r"|\b[0-9a-fA-F]{40,64}\b"
+    r")"
+)
+_PUBLIC_ROOM_REPORT_PROTOCOL_PLACEHOLDER = re.compile(
+    r"(?i)^(?:public\s*[:：]\s*)?(?:"
+    r"deliver|handoff|wait|blocked|done|complete(?:d)?|result|success|failed?"
+    r"|已?完成|已?转交|等待|已?阻塞|成功|失败"
+    r")\s*[.!。！]?$"
+)
+_PUBLIC_ROOM_REPORT_GLOBAL_COMPLETION_CLAIM = re.compile(
+    r"(?i)(?:"
+    r"\b(?:entire|whole|all)\s+(?:request|task|work)\b.{0,20}"
+    r"\b(?:complete(?:d)?|done|finished)\b"
+    r"|(?:整个|全部|所有)(?:请求|任务|工作|事项).{0,12}"
+    r"(?:已经|已)?(?:完成|结束|交付)"
+    r"|(?:请求|任务|工作|事项).{0,8}(?:已经|已|全部|均)"
+    r"(?:完成|结束|交付)"
+    r")"
+)
+_PUBLIC_ROOM_REPORT_VERIFICATION_CLAIM = re.compile(
+    r"(?i)(?:"
+    r"\b(?:all|every)\b.{0,20}\b(?:tests?|checks?|verification|criteria)\b"
+    r".{0,12}\b(?:passed|verified|complete(?:d)?)\b"
+    r"|\b(?:tests?|checks?|verification)\b.{0,12}"
+    r"\b(?:all\s+)?(?:passed|verified|complete(?:d)?)\b"
+    r"|(?:全部|所有|各项)(?:测试|检查|验证|验收|标准).{0,12}"
+    r"(?:通过|完成|满足)"
+    r"|(?:测试|检查|验证|验收|标准).{0,8}(?:全部|均|都|已经|已)"
+    r"(?:通过|完成|满足)"
+    r")"
+)
+
+
+def public_room_report_content(value: object, *, field_name: str) -> str:
+    """Validate model-authored text before it enters the public Room timeline."""
+
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    content = value.strip()
+    if not content:
+        raise ValueError(f"{field_name} must not be empty")
+    if len(content) > PUBLIC_ROOM_REPORT_MAX_CHARS:
+        raise ValueError(
+            f"{field_name} must contain at most "
+            f"{PUBLIC_ROOM_REPORT_MAX_CHARS} characters"
+        )
+    if _PUBLIC_ROOM_REPORT_PROTOCOL_PLACEHOLDER.fullmatch(content):
+        raise ValueError(
+            f"{field_name} must be a meaningful user-facing report, not a "
+            "protocol label or terminal status"
+        )
+    if _PUBLIC_ROOM_REPORT_INTERNAL_MARKER.search(content):
+        raise ValueError(
+            f"{field_name} must be rewritten for users without internal Room "
+            "identifiers, raw receipts, hashes, or machine paths"
+        )
+    return content
+
+
+def assert_public_room_report_claims(
+    content: str,
+    *,
+    field_name: str,
+    decision: str,
+    all_criteria_verified: bool,
+) -> None:
+    """Fence terminal prose against claims stronger than Kernel evidence."""
+
+    if decision not in {"deliver", "handoff", "wait", "blocked"}:
+        raise ValueError("decision is invalid")
+    if (
+        decision != "deliver"
+        and _PUBLIC_ROOM_REPORT_GLOBAL_COMPLETION_CLAIM.search(content)
+    ):
+        raise ValueError(
+            f"{field_name} must not claim the whole request is complete for "
+            f"a {decision} outcome"
+        )
+    if (
+        decision != "deliver"
+        and not all_criteria_verified
+        and _PUBLIC_ROOM_REPORT_VERIFICATION_CLAIM.search(content)
+    ):
+        raise ValueError(
+            f"{field_name} must not claim completed verification without "
+            "authoritative evidence for every acceptance criterion"
+        )
 
 
 _ROOM_POST_PUBLIC_FIELDS = (
@@ -18,8 +125,10 @@ _ROOM_POST_PUBLIC_FIELDS = (
     "kind",
     "visibility",
     "content",
+    "question",
     "mentions",
     "blocks",
+    "attachments",
     "idempotencyKey",
     "publicationSource",
     "createdAtMs",
@@ -66,6 +175,7 @@ class RoomPublicTimelineProjector:
                 "text": str(post["content"]),
                 "rootId": root_id,
                 "postId": str(post["postId"]),
+                "attachmentReceipts": list(post.get("attachments") or []),
             },
             turn_id=root_id,
             topic_id=topic_id,

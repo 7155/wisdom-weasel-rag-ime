@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rag_ime.settings_store import ManagementSettingsStore
+
 
 class InstallSquirrelRagConfigScriptTests(unittest.TestCase):
     def test_config_script_preserves_existing_patch_and_replaces_managed_block(self) -> None:
@@ -69,6 +71,42 @@ class InstallSquirrelRagConfigScriptTests(unittest.TestCase):
         self.assertIn('"menu/page_size": 8', default_config)
         self.assertIn("- schema: luna_pinyin_simp", default_config)
         self.assertNotIn('"menu/page_size": 5', default_config)
+
+    def test_config_script_projects_validated_interaction_settings_into_managed_rime_keys(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-squirrel-settings-") as tmp:
+            tmp_path = Path(tmp)
+            snippet = tmp_path / "rag-ime.squirrel.custom.yaml"
+            config_path = tmp_path / "Rime" / "squirrel.custom.yaml"
+            db_path = tmp_path / "rag-ime.sqlite"
+            store = ManagementSettingsStore(db_path)
+            store.initialize()
+            store.update_settings(
+                {
+                    "display.maxPostCommitCandidates": 7,
+                    "interaction.postCommit.idleTriggerMs": 480,
+                }
+            )
+            _write_snippet(snippet, sidecar_url="http://127.0.0.1:8766/api")
+
+            subprocess.run(
+                ["bash", str(root / "scripts" / "install_squirrel_rag_config.sh")],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RAG_IME_DB_PATH": str(db_path),
+                    "RAG_IME_SQUIRREL_CONFIG_SNIPPET": str(snippet),
+                    "RAG_IME_SQUIRREL_CUSTOM_CONFIG": str(config_path),
+                },
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+
+            config = config_path.read_text(encoding="utf-8")
+
+        self.assertIn('"rag_ime/max_side_candidates": 7', config)
+        self.assertIn('"rag_ime/post_commit_idle_ms": 480', config)
 
     def test_deploy_runs_build_and_reload_from_rime_user_directory(self) -> None:
         root = Path(__file__).resolve().parents[1]

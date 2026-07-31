@@ -149,7 +149,7 @@
     "userValue": "Start each Agent Session with bounded personal and project context, keep one approved role identity for the whole Session, and retrieve longer-term memory only when the Agent explicitly needs it.",
     "currentStatus": "Pinned Role Book revisions, one-shot query-free bootstrap, governed current/historical/change memory reads, Evidence capture, daily draft-only consolidation, and durable projection are implemented and covered by backend tests; long-running policy and Control Center review UX still need user acceptance.",
     "realImeTrigger": "none on the typing path; the user explicitly creates or opens an Agent Session",
-    "sidecarEndpoint": "local Agent gateway session, prompt, approval, ime_memory, and agent_role_book operations",
+    "sidecarEndpoint": "local Agent gateway session, prompt, approval, memory, and agent_role_book operations",
     "candidateSourceType": "Agent runtime context and governed memory evidence, not an IME candidate source",
     "keyPolicy": "no input-method keys are intercepted; memory mutations require an explicit hash-bound native approval",
     "dataSource": "approved Role Book revision, current project plan, curated Atom and Memory Book state, recent daily timeline Books, One Ring Evidence tail, and applied tool or Room receipts",

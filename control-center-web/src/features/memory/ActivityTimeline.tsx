@@ -47,6 +47,7 @@ import {
 import './activity-timeline.css';
 
 type TimelinePeriod = 'day' | 'morning' | 'afternoon' | 'evening';
+type TimelineActivityKind = 'ordinary_activity' | 'consolidated_activity' | 'unclassified_activity';
 
 interface TimelineApp {
   id: string;
@@ -82,6 +83,7 @@ interface SemanticTimelineTask {
   startMs: number;
   endMs: number;
   eventCount: number;
+  activityKind: TimelineActivityKind;
   evidenceCount: number;
   redactedEventCount: number;
   apps: TimelineApp[];
@@ -205,8 +207,11 @@ export function ActivityTimeline() {
             <div className="activity-timeline__summary-copy">
               <div>
                 <StatusBadge label={timelineStatusLabel(status)} tone={timelineStatusTone(status)} />
-                <span>{tasks.length} 个语义任务</span>
-                <span>{numberValue(item.eventCount)} 条完整记录</span>
+                <span>{tasks.length} 项活动</span>
+                <span>
+                  {numberValue(item.ordinaryActivityCount)} 条普通活动 · {numberValue(item.consolidatedActivityCount)} 条长时聚合
+                </span>
+                <span>{numberValue(item.eventCount)} 条来源记录</span>
               </div>
               <p>{stringValue(item.summary, '当天活动已完成结构化整理。')}</p>
               <button
@@ -224,7 +229,7 @@ export function ActivityTimeline() {
               </button>
             </div>
             <dl className="activity-timeline__summary-metrics">
-              <div><dt>任务跨度合计</dt><dd>{formatDuration(sumTaskSpan(tasks))}</dd></div>
+              <div><dt>首末证据跨度合计</dt><dd>{formatDuration(sumTaskSpan(tasks))}</dd></div>
               <div><dt>参与 APP</dt><dd>{uniqueAppCount(tasks)}</dd></div>
               <div><dt>证据</dt><dd>{sumEvidenceCount(tasks)} 条</dd></div>
               <div><dt>时区</dt><dd>{stringValue(item.timezone, '本地')}</dd></div>
@@ -238,7 +243,7 @@ export function ActivityTimeline() {
           ) : null}
 
           {taskGroups.length ? (
-            <div className="activity-timeline__periods" aria-label={`${date} 语义任务`}>
+            <div className="activity-timeline__periods" aria-label={`${date} 活动投影`}>
               {taskGroups.map((group) => (
                 <TimelinePeriodBand
                   key={group.period}
@@ -251,7 +256,7 @@ export function ActivityTimeline() {
           ) : (
             <div className="activity-timeline__semantic-empty">
               <ListTree aria-hidden="true" size={19} />
-              <span>这份时间线还没有可显示的语义任务。</span>
+              <span>这份时间线还没有可显示的活动投影。</span>
             </div>
           )}
 
@@ -338,7 +343,7 @@ export function ActivityTimeline() {
           </DialogHeader>
           <div className="activity-timeline__review-line">
             <Check aria-hidden="true" size={17} />
-            <span>{tasks.length} 个语义任务会进入独立时间线，不会自动归入长期主题。</span>
+            <span>{tasks.length} 项活动会进入独立时间线，不会自动归入长期主题。</span>
           </div>
           <DialogFooter>
             <Button onClick={() => setApproveOpen(false)} variant="quiet">取消</Button>
@@ -415,7 +420,7 @@ function ActivityDayMap({
           <Clock3 aria-hidden="true" size={15} />
           <strong>一天的活动分布</strong>
         </div>
-        <span>按开始时间和持续跨度定位，点击可展开证据</span>
+        <span>位置与跨度均来自来源事件时间；跨度不表示持续活跃，点击可检查证据</span>
       </header>
       <div className="activity-day-map__axis" aria-hidden="true">
         {[0, 6, 12, 18, 24].map((hour) => <span key={hour}>{String(hour).padStart(2, '0')}:00</span>)}
@@ -475,7 +480,7 @@ function TimelinePeriodBand({
             <p>{periodDescription(period)}</p>
           </div>
         </div>
-        <span>{tasks.length} 项 · 任务跨度 {formatDuration(sumTaskSpan(tasks))}</span>
+        <span>{tasks.length} 项 · 首末证据跨度 {formatDuration(sumTaskSpan(tasks))}</span>
       </header>
       <div className="activity-timeline__task-list">
         {tasks.map((task) => (
@@ -490,7 +495,7 @@ function TimelinePeriodBand({
               <time dateTime={task.startMs ? new Date(task.startMs).toISOString() : undefined}>
                 {formatTimeRange(task.startMs, task.endMs)}
               </time>
-              <small>跨度 {formatDuration(task.endMs - task.startMs)}</small>
+              <small>{activityKindLabel(task.activityKind)} · 首末证据跨度 {formatDuration(task.endMs - task.startMs)}</small>
             </span>
             <span className="activity-timeline__task-main">
               <strong>{task.title}</strong>
@@ -506,6 +511,10 @@ function TimelinePeriodBand({
               </span>
             </span>
             <span className="activity-timeline__task-stats">
+              <StatusBadge
+                label={activityKindLabel(task.activityKind)}
+                tone={activityKindTone(task.activityKind)}
+              />
               <span><Database aria-hidden="true" size={13} />{task.evidenceCount} 条证据</span>
               <span><ListTree aria-hidden="true" size={13} />{task.eventCount} 条事件</span>
               {task.redactedEventCount ? <span data-tone="warning">{task.redactedEventCount} 条脱敏</span> : null}
@@ -539,7 +548,7 @@ function TaskDetailDialog({
         <DialogHeader>
           <DialogTitle>{task.title}</DialogTitle>
           <DialogDescription>
-            {periodLabel(task.period)} · {formatTimeRange(task.startMs, task.endMs)} · 时间跨度 {formatDuration(task.endMs - task.startMs)}
+            {periodLabel(task.period)} · {formatTimeRange(task.startMs, task.endMs)} · {activityKindLabel(task.activityKind)} · 首末证据跨度 {formatDuration(task.endMs - task.startMs)}
           </DialogDescription>
         </DialogHeader>
 
@@ -566,8 +575,8 @@ function TaskDetailDialog({
           </section>
 
           <section className="activity-timeline__detail-section">
-            <h3><Database aria-hidden="true" size={15} />证据链</h3>
-            <p>先打开事件，再沿稳定引用查看保留的原始来源。</p>
+            <h3><Database aria-hidden="true" size={15} />来源证据</h3>
+            <p>时间、分类和引用由活动账本投影。原始输入与当时上下文只在所属范围内按引用读取，不复制到时间线。</p>
             {taskLevelRefs.length ? (
               <SourceReferenceDetails
                 onOpenReference={onOpenReference}
@@ -728,6 +737,7 @@ function normalizeTimelineTask(
     title: firstString(task, ['title', 'taskTitle', 'name'], deriveTaskTitle(summary, apps, index)),
     summary,
     period: normalizePeriod(firstString(task, ['period', 'dayPart'], inheritedPeriod), startMs, endMs),
+    activityKind: normalizeActivityKind(firstString(task, ['activityKind'])),
     startMs,
     endMs,
     eventCount,
@@ -968,6 +978,28 @@ function normalizePeriod(value: string, startMs: number, endMs: number): Timelin
   const endPeriod = periodForHour(new Date(boundedEndMs).getHours());
   return startPeriod === endPeriod ? startPeriod : 'day';
 }
+
+function normalizeActivityKind(value: string): TimelineActivityKind {
+  if (value === 'ordinary_activity' || value === 'consolidated_activity') return value;
+  return 'unclassified_activity';
+}
+
+
+function activityKindLabel(kind: TimelineActivityKind): string {
+  return ({
+    ordinary_activity: '普通活动',
+    consolidated_activity: '长时聚合',
+    unclassified_activity: '分类未标注',
+  } as const)[kind];
+}
+
+
+function activityKindTone(kind: TimelineActivityKind): 'success' | 'info' | 'neutral' {
+  if (kind === 'consolidated_activity') return 'success';
+  if (kind === 'ordinary_activity') return 'info';
+  return 'neutral';
+}
+
 
 function periodForHour(hour: number): Exclude<TimelinePeriod, 'day'> {
   if (hour < 12) return 'morning';

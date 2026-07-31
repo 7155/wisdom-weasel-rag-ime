@@ -68,7 +68,7 @@ REQUIRED_ACCEPTANCE_CANCELLATION_SURFACES = (
     "continuation",
     "session",
 )
-_STAGED_ACCEPTANCE_SKILL = "test-driven-implementation"
+_STAGED_ACCEPTANCE_SKILL = "implementation-execution"
 _STAGED_ACCEPTANCE_CACHE_PREFIX_HASH = hashlib.sha256(
     b"room-v2-staged-prompt"
 ).hexdigest()

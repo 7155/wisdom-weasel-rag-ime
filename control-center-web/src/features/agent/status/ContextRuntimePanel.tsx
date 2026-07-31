@@ -115,7 +115,7 @@ function ContextRuntimeDetails({ sessionId }: { sessionId: string }) {
       });
       await itemsQuery.refetch();
     } catch {
-      setAckError('暂时无法确认，请稍后重试');
+      setAckError('上下文信息确认失败；该信息仍保留，请再次点击它的“确认”。');
     } finally {
       setAcknowledgingId('');
     }
@@ -130,7 +130,13 @@ function ContextRuntimeDetails({ sessionId }: { sessionId: string }) {
           {activeItems.length > 0 ? <span>{activeItems.length}</span> : null}
         </header>
         {itemsQuery.isPending ? <ContextEmpty animated>正在读取分流上下文</ContextEmpty> : null}
-        {itemsQuery.error ? <ContextEmpty tone="danger">上下文收件箱暂时不可用</ContextEmpty> : null}
+        {itemsQuery.error ? (
+          <ContextFailure
+            loading={itemsQuery.isFetching}
+            owner="上下文收件箱"
+            onRetry={() => void itemsQuery.refetch()}
+          />
+        ) : null}
         {ackError ? <ContextEmpty tone="danger">{ackError}</ContextEmpty> : null}
         {!itemsQuery.isPending && !itemsQuery.error && activeItems.length === 0
           ? <ContextEmpty>没有等待处理的异步信息</ContextEmpty>
@@ -168,7 +174,13 @@ function ContextRuntimeDetails({ sessionId }: { sessionId: string }) {
           {traces.length > 0 ? <span>{traces.length}</span> : null}
         </header>
         {tracesQuery.isPending ? <ContextEmpty animated>正在读取组装记录</ContextEmpty> : null}
-        {tracesQuery.error ? <ContextEmpty tone="danger">上下文管线暂时不可用</ContextEmpty> : null}
+        {tracesQuery.error ? (
+          <ContextFailure
+            loading={tracesQuery.isFetching}
+            owner="上下文组装记录"
+            onRetry={() => void tracesQuery.refetch()}
+          />
+        ) : null}
         {!tracesQuery.isPending && !tracesQuery.error && traces.length === 0
           ? <ContextEmpty>发送消息后会记录组装阶段</ContextEmpty>
           : null}
@@ -296,7 +308,13 @@ function ContextPipelineDialog({
           </nav>
           <section className="agent-context-pipeline-detail" aria-live="polite">
             {traceQuery.isPending ? <ContextEmpty animated>正在读取管线</ContextEmpty> : null}
-            {traceQuery.error ? <ContextEmpty tone="danger">这条管线暂时无法读取</ContextEmpty> : null}
+            {traceQuery.error ? (
+              <ContextFailure
+                loading={traceQuery.isFetching}
+                owner="当前上下文管线"
+                onRetry={() => void traceQuery.refetch()}
+              />
+            ) : null}
             {traceQuery.data ? (
               <>
                 <ContextTraceGraph trace={traceQuery.data} />
@@ -530,6 +548,26 @@ function formatContextTime(value: number): string {
   }).format(value);
 }
 
+function ContextFailure({
+  loading,
+  owner,
+  onRetry,
+}: {
+  loading: boolean;
+  owner: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="agent-status-query-error" role="alert">
+      <span>
+        <strong>{owner}读取失败</strong>
+        <small>失败结果没有被当作空状态；重新读取只刷新这一项。</small>
+      </span>
+      <Button size="small" loading={loading} onClick={onRetry}>重新读取{owner}</Button>
+    </div>
+  );
+}
+
 function ContextEmpty({
   children,
   animated = false,
@@ -540,7 +578,7 @@ function ContextEmpty({
   tone?: 'neutral' | 'danger';
 }) {
   return (
-    <p className="agent-status-empty" data-animated={animated || undefined} data-tone={tone}>
+    <p className="agent-status-empty" data-animated={animated || undefined} data-tone={tone} role={tone === 'danger' ? 'alert' : undefined}>
       {animated ? <LoaderCircle size={13} /> : null}
       {children}
     </p>

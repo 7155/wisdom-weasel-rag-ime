@@ -11,7 +11,7 @@ Personal Agent Workbench adapts those ideas as follows:
 | VCP pressure | Personal Agent Workbench rule |
 | --- | --- |
 | Raw diary text is not the final prompt | Keep Evidence separate from Current Atom and Topic Book retrieval documents. |
-| Tool calls make memory changes observable | Pi uses preview/apply/rollback operations on `ime_memory`; the skill never writes SQLite. |
+| Tool calls make memory changes observable | Pi uses governed preview/apply/rollback operations on `memory`; the Skill never writes SQLite. |
 | Semantic grouping needs control | Cross-App Task Timelines retain every App as provenance and remain continuity context, not fact evidence. |
 | Retrieval should be useful but bounded | Ordinary Agent context admits only finalized, quality-gated segments. |
 | Runtime metadata is not knowledge | App is provenance; transport source/tag names never become semantic tags. |

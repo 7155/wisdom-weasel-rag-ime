@@ -120,7 +120,7 @@ class AgentRoomStore:
         room_id = f"room:{uuid.uuid4()}"
         topic_id = f"topic:{uuid.uuid4()}"
         participant_ids = [f"participant:{uuid.uuid4()}" for _ in values]
-        moderator_id = participant_ids[moderator_ordinal] if policy == "moderator" else ""
+        moderator_id = participant_ids[moderator_ordinal]
         room_file = self._room_file(room_id)
         with self._connect() as conn:
             conn.execute(
@@ -840,6 +840,43 @@ class AgentRoomStore:
                 (session_id,),
             ).fetchone()
         return _participant_payload(row) if row is not None else None
+
+    def participants_for_sessions(
+        self,
+        session_ids: Sequence[str],
+        *,
+        active_only: bool = True,
+    ) -> dict[str, dict[str, object]]:
+        normalized_ids = tuple(
+            dict.fromkeys(
+                str(session_id).strip()
+                for session_id in session_ids
+                if str(session_id).strip()
+            )
+        )
+        if not normalized_ids:
+            return {}
+        active_filter = (
+            "AND p.participant_status = 'active' AND r.status = 'active'"
+            if active_only
+            else ""
+        )
+        placeholders = ", ".join("?" for _ in normalized_ids)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT p.* FROM agent_room_participants p
+                JOIN agent_rooms r ON r.id = p.room_id
+                WHERE p.session_id IN ({placeholders}) {active_filter}
+                ORDER BY r.updated_at_ms DESC, p.created_at_ms DESC
+                """,  # noqa: S608 - placeholders and active_filter are fixed internally
+                normalized_ids,
+            ).fetchall()
+        result: dict[str, dict[str, object]] = {}
+        for row in rows:
+            session_id = str(row["session_id"])
+            result.setdefault(session_id, _participant_payload(row))
+        return result
 
     def plan_route(
         self,

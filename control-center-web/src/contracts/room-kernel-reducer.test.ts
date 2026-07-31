@@ -3,8 +3,8 @@ import type { RoomDispatchEnvelopeV2 } from './generated/room-dispatch-envelope.
 import type { RoomEventEnvelopeV2 } from './generated/room-event-envelope.v2';
 import type { RoomKernelReceiptV1 } from './generated/room-kernel-receipt.v1';
 import type { RoomPostV2 } from './generated/room-post.v2';
-import type { RoomRootExecutionV2 } from './generated/room-root-execution.v2';
-import type { RoomTaskV2 } from './generated/room-task.v2';
+import type { RoomRootExecutionV3 } from './generated/room-root-execution.v3';
+import type { RoomTaskV3 } from './generated/room-task.v3';
 import {
   applyRoomKernelSnapshot,
   createRoomKernelProjection,
@@ -116,7 +116,7 @@ describe('generated-contract Room Kernel projection', () => {
   });
 
   it('keeps concurrent Roots isolated and replaces the projection with a snapshot', () => {
-    const rootB = root({ rootId: 'root-b', generation: 8, owner: 'reviewer' });
+    const rootB = root({ rootId: 'root-b', generation: 8, facilitatorParticipantId: 'reviewer' });
     const snapshot: RoomKernelSnapshot = {
       roomId: 'room-a', lastSequence: 20, snapshotHash: `sha256:${'a'.repeat(64)}`,
       roots: [root(), rootB], tasks: [task()], dispatches: [dispatch()], posts: [post()],
@@ -157,19 +157,23 @@ function envelope(
   return { schemaVersion: 'wisdom-weasel.room-event-envelope.v2', entityKind, entityId, eventKind, sequence, occurredAtMs: sequence, payload };
 }
 
-function root(overrides: Partial<RoomRootExecutionV2> = {}): RoomRootExecutionV2 {
+function root(overrides: Partial<RoomRootExecutionV3> = {}): RoomRootExecutionV3 {
   return {
-    schemaVersion: 'wisdom-weasel.room-root-execution.v2', rootId: 'root-a', roomId: 'room-a', generation: 3,
-    state: 'running', owner: 'researcher', requirementAnchorRef: 'requirement:1', createdByActorRef: 'user:1',
+    schemaVersion: 'wisdom-weasel.room-root-execution.v3', rootId: 'root-a', roomId: 'room-a', generation: 3,
+    state: 'running', facilitatorParticipantId: 'researcher', reporterParticipantId: null,
+    reporterSelectionReceiptId: null, requirementAnchorRef: 'requirement:1', createdByActorRef: 'user:1',
     terminalReceiptId: null, activeProfileRef: null, budgetPolicyRef: 'budget:default', createdAtMs: 1, ...overrides,
   };
 }
 
-function task(overrides: Partial<RoomTaskV2> = {}): RoomTaskV2 {
+function task(overrides: Partial<RoomTaskV3> = {}): RoomTaskV3 {
   return {
-    schemaVersion: 'wisdom-weasel.room-task.v2', taskId: 'task-a', rootId: 'root-a', parentTaskId: null,
-    ownerParticipantId: 'researcher', assigneeParticipantId: 'researcher', objective: 'investigate', expectedOutput: 'evidence',
-    requirementItemIds: ['requirement:1'], acceptanceCriterionIds: ['criterion:1'], revision: 1, state: 'active', ...overrides,
+    schemaVersion: 'wisdom-weasel.room-task.v3', taskId: 'task-a', rootId: 'root-a', parentTaskId: null,
+    taskKind: 'work', currentOwnerParticipantId: 'researcher', ownershipRevision: 0,
+    ownershipReceiptId: null, objective: 'investigate', expectedOutput: 'evidence',
+    requirementItemIds: ['requirement:1'], acceptanceCriterionIds: ['criterion:1'],
+    contextEvidenceRefs: [], invitationId: null, reviewOfTaskIds: [],
+    reviewAuthorParticipantIds: [], reviewState: 'not_required', revision: 1, state: 'active', ...overrides,
   };
 }
 

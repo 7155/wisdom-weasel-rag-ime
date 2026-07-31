@@ -21,8 +21,9 @@ evidence is not authority to edit or approve the work.
 
 ## Workflow
 
-1. Reconstruct intended behavior from the immutable original request and
-   confirmed acceptance, not the implementer's summary.
+1. Reconstruct intended behavior from the verbatim user text supplied by the Runtime,
+   later append-only corrections, and confirmed acceptance—not the implementer's
+   summary.
 2. Inspect the complete relevant diff and trace the real state owner, call
    path, side effects, and downstream consumer.
 3. Re-run or independently inspect the evidence. Probe negative paths
@@ -58,6 +59,12 @@ Return `review_clear`, `review_clear_with_risk`, or `changes_required`, followed
 by ordered findings, evidence, affected acceptance, required fixes, residual
 risk, and unanswered questions. These are reviewer findings, not the Kernel's
 delivery verdict.
+
+`review_clear` and `review_clear_with_risk` return a `candidate_done`
+recommendation to the Room Kernel; no further workflow Skill owns that
+transition. `changes_required` returns the findings to
+`implementation-execution`. Use `structured-handoff` only when responsibility
+must move to a different owner, never as an automatic review stage.
 
 When a Room review Task is complete, translate verified current-Task AC aliases
 into `room_commit.evidence`. For `decision=deliver`, do not send

@@ -10,6 +10,21 @@ INCLUDE_MAINTENANCE=1
 INCLUDE_MLX="auto"
 INCLUDE_PI="auto"
 PI_WORKTREE="${RAG_IME_PI_WORKTREE:-}"
+SQUIRREL_WORKDIR_OVERRIDE_SET=0
+SQUIRREL_WORKDIR_OVERRIDE=""
+SQUIRREL_DERIVED_DATA_OVERRIDE_SET=0
+SQUIRREL_DERIVED_DATA_OVERRIDE=""
+SQUIRREL_STACK_TEMP_ROOT=""
+SQUIRREL_STACK_WORKDIR=""
+SQUIRREL_STACK_DERIVED_DATA=""
+if [[ "${RAG_IME_SQUIRREL_WORKDIR+x}" == "x" ]]; then
+  SQUIRREL_WORKDIR_OVERRIDE_SET=1
+  SQUIRREL_WORKDIR_OVERRIDE="$RAG_IME_SQUIRREL_WORKDIR"
+fi
+if [[ "${RAG_IME_SQUIRREL_DERIVED_DATA+x}" == "x" ]]; then
+  SQUIRREL_DERIVED_DATA_OVERRIDE_SET=1
+  SQUIRREL_DERIVED_DATA_OVERRIDE="$RAG_IME_SQUIRREL_DERIVED_DATA"
+fi
 
 usage() {
   cat <<'EOF'
@@ -29,7 +44,81 @@ Options:
 
 The stack installer refuses dirty tracked source by default. Set
 RAG_IME_ALLOW_DIRTY_INSTALL=1 only for an explicitly marked development build.
+
+With --include-squirrel, an explicit RAG_IME_SQUIRREL_WORKDIR or
+RAG_IME_SQUIRREL_DERIVED_DATA must be an absolute path that does not exist yet.
+The release installer never resets or silently reuses an existing checkout.
 EOF
+}
+
+cleanup_stack_squirrel_workspace() {
+  local exit_code=$?
+  trap - EXIT
+  if [[ -n "$SQUIRREL_STACK_TEMP_ROOT" && -d "$SQUIRREL_STACK_TEMP_ROOT" ]]; then
+    rm -rf -- "$SQUIRREL_STACK_TEMP_ROOT"
+  fi
+  exit "$exit_code"
+}
+
+require_fresh_squirrel_path() {
+  local label="$1"
+  local path="$2"
+  if [[ -z "$path" || "$path" != /* || "$path" == "/" ]]; then
+    echo "$label must be a non-root absolute path: ${path:-<empty>}" >&2
+    exit 73
+  fi
+  if [[ -e "$path" || -L "$path" ]]; then
+    echo "refusing to reuse existing explicit $label: $path" >&2
+    echo "choose a new path; the product installer never resets a caller-owned Squirrel workspace" >&2
+    exit 73
+  fi
+}
+
+run_with_stack_squirrel_workspace() {
+  env \
+    RAG_IME_SQUIRREL_WORKDIR="$SQUIRREL_STACK_WORKDIR" \
+    RAG_IME_SQUIRREL_PROJECT="$SQUIRREL_STACK_WORKDIR/Squirrel.xcodeproj" \
+    RAG_IME_SQUIRREL_DERIVED_DATA="$SQUIRREL_STACK_DERIVED_DATA" \
+    RAG_IME_SQUIRREL_PATCH="$ROOT/squirrel-patches/0001-add-rag-ime-sidecar.patch" \
+    RAG_IME_SQUIRREL_RESET=0 \
+    RAG_IME_SQUIRREL_DRY_RUN=0 \
+    RAG_IME_SQUIRREL_BUILD_DRY_RUN=0 \
+    RAG_IME_SQUIRREL_SKIP_POSTINSTALL=0 \
+    RAG_IME_SQUIRREL_ALLOW_SOURCE_ROOT_CHANGE=0 \
+    "$@"
+}
+
+prepare_stack_squirrel_workspace() {
+  if [[ "$SQUIRREL_WORKDIR_OVERRIDE_SET" == "1" ]]; then
+    require_fresh_squirrel_path "RAG_IME_SQUIRREL_WORKDIR" "$SQUIRREL_WORKDIR_OVERRIDE"
+    SQUIRREL_STACK_WORKDIR="$SQUIRREL_WORKDIR_OVERRIDE"
+  fi
+  if [[ "$SQUIRREL_DERIVED_DATA_OVERRIDE_SET" == "1" ]]; then
+    require_fresh_squirrel_path \
+      "RAG_IME_SQUIRREL_DERIVED_DATA" \
+      "$SQUIRREL_DERIVED_DATA_OVERRIDE"
+    SQUIRREL_STACK_DERIVED_DATA="$SQUIRREL_DERIVED_DATA_OVERRIDE"
+  fi
+  if [[ "$SQUIRREL_WORKDIR_OVERRIDE_SET" != "1" ||
+    "$SQUIRREL_DERIVED_DATA_OVERRIDE_SET" != "1" ]]; then
+    SQUIRREL_STACK_TEMP_ROOT="$(
+      mktemp -d "${TMPDIR:-/tmp}/rag-ime-squirrel-install-stack.XXXXXX"
+    )"
+    trap cleanup_stack_squirrel_workspace EXIT
+  fi
+  if [[ "$SQUIRREL_WORKDIR_OVERRIDE_SET" != "1" ]]; then
+    SQUIRREL_STACK_WORKDIR="$SQUIRREL_STACK_TEMP_ROOT/worktree"
+  fi
+  if [[ "$SQUIRREL_DERIVED_DATA_OVERRIDE_SET" != "1" ]]; then
+    SQUIRREL_STACK_DERIVED_DATA="$SQUIRREL_STACK_TEMP_ROOT/derived-data"
+  fi
+  if [[ "$SQUIRREL_STACK_WORKDIR" == "$SQUIRREL_STACK_DERIVED_DATA" ]]; then
+    echo "Squirrel workdir and derived-data paths must be different" >&2
+    exit 73
+  fi
+
+  run_with_stack_squirrel_workspace "$ROOT/scripts/prepare_squirrel_workspace.sh"
+  echo "Prepared current-source Squirrel workspace: $SQUIRREL_STACK_WORKDIR"
 }
 
 while (($#)); do
@@ -60,6 +149,10 @@ if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]] \
   echo "refusing to install a mixed product stack from dirty tracked source" >&2
   echo "commit or stash tracked changes, or set RAG_IME_ALLOW_DIRTY_INSTALL=1 for a development build" >&2
   exit 1
+fi
+
+if [[ "$INCLUDE_SQUIRREL" == "1" ]]; then
+  prepare_stack_squirrel_workspace
 fi
 
 echo "Installing product runtime generation $SOURCE_COMMIT"
@@ -137,6 +230,21 @@ if [[ "$INCLUDE_DESKTOP" == "1" ]]; then
   required+=(--require desktopBridge)
 fi
 
+if [[ "$INCLUDE_MLX" == "auto" ]]; then
+  if [[ -f "$APP_SUPPORT_DIR/models.json" || -f "$HOME/Library/LaunchAgents/com.rag-ime.mlx-predictor.plist" ]]; then
+    INCLUDE_MLX=1
+  else
+    INCLUDE_MLX=0
+  fi
+fi
+if [[ "$INCLUDE_MLX" == "1" ]]; then
+  # Start the registry-selected resident model before Sidecar. Sidecar resolves
+  # the same registry into its predictor contract and its health gate must
+  # never publish a usable service backed by NullPredictionProvider.
+  "$ROOT/scripts/install_mlx_predictor_launch_agent.sh"
+  required+=(--require mlxPredictor)
+fi
+
 # The stack owns launch order. Prevent the standalone Sidecar installer from
 # also refreshing the gateway, otherwise launchd sees two back-to-back
 # bootout/bootstrap cycles for the same label and can reject the second one.
@@ -155,18 +263,6 @@ else
   echo "Managed Pi Runtime is not installed; Agent gateway installation was skipped."
 fi
 
-if [[ "$INCLUDE_MLX" == "auto" ]]; then
-  if [[ -f "$APP_SUPPORT_DIR/models.json" || -f "$HOME/Library/LaunchAgents/com.rag-ime.mlx-predictor.plist" ]]; then
-    INCLUDE_MLX=1
-  else
-    INCLUDE_MLX=0
-  fi
-fi
-if [[ "$INCLUDE_MLX" == "1" ]]; then
-  "$ROOT/scripts/install_mlx_predictor_launch_agent.sh"
-  required+=(--require mlxPredictor)
-fi
-
 if [[ "$INCLUDE_MAINTENANCE" == "1" ]]; then
   "$ROOT/scripts/install_memory_book_maintenance_launch_agent.sh"
   required+=(--require memoryBookMaintenance)
@@ -178,7 +274,7 @@ if [[ "$INCLUDE_VOICE" == "1" ]]; then
 fi
 
 if [[ "$INCLUDE_SQUIRREL" == "1" ]]; then
-  "$ROOT/scripts/build_patched_squirrel.sh" install
+  run_with_stack_squirrel_workspace "$ROOT/scripts/build_patched_squirrel.sh" install
 fi
 
 # Install the user-visible app last so its marker becomes the canonical product

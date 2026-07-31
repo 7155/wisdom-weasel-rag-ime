@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.agent-background-job.v1",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "jobId",
+    "sessionId",
+    "label",
+    "status",
+    "command",
+    "commandSha256",
+    "cwd",
+    "networkAllowed",
+    "maxRunSeconds",
+    "pid",
+    "createdAtMs",
+    "startedAtMs",
+    "updatedAtMs",
+    "endedAtMs",
+    "exitCode",
+    "outputBytes",
+    "logStartCursor",
+    "logTruncated",
+    "cancelRequestedAtMs",
+    "error",
+    "approvalId",
+    "causalMetadata"
+  ],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.agent-background-job.v1"},
+    "jobId": {"type": "string", "pattern": "^bg_[a-f0-9]{32}$"},
+    "sessionId": {"type": "string", "minLength": 1, "maxLength": 240},
+    "label": {"type": "string", "minLength": 1, "maxLength": 120},
+    "status": {
+      "type": "string",
+      "enum": ["queued", "running", "cancelling", "completed", "failed", "cancelled", "orphaned"]
+    },
+    "command": {"type": "string", "minLength": 1, "maxLength": 2000},
+    "commandSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "cwd": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "networkAllowed": {"type": "boolean"},
+    "maxRunSeconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+    "pid": {"type": ["integer", "null"], "minimum": 1},
+    "createdAtMs": {"type": "integer", "minimum": 0},
+    "startedAtMs": {"type": "integer", "minimum": 0},
+    "updatedAtMs": {"type": "integer", "minimum": 0},
+    "endedAtMs": {"type": "integer", "minimum": 0},
+    "exitCode": {"type": ["integer", "null"]},
+    "outputBytes": {"type": "integer", "minimum": 0},
+    "logStartCursor": {"type": "integer", "minimum": 0},
+    "logTruncated": {"type": "boolean"},
+    "cancelRequestedAtMs": {"type": "integer", "minimum": 0},
+    "error": {"type": "string", "maxLength": 500},
+    "approvalId": {"type": "string", "maxLength": 240},
+    "causalMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planId", "planRevision", "goalId", "goalRevision", "turnId", "roomBound"],
+      "properties": {
+        "planId": {"type": "string", "maxLength": 240},
+        "planRevision": {"type": "integer", "minimum": 0},
+        "goalId": {"type": "string", "maxLength": 240},
+        "goalRevision": {"type": "integer", "minimum": 0},
+        "turnId": {"type": "string", "maxLength": 240},
+        "roomBound": {"type": "boolean"}
+      }
+    }
+  },
+  "additionalProperties": false
+}

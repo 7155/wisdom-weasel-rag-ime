@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createRoomProjection } from '@/contracts/room-reducer';
 
 import {
+  roomActivityNeedsSessionAction,
   selectPublicRoomTurnOrder,
   selectRoomTurnExecution,
 } from './room-execution-lanes';
@@ -159,4 +160,103 @@ describe('selectRoomTurnExecution', () => {
       summary: '模型响应中断，正在按运行策略处理',
     });
   });
+
+  it('keeps generic and plan-review waiting actions in their owning Session lane', () => {
+    const projection = createRoomProjection('room-1');
+    projection.turnOrder.push('root-1');
+    projection.activityOrder.push('plan-review', 'select-input');
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'running',
+      messageIds: [],
+      activityIds: ['plan-review', 'select-input'],
+      participantIds: ['participant-1'],
+      dispatchIds: ['dispatch-1'],
+      dispatchParticipantIds: { 'dispatch-1': 'participant-1' },
+      createdAtMs: 1,
+      updatedAtMs: 3,
+    };
+    projection.activitiesById['plan-review'] = {
+      id: 'plan-review',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-owner',
+      kind: 'participant_activity',
+      status: 'waiting',
+      summary: '等待计划审阅',
+      payload: {
+        rootId: 'root-1',
+        dispatchId: 'dispatch-1',
+        requestId: 'request-plan',
+        requestKind: 'plan_review',
+      },
+      createdAtMs: 2,
+    };
+    projection.activitiesById['select-input'] = {
+      id: 'select-input',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-owner',
+      kind: 'participant_activity',
+      status: 'waiting',
+      summary: '选择部署环境',
+      payload: {
+        rootId: 'root-1',
+        dispatchId: 'dispatch-1',
+        sourceEventType: 'user_input_required',
+        requestId: 'request-select',
+        requestKind: 'user_input_required',
+        method: 'select',
+        options: ['预发布', '生产'],
+      },
+      createdAtMs: 3,
+    };
+
+    const selected = selectRoomTurnExecution(projection, 'root-1');
+
+    expect(selected.activities.map((activity) => activity.id)).toEqual([
+      'plan-review',
+      'select-input',
+    ]);
+    expect(selected.lanes).toHaveLength(1);
+    expect(selected.lanes[0]).toMatchObject({
+      dispatchId: 'dispatch-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-owner',
+    });
+  });
+  it('keeps model arbitration in the Room lane without creating a Session review action', () => {
+    const base = {
+      id: 'approval-model-1',
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-owner',
+      kind: 'participant_activity',
+      status: 'waiting' as const,
+      summary: 'Luna Max 正在评估',
+      createdAtMs: 1,
+      payload: {
+        approvalId: 'approval-model-1',
+        payloadSha256: 'd'.repeat(64),
+        decisionMode: 'model',
+        automatic: true,
+        approvalModelDecision: {
+          status: 'pending',
+          model: 'openai-codex/gpt-5.6-luna',
+        },
+      },
+    };
+
+    expect(roomActivityNeedsSessionAction(base)).toBe(false);
+    expect(roomActivityNeedsSessionAction({
+      ...base,
+      id: 'approval-human-1',
+      payload: {
+        approvalId: 'approval-human-1',
+        payloadSha256: 'e'.repeat(64),
+      },
+    })).toBe(true);
+  });
+
 });

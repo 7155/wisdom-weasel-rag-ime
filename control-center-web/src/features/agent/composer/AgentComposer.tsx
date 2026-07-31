@@ -21,6 +21,11 @@ import {
 } from 'react';
 import { IconButton } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import type {
+  CapabilityCatalog,
+  CapabilityPreference,
+} from '@/features/plugins/capability-policy';
+import { managedContentUrl } from '../file-preview/file-descriptor';
 import {
   buildCommandCatalog,
   commandTitle,
@@ -49,6 +54,7 @@ export type AgentMessageDelivery = 'prompt' | 'steer' | 'followUp';
 export interface AgentComposerEditState {
   entryId: string;
   messageId: string;
+  resolving?: boolean;
 }
 
 export function AgentComposer({
@@ -61,6 +67,8 @@ export function AgentComposer({
   commands: piCommands,
   tools,
   toolCatalogStatus,
+  capabilityCatalog,
+  capabilityPolicyPending = false,
   busy,
   stopping = false,
   sending,
@@ -71,6 +79,7 @@ export function AgentComposer({
   onPasteFromClipboard,
   onPasteImages,
   onToolSelect,
+  onCapabilityPreferenceChange = () => {},
   onProductCommand,
   onSend,
   onStop,
@@ -99,6 +108,8 @@ export function AgentComposer({
   commands: AgentCommand[];
   tools: ToolManifest[];
   toolCatalogStatus: 'loading' | 'ready' | 'failed';
+  capabilityCatalog?: CapabilityCatalog;
+  capabilityPolicyPending?: boolean;
   busy: boolean;
   stopping?: boolean;
   sending: boolean;
@@ -109,6 +120,7 @@ export function AgentComposer({
   onPasteFromClipboard?: () => void;
   onPasteImages: (files: File[]) => void;
   onToolSelect: (tool: ToolManifest) => void;
+  onCapabilityPreferenceChange?: (canonicalId: string, preference: CapabilityPreference) => void;
   onProductCommand: (command: AgentProductCommandName) => void;
   onSend: (delivery: AgentMessageDelivery, draft: string) => void;
   onStop: () => void;
@@ -328,13 +340,13 @@ export function AgentComposer({
   return (
     <div className="agent-composer-wrap">
       {commandPanelVisible ? (
-        <div className="agent-command-palette" role="listbox" aria-label="命令面板">
+        <div id="agent-command-palette" className="agent-command-palette" role="listbox" aria-label="命令面板">
           <header>
             <span><strong>{helpOpen ? '命令帮助' : '当前可用命令'}</strong><small>{session ? `${permissionLabel(session)} · ${commands.length} 项` : '未选择对话'}</small></span>
             {helpOpen ? <p>控制中心命令直接操作界面或 API；Pi 命令只来自当前对话的 RPC 目录。</p> : null}
           </header>
           {commands.map((command, index) => (
-            <button key={`${command.source}:${command.invocation}`} type="button" role="option" data-source={command.source} aria-selected={index === activeCommandIndex} aria-disabled={!command.enabled} disabled={!command.enabled} title={command.disabledReason} onMouseEnter={() => command.enabled && setActiveCommandIndex(index)} onClick={() => selectCommand(command)}>
+            <button id={`agent-command-option-${index}`} key={`${command.source}:${command.invocation}`} type="button" role="option" data-source={command.source} aria-selected={index === activeCommandIndex} aria-disabled={!command.enabled} disabled={!command.enabled} title={command.disabledReason} onMouseEnter={() => command.enabled && setActiveCommandIndex(index)} onClick={() => selectCommand(command)}>
               <kbd title={command.invocation}>{command.invocation}</kbd>
               <span className="agent-command-palette__copy">
                 <strong>{command.description || commandTitle(command.source)}</strong>
@@ -370,14 +382,18 @@ export function AgentComposer({
         {editState ? (
           <div className="agent-composer__edit" role="status">
             <PencilLine size={15} aria-hidden="true" />
-            <span><strong>正在修改这条消息</strong><small>发送后将从这里重新生成后续对话</small></span>
+            <span><strong>正在修改这条消息</strong><small>{editState.resolving ? '正在定位历史锚点；内容现在就可以编辑' : '发送后将从这里重新生成后续对话'}</small></span>
             <IconButton label="取消修改" icon={<X size={15} />} size="small" onClick={onCancelEdit} tooltip />
           </div>
         ) : null}
         {attachments.length ? (
-          <div className="agent-composer__attachments">
+          <div className="agent-composer__attachments" aria-label="待发送图片" role="list">
             {attachments.map((attachment) => (
-              <span key={attachment.id}><Paperclip size={13} /><b>{attachment.name}</b><button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => onAttachmentsChange(attachments.filter((item) => item.id !== attachment.id))}><X size={12} /></button></span>
+              <span className="agent-composer__attachment-chip" key={attachment.id} role="listitem">
+                <ComposerAttachmentPreview attachment={attachment} sessionId={session?.id ?? ''} />
+                <b title={attachment.name}>{attachment.name}</b>
+                <button type="button" aria-label={`移除 ${attachment.name}`} onClick={() => onAttachmentsChange(attachments.filter((item) => item.id !== attachment.id))}><X size={12} /></button>
+              </span>
             ))}
           </div>
         ) : null}
@@ -396,6 +412,11 @@ export function AgentComposer({
           spellCheck={false}
           placeholder={composerPlaceholder(persona?.displayName ?? assistantName, imageSupport)}
           aria-label="消息"
+          aria-autocomplete="list"
+          aria-controls={commandPanelVisible ? 'agent-command-palette' : undefined}
+          aria-activedescendant={commandPanelVisible && commands[activeCommandIndex]
+            ? `agent-command-option-${activeCommandIndex}`
+            : undefined}
         />
         <div className="agent-composer__toolbar">
           <div className="agent-composer__controls">
@@ -414,7 +435,21 @@ export function AgentComposer({
               pending={contextResourcesChanging}
               onChange={onContextResourcesChange}
             />
-            <ToolPicker tools={tools} status={toolCatalogStatus} session={session} disabled={!session || busy || sending} requestOpen={toolPickerRequest} onSelect={onToolSelect} />
+            <ToolPicker
+              adjustmentDisabled={busy || sending}
+              capabilityCatalog={capabilityCatalog}
+              capabilityPolicyPending={capabilityPolicyPending}
+              disabled={!session}
+              requestOpen={toolPickerRequest}
+              session={session}
+              status={toolCatalogStatus}
+              tools={tools}
+              onCapabilityPreferenceChange={onCapabilityPreferenceChange}
+              onSelect={(tool) => {
+                onToolSelect(tool);
+                window.requestAnimationFrame(() => textareaRef.current?.focus());
+              }}
+            />
             <ModelPicker
               catalog={catalog}
               disabled={busy || sending}
@@ -453,6 +488,52 @@ export function AgentComposer({
         </div>
       </div>
     </div>
+  );
+}
+
+function ComposerAttachmentPreview({
+  attachment,
+  sessionId,
+}: {
+  attachment: ComposerAttachment;
+  sessionId: string;
+}) {
+  const [localUrl, setLocalUrl] = useState('');
+  const [failed, setFailed] = useState(false);
+  const isImage = attachment.mimeType.toLowerCase().startsWith('image/');
+  const managedUrl = isImage
+    && attachment.sessionId === sessionId
+    && attachment.sha256
+    ? managedContentUrl({
+      mediaId: attachment.id,
+      sessionId,
+      expectedSha256: attachment.sha256,
+      fileNameHint: attachment.name,
+      mimeTypeHint: attachment.mimeType,
+      byteSizeHint: attachment.byteSize,
+    })
+    : null;
+
+  useEffect(() => {
+    setFailed(false);
+    if (!attachment.previewFile || typeof URL.createObjectURL !== 'function') {
+      setLocalUrl('');
+      return undefined;
+    }
+    const nextUrl = URL.createObjectURL(attachment.previewFile);
+    setLocalUrl(nextUrl);
+    return () => URL.revokeObjectURL(nextUrl);
+  }, [attachment.previewFile]);
+
+  const previewUrl = attachment.previewFile ? localUrl : managedUrl;
+  if (!previewUrl || failed) return <Paperclip aria-hidden="true" size={16} />;
+  return (
+    <img
+      alt=""
+      draggable={false}
+      src={previewUrl}
+      onError={() => setFailed(true)}
+    />
   );
 }
 

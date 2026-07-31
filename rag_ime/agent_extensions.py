@@ -152,6 +152,39 @@ class AgentExtensionService:
                     "actionable": source.get("kind") == "bundled" and bool(versions),
                 }
             )
+        catalog_ids = {
+            str(item.get("id") or "")
+            for item in entries
+            if isinstance(item, Mapping)
+        }
+        for plugin_id, current in sorted(installed.items()):
+            if not plugin_id or plugin_id in catalog_ids:
+                continue
+            entries.append(
+                {
+                    "id": plugin_id,
+                    "displayName": str(
+                        current.get("displayName") or plugin_id
+                    ),
+                    "description": str(current.get("description") or ""),
+                    "publisher": "",
+                    "source": {
+                        "kind": "runtime_inventory",
+                        "label": "Installed runtime inventory",
+                    },
+                    "permissions": list(current.get("permissions") or []),
+                    "compatibility": {},
+                    "security": {},
+                    "versions": [],
+                    "latestVersion": "",
+                    "installedVersion": str(current.get("version") or ""),
+                    "installed": True,
+                    "enabled": current.get("enabled") is True,
+                    "updateAvailable": False,
+                    "installState": "orphaned",
+                    "actionable": False,
+                }
+            )
         return {
             "schemaVersion": "rag-ime.plugin-catalog.v1",
             "ok": True,

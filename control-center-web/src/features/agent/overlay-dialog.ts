@@ -62,8 +62,10 @@ export function useModalPanel({
 
     function handleKeyDown(event: KeyboardEvent): void {
       const eventTarget = event.target instanceof Element ? event.target : document.activeElement;
-      const nestedDialog = eventTarget?.closest<HTMLElement>('[role="dialog"][aria-modal="true"]');
-      if (nestedDialog && nestedDialog !== activePanel) return;
+      const nestedLayer = eventTarget?.closest<HTMLElement>(
+        '[role="dialog"][aria-modal="true"], [role="menu"][data-state="open"], [role="listbox"][data-state="open"], .ui-popover[data-state="open"]',
+      );
+      if (nestedLayer && nestedLayer !== activePanel) return;
       if (event.key === 'Escape' && !event.defaultPrevented) {
         event.preventDefault();
         closeRef.current();

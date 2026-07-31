@@ -12,6 +12,19 @@ PORTABLE_MODELS_DIR="${RAG_IME_MODELS_DIR:-$APP_SUPPORT_DIR/Models}"
 EMBEDDING_PROVIDER_WAS_EXPLICIT="${RAG_IME_EMBEDDING_PROVIDER+x}"
 PREFERRED_MLX_BGE_Q8_MODEL="${RAG_IME_MLX_BGE_Q8_MODEL:-$PORTABLE_MODELS_DIR/bge-base-zh-v1.5-mlx-q8}"
 
+case "${RAG_IME_LAUNCH_AGENT_DRY_RUN:-0}" in
+  1|true|TRUE) export RAG_IME_LAUNCH_AGENT_DRY_RUN=1 ;;
+esac
+case "${RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN:-0}" in
+  1|true|TRUE) export RAG_IME_MLX_LAUNCH_AGENT_DRY_RUN=1 ;;
+esac
+
+if [[ -n "${RAG_IME_PYTHON:-}" ]] \
+  && [[ "$RAG_IME_PYTHON" != /* || ! -f "$RAG_IME_PYTHON" || ! -x "$RAG_IME_PYTHON" ]]; then
+  echo "RAG_IME_PYTHON must be an absolute executable file: $RAG_IME_PYTHON" >&2
+  exit 1
+fi
+
 if [[ -n "$MODEL_REGISTRY_EXPLICIT" && ! -f "$MODEL_REGISTRY_PATH" ]]; then
   echo "Explicit model registry does not exist: $MODEL_REGISTRY_PATH" >&2
   exit 1
@@ -53,13 +66,25 @@ detect_mlx_model() {
 
 detect_sidecar_python() {
   local candidate
+  local path_python
+  local path_python_target
   local candidates=()
+  path_python="$(command -v python3 2>/dev/null || true)"
+  if [[ -n "$path_python" && -L "$path_python" ]]; then
+    path_python_target="$(readlink "$path_python" 2>/dev/null || true)"
+    if [[ -n "$path_python_target" && "$path_python_target" != /* ]]; then
+      path_python_target="$(dirname "$path_python")/$path_python_target"
+    fi
+    if [[ -n "$path_python_target" && -x "$path_python_target" ]]; then
+      path_python="$path_python_target"
+    fi
+  fi
   candidates+=("${RAG_IME_PYTHON:-}")
   candidates+=("$ROOT/.venv/bin/python")
   candidates+=("$ROOT/.venv-mlx313/bin/python")
   candidates+=("$ROOT/.venv-mlx314sys/bin/python")
+  candidates+=("$path_python")
   candidates+=("/opt/homebrew/bin/python3")
-  candidates+=("$(command -v python3 2>/dev/null || true)")
   candidates+=("/usr/local/bin/python3")
   for candidate in "${candidates[@]}"; do
     if [[ -n "$candidate" && -x "$candidate" ]]; then
@@ -142,15 +167,16 @@ if [[ "$MODEL_RUNTIME" == "mlx" && ! -d "$MODEL_DIR" ]]; then
   exit 1
 fi
 
-if [[ "$MODEL_RUNTIME" == "mlx" && -n "$MLX_PYTHON" && ! -x "$MLX_PYTHON" ]]; then
-  echo "MLX python is not executable: $MLX_PYTHON" >&2
+if [[ "$MODEL_RUNTIME" == "mlx" && -n "$MLX_PYTHON" ]] \
+  && [[ "$MLX_PYTHON" != /* || ! -f "$MLX_PYTHON" || ! -x "$MLX_PYTHON" ]]; then
+  echo "RAG_IME_MLX_PYTHON must be an absolute executable file: $MLX_PYTHON" >&2
   echo "Unset RAG_IME_MLX_PYTHON to use the managed runtime, or set it to a Python that can import mlx_lm." >&2
   exit 1
 fi
 
 SIDECAR_PYTHON="$(detect_sidecar_python || true)"
 if [[ -z "$SIDECAR_PYTHON" || ! -x "$SIDECAR_PYTHON" ]]; then
-  echo "Sidecar Python is not available; set RAG_IME_PYTHON to an executable Python 3.11+." >&2
+  echo "Sidecar Python is not available; set RAG_IME_PYTHON to an absolute executable Python 3.12+." >&2
   exit 1
 fi
 eval "$(PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" "$SIDECAR_PYTHON" -m rag_ime.runtime_profile --profile "$RUNTIME_PROFILE" --format shell)"

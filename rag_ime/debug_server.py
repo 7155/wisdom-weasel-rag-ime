@@ -13,7 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,6 +39,7 @@ from .agent_service import AgentService, agent_service_from_settings
 from .agent_routes import (
     agent_collaboration_profile_route,
     agent_approval_route,
+    agent_background_job_route,
     agent_artifact_route,
     agent_context_item_route,
     agent_context_trace_route,
@@ -47,11 +48,13 @@ from .agent_routes import (
     agent_room_kernel_route,
     agent_room_work_route,
     agent_session_route,
+    agent_work_document_route,
     agent_subagent_route,
     agent_wake_schedule_route,
 )
 from .agent_tool_artifacts import AgentToolArtifactProjector
 from .agent_tools import ControlToolGateway
+from .agent_workspace import WorkspaceHarnessError, WorkspaceSnapshotError
 from .adapter import InputMethodAdapter, SuggestionRequest
 from .assistant_overlay import build_assistant_overlay_payload, build_candidate_panel_payload
 from .browser_control import BrowserControlError, BrowserControlService
@@ -70,9 +73,20 @@ from .control_api import (
 from .control_api.gateway_access import GatewayAccessDecision, resolve_gateway_access
 from .control_api.route_table import build_arguments, find_route
 from .models import InputSuggestion
+from .model_profiles import canonical_runtime_profile_id, profile_by_id
+from .model_registry import ModelDeployment, ModelRegistry, default_model_registry_path
+from .predictor_configuration import (
+    PREDICTOR_SETTING_KEYS,
+    PredictorConfiguration,
+    active_predictor_configuration,
+    configuration_matches,
+    resolve_predictor_configuration,
+)
 from .deepseek_completion import DeepSeekCompletionRequest, DeepSeekV4FlashCompletionProvider, build_deepseek_completion_messages
 from .deepseek_config import load_deepseek_config
-from .deepseek_memory_organizer import DeepSeekMemoryOrganizer
+from .deepseek_memory_organizer import ManagedPiMemoryOrganizer
+from .memory_maintenance_settings import MemoryMaintenanceSettings
+from .memory_model_executor import build_governed_memory_model_executor
 from .deployment_status import audit_installed_product
 from .embeddings import embed_query, embedding_provider_from_env
 from .foreground_app_semantics import enrich_window_context_with_app_semantics
@@ -159,6 +173,7 @@ from .rag_core_v3 import memory_candidates_v2_to_input_suggestions
 from .retrieval_docs import rebuild_retrieval_docs
 from .rime_native_feedback import record_native_rime_selection
 from .rime_rank_export import record_rime_rank_feedback
+from .lexicon_organization import lexicon_organization_status
 from .rime_lexicon_review import (
     apply_reviewed_rime_lexicon,
     review_rime_lexicon,
@@ -167,7 +182,12 @@ from .rime_lexicon_review import (
 from .runtime_config import RuntimeConfigResolver, RuntimeConfigSnapshot
 from .runtime_flags import load_hybrid_rag_runtime_flags
 from .settings_models import SettingsUpdateResult, UserProfile, UserVocabularyItem
-from .settings_schema import SENSITIVE_SETTING_SUFFIXES, flatten_settings, stable_settings_hash
+from .settings_schema import (
+    SENSITIVE_SETTING_SUFFIXES,
+    deep_merge_settings,
+    flatten_settings,
+    stable_settings_hash,
+)
 from .settings_store import ManagementSettingsStore, ensure_management_tables, settings_response
 from .temporal_query import TemporalQuery, parse_temporal_query
 from .text_utils import compact_whitespace, now_ms, stable_text_hash, truncate_text
@@ -393,18 +413,28 @@ class DebugImeService:
             self.knowledge_client = self.knowledge_worker
         else:
             self.knowledge_client = config.knowledge_client
-        self._agent_managed_by_settings = config.agent_service is None
+        gateway_owns_agent_runtime = (
+            config.server_name == "sidecar server"
+            and _bool(os.environ.get("RAG_IME_AGENT_GATEWAY_ENABLED"), default=False)
+        )
+        self._agent_runtime_execution_owner = not gateway_owns_agent_runtime
+        self._agent_managed_by_settings = (
+            config.agent_service is None
+            and self._agent_runtime_execution_owner
+        )
         self.agent = config.agent_service or agent_service_from_settings(
             config.db_path,
             self.settings_store.get_settings(include_sensitive=True),
             project=config.project,
             memory_embedding_provider=getattr(self.core, "embedding_provider", None),
-            # Only the dedicated 8768 Agent Gateway owns the durable scheduler.
-            # It also owns Room Runtime effects. The 8766 Sidecar and local
-            # preview servers share SQLite but may only enqueue durable work;
-            # they must never race the Gateway for a Dispatch or Pi Host.
+            # Only the dedicated 8768 Agent Gateway owns the durable scheduler,
+            # Room Runtime effects, and the managed Pi Host.  The process-local
+            # execution fence is deliberately separate from shared SQLite
+            # settings, otherwise applying `agent.pi.enabled=true` wakes a
+            # second Host in the 8766 Sidecar and faults the Gateway.
             wake_scheduler_enabled=config.server_name == "agent gateway",
             room_kernel_worker_enabled=config.server_name == "agent gateway",
+            runtime_execution_owner=self._agent_runtime_execution_owner,
         )
         self.personal_context_observability = PersonalContextObservability(
             config.db_path,
@@ -514,12 +544,17 @@ class DebugImeService:
             project=config.project,
             facade=self,
             knowledge_client=self.knowledge_client,
+            workspace_harness=self.agent.background_jobs.workspace_harness,
+            background_jobs=self.agent.background_jobs,
             delegation=self.agent.delegation,
             collaboration=self.agent,
             extensions=self.agent_extensions,
             scheduling=self.agent,
+            configuration_store=self.agent.configuration_store,
+            governed_skills=self.agent.room_skill_policy,
             browser_control=self.browser_control,
             artifact_projector=AgentToolArtifactProjector(self.agent.media),
+            work_documents=self.agent.work_documents,
             workflow_publisher=lambda session_id, reason: self.agent.publish_workflow_state(
                 session_id,
                 reason=reason,
@@ -861,7 +896,8 @@ class DebugImeService:
                 "roomKernel": {
                     "mode": room_kernel_mode,
                     "v2Active": kernel_owns_room_execution(room_kernel_mode),
-                }
+                },
+                "workDocuments": True,
             },
             "platform": bootstrap["platform"],
             "routes": routes,
@@ -872,6 +908,9 @@ class DebugImeService:
         access_context: ControlAccessContext | None = None,
     ) -> dict[str, object]:
         payload = self.control_api.bootstrap()
+        features = payload.setdefault("features", {})
+        if isinstance(features, dict):
+            features["workDocuments"] = True
         if access_context is not None:
             payload["routes"] = default_route_policy().manifest(
                 context=access_context,
@@ -1301,6 +1340,19 @@ class DebugImeService:
                     "unsupported_mutation",
                     f"Setting {key} must be changed through its dedicated secure flow.",
                 )
+        if PREDICTOR_SETTING_KEYS.intersection(changes):
+            merged = deep_merge_settings(
+                self.settings_store.get_settings(include_sensitive=True),
+                normalized,
+            )
+            try:
+                resolve_predictor_configuration(
+                    merged,
+                    registry=ModelRegistry.load(_configured_model_registry_path()),
+                    require_model_exists=True,
+                )
+            except (OSError, ValueError) as exc:
+                raise ManagementWorkError("invalid_request", str(exc)) from exc
         return changes
 
     def _configuration_restart_components(
@@ -1665,13 +1717,69 @@ class DebugImeService:
 
     def models_status(self) -> dict[str, object]:
         settings = self.settings_store.get_settings()
-        return {
-            "schemaVersion": "rag-ime.models-status.v3",
+        predictor = self._predictor_status(probe_capabilities=True)
+        payload: dict[str, object] = {
+            "schemaVersion": "rag-ime.models-status.v4",
             "ok": True,
             "settings": settings.get("models", {}),
-            "predictor": self._predictor_status(probe_capabilities=True),
+            "predictor": predictor,
             "activeRagRoute": self.active_rag_route_status(local_only=False),
         }
+        try:
+            registry = ModelRegistry.load(_configured_model_registry_path())
+            desired = resolve_predictor_configuration(
+                settings,
+                registry=registry,
+                require_model_exists=False,
+            )
+            active = active_predictor_configuration(registry)
+            registry_agrees = configuration_matches(desired, active)
+            sidecar_agrees = _predictor_status_matches_configuration(
+                predictor,
+                active,
+            )
+            capability_probe = (
+                predictor.get("capabilityProbe")
+                if isinstance(predictor.get("capabilityProbe"), Mapping)
+                else {}
+            )
+            mlx_agrees = _predictor_probe_matches_configuration(
+                capability_probe,
+                active,
+            )
+            payload.update(
+                {
+                    "configurationPending": not registry_agrees,
+                    "desiredConfig": desired.payload(),
+                    "activeConfig": active.payload(),
+                    "availableModels": [
+                        _registered_model_option(deployment)
+                        for deployment in registry.deployments
+                        if deployment.lane == "hot"
+                    ],
+                    "healthAgreement": {
+                        "ok": registry_agrees and sidecar_agrees and mlx_agrees,
+                        "desiredMatchesRegistry": registry_agrees,
+                        "sidecarMatchesRegistry": sidecar_agrees,
+                        "mlxMatchesRegistry": mlx_agrees,
+                    },
+                }
+            )
+        except (OSError, ValueError) as exc:
+            payload.update(
+                {
+                    "ok": False,
+                    "configurationPending": True,
+                    "configurationError": str(exc),
+                    "healthAgreement": {
+                        "ok": False,
+                        "desiredMatchesRegistry": False,
+                        "sidecarMatchesRegistry": False,
+                        "mlxMatchesRegistry": False,
+                    },
+                }
+            )
+        return payload
 
     def model_profiles(self) -> dict[str, object]:
         active_rag_route = self.active_rag_route_status(local_only=False)
@@ -3093,16 +3201,13 @@ class DebugImeService:
                 },
             )
             return response
-        config = load_deepseek_config()
-        if scope == "global":
-            config = replace(
-                config,
-                memory_book_max_tokens=max(
-                    4096,
-                    int(config.memory_book_max_tokens),
-                ),
-            )
-        organizer = DeepSeekMemoryOrganizer(config)
+        managed = MemoryMaintenanceSettings.load(self.core.db_path)
+        executor = build_governed_memory_model_executor(
+            self.agent.runtime,
+            managed.automatic_organization_model,
+            managed.automatic_organization_thinking_level,
+        )
+        organizer = ManagedPiMemoryOrganizer(executor)
         decisions = organizer.compile_memory_curation(
             bundle=bundle,
             project=request.project,
@@ -3197,10 +3302,15 @@ class DebugImeService:
                     "error": "local SQLite core required",
                 }
             project = _string(payload.get("project")) or self.config.project
-            config = load_deepseek_config()
+            managed = MemoryMaintenanceSettings.load(self.core.db_path)
+            executor = build_governed_memory_model_executor(
+                self.agent.runtime,
+                managed.automatic_organization_model,
+                managed.automatic_organization_thinking_level,
+            )
             curator = OwnerMemoryCurator(
                 self.core.db_path,
-                organizer=DeepSeekMemoryOrganizer(config),
+                organizer=ManagedPiMemoryOrganizer(executor),
                 project=project,
                 embedding_provider=self.core.embedding_provider,
             )
@@ -3424,6 +3534,13 @@ class DebugImeService:
                     "title": title[:120],
                     "detail": detail[:240],
                     "sourceCount": len(source_ids) if isinstance(source_ids, list) else 0,
+                    "sourceEventIds": [
+                        int(source_id)
+                        for source_id in (
+                            source_ids if isinstance(source_ids, list) else []
+                        )
+                        if str(source_id).isdigit() and int(source_id) > 0
+                    ][:80],
                 }
             )
         revision_hash = "sha256:" + hashlib.sha256(
@@ -3463,6 +3580,11 @@ class DebugImeService:
                 "runKind": _string(run.get("runKind")),
                 "bundleHash": _string(metadata.get("bundleHash")),
                 "sourceCursor": dict(metadata.get("sourceCursor") or {}),
+                "sourceInputRefs": [
+                    dict(item)
+                    for item in metadata.get("sourceInputRefs") or []
+                    if isinstance(item, dict)
+                ][:64],
                 "diffCount": len(diffs),
                 "pendingDiffCount": pending_count,
                 "appliedDiffCount": applied_count,
@@ -3617,6 +3739,7 @@ class DebugImeService:
                 "schedulerPollIntervalMs": 60 * 60 * 1000,
                 "enabled": automatic_enabled,
                 "model": managed.automatic_organization_model,
+                "thinkingLevel": managed.automatic_organization_thinking_level,
                 "runsPerDay": managed.automatic_organization_runs_per_day,
                 "autoApply": automatic_enabled,
             },
@@ -5213,12 +5336,18 @@ class DebugImeService:
         }
 
     def rime_lexicon_review(self, payload: dict[str, Any]) -> dict[str, object]:
-        return review_rime_lexicon(
+        project = _string(payload.get("project")) or self.config.project
+        review = review_rime_lexicon(
             self.config.db_path,
-            project=_string(payload.get("project")) or self.config.project,
+            project=project,
             limit=max(1, min(500, _optional_int(payload.get("limit")) or 200)),
             rime_user_dir=self.config.rime_user_dir,
         )
+        review["organization"] = lexicon_organization_status(
+            self.config.db_path,
+            project=project,
+        )
+        return review
 
     def rime_lexicon_apply(self, payload: dict[str, Any]) -> dict[str, object]:
         selected_keys = payload.get("selectedKeys")
@@ -6012,6 +6141,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             )
             return
         agent_session_id, agent_action = agent_session_route(parsed.path)
+        background_job_session_id, background_job_id, background_job_action = (
+            agent_background_job_route(parsed.path)
+        )
         if agent_session_id and agent_action == "events":
             query = parse_qs(parsed.query or "")
             self._stream_agent_events(
@@ -6038,6 +6170,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         subagent_run_id, subagent_action = agent_subagent_route(parsed.path)
         artifact_id = agent_artifact_route(parsed.path)
         collaboration_profile_id = agent_collaboration_profile_route(parsed.path)
+        work_document_id, work_document_action = agent_work_document_route(parsed.path)
         if agent_room_id and room_action == "events":
             query = parse_qs(parsed.query or "")
             self._stream_agent_room_events(
@@ -6073,6 +6206,21 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             )
             return
         query = parse_qs(parsed.query or "")
+        if work_document_id and work_document_action == "detail":
+            try:
+                response = self.service.agent.work_documents.detail(work_document_id)
+            except KeyError:
+                self._write_json(
+                    HTTPStatus.NOT_FOUND, {"ok": False, "error": "work document not found"}
+                )
+                return
+            except Exception as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST, {"ok": False, "error": _safe_debug_error(exc)}
+                )
+                return
+            self._write_json(HTTPStatus.OK, response)
+            return
         if parsed.path == "/api/browser/extension/next":
             if not self._browser_extension_authenticated():
                 return
@@ -6287,6 +6435,40 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     }
                 ),
             )
+            return
+        if background_job_session_id:
+            try:
+                if background_job_action == "collection":
+                    response = self.service.agent.background_jobs.list(
+                        background_job_session_id,
+                        limit=_query_first(query, "limit") or 50,
+                        status=_query_first(query, "status"),
+                    )
+                elif background_job_action == "status":
+                    response = self.service.agent.background_jobs.status(
+                        background_job_session_id,
+                        background_job_id,
+                    )
+                elif background_job_action == "logs":
+                    response = self.service.agent.background_jobs.logs(
+                        background_job_session_id,
+                        background_job_id,
+                        cursor=_query_first(query, "cursor") or 0,
+                        limit_bytes=_query_first(query, "limitBytes") or 65_536,
+                    )
+                else:
+                    self._write_json(
+                        HTTPStatus.NOT_FOUND,
+                        {"ok": False, "error": "unknown endpoint"},
+                    )
+                    return
+            except Exception as exc:
+                self._write_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": _safe_debug_error(exc)},
+                )
+                return
+            self._write_json(HTTPStatus.OK, response)
             return
         if agent_session_id and agent_action == "workflow":
             try:
@@ -6625,6 +6807,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self.service.agent.list_media(
                     {
                         "sessionId": _query_first(query, "sessionId"),
+                        "roomId": _query_first(query, "roomId"),
                         "limit": _query_first(query, "limit"),
                     }
                 ),
@@ -6634,8 +6817,13 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
         if media_id:
             try:
                 session_id = _query_first(query, "sessionId")
+                room_id = _query_first(query, "roomId")
                 if media_action == "content":
-                    receipt, content = self.service.agent.media_content(media_id, session_id=session_id)
+                    receipt, content = self.service.agent.media_content(
+                        media_id,
+                        session_id=session_id,
+                        room_id=room_id,
+                    )
                     self._write_binary(
                         HTTPStatus.OK,
                         content,
@@ -6654,7 +6842,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 else:
                     self._write_json(
                         HTTPStatus.OK,
-                        self.service.agent.media_receipt(media_id, session_id=session_id),
+                        self.service.agent.media_receipt(
+                            media_id,
+                            session_id=session_id,
+                            room_id=room_id,
+                        ),
                     )
             except Exception as exc:
                 self._write_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
@@ -6700,6 +6892,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         "schemaVersion": "rag-ime.local-api-error.v1",
                         "ok": False,
                         "errorCode": "session_runtime_unavailable",
+                        "retryable": True,
                         "error": (
                             "session runtime is unavailable because its "
                             "workspace no longer exists"
@@ -6962,6 +7155,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.CREATED,
                     self.service.agent.import_media(
                         session_id=_query_first(query, "sessionId"),
+                        room_id=_query_first(query, "roomId"),
                         data=data,
                         mime_type=mime_type,
                         file_name=_query_first(query, "fileName"),
@@ -6998,7 +7192,53 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                         },
                     )
                     return
-                self._write_json(HTTPStatus.OK, self.service.agent_tools.execute(self._read_json()))
+                try:
+                    result = self.service.agent_tools.execute(self._read_json())
+                except WorkspaceSnapshotError as exc:
+                    self._write_json(
+                        HTTPStatus.CONFLICT,
+                        {
+                            "schemaVersion": "rag-ime.agent-tool-error.v1",
+                            "ok": False,
+                            "error": str(exc),
+                            "errorCode": exc.code,
+                            "retryable": exc.retryable,
+                        },
+                    )
+                    return
+                except WorkspaceHarnessError as exc:
+                    self._write_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {
+                            "schemaVersion": "rag-ime.agent-tool-error.v1",
+                            "ok": False,
+                            "error": str(exc),
+                            "errorCode": "invalid_workspace_request",
+                            "retryable": False,
+                        },
+                    )
+                    return
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    error = str(exc)
+                    workflow_gate_closed = error.startswith(
+                        "Act Gate blocked workspace mutation ("
+                    )
+                    self._write_json(
+                        HTTPStatus.CONFLICT if workflow_gate_closed else HTTPStatus.BAD_REQUEST,
+                        {
+                            "schemaVersion": "rag-ime.agent-tool-error.v1",
+                            "ok": False,
+                            "error": error,
+                            "errorCode": (
+                                "workflow_gate_closed"
+                                if workflow_gate_closed
+                                else "invalid_request"
+                            ),
+                            "retryable": False,
+                        },
+                    )
+                    return
+                self._write_json(HTTPStatus.OK, result)
                 return
             if path == "/api/agent/tool/lifecycle-event":
                 provided = self.headers.get("X-RAG-IME-Agent-Token", "")
@@ -7197,6 +7437,9 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             agent_session_id, agent_action = agent_session_route(path)
             context_session_id, context_item_id, context_item_action = agent_context_item_route(path)
             agent_room_id, room_action = agent_room_route(path)
+            background_job_session_id, background_job_id, background_job_action = (
+                agent_background_job_route(path)
+            )
             kernel_room_id, kernel_action = agent_room_kernel_route(path)
             (
                 room_work_room_id,
@@ -7206,6 +7449,7 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
             subagent_run_id, subagent_action = agent_subagent_route(path)
             wake_schedule_id, wake_schedule_action = agent_wake_schedule_route(path)
             approval_id, approval_action = agent_approval_route(path)
+            work_document_id, work_document_action = agent_work_document_route(path)
             if path == "/api/agent/runtime/ensure":
                 self._write_json(HTTPStatus.OK, self.service.agent.ensure_runtime(payload))
             elif agent_session_id and agent_action in {"knowledge-search", "knowledge-read"}:
@@ -7253,6 +7497,25 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.OK, self.service.agent_surface_refine_voice(payload))
             elif path == "/api/agent/surface/cancel":
                 self._write_json(HTTPStatus.OK, self.service.agent_surface_cancel(payload))
+            elif work_document_id:
+                handlers = {
+                    "archive": self.service.agent.work_documents.request_archive,
+                    "repair": lambda identifier, _payload: self.service.agent.work_documents.repair(
+                        identifier
+                    ),
+                    "reopen": self.service.agent.work_documents.reopen,
+                    "erase-preview": self.service.agent.work_documents.erase_preview,
+                    "erase": self.service.agent.work_documents.erase,
+                }
+                handler = handlers.get(work_document_action)
+                if handler is None:
+                    self._write_json(
+                        HTTPStatus.NOT_FOUND, {"ok": False, "error": "unknown endpoint"}
+                    )
+                else:
+                    self._write_json(
+                        HTTPStatus.OK, handler(work_document_id, payload)
+                    )
             elif path == "/api/agent/sessions":
                 self._write_json(HTTPStatus.CREATED, self.service.agent.create_session(payload))
             elif context_session_id and context_item_id and context_item_action == "ack":
@@ -7261,6 +7524,19 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                     self.service.agent.acknowledge_context_item(
                         context_session_id,
                         context_item_id,
+                    ),
+                )
+            elif (
+                background_job_session_id
+                and background_job_id
+                and background_job_action == "cancel"
+            ):
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.background_jobs.cancel(
+                        background_job_session_id,
+                        background_job_id,
+                        reason=payload.get("reason") or "control_center_requested",
                     ),
                 )
             elif path == "/api/agent/wake-schedules":
@@ -7425,6 +7701,11 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(
                     HTTPStatus.OK,
                     self.service.agent.resolve_review(agent_session_id, payload),
+                )
+            elif agent_session_id and agent_action == "ui-response":
+                self._write_json(
+                    HTTPStatus.OK,
+                    self.service.agent.resolve_ui_request(agent_session_id, payload),
                 )
             elif agent_session_id and agent_action == "compact":
                 self._write_json(HTTPStatus.OK, self.service.agent.compact(agent_session_id, payload))
@@ -8019,6 +8300,12 @@ class DebugRequestHandler(BaseHTTPRequestHandler):
 
 class QuietThreadingHTTPServer(ThreadingHTTPServer):
     """Ignore normal client disconnects without dumping multi-line tracebacks."""
+
+    # socketserver defaults to a backlog of 5. A single Provider response can
+    # legitimately fan out several governed Tool calls at once; keep the
+    # accept queue bounded but large enough that the Runtime Host's per-Session
+    # concurrency limiter (currently 8) does not race the server backlog.
+    request_queue_size = 64
 
     def handle_error(self, request: object, client_address: object) -> None:
         error = sys.exc_info()[1]
@@ -9193,6 +9480,94 @@ def _prediction_lane_summary(lane: dict[str, object]) -> dict[str, object]:
         "candidateMode",
     )
     return {key: lane.get(key) for key in keep if key in lane and lane.get(key) not in ("", None)}
+
+
+def _registered_model_option(deployment: ModelDeployment) -> dict[str, object]:
+    profile_id = canonical_runtime_profile_id(deployment.profile)
+    profile = profile_by_id(profile_id)
+    return {
+        "id": deployment.model_id,
+        "path": deployment.path,
+        "profileId": profile_id,
+        "promptMode": deployment.prompt_mode or profile.prompt_mode,
+        "maxTokens": deployment.max_tokens or profile.max_tokens,
+        "temperature": (
+            profile.temperature
+            if deployment.temperature is None
+            else deployment.temperature
+        ),
+        "topP": profile.top_p if deployment.top_p is None else deployment.top_p,
+        "active": deployment.active,
+    }
+
+
+def _configured_model_registry_path() -> Path:
+    configured = _string(os.environ.get("RAG_IME_MODEL_REGISTRY")).strip()
+    return Path(configured).expanduser() if configured else default_model_registry_path()
+
+
+def _predictor_status_matches_configuration(
+    status: Mapping[str, object],
+    configuration: PredictorConfiguration,
+) -> bool:
+    return (
+        bool(status.get("configured"))
+        and _model_reference_matches(status.get("model"), configuration)
+        and canonical_runtime_profile_id(_string(status.get("providerProfile")))
+        == configuration.profile_id
+        and _string(status.get("promptMode")) == configuration.prompt_mode
+        and _bounded_int(status.get("maxTokens"), default=0, minimum=0, maximum=64)
+        == configuration.max_tokens
+        and _float_matches(status.get("temperature"), configuration.temperature)
+        and _float_matches(status.get("topP"), configuration.top_p)
+    )
+
+
+def _predictor_probe_matches_configuration(
+    probe: Mapping[str, object],
+    configuration: PredictorConfiguration,
+) -> bool:
+    runtime_config = (
+        probe.get("runtimeConfig")
+        if isinstance(probe.get("runtimeConfig"), Mapping)
+        else {}
+    )
+    return (
+        bool(probe.get("ok"))
+        and bool(probe.get("modelLoaded"))
+        and _model_reference_matches(probe.get("model"), configuration)
+        and canonical_runtime_profile_id(_string(runtime_config.get("profileId")))
+        == configuration.profile_id
+        and _string(runtime_config.get("promptMode")) == configuration.prompt_mode
+        and _bounded_int(runtime_config.get("maxTokens"), default=0, minimum=0, maximum=64)
+        == configuration.max_tokens
+        and _float_matches(runtime_config.get("temperature"), configuration.temperature)
+        and _float_matches(runtime_config.get("topP"), configuration.top_p)
+    )
+
+
+def _model_reference_matches(
+    value: object,
+    configuration: PredictorConfiguration,
+) -> bool:
+    reference = _string(value).strip()
+    if reference == configuration.model_id:
+        return True
+    if not reference:
+        return False
+    try:
+        return Path(reference).expanduser().resolve(strict=False) == Path(
+            configuration.model_path
+        ).expanduser().resolve(strict=False)
+    except OSError:
+        return False
+
+
+def _float_matches(value: object, expected: float) -> bool:
+    try:
+        return abs(float(value) - float(expected)) <= 1e-9
+    except (TypeError, ValueError):
+        return False
 
 
 def _prediction_candidate_summary(candidate: dict[str, object], *, include_raw_text: bool) -> dict[str, object]:

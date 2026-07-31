@@ -80,7 +80,7 @@ class RoomToolCatalogTests(unittest.TestCase):
 
     def test_runtime_projection_metadata_survives_room_catalog_compilation(self) -> None:
         memory = _tool(
-            "ime_memory",
+            "memory",
             operation="capture",
             runtime_projections=(
                 {"name": "memory_capture", "operation": "capture"},
@@ -95,10 +95,10 @@ class RoomToolCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            plan.runtime_registry["ime_memory"]["runtimeProjections"],
+            plan.runtime_registry["memory"]["runtimeProjections"],
             [{"name": "memory_capture", "operation": "capture"}],
         )
-        self.assertIs(plan.runtime_registry["ime_memory"]["modelVisible"], False)
+        self.assertIs(plan.runtime_registry["memory"]["modelVisible"], False)
 
 
 if __name__ == "__main__":

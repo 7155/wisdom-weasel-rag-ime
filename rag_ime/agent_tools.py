@@ -7,17 +7,20 @@ import re
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
+from .agent_capability_catalog import build_capability_catalog
 from .agent_governed_memory_tools import (
     AgentRoleBookToolAdapter,
     MemoryGovernanceProposalStore,
 )
 from .agent_execution_policy import (
     APPROVAL_AUTO,
+    APPROVAL_MODEL,
     APPROVAL_DENY,
     approval_strategy,
 )
+from .agent_background_jobs import AgentBackgroundJobService
 from .agent_memory_sources import AgentMemorySourceStore
 from .agent_role_book import AgentRoleBookStore
 from .agent_tool_artifacts import AgentToolArtifactProjector
@@ -34,7 +37,7 @@ from .settings_schema import default_settings, flatten_settings, settings_schema
 
 _TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
-        "id": "ime_overview",
+        "id": "overview",
         "domain": "overview",
         "displayName": "控制中心概览",
         "description": "查看 Agent、模型、记忆、输入和最近活动的整体状态",
@@ -47,7 +50,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "status",
     },
     {
-        "id": "ime_input",
+        "id": "input",
         "domain": "input",
         "displayName": "输入法",
         "description": "查看输入设置、方案、候选解释，并在原生批准后调整设置或词表",
@@ -76,7 +79,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "table",
     },
     {
-        "id": "ime_voice",
+        "id": "voice",
         "domain": "voice",
         "displayName": "语音输入",
         "description": "查看语音状态，并在原生批准后切换已配置的语音 Provider",
@@ -97,7 +100,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "status",
     },
     {
-        "id": "ime_planning",
+        "id": "planning",
         "domain": "planning",
         "displayName": "规划与任务",
         "description": "查看每日计划，并在原生确认后更新任务状态",
@@ -131,7 +134,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
-        "id": "ime_memory",
+        "id": "memory",
         "domain": "memory",
         "displayName": "个人上下文记忆",
         "description": (
@@ -190,13 +193,13 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "when": ("任务需要读取固定角色版本或提议可复用的角色变化",),
         "notFor": ("用户长期记忆、权限扩张或把普通聊天写入角色书",),
         "input": "固定 revision、证据与受限角色字段更新",
-        "output": "角色书、历史或待审 revision 草案",
-        "does": "读取并受控提议 Agent 角色书变化。",
+        "output": "角色书、历史或待审草案",
+        "does": "读取随 Session 固定版本注入系统提示词的角色书，并受控提议 revision。",
         "operations": ("get", "history", "propose_revision", "review"),
         "resultPresentation": "tool_result",
     },
     {
-        "id": "ime_knowledge",
+        "id": "knowledge",
         "domain": "knowledge",
         "displayName": "文档知识库",
         "description": "渐进检索用户明确加载并授权给 Agent 的文档知识库",
@@ -209,7 +212,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "citation",
     },
     {
-        "id": "ime_models",
+        "id": "models",
         "domain": "models",
         "displayName": "模型",
         "description": "查看模型与 Provider，并在原生批准后调整不含密钥的 Provider 配置",
@@ -231,7 +234,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "status",
     },
     {
-        "id": "ime_runtime",
+        "id": "runtime",
         "domain": "runtime",
         "displayName": "诊断与运行时",
         "description": "查看运行组件，并在原生批准后暂停 AI、重启 Sidecar 或预测器、重新部署 Rime",
@@ -260,7 +263,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "status",
     },
     {
-        "id": "ime_configuration",
+        "id": "configuration",
         "domain": "configuration",
         "displayName": "历史与配置",
         "description": "查看隐私化历史与审计，并通过原生审批导出或恢复不含密钥的便携备份",
@@ -281,15 +284,15 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "table",
     },
     {
-        "id": "ime_agents",
+        "id": "agents",
         "domain": "agents",
         "displayName": "多 Agent 协作",
-        "description": "管理当前 Session 的有界子 Agent 委派",
-        "when": ("任务需要并行研究、实现、复核或停止子 Agent",),
-        "notFor": ("单 Agent 可直接完成且无需协作记录",),
-        "input": "操作名、受管 Agent、任务、上下文方式或运行 ID",
-        "output": "子 Agent 目录、运行状态、产物或取消回执",
-        "does": "执行有界、可审计、可取消的子 Agent 委派。",
+        "description": "管理有界子 Agent 委派及 Plan 关联",
+        "when": ("任务需要并行研究、实现或复核",),
+        "notFor": ("单 Agent 可直接完成的任务",),
+        "input": "Agent、任务、Plan item、上下文或运行 ID",
+        "output": "关联 Plan 的状态、产物或取消回执",
+        "does": "执行可审计、可取消的有界委派。",
         "operations": (
             "catalog",
             "delegate",
@@ -300,7 +303,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
-        "id": "ime_browser",
+        "id": "browser",
         "domain": "browser",
         "displayName": "浏览器共驾",
         "description": "按需读取已配对浏览器的页面快照，并在用户批准后执行可追踪的网页操作",
@@ -349,7 +352,7 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
-        "id": "ime_plugins",
+        "id": "plugins",
         "domain": "agents",
         "displayName": "插件制作与安装",
         "description": "制作、校验并提交插件安装提议；最终应用必须由用户在控制中心批准",
@@ -359,6 +362,37 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "output": "插件草案、校验结果或待审安装提议",
         "does": "制作并受控提交当前 Agent 插件。",
         "operations": ("list", "create_draft", "validate", "propose_install"),
+        "resultPresentation": "tool_result",
+    },
+    {
+        "id": "work_documents",
+        "modelVisible": False,
+        "domain": "planning",
+        "displayName": "工作文档",
+        "description": "固定读取与管理当前权威 Plan、Goal 或 Room WorkItem 绑定的活动及归档工作文档",
+        "when": ("本地控制面需要列出、检查、修复、重开或擦除权威工作文档",),
+        "notFor": ("扫描工作区猜测文档身份，或绕过终态回执与擦除审批",),
+        "input": "规范 work_documents 操作及其固定参数",
+        "output": "经 JSON 契约验证的列表、详情或命令回执",
+        "does": "调用 WorkDocumentService 固定适配器；不创建第二个 Plan、Goal 或 Room 状态所有者。",
+        "operations": (
+            "list",
+            "history.search",
+            "get",
+            "register",
+            "archive",
+            "repair",
+            "reopen",
+            "erase.preview",
+            "erase",
+        ),
+        "operationRisks": {
+            "register": "R2",
+            "archive": "R2",
+            "repair": "R2",
+            "reopen": "R2",
+            "erase": "R3",
+        },
         "resultPresentation": "tool_result",
     },
     {
@@ -391,16 +425,45 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "table",
     },
     {
+        "id": "workspace_lsp",
+        "modelVisible": False,
+        "domain": "workspace",
+        "displayName": "工作区语言服务",
+        "description": "在授权工作区内以受限语言服务器读取语义信息，并通过哈希绑定批准应用重命名或纯编辑代码操作",
+        "when": ("协调 Session 需要符号、悬停、定义、引用、诊断或语言服务生成的受控编辑",),
+        "notFor": (
+            "未授权、敏感或符号链接路径",
+            "执行语言服务器命令或创建、重命名、删除资源",
+            "绕过原生批准直接写入文件",
+        ),
+        "input": "操作名、授权根或源文件、位置、服务器选择与有界超时",
+        "output": "有界语义结果、服务状态，或哈希绑定的多文件修改预览和回执",
+        "does": "在 WorkspaceHarness 安全边界内读取语言服务结果并受控应用纯文本编辑。",
+        "operations": (
+            "status",
+            "symbols",
+            "hover",
+            "definition",
+            "references",
+            "diagnostics",
+            "rename",
+            "code_action_apply",
+        ),
+        "operationRisks": {"rename": "R2", "code_action_apply": "R2"},
+        "sessionModes": ("coordinator",),
+        "resultPresentation": "tool_result",
+    },
+    {
         "id": "workspace_read",
         "modelVisible": False,
         "domain": "workspace",
         "displayName": "工作区读取",
-        "description": "读取授权工作区内的非敏感 UTF-8 文本",
-        "when": ("协调 Session 需要读取已知授权文本文件",),
-        "notFor": ("二进制、敏感文件、未知位置搜索或未授权路径",),
-        "input": "相对文件路径、UTF-8 字节偏移与请求上限",
-        "output": "单次最多 50 KiB/2000 行的 UTF-8 文本、续读偏移与文件元数据",
-        "does": "读取授权工作区文本。",
+        "description": "读取授权 UTF-8 文件或受管资源",
+        "when": ("协调 Session 需要读取已知文件或内部资源",),
+        "notFor": ("二进制内容、敏感文件、搜索或未授权资源",),
+        "input": "路径或资源 URI、选择器与续读偏移",
+        "output": "有界内容、选择片段、来源修订与续读偏移",
+        "does": "读取授权文件或受管资源。",
         "operations": ("read",),
         "sessionModes": ("coordinator",),
         "resultPresentation": "tool_result",
@@ -441,12 +504,12 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "modelVisible": False,
         "domain": "workspace",
         "displayName": "文件编辑",
-        "description": "在一个文件中执行一组精确文本替换；每段旧文本必须唯一且彼此不重叠",
-        "when": ("Coding Agent 需要在一个授权文本文件中修改一处或多处内容",),
-        "notFor": ("新建文件、完整重写、二进制编辑或未授权路径",),
-        "input": "路径与一组基于原始文件的 oldText/newText 精确替换",
-        "output": "统一差异、审批状态和哈希绑定的原子写入回执",
-        "does": "预览并受控应用一组精确文件修改。",
+        "description": "按最新读取快照执行精确替换；过期快照不创建审批",
+        "when": ("已读取授权文本且需局部修改",),
+        "notFor": ("未读取、新建、重写、二进制或未授权路径",),
+        "input": "路径、resourceRevision 与 oldText/newText 数组",
+        "output": "差异、审批、原子写入回执与诊断",
+        "does": "快照绑定地修改文件。",
         "operations": ("apply",),
         "operationRisks": {"apply": "R2"},
         "sessionModes": ("coordinator",),
@@ -457,16 +520,35 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "modelVisible": False,
         "domain": "workspace",
         "displayName": "文件写入",
-        "description": "使用完整 UTF-8 内容新建文件或覆盖现有文件",
-        "when": ("Coding Agent 需要新建文件或完整重写授权文本文件",),
-        "notFor": ("局部修改、二进制写入、敏感文件或未授权路径",),
-        "input": "路径与完整 UTF-8 文本内容",
-        "output": "统一差异、审批状态和哈希绑定的原子写入回执",
-        "does": "预览并受控新建或完整覆盖文本文件。",
+        "description": "快照绑定地新建或覆盖 UTF-8 文件",
+        "when": ("新建文件，或已读取现有文件并需重写",),
+        "notFor": ("局部修改、未读取覆盖、二进制、敏感或未授权路径",),
+        "input": "路径、内容及 resourceRevision 或 missing",
+        "output": "差异、审批、原子写入回执与诊断",
+        "does": "快照绑定地写文件。",
         "operations": ("apply",),
         "operationRisks": {"apply": "R2"},
         "sessionModes": ("coordinator",),
         "resultPresentation": "tool_result",
+    },
+    {
+        "id": "workspace_job",
+        "domain": "workspace",
+        "displayName": "后台任务",
+        "description": "在授权工作区的 macOS 沙箱中启动、查看日志并停止受管后台任务",
+        "when": ("协调 Session 需要运行开发服务器、长构建或其他长生命周期命令",),
+        "notFor": (
+            "普通短命令；短命令继续使用 workspace_shell",
+            "交互式 REPL 或任意 stdin 写入",
+            "跨 Session 或跨授权工作区管理进程",
+        ),
+        "input": "操作名，以及启动参数或后台任务 ID",
+        "output": "持久任务快照、增量日志或停止回执",
+        "does": "管理会话级、可审计、可取消的后台工作区任务。",
+        "operations": ("start", "list", "status", "logs", "cancel"),
+        "operationRisks": {"start": "R2", "cancel": "R1"},
+        "sessionModes": ("coordinator",),
+        "resultPresentation": "terminal",
     },
     {
         "id": "workspace_shell",
@@ -491,9 +573,16 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     },
 )
 _TOOL_SPEC_BY_ID = {str(item["id"]): item for item in _TOOL_SPECS}
+if (
+    len(_TOOL_SPEC_BY_ID) != len(_TOOL_SPECS)
+    or tuple(_TOOL_SPEC_BY_ID) != CONTROL_TOOL_IDS
+):
+    raise RuntimeError(
+        "Agent Tool inventory or order differs between agent_tools and agent_tool_ids"
+    )
 
 _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
-    "ime_planning": {
+    "planning": {
         "type": "object",
         "oneOf": [
             {
@@ -549,7 +638,7 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             },
         ],
     },
-    "ime_knowledge": {
+    "knowledge": {
         "type": "object",
         "oneOf": [
             *[
@@ -667,6 +756,94 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
             ],
         ],
     },
+    "work_documents": {
+        "type": "object",
+        "oneOf": [
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "properties": {
+                    "op": {"const": "list"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "properties": {
+                    "op": {"const": "history.search"},
+                    "query": {"type": "string", "maxLength": 240},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                },
+            },
+            *[
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["op", "documentId"],
+                    "properties": {
+                        "op": {"const": operation},
+                        "documentId": {"type": "string", "pattern": "^workdoc_[a-f0-9]{32}$"},
+                    },
+                }
+                for operation in ("get", "repair", "erase.preview")
+            ],
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "op", "authorityKind", "authorityId", "authorityRevision",
+                    "workspaceRoot", "sourcePath",
+                ],
+                "properties": {
+                    "op": {"const": "register"},
+                    "authorityKind": {
+                        "type": "string",
+                        "enum": ["session_plan", "session_goal", "room_work_item"],
+                    },
+                    "authorityId": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "authorityRevision": {"type": "integer", "minimum": 0},
+                    "workspaceRoot": {"type": "string", "minLength": 1, "maxLength": 2000},
+                    "sourcePath": {"type": "string", "minLength": 1, "maxLength": 1000},
+                    "title": {"type": "string", "maxLength": 240},
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "documentId", "terminalReceiptId"],
+                "properties": {
+                    "op": {"const": "archive"},
+                    "documentId": {"type": "string", "pattern": "^workdoc_[a-f0-9]{32}$"},
+                    "terminalReceiptId": {"type": "string", "minLength": 1, "maxLength": 240},
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "documentId", "authorityRevision", "transitionReceiptId"],
+                "properties": {
+                    "op": {"const": "reopen"},
+                    "documentId": {"type": "string", "pattern": "^workdoc_[a-f0-9]{32}$"},
+                    "authorityRevision": {"type": "integer", "minimum": 0},
+                    "transitionReceiptId": {"type": "string", "minLength": 1, "maxLength": 240},
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "documentId", "approvalId", "payloadSha256"],
+                "properties": {
+                    "op": {"const": "erase"},
+                    "documentId": {"type": "string", "pattern": "^workdoc_[a-f0-9]{32}$"},
+                    "approvalId": {"type": "string", "minLength": 1, "maxLength": 240},
+                    "payloadSha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                },
+            },
+        ],
+    },
     "desktop_semantic": {
         "type": "object",
         "oneOf": [
@@ -694,7 +871,7 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                     "bundleId": {"type": "string", "maxLength": 300},
                     "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
                     "query": {"type": "string", "maxLength": 300},
-                    "maxNodes": {"type": "integer", "minimum": 1, "maximum": 400},
+                    "maxNodes": {"type": "integer", "minimum": 1, "maximum": 500},
                     "maxDepth": {"type": "integer", "minimum": 1, "maximum": 12},
                     "sinceSnapshotId": {"type": "string", "maxLength": 200},
                 },
@@ -750,6 +927,24 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
 _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "query": {"type": "string", "maxLength": 500},
     "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+    "workDocument": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["authorityKind", "authorityId", "authorityRevision"],
+        "properties": {
+            "authorityKind": {
+                "type": "string",
+                "enum": ["session_plan", "session_goal", "room_work_item"],
+            },
+            "authorityId": {"type": "string", "minLength": 1, "maxLength": 240},
+            "authorityRevision": {"type": "integer", "minimum": 0},
+            "title": {"type": "string", "maxLength": 240},
+        },
+        "description": (
+            "可选的显式权威绑定。仅在 workspace_write 成功且回执哈希匹配后注册；"
+            "禁止根据目录或文件名推断。"
+        ),
+    },
     "changes": {
         "type": "array",
         "minItems": 1,
@@ -763,7 +958,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 160,
-                    "description": "只能使用 ime_input.get_settings/preview_settings 暴露的 Agent 可管理键。",
+                    "description": "只能使用 input.get_settings/preview_settings 暴露的 Agent 可管理键。",
                 },
                 "value": {
                     "oneOf": [
@@ -908,6 +1103,7 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "targetRoleId": {"type": "string", "maxLength": 120},
     "targetRoleVersion": {"type": "string", "maxLength": 40},
     "planningTaskId": {"type": "string", "maxLength": 240},
+    "planItemId": {"type": "string", "minLength": 1, "maxLength": 160},
     "wakeAtMs": {"type": "integer", "minimum": 1},
     "timezone": {"type": "string", "maxLength": 80},
     "recurrenceKind": {"type": "string", "enum": ["once", "daily", "weekly"]},
@@ -951,6 +1147,19 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "validationToken": {"type": "string", "minLength": 1, "maxLength": 240},
     "enable": {"type": "boolean"},
     "path": {"type": "string", "minLength": 1, "maxLength": 1_024},
+    "resourceRef": {"type": "string", "maxLength": 1_024},
+    "resourceRevision": {
+        "type": "string",
+        "pattern": r"^(?:sha256:[0-9a-fA-F]{64}|missing)$",
+    },
+    "selector": {"type": "string"},
+    "selectorCursor": {"type": "integer", "minimum": 0},
+    "root": {"type": "string", "maxLength": 1_024},
+    "server": {"type": "string", "minLength": 1, "maxLength": 120},
+    "line": {"type": "integer", "minimum": 1, "maximum": 10_000_000},
+    "column": {"type": "integer", "minimum": 1, "maximum": 10_000_000},
+    "includeDeclaration": {"type": "boolean"},
+    "newName": {"type": "string", "minLength": 1, "maxLength": 240},
     "depth": {"type": "integer", "minimum": 1, "maximum": 3},
     "offset": {"type": "integer", "minimum": 0, "maximum": 50_000_000},
     "lineOffset": {"type": "integer", "minimum": 1, "maximum": 50_000_000},
@@ -981,6 +1190,10 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMAS: dict[str, dict[str, object]] = {
     "cwd": {"type": "string", "maxLength": 1_024},
     "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 120},
     "allowNetwork": {"type": "boolean"},
+    "label": {"type": "string", "minLength": 1, "maxLength": 120},
+    "jobId": {"type": "string", "pattern": r"^bg_[a-f0-9]{32}$"},
+    "cursor": {"type": "integer", "minimum": 0},
+    "limitBytes": {"type": "integer", "minimum": 1, "maximum": 131_072},
     "action": {"type": "string", "minLength": 1, "maxLength": 120},
     "caseSensitive": {"type": "boolean"},
     "deviceId": {"type": "string", "minLength": 1, "maxLength": 160},
@@ -1006,12 +1219,19 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]
         "type": "integer",
         "minimum": 1,
         "maximum": 65_536,
-        "description": (
-            "请求读取的 UTF-8 字节数；实际模型可见结果仍受 Pi "
-            "50 KiB 与 2000 行上限约束，按 nextOffset 续读。"
-        ),
     },
-    ("ime_memory", "mode"): {
+    ("workspace_lsp", "query"): {
+        "type": "string",
+        "maxLength": 240,
+        "pattern": r"^[^\u0000]*$",
+    },
+    ("workspace_lsp", "title"): {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500,
+        "pattern": r"^[^\u0000]+$",
+    },
+    ("memory", "mode"): {
         "type": "string",
         "enum": ["current", "historical", "change"],
         "description": "默认 current；只有显式选择 historical/change 才读取历史或变更。",
@@ -1027,22 +1247,28 @@ _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES: dict[tuple[str, str], dict[str, object]
         "maxLength": 1_024,
         "description": "可省略或传空字符串以搜索全部授权工作区。",
     },
+    ("workspace_job", "timeoutSeconds"): {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 86_400,
+        "description": "后台任务最长运行秒数；默认 3600，最大 86400。",
+    },
 }
 
 _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
-    "ime_overview": ("query", "limit"),
-    "ime_input": (
+    "overview": ("query", "limit"),
+    "input": (
         "changes", "selectedKeys", "sourceApprovalId", "query", "currentInput",
         "recentContext", "topK", "limit",
     ),
-    "ime_voice": ("provider", "sourceApprovalId"),
+    "voice": ("provider", "sourceApprovalId"),
     "agent_schedule": (
         "scheduleId", "title", "instruction", "targetType", "targetId",
         "targetSessionId", "targetRoleId", "targetRoleVersion", "planningTaskId",
         "wakeAtMs", "timezone", "recurrenceKind", "recurrenceInterval", "maxRuns",
         "status", "limit",
     ),
-    "ime_memory": (
+    "memory": (
         "query", "limit", "kind", "bookId", "traceId", "runId", "instruction",
         "targetId", "text", "reason", "memoryKind", "evidenceIds", "claimKey",
         "idempotencyKey", "proposalId", "draftId", "mode", "trigger",
@@ -1051,123 +1277,121 @@ _RUNTIME_TOOL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "agent_role_book": (
         "revisionId", "draftId", "limit", "updates", "changeSummary",
     ),
-    "ime_models": ("slot", "provider", "endpoint", "model", "sourceApprovalId"),
-    "ime_configuration": ("query", "limit", "action", "sourceApprovalId"),
-    "ime_agents": (
-        "agent", "version", "task", "tasks", "contextMode", "wait", "runId", "batchId",
-        "artifactId", "limit",
+    "models": ("slot", "provider", "endpoint", "model", "sourceApprovalId"),
+    "configuration": ("query", "limit", "action", "sourceApprovalId"),
+    "agents": (
+        "agent", "version", "task", "tasks", "planItemId", "contextMode", "wait",
+        "runId", "batchId", "artifactId", "limit",
     ),
-    "ime_plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
-    "ime_browser": (
+    "plugins": ("draftId", "manifest", "files", "sourcePath", "validationToken", "enable"),
+    "browser": (
         "deviceId", "tabId", "refId", "url", "text", "clear", "direction",
         "amount", "timeoutMs", "maxChars", "limit",
     ),
     "workspace_list": ("path", "depth", "limit"),
-    "workspace_read": ("path", "offset", "limit", "lineOffset", "lineLimit"),
+    "workspace_lsp": (
+        "root", "path", "server", "query", "line", "column", "timeoutMs",
+        "includeDeclaration", "newName", "title",
+    ),
+    "workspace_read": (
+        "path", "resourceRef", "selector", "selectorCursor",
+        "offset", "limit", "lineOffset", "lineLimit",
+    ),
     "workspace_search": (
         "query", "path", "mode", "caseSensitive", "limit",
         "patternKind", "glob", "context",
     ),
     "workspace_patch": ("path", "oldText", "newText", "expectedOccurrences"),
-    "workspace_edit": ("path", "edits"),
-    "workspace_write": ("path", "content"),
+    "workspace_edit": ("path", "resourceRevision", "edits"),
+    "workspace_write": ("path", "resourceRevision", "content", "workDocument"),
     "workspace_shell": ("command", "cwd", "timeoutSeconds", "allowNetwork"),
+    "workspace_job": (
+        "command", "label", "jobId", "cwd", "timeoutSeconds", "allowNetwork",
+        "cursor", "limitBytes", "limit", "status", "reason",
+    ),
 }
 
 _RUNTIME_TOOL_REQUIRED_ARGUMENTS: dict[tuple[str, str], tuple[str, ...]] = {
-    ("ime_input", "preview_settings"): ("changes",),
-    ("ime_input", "apply_settings"): ("changes",),
-    ("ime_input", "rollback_settings"): ("sourceApprovalId",),
-    ("ime_input", "candidate_explain"): ("query",),
-    ("ime_input", "lexicon_apply"): ("selectedKeys",),
-    ("ime_input", "lexicon_rollback"): ("sourceApprovalId",),
-    ("ime_voice", "provider_preview"): ("provider",),
-    ("ime_voice", "provider_apply"): ("provider",),
-    ("ime_voice", "provider_rollback"): ("sourceApprovalId",),
+    ("input", "preview_settings"): ("changes",),
+    ("input", "apply_settings"): ("changes",),
+    ("input", "rollback_settings"): ("sourceApprovalId",),
+    ("input", "candidate_explain"): ("query",),
+    ("input", "lexicon_apply"): ("selectedKeys",),
+    ("input", "lexicon_rollback"): ("sourceApprovalId",),
+    ("voice", "provider_preview"): ("provider",),
+    ("voice", "provider_apply"): ("provider",),
+    ("voice", "provider_rollback"): ("sourceApprovalId",),
     ("agent_schedule", "runs"): ("scheduleId",),
     ("agent_schedule", "schedule"): ("instruction", "targetType", "wakeAtMs"),
     ("agent_schedule", "pause"): ("scheduleId",),
     ("agent_schedule", "resume"): ("scheduleId",),
     ("agent_schedule", "cancel"): ("scheduleId",),
     ("agent_schedule", "retry"): ("scheduleId",),
-    ("ime_memory", "read"): ("bookId",),
-    ("ime_memory", "trace"): ("traceId",),
-    ("ime_memory", "capture"): (
+    ("memory", "read"): ("bookId",),
+    ("memory", "trace"): ("traceId",),
+    ("memory", "capture"): (
         "kind",
         "claim",
         "captureScope",
         "basis",
         "futureUse",
     ),
-    ("ime_memory", "curation_prepare"): ("trigger",),
-    ("ime_memory", "maintenance_preview"): ("trigger",),
-    ("ime_memory", "maintenance_review"): ("runId",),
-    ("ime_memory", "maintenance_apply"): ("runId",),
-    ("ime_memory", "maintenance_rollback"): ("runId",),
-    ("ime_memory", "remember_preview"): ("text",),
-    ("ime_memory", "correct_preview"): ("targetId", "text"),
-    ("ime_memory", "forget_preview"): ("targetId", "reason"),
-    ("ime_memory", "remember_apply"): ("proposalId",),
-    ("ime_memory", "correct_apply"): ("proposalId",),
-    ("ime_memory", "forget_apply"): ("proposalId",),
-    ("ime_memory", "governance_rollback"): ("proposalId",),
-    ("ime_memory", "explain"): ("targetId",),
-    ("ime_memory", "review"): ("draftId",),
+    ("memory", "curation_prepare"): ("trigger",),
+    ("memory", "maintenance_preview"): ("trigger",),
+    ("memory", "maintenance_review"): ("runId",),
+    ("memory", "maintenance_apply"): ("runId",),
+    ("memory", "maintenance_rollback"): ("runId",),
+    ("memory", "remember_preview"): ("text",),
+    ("memory", "correct_preview"): ("targetId", "text"),
+    ("memory", "forget_preview"): ("targetId", "reason"),
+    ("memory", "remember_apply"): ("proposalId",),
+    ("memory", "correct_apply"): ("proposalId",),
+    ("memory", "forget_apply"): ("proposalId",),
+    ("memory", "governance_rollback"): ("proposalId",),
+    ("memory", "explain"): ("targetId",),
+    ("memory", "review"): ("draftId",),
     ("agent_role_book", "propose_revision"): ("updates",),
-    ("ime_models", "profile_preview"): ("slot",),
-    ("ime_models", "profile_apply"): ("slot",),
-    ("ime_models", "profile_rollback"): ("sourceApprovalId",),
-    ("ime_configuration", "restore_preview"): ("sourceApprovalId",),
-    ("ime_configuration", "restore_apply"): ("sourceApprovalId",),
-    ("ime_agents", "artifact"): ("artifactId",),
-    ("ime_plugins", "create_draft"): ("draftId", "manifest", "files"),
-    ("ime_plugins", "validate"): ("sourcePath",),
-    ("ime_plugins", "propose_install"): ("validationToken",),
-    ("ime_browser", "navigate"): ("url",),
-    ("ime_browser", "click"): ("refId",),
-    ("ime_browser", "type"): ("refId", "text"),
-    ("workspace_read", "read"): ("path",),
+    ("models", "profile_preview"): ("slot",),
+    ("models", "profile_apply"): ("slot",),
+    ("models", "profile_rollback"): ("sourceApprovalId",),
+    ("configuration", "restore_preview"): ("sourceApprovalId",),
+    ("configuration", "restore_apply"): ("sourceApprovalId",),
+    ("agents", "artifact"): ("artifactId",),
+    ("plugins", "create_draft"): ("draftId", "manifest", "files"),
+    ("plugins", "validate"): ("sourcePath",),
+    ("plugins", "propose_install"): ("validationToken",),
+    ("browser", "navigate"): ("url",),
+    ("browser", "click"): ("refId",),
+    ("browser", "type"): ("refId", "text"),
     ("workspace_search", "search"): ("query",),
+    ("workspace_lsp", "hover"): ("path",),
+    ("workspace_lsp", "definition"): ("path",),
+    ("workspace_lsp", "references"): ("path",),
+    ("workspace_lsp", "diagnostics"): ("path",),
+    ("workspace_lsp", "rename"): ("path", "newName"),
+    ("workspace_lsp", "code_action_apply"): ("path", "title"),
     ("workspace_patch", "apply"): ("path", "oldText", "newText"),
-    ("workspace_edit", "apply"): ("path", "edits"),
-    ("workspace_write", "apply"): ("path", "content"),
+    ("workspace_edit", "apply"): ("path", "resourceRevision", "edits"),
+    ("workspace_write", "apply"): ("path", "resourceRevision", "content"),
     ("workspace_shell", "run"): ("command",),
+    ("workspace_job", "start"): ("command",),
+    ("workspace_job", "status"): ("jobId",),
+    ("workspace_job", "logs"): ("jobId",),
+    ("workspace_job", "cancel"): ("jobId",),
 }
 
 _RUNTIME_TOOL_REQUIRED_ALTERNATIVES: dict[
     tuple[str, str], tuple[tuple[str, ...], ...]
 ] = {
-    ("ime_models", "profile_preview"): (("provider",), ("endpoint",), ("model",)),
-    ("ime_models", "profile_apply"): (("provider",), ("endpoint",), ("model",)),
-    ("ime_agents", "delegate"): (("tasks",), ("agent", "task")),
-    ("ime_agents", "abort"): (("runId",), ("batchId",)),
+    ("models", "profile_preview"): (("provider",), ("endpoint",), ("model",)),
+    ("models", "profile_apply"): (("provider",), ("endpoint",), ("model",)),
+    ("agents", "delegate"): (("tasks",), ("agent", "task")),
+    ("agents", "abort"): (("runId",), ("batchId",)),
     ("agent_role_book", "review"): (("revisionId",), ("draftId",)),
-    ("ime_memory", "get"): (("targetId",), ("draftId",)),
+    ("memory", "get"): (("targetId",), ("draftId",)),
+    ("workspace_read", "read"): (("path",), ("resourceRef",)),
 }
 
-_RUNTIME_TOOL_USAGE: dict[str, str] = {
-    "ime_planning": (
-        "调用顺序：先用 dashboard 读取真实 taskId 和 date；再用 task_action 创建审批预览。"
-        "不要用任务标题代替 taskId，也不要在审批完成前声称任务已经执行。"
-    ),
-    "ime_memory": (
-        "Session 启动快照只在首轮注入一次。Timeline 不能单独证明稳定事实。"
-        "无事实问题/流程噪声/失败回执/重复问句/临时指令 not_for_memory；禁止原样复制长输入。"
-        "普通聊天禁 curation_prepare；候选捕获只使用常驻 memory_capture，不从本工具调用 capture。"
-        "task_completion/explicit_request/idle_batch 且有事实时才整理；"
-    ),
-    "ime_browser": (
-        "先用 tabs 或 snapshot 获取真实 tabId、snapshotId 与 refId。"
-        "页面变化后旧 refId 会失效；执行 navigate、click、type、scroll、wait 或 stop 前需要用户批准。"
-    ),
-    "agent_role_book": (
-        "Role Book 是 Agent 自身画像并随 Session 固定版本注入系统提示词，不是用户记忆。"
-        "get 默认读取当前 Session 固定的 revision；history/review 用于检查每日整理产生的草案。"
-        "需要补充最近工作、能力、性格或经验教训时，先引用真实 Evidence，"
-        "再用 propose_revision 提交 personality/capabilities/recentWork/lessonsAndLimits/activeCommitments。"
-        "propose_revision 只保存 draft，不能激活或改变身份、权限、安全策略和工具白名单。"
-    ),
-}
 
 _RUNTIME_TOOL_PROJECTIONS: dict[str, tuple[dict[str, str], ...]] = {
     "workspace_list": ({"name": "ls", "operation": "list"},),
@@ -1179,7 +1403,7 @@ _RUNTIME_TOOL_PROJECTIONS: dict[str, tuple[dict[str, str], ...]] = {
     "workspace_edit": ({"name": "edit", "operation": "apply"},),
     "workspace_write": ({"name": "write", "operation": "apply"},),
     "workspace_shell": ({"name": "bash", "operation": "run"},),
-    "ime_memory": (
+    "memory": (
         {
             "name": "memory_capture",
             "operation": "capture",
@@ -1256,7 +1480,7 @@ def _normalize_runtime_tool_args(
     args: Mapping[str, object],
 ) -> dict[str, object]:
     normalized = dict(args)
-    if tool != "ime_memory" or str(normalized.get("op") or "").strip():
+    if tool != "memory" or str(normalized.get("op") or "").strip():
         return normalized
 
     query = str(normalized.get("query") or "").strip()
@@ -1295,14 +1519,18 @@ class ControlToolGateway:
         facade: object | None = None,
         knowledge_client: object | None = None,
         workspace_harness: WorkspaceHarness | None = None,
+        background_jobs: AgentBackgroundJobService | None = None,
         delegation: object | None = None,
         collaboration: object | None = None,
         extensions: object | None = None,
         scheduling: object | None = None,
+        configuration_store: object | None = None,
+        governed_skills: object | None = None,
         browser_control: BrowserControlService | None = None,
         desktop_client: object | None = None,
         role_books: object | None = None,
         artifact_projector: AgentToolArtifactProjector | None = None,
+        work_documents: object | None = None,
         workflow_publisher: Callable[[str, str], object] | None = None,
     ) -> None:
         self.sessions = sessions
@@ -1312,14 +1540,18 @@ class ControlToolGateway:
         self.facade = facade
         self.knowledge_client = knowledge_client
         self.workspace_harness = workspace_harness or WorkspaceHarness()
+        self.background_jobs = background_jobs
         self.delegation = delegation
         self.collaboration = collaboration
         self.extensions = extensions
+        self.configuration_store = configuration_store
+        self.governed_skills = governed_skills
         self.scheduling = scheduling
         self.browser_control = browser_control
         self.desktop_client = desktop_client or DesktopBridgeClient()
         self.role_books = role_books
         self.artifact_projector = artifact_projector
+        self.work_documents = work_documents
         self.workflow_publisher = workflow_publisher
         self._role_book_tool_adapter: AgentRoleBookToolAdapter | None = None
         self._memory_governance_store: MemoryGovernanceProposalStore | None = None
@@ -1335,31 +1567,36 @@ class ControlToolGateway:
 
     def manifests(self, *, session_id: str = "") -> dict[str, object]:
         session = self.sessions.get(session_id) if session_id else None
-        manifests = self._manifest_items(session)
-        response: dict[str, object] = {
-            "schemaVersion": "rag-ime.control-tool-list.v1",
-            "ok": True,
-            "items": manifests,
-        }
-        if session is not None:
-            response["sessionPolicy"] = {
-                "sessionId": session["id"],
-                "mode": session["mode"],
-                "executionMode": session.get("executionMode", "per_action"),
-                "workspaceScopeGranted": session.get(
-                    "workspaceScopeGranted",
-                    False,
-                ),
-                "toolProfileVersion": session["toolProfileVersion"],
-                "toolAllowlistMode": session.get("toolAllowlistMode", "profile"),
-                "allowedTools": list(session.get("allowedTools") or []),
-            }
-        return response
+        return build_capability_catalog(
+            tool_manifests=self._manifest_items(
+                session,
+                include_runtime_projection=session is not None,
+            ),
+            session=session,
+            configuration_store=self.configuration_store,
+            governed_skills=self.governed_skills,
+            extensions=self.extensions,
+        )
 
     def runtime_manifests(self, session: Mapping[str, object]) -> list[Mapping[str, object]]:
+        manifest_items = self._manifest_items(session)
+        capability_catalog = build_capability_catalog(
+            tool_manifests=manifest_items,
+            session=session,
+            configuration_store=self.configuration_store,
+            governed_skills=None,
+            extensions=None,
+        )
+        disclosed_tools = {
+            str(item["id"])
+            for item in capability_catalog["items"]
+            if item.get("kind") == "tool"
+            and isinstance(item.get("disclosure"), Mapping)
+            and item["disclosure"].get("effective") == "enabled"
+        }
         manifests: list[Mapping[str, object]] = []
-        for manifest in self._manifest_items(session):
-            if manifest.get("enabled") is not True:
+        for manifest in manifest_items:
+            if manifest.get("enabled") is not True or manifest["id"] not in disclosed_tools:
                 continue
             spec = _TOOL_SPEC_BY_ID[str(manifest["id"])]
             operations = list(manifest.get("effectiveOperations") or [])
@@ -1367,18 +1604,18 @@ class ControlToolGateway:
                 str(manifest["id"]),
                 operations,
             )
-            usage = _RUNTIME_TOOL_USAGE.get(str(manifest["id"]), "")
-            base_description = str(manifest["description"]).rstrip("。")
             item: dict[str, object] = {
                 "name": manifest["id"],
-                "description": f"{base_description}。{usage}" if usage else base_description,
+                # The public card below is the routing authority. Keep the
+                # Provider-required description compact instead of projecting
+                # the same guidance a second time for every tool.
+                "description": spec["displayName"],
                 "parameters": parameter_schema,
                 "when": list(spec["when"]),
                 "notFor": list(spec["notFor"]),
                 "input": spec["input"],
                 "output": spec["output"],
                 "does": spec["does"],
-                "profile": session.get("toolProfileVersion") or "control-center-v1",
                 "risk": manifest.get("riskLevel") or "R0",
             }
             if spec.get("modelVisible") is False:
@@ -1399,6 +1636,8 @@ class ControlToolGateway:
     def _manifest_items(
         self,
         session: Mapping[str, object] | None,
+        *,
+        include_runtime_projection: bool = False,
     ) -> list[dict[str, object]]:
         manifests = []
         for spec in _TOOL_SPECS:
@@ -1407,6 +1646,13 @@ class ControlToolGateway:
                 operation: str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
                 for operation in operations
             }
+            available = (
+                str(spec["id"]) != "workspace_job"
+                or (
+                    self.background_jobs is not None
+                    and self.background_jobs.execution_owner
+                )
+            )
             manifest = {
                 "schemaVersion": "rag-ime.control-tool-manifest.v1",
                 "id": spec["id"],
@@ -1419,7 +1665,7 @@ class ControlToolGateway:
                 "operations": operations,
                 "operationRisks": operation_risks,
                 "resultPresentation": spec["resultPresentation"],
-                "availability": "online",
+                "availability": "online" if available else "offline",
                 "version": "1",
             }
             validate_contract(manifest, "control-tool-manifest.v1.json")
@@ -1458,12 +1704,23 @@ class ControlToolGateway:
                         spec=spec,
                     )
                 ]
+                if not available:
+                    effective_operations = []
                 manifest["enabled"] = bool(effective_operations)
                 manifest["effectiveOperations"] = effective_operations
                 manifest["explicitlyAllowed"] = (
                     str(session.get("toolAllowlistMode") or "profile") != "explicit"
                     or str(spec["id"]) in {str(value) for value in session.get("allowedTools") or []}
                 )
+                if (
+                    include_runtime_projection
+                    and str(spec["id"]) == "workspace_lsp"
+                    and str(session.get("mode") or "") == "coordinator"
+                ):
+                    manifest["runtimeProjection"] = self.workspace_harness.lsp_status(
+                        session,
+                        {},
+                    )
             manifests.append(manifest)
         return manifests
 
@@ -1557,6 +1814,22 @@ class ControlToolGateway:
                 response["roomExecutionReceipt"] = sealed_receipt
                 validate_contract(response, "agent-tool-result.v1.json")
                 return response
+            model_decided = (
+                isinstance(response.get("result"), Mapping)
+                and response["result"].get("modelDecided") is True
+            )
+            if model_decided:
+                execution = self._record_room_product_tool_execution(
+                    session_id=session_id,
+                    authorization=room_authorization,
+                    status="rejected",
+                    result_hash=_sha256_json(response),
+                )
+                receipt = execution.get("executionReceipt")
+                if isinstance(receipt, Mapping):
+                    response["roomExecutionReceipt"] = dict(receipt)
+                validate_contract(response, "agent-tool-result.v1.json")
+                return response
             execution = self._record_room_product_tool_execution(
                 session_id=session_id,
                 authorization=room_authorization,
@@ -1587,7 +1860,10 @@ class ControlToolGateway:
             ("workspace_edit", "apply"),
             ("workspace_patch", "apply"),
             ("workspace_shell", "run"),
+            ("workspace_job", "start"),
             ("workspace_write", "apply"),
+            ("workspace_lsp", "rename"),
+            ("workspace_lsp", "code_action_apply"),
         }:
             # A preview request is still planning. Prove Act is open here, but
             # transition to executing only when an approved write is applied.
@@ -1596,38 +1872,58 @@ class ControlToolGateway:
                 room_dispatch_authorized=(room_authorization is not None),
             )
         handlers = {
-            "ime_overview": self._overview,
-            "ime_input": self._input,
-            "ime_voice": self._voice,
-            "ime_planning": self._planning,
+            "overview": self._overview,
+            "input": self._input,
+            "voice": self._voice,
+            "planning": self._planning,
             "agent_schedule": self._agent_schedule,
-            "ime_memory": self._memory,
+            "memory": self._memory,
             "agent_role_book": self._role_book,
-            "ime_knowledge": self._knowledge,
-            "ime_models": self._models,
-            "ime_runtime": self._runtime,
-            "ime_configuration": self._configuration,
-            "ime_agents": self._agents,
-            "ime_browser": self._browser,
+            "knowledge": self._knowledge,
+            "models": self._models,
+            "runtime": self._runtime,
+            "configuration": self._configuration,
+            "agents": self._agents,
+            "browser": self._browser,
             "agent_plan": self._agent_plan,
-            "ime_plugins": self._plugins,
+            "plugins": self._plugins,
+            "work_documents": self._work_documents,
         }
         risk_level = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
-        if risk_level == "R0":
+        if tool == "work_documents":
+            handler_args = dict(args)
+            handler_args["_sessionId"] = session_id
+            result = handlers[tool](operation, handler_args)
+        elif risk_level == "R0":
             if tool == "workspace_list":
                 result = self.workspace_harness.list(session, args)
             elif tool == "workspace_read":
-                result = self.workspace_harness.read(session, args)
+                if str(args.get("resourceRef") or "").strip():
+                    result = self._read_internal_resource(session_id, args)
+                else:
+                    result = self.workspace_harness.read(session, args)
             elif tool == "workspace_search":
                 result = self.workspace_harness.search(session, args)
+            elif tool == "workspace_lsp":
+                result = (
+                    self.workspace_harness.lsp_status(session, args)
+                    if operation == "status"
+                    else self.workspace_harness.lsp_read(session, operation, args)
+                )
+            elif tool == "workspace_job":
+                result = self._background_job(
+                    session_id,
+                    operation,
+                    args,
+                )
             else:
                 handler_args = dict(args)
                 handler_args["_sessionId"] = session_id
                 runtime_context = request.get("runtimeContext")
-                if tool == "ime_agents":
+                if tool == "agents":
                     handler_args["_toolCallId"] = str(request["toolCallId"])
                     handler_args["_loadReceiptId"] = str(request.get("loadReceiptId") or "")
-                if tool == "ime_agents" and operation == "delegate":
+                if tool == "agents" and operation == "delegate":
                     if isinstance(runtime_context, Mapping):
                         handler_args["_runtimeContext"] = dict(runtime_context)
                 if tool == "desktop_semantic":
@@ -1642,9 +1938,13 @@ class ControlToolGateway:
             )
             if strategy == APPROVAL_DENY:
                 # A denied operation must not leave a pending approval behind.
-                # Read-only is a hard runtime policy, not an approval workflow.
+                # Read-only and missing workspace scope are hard runtime fences.
+                if str(session.get("executionMode") or "") == "read_only":
+                    raise ValueError(
+                        "write and Shell operations are blocked in read-only mode"
+                    )
                 raise ValueError(
-                    "write and Shell operations are blocked in read-only mode"
+                    "workspace operations require a previously authorized scope"
                 )
             result = self._prepare_approval(
                 session_id=session_id,
@@ -1656,10 +1956,10 @@ class ControlToolGateway:
                     _room_invocation_receipt_id(room_authorization)
                 ),
             )
-            if strategy == APPROVAL_AUTO:
+            if strategy in {APPROVAL_AUTO, APPROVAL_MODEL}:
                 approval = result.get("approval") if isinstance(result.get("approval"), Mapping) else None
                 if approval is None or self._auto_approval_executor is None:
-                    raise ValueError("automatic approval bridge is unavailable")
+                    raise ValueError("unattended approval bridge is unavailable")
                 result = dict(self._auto_approval_executor(approval))
         response = {
             "schemaVersion": "rag-ime.agent-tool-result.v1",
@@ -1669,6 +1969,125 @@ class ControlToolGateway:
             "result": result,
         }
         return response
+
+    def _read_internal_resource(
+        self,
+        session_id: str,
+        args: Mapping[str, object],
+    ) -> dict[str, object]:
+        resource_ref = _bounded_text(args.get("resourceRef"), maximum=1_024)
+        parsed = urlsplit(resource_ref)
+        if (
+            parsed.scheme not in {"artifact", "media", "room", "skill"}
+            or not parsed.netloc
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "resourceRef must use artifact://, media://, room://, or skill://"
+            )
+        resource_id = unquote(f"{parsed.netloc}{parsed.path}").strip("/")
+        if not resource_id or "/" in resource_id or "\x00" in resource_id:
+            raise ValueError("resourceRef identifier is invalid")
+        metadata: dict[str, object]
+        if parsed.scheme == "artifact":
+            inspect = getattr(self.delegation, "inspect_artifact", None)
+            if not callable(inspect):
+                raise ValueError("delegated artifact reader is unavailable")
+            payload = inspect(session_id, resource_id, limit=100)
+            metadata = {"owner": "AgentDelegationCoordinator"}
+            content = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            )
+        elif parsed.scheme == "media":
+            receipt = getattr(self.collaboration, "media_receipt", None)
+            if not callable(receipt):
+                raise ValueError("managed media reader is unavailable")
+            payload = receipt(resource_id, session_id=session_id)
+            metadata = {"owner": "AgentMediaStore"}
+            content = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            )
+        elif parsed.scheme == "skill":
+            load_exact = getattr(self.governed_skills, "load_exact", None)
+            if not callable(load_exact):
+                raise ValueError("governed Skill reader is unavailable")
+            payload = dict(load_exact(resource_id))
+            content = str(payload.pop("body", ""))
+            metadata = {"owner": "RoomSkillPolicy", **payload}
+        else:
+            rooms = getattr(self.collaboration, "rooms", None)
+            participant_for_session = getattr(rooms, "participant_for_session", None)
+            participant = (
+                participant_for_session(session_id)
+                if callable(participant_for_session)
+                else None
+            )
+            if (
+                not isinstance(participant, Mapping)
+                or str(participant.get("roomId") or "") != resource_id
+            ):
+                raise ValueError("Room resource does not belong to this Session")
+            snapshot = getattr(self.collaboration, "room_snapshot", None)
+            if not callable(snapshot):
+                raise ValueError("Room snapshot reader is unavailable")
+            payload = snapshot(resource_id)
+            metadata = {"owner": "AgentRoomService"}
+            content = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            )
+        offset = _bounded_int(
+            args.get("offset"),
+            default=0,
+            minimum=0,
+            maximum=50_000_000,
+        )
+        requested_limit = _bounded_int(
+            args.get("limit"),
+            default=32_768,
+            minimum=1,
+            maximum=65_536,
+        )
+        encoded = content.encode("utf-8")
+        if offset > len(encoded):
+            raise ValueError(
+                f"resource offset {offset} is beyond end of content ({len(encoded)} bytes)"
+            )
+        if offset and offset < len(encoded) and 0x80 <= encoded[offset] <= 0xBF:
+            raise ValueError("resource offset must be a UTF-8 character boundary")
+        end = min(len(encoded), offset + min(requested_limit, 40 * 1024))
+        while end > offset:
+            try:
+                visible = encoded[offset:end].decode("utf-8")
+                break
+            except UnicodeDecodeError:
+                end -= 1
+        else:
+            visible = ""
+        next_offset = end if end < len(encoded) else None
+        return {
+            "summary": f"已读取受管资源 {resource_ref}",
+            "resourceRef": resource_ref,
+            "resourceKind": parsed.scheme,
+            "resourceId": resource_id,
+            "metadata": metadata,
+            "content": visible,
+            "offset": offset,
+            "nextOffset": next_offset,
+            "truncated": next_offset is not None,
+            "contentBytes": len(visible.encode("utf-8")),
+            "size": len(encoded),
+            "resourceRevision": hashlib.sha256(encoded).hexdigest(),
+        }
 
     def _authorize_room_product_tool(
         self,
@@ -1899,7 +2318,7 @@ class ControlToolGateway:
                     }
                 )
             )
-        raise ValueError("unsupported ime_plugins operation")
+        raise ValueError("unsupported plugins operation")
 
     def _browser(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         service = self.browser_control
@@ -1940,7 +2359,7 @@ class ControlToolGateway:
                 session_id=_bounded_text(args.get("_sessionId"), maximum=240),
                 timeout_seconds=20.0,
             )
-        raise ValueError(f"unsupported ime_browser operation: {operation}")
+        raise ValueError(f"unsupported browser operation: {operation}")
 
     def _desktop(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         if operation == "status":
@@ -1957,7 +2376,7 @@ class ControlToolGateway:
                     bundle_id=_bounded_text(args.get("bundleId"), maximum=300),
                     pid=_bounded_int(args.get("pid"), default=0, minimum=0, maximum=2_147_483_647),
                     query=_bounded_text(args.get("query"), maximum=300),
-                    max_nodes=_bounded_int(args.get("maxNodes"), default=160, minimum=1, maximum=400),
+                    max_nodes=_bounded_int(args.get("maxNodes"), default=160, minimum=1, maximum=500),
                     max_depth=_bounded_int(args.get("maxDepth"), default=8, minimum=1, maximum=12),
                     since_snapshot_id=_bounded_text(args.get("sinceSnapshotId"), maximum=200),
                 )
@@ -1986,7 +2405,7 @@ class ControlToolGateway:
             )
         if operation == "abort":
             return dict(self.delegation.abort(session_id, args))  # type: ignore[attr-defined]
-        raise ValueError("unsupported ime_agents operation")
+        raise ValueError("unsupported agents operation")
 
     def _agent_plan(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
         session_id = _bounded_text(args.get("_sessionId"), maximum=240)
@@ -2041,19 +2460,143 @@ class ControlToolGateway:
             )
             plan = result["plan"] if isinstance(result.get("plan"), Mapping) else {}
             self._publish_workflow(session_id, f"plan:{action}")
+            summary = f"执行计划已进入 {plan.get('status', '')} 状态"
+            if operation == "submit_review":
+                summary = (
+                    "执行计划已提交审阅；可继续处理用户已明确要求的工作区内操作，"
+                    "具体动作仍服从原有风险与审批策略。"
+                )
             return {
-                "summary": f"执行计划已进入 {plan.get('status', '')} 状态",
+                "summary": summary,
                 "presentationKind": "task_plan",
                 "plan": plan,
                 "items": list(plan.get("items") or []),
+                **(
+                    {
+                        "mutationAllowed": True,
+                        "nextAction": "continue_in_scope_execution",
+                    }
+                    if operation == "submit_review"
+                    else {}
+                ),
             }
         raise ValueError("unsupported agent_plan operation")
+
+    def _work_documents(
+        self,
+        operation: str,
+        args: Mapping[str, object],
+    ) -> dict[str, object]:
+        service = self.work_documents
+        if service is None:
+            raise ValueError("work document lifecycle is unavailable")
+        document_id = _bounded_text(args.get("documentId"), maximum=80)
+        if operation == "list":
+            return dict(service.list({"limit": args.get("limit", 100)}))  # type: ignore[attr-defined]
+        if operation == "history.search":
+            return dict(
+                service.history_search(  # type: ignore[attr-defined]
+                    {
+                        "query": _bounded_text(args.get("query"), maximum=240),
+                        "limit": args.get("limit", 100),
+                    }
+                )
+            )
+        if operation == "get":
+            return dict(service.detail(document_id))  # type: ignore[attr-defined]
+        if operation == "register":
+            return dict(
+                service.register(  # type: ignore[attr-defined]
+                    {
+                        key: args[key]
+                        for key in (
+                            "authorityKind",
+                            "authorityId",
+                            "authorityRevision",
+                            "workspaceRoot",
+                            "sourcePath",
+                            "title",
+                        )
+                        if key in args
+                    }
+                )
+            )
+        if operation == "archive":
+            return dict(
+                service.request_archive(  # type: ignore[attr-defined]
+                    document_id,
+                    {"terminalReceiptId": args.get("terminalReceiptId")},
+                )
+            )
+        if operation == "repair":
+            return dict(service.repair(document_id))  # type: ignore[attr-defined]
+        if operation == "reopen":
+            return dict(
+                service.reopen(  # type: ignore[attr-defined]
+                    document_id,
+                    {
+                        "authorityRevision": args.get("authorityRevision"),
+                        "transitionReceiptId": args.get("transitionReceiptId"),
+                    },
+                )
+            )
+        session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+        if operation == "erase.preview":
+            return dict(
+                service.erase_preview(  # type: ignore[attr-defined]
+                    document_id,
+                    {"sessionId": session_id},
+                )
+            )
+        if operation == "erase":
+            return dict(
+                service.erase(  # type: ignore[attr-defined]
+                    document_id,
+                    {
+                        "sessionId": session_id,
+                        "approvalId": args.get("approvalId"),
+                        "payloadSha256": args.get("payloadSha256"),
+                    },
+                )
+            )
+        raise ValueError("unsupported work_documents operation")
 
     def _publish_workflow(self, session_id: str, reason: str) -> None:
         if self.workflow_publisher is None:
             return
         self.workflow_publisher(session_id, reason)
 
+    def _background_job(
+        self,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+    ) -> dict[str, object]:
+        service = self._background_job_service()
+        if operation == "list":
+            return service.list(
+                session_id,
+                limit=args.get("limit", 50),
+                status=args.get("status", ""),
+            )
+        if operation == "status":
+            return service.status(
+                session_id,
+                str(args.get("jobId") or ""),
+            )
+        if operation == "logs":
+            return service.logs(
+                session_id,
+                str(args.get("jobId") or ""),
+                cursor=args.get("cursor", 0),
+                limit_bytes=args.get("limitBytes", 65_536),
+            )
+        raise ValueError("unsupported read-only workspace_job operation")
+
+    def _background_job_service(self) -> AgentBackgroundJobService:
+        if self.background_jobs is None:
+            raise ValueError("background job service is unavailable")
+        return self.background_jobs
     def apply_approval(self, approval: Mapping[str, object]) -> dict[str, object]:
         """Execute one already-approved operation after revalidating its preview."""
 
@@ -2075,7 +2618,10 @@ class ControlToolGateway:
             ("workspace_edit", "apply"),
             ("workspace_patch", "apply"),
             ("workspace_shell", "run"),
+            ("workspace_job", "start"),
             ("workspace_write", "apply"),
+            ("workspace_lsp", "rename"),
+            ("workspace_lsp", "code_action_apply"),
         }:
             self.sessions.require_workspace_act(session_id)
         result = self._apply_approved_operation(approval)
@@ -2090,6 +2636,12 @@ class ControlToolGateway:
     ) -> dict[str, object]:
         tool = str(approval.get("toolId") or "")
         operation = str(approval.get("operation") or "")
+        if (tool, operation) == ("workspace_job", "start"):
+            result = self._apply_background_job_start(approval)
+            self._mark_workspace_execution_started(approval)
+            return result
+        if (tool, operation) == ("workspace_job", "cancel"):
+            return self._apply_background_job_cancel(approval)
         if (tool, operation) == ("workspace_shell", "run"):
             result = self._apply_workspace_command(approval)
             if (
@@ -2112,26 +2664,30 @@ class ControlToolGateway:
             result = self._apply_workspace_write(approval)
             self._mark_workspace_execution_started(approval)
             return result
+        if tool == "workspace_lsp" and operation in {"rename", "code_action_apply"}:
+            result = self._apply_workspace_lsp(approval)
+            self._mark_workspace_execution_started(approval)
+            return result
         if (tool, operation) == ("desktop_semantic", "act"):
             return self._apply_desktop_action(approval)
-        if (tool, operation) == ("ime_planning", "undo_task_event"):
+        if (tool, operation) == ("planning", "undo_task_event"):
             return self._apply_planning_undo(approval)
         if tool == "agent_schedule":
             return self._apply_agent_schedule(approval)
-        if tool == "ime_memory" and operation in {"maintenance_apply", "maintenance_rollback"}:
+        if tool == "memory" and operation in {"maintenance_apply", "maintenance_rollback"}:
             return self._apply_memory_mutation(approval)
-        if tool == "ime_memory" and operation in {
+        if tool == "memory" and operation in {
             "remember_apply",
             "correct_apply",
             "forget_apply",
             "governance_rollback",
         }:
             return self._apply_governed_memory_mutation(approval)
-        if tool == "ime_input" and operation in {"apply_settings", "rollback_settings"}:
+        if tool == "input" and operation in {"apply_settings", "rollback_settings"}:
             return self._apply_input_settings(approval)
-        if tool == "ime_input" and operation in {"lexicon_apply", "lexicon_rollback"}:
+        if tool == "input" and operation in {"lexicon_apply", "lexicon_rollback"}:
             return self._apply_lexicon_mutation(approval)
-        if tool == "ime_runtime" and operation in {
+        if tool == "runtime" and operation in {
             "pause_ai",
             "resume_ai",
             "restart_sidecar",
@@ -2139,17 +2695,17 @@ class ControlToolGateway:
             "redeploy_rime",
         }:
             return self._apply_runtime_mutation(approval)
-        if tool == "ime_models" and operation in {"profile_apply", "profile_rollback"}:
+        if tool == "models" and operation in {"profile_apply", "profile_rollback"}:
             return self._apply_model_profile_mutation(approval)
-        if tool == "ime_voice" and operation in {"provider_apply", "provider_rollback"}:
+        if tool == "voice" and operation in {"provider_apply", "provider_rollback"}:
             return self._apply_voice_provider_mutation(approval)
-        if (tool, operation) == ("ime_configuration", "export"):
+        if (tool, operation) == ("configuration", "export"):
             return self._apply_configuration_export(approval)
-        if (tool, operation) == ("ime_configuration", "restore_apply"):
+        if (tool, operation) == ("configuration", "restore_apply"):
             return self._apply_configuration_restore(approval)
-        if tool == "ime_browser":
+        if tool == "browser":
             return self._apply_browser_action(approval)
-        if (tool, operation) != ("ime_planning", "task_action"):
+        if (tool, operation) != ("planning", "task_action"):
             raise ValueError("approved operation is not enabled")
         preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
         action_payload = (
@@ -2212,15 +2768,7 @@ class ControlToolGateway:
         before = self.sessions.agent_plan(session_id)
         if before.get("status") != "approved":
             return
-        self.sessions.mutate_agent_plan(
-            session_id,
-            {
-                "action": "start_execution",
-                "expectedRevision": before.get("revision"),
-                "note": "首个受控工作区写操作已完成",
-            },
-            actor="agent-runtime",
-        )
+        self.sessions.record_agent_plan_execution_started(session_id)
         self._publish_workflow(session_id, "plan:start_execution")
 
     def _prepare_browser_action(
@@ -2270,7 +2818,7 @@ class ControlToolGateway:
             base_state["snapshotId"] = str(snapshot.get("snapshotId") or "")
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_browser",
+            tool="browser",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -2314,7 +2862,7 @@ class ControlToolGateway:
             )
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_browser",
+            tool_name="browser",
             operation=operation,
             payload_sha256=digest,
             preview=preview,
@@ -2340,7 +2888,7 @@ class ControlToolGateway:
         base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
         expected_digest = _approval_payload_digest(
             session_id=str(approval.get("sessionId") or ""),
-            tool="ime_browser",
+            tool="browser",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -2378,7 +2926,7 @@ class ControlToolGateway:
         return {
             **result,
             "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "ime_browser",
+            "toolId": "browser",
             "operation": operation,
             "auditId": str(approval.get("approvalId") or ""),
         }
@@ -2417,6 +2965,18 @@ class ControlToolGateway:
         args: Mapping[str, object],
         risk_level: str,
     ) -> dict[str, object]:
+        if (tool, operation) == ("workspace_job", "start"):
+            return self._prepare_background_job_start(
+                session_id=session_id,
+                args=args,
+                risk_level=risk_level,
+            )
+        if (tool, operation) == ("workspace_job", "cancel"):
+            return self._prepare_background_job_cancel(
+                session_id=session_id,
+                args=args,
+                risk_level=risk_level,
+            )
         if (tool, operation) == ("workspace_shell", "run"):
             return self._prepare_workspace_command(
                 session_id=session_id,
@@ -2441,13 +3001,20 @@ class ControlToolGateway:
                 args=args,
                 risk_level=risk_level,
             )
+        if tool == "workspace_lsp" and operation in {"rename", "code_action_apply"}:
+            return self._prepare_workspace_lsp(
+                session_id=session_id,
+                operation=operation,
+                args=args,
+                risk_level=risk_level,
+            )
         if (tool, operation) == ("desktop_semantic", "act"):
             return self._prepare_desktop_action(
                 session_id=session_id,
                 args=args,
                 risk_level=risk_level,
             )
-        if (tool, operation) == ("ime_planning", "undo_task_event"):
+        if (tool, operation) == ("planning", "undo_task_event"):
             return self._prepare_planning_undo(
                 session_id=session_id,
                 args=args,
@@ -2460,14 +3027,14 @@ class ControlToolGateway:
                 args=args,
                 risk_level=risk_level,
             )
-        if tool == "ime_memory" and operation in {"maintenance_apply", "maintenance_rollback"}:
+        if tool == "memory" and operation in {"maintenance_apply", "maintenance_rollback"}:
             return self._prepare_memory_mutation(
                 session_id=session_id,
                 operation=operation,
                 args=args,
                 risk_level=risk_level,
             )
-        if tool == "ime_memory" and operation in {
+        if tool == "memory" and operation in {
             "remember_apply",
             "correct_apply",
             "forget_apply",
@@ -2479,21 +3046,21 @@ class ControlToolGateway:
                 args=args,
                 risk_level=risk_level,
             )
-        if tool == "ime_input" and operation in {"apply_settings", "rollback_settings"}:
+        if tool == "input" and operation in {"apply_settings", "rollback_settings"}:
             return self._prepare_input_settings(
                 session_id=session_id,
                 operation=operation,
                 args=args,
                 risk_level=risk_level,
             )
-        if tool == "ime_input" and operation in {"lexicon_apply", "lexicon_rollback"}:
+        if tool == "input" and operation in {"lexicon_apply", "lexicon_rollback"}:
             return self._prepare_lexicon_mutation(
                 session_id=session_id,
                 operation=operation,
                 args=args,
                 risk_level=risk_level,
             )
-        if tool == "ime_runtime" and operation in {
+        if tool == "runtime" and operation in {
             "pause_ai",
             "resume_ai",
             "restart_sidecar",
@@ -2505,45 +3072,45 @@ class ControlToolGateway:
                 operation=operation,
                 risk_level=risk_level,
             )
-        if tool == "ime_models" and operation in {"profile_apply", "profile_rollback"}:
+        if tool == "models" and operation in {"profile_apply", "profile_rollback"}:
             return self._prepare_model_profile_mutation(
                 session_id=session_id,
                 operation=operation,
                 args=args,
                 risk_level=risk_level,
             )
-        if tool == "ime_voice" and operation in {"provider_apply", "provider_rollback"}:
+        if tool == "voice" and operation in {"provider_apply", "provider_rollback"}:
             return self._prepare_voice_provider_mutation(
                 session_id=session_id,
                 operation=operation,
                 args=args,
                 risk_level=risk_level,
             )
-        if (tool, operation) == ("ime_configuration", "export"):
+        if (tool, operation) == ("configuration", "export"):
             return self._prepare_configuration_export(
                 session_id=session_id,
                 risk_level=risk_level,
             )
-        if (tool, operation) == ("ime_configuration", "restore_apply"):
+        if (tool, operation) == ("configuration", "restore_apply"):
             return self._prepare_configuration_restore(
                 session_id=session_id,
                 args=args,
                 risk_level=risk_level,
             )
-        if tool == "ime_browser":
+        if tool == "browser":
             return self._prepare_browser_action(
                 session_id=session_id,
                 operation=operation,
                 args=args,
                 risk_level=risk_level,
             )
-        if (tool, operation) != ("ime_planning", "task_action"):
+        if (tool, operation) != ("planning", "task_action"):
             raise ValueError("write operation is not enabled")
         task_id = _bounded_text(args.get("taskId"), maximum=240)
         action = _bounded_text(args.get("action"), maximum=40).lower()
         plan_date = _bounded_text(args.get("date"), maximum=24)
         if not task_id:
-            raise ValueError("taskId is required for ime_planning.task_action")
+            raise ValueError("taskId is required for planning.task_action")
         if action not in _PLANNING_TARGET_STATUS:
             raise ValueError("action must be complete, start, reopen, or cancel")
         task = self._planning_task(task_id=task_id, plan_date=plan_date)
@@ -2747,7 +3314,7 @@ class ControlToolGateway:
     ) -> dict[str, object]:
         run_id = _bounded_text(args.get("runId"), maximum=240)
         if not run_id:
-            raise ValueError(f"runId is required for ime_memory.{operation}")
+            raise ValueError(f"runId is required for memory.{operation}")
         visible_owners, mutable_owner = self._memory_owner_context(session_id)
         review = self._facade_call(
             "agent_memory_maintenance_run",
@@ -2785,7 +3352,7 @@ class ControlToolGateway:
         }
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_memory",
+            tool="memory",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -2843,7 +3410,7 @@ class ControlToolGateway:
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_memory",
+            tool_name="memory",
             operation=operation,
             payload_sha256=digest,
             preview=preview,
@@ -2964,7 +3531,7 @@ class ControlToolGateway:
         }
         if applying:
             receipt["rollback"] = {
-                "tool": "ime_memory",
+                "tool": "memory",
                 "operation": "maintenance_rollback",
                 "args": {"runId": run_id},
             }
@@ -2982,7 +3549,7 @@ class ControlToolGateway:
     ) -> dict[str, object]:
         proposal_id = _bounded_text(args.get("proposalId"), maximum=240)
         if not proposal_id:
-            raise ValueError(f"proposalId is required for ime_memory.{operation}")
+            raise ValueError(f"proposalId is required for memory.{operation}")
         store = self._governed_memory_store()
         if operation == "governance_rollback":
             prepared = store.prepare_rollback(
@@ -3007,7 +3574,7 @@ class ControlToolGateway:
         )
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_memory",
+            tool="memory",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -3025,7 +3592,7 @@ class ControlToolGateway:
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_memory",
+            tool_name="memory",
             operation=operation,
             payload_sha256=digest,
             preview=preview,
@@ -3061,7 +3628,7 @@ class ControlToolGateway:
         )
         expected_digest = _approval_payload_digest(
             session_id=str(approval.get("sessionId") or ""),
-            tool="ime_memory",
+            tool="memory",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -3149,7 +3716,7 @@ class ControlToolGateway:
         }
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_input",
+            tool="input",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -3178,7 +3745,7 @@ class ControlToolGateway:
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_input",
+            tool_name="input",
             operation=operation,
             payload_sha256=digest,
             preview=preview,
@@ -3243,7 +3810,7 @@ class ControlToolGateway:
             "schemaVersion": "rag-ime.agent-operation-receipt.v1",
             "mutationApplied": True,
             "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "ime_input",
+            "toolId": "input",
             "operation": operation,
             "auditId": _safe_int(result.get("auditId")),
             "summary": (
@@ -3264,7 +3831,7 @@ class ControlToolGateway:
             receipt["revertedSettingsApprovalId"] = source_approval_id
         else:
             receipt["rollback"] = {
-                "toolId": "ime_input",
+                "toolId": "input",
                 "operation": "rollback_settings",
                 "args": {"sourceApprovalId": str(approval.get("approvalId") or "")},
                 "requiresApproval": True,
@@ -3288,7 +3855,7 @@ class ControlToolGateway:
         source_approval_id: str,
     ) -> dict[str, object]:
         if not source_approval_id:
-            raise ValueError("sourceApprovalId is required for ime_input.rollback_settings")
+            raise ValueError("sourceApprovalId is required for input.rollback_settings")
         approvals = self.sessions.list_approvals(session_id=session_id, state="applied", limit=500)
         for item in approvals:
             receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
@@ -3298,7 +3865,7 @@ class ControlToolGateway:
             receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
             if (
                 str(item.get("approvalId") or "") == source_approval_id
-                and str(item.get("toolId") or "") == "ime_input"
+                and str(item.get("toolId") or "") == "input"
                 and str(item.get("operation") or "") == "apply_settings"
                 and receipt.get("undoAvailable") is True
             ):
@@ -3344,7 +3911,7 @@ class ControlToolGateway:
             limit = _bounded_int(args.get("limit"), default=100, minimum=1, maximum=100)
             selected_keys = _review_key_list(args.get("selectedKeys"), limit=100)
             if not selected_keys:
-                raise ValueError("selectedKeys is required for ime_input.lexicon_apply")
+                raise ValueError("selectedKeys is required for input.lexicon_apply")
             review = self._facade_call(
                 "rime_lexicon_review",
                 {"project": self.project, "limit": limit},
@@ -3384,7 +3951,7 @@ class ControlToolGateway:
 
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_input",
+            tool="input",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -3399,7 +3966,7 @@ class ControlToolGateway:
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_input",
+            tool_name="input",
             operation=operation,
             payload_sha256=digest,
             preview=preview,
@@ -3420,7 +3987,7 @@ class ControlToolGateway:
         base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
         expected_digest = _approval_payload_digest(
             session_id=str(approval.get("sessionId") or ""),
-            tool="ime_input",
+            tool="input",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -3499,7 +4066,7 @@ class ControlToolGateway:
             "schemaVersion": "rag-ime.agent-operation-receipt.v1",
             "mutationApplied": True,
             "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "ime_input",
+            "toolId": "input",
             "operation": operation,
             "auditId": str(approval.get("approvalId") or ""),
             "summary": (
@@ -3525,7 +4092,7 @@ class ControlToolGateway:
             receipt["revertedLexiconApprovalId"] = source_approval_id
         else:
             receipt["rollback"] = {
-                "toolId": "ime_input",
+                "toolId": "input",
                 "operation": "lexicon_rollback",
                 "args": {"sourceApprovalId": str(approval.get("approvalId") or "")},
                 "requiresApproval": True,
@@ -3539,7 +4106,7 @@ class ControlToolGateway:
         source_approval_id: str,
     ) -> dict[str, object]:
         if not source_approval_id:
-            raise ValueError("sourceApprovalId is required for ime_input.lexicon_rollback")
+            raise ValueError("sourceApprovalId is required for input.lexicon_rollback")
         approvals = self.sessions.list_approvals(session_id=session_id, state="applied", limit=500)
         for item in approvals:
             receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
@@ -3549,7 +4116,7 @@ class ControlToolGateway:
             receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
             if (
                 str(item.get("approvalId") or "") == source_approval_id
-                and str(item.get("toolId") or "") == "ime_input"
+                and str(item.get("toolId") or "") == "input"
                 and str(item.get("operation") or "") == "lexicon_apply"
                 and receipt.get("undoAvailable") is True
                 and _bounded_text(receipt.get("rollbackId"), maximum=1)
@@ -3614,7 +4181,7 @@ class ControlToolGateway:
         }
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_voice",
+            tool="voice",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -3639,7 +4206,7 @@ class ControlToolGateway:
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_voice",
+            tool_name="voice",
             operation=operation,
             payload_sha256=digest,
             preview=preview,
@@ -3660,7 +4227,7 @@ class ControlToolGateway:
         base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
         expected_digest = _approval_payload_digest(
             session_id=str(approval.get("sessionId") or ""),
-            tool="ime_voice",
+            tool="voice",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -3695,7 +4262,7 @@ class ControlToolGateway:
             "schemaVersion": "rag-ime.agent-operation-receipt.v1",
             "mutationApplied": True,
             "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "ime_voice",
+            "toolId": "voice",
             "operation": operation,
             "auditId": result.get("auditId") or str(approval.get("approvalId") or ""),
             "summary": (
@@ -3715,7 +4282,7 @@ class ControlToolGateway:
             receipt["revertedVoiceProviderApprovalId"] = source_approval_id
         else:
             receipt["rollback"] = {
-                "toolId": "ime_voice",
+                "toolId": "voice",
                 "operation": "provider_rollback",
                 "args": {"sourceApprovalId": str(approval.get("approvalId") or "")},
                 "requiresApproval": True,
@@ -3729,7 +4296,7 @@ class ControlToolGateway:
         source_approval_id: str,
     ) -> dict[str, object]:
         if not source_approval_id:
-            raise ValueError("sourceApprovalId is required for ime_voice.provider_rollback")
+            raise ValueError("sourceApprovalId is required for voice.provider_rollback")
         approvals = self.sessions.list_approvals(session_id=session_id, state="applied", limit=500)
         for item in approvals:
             receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
@@ -3739,7 +4306,7 @@ class ControlToolGateway:
             receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
             if (
                 str(item.get("approvalId") or "") == source_approval_id
-                and str(item.get("toolId") or "") == "ime_voice"
+                and str(item.get("toolId") or "") == "voice"
                 and str(item.get("operation") or "") == "provider_apply"
                 and receipt.get("undoAvailable") is True
             ):
@@ -3870,7 +4437,7 @@ class ControlToolGateway:
         }
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_models",
+            tool="models",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -3889,7 +4456,7 @@ class ControlToolGateway:
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_models",
+            tool_name="models",
             operation=operation,
             payload_sha256=digest,
             preview=preview,
@@ -3910,7 +4477,7 @@ class ControlToolGateway:
         base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
         expected_digest = _approval_payload_digest(
             session_id=str(approval.get("sessionId") or ""),
-            tool="ime_models",
+            tool="models",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -3968,7 +4535,7 @@ class ControlToolGateway:
             "schemaVersion": "rag-ime.agent-operation-receipt.v1",
             "mutationApplied": True,
             "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "ime_models",
+            "toolId": "models",
             "operation": operation,
             "auditId": result.get("auditId") or str(approval.get("approvalId") or ""),
             "summary": summary,
@@ -3988,7 +4555,7 @@ class ControlToolGateway:
             receipt["revertedModelProfileApprovalId"] = source_approval_id
         else:
             receipt["rollback"] = {
-                "toolId": "ime_models",
+                "toolId": "models",
                 "operation": "profile_rollback",
                 "args": {"sourceApprovalId": str(approval.get("approvalId") or "")},
                 "requiresApproval": True,
@@ -4002,7 +4569,7 @@ class ControlToolGateway:
         source_approval_id: str,
     ) -> dict[str, object]:
         if not source_approval_id:
-            raise ValueError("sourceApprovalId is required for ime_models.profile_rollback")
+            raise ValueError("sourceApprovalId is required for models.profile_rollback")
         approvals = self.sessions.list_approvals(session_id=session_id, state="applied", limit=500)
         for item in approvals:
             receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
@@ -4012,7 +4579,7 @@ class ControlToolGateway:
             receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
             if (
                 str(item.get("approvalId") or "") == source_approval_id
-                and str(item.get("toolId") or "") == "ime_models"
+                and str(item.get("toolId") or "") == "models"
                 and str(item.get("operation") or "") == "profile_apply"
                 and receipt.get("undoAvailable") is True
             ):
@@ -4055,7 +4622,7 @@ class ControlToolGateway:
         }
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_runtime",
+            tool="runtime",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -4086,7 +4653,7 @@ class ControlToolGateway:
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_runtime",
+            tool_name="runtime",
             operation=operation,
             payload_sha256=digest,
             preview=preview,
@@ -4107,7 +4674,7 @@ class ControlToolGateway:
         base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
         expected_digest = _approval_payload_digest(
             session_id=str(approval.get("sessionId") or ""),
-            tool="ime_runtime",
+            tool="runtime",
             operation=operation,
             action_payload=action_payload,
             base_state=base_state,
@@ -4163,7 +4730,7 @@ class ControlToolGateway:
                 "mutationApplied": False,
                 "externalActionPending": True,
                 "approvalId": str(approval.get("approvalId") or ""),
-                "toolId": "ime_runtime",
+                "toolId": "runtime",
                 "operation": operation,
                 "auditId": job.get("auditId") or str(approval.get("approvalId") or ""),
                 "summary": "Sidecar 重启已批准；Pi 完成当前回答后，由控制中心外部监督器执行",
@@ -4181,7 +4748,7 @@ class ControlToolGateway:
             "schemaVersion": "rag-ime.agent-operation-receipt.v1",
             "mutationApplied": succeeded,
             "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "ime_runtime",
+            "toolId": "runtime",
             "operation": operation,
             "auditId": job.get("auditId") or str(approval.get("approvalId") or ""),
             "summary": summaries[operation] if succeeded else f"{summaries[operation]}失败",
@@ -4250,7 +4817,7 @@ class ControlToolGateway:
         }
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_configuration",
+            tool="configuration",
             operation="export",
             action_payload=action_payload,
             base_state=base_state,
@@ -4282,7 +4849,7 @@ class ControlToolGateway:
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_configuration",
+            tool_name="configuration",
             operation="export",
             payload_sha256=digest,
             preview=preview,
@@ -4302,7 +4869,7 @@ class ControlToolGateway:
         base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
         expected_digest = _approval_payload_digest(
             session_id=str(approval.get("sessionId") or ""),
-            tool="ime_configuration",
+            tool="configuration",
             operation="export",
             action_payload=action_payload,
             base_state=base_state,
@@ -4324,7 +4891,7 @@ class ControlToolGateway:
             "schemaVersion": "rag-ime.agent-operation-receipt.v1",
             "mutationApplied": True,
             "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "ime_configuration",
+            "toolId": "configuration",
             "operation": "export",
             "auditId": result.get("auditId") or str(approval.get("approvalId") or ""),
             "summary": f"已导出无密钥备份 {target.name}",
@@ -4366,7 +4933,7 @@ class ControlToolGateway:
         }
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_configuration",
+            tool="configuration",
             operation="restore_apply",
             action_payload=action_payload,
             base_state=base_state,
@@ -4405,7 +4972,7 @@ class ControlToolGateway:
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_configuration",
+            tool_name="configuration",
             operation="restore_apply",
             payload_sha256=digest,
             preview=preview,
@@ -4425,7 +4992,7 @@ class ControlToolGateway:
         base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
         expected_digest = _approval_payload_digest(
             session_id=str(approval.get("sessionId") or ""),
-            tool="ime_configuration",
+            tool="configuration",
             operation="restore_apply",
             action_payload=action_payload,
             base_state=base_state,
@@ -4457,7 +5024,7 @@ class ControlToolGateway:
             "mutationApplied": False,
             "externalActionPending": True,
             "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "ime_configuration",
+            "toolId": "configuration",
             "operation": "restore_apply",
             "auditId": str(approval.get("approvalId") or ""),
             "summary": (
@@ -4509,13 +5076,13 @@ class ControlToolGateway:
         source_approval_id: str,
     ) -> tuple[dict[str, object], Path]:
         if not source_approval_id:
-            raise ValueError("sourceApprovalId is required for ime_configuration.restore_preview")
+            raise ValueError("sourceApprovalId is required for configuration.restore_preview")
         approvals = self.sessions.list_approvals(session_id=session_id, state="applied", limit=500)
         for item in approvals:
             receipt = item.get("receipt") if isinstance(item.get("receipt"), Mapping) else {}
             if (
                 str(item.get("approvalId") or "") == source_approval_id
-                and str(item.get("toolId") or "") == "ime_configuration"
+                and str(item.get("toolId") or "") == "configuration"
                 and str(item.get("operation") or "") == "export"
                 and receipt.get("secretsIncluded") is False
             ):
@@ -4593,6 +5160,301 @@ class ControlToolGateway:
             "operation": "run",
             "auditId": str(approval.get("approvalId") or ""),
         }
+
+    def _prepare_background_job_start(
+        self,
+        *,
+        session_id: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        session = self.sessions.get(session_id)
+        prepared = self.workspace_harness.prepare_background_command(session, args)
+        preview = dict(self.workspace_harness.preview(prepared))
+        label = _bounded_text(args.get("label"), maximum=120)
+        action_payload = dict(preview.get("actionPayload") or {})
+        action_payload["label"] = label
+        base_state = dict(preview.get("baseState") or {})
+        preview.update(
+            {
+                "title": "确认启动后台任务",
+                "summary": (
+                    f"在 {prepared.cwd.name or prepared.cwd} 中启动"
+                    f"《{label or _bounded_text(prepared.command, maximum=80)}》"
+                ),
+                "operationLabel": "启动受管后台任务",
+                "actionPayload": action_payload,
+                "baseState": base_state,
+                "changes": [
+                    *list(preview.get("changes") or []),
+                    {
+                        "label": "运行方式",
+                        "before": "前台等待",
+                        "after": "后台受管，可查看日志并停止",
+                    },
+                ],
+            }
+        )
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_job",
+            operation="start",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_job",
+            operation="start",
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": "等待确认：启动受沙箱保护的后台任务",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_background_job_start(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload")
+            if isinstance(preview.get("actionPayload"), Mapping)
+            else {}
+        )
+        base_state = (
+            preview.get("baseState")
+            if isinstance(preview.get("baseState"), Mapping)
+            else {}
+        )
+        session_id = str(approval.get("sessionId") or "")
+        expected_digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_job",
+            operation="start",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        session = self.sessions.get(session_id)
+        prepared = self.workspace_harness.prepare_background_command(
+            session,
+            action_payload,
+        )
+        if prepared.roots_digest != str(base_state.get("workspaceRootsSha256") or ""):
+            raise ValueError("authorized workspace changed after approval preview")
+        receipt = self._background_job_service().start(
+            session_id,
+            prepared,
+            label=action_payload.get("label"),
+            approval_id=str(approval.get("approvalId") or ""),
+            causal_metadata=(
+                approval.get("causalMetadata")
+                if isinstance(approval.get("causalMetadata"), Mapping)
+                else None
+            ),
+        )
+        return {
+            **receipt,
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "workspace_job",
+            "operation": "start",
+            "auditId": str(approval.get("approvalId") or ""),
+        }
+
+    def _prepare_background_job_cancel(
+        self,
+        *,
+        session_id: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        job_id = str(args.get("jobId") or "")
+        job = self._background_job_service().status(session_id, job_id)["job"]
+        action_payload = {
+            "jobId": job_id,
+            "reason": _bounded_text(args.get("reason"), maximum=240) or "agent_requested",
+        }
+        base_state = {
+            "jobStatus": job["status"],
+            "commandSha256": job["commandSha256"],
+        }
+        preview = {
+            "title": "确认停止后台任务",
+            "summary": f"停止后台任务《{job['label']}》及其进程组",
+            "operationLabel": "停止后台任务",
+            "changes": [
+                {
+                    "label": "任务状态",
+                    "before": str(job["status"]),
+                    "after": "停止",
+                },
+                {
+                    "label": "命令",
+                    "before": str(job["command"]),
+                    "after": "终止整个进程组",
+                },
+            ],
+            "actionPayload": action_payload,
+            "baseState": base_state,
+        }
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_job",
+            operation="cancel",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_job",
+            operation="cancel",
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": "等待确认：停止后台任务",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_background_job_cancel(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        preview = approval.get("preview") if isinstance(approval.get("preview"), Mapping) else {}
+        action_payload = (
+            preview.get("actionPayload")
+            if isinstance(preview.get("actionPayload"), Mapping)
+            else {}
+        )
+        base_state = (
+            preview.get("baseState")
+            if isinstance(preview.get("baseState"), Mapping)
+            else {}
+        )
+        session_id = str(approval.get("sessionId") or "")
+        expected_digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_job",
+            operation="cancel",
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        receipt = self._background_job_service().cancel(
+            session_id,
+            str(action_payload.get("jobId") or ""),
+            reason=action_payload.get("reason"),
+        )
+        return {
+            **receipt,
+            "mutationApplied": True,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "workspace_job",
+            "operation": "cancel",
+            "auditId": str(approval.get("approvalId") or ""),
+        }
+
+    def _prepare_workspace_lsp(
+        self,
+        *,
+        session_id: str,
+        operation: str,
+        args: Mapping[str, object],
+        risk_level: str,
+    ) -> dict[str, object]:
+        session = self.sessions.get(session_id)
+        prepared = self.workspace_harness.prepare_lsp_mutation(
+            session,
+            operation,
+            args,
+        )
+        preview = self.workspace_harness.lsp_mutation_preview(prepared)
+        action_payload = preview.get("actionPayload")
+        base_state = preview.get("baseState")
+        assert isinstance(action_payload, Mapping)
+        assert isinstance(base_state, Mapping)
+        digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_lsp",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        approval = self.sessions.create_approval(
+            session_id=session_id,
+            tool_name="workspace_lsp",
+            operation=operation,
+            payload_sha256=digest,
+            preview=preview,
+            risk_level=risk_level,
+            ttl_ms=60_000,
+        )
+        return {
+            "summary": f"等待确认：{preview['summary']}",
+            "approvalRequired": True,
+            "approvalId": approval["approvalId"],
+            "approval": approval,
+        }
+
+    def _apply_workspace_lsp(
+        self,
+        approval: Mapping[str, object],
+    ) -> dict[str, object]:
+        operation = str(approval.get("operation") or "")
+        preview = (
+            approval.get("preview")
+            if isinstance(approval.get("preview"), Mapping)
+            else {}
+        )
+        action_payload = (
+            preview.get("actionPayload")
+            if isinstance(preview.get("actionPayload"), Mapping)
+            else {}
+        )
+        base_state = (
+            preview.get("baseState")
+            if isinstance(preview.get("baseState"), Mapping)
+            else {}
+        )
+        session_id = str(approval.get("sessionId") or "")
+        expected_digest = _approval_payload_digest(
+            session_id=session_id,
+            tool="workspace_lsp",
+            operation=operation,
+            action_payload=action_payload,
+            base_state=base_state,
+        )
+        if expected_digest != str(approval.get("payloadSha256") or ""):
+            raise ValueError("approval payload no longer matches its preview")
+        session = self.sessions.get(session_id)
+        receipt = self.workspace_harness.apply_lsp_mutation(
+            session,
+            operation,
+            action_payload,
+            base_state,
+        )
+        return {
+            **receipt,
+            "approvalId": str(approval.get("approvalId") or ""),
+            "toolId": "workspace_lsp",
+            "operation": operation,
+            "auditId": str(approval.get("approvalId") or ""),
+        }
+
 
     def _prepare_workspace_patch(
         self,
@@ -4793,6 +5655,52 @@ class ControlToolGateway:
         if expected_digest != str(approval.get("payloadSha256") or ""):
             raise ValueError("approval payload no longer matches its preview")
         session = self.sessions.get(session_id)
+        work_document = (
+            action_payload.get("workDocument")
+            if isinstance(action_payload.get("workDocument"), Mapping)
+            else None
+        )
+        registration_payload: dict[str, object] | None = None
+        if work_document is not None:
+            if self.work_documents is None:
+                raise ValueError("work document lifecycle is unavailable")
+            authority_kind = str(work_document.get("authorityKind") or "")
+            authority_id = str(work_document.get("authorityId") or "")
+            if (
+                authority_kind in {"session_plan", "session_goal"}
+                and authority_id != session_id
+            ):
+                raise ValueError(
+                    "session work document authority must match the approved workspace Session"
+                )
+            target = Path(str(action_payload.get("path") or "")).resolve(strict=False)
+            workspace_root: Path | None = None
+            relative_path: Path | None = None
+            roots = session.get("workspaceRoots")
+            for value in roots if isinstance(roots, list) else []:
+                root = Path(str(value)).expanduser().resolve(strict=True)
+                try:
+                    relative = target.relative_to(root)
+                except ValueError:
+                    continue
+                workspace_root = root
+                relative_path = relative
+                break
+            if workspace_root is None or relative_path is None:
+                raise ValueError(
+                    "applied work document is outside the approved workspace roots"
+                )
+            registration_payload = {
+                "authorityKind": authority_kind,
+                "authorityId": authority_id,
+                "authorityRevision": work_document.get("authorityRevision"),
+                "workspaceRoot": str(workspace_root),
+                "sourcePath": str(relative_path),
+                "title": work_document.get("title"),
+            }
+            self.work_documents.preflight_register(  # type: ignore[attr-defined,union-attr]
+                registration_payload
+            )
         receipt = self.workspace_harness.apply_write(session, action_payload, base_state)
         result = {
             **receipt,
@@ -4810,6 +5718,10 @@ class ControlToolGateway:
                 origin_tool="workspace_write",
             )
             result.update(projection.receipt_fields())
+        if registration_payload is not None:
+            result["workDocumentRegistration"] = dict(
+                self.work_documents.register(registration_payload)  # type: ignore[attr-defined,union-attr]
+            )
         return result
 
     def _prepare_planning_undo(
@@ -4821,7 +5733,7 @@ class ControlToolGateway:
     ) -> dict[str, object]:
         event_id = _bounded_text(args.get("eventId"), maximum=240)
         if not event_id:
-            raise ValueError("eventId is required for ime_planning.undo_task_event")
+            raise ValueError("eventId is required for planning.undo_task_event")
         source_approval = self._rollback_source_approval(session_id=session_id, event_id=event_id)
         source_receipt = (
             source_approval.get("receipt") if isinstance(source_approval.get("receipt"), Mapping) else {}
@@ -4855,7 +5767,7 @@ class ControlToolGateway:
         }
         digest = _approval_payload_digest(
             session_id=session_id,
-            tool="ime_planning",
+            tool="planning",
             operation="undo_task_event",
             action_payload=action_payload,
             base_state=base_state,
@@ -4877,7 +5789,7 @@ class ControlToolGateway:
         }
         approval = self.sessions.create_approval(
             session_id=session_id,
-            tool_name="ime_planning",
+            tool_name="planning",
             operation="undo_task_event",
             payload_sha256=digest,
             preview=preview,
@@ -4899,7 +5811,7 @@ class ControlToolGateway:
         base_state = preview.get("baseState") if isinstance(preview.get("baseState"), Mapping) else {}
         expected_digest = _approval_payload_digest(
             session_id=str(approval.get("sessionId") or ""),
-            tool="ime_planning",
+            tool="planning",
             operation="undo_task_event",
             action_payload=action_payload,
             base_state=base_state,
@@ -4989,7 +5901,7 @@ class ControlToolGateway:
             "schemaVersion": "rag-ime.agent-operation-receipt.v1",
             "mutationApplied": True,
             "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "ime_planning",
+            "toolId": "planning",
             "operation": "undo_task_event",
             "summary": f"已撤销《{_bounded_text(task.get('title'), maximum=160) or '任务'}》的上一次状态变更",
             "auditId": _safe_int(result.get("auditId")),
@@ -5030,7 +5942,7 @@ class ControlToolGateway:
             "schemaVersion": "rag-ime.agent-operation-receipt.v1",
             "mutationApplied": True,
             "approvalId": str(approval.get("approvalId") or ""),
-            "toolId": "ime_planning",
+            "toolId": "planning",
             "operation": "task_action",
             "summary": f"已将《{_bounded_text(task.get('title'), maximum=160) or '任务'}》{_PLANNING_ACTION_LABELS[action]}",
             "auditId": _safe_int(result.get("auditId")),
@@ -5041,7 +5953,7 @@ class ControlToolGateway:
         }
         if undo_available:
             receipt["rollback"] = {
-                "toolId": "ime_planning",
+                "toolId": "planning",
                 "operation": "undo_task_event",
                 "args": {"eventId": event_id},
                 "requiresApproval": True,
@@ -5080,19 +5992,19 @@ class ControlToolGateway:
                     for spec in _TOOL_SPECS
                 ],
                 "approvalGatedOperations": [
-                    "ime_input.apply_settings",
-                    "ime_input.rollback_settings",
-                    "ime_input.lexicon_apply",
-                    "ime_input.lexicon_rollback",
-                    "ime_planning.task_action",
-                    "ime_memory.maintenance_apply",
-                    "ime_memory.maintenance_rollback",
-                    "ime_runtime.pause_ai",
-                    "ime_runtime.resume_ai",
-                    "ime_runtime.restart_sidecar",
-                    "ime_runtime.restart_predictor",
-                    "ime_runtime.redeploy_rime",
-                    "ime_configuration.export",
+                    "input.apply_settings",
+                    "input.rollback_settings",
+                    "input.lexicon_apply",
+                    "input.lexicon_rollback",
+                    "planning.task_action",
+                    "memory.maintenance_apply",
+                    "memory.maintenance_rollback",
+                    "runtime.pause_ai",
+                    "runtime.resume_ai",
+                    "runtime.restart_sidecar",
+                    "runtime.restart_predictor",
+                    "runtime.redeploy_rime",
+                    "configuration.export",
                 ],
                 "writePolicy": "R1 以上操作必须生成差异、校验快照、原生确认并保存 receipt",
             }
@@ -5158,7 +6070,7 @@ class ControlToolGateway:
         if operation == "candidate_explain":
             query = _bounded_text(args.get("query") or args.get("currentInput"), maximum=240)
             if not query:
-                raise ValueError("query is required for ime_input.candidate_explain")
+                raise ValueError("query is required for input.candidate_explain")
             payload = self._facade_call(
                 "candidate_explain",
                 {
@@ -5526,14 +6438,14 @@ class ControlToolGateway:
                 session_id=_bounded_text(args.get("_sessionId"), maximum=240),
             )
         if operation == "review":
-            raise ValueError("draftId is required for ime_memory.review")
+            raise ValueError("draftId is required for memory.review")
         if operation in {"search", "get", "explain"}:
             kind = _bounded_text(args.get("kind"), maximum=40) or "atoms"
             if kind in {"atoms", "timelines"}:
                 return self._governed_memory_store().read(operation, args)
             if operation != "search":
                 raise ValueError(
-                    f"ime_memory.{operation} only supports governed Atom records"
+                    f"memory.{operation} only supports governed Atom records"
                 )
             if _bounded_text(args.get("mode"), maximum=24) not in {"", "current"}:
                 raise ValueError(
@@ -5548,7 +6460,7 @@ class ControlToolGateway:
         if operation == "trace":
             trace_id = _bounded_text(args.get("traceId"), maximum=240)
             if not trace_id:
-                raise ValueError("traceId is required for ime_memory.trace")
+                raise ValueError("traceId is required for memory.trace")
             payload = self._facade_call("memory_optimizer_trace", {"traceId": trace_id})
             return {"summary": "已读取记忆整理追溯信息", "trace": _safe_payload(payload)}
         if operation == "maintenance_status":
@@ -5575,7 +6487,7 @@ class ControlToolGateway:
             trigger = _bounded_text(args.get("trigger"), maximum=40)
             if trigger not in {"task_completion", "explicit_request", "idle_batch"}:
                 raise ValueError(
-                    "ime_memory.curation_prepare requires trigger="
+                    "memory.curation_prepare requires trigger="
                     "task_completion, explicit_request, or idle_batch"
                 )
             payload = self._facade_call(
@@ -5692,7 +6604,7 @@ class ControlToolGateway:
         if operation == "maintenance_review":
             run_id = _bounded_text(args.get("runId"), maximum=240)
             if not run_id:
-                raise ValueError("runId is required for ime_memory.maintenance_review")
+                raise ValueError("runId is required for memory.maintenance_review")
             review = self._facade_call(
                 "agent_memory_maintenance_run",
                 {
@@ -5812,12 +6724,12 @@ class ControlToolGateway:
         if operation in {"search", "find", "open"}:
             base_id = _bounded_text(args.get("kbId") or args.get("baseId"), maximum=240)
             if not base_id:
-                raise ValueError(f"kbId is required for ime_knowledge.{operation}")
+                raise ValueError(f"kbId is required for knowledge.{operation}")
             payload["kbId"] = base_id
         if operation == "search":
             query = _bounded_text(args.get("query"), maximum=500)
             if not query:
-                raise ValueError("query is required for ime_knowledge.search")
+                raise ValueError("query is required for knowledge.search")
             search_mode = _bounded_text(args.get("searchMode"), maximum=24) or "hybrid"
             if search_mode not in {"hybrid", "lexical", "dense"}:
                 raise ValueError("searchMode must be hybrid, lexical, or dense")
@@ -5842,9 +6754,9 @@ class ControlToolGateway:
                 patterns = []
             patterns = [item for item in patterns if item]
             if not file_id:
-                raise ValueError("fileId is required for ime_knowledge.find")
+                raise ValueError("fileId is required for knowledge.find")
             if not patterns:
-                raise ValueError("patterns are required for ime_knowledge.find")
+                raise ValueError("patterns are required for knowledge.find")
             payload.update(
                 {
                     "fileId": file_id,
@@ -5863,7 +6775,7 @@ class ControlToolGateway:
         elif operation == "open":
             file_id = _bounded_text(args.get("fileId"), maximum=240)
             if not file_id:
-                raise ValueError("fileId is required for ime_knowledge.open")
+                raise ValueError("fileId is required for knowledge.open")
             payload.update(
                 {
                     "fileId": file_id,
@@ -6072,7 +6984,7 @@ class ControlToolGateway:
     ) -> dict[str, object]:
         book_id = _bounded_text(args.get("bookId"), maximum=240)
         if not book_id:
-            raise ValueError("bookId is required for ime_memory.read")
+            raise ValueError("bookId is required for memory.read")
         report = self.management.memory_page(
             "books",
             page_request(
@@ -6807,8 +7719,8 @@ def _tool_profile_allows(
     if profile != "subagent-readonly-v1":
         return not profile.startswith("subagent-")
     allowed: dict[str, frozenset[str]] = {
-        "ime_overview": frozenset({"status", "capabilities", "recent_activity"}),
-        "ime_memory": frozenset(
+        "overview": frozenset({"status", "capabilities", "recent_activity"}),
+        "memory": frozenset(
             {
                 "catalog",
                 "read",
@@ -6826,11 +7738,11 @@ def _tool_profile_allows(
             }
         ),
         "agent_role_book": frozenset({"get", "history", "review"}),
-        "ime_knowledge": frozenset({"list_bases", "search", "find", "open", "status"}),
-        "ime_models": frozenset({"status", "profiles", "probe", "cache_stats"}),
-        "ime_runtime": frozenset({"health", "components", "diagnose"}),
-        "ime_browser": frozenset({"status", "tabs", "snapshot", "screenshot", "trace"}),
-        "ime_agents": frozenset(
+        "knowledge": frozenset({"list_bases", "search", "find", "open", "status"}),
+        "models": frozenset({"status", "profiles", "probe", "cache_stats"}),
+        "runtime": frozenset({"health", "components", "diagnose"}),
+        "browser": frozenset({"status", "tabs", "snapshot", "screenshot", "trace"}),
+        "agents": frozenset(
             {
                 "catalog",
                 "status",
@@ -6839,9 +7751,21 @@ def _tool_profile_allows(
         ),
         "agent_schedule": frozenset({"list", "runs"}),
         "agent_plan": frozenset({"list"}),
+        "work_documents": frozenset({"list", "history.search", "get"}),
         "workspace_list": frozenset({"list"}),
         "workspace_read": frozenset({"read"}),
         "workspace_search": frozenset({"search"}),
+        "workspace_lsp": frozenset(
+            {
+                "status",
+                "symbols",
+                "hover",
+                "definition",
+                "references",
+                "diagnostics",
+            }
+        ),
+        "workspace_job": frozenset({"list", "status", "logs"}),
         "desktop_semantic": frozenset({"status", "list", "inspect"}),
     }
     operation_risk = str(dict(spec.get("operationRisks") or {}).get(operation) or "R0")
@@ -6851,19 +7775,19 @@ def _tool_profile_allows(
 def _runtime_memory_tool_parameter_schema(
     operations: list[str],
 ) -> dict[str, object]:
-    argument_names = (*_RUNTIME_TOOL_ARGUMENTS["ime_memory"], "scope", "policy")
+    argument_names = (*_RUNTIME_TOOL_ARGUMENTS["memory"], "scope", "policy")
     properties = {
         "op": {"type": "string", "enum": operations},
         **{
         name: dict(
             _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES.get(
-                ("ime_memory", name),
+                ("memory", name),
                 _RUNTIME_TOOL_ARGUMENT_SCHEMAS[name],
             )
         )
         for name in argument_names
         if name in _RUNTIME_TOOL_ARGUMENT_SCHEMAS
-        or ("ime_memory", name) in _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES
+        or ("memory", name) in _RUNTIME_TOOL_ARGUMENT_SCHEMA_OVERRIDES
         },
     }
     properties.update(
@@ -6949,14 +7873,14 @@ def _runtime_memory_tool_parameter_schema(
             "required": [
                 "op",
                 *_RUNTIME_TOOL_REQUIRED_ARGUMENTS.get(
-                    ("ime_memory", operation),
+                    ("memory", operation),
                     (),
                 ),
             ],
             "properties": {"op": {"const": operation}},
         }
         alternatives = _RUNTIME_TOOL_REQUIRED_ALTERNATIVES.get(
-            ("ime_memory", operation),
+            ("memory", operation),
             (),
         )
         if alternatives:
@@ -7043,7 +7967,7 @@ def _runtime_tool_parameter_schema(
     operations: list[object],
 ) -> dict[str, object]:
     normalized_operations = [str(operation) for operation in operations]
-    if tool_id == "ime_memory":
+    if tool_id == "memory":
         return _runtime_memory_tool_parameter_schema(normalized_operations)
     configured = _RUNTIME_TOOL_PARAMETER_SCHEMAS.get(tool_id)
     if configured is not None:

@@ -125,16 +125,16 @@ for line in sys.stdin:
         if str(command.get("message", "")) == "tool-loop":
             first = {"role": "assistant", "timestamp": 105, "content": [
                 {"type": "text", "text": "我先检查相关记忆。"},
-                {"type": "toolCall", "id": "call-1", "name": "ime_memory", "arguments": {"op": "recent"}}
+                {"type": "toolCall", "id": "call-1", "name": "memory", "arguments": {"op": "recent"}}
             ]}
             emit({"type": "message_update", "message": {"role": "assistant", "timestamp": 105},
                   "assistantMessageEvent": {"type": "text_delta", "contentIndex": 0, "delta": "我先检查相关记忆。"}})
             emit({"type": "message_end", "message": first})
-            emit({"type": "tool_execution_start", "toolCallId": "call-1", "toolName": "ime_memory",
+            emit({"type": "tool_execution_start", "toolCallId": "call-1", "toolName": "memory",
                   "args": {"op": "recent"}})
             emit({"type": "message_end", "message": {"role": "toolResult", "timestamp": 106,
                   "content": [{"type": "text", "text": "{\"summary\":\"raw tool json\"}"}]}})
-            emit({"type": "tool_execution_end", "toolCallId": "call-1", "toolName": "ime_memory",
+            emit({"type": "tool_execution_end", "toolCallId": "call-1", "toolName": "memory",
                   "args": {"op": "recent"}, "result": {"summary": "读取 2 条近期记录"}, "isError": False})
             final = {"role": "assistant", "timestamp": 107, "content": [
                 {"type": "text", "text": "## 结论\n\n找到了两条相关记录。"}
@@ -230,11 +230,12 @@ for line in sys.stdin:
 class PiRuntimePermissionSelectionTests(unittest.TestCase):
     def test_explicit_allowlist_is_intersected_with_mode_and_subagent_profile(self) -> None:
         available = (
-            "ime_overview",
-            "ime_memory",
-            "ime_input",
+            "overview",
+            "memory",
+            "input",
             "agent_plan",
             "workspace_search",
+            "workspace_lsp",
             "workspace_patch",
         )
         assistant = _tools_for_session(
@@ -243,7 +244,7 @@ class PiRuntimePermissionSelectionTests(unittest.TestCase):
                 "mode": "assistant",
                 "toolProfileVersion": "control-center-v1",
                 "toolAllowlistMode": "explicit",
-                "allowedTools": ["ime_overview", "workspace_search"],
+                "allowedTools": ["overview", "workspace_search"],
             },
         )
         readonly_child = _tools_for_session(
@@ -252,12 +253,15 @@ class PiRuntimePermissionSelectionTests(unittest.TestCase):
                 "mode": "assistant",
                 "toolProfileVersion": "subagent-readonly-v1",
                 "toolAllowlistMode": "explicit",
-                "allowedTools": ["ime_memory", "ime_input", "agent_plan"],
+                "allowedTools": ["memory", "input", "agent_plan", "workspace_lsp"],
             },
         )
 
-        self.assertEqual(assistant, ("ime_overview",))
-        self.assertEqual(readonly_child, ("ime_memory", "agent_plan"))
+        self.assertEqual(assistant, ("overview",))
+        self.assertEqual(
+            readonly_child,
+            ("memory", "agent_plan", "workspace_lsp"),
+        )
 
 
 class PiRuntimeTests(unittest.TestCase):
@@ -876,7 +880,7 @@ class PiRuntimeTests(unittest.TestCase):
             session_dir=self.root / "tool-sessions",
             logs_dir=self.root / "tool-logs",
             extension_path=extension,
-            tools=("ime_memory",),
+            tools=("memory",),
             tool_gateway_token="scoped-test-token",
             plugin_approval_token="plugin-only-test-token",
         )
@@ -885,7 +889,7 @@ class PiRuntimeTests(unittest.TestCase):
 
         self.assertIn("--no-builtin-tools", command)
         self.assertIn(str(extension.resolve()), command)
-        self.assertIn("ime_memory", command)
+        self.assertIn("memory", command)
         self.assertNotIn("--no-tools", command)
         self.assertEqual(environment["RAG_IME_AGENT_TOOL_TOKEN"], "scoped-test-token")
         self.assertEqual(environment["RAG_IME_TOOL_GATEWAY_TOKEN"], "scoped-test-token")
@@ -907,7 +911,7 @@ class PiRuntimeTests(unittest.TestCase):
             session_dir=self.root / "coordinator-sessions",
             logs_dir=self.root / "coordinator-logs",
             extension_path=extension,
-            tools=("ime_memory", "workspace_list", "workspace_read", "workspace_shell"),
+            tools=("memory", "workspace_list", "workspace_read", "workspace_shell"),
         )
         coordinator = self.store.create(
             title="coordinator",
@@ -919,8 +923,12 @@ class PiRuntimeTests(unittest.TestCase):
         assistant_tools = assistant_command[assistant_command.index("--tools") + 1]
         coordinator_tools = coordinator_command[coordinator_command.index("--tools") + 1]
 
-        self.assertEqual(assistant_tools, "ime_memory")
-        self.assertIn("workspace_shell", coordinator_tools)
+        self.assertEqual(assistant_tools, "memory")
+        self.assertEqual(
+            coordinator_tools,
+            "memory,ls,read,bash",
+        )
+        self.assertNotIn("workspace_", coordinator_tools)
         environment = config.child_environment(session=coordinator)
         self.assertEqual(environment["RAG_IME_AGENT_SESSION_MODE"], "coordinator")
 
@@ -970,7 +978,7 @@ class PiRuntimeTests(unittest.TestCase):
         session_id = str(self.session["id"])
         approval = self.store.create_approval(
             session_id=session_id,
-            tool_name="ime_memory",
+            tool_name="memory",
             operation="edit",
             payload_sha256="b" * 64,
             preview={"summary": "等待测试队列"},
@@ -1571,7 +1579,7 @@ class PiRuntimeTests(unittest.TestCase):
         session_id = str(self.session["id"])
         approval = self.store.create_approval(
             session_id=session_id,
-            tool_name="ime_runtime",
+            tool_name="runtime",
             operation="restart",
             payload_sha256="a" * 64,
             preview={"summary": "重启运行组件"},

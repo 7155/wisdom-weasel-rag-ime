@@ -481,7 +481,7 @@ class PostCommitCompletionCache:
     ) -> tuple[list[ModelPrediction], dict[str, object]]:
         now = time.time()
         ttl_ms = max(1000, int(ttl_ms))
-        hard_timeout_ms = max(500, int(hard_timeout_ms))
+        hard_timeout_ms = max(300, int(hard_timeout_ms))
         wait_ms = max(0, min(int(wait_ms), hard_timeout_ms))
         start_kwargs: dict[str, object] | None = None
         started = False
@@ -643,7 +643,7 @@ class PostCommitCompletionCache:
             called=True,
             timed_out=job.state == "timeout",
             skipped_reason="" if predictions else f"post-commit completion {state}",
-            budget_ms=post_commit_model_hard_timeout_ms(),
+            budget_ms=job.hard_timeout_ms,
             elapsed_ms=elapsed_ms,
             prediction_count=len(predictions),
             request_type=PREDICTION_REQUEST_POST_COMMIT_COMPLETION,
@@ -2177,7 +2177,11 @@ def run_side_lanes_with_latency_budget(
         latency_budget_ms,
         runtime_config=runtime_config,
     )
-    model_budget_ms = _model_lane_budget_for_request(latency_budget_ms, snapshot=snapshot)
+    model_budget_ms = _model_lane_budget_for_request(
+        latency_budget_ms,
+        snapshot=snapshot,
+        runtime_config=runtime_config,
+    )
     request_type = model_request_type_for_snapshot(snapshot)
     post_commit_prediction = _is_post_commit_prediction_snapshot(snapshot)
     post_commit_auto_model = (not post_commit_prediction) or post_commit_auto_model_enabled()
@@ -2250,6 +2254,7 @@ def run_side_lanes_with_latency_budget(
             explicit_recent_context=model_recent_context,
             project=project,
             max_candidates=local_model_candidate_limit,
+            model_budget_ms=model_budget_ms,
             runtime_config=runtime_config,
         )
         model_lane["contextPacket"] = online_context_packet
@@ -2598,6 +2603,7 @@ def run_post_commit_completion_async(
     explicit_recent_context: str,
     project: str,
     max_candidates: int,
+    model_budget_ms: int | None = None,
     runtime_config: RuntimeConfigSnapshot | None = None,
 ) -> tuple[list[ModelPrediction], dict[str, object]]:
     key = build_post_commit_completion_key(
@@ -2624,10 +2630,26 @@ def run_post_commit_completion_async(
             if runtime_config is not None
             else post_commit_completion_ttl_ms()
         ),
-        hard_timeout_ms=(
-            runtime_config.post_commit.model_hard_timeout_ms
-            if runtime_config is not None
-            else post_commit_model_hard_timeout_ms()
+        hard_timeout_ms=min(
+            (
+                runtime_config.post_commit.model_hard_timeout_ms
+                if runtime_config is not None
+                else post_commit_model_hard_timeout_ms()
+            ),
+            (
+                max(300, int(model_budget_ms))
+                if model_budget_ms is not None
+                else (
+                    runtime_config.post_commit.model_budget_ms
+                    if runtime_config is not None
+                    else _bounded_int(
+                        os.environ.get("RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"),
+                        default=900,
+                        minimum=300,
+                        maximum=12000,
+                    )
+                )
+            ),
         ),
         wait_ms=wait_ms,
         memory_enabled=runtime_config.memory.enabled if runtime_config is not None else True,
@@ -2673,10 +2695,19 @@ def _rag_lane_budget_for_request(
     return min(request_budget_ms, max(1, int(runtime_config.hybrid_rag.budget_ms)))
 
 
-def _model_lane_budget_for_request(latency_budget_ms: int, *, snapshot: RimeContextSnapshot) -> int:
+def _model_lane_budget_for_request(
+    latency_budget_ms: int,
+    *,
+    snapshot: RimeContextSnapshot,
+    runtime_config: RuntimeConfigSnapshot | None = None,
+) -> int:
     budget = max(0, int(latency_budget_ms))
     if not _is_post_commit_prediction_snapshot(snapshot):
         return budget
+    post_commit_config = getattr(runtime_config, "post_commit", None)
+    configured_budget = getattr(post_commit_config, "model_budget_ms", None)
+    if configured_budget is not None:
+        return max(300, min(12000, int(configured_budget)))
     configured = _bounded_int(
         os.environ.get("RAG_IME_POST_COMMIT_MODEL_BUDGET_MS"),
         default=900,

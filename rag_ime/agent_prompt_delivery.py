@@ -33,11 +33,15 @@ class AgentPromptDeliveryService:
             [Mapping[str, object]],
             list[Mapping[str, object]],
         ],
+        room_public_recovery_context: Callable[[str], str],
     ) -> None:
         self.sessions = sessions
         self.context_runtime = context_runtime
         self._runtime_provider = runtime_provider
         self.runtime_tool_manifest = runtime_tool_manifest
+        self.room_public_recovery_context = (
+            room_public_recovery_context
+        )
 
     @property
     def runtime(self) -> Any:
@@ -141,8 +145,17 @@ class AgentPromptDeliveryService:
                 )
                 if part and part.strip()
             ),
-            session_context_prompt=render_context_items(
-                memory_items
+            session_context_prompt="\n\n".join(
+                value
+                for value in (
+                    render_context_items(memory_items),
+                    (
+                        self.room_public_recovery_context(session_id)
+                        if delivery == "prompt"
+                        else ""
+                    ),
+                )
+                if value
             ),
         )
         request_node = self.context_runtime.add_trace_node(

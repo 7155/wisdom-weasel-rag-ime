@@ -441,7 +441,7 @@ class MemoryGovernanceProposalStore:
                 "mutationApplied": True,
                 "approvalId": approval,
                 "auditId": proposal,
-                "toolId": "ime_memory",
+                "toolId": "memory",
                 "operation": apply_operation,
                 "proposalId": proposal,
                 "status": "applied",
@@ -452,7 +452,7 @@ class MemoryGovernanceProposalStore:
                 "summary": str(mutation["summary"]),
                 "undoAvailable": True,
                 "rollback": {
-                    "tool": "ime_memory",
+                    "tool": "memory",
                     "operation": "governance_rollback",
                     "args": {"proposalId": proposal},
                 },
@@ -567,7 +567,7 @@ class MemoryGovernanceProposalStore:
                 "mutationApplied": True,
                 "approvalId": approval,
                 "auditId": proposal,
-                "toolId": "ime_memory",
+                "toolId": "memory",
                 "operation": "governance_rollback",
                 "proposalId": proposal,
                 "revertedProposalId": proposal,
@@ -623,11 +623,11 @@ class MemoryGovernanceProposalStore:
                 return self._search(conn, mode=mode, query=query, limit=limit)
             if operation == "get":
                 if not target_id:
-                    raise ValueError("targetId is required for ime_memory.get")
+                    raise ValueError("targetId is required for memory.get")
                 return self._get(conn, mode=mode, target_id=target_id)
             if operation == "explain":
                 if not target_id:
-                    raise ValueError("targetId is required for ime_memory.explain")
+                    raise ValueError("targetId is required for memory.explain")
                 return self._explain(conn, mode=mode, target_id=target_id)
         raise ValueError("unsupported governed memory read operation")
 

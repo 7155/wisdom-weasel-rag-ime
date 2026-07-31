@@ -42,6 +42,23 @@ import './browser.css';
 type BrowserMode = 'observe' | 'codrive' | 'managed';
 type BrowserView = 'copilot' | 'permissions' | 'traces' | 'setup';
 
+type BrowserReceiptArea = 'global' | 'permissions' | 'pairing' | 'managed';
+type BrowserReceiptState = 'pending' | 'confirmed' | 'waiting' | 'error';
+type BrowserActionReceipt = {
+  area: BrowserReceiptArea;
+  detail: string;
+  state: BrowserReceiptState;
+  title: string;
+};
+type BrowserActionRequest = {
+  area: BrowserReceiptArea;
+  confirmed: (response: Record<string, unknown>) => boolean;
+  confirmedDetail: string;
+  label: string;
+  request: () => Promise<unknown>;
+  waitingDetail: string;
+};
+
 const modeItems = [
   { label: '只读观察', value: 'observe' },
   { label: '协同操作', value: 'codrive' },
@@ -59,6 +76,7 @@ export function BrowserFeature() {
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [selectedTabId, setSelectedTabId] = useState(0);
   const [view, setView] = useState<BrowserView>('copilot');
+  const [actionReceipt, setActionReceipt] = useState<BrowserActionReceipt | null>(null);
   const control = useBrowserControl(selectedDeviceId, selectedTabId);
   const status = asRecord(control.status.data);
   const pairing = asRecord(control.pairing.data);
@@ -99,6 +117,47 @@ export function BrowserFeature() {
       control.traces.refetch(),
     ]);
   };
+  const performBrowserAction = async ({
+    area,
+    confirmed,
+    confirmedDetail,
+    label,
+    request,
+    waitingDetail,
+  }: BrowserActionRequest) => {
+    setActionReceipt({
+      area,
+      detail: '正在把请求交给浏览器服务；页面不会提前改变状态。',
+      state: 'pending',
+      title: `正在${label}`,
+    });
+    try {
+      const response = asRecord(await request());
+      if (response.ok === false) {
+        setActionReceipt({
+          area,
+          detail: '浏览器服务没有接受这次请求；当前页面状态没有改变。请刷新状态后再试。',
+          state: 'error',
+          title: `${label}未被接受`,
+        });
+        return;
+      }
+      const didConfirm = confirmed(response);
+      setActionReceipt({
+        area,
+        detail: didConfirm ? confirmedDetail : waitingDetail,
+        state: didConfirm ? 'confirmed' : 'waiting',
+        title: didConfirm ? `${label}已确认` : `${label}请求已送达，等待确认`,
+      });
+    } catch {
+      setActionReceipt({
+        area,
+        detail: '请求未完成；当前页面状态没有改变。请刷新状态后重试。',
+        state: 'error',
+        title: `${label}失败`,
+      });
+    }
+  };
   const runningMutation = (
     control.setMode.isPending
     || control.runCommand.isPending
@@ -116,11 +175,22 @@ export function BrowserFeature() {
             disabled={!selectedTabId || runningMutation}
             leadingIcon={<Camera size={15} />}
             loading={control.runCommand.isPending}
-            onClick={() => void control.runCommand.mutateAsync({
-              action: 'screenshot',
-              deviceId: selectedDeviceId,
-              tabId: selectedTabId,
-              timeoutSeconds: 20,
+            onClick={() => void performBrowserAction({
+              area: 'global',
+              confirmed: (response) => Boolean(
+                stringValue(response.snapshotId)
+                || response.hasScreenshot === true
+                || ['completed', 'succeeded'].includes(stringValue(response.status)),
+              ),
+              confirmedDetail: '浏览器已返回截图回执，最新页面快照正在刷新。',
+              label: '获取截图',
+              request: () => control.runCommand.mutateAsync({
+                action: 'screenshot',
+                deviceId: selectedDeviceId,
+                tabId: selectedTabId,
+                timeoutSeconds: 20,
+              }),
+              waitingDetail: '请求已送达，但浏览器尚未返回截图回执；当前图片或占位提示保持不变。',
             })}
             size="small"
           >
@@ -129,7 +199,18 @@ export function BrowserFeature() {
           <Button
             disabled={runningMutation}
             leadingIcon={<Octagon size={15} />}
-            onClick={() => void control.stop.mutateAsync()}
+            onClick={() => void performBrowserAction({
+              area: 'global',
+              confirmed: (response) => (
+                response.stopped === true
+                || response.running === false
+                || ['stopped', 'completed'].includes(stringValue(response.status))
+              ),
+              confirmedDetail: '浏览器已确认停止；在线状态正在刷新。',
+              label: '停止浏览器',
+              request: () => control.stop.mutateAsync(),
+              waitingDetail: '停止请求已送达，但浏览器仍未确认停止；在线状态保持不变。',
+            })}
             size="small"
             variant="quiet"
           >
@@ -158,9 +239,17 @@ export function BrowserFeature() {
           <SegmentedControl
             aria-label="浏览器操作方式"
             items={modeItems}
-            onValueChange={(next) => void control.setMode.mutateAsync(next as BrowserMode)}
+            onValueChange={(next) => void performBrowserAction({
+              area: 'global',
+              confirmed: (response) => stringValue(response.mode) === next,
+              confirmedDetail: `浏览器已确认切换为“${modeItems.find((item) => item.value === next)?.label ?? '所选方式'}”。`,
+              label: '切换浏览器操作方式',
+              request: () => control.setMode.mutateAsync(next as BrowserMode),
+              waitingDetail: '切换请求已送达，但浏览器仍未确认新方式；当前选中项保持不变。',
+            })}
             value={mode}
           />
+          <BrowserActionNotice receipt={actionReceipt?.area === 'global' ? actionReceipt : null} />
         </div>
 
         <Tabs className="browser-tabs" onValueChange={(next) => setView(next as BrowserView)} value={view}>
@@ -197,7 +286,18 @@ export function BrowserFeature() {
             <PermissionsView
               isPending={control.decidePermission.isPending}
               items={permissions}
-              onDecision={(promptId, decision) => void control.decidePermission.mutateAsync({ promptId, decision })}
+              onDecision={(promptId, decision) => void performBrowserAction({
+                area: 'permissions',
+                confirmed: (response) => (
+                  stringValue(response.promptId) === promptId
+                  && stringValue(response.decision) === decision
+                ),
+                confirmedDetail: '浏览器已记录这次权限决定，待处理列表正在刷新。',
+                label: ({ allow_once: '允许一次', allow_site: '允许站点', deny: '拒绝权限' } as const)[decision],
+                request: () => control.decidePermission.mutateAsync({ promptId, decision }),
+                waitingDetail: '决定已送达，但浏览器尚未返回匹配回执；该请求仍显示为待处理。',
+              })}
+              receipt={actionReceipt?.area === 'permissions' ? actionReceipt : null}
             />
           </TabsContent>
 
@@ -209,7 +309,35 @@ export function BrowserFeature() {
             <SetupView
               control={control}
               managed={managed}
+              onRotatePairing={() => void performBrowserAction({
+                area: 'pairing',
+                confirmed: (response) => (
+                  (Boolean(stringValue(response.pairingToken)) && stringValue(response.pairingToken) !== stringValue(pairing.pairingToken))
+                  || (Boolean(stringValue(response.tokenFingerprint)) && stringValue(response.tokenFingerprint) !== stringValue(pairing.tokenFingerprint))
+                ),
+                confirmedDetail: '浏览器已返回新的配对凭据；只把它复制给正在配对的本机插件。',
+                label: '轮换配对凭据',
+                request: () => control.rotatePairing.mutateAsync(),
+                waitingDetail: '轮换请求已送达，但浏览器尚未返回新的凭据或指纹；现有凭据保持有效。',
+              })}
+              onStartManaged={() => void performBrowserAction({
+                area: 'managed',
+                confirmed: (response) => response.running === true || stringValue(response.status) === 'running',
+                confirmedDetail: '浏览器已确认托管进程启动；进程状态正在刷新。',
+                label: '启动托管浏览器',
+                request: () => control.startManaged.mutateAsync(),
+                waitingDetail: '启动请求已送达，但浏览器仍未报告进程；页面继续显示“已停止”。',
+              })}
+              onStopManaged={() => void performBrowserAction({
+                area: 'managed',
+                confirmed: (response) => response.running === false || stringValue(response.status) === 'stopped',
+                confirmedDetail: '浏览器已确认托管进程停止；进程状态正在刷新。',
+                label: '停止托管浏览器',
+                request: () => control.stopManaged.mutateAsync(),
+                waitingDetail: '停止请求已送达，但浏览器尚未确认进程退出；当前运行状态保持不变。',
+              })}
               pairing={pairing}
+              receipt={actionReceipt && ['pairing', 'managed'].includes(actionReceipt.area) ? actionReceipt : null}
             />
           </TabsContent>
         </Tabs>
@@ -333,14 +461,17 @@ function PermissionsView({
   isPending,
   items,
   onDecision,
+  receipt,
 }: {
   isPending: boolean;
   items: Record<string, unknown>[];
   onDecision: (promptId: string, decision: 'allow_once' | 'allow_site' | 'deny') => void;
+  receipt: BrowserActionReceipt | null;
 }) {
   return (
     <section className="browser-list-view">
       <header><div><h2>页面权限</h2><p>跨站访问或高影响页面操作会在这里等待你的决定。</p></div><StatusBadge label={`${items.filter((item) => stringValue(item.status) === 'pending').length} 个待处理`} tone="neutral" /></header>
+      <BrowserActionNotice receipt={receipt} />
       {items.length ? (
         <div className="browser-permission-list">
           {items.map((item) => {
@@ -392,11 +523,19 @@ function TraceView({ items }: { items: Record<string, unknown>[] }) {
 function SetupView({
   control,
   managed,
+  onRotatePairing,
+  onStartManaged,
+  onStopManaged,
   pairing,
+  receipt,
 }: {
   control: ReturnType<typeof useBrowserControl>;
   managed: Record<string, unknown>;
+  onRotatePairing: () => void;
+  onStartManaged: () => void;
+  onStopManaged: () => void;
   pairing: Record<string, unknown>;
+  receipt: BrowserActionReceipt | null;
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle');
   const token = stringValue(pairing.pairingToken);
@@ -420,7 +559,7 @@ function SetupView({
         </dl>
         <div className="browser-pairing-token">
           <label htmlFor="browser-pairing-token">配对凭据</label>
-          <input id="browser-pairing-token" readOnly type="password" value={token} />
+          <input aria-describedby="browser-pairing-guidance" autoComplete="off" id="browser-pairing-token" readOnly type="password" value={token} />
           <Button
             disabled={!token}
             leadingIcon={copyState === 'copied' ? <Check size={15} /> : <Clipboard size={15} />}
@@ -432,10 +571,14 @@ function SetupView({
           <IconButton
             icon={<RotateCcw size={15} />}
             label="轮换配对凭据"
-            onClick={() => void control.rotatePairing.mutateAsync()}
+            onClick={onRotatePairing}
             tooltip
           />
         </div>
+        <p className="browser-pairing-guidance" id="browser-pairing-guidance">
+          这项凭据可以授权插件连接浏览器。默认隐藏；只复制给你正在配对的本机插件，不再使用时请立即轮换。
+        </p>
+        <BrowserActionNotice receipt={receipt?.area === 'pairing' ? receipt : null} />
         {copyState === 'error' ? (
           <InlineNotice title="复制失败" tone="warning">
             当前宿主没有授予剪贴板权限，请选中凭据后使用系统复制命令。
@@ -447,20 +590,36 @@ function SetupView({
       </div>
 
       <div className="browser-setup__section">
-        <header><div><h2>托管浏览器</h2><p>使用独立 Profile 和插件实例，适合未来角色主持的长时调研。</p></div><StatusBadge label={managed.running === true ? '运行中' : '已停止'} tone={managed.running === true ? 'success' : 'neutral'} /></header>
+        <header><div><h2>托管浏览器</h2><p>使用独立的浏览器资料和插件，与日常浏览分开，适合让伙伴进行较长时间的调研。</p></div><StatusBadge label={managed.running === true ? '运行中' : '已停止'} tone={managed.running === true ? 'success' : 'neutral'} /></header>
         <dl>
-          <div><dt>隔离 Profile</dt><dd>{stringValue(managed.profilePath, '未创建')}</dd></div>
+          <div><dt>隔离资料目录</dt><dd>{stringValue(managed.profilePath, '未创建')}</dd></div>
           <div><dt>进程</dt><dd>{managed.running === true ? `PID ${Number(managed.pid || 0)}` : '无'}</dd></div>
         </dl>
         <div className="browser-managed-actions">
           {managed.running === true ? (
-            <Button leadingIcon={<Octagon size={15} />} loading={control.stopManaged.isPending} onClick={() => void control.stopManaged.mutateAsync()}>停止托管浏览器</Button>
+            <Button leadingIcon={<Octagon size={15} />} loading={control.stopManaged.isPending} onClick={onStopManaged}>停止托管浏览器</Button>
           ) : (
-            <Button leadingIcon={<AppWindow size={15} />} loading={control.startManaged.isPending} onClick={() => void control.startManaged.mutateAsync()} variant="primary">启动托管浏览器</Button>
+            <Button leadingIcon={<AppWindow size={15} />} loading={control.startManaged.isPending} onClick={onStartManaged} variant="primary">启动托管浏览器</Button>
           )}
         </div>
+        <BrowserActionNotice receipt={receipt?.area === 'managed' ? receipt : null} />
       </div>
     </section>
+  );
+}
+
+function BrowserActionNotice({ receipt }: { receipt: BrowserActionReceipt | null }) {
+  if (!receipt) return null;
+  const tone = {
+    confirmed: 'success',
+    error: 'danger',
+    pending: 'info',
+    waiting: 'warning',
+  }[receipt.state] as 'success' | 'danger' | 'info' | 'warning';
+  return (
+    <div aria-live="polite" className="browser-action-receipt">
+      <InlineNotice title={receipt.title} tone={tone}>{receipt.detail}</InlineNotice>
+    </div>
   );
 }
 

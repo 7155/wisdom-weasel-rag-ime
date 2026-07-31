@@ -11,6 +11,11 @@
     "candidateCount": {"type": "integer", "minimum": 0},
     "expiresAfterMs": {"type": "integer", "minimum": 0},
     "candidates": {"type": "array"},
+    "evidence": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {"$ref": "#/$defs/redactedEvidence"}
+    },
     "stored": {"type": "boolean"},
     "noStore": {"type": "boolean"},
     "privacyAssessment": {"type": "object"},
@@ -53,6 +58,7 @@
             "elapsedMs": {"type": "number", "minimum": 0}
           }
         },
+        "contextView": {"$ref": "#/$defs/contextView"},
         "progress": {
           "type": "object",
           "required": ["stage", "elapsedMs", "context", "retrieval", "model"],
@@ -111,5 +117,57 @@
       }
     },
     "traceEvents": {"type": "array"}
+  },
+  "$defs": {
+    "redactedEvidence": {
+      "type": "object",
+      "required": ["evidenceId", "sourceType", "sourceLane", "score", "confidence", "tags", "hasPreview"],
+      "properties": {
+        "evidenceId": {"type": "string"},
+        "sourceType": {"type": "string"},
+        "sourceLane": {"type": "string"},
+        "score": {"type": "number"},
+        "confidence": {"type": "number"},
+        "tags": {"type": "array", "maxItems": 6, "items": {"type": "string"}},
+        "hasPreview": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "contextView": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "source",
+        "currentRequest",
+        "currentContext",
+        "selectedText",
+        "taskMode",
+        "groundingMode",
+        "windowContext",
+        "recentCompleteInputs",
+        "planning",
+        "activityTimeline",
+        "groundingEvidence",
+        "evidenceHints",
+        "contextBudget"
+      ],
+      "properties": {
+        "schemaVersion": {"const": "rag-ime.active-rag-context-view.v1"},
+        "source": {"type": "string", "enum": ["frontend_request", "provider_request"]},
+        "currentRequest": {"type": "string"},
+        "currentContext": {"type": "string"},
+        "selectedText": {"type": "string"},
+        "taskMode": {"type": "string"},
+        "groundingMode": {"type": "string"},
+        "windowContext": {"type": "object"},
+        "recentCompleteInputs": {"type": "array", "maxItems": 4},
+        "planning": {"type": "object"},
+        "activityTimeline": {"type": "object"},
+        "groundingEvidence": {"type": "array", "maxItems": 12},
+        "evidenceHints": {"type": "array", "maxItems": 12},
+        "contextBudget": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
   }
 }

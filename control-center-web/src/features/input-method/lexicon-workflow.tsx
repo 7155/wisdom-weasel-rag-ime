@@ -98,7 +98,7 @@ export function LexiconWorkflow({
       </div>
 
       <InlineNotice title="常用词质量门" tone="info">
-        {review.selectionPolicy || '重复使用的常用词才进入审阅；模型建议默认不勾选。'}
+        {selectionPolicyLabel(review.selectionPolicy)}
         {review.filteredEntryCount ? ` 本轮已拦截 ${review.filteredEntryCount} 条单字、生僻噪声或证据不足的候选。` : ''}
       </InlineNotice>
 
@@ -227,6 +227,14 @@ function toggled(current: Set<string>, key: string, selected: boolean): Set<stri
   return next;
 }
 
+function selectionPolicyLabel(value?: string): string {
+  return ({
+    review_required: '重复使用的常用词才进入审阅；系统建议默认不勾选。',
+    repeated_usage: '重复使用的常用词才进入审阅；系统建议默认不勾选。',
+    manual_review: '每条建议都需要你审阅后才能加入词库。',
+  } as Record<string, string>)[value ?? ''] ?? '重复使用的常用词才进入审阅；系统建议默认不勾选。';
+}
+
 function reviewSourceLabel(value: string): string {
-  return ({ usage: '输入记录', manual: '手动添加', imported: '已导入' } as Record<string, string>)[value] ?? '待审词条';
+  return ({ usage: '输入记录', local_feedback: '本机选词反馈', manual: '手动添加', imported: '已导入' } as Record<string, string>)[value] ?? '待审词条';
 }

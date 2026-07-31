@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rag-ime.contract.workspace-lsp-status.v1",
+  "type": "object",
+  "required": ["schemaVersion", "runtimeInstanceId", "runtimeEpoch", "observedAtMs", "heartbeatExpiresAtMs", "current", "summary", "state", "roots"],
+  "properties": {
+    "schemaVersion": {"type": "string", "const": "rag-ime.workspace-lsp-status.v1"},
+    "runtimeInstanceId": {"type": "string", "pattern": "^workspace-lsp-[0-9a-f]{32}$"},
+    "runtimeEpoch": {"type": "integer", "minimum": 0},
+    "observedAtMs": {"type": "integer", "minimum": 0},
+    "heartbeatExpiresAtMs": {"type": "integer", "minimum": 0},
+    "current": {"type": "boolean"},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
+    "state": {"type": "string", "enum": ["ready", "available", "degraded", "unavailable"]},
+    "roots": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "required": ["root", "state", "servers"],
+        "properties": {
+          "root": {"type": "string", "minLength": 1, "maxLength": 4096},
+          "state": {"type": "string", "enum": ["ready", "available", "degraded", "unavailable"]},
+          "errorCode": {"type": "string", "maxLength": 120},
+          "error": {"type": "string", "maxLength": 500},
+          "servers": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "required": ["name", "state", "languageIds", "fileExtensions"],
+              "properties": {
+                "name": {"type": "string", "minLength": 1, "maxLength": 120},
+                "state": {"type": "string", "enum": ["ready", "available", "degraded", "unavailable"]},
+                "languageIds": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 120}},
+                "fileExtensions": {"type": "array", "maxItems": 64, "items": {"type": "string", "maxLength": 32}},
+                "errorCode": {"type": "string", "maxLength": 120},
+                "error": {"type": "string", "maxLength": 500}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -173,6 +173,16 @@ def prompt_user_message_payload(
         media_id = str(receipt.get("mediaId") or "")
         if not media_id:
             continue
+        room_id = (
+            str(receipt.get("roomId") or "")
+            if receipt.get("ownerType") == "room"
+            else ""
+        )
+        owner_query = (
+            f"roomId={quote(room_id, safe='')}"
+            if room_id
+            else f"sessionId={quote(session_id, safe='')}"
+        )
         media_ids.append(media_id)
         blocks.append(
             {
@@ -185,7 +195,7 @@ def prompt_user_message_payload(
                     "receiptUrl": (
                         "/api/agent/media/"
                         f"{quote(media_id, safe='')}/content"
-                        f"?sessionId={quote(session_id, safe='')}"
+                        f"?{owner_query}"
                     ),
                     "alt": str(
                         receipt.get("fileName") or "对话图片"

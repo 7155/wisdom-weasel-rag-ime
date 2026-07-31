@@ -34,25 +34,31 @@ test('Room publishes once immediately and preserves the in-flight turn across ro
   const feature = page.locator('main[data-route-id="rooms"]');
   await expect(feature).toBeVisible();
 
-  const executionLayout = await feature.locator('.room-execution-phase').evaluate((root) => {
-    const boxes = Array.from(root.children).map((element) => {
-      const rect = element.getBoundingClientRect();
-      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
-    });
-    const overlaps = boxes.flatMap((first, firstIndex) => boxes.slice(firstIndex + 1).map((second) => ({
-      width: Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left)),
-      height: Math.max(0, Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top)),
-    })));
+  const viewSelector = feature.getByRole('radiogroup', { name: '协作空间视图' });
+  await expect(viewSelector.getByRole('radio', { name: '对话', exact: true })).toBeChecked();
+  const timeline = feature.getByLabel('协作对话时间线');
+  await expect(timeline).toBeVisible();
+  const workspaceLayout = await feature.locator('.room-workspace').evaluate((root) => {
+    const timelineElement = root.querySelector<HTMLElement>('[aria-label="协作对话时间线"]');
+    const composerDock = root.querySelector<HTMLElement>('.room-composer-dock');
+    if (!timelineElement || !composerDock) throw new Error('Room conversation layout is incomplete');
+    const rootRect = root.getBoundingClientRect();
+    const timelineRect = timelineElement.getBoundingClientRect();
+    const composerRect = composerDock.getBoundingClientRect();
     return {
-      overlaps,
-      rootWidth: root.getBoundingClientRect().width,
+      clientWidth: root.clientWidth,
       scrollWidth: root.scrollWidth,
+      root: { left: rootRect.left, right: rootRect.right, bottom: rootRect.bottom },
+      timeline: { left: timelineRect.left, right: timelineRect.right },
+      composer: { left: composerRect.left, right: composerRect.right, bottom: composerRect.bottom },
     };
   });
-  expect(executionLayout.scrollWidth - executionLayout.rootWidth).toBeLessThanOrEqual(1);
-  for (const overlap of executionLayout.overlaps) {
-    expect(overlap.width * overlap.height).toBeLessThanOrEqual(0.5);
-  }
+  expect(workspaceLayout.scrollWidth).toBeLessThanOrEqual(workspaceLayout.clientWidth + 1);
+  expect(workspaceLayout.timeline.left).toBeGreaterThanOrEqual(workspaceLayout.root.left - 1);
+  expect(workspaceLayout.timeline.right).toBeLessThanOrEqual(workspaceLayout.root.right + 1);
+  expect(workspaceLayout.composer.left).toBeGreaterThanOrEqual(workspaceLayout.root.left - 1);
+  expect(workspaceLayout.composer.right).toBeLessThanOrEqual(workspaceLayout.root.right + 1);
+  expect(workspaceLayout.composer.bottom).toBeLessThanOrEqual(workspaceLayout.root.bottom + 1);
 
   const probe = `Room optimistic ${Date.now()}`;
   const composer = feature.getByRole('textbox', { name: '协作消息' });

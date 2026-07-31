@@ -18,6 +18,7 @@ class RoomRuntime(Protocol):
         payload: Mapping[str, object],
         *,
         message: str,
+        images: list[Mapping[str, str]] | None = None,
         lease_token: str,
     ) -> dict[str, object]: ...
 
@@ -50,6 +51,9 @@ class RoomKernelWorker:
             [str, str, str, int], Mapping[str, object]
         ]
         | None = None,
+        image_provider: Callable[
+            [Mapping[str, object]], list[dict[str, str]]
+        ] | None = None,
         learning_observer: Callable[[Mapping[str, object]], object] | None = None,
         clock_ms: Callable[[], int] | None = None,
     ) -> None:
@@ -61,6 +65,7 @@ class RoomKernelWorker:
         self.accept_runtime_context = accept_runtime_context
         self.revoke_session = revoke_session
         self.invalidate_room_approvals = invalidate_room_approvals
+        self.image_provider = image_provider
         self.learning_observer = learning_observer
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
 
@@ -72,11 +77,12 @@ class RoomKernelWorker:
         if pending is None:
             return None
         prepared: Mapping[str, object] = {}
-        if self.prepare_dispatch is not None:
+        is_runtime_retry = pending.get("state") == "retry_wait"
+        if self.prepare_dispatch is not None and not is_runtime_retry:
             prepared = self.prepare_dispatch(pending, now_ms)
             if not prepared.get("sessionId") or not prepared.get("manifestHash"):
                 raise RoomKernelFenceError("managed Dispatch preparation returned no capability fence")
-        if self.prepare_memory_context is not None:
+        if self.prepare_memory_context is not None and not is_runtime_retry:
             # Generic RAG is an enhancement. Its application service preserves
             # the last valid projection and may return an empty fail-open
             # receipt when no memory source is currently available.
@@ -95,11 +101,25 @@ class RoomKernelWorker:
             raise RoomKernelFenceError("outbox payload is not a Dispatch envelope")
         self.store.record_runtime_dispatch_intent(str(dispatch["dispatchId"]), now_ms=self.clock_ms())
         try:
-            runtime_receipt = self.runtime.dispatch_room(
-                dispatch,
-                message=self.message_builder(dispatch),
-                lease_token=str(lease["leaseToken"]),
+            message = self.message_builder(dispatch)
+            images = (
+                self.image_provider(dispatch)
+                if self.image_provider is not None
+                else []
             )
+            if images:
+                runtime_receipt = self.runtime.dispatch_room(
+                    dispatch,
+                    message=message,
+                    images=images,
+                    lease_token=str(lease["leaseToken"]),
+                )
+            else:
+                runtime_receipt = self.runtime.dispatch_room(
+                    dispatch,
+                    message=message,
+                    lease_token=str(lease["leaseToken"]),
+                )
         except BaseException as exc:
             if self.revoke_session is not None:
                 self.revoke_session(str(dispatch["targetSessionId"]), self.clock_ms())
@@ -193,16 +213,23 @@ class RoomKernelWorker:
                 self.store.complete_cancel(str(intent["cancelId"]), runtime_receipt, now_ms=self.clock_ms())
                 receipts.append(dict(runtime_receipt))
             except Exception as exc:
-                self.store.fail_cancel(str(intent["cancelId"]), f"{type(exc).__name__}: {exc}", now_ms=self.clock_ms())
+                receipts.extend(
+                    self.store.fail_cancel(
+                        str(intent["cancelId"]),
+                        f"{type(exc).__name__}: {exc}",
+                        now_ms=self.clock_ms(),
+                    )
+                )
         return receipts
 
     def reconcile(self) -> list[dict[str, object]]:
         now_ms = self.clock_ms()
-        receipts = self.store.cancel_expired_roots(now_ms=now_ms)
+        receipts = self.store.reconcile_exhausted_cancels(now_ms=now_ms)
+        receipts.extend(self.store.cancel_expired_roots(now_ms=now_ms))
         receipts.extend(self.store.reconcile_expired_leases(now_ms=now_ms))
         # Durable cancel delivery owns capability revocation too; doing it here
         # would double-fire the same session when the outbox is drained below.
-        self.drain_cancel_outbox()
+        receipts.extend(self.drain_cancel_outbox())
         return receipts
 
 
@@ -245,6 +272,14 @@ class KernelCommandBus:
             acceptance_criteria=acceptance_criteria,
             now_ms=now_ms,
         )
+
+    def create_task(
+        self,
+        task: Mapping[str, object],
+        *,
+        now_ms: int,
+    ) -> dict[str, object]:
+        return self.store.create_task(task, now_ms=now_ms)
 
     def dispatch(self, payload: Mapping[str, object], *, now_ms: int) -> tuple[dict[str, object], bool]:
         return self.store.enqueue_dispatch(payload, now_ms=now_ms)
@@ -324,6 +359,8 @@ def _default_dispatch_message(_dispatch: Mapping[str, object]) -> str:
         "最新 room_state 或成功工具结果返回的完整 evidenceRef，不得重写、拼接或"
         "猜测；不要填写数据库 criterionId，也不要自报 "
         "已通过或最终裁决，真实状态由 Kernel 判定。"
+        "summary、evidence 和接手指令留在结构化私有字段；publicSummary 必须遵循"
+        "系统公开报告规则，用自然语言写给用户，不暴露协议字段或私有推理。"
     )
 
 

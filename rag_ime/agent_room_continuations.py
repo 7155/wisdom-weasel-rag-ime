@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 from .agent_room_capabilities import RoomCapabilityManifestStore
 from .agent_room_kernel import RoomKernelStore
@@ -26,10 +26,12 @@ class RoomContinuationFactory:
         rooms: AgentRoomStore,
         kernel: RoomKernelStore,
         capabilities: RoomCapabilityManifestStore,
+        revoke_session: Callable[[str, int], None],
     ) -> None:
         self.rooms = rooms
         self.kernel = kernel
         self.capabilities = capabilities
+        self.revoke_session = revoke_session
 
     def build(
         self,
@@ -45,6 +47,7 @@ class RoomContinuationFactory:
         acceptance_criterion_ids: Sequence[str],
         context_evidence_refs: Sequence[str] = (),
         kind: str,
+        now_ms: int,
     ) -> dict[str, object]:
         if kind not in {"handoff", "collaboration"}:
             raise ValueError("Room continuation kind is invalid")
@@ -60,14 +63,6 @@ class RoomContinuationFactory:
         session_id = str(target.get("sessionId") or "").strip()
         if not session_id or self.kernel.session_binding(session_id) is not None:
             raise RoomContinuationProposalError(f"{kind} target is currently busy")
-        previous = self.capabilities.runtime_binding(
-            session_id,
-            active_only=False,
-        )
-        if previous is not None and previous.get("state") in {"active", "prepared"}:
-            raise RoomContinuationProposalError(
-                f"{kind} target capability is still active"
-            )
 
         parent_criteria = [
             str(item)
@@ -84,6 +79,31 @@ class RoomContinuationFactory:
             raise RoomContinuationProposalError(
                 f"{kind} acceptance criteria are outside the parent Task"
             )
+        normalized_objective = _required(objective, "objective")
+        normalized_expected_output = _required(
+            expected_output,
+            "expected_output",
+        )
+        previous = self.capabilities.runtime_binding(
+            session_id,
+            active_only=False,
+        )
+        if previous is not None and previous.get("state") in {
+            "active",
+            "prepared",
+        }:
+            self.revoke_session(session_id, max(0, int(now_ms)))
+            previous = self.capabilities.runtime_binding(
+                session_id,
+                active_only=False,
+            )
+        if previous is not None and previous.get("state") in {
+            "active",
+            "prepared",
+        }:
+            raise RoomContinuationProposalError(
+                f"{kind} target capability is still active"
+            )
         parent_epoch = max(1, int(parent_dispatch.get("capabilityEpoch") or 0))
         # capabilityEpoch is a Root execution wave, not a target Session counter.
         # A sequential handoff advances the wave. Parallel collaboration, and a
@@ -94,11 +114,25 @@ class RoomContinuationFactory:
             str(parent_dispatch["dispatchId"])
         ):
             capability_epoch += 1
-        task_id = _stable_id(
-            "room-task",
-            trigger_id,
-            target_participant_id,
-            kind,
+        current_participant_id = str(
+            parent_dispatch.get("targetParticipantId") or ""
+        )
+        current_owner_participant_id = str(
+            parent_task.get("currentOwnerParticipantId") or ""
+        )
+        if current_owner_participant_id != current_participant_id:
+            raise RoomContinuationProposalError(
+                f"{kind} requires the current Task owner"
+            )
+        task_id = (
+            str(parent_task["taskId"])
+            if kind == "handoff"
+            else _stable_id(
+                "room-task",
+                trigger_id,
+                target_participant_id,
+                kind,
+            )
         )
         dispatch_id = _stable_id(
             "room-dispatch",
@@ -106,29 +140,31 @@ class RoomContinuationFactory:
             target_participant_id,
             kind,
         )
-        current_participant_id = str(
-            parent_dispatch.get("targetParticipantId") or ""
-        )
+        evidence_refs = _unique_text(context_evidence_refs)[:32]
         task = {
             "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
             "taskId": task_id,
             "rootId": parent_dispatch["rootId"],
             "parentTaskId": parent_task["taskId"],
-            "ownerParticipantId": (
-                target_participant_id
-                if kind == "handoff"
-                else current_participant_id
+            "taskKind": "review" if intent_kind == "review" else "work",
+            "currentOwnerParticipantId": target_participant_id,
+            "ownershipRevision": 0,
+            "ownershipReceiptId": None,
+            "invitationId": None,
+            "reviewState": (
+                "required" if intent_kind == "review" else "not_required"
             ),
-            "assigneeParticipantId": target_participant_id,
-            "objective": _required(objective, "objective"),
-            "expectedOutput": _required(expected_output, "expected_output"),
+            "reviewOfTaskIds": (
+                [str(parent_task["taskId"])] if intent_kind == "review" else []
+            ),
+            "reviewAuthorParticipantIds": [],
+            "objective": normalized_objective,
+            "expectedOutput": normalized_expected_output,
             "requirementItemIds": _unique_text(
                 parent_task.get("requirementItemIds") or []
             ),
             "acceptanceCriterionIds": criteria,
-            "contextEvidenceRefs": _unique_text(
-                context_evidence_refs
-            )[:32],
+            "contextEvidenceRefs": evidence_refs,
             "revision": 0,
             "state": "active",
         }
@@ -159,10 +195,22 @@ class RoomContinuationFactory:
             ),
             "state": "pending",
         }
-        result: dict[str, object] = {
-            "childTask": task,
-            "childDispatch": dispatch,
-        }
+        result: dict[str, object] = {"childDispatch": dispatch}
+        if kind == "handoff":
+            result["taskTransfer"] = {
+                "taskId": task_id,
+                "fromParticipantId": current_owner_participant_id,
+                "toParticipantId": target_participant_id,
+                "objective": normalized_objective,
+                "expectedOutput": normalized_expected_output,
+                "acceptanceCriterionIds": criteria,
+                "contextEvidenceRefs": evidence_refs,
+                "ownershipRevision": (
+                    int(parent_task.get("ownershipRevision") or 0) + 1
+                ),
+            }
+        else:
+            result["childTask"] = task
         if kind == "handoff" and intent_kind == "close":
             wait_for = self.kernel.close_barrier_dispatch_ids(
                 str(parent_dispatch["dispatchId"])

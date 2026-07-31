@@ -11,6 +11,9 @@ class ModelProfile:
     model_path: str
     adapter_path: str = ""
     max_tokens: int = 32
+    prompt_mode: str = "chat-json"
+    temperature: float = 0.15
+    top_p: float = 0.85
     target_candidates: int = 3
     latency_budget_ms: int = 500
     resident: bool = True
@@ -27,6 +30,9 @@ class ModelProfile:
             "modelPath": payload["model_path"],
             "adapterPath": payload["adapter_path"],
             "maxTokens": payload["max_tokens"],
+            "promptMode": payload["prompt_mode"],
+            "temperature": payload["temperature"],
+            "topP": payload["top_p"],
             "targetCandidates": payload["target_candidates"],
             "latencyBudgetMs": payload["latency_budget_ms"],
             "resident": payload["resident"],
@@ -43,6 +49,9 @@ DEFAULT_MODEL_PROFILES: tuple[ModelProfile, ...] = (
         lane="hot",
         model_path="~/Library/Application Support/RagIme/Models/minimind-ime-v2",
         max_tokens=8,
+        prompt_mode="base-completion",
+        temperature=0.15,
+        top_p=0.85,
         target_candidates=3,
         latency_budget_ms=900,
         resident=True,
@@ -90,13 +99,37 @@ DEFAULT_MODEL_PROFILES: tuple[ModelProfile, ...] = (
 )
 
 
+_MINIMIND_RUNTIME_PROFILE_ALIASES = {
+    "base_completion",
+    "minimind",
+    "minimind_ime_60m_v8",
+    "minimind_ime_100m_v1",
+    "minimind_ime_v2",
+    "minimind_v2",
+}
+
+
+def canonical_runtime_profile_id(profile_id: str) -> str:
+    """Map known deployment labels onto their shared inference contract.
+
+    The model registry keeps the exact training/deployment label for provenance
+    and rollback. Runtime clients, however, need the stable profile that defines
+    prompt mode, sampling defaults and latency budget. Only known compatible
+    MiniMind artifacts are aliased; arbitrary custom profiles remain untouched.
+    """
+
+    raw = str(profile_id or "").strip().lower()
+    normalized = raw.replace("-", "_")
+    if normalized in _MINIMIND_RUNTIME_PROFILE_ALIASES:
+        return "minimind_ime_v2"
+    return raw
+
+
 def profile_by_id(profile_id: str) -> ModelProfile:
-    normalized = normalize_profile_id(profile_id)
+    normalized = normalize_profile_id(canonical_runtime_profile_id(profile_id))
     for profile in DEFAULT_MODEL_PROFILES:
         if profile.id == normalized:
             return profile
-    if normalized in {"minimind", "minimind_v2", "base_completion"}:
-        return DEFAULT_MODEL_PROFILES[0]
     if normalized in {"ime_hot", "instant", "hot", "qwen_hot"}:
         return next(item for item in DEFAULT_MODEL_PROFILES if item.id == "qwen3_06b_ime_hot")
     if normalized in {"ime_post_commit", "main", "post_commit"}:
@@ -122,4 +155,12 @@ def validate_profile(profile: ModelProfile) -> list[str]:
         errors.append("latency budget must be positive")
     if profile.target_candidates <= 0:
         errors.append("target candidates must be positive")
+    if not 1 <= profile.max_tokens <= 64:
+        errors.append("max tokens must be between 1 and 64")
+    if profile.prompt_mode not in {"base-completion", "chat-json"}:
+        errors.append("prompt mode must be base-completion or chat-json")
+    if not 0.0 <= profile.temperature <= 2.0:
+        errors.append("temperature must be between 0 and 2")
+    if not 0.0 < profile.top_p <= 1.0:
+        errors.append("top p must be greater than 0 and at most 1")
     return errors

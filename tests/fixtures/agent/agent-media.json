@@ -2,6 +2,8 @@
   "schemaVersion": "rag-ime.agent-media.v1",
   "mediaId": "media-1234",
   "sessionId": "agent-session-1",
+  "ownerType": "session",
+  "ownerId": "agent-session-1",
   "mimeType": "image/png",
   "byteSize": 2048,
   "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",

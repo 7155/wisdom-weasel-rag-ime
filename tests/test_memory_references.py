@@ -32,6 +32,8 @@ class MemoryReferenceTests(unittest.TestCase):
             "CAS 在 Ghostty 切换 Codex 账号并完成验证",
             created_at_ms=1_784_250_000_000,
             app="com.mitchellh.ghostty",
+            recent_context="准备切换工作账号",
+            preedit="cas codex",
         )
         self.sensitive_event_id = self._record_event(
             "token=super-secret-value",
@@ -212,6 +214,19 @@ class MemoryReferenceTests(unittest.TestCase):
             validate_contract(event, "memory-reference.v1.json")
             self.assertEqual(event["ref"]["id"], str(self.safe_event_id))
 
+            self.assertTrue(event["item"]["sourceContextAvailable"])
+            self.assertEqual(
+                event["item"]["sourceContext"]["recentContext"],
+                "准备切换工作账号",
+            )
+            self.assertEqual(
+                event["item"]["sourceContext"]["preedit"],
+                "cas codex",
+            )
+            self.assertEqual(
+                event["item"]["sourceContext"]["usedFor"],
+                ["source_fingerprint", "semantic_grouping"],
+            )
         evidence = self.service.management.memory_reference(
             "evidence",
             self.evidence_id,
@@ -242,6 +257,19 @@ class MemoryReferenceTests(unittest.TestCase):
             ("event", str(self.safe_event_id)),
             {(ref["kind"], ref["id"]) for ref in timeline["evidenceRefs"]},
         )
+        self.assertEqual(timeline["item"]["ordinaryActivityCount"], 1)
+        self.assertEqual(timeline["item"]["consolidatedActivityCount"], 0)
+        self.assertEqual(
+            timeline["item"]["spanSemantics"],
+            "first_to_last_source_event",
+        )
+        self.assertTrue(
+            all(
+                "preview" not in reference
+                for segment in timeline["item"]["segments"]
+                for reference in segment["evidenceRefs"]
+            )
+        )
         self.assertEqual(role["ref"]["kind"], "role_book_revision")
 
         sensitive = self.service.management.memory_reference(
@@ -252,6 +280,26 @@ class MemoryReferenceTests(unittest.TestCase):
         self.assertTrue(sensitive["item"]["sensitive"])
         self.assertEqual(sensitive["item"]["text"], "")
         self.assertNotIn("super-secret-value", serialized)
+        self.assertTrue(sensitive["item"]["sourceContext"]["redacted"])
+        self.assertEqual(sensitive["item"]["sourceContext"]["recentContext"], "")
+        self.assertEqual(sensitive["item"]["sourceContext"]["preedit"], "")
+
+        unscoped_service = DebugImeService(
+            DebugServerConfig(
+                db_path=self.db_path,
+                project="",
+                seed_if_empty=False,
+            )
+        )
+        try:
+            unscoped = unscoped_service.management.memory_reference(
+                "event",
+                str(self.safe_event_id),
+            )
+            self.assertFalse(unscoped["item"]["sourceContextAvailable"])
+            self.assertNotIn("sourceContext", unscoped["item"])
+        finally:
+            unscoped_service.close()
 
     def test_forgotten_tombstoned_and_unknown_references_fail_closed(self) -> None:
         with sqlite3.connect(self.db_path) as conn, conn:
@@ -411,6 +459,8 @@ class MemoryReferenceTests(unittest.TestCase):
         *,
         created_at_ms: int,
         app: str,
+        recent_context: str = "",
+        preedit: str = "",
     ) -> int:
         self.core.record_event(
             InputEvent(
@@ -418,6 +468,8 @@ class MemoryReferenceTests(unittest.TestCase):
                 created_at_ms=created_at_ms,
                 source="squirrel_input_segment",
                 committed_text=text,
+                recent_context=recent_context,
+                preedit=preedit,
                 privacy_disposition="allowed",
                 app=app,
                 project=self.project,

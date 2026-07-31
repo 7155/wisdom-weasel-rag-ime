@@ -222,7 +222,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         before_outbox = self._table_count("memory_projection_outbox")
         preview = self._execute_tool(
             governed_session_id,
-            "ime_memory",
+            "memory",
             "correct_preview",
             targetId=OLD_ATOM_ID,
             text=NEW_FACT,
@@ -238,7 +238,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
 
         prepared = self._execute_tool(
             governed_session_id,
-            "ime_memory",
+            "memory",
             "correct_apply",
             proposalId=preview["proposalId"],
         )["result"]
@@ -255,7 +255,7 @@ class MemoryConsumerAcceptanceTests(unittest.TestCase):
         self.assertEqual(self._atom_state(new_atom_id), ("approved", "current"))
         current = self._execute_tool(
             governed_session_id,
-            "ime_memory",
+            "memory",
             "search",
         )["result"]
         current_ids = {str(item["memoryId"]) for item in current["items"]}

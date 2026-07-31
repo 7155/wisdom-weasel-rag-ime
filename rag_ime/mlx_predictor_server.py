@@ -365,11 +365,26 @@ class MlxLmEngine:
         enable_prompt_cache: bool = False,
         prompt_cache_max_kv_size: int = 0,
         profile_id: str = "qwen3_06b_ime_hot",
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ):
         if not model_id:
             raise RuntimeError("MLX predictor requires --model or RAG_IME_MLX_MODEL")
         self.model_id = model_id
         self.profile = profile_by_id(profile_id)
+        self.configured_max_tokens = max(
+            1,
+            min(64, int(self.profile.max_tokens if max_tokens is None else max_tokens)),
+        )
+        self.configured_temperature = max(
+            0.0,
+            min(2.0, float(self.profile.temperature if temperature is None else temperature)),
+        )
+        self.configured_top_p = max(
+            0.05,
+            min(1.0, float(self.profile.top_p if top_p is None else top_p)),
+        )
         self.model_info = _inspect_local_mlx_model(model_id)
         # MLX otherwise defaults to a multi-gigabyte Metal allocator cache. Cap
         # it before model loading so varied IME requests cannot grow indefinitely.
@@ -458,12 +473,19 @@ class MlxLmEngine:
 
     def health(self) -> dict[str, Any]:
         prompt_cache = self.prompt_cache_status()
+        model_profile = {
+            **self.profile.to_payload(),
+            "maxTokens": self.configured_max_tokens,
+            "temperature": self.configured_temperature,
+            "topP": self.configured_top_p,
+        }
+        prompt_mode = "base-completion" if self._base_completion_mode else "chat-json"
         return {
             "ok": True,
             "provider": "mlx-lm",
             "model": self.model_id,
             "modelFingerprint": self.model_fingerprint,
-            "modelProfile": self.profile.to_payload(),
+            "modelProfile": model_profile,
             "modelLoaded": True,
             "modelInfo": self.model_info,
             "warmup": dict(self._warmup_status),
@@ -486,7 +508,14 @@ class MlxLmEngine:
                 "serverTiming": True,
                 "baseCompletion": self._base_completion_mode,
             },
-            "promptMode": "base-completion" if self._base_completion_mode else "chat-json",
+            "promptMode": prompt_mode,
+            "runtimeConfig": {
+                "profileId": self.profile.id,
+                "promptMode": prompt_mode,
+                "maxTokens": self.configured_max_tokens,
+                "temperature": self.configured_temperature,
+                "topP": self.configured_top_p,
+            },
         }
 
     def prompt_cache_status(self) -> dict[str, Any]:
@@ -498,6 +527,18 @@ class MlxLmEngine:
             **self._last_prefix_cache_status,
             "boundaryTokens": self._prefix_cache_boundary_tokens,
         }
+
+    def canonical_request_metadata(
+        self,
+        request_metadata: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        metadata = dict(request_metadata or {})
+        # Deployment aliases are accepted only when the process loads a model.
+        # Once loaded, the engine profile owns scheduler, cache and trace keys.
+        metadata.pop("profile", None)
+        metadata.pop("profile_id", None)
+        metadata["profileId"] = self.profile.id
+        return metadata
 
     def predict(
         self,
@@ -516,8 +557,8 @@ class MlxLmEngine:
         started = time.perf_counter()
         resolved_request_type = normalize_prediction_request_type(request_type)
         rime_candidate_tuple = normalized_rime_candidate_texts(rime_candidates)
-        metadata = dict(request_metadata or {})
-        profile_id = str(metadata.get("profileId") or metadata.get("profile") or self.profile.id)
+        metadata = self.canonical_request_metadata(request_metadata)
+        profile_id = self.profile.id
         token = model_request_token_from_metadata(metadata, profile_id=profile_id)
         metadata["requestId"] = token.request_id
         metadata["profileId"] = profile_id
@@ -1837,7 +1878,7 @@ class MlxLmEngine:
         stream_first_candidate: bool = False,
         request_metadata: dict[str, Any] | None = None,
     ) -> Iterable[str]:
-        metadata = dict(request_metadata or {})
+        metadata = self.canonical_request_metadata(request_metadata)
         cancel_request_id = str(metadata.get("requestId") or "")
         prompt = self._build_prompt(
             current_input=current_input,
@@ -1901,7 +1942,7 @@ class MlxLmEngine:
                 "error": "tokenize_failed",
             }
             return
-        profile_id = str(request_metadata.get("profileId") or request_metadata.get("profile") or "default")
+        profile_id = self.profile.id
         hit = self._prefix_cache.lookup_longest_prefix(
             profile_id=profile_id,
             prompt_format="IMEV1",
@@ -2181,7 +2222,14 @@ def make_mlx_predictor_handler(engine: MlxLmEngine):
             except json.JSONDecodeError:
                 self.send_error(400, "invalid JSON")
                 return
-            request = _normalize_prediction_request(payload, default_model=engine.model_id)
+            request = _normalize_prediction_request(
+                payload,
+                default_model=engine.model_id,
+                max_tokens_limit=int(getattr(engine, "configured_max_tokens", 64)),
+            )
+            request["request_metadata"] = engine.canonical_request_metadata(
+                request.get("request_metadata")
+            )
             if self.path == "/predict-stream":
                 self._send_stream(engine, request)
                 return
@@ -2302,6 +2350,9 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
         enable_prompt_cache=config.prompt_cache,
         prompt_cache_max_kv_size=config.prompt_cache_max_kv_size,
         profile_id=config.profile_id,
+        max_tokens=config.max_tokens,
+        temperature=config.temperature,
+        top_p=config.top_p,
     )
     warmup = engine.warmup(
         max_tokens=config.max_tokens,
@@ -2330,7 +2381,12 @@ def serve_mlx_predictor(config: MlxPredictorServerConfig) -> None:
         server.server_close()
 
 
-def _normalize_prediction_request(payload: dict[str, Any], *, default_model: str) -> dict[str, Any]:
+def _normalize_prediction_request(
+    payload: dict[str, Any],
+    *,
+    default_model: str,
+    max_tokens_limit: int = 64,
+) -> dict[str, Any]:
     _ = str(payload.get("model") or default_model)
     current_input = collapse_repeated_tail(
         compact_whitespace(str(_payload_value(payload, "currentInput", "current_input", default="") or ""))
@@ -2342,7 +2398,13 @@ def _normalize_prediction_request(payload: dict[str, Any], *, default_model: str
         "current_input": current_input,
         "recent_context": recent_context,
         "max_candidates": max(1, min(10, _int_payload(_payload_value(payload, "maxCandidates", "max_candidates"), 3))),
-        "max_tokens": max(1, min(64, _int_payload(_payload_value(payload, "maxTokens", "max_tokens"), 8))),
+        "max_tokens": max(
+            1,
+            min(
+                max(1, min(64, int(max_tokens_limit))),
+                _int_payload(_payload_value(payload, "maxTokens", "max_tokens"), 8),
+            ),
+        ),
         "temperature": _float_payload(payload.get("temperature"), 0.15),
         "top_p": _float_payload(_payload_value(payload, "topP", "top_p"), 0.85),
         "request_type": normalize_prediction_request_type(_payload_value(payload, "requestType", "request_type")),
@@ -2366,7 +2428,7 @@ def _predict_error_payload(
     exc: Exception,
     started: float,
 ) -> dict[str, Any]:
-    metadata = dict(request.get("request_metadata") or {})
+    metadata = engine.canonical_request_metadata(request.get("request_metadata"))
     request_type = normalize_prediction_request_type(request.get("request_type"))
     payload = {
         "ok": False,

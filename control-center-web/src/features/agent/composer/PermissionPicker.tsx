@@ -65,6 +65,12 @@ export function PermissionPicker({
     if (requestOpen > 0 && session && !disabled) setOpen(true);
   }, [disabled, requestOpen, session]);
 
+  useEffect(() => {
+    if (!disabled) return;
+    setOpen(false);
+    setDangerousOpen(false);
+  }, [disabled]);
+
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
@@ -74,7 +80,9 @@ export function PermissionPicker({
             className="agent-composer__picker"
             data-permission={current.id}
             size="small"
-            title={`对话权限：${current.label}`}
+            title={disabled
+              ? '请先结束或停止当前任务，再调整运行权限。'
+              : `对话权限：${current.label}`}
             variant="quiet"
             disabled={!session || disabled}
             leadingIcon={permissionIcon(current.icon, 15)}
@@ -131,7 +139,7 @@ export function PermissionPicker({
                   data-danger={preset.id === 'dangerous' || undefined}
                   value={preset.id}
                   key={preset.id}
-                  disabled={!available}
+                  disabled={disabled || !available}
                 >
                   {permissionIcon(preset.icon, 17)}
                   <span>
@@ -187,19 +195,23 @@ export function PermissionPicker({
             <span className="agent-dangerous-permission-dialog__symbol">
               <TriangleAlert size={20} />
             </span>
-            <DialogTitle>启用完全信任？</DialogTitle>
+            <DialogTitle>启用全自动模式？</DialogTitle>
             <DialogDescription>
-              当前工作区内符合策略的写入与命令会根据结构化预览自动批准；系统级危险动作仍保留人工门禁。
+              读取等无需审批的操作会直接进行；所有原本需要审批的操作都由独立审批 Agent（Luna Max）自动判定。
             </DialogDescription>
           </DialogHeader>
           <div className="agent-dangerous-permission-dialog__limits">
             <p>
               <ShieldCheck size={16} />
-              <span><strong>仍然保留</strong> 工作区和路径边界、取消栅栏、哈希复验、审计回执与危险动作禁区</span>
+              <span><strong>审批上下文相互隔离</strong> Luna Max 只读取用户请求、当前任务与结构化审批历史，不读取当前 Agent 的输出或推理</span>
+            </p>
+            <p>
+              <ShieldCheck size={16} />
+              <span><strong>模型不能扩大权限</strong> 工作区边界、取消栅栏、哈希复验与审计回执始终有效；删库、灾难性破坏和敏感数据外传仍由代码阻止</span>
             </p>
             <p>
               <TriangleAlert size={16} />
-              <span><strong>不再保留</strong> 每次写操作前的人工确认机会</span>
+              <span><strong>不会再等待你逐项确认</strong> Luna Max 拒绝或不可用时原操作不执行，Agent 会尝试更安全的替代方案</span>
             </p>
           </div>
           <label className="agent-dangerous-permission-dialog__check">
@@ -209,7 +221,7 @@ export function PermissionPicker({
             >
               <Checkbox.Indicator><Check size={14} /></Checkbox.Indicator>
             </Checkbox.Root>
-            <span>我确认让此对话自动批准工作区内的受控写入和命令</span>
+            <span>我确认让此对话全自动执行，并由独立审批 Agent（Luna Max）判定所有待审批操作</span>
           </label>
           <DialogFooter>
             <Button variant="quiet" onClick={() => setDangerousOpen(false)}>
@@ -229,7 +241,7 @@ export function PermissionPicker({
                 setDangerousOpen(false);
               }}
             >
-              启用完全信任
+              启用全自动
             </Button>
           </DialogFooter>
         </DialogContent>

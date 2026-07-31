@@ -55,6 +55,90 @@ describe('RoomEventReducer', () => {
     expect(state.resumeToken).toBe('room-1:200');
   });
 
+  it('replaces provisional participant content without breaking append or final coalescing', () => {
+    const deltas = [
+      roomEvent(1, 'participant_delta', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        messageId: 'provider-stream-1',
+        blockId: 'room-final-1:text',
+        contentIndex: 0,
+        delta: '过时前缀',
+      }),
+      roomEvent(2, 'participant_delta', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        messageId: 'provider-stream-1',
+        blockId: 'room-final-1:text',
+        contentIndex: 0,
+        delta: '仍会追加',
+      }),
+      roomEvent(3, 'participant_delta', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        messageId: 'provider-stream-1',
+        blockId: 'room-final-1:text',
+        contentIndex: 0,
+        delta: '块替换',
+        replaceBlock: true,
+      }),
+      roomEvent(4, 'participant_delta', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        messageId: 'provider-stream-1',
+        blockId: 'room-final-1:text',
+        contentIndex: 0,
+        delta: '后续追加',
+      }),
+      roomEvent(5, 'participant_delta', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        messageId: 'provider-stream-1',
+        blockId: 'room-final-1:text',
+        contentIndex: 0,
+        delta: '内容替换',
+        replaceContent: true,
+      }),
+      roomEvent(6, 'participant_delta', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        messageId: 'provider-stream-1',
+        blockId: 'room-final-1:text',
+        contentIndex: 0,
+        delta: '最终追加',
+      }),
+    ];
+    const executionId = [
+      'room-execution',
+      'room-turn-1',
+      'participant-1',
+      'dispatch-1',
+      'provider-stream-1',
+    ].join('\u001f');
+
+    const appended = reduceRoomEvents(createRoomProjection('room-1'), deltas.slice(0, 2));
+    expect(appended.messagesById[executionId].text).toBe('过时前缀仍会追加');
+
+    const blockReplaced = reduceRoomEvents(createRoomProjection('room-1'), deltas.slice(0, 4));
+    expect(blockReplaced.messagesById[executionId].text).toBe('块替换后续追加');
+
+    const contentReplaced = reduceRoomEvents(createRoomProjection('room-1'), deltas);
+    expect(contentReplaced.messagesById[executionId].text).toBe('内容替换最终追加');
+
+    const completed = reduceRoomEvent(
+      contentReplaced,
+      parseRoomEvent(wireRoomEvent(7, 'participant_message', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        message: roomServerMessage('room-final-1', '最终公开回复'),
+      })),
+    ).state;
+    expect(completed.messageOrder).toEqual(['room-final-1']);
+    expect(completed.turnsById['room-turn-1'].messageIds).toEqual(['room-final-1']);
+    expect(completed.messagesById[executionId]).toBeUndefined();
+    expect(completed.messagesById['room-final-1'].text).toBe('最终公开回复');
+  });
+
   it('keeps completed Room turns referentially stable while another lane streams', () => {
     const user = reduceRoomEvent(
       createRoomProjection('room-1'),
@@ -140,6 +224,47 @@ describe('RoomEventReducer', () => {
     ).toBeUndefined();
   });
 
+  it('coalesces live delta aliases and reconnect replay into one final assistant message', () => {
+    const events = [
+      wireRoomEvent(1, 'participant_delta', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        messageId: 'provider-stream-1',
+        blockId: 'room-final-1:text',
+        delta: '流式草稿不应重复',
+      }),
+      wireRoomEvent(2, 'participant_message', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        message: roomServerMessage('room-final-1', '最终公开回复'),
+      }),
+      wireRoomEvent(3, 'participant_message', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        message: roomServerMessage('room-final-1', '最终公开回复'),
+      }),
+    ];
+    const live = reduceRoomEvents(
+      createRoomProjection('room-1'),
+      events.map((event) => parseRoomEvent(event)),
+    );
+    const replayed = replayRoomEventSnapshot(
+      createRoomProjection('room-1'),
+      parseRoomEventSnapshot(roomSnapshotFixture(events)),
+    );
+
+    for (const projection of [live, replayed]) {
+      expect(projection.messageOrder).toEqual(['room-final-1']);
+      expect(projection.turnsById['room-turn-1'].messageIds).toEqual(['room-final-1']);
+      expect(Object.values(projection.messagesById)).toHaveLength(1);
+      expect(projection.messagesById['room-final-1']).toMatchObject({
+        projectionKind: 'post',
+        status: 'completed',
+        text: '最终公开回复',
+      });
+    }
+  });
+
   it('replaces only the matching execution lane when an authorized RoomPost is published', () => {
     const streaming = reduceRoomEvent(
       createRoomProjection('room-1'),
@@ -161,6 +286,7 @@ describe('RoomEventReducer', () => {
     expect(Object.values(published.messagesById)).toHaveLength(1);
     expect(published.messagesById['post-1']).toMatchObject({
       projectionKind: 'post',
+      postKind: 'result',
       dispatchId: 'dispatch-1',
       text: '正式交付',
       status: 'completed',
@@ -276,6 +402,50 @@ describe('RoomEventReducer', () => {
     expect(state.turnsById['room-turn-1'].status).toBe('completed');
   });
 
+  it('keeps a scheduled retry lane nonterminal and accepts its later completion', () => {
+    const retryWaiting = roomEvent(1, 'participant_activity', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+      sourceEventId: 'agent-session:failed-attempt',
+      sourceEventType: 'turn_failed',
+      status: 'retry_wait',
+      retryAttempt: 2,
+      summary: '模型连接中断，已进入有界重试等待',
+    });
+    const completed = roomEvent(2, 'turn_completed', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+      status: 'completed',
+    });
+
+    let state = reduceRoomEvent(createRoomProjection('room-1'), retryWaiting).state;
+    expect(state.activitiesById[state.activityOrder[0]!]).toMatchObject({
+      status: 'waiting',
+      payload: {
+        sourceEventType: 'turn_failed',
+        status: 'retry_wait',
+        retryAttempt: 2,
+      },
+    });
+    expect(state.turnsById['room-turn-1']).toMatchObject({
+      status: 'running',
+      dispatchIds: ['dispatch-1'],
+      terminalDispatchIds: [],
+      failedDispatchIds: [],
+      terminalParticipantIds: [],
+      failedParticipantIds: [],
+    });
+
+    state = reduceRoomEvent(state, completed).state;
+    expect(state.turnsById['room-turn-1']).toMatchObject({
+      status: 'running',
+      terminalDispatchIds: ['dispatch-1'],
+      failedDispatchIds: [],
+      terminalParticipantIds: ['participant-1'],
+      failedParticipantIds: [],
+    });
+  });
+
   it('merges optimistic room input by clientMessageId and keeps unknown events', () => {
     const optimistic = appendOptimisticRoomMessage(createRoomProjection('room-1'), {
       clientMessageId: 'room-client-1',
@@ -337,38 +507,75 @@ describe('RoomEventReducer', () => {
     });
   });
 
-  it('keeps one live tool activity from start through its final public summary', () => {
+  it('reduces started, progress, and finished for one tool call to one terminal activity', () => {
     const started = reduceRoomEvent(
       createRoomProjection('room-1'),
       roomEvent(1, 'participant_activity', {
-        sourceEventId: 'agent-session:tool:1',
+        rootId: 'root-tool-1',
+        dispatchId: 'dispatch-tool-1',
         sourceEventType: 'tool_started',
-        data: {
-          toolCallId: 'tool-call-1',
-          toolName: 'ime_memory',
+        toolCallId: 'tool-call-1',
+        toolName: 'memory',
+        arguments: {
+          path: '…/project/rag_ime',
+          pattern: 'room_event_projection',
+          limit: 40,
         },
+      }),
+    ).state;
+    const progressed = reduceRoomEvent(
+      started,
+      roomEvent(2, 'participant_activity', {
+        rootId: 'root-tool-1',
+        dispatchId: 'dispatch-tool-1',
+        sourceEventType: 'tool_progress',
+        toolCallId: 'tool-call-1',
+        toolName: 'memory',
+        summary: '正在筛选公开记录',
       }),
     ).state;
     const finished = reduceRoomEvent(
-      started,
-      roomEvent(2, 'participant_activity', {
-        sourceEventId: 'agent-session:tool:2',
+      progressed,
+      roomEvent(3, 'participant_activity', {
+        rootId: 'root-tool-1',
+        dispatchId: 'dispatch-tool-1',
         sourceEventType: 'tool_finished',
-        data: {
-          toolCallId: 'tool-call-1',
-          toolName: 'ime_memory',
-          summary: '找到了两条可用历史输入',
-          isError: false,
+        toolCallId: 'tool-call-1',
+        toolName: 'memory',
+        summary: '找到了两条可用历史输入',
+        isError: false,
+        result: {
+          outputPreview: 'agent_event_projection.py:350:def room_event_projection',
+          outputTruncated: false,
         },
       }),
     ).state;
+    const staleProgress = reduceRoomEvent(
+      finished,
+      roomEvent(4, 'participant_activity', {
+        rootId: 'root-tool-1',
+        dispatchId: 'dispatch-tool-1',
+        sourceEventType: 'tool_progress',
+        toolCallId: 'tool-call-1',
+        toolName: 'memory',
+        summary: '迟到的处理中状态',
+      }),
+    ).state;
 
-    const activityId = 'room-turn-1:participant-1:session-room-1:tool-call-1';
+    const activityId = 'root-tool-1:participant-1:dispatch-tool-1:tool-call-1';
     expect(started.activitiesById[activityId]).toMatchObject({
       status: 'running',
-      summary: 'ime_memory',
+      summary: 'memory',
       createdAtMs: 10,
-      payload: { sourceEventType: 'tool_started' },
+      payload: {
+        sourceEventType: 'tool_started',
+        arguments: { pattern: 'room_event_projection' },
+      },
+    });
+    expect(progressed.activityOrder).toEqual([activityId]);
+    expect(progressed.activitiesById[activityId]).toMatchObject({
+      status: 'running',
+      summary: '正在筛选公开记录',
     });
     expect(finished.activityOrder).toEqual([activityId]);
     expect(finished.turnsById['room-turn-1'].activityIds).toEqual([activityId]);
@@ -376,8 +583,274 @@ describe('RoomEventReducer', () => {
       status: 'completed',
       summary: '找到了两条可用历史输入',
       createdAtMs: 10,
-      updatedAtMs: 20,
-      payload: { sourceEventType: 'tool_finished' },
+      updatedAtMs: 30,
+      payload: {
+        sourceEventType: 'tool_finished',
+        arguments: { pattern: 'room_event_projection' },
+        result: { outputPreview: 'agent_event_projection.py:350:def room_event_projection' },
+      },
+    });
+    expect(finished.activitiesById[activityId].payload.progressHistory).toHaveLength(3);
+    expect(staleProgress.activitiesById[activityId]).toEqual(finished.activitiesById[activityId]);
+  });
+
+  it('drops a stale preparatory summary when tool_finished has no terminal summary', () => {
+    const started = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_activity', {
+        rootId: 'root-room-state',
+        dispatchId: 'dispatch-room-state',
+        sourceEventType: 'tool_started',
+        toolCallId: 'room-state-call',
+        toolName: 'room_state',
+        summary: '准备查看协作状态',
+        status: 'running',
+      }),
+    ).state;
+    const finished = reduceRoomEvent(
+      started,
+      roomEvent(2, 'participant_activity', {
+        rootId: 'root-room-state',
+        dispatchId: 'dispatch-room-state',
+        sourceEventType: 'tool_finished',
+        toolCallId: 'room-state-call',
+        toolName: 'room_state',
+        result: {
+          unchanged: true,
+          stateRevision: 12,
+        },
+      }),
+    ).state;
+    const activity = finished.activitiesById[
+      'root-room-state:participant-1:dispatch-room-state:room-state-call'
+    ];
+
+    expect(activity).toMatchObject({
+      status: 'completed',
+      summary: 'room_state',
+      payload: {
+        sourceEventType: 'tool_finished',
+        result: { unchanged: true, stateRevision: 12 },
+      },
+    });
+    expect(activity.payload).not.toHaveProperty('summary');
+    expect(activity.payload).not.toHaveProperty('status');
+  });
+
+  it('projects tool lifecycle identically from live SSE and HTTP snapshot replay', () => {
+    const events = [
+      wireRoomEvent(1, 'participant_activity', {
+        rootId: 'root-replay',
+        dispatchId: 'dispatch-replay',
+        sourceEventType: 'tool_started',
+        toolCallId: 'call-replay',
+        toolName: 'read',
+        arguments: { path: '…/project/src/runtime.ts' },
+      }),
+      wireRoomEvent(2, 'participant_activity', {
+        rootId: 'root-replay',
+        dispatchId: 'dispatch-replay',
+        sourceEventType: 'tool_progress',
+        toolCallId: 'call-replay',
+        toolName: 'read',
+        summary: '正在读取公开片段',
+      }),
+      wireRoomEvent(3, 'participant_activity', {
+        rootId: 'root-replay',
+        dispatchId: 'dispatch-replay',
+        sourceEventType: 'tool_finished',
+        toolCallId: 'call-replay',
+        toolName: 'read',
+        summary: '公开片段已返回',
+        result: { outputPreview: 'export const roomReady = true;' },
+      }),
+    ];
+    const live = reduceRoomEvents(
+      createRoomProjection('room-1'),
+      events.map((event) => parseRoomEvent(event)),
+    );
+    const replayed = replayRoomEventSnapshot(
+      createRoomProjection('room-1'),
+      parseRoomEventSnapshot(roomSnapshotFixture(events)),
+    );
+    const activityId = 'root-replay:participant-1:dispatch-replay:call-replay';
+
+    expect(replayed.activityOrder).toEqual(live.activityOrder);
+    expect(replayed.turnsById['room-turn-1'].activityIds).toEqual(
+      live.turnsById['room-turn-1'].activityIds,
+    );
+    expect(replayed.activitiesById[activityId]).toEqual(live.activitiesById[activityId]);
+    expect(replayed.activitiesById[activityId]).toMatchObject({
+      status: 'completed',
+      payload: {
+        sourceEventType: 'tool_finished',
+        result: { outputPreview: 'export const roomReady = true;' },
+      },
+    });
+  });
+
+  it('keeps separate calls to the same tool as separate activities', () => {
+    const projection = reduceRoomEvents(createRoomProjection('room-1'), [
+      roomEvent(1, 'participant_activity', {
+        rootId: 'root-same-tool',
+        dispatchId: 'dispatch-same-tool',
+        sourceEventType: 'tool_finished',
+        toolCallId: 'read-call-1',
+        toolName: 'read',
+        result: { outputPreview: 'first' },
+      }),
+      roomEvent(2, 'participant_activity', {
+        rootId: 'root-same-tool',
+        dispatchId: 'dispatch-same-tool',
+        sourceEventType: 'tool_finished',
+        toolCallId: 'read-call-2',
+        toolName: 'read',
+        result: { outputPreview: 'second' },
+      }),
+    ]);
+
+    expect(projection.activityOrder).toEqual([
+      'root-same-tool:participant-1:dispatch-same-tool:read-call-1',
+      'root-same-tool:participant-1:dispatch-same-tool:read-call-2',
+    ]);
+    expect(Object.values(projection.activitiesById)).toHaveLength(2);
+  });
+
+  it('coalesces reasoning and current-progress updates into one card per lane', () => {
+    const projection = reduceRoomEvents(createRoomProjection('room-1'), [
+      roomEvent(1, 'participant_activity', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        sourceEventType: 'reasoning_summary',
+        state: 'running',
+        summary: '正在检查边界',
+      }),
+      roomEvent(2, 'participant_activity', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        sourceEventType: 'reasoning_summary',
+        state: 'completed',
+        summary: '边界检查完成',
+      }),
+      roomEvent(3, 'participant_activity', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        sourceEventType: 'current_progress',
+        summary: '正在整理结果',
+      }),
+      roomEvent(4, 'participant_activity', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        sourceEventType: 'current_progress',
+        summary: '正在等待审阅',
+      }),
+    ]);
+
+    expect(projection.activityOrder).toHaveLength(2);
+    expect(Object.values(projection.activitiesById).map((activity) => activity.summary)).toEqual([
+      '边界检查完成',
+      '正在等待审阅',
+    ]);
+  });
+
+  it('keeps one authoritative selectable request until its Session resolves it', () => {
+    const waiting = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_activity', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        sourceEventId: 'session:input:1',
+        sourceEventType: 'user_input_required',
+        data: {
+          requestId: 'input:1',
+          requestKind: 'user_input_required',
+          method: 'select',
+          title: '选择部署环境',
+          options: [{ id: 'staging', label: '预发布' }, { id: 'production', label: '生产' }],
+        },
+      }),
+    ).state;
+    const resolved = reduceRoomEvent(
+      waiting,
+      roomEvent(2, 'participant_activity', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        sourceEventId: 'session:input:2',
+        sourceEventType: 'user_input_required',
+        data: {
+          requestId: 'input:1',
+          requestKind: 'user_input_required',
+          method: 'select',
+          resolutionState: 'resolved',
+          resolutionSource: 'user',
+        },
+      }),
+    ).state;
+    const activityId = 'room-turn-1:participant-1:dispatch-1:input:1';
+
+    expect(waiting.activitiesById[activityId]).toMatchObject({
+      status: 'waiting',
+      sourceSessionId: 'session-room-1',
+      payload: { title: '选择部署环境', options: expect.any(Array) },
+    });
+    expect(resolved.activityOrder).toEqual([activityId]);
+    expect(resolved.activitiesById[activityId]).toMatchObject({
+      status: 'completed',
+      payload: {
+        title: '选择部署环境',
+        resolutionState: 'resolved',
+        resolutionSource: 'user',
+      },
+    });
+  });
+
+  it('prefers explicit public data identities over envelope fallbacks', () => {
+    const event = roomEvent(1, 'participant_activity', {
+      rootId: 'root-fallback',
+      dispatchId: 'dispatch-fallback',
+      messageId: 'message-fallback',
+      blockId: 'block-fallback',
+      sourceEventId: 'source-fallback',
+      sourceEventType: 'user_input_required',
+      data: {
+        rootId: 'root-owner',
+        dispatchId: 'dispatch-owner',
+        messageId: 'message-owner',
+        blockId: 'block-owner',
+        sourceEventId: 'source-owner',
+        sourceEventType: 'user_input_required',
+        participantId: 'participant-owner',
+        sourceSessionId: 'session-owner',
+        requestId: 'input-owner',
+        requestKind: 'plan_review',
+        method: 'select',
+        options: ['批准', '修改'],
+      },
+    });
+    event.participantId = 'participant-fallback';
+    event.sourceSessionId = 'session-fallback';
+
+    const state = reduceRoomEvent(createRoomProjection('room-1'), event).state;
+    const activity = state.activitiesById[
+      'root-owner:participant-owner:dispatch-owner:input-owner'
+    ];
+
+    expect(activity).toMatchObject({
+      participantId: 'participant-owner',
+      sourceSessionId: 'session-owner',
+      status: 'waiting',
+      payload: {
+        rootId: 'root-owner',
+        dispatchId: 'dispatch-owner',
+        messageId: 'message-owner',
+        blockId: 'block-owner',
+        sourceEventId: 'source-owner',
+      },
+    });
+    expect(roomActivityLaneIdentity(activity)).toMatchObject({
+      rootId: 'root-owner',
+      participantId: 'participant-owner',
+      dispatchId: 'dispatch-owner',
     });
   });
 
@@ -389,7 +862,7 @@ describe('RoomEventReducer', () => {
         rootId: 'root-a',
         toolCallId: 'call-1',
         sourceEventType: 'tool_started',
-        toolName: 'ime_memory',
+        toolName: 'memory',
       }),
     ).state;
     const secondEvent = roomEvent(2, 'participant_activity', {
@@ -397,7 +870,7 @@ describe('RoomEventReducer', () => {
       rootId: 'root-a',
       toolCallId: 'call-1',
       sourceEventType: 'tool_started',
-      toolName: 'ime_memory',
+      toolName: 'memory',
     });
     secondEvent.participantId = 'participant-2';
     secondEvent.sourceSessionId = 'session-room-2';
@@ -617,6 +1090,62 @@ describe('RoomEventReducer', () => {
       wireRoomEvent(3, 'turn_completed', {}),
     ], { firstSequence: 1 }))).toThrow(/contiguous/);
   });
+  it('projects model arbitration as running work instead of human review', () => {
+    const pending = roomEvent(1, 'participant_activity', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+      approvalId: 'approval-model-1',
+      payloadSha256: 'c'.repeat(64),
+      decisionMode: 'model',
+      automatic: true,
+      approvalModelDecision: {
+        status: 'pending',
+        model: 'openai-codex/gpt-5.6-luna',
+      },
+    });
+    const deciding = reduceRoomEvent(createRoomProjection('room-1'), pending).state;
+    const activityId = deciding.activityOrder[0]!;
+
+    expect(deciding.activitiesById[activityId]).toMatchObject({
+      status: 'running',
+      payload: {
+        approvalId: 'approval-model-1',
+        decisionMode: 'model',
+      },
+    });
+
+    const denied = roomEvent(2, 'participant_activity', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+      approvalId: 'approval-model-1',
+      payloadSha256: 'c'.repeat(64),
+      state: 'rejected',
+      resolutionState: 'rejected',
+      decisionMode: 'model',
+      automatic: true,
+      approvalDecisionReceiptId: 'approval-model-decision:1',
+      approvalModelDecision: {
+        status: 'decided',
+        decision: 'deny',
+        model: 'openai-codex/gpt-5.6-luna',
+        reasonCodes: ['destructive_command'],
+      },
+    });
+    const settled = reduceRoomEvent(deciding, denied).state;
+
+    expect(settled.activityOrder).toEqual([activityId]);
+    expect(settled.activitiesById[activityId]).toMatchObject({
+      status: 'completed',
+      payload: {
+        approvalDecisionReceiptId: 'approval-model-decision:1',
+        approvalModelDecision: {
+          decision: 'deny',
+          reasonCodes: ['destructive_command'],
+        },
+      },
+    });
+  });
+
 });
 
 function wireRoomEvent(

@@ -9,7 +9,7 @@ import {
   RotateCcw,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import {
   Button,
@@ -50,6 +50,7 @@ const scheduleQueryKey = ['planning', 'agent-wake-schedules'] as const;
 export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) {
   const transport = useControlTransport();
   const queryClient = useQueryClient();
+  const createTriggerRef = useRef<HTMLButtonElement>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [historyId, setHistoryId] = useState('');
   const [title, setTitle] = useState('');
@@ -201,6 +202,7 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
       description="让一段对话或一位伙伴在指定时间继续做事；每次执行都会留下结果。"
       trailing={(
         <Button
+          ref={createTriggerRef}
           disabled={catalog.isPending || Boolean(catalog.error)}
           leadingIcon={<Plus size={15} />}
           onClick={beginCreate}
@@ -258,7 +260,13 @@ export function AgentWakeSchedules({ tasks }: { tasks: readonly JsonRecord[] }) 
       </QueryState>
 
       <Dialog open={createOpen} onOpenChange={(open) => { if (!createSchedule.isPending) setCreateOpen(open); }}>
-        <DialogContent className="planning-dialog planning-wake-dialog">
+        <DialogContent
+          className="planning-dialog planning-wake-dialog"
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            createTriggerRef.current?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>添加定时安排</DialogTitle>
             <DialogDescription>写下要做的事、在哪里继续以及开始时间。保存后可以暂停、取消或查看每次结果。</DialogDescription>

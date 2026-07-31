@@ -28,7 +28,6 @@ class AgentCorePolicyTests(unittest.TestCase):
             self.assertIn(expected, prompt)
         self.assertEqual(prompt.count("<durable-memory-policy>"), 1)
         self.assertEqual(prompt.count("</durable-memory-policy>"), 1)
-        self.assertNotIn("ime_memory", prompt)
         self.assertNotIn("explicit_user_request", prompt)
         self.assertNotIn("一轮最多提交三条", prompt)
 
@@ -42,6 +41,9 @@ class AgentCorePolicyTests(unittest.TestCase):
             "计划、进度汇报",
             "不以",
             "代替完成",
+            "任务的当前状态与下一步以最新用户消息和本轮动态状态投影为准",
+            "仍可界定目标或提供证据",
+            "不能重新激活已完成、已取消或已被替代的工作",
             "避免无关重构和假想抽象",
             "实质改变权限、数据、兼容性或用户目标",
             "真实完成项、验证证据和剩余边界",

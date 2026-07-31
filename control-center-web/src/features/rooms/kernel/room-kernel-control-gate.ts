@@ -59,25 +59,24 @@ export async function evaluateRoomKernelControlGate(
   const events = routes.find((route) => route.pathId === EXPECTED_EVENTS_ROUTE.pathId);
   const expectedCommandRouteHash = await routeHash(EXPECTED_COMMAND_ROUTE);
   const commandRouteHash = command ? await routeHash(command) : '';
-  const expectedSnapshotRouteHash = await routeHash(EXPECTED_SNAPSHOT_ROUTE);
-  const expectedEventsRouteHash = await routeHash(EXPECTED_EVENTS_ROUTE);
-  const snapshotRouteHash = snapshot ? await routeHash(snapshot) : '';
-  const eventsRouteHash = events ? await routeHash(events) : '';
-  const readEnabled = Boolean(
-    expectedSnapshotRouteHash.startsWith('sha256:')
-      && expectedEventsRouteHash.startsWith('sha256:')
-      && snapshotRouteHash === expectedSnapshotRouteHash
-      && eventsRouteHash === expectedEventsRouteHash,
-  );
+  const routeIds = new Set<string>(capabilities.routeIds);
+  const nativePolicy = capabilities.transport === 'native';
+  const readEnabled = nativePolicy
+    ? routeIds.has(EXPECTED_SNAPSHOT_ROUTE.pathId)
+      && routeIds.has(EXPECTED_EVENTS_ROUTE.pathId)
+    : routeMatches(snapshot, EXPECTED_SNAPSHOT_ROUTE)
+      && routeMatches(events, EXPECTED_EVENTS_ROUTE);
+  const commandRouteVerified = nativePolicy
+    ? routeIds.has(EXPECTED_COMMAND_ROUTE.pathId)
+    : routeMatches(command, EXPECTED_COMMAND_ROUTE);
   const client = record(raw.client);
   const remote = client.remote === true;
   const scopes = new Set(array(client.grantedScopes).filter((item): item is string => typeof item === 'string'));
   const authorized = !remote || (client.deviceAuthenticated === true && scopes.has('agent.write'));
   const commandEnabled = readEnabled
-    && expectedCommandRouteHash.startsWith('sha256:')
-    && commandRouteHash === expectedCommandRouteHash
+    && commandRouteVerified
     && authorized
-    && capabilities.routeIds.includes('agent.room.kernel.command');
+    && routeIds.has(EXPECTED_COMMAND_ROUTE.pathId);
   const features = record(raw.features);
   const panicEnabled = commandEnabled
     && features.roomKernelPanic === true
@@ -94,9 +93,29 @@ export async function evaluateRoomKernelControlGate(
         ? '任务进度暂时不可用，请刷新后重试。已有对话和工作文件不会受影响。'
         : !authorized
           ? '当前连接可以查看任务，但没有停止任务的权限'
-          : commandRouteHash !== expectedCommandRouteHash
+          : !commandRouteVerified && !nativePolicy
             ? '停止任务的控制通道已发生变化，请刷新或更新应用'
             : '当前连接暂不支持停止任务',
+  };
+}
+
+function routeMatches(
+  actual: RouteManifest | undefined,
+  expected: RouteManifest,
+): boolean {
+  return actual !== undefined
+    && JSON.stringify(canonicalRoute(actual)) === JSON.stringify(canonicalRoute(expected));
+}
+
+function canonicalRoute(route: RouteManifest): RouteManifest {
+  return {
+    pathId: route.pathId,
+    method: route.method,
+    remoteSafe: route.remoteSafe,
+    subscription: route.subscription,
+    params: [...route.params].sort(),
+    query: [...route.query].sort(),
+    remoteScopes: [...route.remoteScopes].sort(),
   };
 }
 

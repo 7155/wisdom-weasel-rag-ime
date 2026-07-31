@@ -1351,10 +1351,33 @@ def _looks_like_sensitive_account_text(*texts: str) -> bool:
     combined = " ".join(str(text or "") for text in texts)
     if not combined:
         return False
+    # Product and code discussions routinely mention words such as "API key",
+    # "token" and "password". A noun alone is not a credential. Keep the
+    # backend fail-closed for credential-shaped values while the native secure
+    # field flags remain the authoritative boundary for password fields.
+    if re.search(
+        r"(?ix)(?:"
+        r"\bbearer\s+[a-z0-9._~+/=-]{8,}"
+        r"|\bsk-[a-z0-9_-]{8,}"
+        r"|\b(?:gh[opsu]_|github_pat_)[a-z0-9_-]{8,}"
+        r"|\bxox[baprs]-[a-z0-9-]{8,}"
+        r"|\bAKIA[0-9A-Z]{16}\b"
+        r"|\beyJ[a-z0-9_-]{6,}\.[a-z0-9_-]{6,}\.[a-z0-9_-]{6,}"
+        r")",
+        combined,
+    ):
+        return True
+    if re.search(
+        r"(?ix)(?:password|passwd|passcode|credential|api[ _-]?key|access[ _-]?token|"
+        r"secret|one[ _-]?time[ _-]?code|账号|帐号|密码|口令|验证码)"
+        r"\s*(?::|=|\bis\b|为|是)\s*[\"']?[^\s,;，；\"']{4,}",
+        combined,
+    ):
+        return True
     return bool(
         re.search(
-            r"(?i)(?:password|passwd|passcode|credential|api[ _-]?key|access[ _-]?token|bearer\s+|"
-            r"secret|one[ _-]?time[ _-]?code|账号|帐号|密码|口令|验证码|银行卡|信用卡)",
+            r"(?ix)(?:银行卡|信用卡|card[ _-]?number)"
+            r"\s*(?::|=|为|是)?\s*(?:\d[\s-]?){12,19}\b",
             combined,
         )
     )

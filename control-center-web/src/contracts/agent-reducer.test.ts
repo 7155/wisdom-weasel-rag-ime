@@ -3,16 +3,20 @@ import { describe, expect, it } from 'vitest';
 import {
   abortAgentTurn,
   appendOptimisticAgentMessage,
+  applyAgentBackgroundJobReceipt,
   applyAgentSnapshot,
   createAgentProjection,
   discardOptimisticAgentMessage,
   failOptimisticAgentMessage,
   requeueOptimisticAgentMessage,
   reduceAgentEvent,
+  rewriteOptimisticAgentMessage,
   reduceAgentEvents,
 } from './agent-reducer';
 import { parseAgentEvent } from './validators';
 import { agentEventFixture as agentEvent } from '@/test/fixtures/events';
+import type { AgentBackgroundJobV1 } from './generated/agent-background-job.v1';
+import type { AgentLifecycleCancellationAuditV1 } from './generated/agent-lifecycle-cancellation-audit.v1';
 
 describe('AgentEventReducer', () => {
   it('applies ordered deltas and ignores replayed duplicates', () => {
@@ -24,6 +28,27 @@ describe('AgentEventReducer', () => {
     expect(replay.disposition).toBe('ignored-duplicate');
     expect(replay.state).toBe(second.state);
     expect(textOf(second.state.messagesById['turn-1:assistant'])).toBe('你好');
+  });
+
+  it('replaces one live assistant bubble when a mixed Tool message has no provider deltas', () => {
+    const first = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'text_delta', {
+        delta: '已经找到结构，继续核对。',
+        replaceContent: true,
+      }),
+    ).state;
+    const second = reduceAgentEvent(
+      first,
+      agentEvent(2, 'text_delta', {
+        delta: '结构已经确认，正在整理结论。',
+        replaceContent: true,
+      }),
+    ).state;
+
+    expect(second.turnsById['turn-1'].messageIds).toEqual(['turn-1:assistant']);
+    expect(textOf(second.messagesById['turn-1:assistant'])).toBe('结构已经确认，正在整理结论。');
+    expect(second.messagesById['turn-1:assistant'].status).toBe('streaming');
   });
 
   it('coalesces a frame-sized delta burst without losing its exact cursor', () => {
@@ -102,6 +127,41 @@ describe('AgentEventReducer', () => {
     expect(streamed.turnsById['turn-1'].messageIds).toContain('turn-1:assistant');
   });
 
+  it('optimistically removes the abandoned future when rewriting a durable user message', () => {
+    const hydrated = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        serverMessage('user-1', 'user', 'turn-old-1', '第一问'),
+        serverMessage('assistant-1', 'assistant', 'turn-old-1', '第一答'),
+        serverMessage('user-2', 'user', 'turn-old-2', '需要修改的第二问'),
+        serverMessage('assistant-2', 'assistant', 'turn-old-2', '将被放弃的第二答'),
+        serverMessage('user-3', 'user', 'turn-old-3', '将被放弃的第三问'),
+        serverMessage('assistant-3', 'assistant', 'turn-old-3', '将被放弃的第三答'),
+      ],
+      liveEvents: [],
+      lastSequence: 99,
+      resumeToken: 'session-1:99',
+      status: 'idle',
+    });
+
+    const rewritten = rewriteOptimisticAgentMessage(hydrated, 'user-2', {
+      clientMessageId: 'rewrite-1',
+      text: '修改后的第二问',
+      nowMs: 1_000,
+    });
+
+    expect(rewritten.messageOrder).toEqual([
+      'user-1',
+      'assistant-1',
+      'local:rewrite-1',
+    ]);
+    expect(rewritten.turnOrder).toEqual(['turn-old-1', 'local-turn:rewrite-1']);
+    expect(rewritten.messagesById['assistant-2']).toBeUndefined();
+    expect(rewritten.messagesById['user-3']).toBeUndefined();
+    expect(textOf(rewritten.messagesById['local:rewrite-1'])).toBe('修改后的第二问');
+    expect(rewritten.status).toBe('busy');
+    expect(rewritten.lastSequence).toBe(99);
+  });
+
   it('preserves assistant segments around a tool call instead of replacing earlier text', () => {
     let state = createAgentProjection('session-1');
     const events = [
@@ -111,11 +171,11 @@ describe('AgentEventReducer', () => {
       }),
       agentEvent(3, 'tool_started', {
         toolCallId: 'tool-interleaved',
-        toolName: 'ime_overview',
+        toolName: 'overview',
       }),
       agentEvent(4, 'tool_finished', {
         toolCallId: 'tool-interleaved',
-        toolName: 'ime_overview',
+        toolName: 'overview',
         result: { details: { result: { summary: '运行状态正常' } } },
       }),
       agentEvent(5, 'text_delta', { delta: '检查完成，一切正常。', replaceBlock: true }),
@@ -162,6 +222,28 @@ describe('AgentEventReducer', () => {
     expect(recovered.needsSnapshot).toBe(false);
     expect(recovered.lastSequence).toBe(8);
     expect(recovered.messageOrder).toEqual(['server-user']);
+  });
+
+  it('honors a snapshot-required control even when a restarted server sequence regresses', () => {
+    const hydrated = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 12,
+      resumeToken: 'session-1:12',
+    });
+
+    const control = reduceAgentEvent(
+      hydrated,
+      agentEvent(3, 'snapshot_required', { reason: 'event_replay_gap' }),
+    );
+
+    expect(control.disposition).toBe('snapshot-required');
+    expect(control.state.needsSnapshot).toBe(true);
+    expect(control.state.lastSequence).toBe(12);
+    expect(control.state.gap).toMatchObject({
+      expectedSequence: 13,
+      receivedSequence: 3,
+    });
   });
 
   it('projects queued steering and follow-up messages without replacing the active turn', () => {
@@ -284,6 +366,72 @@ describe('AgentEventReducer', () => {
     expect(recovered.status).toBe('waiting');
   });
 
+  it('restores a generic Pi question from the authoritative snapshot', () => {
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [],
+      liveEvents: [{
+        ...rawAgentEvent(7, 'user_input_required', {
+          requestId: 'ui-select-1',
+          method: 'select',
+          title: '选择部署环境',
+          options: ['预览', '生产'],
+        }),
+        turnId: 'turn-structured-1',
+      }],
+      lastSequence: 7,
+      resumeToken: 'session-1:7',
+      status: 'busy',
+    });
+
+    expect(recovered.activitiesById['ui-select-1']).toMatchObject({
+      kind: 'user_input_required',
+      status: 'waiting',
+      turnId: 'turn-structured-1',
+    });
+    expect(recovered.activityOrder).toEqual(['ui-select-1']);
+    expect(recovered.status).toBe('waiting');
+  });
+
+  it('settles one structured question once and retains timeout provenance', () => {
+    const waiting = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'user_input_required', {
+        requestId: 'ui-timeout-1',
+        method: 'confirm',
+        title: '继续执行？',
+      }),
+    ).state;
+    const resolved = reduceAgentEvent(
+      waiting,
+      agentEvent(2, 'user_input_required', {
+        requestId: 'ui-timeout-1',
+        method: 'confirm',
+        resolutionState: 'cancelled',
+        resolutionSource: 'timeout',
+      }),
+    ).state;
+    const replay = reduceAgentEvent(
+      resolved,
+      agentEvent(2, 'user_input_required', {
+        requestId: 'ui-timeout-1',
+        method: 'confirm',
+        resolutionState: 'cancelled',
+        resolutionSource: 'timeout',
+      }),
+    );
+
+    expect(resolved.activityOrder).toEqual(['ui-timeout-1']);
+    expect(resolved.activitiesById['ui-timeout-1']).toMatchObject({
+      status: 'completed',
+      payload: {
+        resolutionState: 'cancelled',
+        resolutionSource: 'timeout',
+      },
+    });
+    expect(replay.disposition).toBe('ignored-duplicate');
+    expect(replay.state).toBe(resolved);
+  });
+
   it('keeps Pi transcript anchors once when the bounded event journal replays the same turn', () => {
     const question = '昨天做到哪里了？';
     const answer = '已经完成按需加载边界。';
@@ -358,7 +506,67 @@ describe('AgentEventReducer', () => {
     expect(recovered.messagesById['pi-user'].clientMessageId).toBe('web-rewrite-1');
     expect(recovered.activitiesById['tool-proof']).toMatchObject({
       status: 'completed',
-      turnId: 'turn-rewrite',
+      turnId: 'history:pi-user',
+    });
+    expect(recovered.turnOrder).toEqual(['history:pi-user']);
+    expect(recovered.turnsById['turn-rewrite']).toBeUndefined();
+    expect(recovered.turnsById['history:pi-user'].activityIds).toContain('tool-proof');
+  });
+
+  it('anchors replay-only reasoning to the matching durable turn without creating a phantom reply', () => {
+    const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [
+        {
+          ...serverMessage('durable-user', 'user', 'history:durable-user', '读取很多文件'),
+          createdAtMs: 1_000,
+          completedAtMs: 1_000,
+        },
+        {
+          ...serverMessage('durable-assistant', 'assistant', 'history:durable-user', 'READS-OK'),
+          createdAtMs: 2_000,
+          completedAtMs: 2_000,
+        },
+      ],
+      liveEvents: [
+        {
+          ...rawAgentEvent(41, 'reasoning_summary', {
+            requestId: 'reasoning-many-reads',
+            summary: '检查只读结果',
+            state: 'completed',
+          }),
+          turnId: 'runtime-turn-many-reads',
+        },
+        {
+          ...rawAgentEvent(42, 'message_completed', {
+            message: {
+              ...serverMessage(
+                'runtime-assistant',
+                'assistant',
+                'runtime-turn-many-reads',
+                'READS-OK',
+              ),
+              createdAtMs: 2_000,
+              completedAtMs: 2_000,
+            },
+          }),
+          turnId: 'runtime-turn-many-reads',
+        },
+      ],
+      lastSequence: 42,
+      resumeToken: 'session-1:42',
+      status: 'idle',
+    });
+
+    expect(recovered.turnOrder).toEqual(['history:durable-user']);
+    expect(recovered.turnsById['runtime-turn-many-reads']).toBeUndefined();
+    expect(recovered.activitiesById['reasoning-many-reads']).toMatchObject({
+      turnId: 'history:durable-user',
+      status: 'completed',
+    });
+    expect(recovered.turnsById['history:durable-user']).toMatchObject({
+      status: 'completed',
+      messageIds: ['durable-user', 'durable-assistant'],
+      activityIds: ['reasoning-many-reads'],
     });
   });
 
@@ -379,6 +587,128 @@ describe('AgentEventReducer', () => {
 
     expect(recovered.messageOrder).toEqual(['pi-user', 'turn-1:assistant']);
     expect(textOf(recovered.messagesById['turn-1:assistant'])).toBe('仍在生成');
+  });
+
+  it('replays lifecycle cancellation audits from snapshots and applies newer owner receipts', () => {
+    const restoredAudit = lifecycleCancellationAudit({
+      state: 'partial',
+      updatedAtMs: 100,
+      owners: {
+        runtime: { status: 'succeeded', receipt: { lifecycle: 'aborted' } },
+        approval: { status: 'succeeded', receipt: { cancelledCount: 1 } },
+        job: { status: 'partial', receipt: { cancelled: 1, stillRunning: 1 } },
+        delegation: { status: 'pending', receipt: {} },
+      },
+    });
+    const restored = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 10,
+      resumeToken: 'session-1:10',
+      lifecycleCancellationAudits: [restoredAudit],
+    });
+
+    expect(restored.lifecycleCancellationAuditOrder).toEqual([restoredAudit.requestId]);
+    expect(restored.lifecycleCancellationAuditsById[restoredAudit.requestId]).toMatchObject({
+      state: 'partial',
+      owners: {
+        runtime: { status: 'succeeded' },
+        job: { status: 'partial' },
+        delegation: { status: 'pending' },
+      },
+    });
+
+    const completedAudit = lifecycleCancellationAudit({
+      state: 'completed',
+      updatedAtMs: 200,
+      owners: {
+        runtime: { status: 'succeeded', receipt: { lifecycle: 'aborted' } },
+        approval: { status: 'succeeded', receipt: { cancelledCount: 1 } },
+        job: { status: 'succeeded', receipt: { cancelled: 2 } },
+        delegation: { status: 'excluded', receipt: { reason: 'no_active_delegation' } },
+      },
+    });
+    const updated = reduceAgentEvent(
+      restored,
+      agentEvent(11, 'lifecycle_cancellation_changed', { audit: completedAudit }),
+    ).state;
+
+    expect(updated.lifecycleCancellationAuditOrder).toEqual([completedAudit.requestId]);
+    expect(updated.lifecycleCancellationAuditsById[completedAudit.requestId]).toEqual(completedAudit);
+  });
+  it('replaces active Room authorization with the fenced workflow on reconnect', () => {
+    const plan = {
+      id: 'plan:room-session',
+      sessionId: 'session-1',
+      revision: 0,
+      status: 'draft',
+      items: [],
+    };
+    const goal = {
+      schemaVersion: 'rag-ime.agent-goal.v1',
+      sessionId: 'session-1',
+      configured: false,
+      goalId: '',
+      revision: 0,
+      objective: '',
+      successCriteria: '',
+      evidenceExpectations: [],
+      status: 'cleared',
+      budget: { tokenLimit: null, timeLimitMs: null },
+      usage: { tokens: 0, elapsedMs: 0 },
+      remaining: { tokens: null, timeMs: null },
+      budgetExceeded: false,
+      completionAudit: null,
+      cancellationAudit: null,
+      updatedAtMs: 0,
+    };
+    const authorized = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 7,
+      resumeToken: 'session-1:7',
+      plan,
+      goal,
+      actGate: {
+        allowed: true,
+        reason: 'approved',
+        message: '当前 Room 任务已经开始，可以在本轮权限范围内继续工作。',
+        planRevision: 0,
+        goalRevision: 0,
+      },
+    });
+
+    expect(authorized.actGate).toMatchObject({ allowed: true, reason: 'approved' });
+
+    const reconnected = applyAgentSnapshot(authorized, {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 8,
+      resumeToken: 'session-1:8',
+      plan,
+      goal,
+      actGate: {
+        allowed: false,
+        reason: 'plan_required',
+        message: '先创建执行计划并提交审阅。',
+        planRevision: 0,
+        goalRevision: 0,
+      },
+    });
+
+    expect(reconnected.plan).toMatchObject({ id: plan.id, revision: plan.revision });
+    expect(reconnected.goal).toMatchObject({
+      sessionId: goal.sessionId,
+      revision: goal.revision,
+      status: goal.status,
+    });
+    expect(reconnected.actGate).toEqual({
+      allowed: false,
+      reason: 'plan_required',
+      message: '先创建执行计划并提交审阅。',
+      planRevision: 0,
+      goalRevision: 0,
+    });
   });
 
   it('restores the durable plan and advances it from live agent_plan results', () => {
@@ -450,7 +780,7 @@ describe('AgentEventReducer', () => {
   it('does not reopen the last completed transcript turn when Pi marks the Session active', () => {
     const recovered = applyAgentSnapshot(createAgentProjection('session-1'), {
       messages: [
-        serverMessage('server-user', 'user', 'turn-history', '调用 ime_overview'),
+        serverMessage('server-user', 'user', 'turn-history', '调用 overview'),
         serverMessage('server-assistant', 'assistant', 'turn-history', '控制中心运行正常。'),
       ],
       liveEvents: [rawAgentEvent(43, 'status_changed', { status: 'ready' })],
@@ -471,7 +801,7 @@ describe('AgentEventReducer', () => {
       createAgentProjection('session-1'),
       agentEvent(1, 'tool_started', {
         toolCallId: 'tool-progress-1',
-        toolName: 'ime_knowledge',
+        toolName: 'knowledge',
         summary: '开始检索知识库',
         args: { path: 'docs/acceptance.md' },
       }),
@@ -506,7 +836,7 @@ describe('AgentEventReducer', () => {
       createdAtMs: 10,
       updatedAtMs: 40,
       payload: {
-        toolName: 'ime_knowledge',
+        toolName: 'knowledge',
         args: { path: 'docs/acceptance.md' },
         progressHistory: [
           { kind: 'tool_started', summary: '开始检索知识库', createdAtMs: 10 },
@@ -515,6 +845,56 @@ describe('AgentEventReducer', () => {
           { kind: 'tool_finished', summary: '知识检索完成', createdAtMs: 40 },
         ],
       },
+    });
+  });
+
+  it('projects an Act Gate refusal as a safe no-op instead of a failed Tool', () => {
+    const state = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'tool_finished', {
+        toolCallId: 'tool-plan-required',
+        toolName: 'edit',
+        isError: true,
+        result: {
+          details: {
+            ok: false,
+            error: 'Act Gate blocked workspace mutation (plan_required): 先创建执行计划并提交审阅。',
+          },
+        },
+      }),
+    ).state;
+
+    expect(state.activitiesById['tool-plan-required']).toMatchObject({
+      status: 'completed',
+      summary: '工作区变更未执行：请先提交执行计划并等待用户批准。',
+      payload: {
+        isError: false,
+        governanceBlocked: true,
+      },
+    });
+  });
+
+  it('projects loading an already-active Tool schema as an idempotent no-op', () => {
+    const state = reduceAgentEvent(
+      createAgentProjection('session-1'),
+      agentEvent(1, 'tool_finished', {
+        toolCallId: 'tool-load-active',
+        toolName: 'tool_load',
+        isError: true,
+        result: {
+          content: [{
+            type: 'text',
+            text: 'Tool schema is already active; call it directly and do not pass it to tool_load: desktop_semantic',
+          }],
+          details: {},
+        },
+      }),
+    ).state;
+
+    expect(state.activitiesById['tool-load-active']).toMatchObject({
+      status: 'completed',
+      summary: '工具已经可直接调用，无需重复加载。',
+      payload: { isError: false, expectedNoop: true },
     });
   });
 
@@ -747,6 +1127,65 @@ describe('AgentEventReducer', () => {
     expect(stopped.messagesById['turn-1:assistant'].status).toBe('aborted');
   });
 
+  it('projects background job snapshots and terminal events by durable job id', () => {
+    const restored = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 4,
+      resumeToken: 'session-1:4',
+      backgroundJobs: [backgroundJob('running', 40)],
+    });
+    const completed = reduceAgentEvent(
+      restored,
+      agentEvent(5, 'background_job_completed', {
+        jobId: 'bg_0123456789abcdef0123456789abcdef',
+        status: 'completed',
+        summary: '后台任务已完成',
+        job: backgroundJob('completed', 50),
+      }),
+    ).state;
+
+    expect(completed.backgroundJobOrder).toEqual(['bg_0123456789abcdef0123456789abcdef']);
+    expect(completed.backgroundJobsById.bg_0123456789abcdef0123456789abcdef).toMatchObject({
+      status: 'completed',
+      exitCode: 0,
+      outputBytes: 12,
+      updatedAtMs: 50,
+    });
+  });
+
+  it('keeps an equal-time terminal SSE job over a cancelling receipt but accepts a newer retry', () => {
+    const running = applyAgentSnapshot(createAgentProjection('session-1'), {
+      messages: [],
+      liveEvents: [],
+      lastSequence: 4,
+      resumeToken: 'session-1:4',
+      backgroundJobs: [backgroundJob('running', 40)],
+    });
+    const cancelled = reduceAgentEvent(
+      running,
+      agentEvent(5, 'background_job_cancelled', {
+        jobId: 'bg_0123456789abcdef0123456789abcdef',
+        status: 'cancelled',
+        summary: '后台任务已停止',
+        job: backgroundJob('cancelled', 50),
+      }),
+    ).state;
+
+    const staleReceipt = applyAgentBackgroundJobReceipt(cancelled, {
+      job: backgroundJob('cancelling', 50),
+    });
+    expect(staleReceipt).toBe(cancelled);
+    expect(staleReceipt.backgroundJobsById.bg_0123456789abcdef0123456789abcdef.status)
+      .toBe('cancelled');
+
+    const newerRetry = applyAgentBackgroundJobReceipt(staleReceipt, {
+      job: backgroundJob('running', 51),
+    });
+    expect(newerRetry.backgroundJobsById.bg_0123456789abcdef0123456789abcdef)
+      .toMatchObject({ status: 'running', updatedAtMs: 51 });
+  });
+
   it('hides legacy per-turn user source checkpoints but keeps explicit memory work', () => {
     const captured = reduceAgentEvent(
       createAgentProjection('session-1'),
@@ -774,6 +1213,33 @@ describe('AgentEventReducer', () => {
     });
   });
 });
+
+function lifecycleCancellationAudit(
+  overrides: Partial<AgentLifecycleCancellationAuditV1> = {},
+): AgentLifecycleCancellationAuditV1 {
+  return {
+    schemaVersion: 'rag-ime.agent-lifecycle-cancellation-audit.v1',
+    requestId: 'lifecycle:goal:1',
+    sessionId: 'session-1',
+    scopeKind: 'goal',
+    scopeId: 'goal:session-1',
+    sourceRevision: 3,
+    transitionRevision: 4,
+    action: 'pause',
+    reason: '用户暂停当前目标',
+    state: 'pending',
+    sourceTurnId: 'turn-1',
+    owners: {
+      runtime: { status: 'pending', receipt: {} },
+      approval: { status: 'pending', receipt: {} },
+      job: { status: 'pending', receipt: {} },
+      delegation: { status: 'pending', receipt: {} },
+    },
+    createdAtMs: 50,
+    updatedAtMs: 50,
+    ...overrides,
+  };
+}
 
 function rawAgentEvent(
   sequence: number,
@@ -823,4 +1289,50 @@ function serverMessage(id: string, role: 'user' | 'assistant', turnId: string, t
 
 function textOf(message: { blocks: { data: Record<string, unknown> }[] }): string {
   return String(message.blocks[0]?.data.text ?? '');
+}
+
+function backgroundJob(
+  status: AgentBackgroundJobV1['status'],
+  updatedAtMs: number,
+): AgentBackgroundJobV1 {
+  const terminal = (
+    status === 'completed'
+    || status === 'failed'
+    || status === 'cancelled'
+    || status === 'orphaned'
+  );
+  return {
+    schemaVersion: 'rag-ime.agent-background-job.v1',
+    jobId: 'bg_0123456789abcdef0123456789abcdef',
+    sessionId: 'session-1',
+    label: '后台检查',
+    status,
+    command: 'python3 check.py',
+    commandSha256: 'a'.repeat(64),
+    cwd: '/tmp/project',
+    networkAllowed: false,
+    maxRunSeconds: 60,
+    pid: terminal || status === 'queued' ? null : 42,
+    createdAtMs: 10,
+    startedAtMs: status === 'queued' ? 0 : 11,
+    updatedAtMs,
+    endedAtMs: terminal ? updatedAtMs : 0,
+    exitCode: status === 'completed' ? 0 : status === 'failed' ? 1 : null,
+    outputBytes: 12,
+    logStartCursor: 0,
+    logTruncated: false,
+    cancelRequestedAtMs: status === 'cancelling' || status === 'cancelled'
+      ? updatedAtMs
+      : 0,
+    error: '',
+    approvalId: 'approval-1',
+    causalMetadata: {
+      planId: 'plan-1',
+      planRevision: 1,
+      goalId: 'goal-1',
+      goalRevision: 1,
+      turnId: 'turn-1',
+      roomBound: false,
+    },
+  };
 }

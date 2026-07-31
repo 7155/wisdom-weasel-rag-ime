@@ -114,8 +114,8 @@ describe('DiagnosticsFeature runtime actions', () => {
     for (const title of [
       '重新连接输入法',
       '重启后台服务',
-      '重启本机模型',
-      '重新部署输入法配置',
+      '应用并重启本机模型',
+      '应用输入法前端设置',
       '打开辅助功能设置',
       '暂停智能候选',
     ]) {

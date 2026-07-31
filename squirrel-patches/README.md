@@ -123,7 +123,15 @@ rag_ime:
 ```
 
 When `rag_ime/enabled` is false or the Sidecar is unavailable, Squirrel keeps
-the native Rime composition route. Side-candidate acceptance prefers one HTTP
+the native Rime composition route. The installed Control Center's approved
+`redeploy_rime` action runs `scripts/apply_input_method_configuration.sh`:
+it reads the validated `display.maxPostCommitCandidates` and
+`interaction.postCommit.idleTriggerMs` values from SQLite, updates only this
+managed YAML block, then runs Squirrel `--build` and `--reload`. Tab and
+Option+number policies remain response-scoped runtime values, while ordinary
+number keys are always reserved for Rime/the host.
+
+Side-candidate acceptance prefers one HTTP
 `POST /rime-select`; its legacy commit/action fallback is off the passive
 request path and exists only for accepted feedback compatibility.
 

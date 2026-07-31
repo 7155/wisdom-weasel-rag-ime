@@ -25,6 +25,7 @@ final class DesktopAccessibilityService {
         let focusedNodeRef: String
         let stateHash: String
         let nodeHashes: [String: String]
+        let nodeActionHashes: [String: String]
         let nodePayloads: [String: [String: Any]]
         let elements: [String: AXUIElement]
         let maxNodes: Int
@@ -66,12 +67,15 @@ final class DesktopAccessibilityService {
             return payload
         }
 
-        var stateHash: String {
-            let frameText = frame.map {
+        private var frameState: String {
+            frame.map {
                 "\(Int($0.origin.x.rounded())):\(Int($0.origin.y.rounded())):"
                     + "\(Int($0.width.rounded())):\(Int($0.height.rounded()))"
             } ?? ""
-            return desktopSHA256(
+        }
+
+        var stateHash: String {
+            desktopSHA256(
                 [
                     ref, parentRef, role, subrole, label, value,
                     enabled ? "1" : "0",
@@ -79,7 +83,21 @@ final class DesktopAccessibilityService {
                     selected ? "1" : "0",
                     secure ? "1" : "0",
                     actions.joined(separator: ","),
-                    frameText,
+                    frameState,
+                ].joined(separator: "\u{1f}")
+            )
+        }
+
+        // Showing a native approval surface necessarily changes focus. Bind
+        // execution to target semantics instead of that expected focus transfer.
+        var actionStateHash: String {
+            desktopSHA256(
+                [
+                    ref, parentRef, role, subrole, label, value,
+                    enabled ? "1" : "0",
+                    secure ? "1" : "0",
+                    actions.joined(separator: ","),
+                    frameState,
                 ].joined(separator: "\u{1f}")
             )
         }
@@ -236,7 +254,7 @@ final class DesktopAccessibilityService {
             throw DesktopBridgeError.permissionDenied(reason)
         }
 
-        let maxNodes = boundedInteger(request["maxNodes"], default: 160, minimum: 1, maximum: 400)
+        let maxNodes = boundedInteger(request["maxNodes"], default: 160, minimum: 1, maximum: 500)
         let maxDepth = boundedInteger(request["maxDepth"], default: 8, minimum: 1, maximum: 12)
         let query = boundedString(request["query"], maximum: 300).lowercased()
         let traversal = traverse(
@@ -251,6 +269,9 @@ final class DesktopAccessibilityService {
         }
 
         let nodeHashes = Dictionary(uniqueKeysWithValues: records.map { ($0.ref, $0.stateHash) })
+        let nodeActionHashes = Dictionary(
+            uniqueKeysWithValues: records.map { ($0.ref, $0.actionStateHash) }
+        )
         let stateHash = desktopSHA256(
             records.map { "\($0.ref):\($0.stateHash)" }.joined(separator: "\n")
         )
@@ -283,6 +304,7 @@ final class DesktopAccessibilityService {
             focusedNodeRef: focusedRef,
             stateHash: stateHash,
             nodeHashes: nodeHashes,
+            nodeActionHashes: nodeActionHashes,
             nodePayloads: payloads,
             elements: Dictionary(uniqueKeysWithValues: records.map { ($0.ref, $0.element) }),
             maxNodes: maxNodes,
@@ -333,7 +355,8 @@ final class DesktopAccessibilityService {
         let nodeRef = boundedString(request["nodeRef"], maximum: 200)
         guard let node = snapshot.nodePayloads[nodeRef],
               snapshot.elements[nodeRef] != nil,
-              let nodeStateHash = snapshot.nodeHashes[nodeRef] else {
+              let nodeStateHash = snapshot.nodeHashes[nodeRef],
+              let nodeActionStateHash = snapshot.nodeActionHashes[nodeRef] else {
             throw DesktopBridgeError.invalidRequest("node_not_found")
         }
         guard node["secure"] as? Bool != true else {
@@ -396,6 +419,7 @@ final class DesktopAccessibilityService {
             "snapshotId": snapshot.id,
             "revision": snapshot.revision,
             "nodeStateSha256": nodeStateHash,
+            "nodeActionStateSha256": nodeActionStateHash,
             "applicationStateSha256": snapshot.stateHash,
             "capturedAtMs": snapshot.createdAtMs,
         ]
@@ -416,7 +440,7 @@ final class DesktopAccessibilityService {
               let baseState = request["baseState"] as? [String: Any] else {
             throw DesktopBridgeError.invalidRequest("actionPayload_and_baseState_are_required")
         }
-        let snapshot = try validatedSnapshot(actionPayload)
+        let snapshot = try approvedActionSnapshot(actionPayload)
         let nodeRef = boundedString(actionPayload["nodeRef"], maximum: 200)
         guard baseState["snapshotId"] as? String == snapshot.id,
               boundedInteger(
@@ -425,15 +449,14 @@ final class DesktopAccessibilityService {
                   minimum: -1,
                   maximum: Int.max
               ) == snapshot.revision,
-              let expectedNodeHash = baseState["nodeStateSha256"] as? String,
-              expectedNodeHash == snapshot.nodeHashes[nodeRef],
-              baseState["applicationStateSha256"] as? String == snapshot.stateHash else {
+              let expectedActionHash = baseState["nodeActionStateSha256"] as? String,
+              expectedActionHash == snapshot.nodeActionHashes[nodeRef] else {
             throw DesktopBridgeError.stale("desktop_node_changed_after_preview")
         }
         let refreshed = try refreshSnapshotForAction(
             snapshot,
             nodeRef: nodeRef,
-            expectedNodeHash: expectedNodeHash
+            expectedActionHash: expectedActionHash
         )
         guard let element = refreshed.elements[nodeRef] else {
             throw DesktopBridgeError.stale("desktop_node_changed_after_preview")
@@ -468,7 +491,7 @@ final class DesktopAccessibilityService {
     private func refreshSnapshotForAction(
         _ snapshot: Snapshot,
         nodeRef: String,
-        expectedNodeHash: String
+        expectedActionHash: String
     ) throws -> Snapshot {
         let result = try inspect([
             "pid": Int(snapshot.pid),
@@ -479,12 +502,22 @@ final class DesktopAccessibilityService {
         let refreshedID = boundedString(result["snapshotId"], maximum: 200)
         guard let refreshed = snapshots[refreshedID],
               refreshed.pid == snapshot.pid,
-              refreshed.revision == snapshot.revision,
-              refreshed.stateHash == snapshot.stateHash,
-              refreshed.nodeHashes[nodeRef] == expectedNodeHash else {
+              refreshed.nodeActionHashes[nodeRef] == expectedActionHash else {
             throw DesktopBridgeError.stale("desktop_changed_after_approval")
         }
         return refreshed
+    }
+
+    private func approvedActionSnapshot(_ request: [String: Any]) throws -> Snapshot {
+        let snapshotID = boundedString(request["snapshotId"], maximum: 200)
+        let revision = boundedInteger(request["revision"], default: -1, minimum: -1, maximum: Int.max)
+        guard let snapshot = snapshots[snapshotID], snapshot.revision == revision else {
+            throw DesktopBridgeError.stale("desktop_changed_after_snapshot")
+        }
+        guard NSRunningApplication(processIdentifier: snapshot.pid)?.isTerminated == false else {
+            throw DesktopBridgeError.stale("application_terminated")
+        }
+        return snapshot
     }
 
     private func perform(

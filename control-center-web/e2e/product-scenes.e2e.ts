@@ -35,7 +35,13 @@ test('production Agent scene preserves Turn aggregation and composer responsiven
   await expect(activity).toHaveCount(1);
   await activity.locator(':scope > summary').click();
   await expect(activity).toHaveAttribute('open', '');
-  expect(await page.locator('.agent-activity-row').count()).toBeGreaterThanOrEqual(5);
+  await expect(page.getByRole('button', { name: '查看 Agent 思考摘要：核对迁移计划与当前前端边界' })).toBeVisible();
+  await expect(activity.locator('.agent-activity-row > summary strong')).toHaveText([
+    '检索文档',
+    '读取工具书',
+    '协作 Agent',
+    '权限确认',
+  ]);
 
   const visibleText = await page.locator('main[data-route-id="agent"]').innerText();
   expect(visibleText).not.toMatch(/\{"(?:schemaVersion|eventType|payload)"/);

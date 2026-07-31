@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
@@ -57,9 +58,9 @@ describe('document knowledge library', () => {
       params: { kbId: 'kb-runtime', fileId: 'file-runtime' },
       query: { chunkId: 'chunk-tool', page: 12, lines: 80 },
     }));
-    expect(screen.getByRole('tab', { name: '查看材料' })).toHaveAttribute('data-state', 'active');
+    await waitFor(() => expect(screen.getByRole('tab', { name: '查看材料' })).toHaveAttribute('data-state', 'active'));
     expect(await screen.findByText(/已定位检索命中/)).toBeInTheDocument();
-    expect(screen.getByText('Agent 启动时注册 ime_knowledge。').closest('article')).toHaveAttribute('data-focused', 'true');
+    expect(screen.getByText('Agent 启动时注册 knowledge。').closest('article')).toHaveAttribute('data-focused', 'true');
   });
 
   it('imports through the typed transport and updates Agent/parser settings with revisions', async () => {
@@ -121,7 +122,7 @@ describe('document knowledge library', () => {
     await waitFor(() => expect(request(transport, 'knowledgeBases.rebuild')?.body).toEqual({
       previewToken: 'preview-reindex', payloadSha256: 'sha256:reindex', expectedRevision: 8, confirmText: 'REBUILD',
     }));
-    expect(screen.getByRole('tab', { name: '处理记录' })).toHaveAttribute('data-state', 'active');
+    await waitFor(() => expect(screen.getByRole('tab', { name: '处理记录' })).toHaveAttribute('data-state', 'active'));
   });
 
   it('retries a failed document and confirms deletion without leaking storage paths', async () => {
@@ -139,6 +140,8 @@ describe('document knowledge library', () => {
       params: { kbId: 'kb-runtime', fileId: 'file-runtime' },
       body: { stage: 'parse', parserProvider: 'mineru_local_http', expectedRevision: 3 },
     }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: '处理记录' })).toHaveAttribute('data-state', 'active'));
+    await user.click(screen.getByRole('tab', { name: '资料' }));
 
     await user.click(screen.getByRole('button', { name: '删除 runtime.pdf' }));
     const dialog = screen.getByRole('dialog', { name: '删除文档' });
@@ -164,7 +167,7 @@ describe('document knowledge library', () => {
     expect(await screen.findByTitle('runtime.pdf 源文件')).toHaveAttribute('src', 'blob:knowledge-source');
     expect(transport.knowledgeDocumentSourceCalls[0]).toMatchObject({ kbId: 'kb-runtime', fileId: 'file-runtime' });
     await user.click(screen.getByRole('tab', { name: 'Chunks' }));
-    expect(screen.getByText('Agent 启动时注册 ime_knowledge。')).toBeInTheDocument();
+    expect(screen.getByText('Agent 启动时注册 knowledge。')).toBeInTheDocument();
     expect(screen.getByText('Agent Loop > Tools')).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: '解析产物' }));
     expect(await screen.findByRole('img', { name: '工具流程图' })).toHaveAttribute('src', 'blob:knowledge-asset');
@@ -172,7 +175,7 @@ describe('document knowledge library', () => {
     expect(screen.getByRole('link', { name: '下载 tool-flow.png' })).toHaveAttribute('download', 'tool-flow.png');
     expect(transport.knowledgeAssetCalls[0]).toMatchObject({ kbId: 'kb-runtime', fileId: 'file-runtime', assetId: 'd'.repeat(64) });
     expect(screen.getByRole('columnheader', { name: '字段' })).toBeInTheDocument();
-    expect(screen.getByRole('cell', { name: 'ime_knowledge' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: 'knowledge' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '加载更多' }));
     expect(screen.getByRole('cell', { name: 'value-21' })).toBeInTheDocument();
   });
@@ -190,6 +193,17 @@ describe('document knowledge library', () => {
       expect(screen.getByRole('tab', { name })).toHaveAttribute('data-state', 'active');
     }
     expect(screen.getByRole('button', { name: '保存切分设置' })).toBeInTheDocument();
+  });
+
+  it('keeps document actions content-first at a narrow viewport', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    window.dispatchEvent(new Event('resize'));
+    const transport = createTransport();
+    renderKnowledge(transport);
+
+    expect(await screen.findByRole('button', { name: '重新解析 runtime.pdf' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '查看 runtime.pdf' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '删除 runtime.pdf' })).toBeInTheDocument();
   });
 
   it('paginates Markdown and chunks without hiding content after the first window', async () => {
@@ -359,16 +373,55 @@ describe('document knowledge library', () => {
     await waitFor(() => expect(screen.getAllByRole('button', { name: '重建图谱' }).every((button) => !button.hasAttribute('disabled'))).toBe(true));
     expect(screen.getByRole('heading', { name: '已就绪' })).toBeInTheDocument();
   });
+  it('keeps the Settings workspace and unsaved drafts through an authoritative refresh', async () => {
+    const transport = createTransport();
+    const user = userEvent.setup();
+    renderKnowledge(transport, '/knowledge?tab=settings');
+
+    expect(await screen.findByRole('tab', { name: '设置' })).toHaveAttribute('data-state', 'active');
+    const name = screen.getByRole('textbox', { name: '名称' });
+    await user.clear(name);
+    await user.type(name, '尚未保存的知识库名称');
+    await user.click(screen.getByRole('button', { name: '刷新知识库' }));
+
+    await waitFor(() => expect(screen.getByRole('tab', { name: '设置' })).toHaveAttribute('data-state', 'active'));
+    expect(screen.getByRole('textbox', { name: '名称' })).toHaveValue('尚未保存的知识库名称');
+  });
+
+  it('keeps create and basic-info drafts visible when the backend does not confirm them', async () => {
+    const transport = createTransport();
+    const user = userEvent.setup();
+    renderKnowledge(transport);
+
+    await user.click(await screen.findByRole('button', { name: '新建知识库' }));
+    const dialog = screen.getByRole('dialog', { name: '新建文档知识库' });
+    await user.type(within(dialog).getByRole('textbox', { name: '名称' }), '没有被确认的新库');
+    await user.click(within(dialog).getByRole('button', { name: '创建' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('知识服务没有确认新知识库');
+    expect(dialog).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: '取消' }));
+    await user.click(screen.getByRole('tab', { name: '设置' }));
+    const name = screen.getByRole('textbox', { name: '名称' });
+    await user.clear(name);
+    await user.type(name, '没有被确认的名称');
+    await user.click(screen.getByRole('button', { name: '保存基本信息' }));
+    expect(await screen.findByText('知识服务没有确认基本信息更新，页面仍保留你的输入。')).toBeInTheDocument();
+    expect(name).toHaveValue('没有被确认的名称');
+  });
+
 });
 
-function renderKnowledge(transport: MockControlTransport) {
+function renderKnowledge(transport: MockControlTransport, initialEntry = '/knowledge') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   render(
-    <TooltipProvider delayDuration={0}>
-      <ControlTransportProvider transport={transport}>
-        <QueryClientProvider client={client}><KnowledgeFeature /></QueryClientProvider>
-      </ControlTransportProvider>
-    </TooltipProvider>,
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <TooltipProvider delayDuration={0}>
+        <ControlTransportProvider transport={transport}>
+          <QueryClientProvider client={client}><KnowledgeFeature /></QueryClientProvider>
+        </ControlTransportProvider>
+      </TooltipProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -391,13 +444,14 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
       'knowledgeBases.search': {
         hits: [{
           id: 'chunk-tool', documentId: 'file-runtime', documentName: 'runtime.pdf', title: 'Tool 注册',
-          excerpt: 'Agent 启动时注册 ime_knowledge。', score: .92, page: 12, heading: 'Agent Loop > Tools',
+          excerpt: 'Agent 启动时注册 knowledge。', score: .92, page: 12, heading: 'Agent Loop > Tools',
           diagnostics: { effectiveMode: 'hybrid', lexicalRank: 1, denseRank: 2, graphRank: 1, lexicalScore: .95, denseScore: .88, graphScore: .9, graphMatches: ['Tool', 'Knowledge Worker'], graphPaths: ['Tool → mentions → 文档片段'] },
         }],
       },
       'knowledgeBases.document.get': options.pagedDetail ? pagedKnowledgeDetail : knowledgeDetail(),
       'knowledgeBases.open': { ok: true, content: '工具原文' },
       'knowledgeBases.update': { base: knowledgeBase() },
+      'knowledgeBases.create': { base: knowledgeBase() },
       'knowledgeBases.document.retry': { ok: true },
       'knowledgeBases.document.delete': { ok: true },
       'knowledgeBases.reindexPreview': { previewToken: 'preview-reindex', payloadSha256: 'sha256:reindex', expectedRevision: 8, summary: { documentCount: 1, staleDocumentCount: 1, estimatedChunkCount: 48 } },
@@ -414,7 +468,7 @@ function createTransport(options: { activeJob?: boolean; emptyGraph?: boolean; p
           { id: 'doc-runtime', label: 'runtime.pdf', kind: 'document', documentId: 'file-runtime', documentName: 'runtime.pdf', weight: 1 },
           { id: 'topic-tools', label: '工具注册', kind: 'topic', weight: .9 },
           { id: 'entity-worker', label: 'Knowledge Worker', kind: 'entity', weight: .8 },
-          { id: 'chunk-tool', label: '按需检索与上下文注入', kind: 'chunk', documentId: 'file-runtime', documentName: 'runtime.pdf', chunkId: 'chunk-tool', heading: 'Agent Loop > Tools', excerpt: 'Agent 启动时注册 ime_knowledge。', page: 12, weight: .92 },
+          { id: 'chunk-tool', label: '按需检索与上下文注入', kind: 'chunk', documentId: 'file-runtime', documentName: 'runtime.pdf', chunkId: 'chunk-tool', heading: 'Agent Loop > Tools', excerpt: 'Agent 启动时注册 knowledge。', page: 12, weight: .92 },
         ],
         edges: options.emptyGraph ? [] : [
           { id: 'edge-1', source: 'doc-runtime', target: 'topic-tools', kind: 'contains', label: '包含', weight: .9 },
@@ -476,12 +530,12 @@ function pagedKnowledgeDetail(request: ControlRequest) {
 function knowledgeDetail() {
   return {
     document: knowledgeDocument(),
-    chunks: { items: [{ chunkId: 'chunk-tool', ordinal: 0, content: 'Agent 启动时注册 ime_knowledge。', page: 12, heading: 'Agent Loop > Tools', tokenCount: 12 }], total: 1, hasMore: false },
+    chunks: { items: [{ chunkId: 'chunk-tool', ordinal: 0, content: 'Agent 启动时注册 knowledge。', page: 12, heading: 'Agent Loop > Tools', tokenCount: 12 }], total: 1, hasMore: false },
     pages: [{ page: 12, chunkCount: 1 }],
     artifact: { available: true, format: 'markdown', mimeType: 'text/markdown', byteSize: 96, lineCount: 3, sha256: 'c'.repeat(64) },
-    contentWindow: { items: [{ lineNumber: 1, content: '# Agent Loop' }, { lineNumber: 2, content: 'Agent 启动时注册 ime_knowledge。' }, { lineNumber: 3, content: '![远程图](https://example.invalid/remote.png)' }], total: 3, hasMore: false },
+    contentWindow: { items: [{ lineNumber: 1, content: '# Agent Loop' }, { lineNumber: 2, content: 'Agent 启动时注册 knowledge。' }, { lineNumber: 3, content: '![远程图](https://example.invalid/remote.png)' }], total: 3, hasMore: false },
     assets: [{ assetId: 'd'.repeat(64), name: 'tool-flow.png', mimeType: 'image/png', byteSize: 1_024, sha256: 'd'.repeat(64), readPath: `/api/knowledge-bases/kb-runtime/documents/file-runtime/assets/${'d'.repeat(64)}`, page: 12, caption: '工具流程图' }],
-    tables: [{ tableId: 'table-tools', title: '工具表', page: 12, columns: ['字段', '值'], rows: [['工具', 'ime_knowledge'], ...Array.from({ length: 21 }, (_value, index) => [`field-${index + 1}`, `value-${index + 1}`])] }],
+    tables: [{ tableId: 'table-tools', title: '工具表', page: 12, columns: ['字段', '值'], rows: [['工具', 'knowledge'], ...Array.from({ length: 21 }, (_value, index) => [`field-${index + 1}`, `value-${index + 1}`])] }],
   };
 }
 

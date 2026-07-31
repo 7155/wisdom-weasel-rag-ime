@@ -233,7 +233,7 @@ export function ModelPicker({
             </header>
             <div className="agent-model-picker__reasoning-copy">
               <strong>{thinkingLabel(thinking)}</strong>
-              <small>选择后立即写入当前 Session，并以 Pi 返回状态为准</small>
+              <small>选择后立即用于当前对话，并以实际返回状态为准</small>
             </div>
             <ReasoningRail
               ref={reasoningRailRef}

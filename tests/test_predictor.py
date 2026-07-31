@@ -1005,6 +1005,46 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertEqual(provider.config.model, "local-proxy-model")
         self.assertEqual(provider.config.api_key, "secret-value")
 
+    def test_process_env_overrides_stale_predictor_env_file_without_explicit_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / "predictor.env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "RAG_IME_PREDICTOR_PROVIDER=mlx",
+                        "RAG_IME_PREDICTOR_BASE_URL=http://127.0.0.1:18767",
+                        "RAG_IME_PREDICTOR_MODEL=stale-minimind",
+                        "RAG_IME_PREDICTOR_PROFILE=custom",
+                        "RAG_IME_PREDICTOR_PROMPT_MODE=chat",
+                        "RAG_IME_PREDICTOR_MAX_TOKENS=24",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "RAG_IME_PREDICTOR_ENV": str(env_path),
+                    "RAG_IME_PREDICTOR_PROVIDER": "mlx",
+                    "RAG_IME_PREDICTOR_BASE_URL": "http://127.0.0.1:8767",
+                    "RAG_IME_PREDICTOR_MODEL": "minimind-ime-v2",
+                    "RAG_IME_PREDICTOR_PROFILE": "minimind_ime_v2",
+                    "RAG_IME_PREDICTOR_PROMPT_MODE": "base-completion",
+                    "RAG_IME_PREDICTOR_MAX_TOKENS": "8",
+                    "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
+                },
+                clear=True,
+            ):
+                provider = prediction_provider_from_env()
+
+        self.assertIsInstance(provider, MlxPredictionServiceProvider)
+        assert isinstance(provider, MlxPredictionServiceProvider)
+        self.assertEqual(provider.config.base_url, "http://127.0.0.1:8767")
+        self.assertEqual(provider.config.model, "minimind-ime-v2")
+        self.assertEqual(provider.config.profile, "minimind_ime_v2")
+        self.assertEqual(provider.config.prompt_mode, "base-completion")
+        self.assertEqual(provider.config.max_tokens, 8)
+
     def test_remote_openai_compatible_predictor_url_is_rejected_for_realtime(self) -> None:
         provider = prediction_provider_from_env(
             {
@@ -1219,8 +1259,8 @@ class PredictionProviderTests(unittest.TestCase):
                 {
                     "RAG_IME_PREDICTOR_PROVIDER": "mlx",
                     "RAG_IME_PREDICTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
-                    "RAG_IME_PREDICTOR_MODEL": "mlx-qwen3.5-0.8b",
-                    "RAG_IME_PREDICTOR_PROFILE": "instant",
+                    "RAG_IME_PREDICTOR_MODEL": "minimind-ime-100m",
+                    "RAG_IME_PREDICTOR_PROFILE": "minimind_ime_100m_v1",
                     "RAG_IME_PREDICTOR_TIMEOUT_MS": "1000",
                     "RAG_IME_PREDICTOR_STREAM_FIRST": "0",
                     "RAG_IME_PREDICTOR_FAILURE_COOLDOWN_MS": "0",
@@ -1240,9 +1280,14 @@ class PredictionProviderTests(unittest.TestCase):
             server.server_close()
 
         self.assertEqual(_MockMlxHandler.captured_path, "/predict")
-        self.assertEqual(_MockMlxHandler.captured_payload["model"], "mlx-qwen3.5-0.8b")
+        self.assertEqual(_MockMlxHandler.captured_payload["model"], "minimind-ime-100m")
         self.assertEqual(_MockMlxHandler.captured_payload["maxCandidates"], 3)
-        self.assertEqual(_MockMlxHandler.captured_payload["maxTokens"], 24)
+        self.assertEqual(_MockMlxHandler.captured_payload["maxTokens"], 8)
+        self.assertEqual(_MockMlxHandler.captured_payload["profile"], "minimind_ime_v2")
+        self.assertEqual(_MockMlxHandler.captured_payload["profileId"], "minimind_ime_v2")
+        self.assertEqual(_MockMlxHandler.captured_payload["promptMode"], "base-completion")
+        self.assertEqual(_MockMlxHandler.captured_payload["temperature"], 0.15)
+        self.assertEqual(_MockMlxHandler.captured_payload["topP"], 0.85)
         self.assertEqual(_MockMlxHandler.captured_payload["requestType"], "pinyin_constrained_prediction")
         self.assertEqual(_MockMlxHandler.captured_payload["rimeCandidates"], ["输入法", "音法", "英法"])
         self.assertEqual(_MockMlxHandler.captured_payload["rimeCandidateCount"], 3)
@@ -1270,6 +1315,9 @@ class PredictionProviderTests(unittest.TestCase):
         self.assertFalse(status["capabilities"]["seededPromptReplay"])
         self.assertFalse(status["capabilities"]["kvFork"])
         self.assertFalse(status["capabilities"]["sequenceFork"])
+        self.assertEqual(status["providerProfile"], "minimind_ime_v2")
+        self.assertEqual(status["promptMode"], "base-completion")
+        self.assertEqual(status["maxTokens"], 8)
 
     def test_mlx_provider_status_can_probe_prompt_cache_runtime_capability(self) -> None:
         _MockMlxHandler.captured_path = ""

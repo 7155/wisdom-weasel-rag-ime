@@ -37,7 +37,7 @@ READ_BOUNDARY_SOURCE = "".join(
     f'第{index:04d}行 "quoted" \\\\ path 澄数据\n'
     for index in range(4_200)
 )
-EXPECTED_SKILL = "test-driven-implementation"
+EXPECTED_SKILL = "implementation-execution"
 EXPECTED_TOOLS = {
     "ls",
     "grep",
@@ -127,6 +127,9 @@ def validate_agent_project_approval(
             shape_valid = action.get("expectedOccurrences") == 1
         else:
             edits = action.get("edits")
+            expected_revision = f"sha256:{hashlib.sha256(target.read_bytes()).hexdigest()}"
+            if str(action.get("resourceRevision") or "") != expected_revision:
+                raise AgentProjectPolicyRejection("Agent project edit snapshot is stale")
             candidate_source = current_source
             shape_valid = isinstance(edits, list) and 1 <= len(edits) <= 64
             if shape_valid:
@@ -977,7 +980,7 @@ def _tool_checks(evidence: dict[str, Any], workspace: Path) -> dict[str, bool]:
         "bashTwice": len(by_name["bash"]) == 2,
         "noRoomOrDelegationCalls": not any(
             item["toolName"].startswith("room_")
-            or item["toolName"] == "ime_agents"
+            or item["toolName"] == "agents"
             for item in executions
         ),
     }
@@ -1032,7 +1035,7 @@ def agent_session_task_message(workspace: Path) -> str:
         "所有计划项和验收均完成后，必须先调用 agent_plan complete，再输出最终回答。"
         f"最终回答以 {FINAL_MARKER} 开头，列出失败、修复、通过测试和剩余风险。"
         f"计划待审或等待批准时不得输出 {FINAL_MARKER}，它只代表全部验收真的完成。"
-        "不要调用任何 room_*、ime_agents 或其他无关产品 Tool。"
+        "不要调用任何 room_*、agents 或其他无关产品 Tool。"
     )
 
 

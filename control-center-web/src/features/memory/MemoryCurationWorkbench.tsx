@@ -203,7 +203,7 @@ export function MemoryCurationWorkbench({ enabled }: { enabled: boolean }) {
   }
 
   function handoffToAgent() {
-    const prompt = '请调用 ime_memory Tool 的 curation_prepare 操作，以 conservative 策略增量整理当前记忆。只生成一个 Atom-first 可审阅草案并返回 runId，不要逐条复述数据库操作，也不要直接应用。';
+    const prompt = '请调用 memory Tool 的 curation_prepare 操作，以 conservative 策略增量整理当前记忆。只生成一个 Atom-first 可审阅草案并返回 runId，不要逐条复述数据库操作，也不要直接应用。';
     window.location.hash = `/agent?draft=${encodeURIComponent(prompt)}`;
   }
 }

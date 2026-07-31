@@ -33,6 +33,10 @@ from .agent_room_references import (
     participant_ref_map,
     resolve_participant_ref,
 )
+from .agent_room_public_timeline import (
+    assert_public_room_report_claims,
+    public_room_report_content,
+)
 from .agent_rooms import AgentRoomStore
 
 
@@ -60,6 +64,13 @@ class SettlementApplication(Protocol):
     """
 
     requirements: RequirementContextSource
+
+    def revoke_session(
+        self,
+        session_id: str,
+        now_ms: int,
+    ) -> None:
+        ...
 
     def settle(
         self,
@@ -95,6 +106,7 @@ class RoomSettleLifecycleService:
             rooms=rooms,
             kernel=kernel,
             capabilities=capabilities,
+            revoke_session=application.revoke_session,
         )
 
     def settle(self, payload: Mapping[str, object]) -> dict[str, object]:
@@ -105,6 +117,11 @@ class RoomSettleLifecycleService:
         capability_epoch = _non_negative_int(payload, "capabilityEpoch")
         settle_scope_id = _required_text(payload, "settleScopeId")
         settle_attempt = _positive_int(payload, "settleAttempt")
+        runtime_turn_id = _required_text(payload, "runtimeTurnId")
+        dispatch_attempt = _non_negative_int(
+            payload,
+            "dispatchAttempt",
+        )
 
         bound = self.capabilities.manifest_for_runtime(
             session_id,
@@ -191,6 +208,8 @@ class RoomSettleLifecycleService:
                 room_id=room_id,
                 settle_receipt=settle_receipt,
                 settle_attempt=settle_attempt,
+                runtime_turn_id=runtime_turn_id,
+                dispatch_attempt=dispatch_attempt,
                 reason="missing_room_commit",
                 follow_up_kind="continue",
             )
@@ -206,6 +225,8 @@ class RoomSettleLifecycleService:
                 room_id=room_id,
                 settle_receipt=settle_receipt,
                 settle_attempt=settle_attempt,
+                runtime_turn_id=runtime_turn_id,
+                dispatch_attempt=dispatch_attempt,
                 reason=str(exc),
                 follow_up_kind="repair_commit",
             )
@@ -216,6 +237,8 @@ class RoomSettleLifecycleService:
                 "settleReceipt": settle_receipt,
                 "commit": commit,
                 "invocationReceiptId": invocation["receiptId"],
+                "runtimeTurnId": runtime_turn_id,
+                "dispatchAttempt": dispatch_attempt,
             },
         )
         return {
@@ -233,6 +256,8 @@ class RoomSettleLifecycleService:
         room_id: str,
         settle_receipt: Mapping[str, object],
         settle_attempt: int,
+        runtime_turn_id: str,
+        dispatch_attempt: int,
         reason: str,
         follow_up_kind: str,
     ) -> dict[str, object]:
@@ -241,6 +266,8 @@ class RoomSettleLifecycleService:
             {
                 "settleReceipt": settle_receipt,
                 "guardReason": _bounded(reason, 500),
+                "runtimeTurnId": runtime_turn_id,
+                "dispatchAttempt": dispatch_attempt,
             },
         )
         return self._follow_up_result(
@@ -381,6 +408,78 @@ class RoomSettleLifecycleService:
                 f"{role.display_name} 不能以 {decision} 收工；本岗位可用的出口是 {allowed}"
             )
 
+    def _assert_managed_collaboration_ready(
+        self,
+        *,
+        decision: str,
+        root: Mapping[str, object],
+        task: Mapping[str, object],
+        dispatch: Mapping[str, object],
+    ) -> None:
+        if (
+            decision in {"wait", "blocked"}
+            or task.get("parentTaskId")
+            or str(dispatch.get("targetParticipantId") or "")
+            != str(root.get("facilitatorParticipantId") or "")
+        ):
+            return
+        room = self.rooms.get(str(root["roomId"]))
+        managed_work = next(
+            (
+                value
+                for value in room.get("workItems", ())
+                if isinstance(value, Mapping)
+                and str(value.get("rootTurnId") or "")
+                == str(root["rootId"])
+                and str(value.get("clientMessageId") or "").startswith(
+                    "managed-room-ingress:"
+                )
+            ),
+            None,
+        )
+        if managed_work is None:
+            return
+        managed_client_id = str(
+            managed_work.get("clientMessageId") or ""
+        )
+        parts = managed_client_id.split(":", 3)
+        try:
+            required_peer_count = (
+                int(parts[2])
+                if len(parts) == 4
+                and parts[:2] == ["managed-room-ingress", "v1"]
+                else -1
+            )
+        except ValueError:
+            required_peer_count = -1
+        if required_peer_count < 0:
+            raise RoomCommitProposalError(
+                "managed Room collaboration metadata is invalid"
+            )
+        if required_peer_count == 0:
+            return
+        children = self.kernel.collaboration_children(
+            str(root["rootId"])
+        )
+        public_participant_ids = {
+            str(child.get("targetParticipantId") or "")
+            for child in children
+            if child.get("resultPublic") is True
+            and str(child.get("targetParticipantId") or "")
+            != str(root.get("facilitatorParticipantId") or "")
+        }
+        if len(public_participant_ids) < required_peer_count:
+            raise RoomCommitProposalError(
+                "managed Room collaboration cannot settle before every "
+                "required partner has a receipt-backed public child result; "
+                "call room_collaborate for each missing participant, then "
+                "room_commit wait and resume, or report an honest blocked "
+                "outcome. "
+                f"Required distinct partners: {required_peer_count}; "
+                f"public receipt-backed partners: "
+                f"{len(public_participant_ids)}"
+            )
+
     def _canonical_commit(
         self,
         *,
@@ -404,6 +503,12 @@ class RoomSettleLifecycleService:
         self._assert_decision_allowed(decision, dispatch)
         task = self.kernel.task(str(dispatch["taskId"]))
         root = self.kernel.root(str(manifest["rootId"]))
+        self._assert_managed_collaboration_ready(
+            decision=decision,
+            root=root,
+            task=task,
+            dispatch=dispatch,
+        )
         task_criteria = [
             str(item)
             for item in task.get("acceptanceCriterionIds", [])
@@ -453,12 +558,30 @@ class RoomSettleLifecycleService:
             "room-commit",
             str(invocation["receiptId"]),
         )
-        next_task = str(arguments.get("nextTask") or "").strip()
-        public_content = str(
-            arguments.get("publicSummary") or summary
-        ).strip()
-        if decision == "handoff" and next_task:
-            public_content = f"{public_content}\n\n下一步：{next_task}"
+        question_options = _canonical_question_options(
+            arguments.get("questionOptions"),
+            decision=decision,
+            waiting_for=str(arguments.get("waitingFor") or "").strip(),
+            question=arguments.get("question"),
+        )
+        try:
+            public_content = public_room_report_content(
+                arguments.get("publicSummary"),
+                field_name="publicSummary",
+            )
+        except ValueError as exc:
+            raise RoomCommitProposalError(str(exc)) from exc
+        try:
+            assert_public_room_report_claims(
+                public_content,
+                field_name="publicSummary",
+                decision=decision,
+                all_criteria_verified=(
+                    quality_gate_receipt.get("verdict") == "ready_to_deliver"
+                ),
+            )
+        except ValueError as exc:
+            raise RoomCommitProposalError(str(exc)) from exc
         post_id = _stable_id("room-post", commit_id)
         post_proposal: dict[str, object] = {
             "schemaVersion": "wisdom-weasel.room-post.v2",
@@ -487,6 +610,13 @@ class RoomSettleLifecycleService:
         post_blocks = arguments.get("blocks")
         if post_blocks is not None:
             post_proposal["blocks"] = list(post_blocks)
+        if question_options is not None:
+            post_proposal["question"] = {
+                "prompt": _required_text(arguments, "question"),
+                "options": [
+                    dict(option) for option in question_options
+                ],
+            }
 
         continuation: dict[str, object] = {
             "decision": {
@@ -541,6 +671,7 @@ class RoomSettleLifecycleService:
                             *evidence_refs,
                         ],
                         kind="handoff",
+                        now_ms=now_ms,
                     )
                 )
             except (
@@ -563,6 +694,10 @@ class RoomSettleLifecycleService:
             question = str(arguments.get("question") or "").strip()
             if question:
                 continuation["question"] = question
+            if question_options is not None:
+                continuation["questionOptions"] = [
+                    dict(option) for option in question_options
+                ]
             if waiting_for == "participant":
                 room = self.rooms.get(str(root["roomId"]))
                 participant_refs = participant_ref_map(
@@ -669,6 +804,105 @@ def _resource_usage(value: object) -> dict[str, int]:
             raise ValueError(f"resourceUsage.{key} must be non-negative")
         result[key] = raw
     return result
+
+
+def _canonical_question_options(
+    value: object,
+    *,
+    decision: str,
+    waiting_for: str,
+    question: object,
+) -> list[dict[str, object]] | None:
+    if value is None:
+        return None
+    if decision != "wait" or waiting_for != "user":
+        raise RoomCommitProposalError(
+            "questionOptions is only valid for wait-for-user"
+        )
+    if not isinstance(question, str) or not question.strip():
+        raise RoomCommitProposalError(
+            "questionOptions requires a non-empty question"
+        )
+    if not isinstance(value, list):
+        raise RoomCommitProposalError("questionOptions must be an array")
+    if not 2 <= len(value) <= 5:
+        raise RoomCommitProposalError(
+            "questionOptions must contain between 2 and 5 options"
+        )
+
+    allowed = frozenset(
+        {"value", "label", "description", "recommended"}
+    )
+    normalized: list[dict[str, object]] = []
+    seen_values: set[str] = set()
+    recommended_count = 0
+    for index, item in enumerate(value):
+        if not isinstance(item, Mapping):
+            raise RoomCommitProposalError(
+                f"questionOptions[{index}] must be an object"
+            )
+        unsupported = set(item) - allowed
+        if unsupported:
+            raise RoomCommitProposalError(
+                f"questionOptions[{index}] contains unsupported fields"
+            )
+        raw_value = item.get("value")
+        raw_label = item.get("label")
+        if not isinstance(raw_value, str):
+            raise RoomCommitProposalError(
+                f"questionOptions[{index}].value must be a string"
+            )
+        if not isinstance(raw_label, str):
+            raise RoomCommitProposalError(
+                f"questionOptions[{index}].label must be a string"
+            )
+        option_value = " ".join(raw_value.split())
+        label = " ".join(raw_label.split())
+        if not option_value or len(option_value) > 80:
+            raise RoomCommitProposalError(
+                f"questionOptions[{index}].value must contain 1-80 characters"
+            )
+        if not label or len(label) > 120:
+            raise RoomCommitProposalError(
+                f"questionOptions[{index}].label must contain 1-120 characters"
+            )
+        if option_value in seen_values:
+            raise RoomCommitProposalError(
+                "questionOptions values must be unique after normalization"
+            )
+        seen_values.add(option_value)
+        option: dict[str, object] = {
+            "value": option_value,
+            "label": label,
+        }
+        if "description" in item:
+            raw_description = item["description"]
+            if not isinstance(raw_description, str):
+                raise RoomCommitProposalError(
+                    f"questionOptions[{index}].description must be a string"
+                )
+            description = " ".join(raw_description.split())
+            if not description or len(description) > 500:
+                raise RoomCommitProposalError(
+                    f"questionOptions[{index}].description must contain "
+                    "1-500 characters"
+                )
+            option["description"] = description
+        if "recommended" in item:
+            recommended = item["recommended"]
+            if not isinstance(recommended, bool):
+                raise RoomCommitProposalError(
+                    f"questionOptions[{index}].recommended must be a boolean"
+                )
+            option["recommended"] = recommended
+            if recommended:
+                recommended_count += 1
+                if recommended_count > 1:
+                    raise RoomCommitProposalError(
+                        "questionOptions allows at most one recommended option"
+                    )
+        normalized.append(option)
+    return normalized
 
 
 def _string_list(value: object, name: str) -> list[str]:

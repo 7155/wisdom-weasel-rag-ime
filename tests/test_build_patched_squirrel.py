@@ -197,6 +197,47 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('NSMenuItem(title: "查看输入与依据"', controller_text)
         self.assertIn("showContextInspector", controller_text)
         self.assertIn("RagImeAssistantContextInspectorViewController", controller_text)
+        self.assertIn("final class RagImeAssistantPanelController: NSObject", controller_text)
+        self.assertIn("contextInspectorWindowController", controller_text)
+        self.assertIn("menu.autoenablesItems = false", controller_text)
+        self.assertIn("context.target = self", controller_text)
+        self.assertIn("context.isEnabled = contextMenuDocument != nil", controller_text)
+        self.assertIn('NSMenuItem(title: "内容状态：\\(unavailableReason)"', controller_text)
+        self.assertIn("context.keyEquivalentModifierMask = [.command, .option]", controller_text)
+        self.assertIn('context.setAccessibilityLabel("查看本轮输入与依据")', controller_text)
+        self.assertIn("guard let document else", controller_text)
+        self.assertNotIn("guard let document, document.isAvailable else", controller_text)
+        self.assertIn('"contentState": document.state.rawValue', controller_text)
+        self.assertIn("func authorizedContextView()", patch_text)
+        self.assertIn("response.authorizedContextView()", patch_text)
+        self.assertIn('schemaVersion == "rag-ime.active-rag-context-view.v1"', patch_text)
+        self.assertIn('source == "frontend_request" || source == "provider_request"', patch_text)
+        self.assertIn(
+            "styleMask: [.borderless, .nonactivatingPanel]",
+            controller_text,
+        )
+        self.assertIn("inspectorPanel.orderFront(nil)", controller_text)
+        self.assertNotIn("inspectorPanel.makeKeyAndOrderFront(nil)", controller_text)
+        self.assertNotIn("inspectorPanel.makeFirstResponder(viewController)", controller_text)
+        self.assertNotIn("let popover = NSPopover()", controller_text)
+        self.assertIn('accessibilityDescription: "关闭输入与依据"', controller_text)
+        self.assertIn("closeContextInspector", controller_text)
+        self.assertIn("captureResultViewport()", controller_text)
+        self.assertIn("restoreResultViewport", controller_text)
+        self.assertIn("let panelFrame: NSRect", controller_text)
+        self.assertIn("case loading", controller_text)
+        self.assertIn("case empty", controller_text)
+        self.assertIn("case error", controller_text)
+        self.assertIn("copyButton.isEnabled = document.isAvailable", controller_text)
+        self.assertIn("RagImeAssistantMetrics.minimumHitTarget", combined_overlay_text)
+        self.assertIn("button.focusRingType = .exterior", card_text)
+        self.assertIn("func captureResultViewport()", card_text)
+        self.assertIn("func restoreResultViewport", card_text)
+        dismiss_start = controller_text.index("func dismiss(reason: String)")
+        dismiss_end = controller_text.index("private func apply(", dismiss_start)
+        dismiss = controller_text[dismiss_start:dismiss_end]
+        self.assertNotIn("contextInspectorWindowController", dismiss)
+        self.assertNotIn("closeContextInspector", dismiss)
         self.assertNotIn("copyEvidence", controller_text)
         self.assertIn("let explicitGeneration = currentState == .explicitGenerating", controller_text)
         self.assertIn('? 30_000\n      : (explicitGeneration ? 30_000', controller_text)
@@ -818,23 +859,53 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         controller_text = (
             root / "squirrel-patches" / "sources" / "RagImeAssistantPanelController.swift"
         ).read_text(encoding="utf-8")
+        row_text = (
+            root / "squirrel-patches" / "sources" / "RagImeSuggestionRowView.swift"
+        ).read_text(encoding="utf-8")
 
-        self.assertIn('appendSection("窗口语义上下文"', controller_text)
+        self.assertIn('appendSection("本轮输入"', controller_text)
+        self.assertIn('appendSection("窗口语义"', controller_text)
         self.assertIn("zed_workspace_state", controller_text)
-        self.assertIn("控件与结构节点未发送给模型", controller_text)
+        self.assertIn("控件、动作与内部节点未发送给模型", controller_text)
+        self.assertNotIn('node["actions"]', controller_text)
+        self.assertNotIn('node["nodeRef"]', controller_text)
         self.assertIn('appendSection("当前规划与任务"', controller_text)
         self.assertIn('appendSection("最近批准时间线"', controller_text)
-        self.assertIn('appendSection("当前事实 · Atom"', controller_text)
-        self.assertIn('appendSection("主题书 · Book"', controller_text)
+        self.assertIn('appendSection("知识库事实 · Atom"', controller_text)
+        self.assertIn('appendSection("知识主题 · Book"', controller_text)
+        self.assertIn('appendSection("RAG 依据"', controller_text)
+        self.assertIn('appendSection("依据状态"', controller_text)
+        self.assertIn("本轮没有召回可显示的知识依据", controller_text)
+        self.assertIn('keys: ["evidencePreview", "preview", "textPreview", "text", "summary", "detail"]', controller_text)
+        self.assertIn('keys: ["sourceLane", "sourceType"]', controller_text)
+        self.assertIn('contextSchemaVersion != "rag-ime.active-rag-context-view.v1"', controller_text)
+        self.assertIn("RagImeAssistantContextInspectorState", controller_text)
+        status_schema = (
+            root / "rag_ime" / "contracts" / "json" / "active-rag-status.v1.json"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"contextView": {"$ref": "#/$defs/contextView"}', status_schema)
+        self.assertIn('"groundingEvidence": {"type": "array", "maxItems": 12}', status_schema)
+        self.assertIn('"redactedEvidence"', status_schema)
         grounding_start = controller_text.index('let groundingEvidence = array(contextView["groundingEvidence"])')
-        grounding_body = controller_text[grounding_start : grounding_start + 2600]
+        grounding_body = controller_text[grounding_start : grounding_start + 3200]
+        self.assertIn("groundingEvidence.prefix(8)", grounding_body)
         self.assertIn("if groundingEvidence.isEmpty {", grounding_body)
         self.assertLess(
             grounding_body.index("if groundingEvidence.isEmpty {"),
             grounding_body.index('array(contextView["evidenceHints"])'),
         )
-        self.assertIn("recentInputs.prefix(4)", controller_text)
+        self.assertIn('array(contextView["recentCompleteInputs"]).prefix(3)', controller_text)
         self.assertIn('appendSection("最近完整输入 · 仅用于承接"', controller_text)
+        self.assertIn("boundedParagraph", controller_text)
+        self.assertIn("private static func evidenceDisplayText(_ value: RagImeJSONValue)", controller_text)
+        self.assertIn("evidenceDisplayText(value)", controller_text)
+        self.assertIn("scrollView.hasHorizontalScroller = false", controller_text)
+        self.assertIn("textView.textContainer?.lineBreakMode = .byCharWrapping", controller_text)
+        self.assertIn('NSButton(title: "重新生成"', controller_text)
+        self.assertIn("retryButton.isHidden = document.state != .error", controller_text)
+        self.assertIn("guard document.state == .error, let onRetry else { return }", controller_text)
+        self.assertIn("self.onAction?(.retry)", controller_text)
+        self.assertIn("readableEvidenceHint", row_text)
 
     def test_native_rime_selection_feedback_is_local_source_only_and_sensitive_guarded(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1253,6 +1324,69 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             deactivate.index('invalidateRagImeForegroundTransaction(reason: "deactivate_server")'),
         )
 
+    def test_active_rag_terminal_lifecycle_fails_closed_across_focus_and_mouse_routes(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
+        controller_text = (
+            root / "squirrel-patches" / "sources" / "RagImeAssistantPanelController.swift"
+        ).read_text(encoding="utf-8")
+
+        invalidate_start = patch_text.index("func invalidateRagImeForegroundTransaction(")
+        invalidate_end = patch_text.index("func ragImeDisplaySessionStillLive", invalidate_start)
+        invalidate = patch_text[invalidate_start:invalidate_end]
+        self.assertIn("clearRagImeDisplayCandidates(dismissReason: reason)", invalidate)
+
+        clear_start = patch_text.index("func clearRagImeDisplayCandidates(")
+        clear_end = patch_text.index("func recordRagImeSideCandidateCommit(", clear_start)
+        clear = patch_text[clear_start:clear_end]
+        self.assertIn(
+            'func clearRagImeDisplayCandidates(dismissReason: String = "clear_display_candidates")',
+            clear,
+        )
+        self.assertIn("dismissRagImeAssistantOverlay(reason: dismissReason)", clear)
+
+        keep_start = controller_text.index("private func shouldKeepExplicitSurface(")
+        keep_end = controller_text.index("private func showMoreMenu(", keep_start)
+        keep = controller_text[keep_start:keep_end]
+        self.assertIn('"clear_display_candidates"', keep)
+        self.assertNotIn('"deactivate_server"', keep)
+        self.assertNotIn('"front_app_changed"', keep)
+
+        commit_start = patch_text.index("func commitRagImeAssistantCandidate(")
+        commit_end = patch_text.index("func replaceRagImeAssistantSelection(", commit_start)
+        commit = patch_text[commit_start:commit_end]
+        liveness_guard = commit.index("guard canSelectRagImeOverlayCandidate(candidate) else {")
+        first_action = commit.index('if candidate.selectionAction == "start_agent_deep_search_from_context"')
+        self.assertLess(liveness_guard, first_action)
+        self.assertIn('"reason": "commit_candidate_transaction_mismatch"', commit)
+        self.assertIn('dismissRagImeAssistantOverlay(reason: "stale_overlay_candidate")', commit)
+
+        apply_start = patch_text.index("func applyRagImeActiveRagResponse(")
+        apply_end = patch_text.index("func scheduleRagImeActiveRagStatusPoll(", apply_start)
+        apply_response = patch_text[apply_start:apply_end]
+        blocked_branch = apply_response.index('if response.status == "blocked" {')
+        normal_anchor_guard = apply_response.index(
+            "guard response.selectedTextHash == request.selectedTextHash"
+        )
+        self.assertLess(blocked_branch, normal_anchor_guard)
+        self.assertIn(
+            "guard ragImeActiveRagSessionIsLive(request, generation: generation) else { return }",
+            apply_response,
+        )
+        self.assertIn('"active_rag_blocked_terminal_handled"', apply_response)
+        self.assertIn('cancelRagImeActiveRagSession(reason: "active_rag_blocked")', apply_response)
+        self.assertIn("showRagImeActiveRagBlockedFeedback(request: request)", apply_response)
+        self.assertNotIn('dismissRagImeAssistantOverlay(reason: "active_rag_blocked")', apply_response)
+        blocked_feedback_start = patch_text.index("func showRagImeActiveRagBlockedFeedback(")
+        blocked_feedback_end = patch_text.index(
+            "func scheduleRagImeActiveRagStatusPoll(",
+            blocked_feedback_start,
+        )
+        blocked_feedback = patch_text[blocked_feedback_start:blocked_feedback_end]
+        self.assertIn('uiMode: "active_rag_blocked"', blocked_feedback)
+        self.assertIn('statusText: "当前内容可能包含敏感信息，未发送"', blocked_feedback)
+        self.assertIn('traceEvent: "assistant_overlay_active_rag_blocked"', blocked_feedback)
+
     def test_terminal_sidecar_paths_target_pending_overlay_by_panel_session(self) -> None:
         root = Path(__file__).resolve().parents[1]
         patch_text = (root / "squirrel-patches" / "0001-add-rag-ime-sidecar.patch").read_text(encoding="utf-8")
@@ -1495,7 +1629,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
         self.assertIn('"usesScreenCapture": false', patch_text)
         self.assertIn('applicationSemantics["source"]', patch_text)
         self.assertIn("zed_workspace_state", patch_text)
-        self.assertIn("窗口语义上下文", patch_text)
+        self.assertIn('appendSection("窗口语义"', patch_text)
         self.assertIn("let useClientContext = clientContext.count > capturedBefore.count", patch_text)
         self.assertIn("context.isEmpty ? semanticQuery : context", patch_text)
         self.assertIn("postActiveRagStatus", patch_text)
@@ -1594,6 +1728,48 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
             "connection_name=im.rime.inputmethod.Squirrel_Connection",
             result.stdout,
         )
+
+    def test_build_script_rejects_stale_generated_repo_root_before_xcode(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-squirrel-stale-root-") as tmp:
+            tmp_path = Path(tmp)
+            workdir = _fake_patched_squirrel_workdir(tmp_path)
+            config_path = workdir / "rag-ime.squirrel.custom.yaml"
+            config_path.write_text(
+                config_path.read_text(encoding="utf-8").replace(
+                    f"repo_root: {root}",
+                    f"repo_root: {tmp_path / 'old-product-worktree'}",
+                ),
+                encoding="utf-8",
+            )
+            xcode_log = tmp_path / "xcodebuild-called"
+            fake_xcodebuild = tmp_path / "xcodebuild"
+            fake_xcodebuild.write_text(
+                "#!/usr/bin/env bash\n"
+                f"touch {xcode_log!s}\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_xcodebuild.chmod(0o755)
+
+            result = subprocess.run(
+                ["bash", str(root / "scripts" / "build_patched_squirrel.sh"), "build"],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RAG_IME_XCODEBUILD": str(fake_xcodebuild),
+                    "RAG_IME_SQUIRREL_WORKDIR": str(workdir),
+                    "RAG_IME_SQUIRREL_DERIVED_DATA": str(tmp_path / "derived-data"),
+                },
+                text=True,
+                capture_output=True,
+            )
+            xcode_was_called = xcode_log.exists()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("patched Squirrel config repo_root is stale", result.stderr)
+        self.assertIn(str(root), result.stderr)
+        self.assertFalse(xcode_was_called)
 
     def test_branded_install_pref_repair_and_auto_select_are_explicit(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -1833,6 +2009,7 @@ class BuildPatchedSquirrelScriptTests(unittest.TestCase):
 
 
 def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
+    root = Path(__file__).resolve().parents[1]
     workdir = tmp_path / "squirrel"
     workdir.mkdir()
     subprocess.run(["git", "init"], cwd=workdir, check=True, capture_output=True, text=True)
@@ -1927,7 +2104,7 @@ def _fake_patched_squirrel_workdir(tmp_path: Path) -> Path:
                 "  enabled: true",
                 "  sidecar_url: http://127.0.0.1:19866/api",
                 "  python: /usr/bin/python3",
-                f"  repo_root: {tmp_path}",
+                f"  repo_root: {root}",
                 f"  db_path: {tmp_path / 'rag-ime.sqlite'}",
                 "  project: offline-test",
                 "  max_visible_candidates: 8",

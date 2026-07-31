@@ -5,8 +5,8 @@
   "additionalProperties": false,
   "required": [
     "schemaVersion", "id", "parentSessionId", "parentRunId", "contextMode",
-    "state", "depth", "maxDepth", "abortRequested", "createdAtMs",
-    "updatedAtMs", "completedAtMs", "runs"
+    "resultDeliveryMode", "state", "depth", "maxDepth", "abortRequested",
+    "causalMetadata", "createdAtMs", "updatedAtMs", "completedAtMs", "runs"
   ],
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.agent-subagent-batch.v1"},
@@ -14,10 +14,23 @@
     "parentSessionId": {"type": "string", "minLength": 1},
     "parentRunId": {"type": "string"},
     "contextMode": {"type": "string", "enum": ["fresh", "fork"]},
+    "resultDeliveryMode": {"type": "string", "enum": ["inline", "next_turn"]},
     "state": {"type": "string", "enum": ["queued", "running", "completed", "failed", "aborted", "timed_out"]},
     "depth": {"type": "integer", "minimum": 1, "maximum": 2},
     "maxDepth": {"type": "integer", "minimum": 1, "maximum": 2},
     "abortRequested": {"type": "boolean"},
+    "causalMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planId", "planRevision", "goalId", "goalRevision", "roomBound"],
+      "properties": {
+        "planId": {"type": "string", "maxLength": 240},
+        "planRevision": {"type": "integer", "minimum": 0},
+        "goalId": {"type": "string", "maxLength": 240},
+        "goalRevision": {"type": "integer", "minimum": 0},
+        "roomBound": {"type": "boolean"}
+      }
+    },
     "createdAtMs": {"type": "integer", "minimum": 0},
     "updatedAtMs": {"type": "integer", "minimum": 0},
     "completedAtMs": {"type": ["integer", "null"], "minimum": 0},

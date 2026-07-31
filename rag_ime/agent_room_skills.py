@@ -26,9 +26,17 @@ _MODEL_SKILL_CATALOG_KEYS = (
     "does",
 )
 _LEGACY_SKILL_ALIASES = {
-    "room-requirement-clarification": "requirement-alignment",
-    "room-solution-convergence": "solution-convergence",
+    "room-requirement-clarification": "alignment-and-decision",
+    "room-solution-convergence": "alignment-and-decision",
+    "requirement-alignment": "alignment-and-decision",
+    "solution-convergence": "alignment-and-decision",
+    "grill-me": "alignment-and-decision",
+    "grill-me-docs": "alignment-and-decision",
     "room-implementation-planning": "implementation-planning",
+    "managed-task-execution": "implementation-execution",
+    "project-devlog": "implementation-execution",
+    "room-managed-task-execution": "implementation-execution",
+    "room-implementation-execution": "implementation-execution",
     "room-test-driven-implementation": "test-driven-implementation",
     "room-systematic-debugging": "systematic-debugging",
     "room-independent-vision-review": "independent-review",
@@ -81,7 +89,7 @@ class RoomSkillPolicy:
             skill_id = _required_text(value.get("skillId"), f"skills[{index}].skillId")
             if skill_id in seen:
                 raise ValueError(f"duplicate Room Skill policy entry: {skill_id}")
-            stages = _string_list(value.get("stages"), f"skills[{index}].stages", allow_empty=False)
+            stages = _string_list(value.get("stages"), f"skills[{index}].stages", allow_empty=True)
             next_candidates = _string_list(
                 value.get("nextCandidates"),
                 f"skills[{index}].nextCandidates",
@@ -146,6 +154,24 @@ class RoomSkillPolicy:
         """Expose only progressive-disclosure metadata, never Skill bodies."""
 
         return [self._catalog_entry(skill_id) for skill_id in self.skill_ids]
+    def governance_catalog(self) -> list[dict[str, object]]:
+        """Return backend governance metadata without disclosing Skill bodies."""
+
+        items: list[dict[str, object]] = []
+        for skill_id in self.skill_ids:
+            entry = self._by_id[skill_id]
+            items.append(
+                {
+                    **self._catalog_entry(skill_id),
+                    "skillId": skill_id,
+                    "risk": str(entry["risk"]),
+                    "stages": list(entry["stages"]),  # type: ignore[arg-type]
+                    "policyId": self.policy_id,
+                    "policyVersion": self.version,
+                    "contentRevision": self.skill_hash(skill_id),
+                }
+            )
+        return items
 
     def load_exact(self, skill_id: str) -> dict[str, object]:
         """Load exactly one governed native Skill; fuzzy names are rejected."""

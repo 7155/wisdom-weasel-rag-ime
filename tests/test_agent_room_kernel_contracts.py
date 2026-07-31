@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from rag_ime.agent_room_kernel_contracts import (
+    AGENT_APPROVAL_MODEL_DECISION_SCHEMA_VERSION,
     CONTRACT_FILES,
     DISPATCH_ENVELOPE_SCHEMA_VERSION,
     EVENT_ENVELOPE_SCHEMA_VERSION,
@@ -15,6 +16,7 @@ from rag_ime.agent_room_kernel_contracts import (
     ROOM_BINDING_SCHEMA_VERSION,
     ROOM_COMMIT_SCHEMA_VERSION,
     ROOM_QUALITY_GATE_RECEIPT_SCHEMA_VERSION,
+    ROOM_PEER_INVITATION_SCHEMA_VERSION,
     ROOM_POST_SCHEMA_VERSION,
     ROOM_SETTLE_RECEIPT_SCHEMA_VERSION,
     ROOM_SETTLE_RESULT_SCHEMA_VERSION,
@@ -56,13 +58,13 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
     def test_contract_names_ids_and_wire_versions_are_frozen(self) -> None:
         expected = {
             "rootExecution": (
-                "room-root-execution.v2.json",
-                "https://wisdom-weasel.local/contracts/room-root-execution.v2.json",
+                "room-root-execution.v3.json",
+                "https://wisdom-weasel.local/contracts/room-root-execution.v3.json",
                 ROOT_EXECUTION_SCHEMA_VERSION,
             ),
             "roomTask": (
-                "room-task.v2.json",
-                "https://wisdom-weasel.local/contracts/room-task.v2.json",
+                "room-task.v3.json",
+                "https://wisdom-weasel.local/contracts/room-task.v3.json",
                 ROOM_TASK_SCHEMA_VERSION,
             ),
             "dispatchEnvelope": (
@@ -71,8 +73,8 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 DISPATCH_ENVELOPE_SCHEMA_VERSION,
             ),
             "roomCommit": (
-                "room-commit.v3.json",
-                "https://wisdom-weasel.local/contracts/room-commit.v3.json",
+                "room-commit.v4.json",
+                "https://wisdom-weasel.local/contracts/room-commit.v4.json",
                 ROOM_COMMIT_SCHEMA_VERSION,
             ),
             "roomQualityGateReceipt": (
@@ -128,6 +130,16 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "https://wisdom-weasel.local/contracts/room-settle-result.v1.json",
                 ROOM_SETTLE_RESULT_SCHEMA_VERSION,
             ),
+            "peerInvitation": (
+                "room-peer-invitation.v1.json",
+                "https://wisdom-weasel.local/contracts/room-peer-invitation.v1.json",
+                ROOM_PEER_INVITATION_SCHEMA_VERSION,
+            ),
+            "agentApprovalModelDecision": (
+                "agent-approval-model-decision.v1.json",
+                "https://wisdom-weasel.local/contracts/agent-approval-model-decision.v1.json",
+                AGENT_APPROVAL_MODEL_DECISION_SCHEMA_VERSION,
+            ),
         }
 
         self.assertEqual(CONTRACT_FILES, {key: value[0] for key, value in expected.items()})
@@ -149,7 +161,9 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "roomId": "room:1",
                 "generation": 0,
                 "state": "running",
-                "owner": "kernel-v2",
+                "facilitatorParticipantId": "participant:coordinator",
+                "reporterParticipantId": None,
+                "reporterSelectionReceiptId": None,
                 "requirementAnchorRef": "requirement-anchor:1@sha256:abc",
                 "createdByActorRef": "user:local",
                 "terminalReceiptId": None,
@@ -165,12 +179,19 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "taskId": "task:1",
                 "rootId": "root:1",
                 "parentTaskId": None,
-                "ownerParticipantId": "participant:coordinator",
-                "assigneeParticipantId": "participant:worker",
+                "taskKind": "work",
+                "currentOwnerParticipantId": "participant:worker",
+                "ownershipRevision": 0,
+                "ownershipReceiptId": None,
                 "objective": "Inspect the route.",
                 "expectedOutput": "A source-backed report.",
                 "requirementItemIds": ["requirement:1"],
                 "acceptanceCriterionIds": ["criterion:1"],
+                "contextEvidenceRefs": [],
+                "invitationId": None,
+                "reviewOfTaskIds": [],
+                "reviewAuthorParticipantIds": [],
+                "reviewState": "not_required",
                 "revision": 0,
                 "state": "active",
             },
@@ -244,6 +265,91 @@ class AgentRoomKernelContractsTest(unittest.TestCase):
                 "occurredAtMs": 2,
                 "payload": {},
             },
+        )
+
+    def test_structured_wait_question_round_trips_through_post_and_commit_contracts(
+        self,
+    ) -> None:
+        options = [
+            {
+                "value": "safe",
+                "label": "稳妥方案",
+                "description": "保留当前边界",
+                "recommended": True,
+            },
+            {
+                "value": "fast",
+                "label": "快速方案",
+            },
+        ]
+        post = {
+            "schemaVersion": ROOM_POST_SCHEMA_VERSION,
+            "postId": "post:question",
+            "roomId": "room:1",
+            "rootId": "root:1",
+            "generation": 0,
+            "taskId": "task:1",
+            "dispatchId": "dispatch:1",
+            "authorActorRef": "participant:worker",
+            "kind": "wait",
+            "visibility": "room",
+            "content": "需要用户澄清",
+            "question": {
+                "prompt": "采用哪个方案？",
+                "options": options,
+            },
+            "idempotencyKey": "post:question",
+            "publicationSource": {
+                "kind": "room_commit",
+                "ref": "commit:question",
+            },
+            "createdAtMs": 2,
+        }
+        commit = {
+            "schemaVersion": ROOM_COMMIT_SCHEMA_VERSION,
+            "commitId": "commit:question",
+            "dispatchId": "dispatch:1",
+            "action": "post",
+            "contentHash": "sha256:question",
+            "postProposal": post,
+            "continuation": {
+                "decision": "wait",
+                "waitingFor": "user",
+                "resumeCondition": "用户选择一个方案",
+                "question": "采用哪个方案？",
+                "questionOptions": options,
+            },
+            "qualityGateReceipt": {
+                "schemaVersion": (
+                    "wisdom-weasel.room-quality-gate-receipt.v1"
+                ),
+                "receiptId": "quality:question",
+                "rootId": "root:1",
+                "taskId": "task:1",
+                "dispatchId": "dispatch:1",
+                "generation": 0,
+                "originalRequestChecked": True,
+                "verdict": "not_ready",
+                "items": [],
+                "residualRisks": ["等待用户选择"],
+                "createdAtMs": 2,
+            },
+            "evidenceRefs": [],
+            "requirementCoverage": [],
+            "createdAtMs": 2,
+        }
+
+        round_tripped = json.loads(
+            json.dumps(
+                {"post": post, "commit": commit},
+                ensure_ascii=False,
+            )
+        )
+        validate_kernel_contract("roomPost", round_tripped["post"])
+        validate_kernel_contract("roomCommit", round_tripped["commit"])
+        self.assertEqual(
+            round_tripped["commit"]["continuation"]["questionOptions"],
+            round_tripped["post"]["question"]["options"],
         )
 
     def test_room_binding_has_stable_identity_and_generation_fence(self) -> None:

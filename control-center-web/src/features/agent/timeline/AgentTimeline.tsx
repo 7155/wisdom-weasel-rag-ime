@@ -14,7 +14,7 @@ import type {
   AgentProjectionState,
 } from '@/contracts/agent-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
-import { ActivitySummary } from './ActivitySummary';
+import { ActivitySummary, ReasoningActivitySummary } from './ActivitySummary';
 import { AgentBlocks } from './BlockRenderer';
 import { PersonaAvatar, type PersonaPresence } from './PersonaAvatar';
 import { conversationMarkerIndexes } from './conversation-markers';
@@ -64,8 +64,8 @@ export function AgentTimeline({
   onEditMessage?: (messageId: string) => void;
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const atBottomRef = useRef(true);
-  const followFrameRef = useRef(0);
+  const liveFollowIntentRef = useRef(true);
+  const [timelineScroller, setTimelineScroller] = useState<HTMLElement | null>(null);
   const [activeTargetId, setActiveTargetId] = useState('');
   const [visibleRange, setVisibleRange] = useState({ startIndex: 0, endIndex: 0 });
   /* -1 means "follow the active marker"; a real value pins the roving stop
@@ -125,46 +125,91 @@ export function AgentTimeline({
     Footer: AgentTimelineScrollFooter,
   }), []);
   useEffect(() => {
+    liveFollowIntentRef.current = true;
     const lastIndex = Math.max(0, turnOrder.length - 1);
     setVisibleRange({ startIndex: lastIndex, endIndex: lastIndex });
   }, [sessionId]);
+  const handleScrollerRef = useCallback((scroller: HTMLElement | Window | null) => {
+    setTimelineScroller(scroller instanceof HTMLElement ? scroller : null);
+  }, []);
   useEffect(() => {
-    atBottomRef.current = true;
-    const unsubscribe = useAgentLiveStore.subscribe((state, previousState) => {
-      const projection = state.projections[sessionId];
-      const previous = previousState.projections[sessionId];
-      if (
-        !atBottomRef.current
-        || !projection
-        || projection.lastSequence <= (previous?.lastSequence ?? 0)
-      ) {
-        return;
+    if (!timelineScroller) return;
+    let pointerScrollActive = false;
+    const leaveLiveFollow = () => {
+      liveFollowIntentRef.current = false;
+    };
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) leaveLiveFollow();
+    };
+    const handlePointerDown = () => {
+      pointerScrollActive = true;
+    };
+    const handlePointerEnd = () => {
+      pointerScrollActive = false;
+    };
+    const handleScroll = () => {
+      if (pointerScrollActive && !scrollerIsAtBottom(timelineScroller)) {
+        leaveLiveFollow();
       }
-      const index = streamingFollowIndex(projection);
-      if (index < 0) return;
-      const frame = window.requestAnimationFrame(() => {
-        followFrameRef.current = 0;
-        virtuosoRef.current?.scrollToIndex({
-          index,
-          align: 'end',
-          behavior: 'auto',
-        });
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.key === 'ArrowUp'
+        || event.key === 'PageUp'
+        || event.key === 'Home'
+        || event.key === 'k'
+        || event.key === 'K'
+        || (event.key === ' ' && event.shiftKey)
+      ) {
+        leaveLiveFollow();
+      }
+    };
+    timelineScroller.addEventListener('wheel', handleWheel, { passive: true });
+    timelineScroller.addEventListener('pointerdown', handlePointerDown);
+    timelineScroller.addEventListener('scroll', handleScroll, { passive: true });
+    timelineScroller.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('pointerup', handlePointerEnd);
+    window.addEventListener('pointercancel', handlePointerEnd);
+    return () => {
+      timelineScroller.removeEventListener('wheel', handleWheel);
+      timelineScroller.removeEventListener('pointerdown', handlePointerDown);
+      timelineScroller.removeEventListener('scroll', handleScroll);
+      timelineScroller.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('pointerup', handlePointerEnd);
+      window.removeEventListener('pointercancel', handlePointerEnd);
+    };
+  }, [timelineScroller]);
+  useEffect(() => {
+    if (!timelineScroller) return;
+    let pendingFrame = 0;
+    const followAfterLayout = () => {
+      if (!liveFollowIntentRef.current || pendingFrame !== 0) return;
+      pendingFrame = window.requestAnimationFrame(() => {
+        pendingFrame = 0;
+        if (!liveFollowIntentRef.current) return;
+        // One Runtime event can add a large Tool/Reasoning block without
+        // changing Virtuoso's item count. `followOutput` alone therefore does
+        // not observe every height change. Coalesce the entire event burst to
+        // one layout-frame scroll and keep the real footer clearance visible.
+        timelineScroller.scrollTop = timelineScroller.scrollHeight;
       });
-      if (followFrameRef.current) window.cancelAnimationFrame(followFrameRef.current);
-      followFrameRef.current = frame;
+    };
+    const unsubscribe = useAgentLiveStore.subscribe((state, previousState) => {
+      if (state.projections[sessionId] === previousState.projections[sessionId]) return;
+      followAfterLayout();
     });
     return () => {
       unsubscribe();
-      if (followFrameRef.current) window.cancelAnimationFrame(followFrameRef.current);
-      followFrameRef.current = 0;
+      window.cancelAnimationFrame(pendingFrame);
     };
-  }, [sessionId]);
+  }, [sessionId, timelineScroller]);
   const handleAtBottomChange = useCallback((atBottom: boolean) => {
-    atBottomRef.current = atBottom;
+    if (atBottom) liveFollowIntentRef.current = true;
     onAtBottomChange?.(atBottom);
   }, [onAtBottomChange]);
   useEffect(() => {
     if (scrollToLatestRequest <= 0 || turnOrder.length === 0) return;
+    liveFollowIntentRef.current = true;
     virtuosoRef.current?.scrollToIndex({
       index: turnOrder.length - 1,
       align: 'end',
@@ -178,6 +223,7 @@ export function AgentTimeline({
       (turnId) => projection.turnsById[turnId]?.messageIds.includes(jumpRequest.messageId),
     ) ?? -1;
     if (index < 0) return;
+    liveFollowIntentRef.current = false;
     setActiveTargetId(jumpRequest.messageId);
     virtuosoRef.current?.scrollToIndex({ index, align: 'center', behavior: 'smooth' });
     let attempts = 0;
@@ -215,10 +261,11 @@ export function AgentTimeline({
         // composer. While the viewport still fits, `followOutput` naturally
         // moves the transcript upward as output grows; once a user scrolls
         // away from the bottom, their reading position remains authoritative.
-        followOutput={(isAtBottom) => isAtBottom ? 'auto' : false}
+        followOutput={() => liveFollowIntentRef.current ? liveFollowScrollBehavior() : false}
         initialTopMostItemIndex={{ index: 'LAST', align: 'start' }}
         increaseViewportBy={{ top: 320, bottom: 520 }}
         components={timelineComponents}
+        scrollerRef={handleScrollerRef}
         rangeChanged={setVisibleRange}
         atBottomStateChange={handleAtBottomChange}
         atBottomThreshold={120}
@@ -293,7 +340,10 @@ export function AgentTimeline({
                 data-kind={markerKind}
                 data-visible={index >= visibleRange.startIndex && index <= visibleRange.endIndex || undefined}
                 key={turnId}
-                onClick={() => virtuosoRef.current?.scrollToIndex({ index, align: 'center', behavior: 'smooth' })}
+                onClick={() => {
+                  liveFollowIntentRef.current = false;
+                  virtuosoRef.current?.scrollToIndex({ index, align: 'center', behavior: 'smooth' });
+                }}
                 style={{ '--agent-nav-position': `${position}%` } as CSSProperties}
                 title={userPreview || assistantPreview || `第 ${index + 1} 轮`}
                 type="button"
@@ -433,6 +483,7 @@ export function AgentTurn({
   const failure = turn.status === 'failed' ? publicAgentErrorText(rawFailure) : '';
   const retryRequested = retryRequestedFor === `${turnId}:${turn.status}`;
   const showWorking = turn.status === 'queued' || turn.status === 'running';
+  const turnSettled = turn.status === 'completed' || turn.status === 'failed' || turn.status === 'aborted';
   const presence: PersonaPresence = turn.status === 'failed' ? 'warning' : turn.status === 'running' || turn.status === 'waiting' ? 'thinking' : 'done';
   const timelineEntries = interleavedTurnEntries(assistantMessages, activities);
   const streamingMessageId = activeStreamingMessageId(turn.status, assistantMessages);
@@ -469,6 +520,7 @@ export function AgentTurn({
                 </div>
               ))}
             </div>
+            {turnSettled ? <AgentTurnUsage messages={assistantMessages} /> : null}
             {failure ? (
               <div className="agent-turn__failure" role="alert">
                 <TriangleAlert size={17} />
@@ -692,7 +744,6 @@ function MessageView({
         <AgentBlocks blocks={visibleBlocks} sessionId={sessionId} streaming={showStreaming} onApprovalDecision={onApprovalDecision} />
         {showStreaming ? <span className="agent-streaming-cursor" aria-label="正在生成" /> : null}
       </div>
-      {!showStreaming ? <AgentMessageUsage message={message} /> : null}
       {canFork ? (
         <div className="agent-message-actions">
           <IconButton
@@ -709,15 +760,25 @@ function MessageView({
   );
 }
 
-function AgentMessageUsage({ message }: { message: AgentMessageProjection }) {
-  const usage = message.usage;
-  if (!usage || usage.totalTokens <= 0) return null;
+function AgentTurnUsage({ messages }: { messages: AgentMessageProjection[] }) {
+  const metered = messages.filter((message) => message.usage && message.usage.totalTokens > 0);
+  if (metered.length === 0) return null;
+  const usage = metered.reduce(
+    (total, message) => ({
+      input: total.input + (message.usage?.input ?? 0),
+      output: total.output + (message.usage?.output ?? 0),
+      cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0),
+      cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0),
+    }),
+    { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  );
+  const latest = metered.at(-1)!;
   const promptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
   const cachePercent = promptTokens > 0 ? Math.round((usage.cacheRead / promptTokens) * 100) : 0;
   return (
     <div className="agent-message-usage" aria-label="本轮模型与 Token 用量">
-      {message.model ? <span className="agent-message-usage__model" title="本轮模型">{message.model}</span> : null}
-      {message.provider ? <span title="模型提供方">{message.provider}</span> : null}
+      {latest.model ? <span className="agent-message-usage__model" title="本轮模型">{latest.model}</span> : null}
+      {latest.provider ? <span title="模型提供方">{latest.provider}</span> : null}
       <span title="输入 Token">输入 {formatTokens(promptTokens)}</span>
       <span title="输出 Token">输出 {formatTokens(usage.output)}</span>
       <strong title="本轮缓存读取占提示 Token 的比例">缓存 {cachePercent}%</strong>
@@ -737,13 +798,16 @@ function ActivityGroupView({
   onRequestPermission?: () => void;
 }) {
   const compactions = activities.filter((activity) => activity.kind === 'context_compaction');
+  const reasoning = activities.filter((activity) => activity.kind === 'reasoning_summary');
   const ordinary = activities.filter((activity) => (
     activity.kind !== 'context_compaction'
+    && activity.kind !== 'reasoning_summary'
     && (!isAgentPlanActivity(activity) || activity.status === 'failed')
   ));
   return (
     <>
       {compactions.map((activity) => <ContextCompactionNotice key={activity.id} activity={activity} />)}
+      <ReasoningActivitySummary activities={reasoning} />
       {ordinary.length ? (
         <ActivitySummary
           activities={ordinary}
@@ -839,6 +903,19 @@ function messagePreview(message?: AgentMessageProjection): string {
 
 const emptyIds: string[] = [];
 
+function scrollerIsAtBottom(scroller: HTMLElement): boolean {
+  return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 120;
+}
+
+function liveFollowScrollBehavior(): 'auto' {
+  // Keep the user's explicit follow intent across height changes inside one
+  // turn. Virtuoso's instantaneous `isAtBottom` can flip false after a large
+  // Tool batch grows the active item, even though the user never scrolled.
+  // Starting a smooth scroll for every event would queue overlapping
+  // animations, so passive following remains immediate.
+  return 'auto';
+}
+
 export function streamingFollowIndex(projection: AgentProjectionState): number {
   const visibleTurnIds = projection.turnOrder.filter((turnId) => {
     const turn = projection.turnsById[turnId];
@@ -872,6 +949,9 @@ function workingDetail(activities: AgentActivityProjection[]): string {
   const latest = [...activities].reverse().find((activity) => activity.status === 'running');
   if (text(latest?.payload.phase) === 'provider_retry') {
     return latest?.summary || '模型连接暂时不可用，正在自动重试。';
+  }
+  if (latest?.kind === 'reasoning_summary') {
+    return latest.summary || '正在分析问题与下一步。';
   }
   const tool = text(latest?.payload.toolName ?? latest?.payload.toolId).toLowerCase();
   if (tool.includes('memory')) return '正在读取并整理相关记忆，工具明细会实时显示在下方。';

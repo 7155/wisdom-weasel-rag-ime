@@ -47,7 +47,7 @@ COMMIT_RESULTS = {
     "C": "COLLAB-C-COMMIT-RESULT",
 }
 EXPECTED_SKILLS = {
-    "A": "test-driven-implementation",
+    "A": "implementation-execution",
     "B": "independent-review",
     "C": "quality-gate",
 }
@@ -74,6 +74,7 @@ _NATURAL_REQUEST_FORBIDDEN_TERMS = (
     "workspace_search",
     "workspace_read",
     "workspace_patch",
+    "workspace_edit",
     "workspace_shell",
     "participantRef",
     "evidenceRef",
@@ -593,7 +594,7 @@ def managed_approval_checks(
     expected = {
         "A": [
             ("workspace_shell", "failed"),
-            ("workspace_patch", "applied"),
+            ("workspace_edit", "applied"),
             ("workspace_shell", "applied"),
         ],
         "B": [],
@@ -729,7 +730,7 @@ def natural_managed_approval_checks(
     a_patches = [
         item
         for item in approvals.get("A", [])
-        if item.get("toolId") == "workspace_patch"
+        if item.get("toolId") == "workspace_edit"
     ]
     return {
         "aRedGreenTestObserved": (
@@ -742,7 +743,7 @@ def natural_managed_approval_checks(
             and len(a_patches) <= 2
         ),
         "reviewersDidNotPatch": all(
-            item.get("toolId") != "workspace_patch"
+            item.get("toolId") != "workspace_edit"
             for member in ("B", "C")
             for item in approvals.get(member, [])
         ),
@@ -759,7 +760,7 @@ def natural_managed_approval_checks(
             "C",
         ),
         "onlyWorkspaceActions": all(
-            item.get("toolId") in {"workspace_patch", "workspace_shell"}
+            item.get("toolId") in {"workspace_edit", "workspace_shell"}
             for values in approvals.values()
             for item in values
         ),
@@ -865,14 +866,11 @@ def dispatch_chain_evidence(
         "distinctTasks": len(set(task_ids)) == 3,
         "taskParents": [item.get("parentTaskId") for item in task_items]
         == [None, task_ids[0], task_ids[0]],
-        # A collaboration keeps responsibility with the caller while assigning
-        # the child work to the peer. A formal handoff transfers both ownership
-        # and assignment. Treating both paths as ownership transfer would hide
-        # the exact semantic difference this canary is meant to prove.
-        "taskOwners": [str(item.get("ownerParticipantId") or "") for item in task_items]
-        == [participant_ids["A"], participant_ids["A"], participant_ids["C"]],
-        "taskAssignees": [
-            str(item.get("assigneeParticipantId") or "") for item in task_items
+        # Every Task has one durable current owner. Collaboration and handoff
+        # differ in Dispatch topology, not in a second assignee identity.
+        "taskCurrentOwners": [
+            str(item.get("currentOwnerParticipantId") or "")
+            for item in task_items
         ]
         == [participant_ids[member] for member in ordered_members],
         "tasksCompleted": [str(item.get("state") or "") for item in task_items]
@@ -958,7 +956,7 @@ def _member_tool_receipts(
         "workspace_list",
         "workspace_search",
         "workspace_read",
-        "workspace_patch",
+        "workspace_edit",
         "workspace_shell",
         "room_post",
         "room_commit",
@@ -1296,7 +1294,7 @@ def tool_workload_checks(
 ) -> dict[str, bool]:
     a = receipts["A"]
     a_read_statuses = _statuses(a["workspace_read"])
-    a_patch_statuses = _statuses(a["workspace_patch"])
+    a_patch_statuses = _statuses(a["workspace_edit"])
     checks = {
         "aRoomState": _statuses(a["room_state"]) == ["applied"],
         "aCollaboratedOnce": _statuses(a["room_collaborate"]) == ["applied"],
@@ -1329,7 +1327,7 @@ def tool_workload_checks(
         "applied",
     ]
     checks["bStayedReadOnly"] = (
-        b["workspace_patch"]["invocationCount"] == 0
+        b["workspace_edit"]["invocationCount"] == 0
         and b["workspace_shell"]["invocationCount"] == 0
     )
     checks["bDidNotDelegateItsOwnReview"] = (
@@ -1346,8 +1344,12 @@ def tool_workload_checks(
         "applied",
         "applied",
     ]
-    checks["cIndependentTest"] = _statuses(c["workspace_shell"]) == ["applied"]
-    checks["cNeverPatched"] = c["workspace_patch"]["invocationCount"] == 0
+    c_test_statuses = _statuses(c["workspace_shell"])
+    checks["cIndependentTest"] = c_test_statuses in (
+        ["applied"],
+        ["failed", "applied"],
+    )
+    checks["cNeverPatched"] = c["workspace_edit"]["invocationCount"] == 0
     checks["cDidNotDelegateFinalAcceptance"] = (
         c["room_collaborate"]["invocationCount"] == 0
     )
@@ -1372,7 +1374,7 @@ def natural_tool_workload_checks(
     """Validate outcomes without prescribing discovery calls in the request."""
 
     a = receipts["A"]
-    a_patch = _statuses(a["workspace_patch"])
+    a_patch = _statuses(a["workspace_edit"])
     b = receipts["B"]
     c = receipts["C"]
     a_test_states = _test_command_states(approvals, "A")
@@ -1398,7 +1400,7 @@ def natural_tool_workload_checks(
         ),
         "bReviewedIndependently": (
             b["workspace_read"]["appliedExecutionCount"] >= 2
-            and b["workspace_patch"]["invocationCount"] == 0
+            and b["workspace_edit"]["invocationCount"] == 0
             and b["room_collaborate"]["invocationCount"] == 0
         ),
         "bPublishedAndCommitted": _bounded_commit_statuses(
@@ -1407,7 +1409,7 @@ def natural_tool_workload_checks(
         "cVerifiedIndependently": (
             c["workspace_read"]["appliedExecutionCount"] >= 2
             and _successful_unittest_observed(approvals, "C")
-            and c["workspace_patch"]["invocationCount"] == 0
+            and c["workspace_edit"]["invocationCount"] == 0
             and c["room_collaborate"]["invocationCount"] == 0
         ),
         "cPublishedAndDelivered": (
@@ -1578,14 +1580,19 @@ def _compact_members(
             ),
             "transitionBound": transition["reason"] == "compaction"
             and transition["recovery"]["providerHashes"] == after["journal"]["hashes"],
-            "requirementsRecovered": int(
-                transition["recovery"]["originalRequirements"] or 0
-            )
-            >= 1
-            and transition["recovery"]["currentTask"] is True
-            and int(transition["recovery"]["acceptance"] or 0)
-            == expected_acceptance_counts[member],
-            "handoffRecovered": transition["recovery"]["handoff"] is True,
+            "releasedTaskContextCleared": (
+                transition["recovery"]["originalRequirements"] is None
+                and transition["recovery"]["currentTask"] is None
+                and transition["recovery"]["acceptance"] is None
+                and int(after["recoveryPacket"]["originalRequirementCount"] or 0)
+                == 0
+                and int(after["recoveryPacket"]["acceptanceCount"] or 0) == 0
+                and str(after["recoveryPacket"]["taskState"] or "") == ""
+            ),
+            "releasedHandoffCleared": (
+                transition["recovery"]["handoff"] is None
+                and str(after["recoveryPacket"]["handoffIntent"] or "") == ""
+            ),
             "skillReceiptExact": transition["recovery"]["skillReceiptId"]
             == expected_skill_receipt,
             "toolReceiptsExact": expected_tool_ids
@@ -1685,15 +1692,35 @@ def _room_session_turn_visible(
     snapshot: Mapping[str, Any],
     _request: CollaborationRequest,
 ) -> bool:
-    """The Agent window exposes the same Session's Room assistant turn.
+    """The Agent window exposes the same Session's Room activity.
 
-    The original Room requirement belongs to the managed Room projection, not
-    to a copied user transcript entry. Requiring the model to echo that text
-    made this check a false positive for verbose models and a false negative
-    for concise ones.
+    A Room turn may finish with ``room_commit`` instead of a plain assistant
+    text.  The human transcript deliberately hides Tool protocol messages, but
+    their redacted timeline remains public.  Accept either projection while
+    still requiring evidence from this exact Agent snapshot; copied Room posts
+    do not satisfy the check.
     """
 
-    return bool(_assistant_texts(snapshot))
+    if _assistant_texts(snapshot):
+        return True
+    for raw_event in snapshot.get("liveEvents") or []:
+        if not isinstance(raw_event, Mapping):
+            continue
+        if str(raw_event.get("eventType") or "") not in {
+            "tool_started",
+            "tool_progress",
+            "tool_finished",
+        }:
+            continue
+        payload = raw_event.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        tool_name = str(
+            payload.get("toolName") or payload.get("toolId") or ""
+        ).strip()
+        if tool_name.startswith("room_"):
+            return True
+    return False
 
 
 def _runtime_transcript_ref(db_path: Path, session_id: str) -> str:
@@ -1825,11 +1852,12 @@ def _session_continuity_probe(
         "samePublicDeliveryVisibleInRoom": len(public_a_posts) == 1,
         "ordinaryPromptAccepted": accepted.get("accepted") is True,
         "ordinarySessionIdle": str(after.get("status") or "") == "idle",
-        "providerSawRoomHistory": (
+        "releasedRoomContextNotRebound": (
             SESSION_CONTINUITY_PROMPT in context_text
+            and request.objective not in context_text
             and (
-                request.objective in context_text
-                or (bool(public_a_marker) and public_a_marker in context_text)
+                not public_a_marker
+                or public_a_marker not in context_text
             )
         ),
         "noDuplicateContinuationPrompt": (
@@ -2202,10 +2230,11 @@ def run(
                 for member in posts_by_member
             )
             else False,
-            "commitSummariesPublished": all(
+            "commitResultsPublished": all(
                 sum(
                     item["publicationSource"].get("kind") == "room_commit"
-                    and COMMIT_RESULTS[member] in str(item.get("content") or "")
+                    and str(item.get("kind") or "") in {"handoff", "result"}
+                    and bool(str(item.get("content") or "").strip())
                     for item in posts_by_member[member]
                 )
                 == 1

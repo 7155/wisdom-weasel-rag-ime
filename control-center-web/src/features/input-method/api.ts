@@ -23,6 +23,32 @@ export type LexiconReviewEntry = {
   riskLabel?: string;
 };
 
+export type LexiconOrganizationRun = {
+  runId: string;
+  status: 'running' | 'succeeded' | 'failed' | '';
+  startedAtMs: number;
+  completedAtMs: number;
+  candidateCount: number;
+  filteredEntryCount: number;
+  errorCode: string;
+  error: string;
+};
+
+export type LexiconOrganizationStatus = {
+  schemaVersion: 'rag-ime.lexicon-organization-status.v1';
+  owner: 'maintenance_poll';
+  decoderOwner: 'rime';
+  enabled: boolean;
+  runsPerDay: number;
+  intervalMs: number;
+  candidateLimit: number;
+  lastRunAtMs: number;
+  lastSucceededAtMs: number;
+  nextRunAtMs: number | null;
+  due: boolean;
+  lastRun: LexiconOrganizationRun;
+};
+
 export type LexiconReview = {
   schemaVersion: 'rag-ime.rime-lexicon-review.v1';
   project: string;
@@ -34,6 +60,7 @@ export type LexiconReview = {
   reviewRequired: boolean;
   filteredEntryCount?: number;
   selectionPolicy?: string;
+  organization: LexiconOrganizationStatus;
 };
 
 export type LexiconMutationReceipt = {
@@ -54,6 +81,7 @@ export const inputMethodQueryKeys = {
   root: ['input-method'] as const,
   source: () => [...inputMethodQueryKeys.root, 'source'] as const,
   overview: () => [...inputMethodQueryKeys.root, 'overview'] as const,
+  models: () => [...inputMethodQueryKeys.root, 'models'] as const,
   settings: () => [...inputMethodQueryKeys.root, 'settings'] as const,
   schema: () => [...inputMethodQueryKeys.root, 'schema'] as const,
   capabilities: () => [...inputMethodQueryKeys.root, 'capabilities'] as const,
@@ -70,6 +98,21 @@ export function useInputMethodQueries() {
   const overview = useQuery({
     queryKey: inputMethodQueryKeys.overview(),
     queryFn: ({ signal }) => transport.request({ pathId: 'overview.get', signal }),
+  });
+  const models = useQuery({
+    queryKey: inputMethodQueryKeys.models(),
+    queryFn: async ({ signal }) => {
+      try {
+        return await transport.request({ pathId: 'diagnostics.models', signal });
+      } catch (error) {
+        if (signal.aborted) throw error;
+        return {
+          ok: false,
+          schemaVersion: 'rag-ime.models-status.v4',
+          statusUnavailable: true,
+        };
+      }
+    },
   });
   const settings = useQuery({
     queryKey: inputMethodQueryKeys.settings(),
@@ -125,6 +168,7 @@ export function useInputMethodQueries() {
     capabilities,
     lexiconAvailable,
     lexiconReview,
+    models,
     overview,
     schema,
     settings,
@@ -187,6 +231,50 @@ function parseLexiconReview(value: unknown): LexiconReview {
     confirmText,
     applySupported: payload.applySupported === true,
     reviewRequired: payload.reviewRequired === true,
+    filteredEntryCount: optionalNonNegativeInteger(payload.filteredEntryCount),
+    selectionPolicy: stringValue(payload.selectionPolicy),
+    organization: parseLexiconOrganization(payload.organization),
+  };
+}
+
+function parseLexiconOrganization(value: unknown): LexiconOrganizationStatus {
+  const payload = record(value);
+  if (payload.schemaVersion !== 'rag-ime.lexicon-organization-status.v1') {
+    throw new Error('词库定期整理返回了不兼容的数据。');
+  }
+  if (payload.owner !== 'maintenance_poll' || payload.decoderOwner !== 'rime') {
+    throw new Error('词库定期整理的运行归属不明确。');
+  }
+  const nextRunAtMs = payload.nextRunAtMs === null
+    ? null
+    : nonNegativeInteger(payload.nextRunAtMs, 'organization.nextRunAtMs');
+  const rawLastRun = record(payload.lastRun);
+  const rawStatus = stringValue(rawLastRun.status);
+  const status = ['running', 'succeeded', 'failed'].includes(rawStatus)
+    ? rawStatus as LexiconOrganizationRun['status']
+    : '';
+  return {
+    schemaVersion: payload.schemaVersion,
+    owner: payload.owner,
+    decoderOwner: payload.decoderOwner,
+    enabled: payload.enabled === true,
+    runsPerDay: nonNegativeInteger(payload.runsPerDay, 'organization.runsPerDay'),
+    intervalMs: nonNegativeInteger(payload.intervalMs, 'organization.intervalMs'),
+    candidateLimit: nonNegativeInteger(payload.candidateLimit, 'organization.candidateLimit'),
+    lastRunAtMs: nonNegativeInteger(payload.lastRunAtMs, 'organization.lastRunAtMs'),
+    lastSucceededAtMs: nonNegativeInteger(payload.lastSucceededAtMs, 'organization.lastSucceededAtMs'),
+    nextRunAtMs,
+    due: payload.due === true,
+    lastRun: {
+      runId: stringValue(rawLastRun.runId),
+      status,
+      startedAtMs: optionalNonNegativeInteger(rawLastRun.startedAtMs) ?? 0,
+      completedAtMs: optionalNonNegativeInteger(rawLastRun.completedAtMs) ?? 0,
+      candidateCount: optionalNonNegativeInteger(rawLastRun.candidateCount) ?? 0,
+      filteredEntryCount: optionalNonNegativeInteger(rawLastRun.filteredEntryCount) ?? 0,
+      errorCode: stringValue(rawLastRun.errorCode),
+      error: stringValue(rawLastRun.error),
+    },
   };
 }
 
@@ -258,6 +346,12 @@ function stringValue(value: unknown): string {
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function optionalNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
 }
 
 function nonNegativeInteger(value: unknown, field: string): number {

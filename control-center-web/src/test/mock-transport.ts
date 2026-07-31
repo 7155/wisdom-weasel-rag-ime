@@ -46,6 +46,9 @@ export interface MockControlTransportOptions {
   routes?: Partial<Record<ControlPathId, MockRouteHandler>>;
   pickedFiles?: PickedFile[];
   importedFiles?: PickedFile[];
+  imagePaste?: (
+    input: AgentImagePasteOptions,
+  ) => PickedFile[] | Promise<PickedFile[]>;
   knowledgeImportReceipts?: KnowledgeDocumentImportReceipt[];
   knowledgeAsset?: (
     input: KnowledgeAssetReadInput,
@@ -82,6 +85,7 @@ export class MockControlTransport implements ControlTransport {
   private readonly pickedFiles: PickedFile[];
   private readonly importedFiles: PickedFile[];
   private readonly knowledgeImportReceipts: KnowledgeDocumentImportReceipt[];
+  private readonly imagePaste?: MockControlTransportOptions['imagePaste'];
   private readonly knowledgeAsset?: MockControlTransportOptions['knowledgeAsset'];
   private readonly knowledgeDocumentSource?: MockControlTransportOptions['knowledgeDocumentSource'];
   private readonly snapshotImageUrl?: MockControlTransportOptions['browserSnapshotImageUrl'];
@@ -117,6 +121,7 @@ export class MockControlTransport implements ControlTransport {
     };
     this.pickedFiles = [...(options.pickedFiles ?? [])];
     this.importedFiles = [...(options.importedFiles ?? [])];
+    this.imagePaste = options.imagePaste;
     this.knowledgeImportReceipts = [...(options.knowledgeImportReceipts ?? [])];
     this.knowledgeAsset = options.knowledgeAsset;
     this.knowledgeDocumentSource = options.knowledgeDocumentSource;
@@ -213,12 +218,12 @@ export class MockControlTransport implements ControlTransport {
   }
 
   async pasteImages(options: AgentImagePasteOptions): Promise<PickedFile[]> {
-    this.imagePasteCalls.push({
-      sessionId: options.sessionId,
+    const input: AgentImagePasteOptions = {
+      ...options,
       ...(options.files ? { files: [...options.files] } : {}),
-      ...(options.maxFiles !== undefined ? { maxFiles: options.maxFiles } : {}),
-    });
-    return [...this.importedFiles];
+    };
+    this.imagePasteCalls.push(input);
+    return this.imagePaste ? [...await this.imagePaste(input)] : [...this.importedFiles];
   }
 
   async importKnowledgeDocuments(

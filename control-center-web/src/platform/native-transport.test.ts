@@ -278,6 +278,39 @@ describe('NativeControlTransport', () => {
     transport.dispose();
   });
 
+  it('keeps a managed attachment receipt bound to its Room owner', async () => {
+    const sent: NativeBridgeRequestEnvelope[] = [];
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      sent.push(envelope);
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: [{
+          id: 'media_native_room_image01',
+          name: 'room.png',
+          mimeType: 'image/png',
+          byteSize: 68,
+          roomId: 'room:collaboration-1',
+          sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        }],
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow, createId: () => 'room-media-call' });
+    await expect(transport.pickFiles({
+      purpose: 'attachment',
+      roomId: 'room:collaboration-1',
+      maxFiles: 1,
+    })).resolves.toEqual([expect.objectContaining({
+      id: 'media_native_room_image01',
+      roomId: 'room:collaboration-1',
+    })]);
+    expect(sent[0]).toMatchObject({
+      method: 'pickFiles',
+      payload: { roomId: 'room:collaboration-1' },
+    });
+    transport.dispose();
+  });
+
   it('rejects a native attachment receipt that leaks a selected local path', async () => {
     const bridgeWindow = fakeBridgeWindow((envelope) => {
       queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
@@ -429,6 +462,30 @@ describe('NativeControlTransport', () => {
       method: 'pasteImages',
       payload: { sessionId: 'agent:session-1', maxFiles: 1 },
     }]);
+    transport.dispose();
+  });
+
+  it('rejects a pasted image receipt owned by a different Session', async () => {
+    const bridgeWindow = fakeBridgeWindow((envelope) => {
+      queueMicrotask(() => bridgeWindow.__RAG_IME_NATIVE_BRIDGE__?.receive({
+        id: envelope.id,
+        ok: true,
+        result: [{
+          id: 'media_native_pasted_02',
+          name: 'pasted-image-1.png',
+          mimeType: 'image/png',
+          byteSize: 68,
+          sessionId: 'agent:session-2',
+          sha256: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        }],
+      }));
+    });
+    const transport = new NativeControlTransport({ bridgeWindow });
+
+    await expect(transport.pasteImages({
+      sessionId: 'agent:session-1',
+      maxFiles: 1,
+    })).rejects.toThrow(/invalid managed image receipt/);
     transport.dispose();
   });
 
@@ -602,13 +659,13 @@ describe('NativeControlTransport', () => {
     const transport = new NativeControlTransport({ bridgeWindow, createId: () => 'native-paste-call' });
 
     await expect(transport.pasteImages({
-      sessionId: 'agent:session-1',
+      roomId: 'room:collaboration-1',
       maxFiles: 4,
     })).resolves.toEqual([]);
     expect(sent).toEqual([{
       id: 'native-paste-call',
       method: 'pasteImages',
-      payload: { sessionId: 'agent:session-1', maxFiles: 4 },
+      payload: { roomId: 'room:collaboration-1', maxFiles: 4 },
     }]);
     transport.dispose();
   });

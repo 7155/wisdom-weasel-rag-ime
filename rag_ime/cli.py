@@ -40,8 +40,11 @@ from .foreground_privacy import assess_foreground_write, storage_receipt
 from .history_context import build_prediction_context
 from .hybrid_rag_eval import run_hybrid_rag_eval
 from .local_sqlite_core import LocalSqliteCoreClient
-from .deepseek_config import load_deepseek_config
-from .deepseek_memory_organizer import DeepSeekMemoryOrganizer, DeepSeekMemoryOrganizerError
+from .memory_model_executor import (
+    MemoryModelUnavailable,
+    build_managed_pi_memory_model_executor,
+)
+from .deepseek_memory_organizer import ManagedPiMemoryOrganizer, DeepSeekMemoryOrganizerError
 from .memory_book_compiler import (
     MEMORY_BOOK_APPLY_SCHEMA_VERSION,
     MEMORY_BOOK_PREVIEW_SCHEMA_VERSION,
@@ -481,14 +484,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     memory_book_preview = subparsers.add_parser(
         "memory-book-preview",
-        help="Build a dry-run Memory Book compile preview with an explicitly configured DeepSeek provider",
+        help="Build a dry-run Memory Book compile preview through the governed managed-Pi provider",
     )
     memory_book_preview.add_argument("--project", default="wisdom-weasel-rag-ime")
     memory_book_preview.add_argument("--since-days", type=int, default=7)
     memory_book_preview.add_argument("--recent-limit", type=int, default=48)
-    memory_book_preview.add_argument("--provider", choices=("deepseek",), default="deepseek")
+    memory_book_preview.add_argument("--provider", default="")
     memory_book_preview.add_argument("--model", default="")
-    memory_book_preview.add_argument("--model-env-path", default=os.environ.get("RAG_IME_DEEPSEEK_ENV", "") or os.environ.get("RAG_IME_MODEL_ENV", ""))
+    memory_book_preview.add_argument(
+        "--thinking-level",
+        default="",
+        choices=("off", "minimal", "low", "medium", "high", "xhigh", "max"),
+    )
+    memory_book_preview.add_argument(
+        "--model-env-path",
+        default="",
+        help="Deprecated DeepSeek env path; managed-Pi configuration is required",
+    )
     memory_book_preview.add_argument(
         "--scope",
         choices=("incremental", "global"),
@@ -1379,6 +1391,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ),
                     batch_limit=args.batch_limit,
                     model=managed.dreaming_model,
+                    thinking_level=managed.dreaming_thinking_level,
                 ).normalized()
             else:
                 config = PersonalContextMaintenanceConfig(
@@ -1944,30 +1957,57 @@ def main(argv: Sequence[str] | None = None) -> int:
                 provider_name = str(existing_draft.get("provider") or "")
                 model_name = str(existing_draft.get("model") or "")
             else:
-                config = load_deepseek_config(args.model_env_path or None)
-                if args.model:
-                    config = replace(config, model=args.model)
-                if args.scope == "global":
-                    config = replace(
-                        config,
-                        memory_book_max_tokens=max(
-                            4096,
-                            int(config.memory_book_max_tokens),
-                        ),
+                if str(args.model_env_path or "").strip():
+                    raise ValueError(
+                        "--model-env-path is not supported by the governed managed-Pi memory runtime"
                     )
-                organizer = DeepSeekMemoryOrganizer(config)
-                decisions = organizer.compile_memory_curation(
-                    bundle=bundle,
-                    project=args.project,
-                    policy=args.policy,
+                managed = MemoryMaintenanceSettings.load(core.db_path)
+                configured_provider, separator, configured_model = (
+                    managed.automatic_organization_model.partition("/")
                 )
+                requested_provider = str(args.provider or "").strip()
+                requested_model = str(args.model or "").strip()
+                model_provider, model_separator, model_id = requested_model.partition("/")
+                selected_provider = (
+                    requested_provider
+                    or (model_provider if model_separator else configured_provider)
+                )
+                selected_model_id = (
+                    model_id
+                    if model_separator
+                    else requested_model
+                    or (configured_model if separator else configured_provider)
+                )
+                selected_model = (
+                    f"{selected_provider}/{selected_model_id}"
+                    if selected_provider
+                    else selected_model_id
+                )
+                thinking_level = (
+                    str(args.thinking_level).strip()
+                    or managed.automatic_organization_thinking_level
+                )
+                executor = build_managed_pi_memory_model_executor(
+                    core.db_path,
+                    selected_model,
+                    thinking_level,
+                )
+                organizer = ManagedPiMemoryOrganizer(executor)
+                try:
+                    decisions = organizer.compile_memory_curation(
+                        bundle=bundle,
+                        project=args.project,
+                        policy=args.policy,
+                    )
+                    provider_name = organizer.provider_name
+                    model_name = executor.model_id
+                finally:
+                    organizer.close()
                 compile_output = curation_decisions_to_compile_output(
                     decisions,
                     source_bundle=bundle,
                     project=args.project,
                 )
-                provider_name = organizer.provider_name
-                model_name = config.model
                 plan = memory_book_plan_from_compile_output(
                     compile_output,
                     project=args.project,
@@ -1975,7 +2015,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     model=model_name,
                     source_bundle=bundle,
                 )
-        except (DeepSeekMemoryOrganizerError, ValueError) as exc:
+        except (DeepSeekMemoryOrganizerError, MemoryModelUnavailable, ValueError) as exc:
             print(json.dumps({"schemaVersion": MEMORY_BOOK_PREVIEW_SCHEMA_VERSION, "ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
             return 2
         validation = inspect_memory_book_plan(plan)

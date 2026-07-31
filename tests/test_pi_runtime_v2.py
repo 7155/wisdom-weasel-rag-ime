@@ -12,10 +12,17 @@ from unittest.mock import patch
 from rag_ime.agent_events import AgentEventHub
 from rag_ime.agent_sessions import AgentSessionStore
 from rag_ime.pi_runtime import PiRuntimeConfig, PiRuntimeError
-from rag_ime.pi_runtime_public import public_code_tool_activity
+from rag_ime.pi_runtime_public import (
+    pi_message_completes_public_turn,
+    pi_message_is_public,
+    pi_message_payload,
+    public_code_tool_activity,
+    public_reasoning_summaries,
+)
 from rag_ime.pi_runtime_v2 import (
     PiRuntimeHostClient,
     PiRuntimeHostManager,
+    _pi_durable_branch_messages,
     _pi_tool_history_events,
 )
 
@@ -108,6 +115,11 @@ for line in sys.stdin:
             "leafId": "", "messages": [], "thinkingLevel": params.get("thinkingLevel", "medium"),
             "model": model,
             "roomCapability": params.get("roomCapability"),
+            "activeRoom": ({
+                "rootId": "root:stale",
+                "dispatchId": "dispatch:stale",
+                "generation": 0,
+            } if os.environ.get("TEST_STALE_ACTIVE_ROOM") == "1" else None),
             "roomProviderContext": params.get("roomProviderContext"),
             "roomSkillLoad": room_skill_load,
             "isIdle": True,
@@ -125,7 +137,7 @@ for line in sys.stdin:
             "isCompacting": False,
             "activeTurn": None,
             "roomCapability": session.get("roomCapability"),
-            "activeRoom": None,
+            "activeRoom": session.get("activeRoom"),
             "sequence": sequence,
         })
     elif method == "session.snapshot":
@@ -200,6 +212,8 @@ for line in sys.stdin:
             continue
         event(session_id, turn_id, client_message_id, {"type": "message_end", "message": assistant})
         event(session_id, turn_id, client_message_id, {"type": "agent_end", "messages": [assistant]})
+        if params["message"] == "end-without-settled":
+            continue
         time.sleep(0.15)
         event(session_id, turn_id, client_message_id, {"type": "agent_settled"})
     elif method in {"session.steer", "session.follow_up"}:
@@ -358,7 +372,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             sessions=self.store,
             events=self.events,
             tool_manifest_provider=lambda _session: [{
-                "name": "ime_memory",
+                "name": "memory",
                 "description": "memory operations",
                 "parameters": {"type": "object", "properties": {"op": {"type": "string"}}},
             }],
@@ -612,6 +626,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "rootId": "root:cross-process",
             "dispatchId": "dispatch:cross-process",
             "generation": 4,
+            "attempt": 0,
             "idempotencyKey": "cross-process-key",
         }
 
@@ -647,6 +662,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(methods[-1], "room.cancel")
         delivered = next(item for item in requests if item["method"] == "room.dispatch")
         self.assertEqual(delivered["params"]["leaseToken"], "lease-token:cross-process")
+        self.assertEqual(delivered["params"]["dispatchAttempt"], 0)
 
         crashed_payload = dict(payload)
         crashed_payload.update(
@@ -659,6 +675,119 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 lease_token="lease-token:crashed-host",
             )
         self.assertEqual(self.runtime.runtime_status()["status"], "faulted")
+
+    def test_room_retry_attempt_uses_a_distinct_persisted_delivery_key(
+        self,
+    ) -> None:
+        self.runtime.stop()
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=lambda _session: {
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+            },
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        logical_key = "room-task:stable-logical-key"
+        base = {
+            "targetSessionId": session_id,
+            "rootId": "root:runtime-retry-key",
+            "generation": 0,
+            "idempotencyKey": logical_key,
+            "attempt": 0,
+        }
+
+        for invalid_attempt in (None, -1, True):
+            invalid_payload = {
+                **base,
+                "dispatchId": "dispatch:runtime-invalid-attempt",
+            }
+            if invalid_attempt is None:
+                invalid_payload.pop("attempt")
+            else:
+                invalid_payload["attempt"] = invalid_attempt
+            with self.subTest(invalid_attempt=invalid_attempt):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "attempt must be a non-negative integer",
+                ):
+                    self.runtime.dispatch_room(
+                        invalid_payload,
+                        message="Invalid durable delivery.",
+                        lease_token="lease-token:invalid-attempt",
+                    )
+
+        self.runtime.dispatch_room(
+            {
+                **base,
+                "dispatchId": "dispatch:runtime-attempt-zero",
+                "attempt": 0,
+            },
+            message="First durable delivery.",
+            lease_token="lease-token:attempt-zero",
+        )
+        self.runtime.dispatch_room(
+            {
+                **base,
+                "dispatchId": "dispatch:runtime-attempt-one",
+                "attempt": 1,
+            },
+            message="Retry after a confirmed final failure.",
+            lease_token="lease-token:attempt-one",
+        )
+        longest_host_key = "k" * 512
+        self.runtime.dispatch_room(
+            {
+                **base,
+                "dispatchId": "dispatch:runtime-attempt-long-key",
+                "idempotencyKey": longest_host_key,
+                "attempt": 2,
+            },
+            message="Retry a Dispatch whose logical key fills the Host limit.",
+            lease_token="lease-token:attempt-long-key",
+        )
+
+        requests = [
+            json.loads(line)
+            for line in (
+                self.root / "agent" / "host-requests.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        delivered = [
+            item["params"]
+            for item in requests
+            if item["method"] == "room.dispatch"
+        ]
+        self.assertEqual(delivered[0]["idempotencyKey"], logical_key)
+        self.assertEqual(
+            [request["dispatchAttempt"] for request in delivered],
+            [0, 1, 2],
+        )
+        self.assertEqual(
+            delivered[1]["idempotencyKey"],
+            f"{logical_key}:runtime-attempt:1",
+        )
+        self.assertEqual(len(delivered[2]["idempotencyKey"]), 512)
+        self.assertTrue(
+            delivered[2]["idempotencyKey"].endswith(
+                ":runtime-attempt:2"
+            )
+        )
+        self.assertNotEqual(
+            delivered[2]["idempotencyKey"],
+            longest_host_key,
+        )
+        self.assertEqual(
+            base["idempotencyKey"],
+            logical_key,
+            "the logical Dispatch identity must remain unchanged",
+        )
 
     def test_room_dispatch_ack_is_not_blocked_by_slow_event_projection(self) -> None:
         self.runtime.stop()
@@ -693,6 +822,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                     "dispatchId": "dispatch:event-lane",
                     "generation": 0,
                     "capabilityEpoch": 1,
+                    "attempt": 0,
                     "idempotencyKey": "event-lane:1",
                 },
                 message="event-before-room-dispatch-ack",
@@ -765,6 +895,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "dispatchId": "dispatch:handoff",
                 "generation": 0,
                 "capabilityEpoch": 2,
+                "attempt": 0,
                 "idempotencyKey": "handoff:1",
             },
             message="Execute the handed-off Room task.",
@@ -847,6 +978,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "dispatchId": "dispatch:1",
                 "generation": 0,
                 "capabilityEpoch": 4,
+                "attempt": 0,
                 "idempotencyKey": "stable:1",
             },
             message="first bounded task",
@@ -860,6 +992,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "dispatchId": "dispatch:2",
                 "generation": 0,
                 "capabilityEpoch": 4,
+                "attempt": 0,
                 "idempotencyKey": "stable:2",
             },
             message="second bounded task",
@@ -873,6 +1006,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "dispatchId": "dispatch:3",
                 "generation": 0,
                 "capabilityEpoch": 4,
+                "attempt": 0,
                 "idempotencyKey": "next:3",
             },
             message="third task starts a new context epoch",
@@ -907,6 +1041,99 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(delivered[2]["params"]["roomContext"], "room-bootstrap-3")
         self.assertEqual(delivered[2]["params"]["roomCapability"]["contextEpoch"], 2)
         self.assertEqual(third["providerContextReceipt"]["journalId"], "journal:3")
+
+    def test_room_dispatch_reopens_idle_session_with_stale_active_room(self) -> None:
+        self.runtime.stop()
+        revision = {"value": 1}
+
+        def context_provider(_session):
+            current = revision["value"]
+            return {
+                "roomCapability": {
+                    "manifestId": f"manifest:stale-active:{current}",
+                    "manifestHash": ("a" if current == 1 else "b") * 64,
+                    "promptCompileReceiptId": f"prompt:stale-active:{current}",
+                    "promptPlanHash": ("c" if current == 1 else "d") * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:stale-active",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "capabilityEpoch": current,
+                    "rootId": f"root:stale-active:{current}",
+                    "dispatchId": f"dispatch:stale-active:{current}",
+                    "generation": 0,
+                    "contextEpoch": current,
+                    "contextEpochReason": (
+                        "session_open" if current == 1 else "task_switch"
+                    ),
+                    "runtimeBindingHash": ("e" if current == 1 else "f") * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "sessionContext": "generic-agent-rag",
+                "providerContext": f"room-bootstrap-{current}",
+                "roomRecoveryContext": f"room-recovery-{current}",
+                "roomProviderContext": {
+                    "journalId": f"journal:stale-active:{current}",
+                    "throughSequence": current,
+                    "projectionHash": ("0" if current == 1 else "1") * 64,
+                },
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={
+                    "TEST_ROOM_TYPES": "1",
+                    "TEST_STALE_ACTIVE_ROOM": "1",
+                },
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:stale-active:1",
+                "dispatchId": "dispatch:stale-active:1",
+                "generation": 0,
+                "capabilityEpoch": 1,
+                "attempt": 0,
+                "idempotencyKey": "stale-active:1",
+            },
+            message="first task",
+            lease_token="lease:stale-active:1",
+        )
+        revision["value"] = 2
+
+        receipt = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:stale-active:2",
+                "dispatchId": "dispatch:stale-active:2",
+                "generation": 0,
+                "capabilityEpoch": 2,
+                "attempt": 0,
+                "idempotencyKey": "stale-active:2",
+            },
+            message="replacement task",
+            lease_token="lease:stale-active:2",
+        )
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        methods = [request["method"] for request in requests]
+        self.assertEqual(methods.count("session.open"), 2)
+        self.assertEqual(methods.count("session.close"), 1)
+        self.assertIn("session.control_state", methods)
+        self.assertEqual(receipt["dispatchId"], "dispatch:stale-active:2")
 
     def test_sealed_room_maintenance_reuses_idle_session_after_capability_revocation(self) -> None:
         self.runtime.stop()
@@ -972,15 +1199,122 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(methods.count("session.open"), 1)
         self.assertNotIn("session.close", methods)
         self.assertEqual(
-            methods[-4:],
+            methods[-2:],
             [
-                "session.debug.context",
-                "session.snapshot",
-                "session.snapshot",
+                "session.control_state",
                 "session.compact",
             ],
         )
+        self.assertEqual(methods.count("session.snapshot"), 1)
         self.assertTrue(compacted["memoryCheckpoint"]["stored"])
+
+    def test_revoked_room_compaction_recovers_stale_and_nonresident_sessions(self) -> None:
+        self.runtime.stop()
+        state = {
+            "revoked": False,
+            "manifestId": "manifest:resident-compaction",
+        }
+        manifest_hash = "d" * 64
+
+        def context_provider(_session):
+            if state["revoked"]:
+                return {
+                    "roomCapability": {
+                        "manifestId": state["manifestId"],
+                        "manifestHash": manifest_hash,
+                        "capabilityEpoch": 5,
+                        "status": "revoked",
+                    },
+                    "sessionContext": "bounded-room-recovery",
+                }
+            return {
+                "roomCapability": {
+                    "manifestId": state["manifestId"],
+                    "manifestHash": manifest_hash,
+                    "capabilityEpoch": 4,
+                    "promptCompileReceiptId": "prompt:resident-compaction",
+                    "promptPlanHash": "e" * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:resident-compaction",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "rootId": "root:resident-compaction",
+                    "generation": 0,
+                    "contextEpoch": 1,
+                    "contextEpochReason": "session_open",
+                    "runtimeBindingHash": "f" * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "sessionContext": "generic-agent-rag",
+                "providerContext": "governed-room-task",
+                "roomRecoveryContext": "bounded-room-recovery",
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=self.runtime.config,
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+            compaction_observer=self._observe_compaction,
+        )
+        session_id = str(self.first["id"])
+        opened = self.runtime.ensure(session_id)
+        original_transcript = str(opened["state"]["sessionFile"])
+        state["revoked"] = True
+        state["manifestId"] = "manifest:revoked-compaction"
+
+        stale_compacted = self.runtime.compact(
+            session_id,
+            "保留陈旧 Room 恢复事实",
+        )
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        opened_requests = [
+            request for request in requests if request["method"] == "session.open"
+        ]
+        self.assertEqual(len(opened_requests), 2)
+        self.assertEqual(
+            sum(request["method"] == "session.close" for request in requests),
+            1,
+        )
+        ordinary_open = opened_requests[-1]["params"]
+        self.assertNotIn("roomCapability", ordinary_open)
+        self.assertNotIn("roomContext", ordinary_open)
+        self.assertEqual(ordinary_open["sessionContext"], "bounded-room-recovery")
+        self.assertEqual(ordinary_open["sessionFile"], original_transcript)
+        self.assertTrue(stale_compacted["memoryCheckpoint"]["stored"])
+
+        self.runtime.stop()
+        nonresident_compacted = self.runtime.compact(
+            session_id,
+            "保留非驻留 Room 恢复事实",
+        )
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        opened_requests = [
+            request for request in requests if request["method"] == "session.open"
+        ]
+        self.assertEqual(len(opened_requests), 3)
+        nonresident_open = opened_requests[-1]["params"]
+        self.assertNotIn("roomCapability", nonresident_open)
+        self.assertEqual(
+            nonresident_open["sessionContext"],
+            "bounded-room-recovery",
+        )
+        self.assertEqual(nonresident_open["sessionFile"], original_transcript)
+        self.assertTrue(nonresident_compacted["memoryCheckpoint"]["stored"])
 
     def test_revoked_room_session_reopens_as_an_ordinary_agent_and_keeps_transcript(self) -> None:
         self.runtime.stop()
@@ -1179,6 +1513,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "dispatchId": "dispatch:agent-to-room",
                 "generation": 0,
                 "capabilityEpoch": 4,
+                "attempt": 0,
                 "idempotencyKey": "agent-to-room:1",
             },
             message="现在由 Room 接管同一个 Session",
@@ -1302,6 +1637,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
                 "dispatchId": "dispatch:agent-room-agent",
                 "generation": 0,
                 "capabilityEpoch": 5,
+                "attempt": 0,
                 "idempotencyKey": "agent-room-agent:room",
             },
             message="同一个 Session 进入 Room",
@@ -1398,6 +1734,104 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertNotIn("/Users/private", serialized)
         self.assertNotIn("sk-never-render-this", serialized)
 
+    def test_canonical_workspace_tools_keep_meaningful_bounded_details(self) -> None:
+        lsp = public_code_tool_activity(
+            "workspace_lsp",
+            {
+                "operation": "diagnostics",
+                "root": "/Users/private/project",
+                "path": "src/main.py",
+                "server": "pyright",
+                "line": 12,
+                "column": 4,
+            },
+            {"content": [{"type": "text", "text": "2 diagnostics"}]},
+        )
+        job = public_code_tool_activity(
+            "workspace_job",
+            {
+                "operation": "logs",
+                "jobId": "bg_123",
+                "cwd": "/Volumes/private/project",
+                "command": "python -m unittest",
+                "cursor": 64,
+                "limitBytes": 4096,
+            },
+            {"content": [{"type": "text", "text": "tests complete"}]},
+        )
+        write = public_code_tool_activity(
+            "workspace_write",
+            {
+                "operation": "apply",
+                "path": "src/new_file.py",
+                "content": "first\nsecond\n",
+            },
+        )
+
+        self.assertEqual(
+            {
+                key: lsp[key]
+                for key in ("path", "root", "operation", "server", "line", "column")
+            },
+            {
+                "path": "src/main.py",
+                "root": "…/project",
+                "operation": "diagnostics",
+                "server": "pyright",
+                "line": 12,
+                "column": 4,
+            },
+        )
+        self.assertEqual(lsp["outputPreview"], "2 diagnostics")
+        self.assertEqual(job["jobId"], "bg_123")
+        self.assertEqual(job["cwd"], "…/project")
+        self.assertEqual(job["cursor"], 64)
+        self.assertEqual(job["limitBytes"], 4096)
+        self.assertEqual(job["outputPreview"], "tests complete")
+        self.assertEqual(write["summary"], "new_file.py +2")
+        self.assertNotIn("content", write)
+
+    def test_coding_tool_projection_unwraps_managed_evidence_receipts(self) -> None:
+        evidence_summary = (
+            "wisdom-weasel-rag-ime/rag_ime/agent_tools.py:41: "
+            "def rime_lexicon_review(): pass"
+        )
+        result = public_code_tool_activity(
+            "grep",
+            {},
+            {
+                "content": [{
+                    "type": "text",
+                    "text": json.dumps(
+                        {
+                            "evidenceHandle": "internal-handle-must-not-render",
+                            "evidenceRequest": {
+                                "path": "/Volumes/private/project/rag_ime",
+                                "pattern": "rime_lexicon_review",
+                                "limit": 100,
+                                "context": 2,
+                            },
+                            "evidenceSummary": evidence_summary,
+                            "evidenceBytes": len(evidence_summary.encode("utf-8")) + 500,
+                            "evidenceSha256": "a" * 64,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }],
+            },
+        )
+
+        self.assertEqual(result["path"], "…/project/rag_ime")
+        self.assertEqual(result["pattern"], "rime_lexicon_review")
+        self.assertEqual(result["limit"], 100)
+        self.assertEqual(result["context"], 2)
+        self.assertEqual(result["outputPreview"], evidence_summary)
+        self.assertTrue(result["outputTruncated"])
+        serialized = json.dumps(result, ensure_ascii=False)
+        self.assertNotIn("evidenceHandle", serialized)
+        self.assertNotIn("internal-handle", serialized)
+        self.assertNotIn("evidenceSha256", serialized)
+
     def test_coding_tool_projection_redacts_commands_and_never_previews_secret_files(self) -> None:
         command = public_code_tool_activity(
             "bash",
@@ -1471,6 +1905,301 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
         self.assertNotIn("result", event.payload)
 
+    def test_cold_history_reads_managed_jsonl_without_opening_provider_context(self) -> None:
+        session_id = str(self.first["id"])
+        transcript = self.root / "sessions" / "cold-history.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        entries = [
+            {"type": "session", "id": "pi-cold-history"},
+            {
+                "type": "message",
+                "id": "cold-user",
+                "parentId": "",
+                "timestamp": "1970-01-01T00:00:00.100Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "冷启动历史问题"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "cold-assistant",
+                "parentId": "cold-user",
+                "timestamp": "1970-01-01T00:00:00.200Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "冷启动历史回答"}],
+                },
+            },
+        ]
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        self.store.bind_runtime_session(
+            session_id,
+            driver_id="managed-pi",
+            runtime_kind="pi_rpc",
+            external_session_id="pi-cold-history",
+            transcript_ref=transcript.as_posix(),
+            branch_anchor="cold-assistant",
+            binding_state="active",
+            metadata={"protocolVersion": "2"},
+            message_count=2,
+        )
+        context_calls: list[str] = []
+        self.runtime._session_context_provider = (  # noqa: SLF001 - latency contract
+            lambda session: context_calls.append(str(session["id"])) or {}
+        )
+
+        with patch.object(
+            self.runtime,
+            "_host",
+            side_effect=AssertionError("history must not start the Runtime Host"),
+        ):
+            snapshot = self.runtime.session_snapshot(session_id)
+
+        self.assertEqual(
+            [
+                block["data"]["text"]
+                for message in snapshot["messages"]
+                for block in message["blocks"]
+                if block["type"] == "text"
+            ],
+            ["冷启动历史问题", "冷启动历史回答"],
+        )
+        self.assertEqual(context_calls, [])
+        self.assertFalse((self.root / "agent" / "host-requests.jsonl").exists())
+
+    def test_resident_history_and_command_reads_skip_context_reassembly(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        context_calls: list[str] = []
+        self.runtime._session_context_provider = (  # noqa: SLF001 - latency contract
+            lambda session: context_calls.append(str(session["id"])) or {}
+        )
+
+        with patch.object(
+            self.store,
+            "set_status",
+            wraps=self.store.set_status,
+        ) as set_status:
+            snapshot = self.runtime.session_snapshot(session_id)
+            commands = self.runtime.command_catalog(session_id)
+
+        self.assertTrue(snapshot["messages"] == [])
+        self.assertTrue(commands)
+        self.assertEqual(context_calls, [])
+        set_status.assert_not_called()
+
+    def test_resident_idle_history_prefers_populated_durable_branch_without_live_snapshot(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        binding = self.store.runtime_binding(session_id)
+        transcript = Path(binding["transcriptRef"])
+        root_id = str(binding["externalSessionId"])
+        time.sleep(0.01)
+        entries = [
+            {"type": "session", "id": root_id},
+            {
+                "type": "message",
+                "id": "resident-user",
+                "parentId": root_id,
+                "timestamp": "1970-01-01T00:00:00.100Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "常驻历史问题"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "resident-answer",
+                "parentId": "resident-user",
+                "timestamp": "1970-01-01T00:00:00.200Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "常驻历史回答"}],
+                },
+            },
+        ]
+        transcript.write_text(
+            "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+            encoding="utf-8",
+        )
+        request_log = self.root / "agent" / "host-requests.jsonl"
+        before = [
+            json.loads(line)
+            for line in request_log.read_text(encoding="utf-8").splitlines()
+        ]
+
+        snapshot = self.runtime.session_snapshot(session_id)
+
+        self.assertEqual(
+            [
+                block["data"]["text"]
+                for message in snapshot["messages"]
+                for block in message["blocks"]
+                if block["type"] == "text"
+            ],
+            ["常驻历史问题", "常驻历史回答"],
+        )
+        after = [
+            json.loads(line)
+            for line in request_log.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [item["method"] for item in after].count("session.snapshot"),
+            [item["method"] for item in before].count("session.snapshot"),
+        )
+
+    def test_resident_idle_history_keeps_body_across_repeated_reads(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.prompt(session_id, "resident history")
+        _wait_until(lambda: self.store.get(session_id)["status"] == "idle")
+
+        transcript = Path(
+            self.store.runtime_binding(session_id)["transcriptRef"]
+        )
+        self.assertEqual(
+            [json.loads(line)["type"] for line in transcript.read_text().splitlines()],
+            ["session"],
+        )
+
+        for _ in range(2):
+            snapshot = self.runtime.session_snapshot(session_id)
+            self.assertEqual(
+                [
+                    block["data"]["text"]
+                    for message in snapshot["messages"]
+                    for block in message["blocks"]
+                    if block["type"] == "text"
+                ],
+                ["resident history", f"host reply for {session_id}"],
+            )
+
+        requests = [
+            json.loads(line)
+            for line in (
+                self.root / "agent" / "host-requests.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [item["method"] for item in requests].count("session.open"),
+            1,
+        )
+        self.assertEqual(
+            [item["method"] for item in requests].count("session.snapshot"),
+            2,
+        )
+
+    def test_snapshot_history_uses_only_the_selected_durable_branch(self) -> None:
+        entries = [
+            {"type": "session", "id": "root"},
+            {
+                "type": "message",
+                "id": "entry-user",
+                "parentId": "root",
+                "timestamp": "1970-01-01T00:00:00.100Z",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "保留的提问"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "entry-answer",
+                "parentId": "entry-user",
+                "timestamp": "1970-01-01T00:00:00.200Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "保留的回答"}],
+                },
+            },
+            {
+                "type": "message",
+                "id": "entry-other-branch",
+                "parentId": "entry-user",
+                "timestamp": "1970-01-01T00:00:00.300Z",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "另一分支"}],
+                },
+            },
+        ]
+
+        messages, selected_entries = _pi_durable_branch_messages(
+            entries,
+            leaf_id="entry-answer",
+        )
+
+        self.assertEqual(
+            [message["content"][0]["text"] for message in messages],
+            ["保留的提问", "保留的回答"],
+        )
+        self.assertEqual([entry["id"] for entry in selected_entries], ["entry-user", "entry-answer"])
+        self.assertEqual(messages[0]["id"], "entry-user")
+        self.assertEqual(messages[0]["timestamp"], 100)
+
+    def test_mixed_text_and_tool_message_keeps_text_but_not_tool_protocol(self) -> None:
+        mixed = {
+            "role": "assistant",
+            "timestamp": 101,
+            "content": [
+                {"type": "text", "text": "我先检查项目入口。"},
+                {
+                    "type": "toolCall",
+                    "id": "call-read",
+                    "name": "workspace_read",
+                    "arguments": {
+                        "path": "/Users/private/project/README.md",
+                        "apiKey": "top-secret",
+                    },
+                },
+            ],
+        }
+        tool_only = {
+            **mixed,
+            "content": [mixed["content"][1]],
+        }
+
+        self.assertTrue(pi_message_is_public(mixed))
+        self.assertFalse(pi_message_completes_public_turn(mixed))
+        self.assertFalse(pi_message_is_public(tool_only))
+        payload = pi_message_payload(
+            mixed,
+            session_id="session-1",
+            turn_id="turn-1",
+        ).to_payload()
+        self.assertEqual(
+            [block["type"] for block in payload["blocks"]],
+            ["text"],
+        )
+        serialized = json.dumps(payload, ensure_ascii=False)
+        self.assertIn("我先检查项目入口", serialized)
+        self.assertNotIn("workspace_read", serialized)
+        self.assertNotIn("top-secret", serialized)
+        self.assertNotIn("/Users/private", serialized)
+
+    def test_only_openai_response_summaries_are_public(self) -> None:
+        openai = {
+            "api": "openai-responses",
+            "content": [{
+                "type": "thinking",
+                "thinking": (
+                    "**Analyzing session history**\n\n"
+                    "**Inspecting /Users/private/project/runtime.py**"
+                ),
+                "thinkingSignature": "opaque-provider-signature",
+            }],
+        }
+        anthropic = {**openai, "api": "anthropic-messages"}
+
+        self.assertEqual(
+            public_reasoning_summaries(openai),
+            ["Analyzing session history", "Inspecting [REDACTED_PATH]"],
+        )
+        self.assertEqual(public_reasoning_summaries(anthropic), [])
+
     def test_transcript_tool_messages_rebuild_a_redacted_durable_timeline(self) -> None:
         raw_messages = [
             {
@@ -1482,16 +2211,23 @@ class PiRuntimeV2Tests(unittest.TestCase):
             {
                 "id": "assistant-tool-1",
                 "role": "assistant",
+                "api": "openai-responses",
                 "timestamp": 101,
-                "content": [{
-                    "type": "toolCall",
-                    "id": "tool-1",
-                    "name": "workspace_read",
-                    "arguments": {
-                        "path": "/Users/private/project/README.md",
-                        "apiKey": "top-secret",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "**Planning project inspection**",
                     },
-                }],
+                    {
+                        "type": "toolCall",
+                        "id": "tool-1",
+                        "name": "workspace_read",
+                        "arguments": {
+                            "path": "/Users/private/project/README.md",
+                            "apiKey": "top-secret",
+                        },
+                    },
+                ],
             },
             {
                 "role": "toolResult",
@@ -1524,10 +2260,17 @@ class PiRuntimeV2Tests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual([event["eventType"] for event in events], ["tool_started", "tool_finished"])
-        self.assertEqual([event["turnId"] for event in events], ["history:user-1", "history:user-1"])
-        self.assertEqual([event["createdAtMs"] for event in events], [501, 902])
-        self.assertEqual(events[0]["payload"]["publicResult"]["fileName"], "README.md")
+        self.assertEqual(
+            [event["eventType"] for event in events],
+            ["reasoning_summary", "tool_started", "tool_finished"],
+        )
+        self.assertEqual(
+            [event["turnId"] for event in events],
+            ["history:user-1", "history:user-1", "history:user-1"],
+        )
+        self.assertEqual([event["createdAtMs"] for event in events], [501, 502, 902])
+        self.assertEqual(events[0]["payload"]["items"], ["Planning project inspection"])
+        self.assertEqual(events[1]["payload"]["publicResult"]["fileName"], "README.md")
         serialized = json.dumps(events, ensure_ascii=False)
         self.assertNotIn("top-secret", serialized)
         self.assertNotIn("/Users/private", serialized)
@@ -1577,7 +2320,10 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "message": {
                 "role": "assistant",
                 "timestamp": 101,
-                "content": [{"type": "toolCall", "id": "call-next", "name": "agent_plan"}],
+                "content": [
+                    {"type": "text", "text": "我已经找到主要结构，继续核对最后一项。"},
+                    {"type": "toolCall", "id": "call-next", "name": "agent_plan"},
+                ],
             },
         })
         send({
@@ -1592,6 +2338,11 @@ class PiRuntimeV2Tests(unittest.TestCase):
         events, gap = self.events.replay(session_id)
         self.assertFalse(gap)
         completed = [event.payload["message"] for event in events if event.event_type == "message_completed"]
+        progress = [event.payload for event in events if event.event_type == "text_delta"]
+        self.assertEqual(
+            [(item["delta"], item.get("replaceContent")) for item in progress],
+            [("我已经找到主要结构，继续核对最后一项。", True)],
+        )
         self.assertEqual(len(completed), 1)
         self.assertEqual([block["type"] for block in completed[-1]["blocks"]], ["file", "text"])
         self.assertEqual(completed[-1]["blocks"][0]["data"]["mimeType"], "text/x-diff")
@@ -1674,7 +2425,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         requests = [json.loads(line) for line in (self.root / "agent" / "host-requests.jsonl").read_text().splitlines()]
         opened = [row for row in requests if row["method"] == "session.open"]
         self.assertEqual(len(opened), 2)
-        self.assertEqual(opened[0]["params"]["toolManifest"][0]["name"], "ime_memory")
+        self.assertEqual(opened[0]["params"]["toolManifest"][0]["name"], "memory")
         self.assertEqual(opened[0]["params"]["thinkingLevel"], "max")
 
     def test_live_peer_runtime_manager_cannot_kill_the_active_host(self) -> None:
@@ -1789,7 +2540,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         )
         self.assertEqual(
             sum(request["method"] == "models.list" for request in requests),
-            workers,
+            1,
         )
 
     def test_close_session_keeps_other_hosted_sessions_ready(self) -> None:
@@ -1842,6 +2593,17 @@ class PiRuntimeV2Tests(unittest.TestCase):
         session_id = str(self.first["id"])
         catalog = self.runtime.model_catalog(session_id)
         self.assertEqual(catalog["models"][0]["thinkingLevels"], ["off", "medium", "xhigh", "max"])
+        requests = [
+            json.loads(line)
+            for line in (
+                self.root / "agent" / "host-requests.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [request["method"] for request in requests],
+            ["hello", "models.list"],
+        )
+        self.assertEqual(self.runtime.runtime_status()["openSessionIds"], [])
         self.runtime.set_thinking_level(session_id, level="max")
 
         accepted = self.runtime.prompt(session_id, "hello", client_message_id="client-1")
@@ -2010,6 +2772,74 @@ class PiRuntimeV2Tests(unittest.TestCase):
             completed[-1].payload["terminalEvent"],
             "agent_settled",
         )
+
+    def test_tool_loop_no_progress_becomes_one_public_failed_terminal(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-tool-loop-no-progress"
+        with self.runtime._lock:
+            state = self.runtime._states[session_id]
+            state.turn_id = turn_id
+            state.had_tool_activity = True
+
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "tool_loop_no_progress",
+                "message": "Tool Loop 连续未产生成功结果，已按受管无进展策略停止。",
+                "reason": "repeated_failure_signature",
+                "consecutiveAllErrorTurns": 3,
+                "repeatedFailureSignature": 3,
+                "toolNames": ["read"],
+            },
+        })
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "agent_end",
+                "messages": [{
+                    "role": "assistant",
+                    "stopReason": "toolUse",
+                    "content": [{
+                        "type": "toolCall",
+                        "id": "call-3",
+                        "name": "read",
+                        "arguments": {"path": "/missing"},
+                    }],
+                }],
+            },
+        })
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {"type": "agent_settled"},
+        })
+
+        events = self.events.replay(session_id)[0]
+        guarded = [
+            event for event in events
+            if event.event_type == "status_changed"
+            and event.payload.get("phase") == "tool_loop_no_progress"
+        ]
+        self.assertEqual(guarded[-1].payload["reason"], "repeated_failure_signature")
+        self.assertEqual(guarded[-1].payload["toolNames"], ["read"])
+        failed = [
+            event for event in events
+            if event.event_type == "turn_failed"
+            and event.turn_id == turn_id
+        ]
+        self.assertEqual(len(failed), 1)
+        self.assertIn("受管无进展策略停止", failed[0].payload["error"])
+        self.assertFalse(failed[0].payload["retryable"])
+        self.assertEqual(self.store.get(session_id)["status"], "faulted")
 
     def test_snapshot_collapses_only_adjacent_duplicate_assistant_projection(self) -> None:
         session_id = str(self.first["id"])
@@ -2243,6 +3073,44 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(methods[-1], "session.debug.context")
         self.assertNotIn("session.snapshot", methods)
 
+    def test_idle_control_probe_closes_tool_loop_when_agent_settled_is_lost(self) -> None:
+        session_id = str(self.first["id"])
+        accepted = self.runtime.prompt(
+            session_id,
+            "end-without-settled",
+            client_message_id="lost-settled",
+        )
+        turn_id = str(accepted["turnId"])
+
+        _wait_until(
+            lambda: any(
+                item.event_type == "turn_completed"
+                and item.turn_id == turn_id
+                for item in self.events.replay(session_id)[0]
+            ),
+            timeout=2.5,
+        )
+        completed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_completed"
+            and item.turn_id == turn_id
+        ]
+        self.assertEqual(
+            completed[-1].payload["terminalEvent"],
+            "idle_control_reconciliation",
+        )
+        self.assertEqual(completed[-1].payload["status"], "completed")
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        self.assertEqual(self.runtime._states[session_id].turn_id, "")
+
+        continued = self.runtime.prompt(
+            session_id,
+            "继续发送",
+            client_message_id="after-lost-settled",
+        )
+        self.assertTrue(continued["accepted"])
+
     def test_abort_ack_without_agent_settled_escalates_to_durable_host_tree_kill(self) -> None:
         session_id = str(self.first["id"])
         accepted = self.runtime.prompt(session_id, "hang-without-settled")
@@ -2261,6 +3129,22 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(completed[-1].turn_id, turn_id)
         self.assertEqual(completed[-1].payload["status"], "aborted")
         self.assertEqual(completed[-1].payload["terminalEvent"], "abort_timeout_kill")
+        _wait_until(
+            lambda: any(
+                item.event_type == "status_changed"
+                and item.payload.get("escalated") is True
+                for item in self.events.replay(session_id)[0]
+            ),
+            timeout=2.5,
+        )
+        escalations = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "status_changed"
+            and item.payload.get("escalated") is True
+        ]
+        self.assertEqual(escalations[-1].payload["status"], "idle")
+        self.assertEqual(escalations[-1].payload["runtimeStatus"], "stopping")
         _wait_until(
             lambda: self.runtime.runtime_status()["status"] == "faulted"
             and self.runtime.runtime_status()["runtimeHostKillGate"]["lastKillReceipt"] is not None
@@ -2340,6 +3224,64 @@ class PiRuntimeV2Tests(unittest.TestCase):
         failed = [item for item in self.events.replay(session_id)[0] if item.event_type == "turn_failed"]
         self.assertEqual(failed[-1].turn_id, "turn-provider-error")
         self.assertEqual(failed[-1].payload["error"], "provider failed")
+        self.assertEqual(
+            failed[-1].payload["reasonCode"],
+            "provider_failure_unclassified",
+        )
+        self.assertFalse(failed[-1].payload["retryable"])
+        self.assertFalse(failed[-1].payload["hadToolActivity"])
+
+    def test_transport_failure_without_tool_activity_is_retryable(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+
+        self.runtime._turn_failed(
+            session_id,
+            "turn-transport-error",
+            RuntimeError("fetch failed"),
+        )
+
+        failed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_failed"
+        ][-1]
+        self.assertEqual(
+            failed.payload["failureKind"],
+            "transient_provider_failure",
+        )
+        self.assertEqual(
+            failed.payload["reasonCode"],
+            "provider_transport_failure",
+        )
+        self.assertTrue(failed.payload["retryable"])
+        self.assertFalse(failed.payload["hadToolActivity"])
+
+    def test_transport_failure_after_tool_activity_is_not_retryable(
+        self,
+    ) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        with self.runtime._lock:
+            self.runtime._states[session_id].had_tool_activity = True
+
+        self.runtime._turn_failed(
+            session_id,
+            "turn-tool-transport-error",
+            RuntimeError("fetch failed"),
+        )
+
+        failed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_failed"
+        ][-1]
+        self.assertEqual(
+            failed.payload["reasonCode"],
+            "tool_activity_observed",
+        )
+        self.assertFalse(failed.payload["retryable"])
+        self.assertTrue(failed.payload["hadToolActivity"])
 
     def test_host_exit_is_classified_separately_from_provider_failure(self) -> None:
         session_id = str(self.first["id"])

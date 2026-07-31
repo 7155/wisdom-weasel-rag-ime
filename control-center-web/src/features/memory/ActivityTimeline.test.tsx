@@ -13,12 +13,12 @@ import { ActivityTimeline } from './ActivityTimeline';
 
 afterEach(cleanup);
 
-describe('ActivityTimeline semantic tasks', () => {
-  it('keeps a cross-app morning activity as one semantic task and reveals its evidence chain', async () => {
+describe('ActivityTimeline activity projection', () => {
+  it('keeps a cross-app morning activity together and reveals its evidence chain', async () => {
     const user = userEvent.setup();
     renderTimeline(semanticTimeline());
 
-    expect(await screen.findByText('2 个语义任务')).toBeInTheDocument();
+    expect(await screen.findByText('2 项活动')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '上午' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '下午' })).toBeInTheDocument();
 
@@ -47,13 +47,15 @@ describe('ActivityTimeline semantic tasks', () => {
     await user.click(within(eventDetails!).getByRole('button', { name: /Terminal 命令记录/ }));
     const referenceDialog = await screen.findByRole('dialog', { name: 'Terminal 命令记录' });
     expect(within(referenceDialog).getByText('通过 cas 切换到工作账号。')).toBeVisible();
+    expect(within(referenceDialog).getByRole('region', { name: '整理使用的输入上下文' })).toBeVisible();
+    expect(within(referenceDialog).getByText('准备切换工作账号')).toBeVisible();
   });
 
   it('falls back to legacy segments and preserves expandable source event identities', async () => {
     const user = userEvent.setup();
     renderTimeline(legacyTimeline());
 
-    expect(await screen.findByText('1 个语义任务')).toBeInTheDocument();
+    expect(await screen.findByText('1 项活动')).toBeInTheDocument();
     expect(screen.queryByText('1 个时段')).not.toBeInTheDocument();
     const task = screen.getByRole('button', { name: /查看任务：实现旧时间线兼容/ });
     await user.click(task);
@@ -64,17 +66,20 @@ describe('ActivityTimeline semantic tasks', () => {
     await user.click(eventSummary!);
     expect(within(dialog).getByText('原始事件 #201')).toBeInTheDocument();
     expect(within(dialog).getByText('当前接口未返回这条事件的来源引用。')).toBeVisible();
+    expect(dialog).toHaveTextContent('分类未标注');
   });
 
-  it('turns production evidenceRefs into expandable events while preserving coarse task granularity', async () => {
+  it('projects a minute-scale production fragment as ordinary activity with reference-only evidence', async () => {
     const user = userEvent.setup();
     renderTimeline(evidenceRefTimeline());
 
-    expect(await screen.findByText('1 个语义任务')).toBeInTheDocument();
+    expect(await screen.findByText('1 项活动')).toBeInTheDocument();
     const task = screen.getByRole('button', { name: '查看任务：切换账号并继续记忆系统开发' });
     expect(within(task).getByText('Terminal')).toBeInTheDocument();
     expect(within(task).getByText('Codex')).toBeInTheDocument();
     expect(within(task).getByText('2 条证据')).toBeInTheDocument();
+    expect(within(task).getAllByText('普通活动').length).toBeGreaterThan(0);
+    expect(within(task).queryByText('长时聚合')).not.toBeInTheDocument();
 
     await user.click(task);
     const dialog = await screen.findByRole('dialog', { name: '切换账号并继续记忆系统开发' });
@@ -83,7 +88,7 @@ describe('ActivityTimeline semantic tasks', () => {
     await user.click(firstEvent!);
     const firstEventDetails = firstEvent!.closest('details');
     expect(firstEventDetails).not.toBeNull();
-    expect(within(firstEventDetails!).getAllByText('通过 cas 切换到工作账号。').length).toBeGreaterThan(0);
+    expect(within(firstEventDetails!).getByText('当前接口只提供事件身份，未返回可展示的事件摘要。')).toBeVisible();
     expect(within(firstEventDetails!).getByRole('button', { name: '打开原始事件' })).toBeVisible();
   });
 
@@ -92,10 +97,10 @@ describe('ActivityTimeline semantic tasks', () => {
 
     expect(await screen.findByRole('heading', { name: '全天' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '上午' })).not.toBeInTheDocument();
-    expect(screen.getByText('任务跨度合计')).toBeInTheDocument();
+    expect(screen.getByText('首末证据跨度合计')).toBeInTheDocument();
     expect(screen.queryByText('活跃时长')).not.toBeInTheDocument();
     const task = screen.getByRole('button', { name: '查看任务：持续优化输入法记忆召回' });
-    expect(within(task).getByText('跨度 6 小时')).toBeInTheDocument();
+    expect(within(task).getByText('长时聚合 · 首末证据跨度 6 小时')).toBeInTheDocument();
   });
 });
 
@@ -143,6 +148,14 @@ function timelineTransport(timeline: Record<string, unknown>): ControlTransport 
             text: '通过 cas 切换到工作账号。',
             status: 'active',
             occurredAtMs: new Date(2026, 6, 18, 9, 0).getTime(),
+            sourceContextAvailable: true,
+            sourceContext: {
+              recentContext: '准备切换工作账号',
+              preedit: 'cas codex',
+              redacted: false,
+              scopeProject: 'wisdom-weasel-rag-ime',
+              usedFor: ['source_fingerprint', 'semantic_grouping'],
+            },
           },
           source: { kind: 'input_event', id: String(request.params?.referenceId ?? '') },
           evidenceRefs: [],
@@ -165,6 +178,8 @@ function semanticTimeline(): Record<string, unknown> {
     summary: '上午完成账号切换与连续开发，下午验证记忆召回。',
     eventCount: 12,
     segmentCount: 2,
+    ordinaryActivityCount: 0,
+    consolidatedActivityCount: 2,
     updatedAtMs: start + 8 * 3_600_000,
     semanticTasks: [
       {
@@ -173,6 +188,7 @@ function semanticTimeline(): Record<string, unknown> {
         period: 'morning',
         startMs: start,
         endMs: start + 2 * 3_600_000,
+        activityKind: 'consolidated_activity',
         summary: '在 Terminal 通过 cas 切换 Codex 账号，随后回到 Codex 延续同一项开发工作。',
         apps: [
           { bundleId: 'com.apple.Terminal', name: 'Terminal', eventCount: 2 },
@@ -218,6 +234,7 @@ function semanticTimeline(): Record<string, unknown> {
         startMs: start + 5 * 3_600_000,
         endMs: start + 6.5 * 3_600_000,
         summary: '验证生成、会话首次注入和 Agent Tools 的召回。',
+        activityKind: 'consolidated_activity',
         apps: [{ bundleId: 'com.mitchellh.ghostty', name: 'Ghostty', eventCount: 4 }],
         eventCount: 4,
         evidenceCount: 4,
@@ -240,13 +257,16 @@ function evidenceRefTimeline(): Record<string, unknown> {
     summary: '上午围绕同一项记忆系统工作，在 Terminal 和 Codex 之间切换。',
     eventCount: 2,
     segmentCount: 1,
+    ordinaryActivityCount: 1,
+    consolidatedActivityCount: 0,
     updatedAtMs: start + 2 * 3_600_000,
     segments: [
       {
         segmentId: 'semantic-task:production-evidence-refs',
         title: '切换账号并继续记忆系统开发',
         startMs: start,
-        endMs: start + 2 * 3_600_000,
+        endMs: start + 20 * 60_000,
+        activityKind: 'ordinary_activity',
         summary: '通过 cas 切换账号后继续完成记忆系统开发。',
         apps: ['com.apple.Terminal', 'com.openai.codex'],
         eventCount: 2,
@@ -258,7 +278,7 @@ function evidenceRefTimeline(): Record<string, unknown> {
             app: 'com.apple.Terminal',
             sourceKind: 'terminal',
             occurredAtMs: start,
-            preview: '通过 cas 切换到工作账号。',
+            redacted: false,
           },
           {
             sourceType: 'input_event',
@@ -267,7 +287,7 @@ function evidenceRefTimeline(): Record<string, unknown> {
             app: 'com.openai.codex',
             sourceKind: 'pi_agent',
             occurredAtMs: start + 20 * 60_000,
-            preview: '继续完成个人记忆系统的语义时间线。',
+            redacted: false,
           },
         ],
       },
@@ -286,6 +306,8 @@ function crossPeriodTimeline(): Record<string, unknown> {
     summary: '上午到下午持续优化输入法记忆召回。',
     eventCount: 2,
     segmentCount: 1,
+    ordinaryActivityCount: 0,
+    consolidatedActivityCount: 1,
     updatedAtMs: start + 6 * 3_600_000,
     segments: [
       {
@@ -293,6 +315,7 @@ function crossPeriodTimeline(): Record<string, unknown> {
         title: '持续优化输入法记忆召回',
         startMs: start,
         endMs: start + 6 * 3_600_000,
+        activityKind: 'consolidated_activity',
         summary: '上午开始排查，下午完成验证。',
         apps: ['com.openai.codex'],
         eventCount: 2,
@@ -314,6 +337,8 @@ function legacyTimeline(): Record<string, unknown> {
     summary: '旧时间线载荷仍然可以阅读。',
     eventCount: 1,
     segmentCount: 1,
+    ordinaryActivityCount: 0,
+    consolidatedActivityCount: 0,
     updatedAtMs: start,
     segments: [
       {

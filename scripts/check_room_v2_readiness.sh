@@ -18,7 +18,7 @@ export UV_CACHE_DIR=${UV_CACHE_DIR:-/tmp/rag-ime-uv-cache}
 uv run python -m unittest \
   tests.test_room_v2_readiness \
   tests.test_agent_room_capabilities.RoomCapabilityManifestTests.test_progressive_search_discloses_catalog_then_loads_exactly_one_schema \
-  tests.test_agent_room_capabilities.RoomCapabilityManifestTests.test_legacy_and_canonical_entry_share_one_authorization_receipt
+  tests.test_agent_room_capabilities.RoomCapabilityManifestTests.test_retired_tool_names_are_rejected_before_authorization
 node scripts/generate_control_center_contracts.mjs --check
 
-printf '%s\n' "Room V2 readiness gate passed: commits, 65->94 migration, 136 contracts, capability receipts, default-off rollback, and no-binding smoke."
+printf '%s\n' "Room V2 readiness gate passed: commits, 65->94 migration, reproducible contracts, capability receipts, retired-name rejection, default-off rollback, and no-binding smoke."

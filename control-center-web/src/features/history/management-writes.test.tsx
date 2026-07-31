@@ -33,9 +33,9 @@ describe('History WorkContract UI', () => {
   it('opens a real full-text detail from the keyboard and exposes only verified server state', async () => {
     const user = userEvent.setup();
     const transport = renderHistory();
-    const row = await screen.findByRole('row', { name: /查看 .* 的输入详情/ });
+    const openDetail = await screen.findByRole('button', { name: /查看 .* 的输入详情/ });
 
-    row.focus();
+    openDetail.focus();
     await user.keyboard('{Enter}');
 
     const dialog = await screen.findByRole('dialog', { name: '输入详情' });
@@ -47,10 +47,12 @@ describe('History WorkContract UI', () => {
     expect(within(dialog).getByText('澄')).toBeInTheDocument();
     expect(within(dialog).getByRole('heading', { name: '辅助上下文' })).toBeInTheDocument();
     expect(within(dialog).getByText('前面正在核对来源筛选，随后完成了当前输入。')).toBeInTheDocument();
-    expect(within(dialog).getByText('Accessibility 文本')).toBeInTheDocument();
+    expect(within(dialog).getByText('辅助功能读取')).toBeInTheDocument();
     expect(within(dialog).getByText('未关联')).toBeInTheDocument();
     expect(within(dialog).queryByText('wisdom-weasel-rag-ime')).not.toBeInTheDocument();
     expect(findRequest(transport, 'history.detail')).toMatchObject({ query: { eventId: 81 } });
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(openDetail).toHaveFocus());
     expect(historyPage().items[0]).not.toHaveProperty('text');
   });
 

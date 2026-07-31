@@ -163,6 +163,8 @@ class AgentRuntimeDriver(Protocol):
         resolution_state: str = "",
     ) -> None: ...
 
+    def pending_ui_requests(self, session_id: str) -> list[dict[str, object]]: ...
+
     def resolve_ui_request(
         self,
         session_id: str,

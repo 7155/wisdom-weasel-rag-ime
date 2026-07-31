@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import unittest
+from http import HTTPStatus
+from types import SimpleNamespace
 
 from rag_ime.agent_routes import (
+    agent_background_job_route,
     agent_approval_route,
     agent_artifact_route,
     agent_context_item_route,
@@ -14,6 +17,7 @@ from rag_ime.agent_routes import (
     agent_session_route,
     agent_wake_schedule_route,
 )
+from rag_ime.debug_server import DebugRequestHandler
 
 
 class AgentRouteTests(unittest.TestCase):
@@ -59,6 +63,18 @@ class AgentRouteTests(unittest.TestCase):
             ("agent:123", "review"),
         )
 
+    def test_ui_response_session_route_is_strict_and_url_decoded(self) -> None:
+        self.assertEqual(
+            agent_session_route("/api/agent/sessions/agent%3A123/ui-response"),
+            ("agent:123", "ui-response"),
+        )
+        self.assertEqual(
+            agent_session_route(
+                "/api/agent/sessions/agent%3A123/ui-response/extra"
+            ),
+            ("", ""),
+        )
+
     def test_unknown_or_nested_routes_do_not_fall_through(self) -> None:
         for path in (
             "/api/agent/sessions",
@@ -69,6 +85,74 @@ class AgentRouteTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertEqual(agent_session_route(path), ("", ""))
+
+    def test_ui_response_handler_receives_decoded_session_id_and_payload(self) -> None:
+        calls: list[tuple[str, dict[str, object]]] = []
+        payload: dict[str, object] = {
+            "requestId": "ui-request:456",
+            "value": "approved",
+        }
+
+        class AgentRecorder:
+            def resolve_ui_request(
+                self,
+                session_id: str,
+                request: dict[str, object],
+            ) -> dict[str, object]:
+                calls.append((session_id, request))
+                return {"ok": True, "requestId": request["requestId"]}
+
+        handler = DebugRequestHandler.__new__(DebugRequestHandler)
+        handler.service = SimpleNamespace(agent=AgentRecorder())
+        handler.path = "/api/agent/sessions/agent%3A123/ui-response"
+        handler._authorize_gateway_request = lambda _method, _parsed: True
+        handler._management_post_security_error = (
+            lambda _path, require_json=True: None
+        )
+        handler._read_json = lambda: payload
+        written: list[tuple[HTTPStatus, dict[str, object]]] = []
+        handler._write_json = lambda status, body: written.append((status, body))
+
+        handler.do_POST()
+
+        self.assertEqual(calls, [("agent:123", payload)])
+        self.assertEqual(
+            written,
+            [(HTTPStatus.OK, {"ok": True, "requestId": "ui-request:456"})],
+        )
+
+    def test_background_job_routes_are_strict_and_url_decoded(self) -> None:
+        job_id = "bg_0123456789abcdef0123456789abcdef"
+        self.assertEqual(
+            agent_background_job_route(
+                f"/api/agent/sessions/agent%3A123/background-jobs/{job_id}"
+            ),
+            ("agent:123", job_id, "status"),
+        )
+        self.assertEqual(
+            agent_background_job_route(
+                f"/api/agent/sessions/agent%3A123/background-jobs/{job_id}/logs"
+            ),
+            ("agent:123", job_id, "logs"),
+        )
+        self.assertEqual(
+            agent_background_job_route(
+                f"/api/agent/sessions/agent%3A123/background-jobs/{job_id}/cancel"
+            ),
+            ("agent:123", job_id, "cancel"),
+        )
+        self.assertEqual(
+            agent_background_job_route(
+                "/api/agent/sessions/agent%3A123/background-jobs"
+            ),
+            ("agent:123", "", "collection"),
+        )
+        for path in (
+            f"/api/agent/sessions/agent:123/background-jobs/{job_id}/unknown",
+            "/api/agent/sessions/agent:123/background-jobs/not-a-job",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(agent_background_job_route(path), ("", "", ""))
 
     def test_context_routes_are_strict_and_url_decoded(self) -> None:
         self.assertEqual(

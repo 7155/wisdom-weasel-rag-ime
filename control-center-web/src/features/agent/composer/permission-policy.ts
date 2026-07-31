@@ -13,8 +13,8 @@ export type PermissionPreset = AgentPermissionSelection & {
 export const PERMISSION_PRESETS: PermissionPreset[] = [
   {
     id: 'controlled',
-    label: '每次确认',
-    description: '只读自动，写入与 Shell 逐项批准',
+    label: '写入与命令确认',
+    description: '读取、搜索和预览自动；写入、Shell 与应用动作逐项批准',
     icon: 'shield',
     mode: 'assistant',
     toolProfileVersion: 'control-center-v1',
@@ -40,8 +40,8 @@ export const PERMISSION_PRESETS: PermissionPreset[] = [
   },
   {
     id: 'dangerous',
-    label: '完全信任',
-    description: '范围内自动，保留取消、审计与危险动作禁区',
+    label: '全自动',
+    description: '所有待审批操作由独立审批 Agent（Luna Max）自动判定',
     icon: 'danger',
     mode: 'coordinator',
     toolProfileVersion: 'control-center-v1',

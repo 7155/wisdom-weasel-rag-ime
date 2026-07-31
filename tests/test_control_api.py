@@ -57,7 +57,7 @@ class _Capabilities:
             "items": [
                 {
                     "schemaVersion": "rag-ime.control-tool-manifest.v1",
-                    "id": "ime_memory",
+                    "id": "memory",
                     "availability": "online",
                 }
             ]
@@ -81,7 +81,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(payload["configuration"]["revision"], 3)
         self.assertEqual(payload["runtime"]["driverId"], "managed-pi")
         self.assertNotIn("lastError", payload["runtime"])
-        self.assertEqual(payload["capabilities"]["items"][0]["id"], "ime_memory")
+        self.assertEqual(payload["capabilities"]["items"][0]["id"], "memory")
         self.assertIn("agent.configuration.get", {item["pathId"] for item in payload["routes"]})
 
     def test_route_catalog_is_unique_and_internal_tool_execution_is_not_remote(self) -> None:

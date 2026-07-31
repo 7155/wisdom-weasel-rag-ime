@@ -185,7 +185,7 @@ describe('Configuration settings WorkContract UI', () => {
     });
   });
 
-  it('reads the stateless lightning model and bounded thinking choices from the live Pi catalog', async () => {
+  it('reads runtime and memory model choices from the live Pi catalog', async () => {
     const user = userEvent.setup();
     const transport = renderConfiguration(true, true);
     await screen.findByRole('heading', { name: '设置', level: 1 });
@@ -201,6 +201,12 @@ describe('Configuration settings WorkContract UI', () => {
     expect(screen.getByRole('option', { name: '最高' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: '关闭' })).not.toBeInTheDocument();
     await user.keyboard('{Escape}');
+
+    await user.click(screen.getByRole('button', { name: /^记忆/ }));
+    expect(await screen.findByRole('combobox', { name: '自动整理模型' })).toHaveTextContent('GPT-5.6 Luna');
+    expect(screen.getByRole('combobox', { name: '自动整理思考' })).toHaveTextContent('最高');
+    expect(screen.getByRole('combobox', { name: '做梦模型' })).toHaveTextContent('GPT-5.6 Luna');
+    expect(screen.getByRole('combobox', { name: '做梦思考' })).toHaveTextContent('最高');
 
     expect(screen.queryByRole('combobox', { name: '看图模型' })).not.toBeInTheDocument();
   });
@@ -336,6 +342,16 @@ function settingsPayload() {
         quickModel: 'deepseek/deepseek-v4-flash',
         quickThinkingLevel: 'high',
       },
+      memory: {
+        automaticOrganization: {
+          model: 'gpt/gpt-5.6-luna',
+          thinkingLevel: 'max',
+        },
+        dreaming: {
+          model: 'gpt/gpt-5.6-luna',
+          thinkingLevel: 'max',
+        },
+      },
     },
     runtimeConfig: { runtimeRevision: 12, settingsRevision: 'sha256:settings' },
   };
@@ -409,6 +425,28 @@ function schemaPayload() {
         description: '必须启用模型支持的思考档',
         modelKey: 'activeRag.quickModel',
       }],
+    }, {
+      id: 'memory',
+      label: '记忆',
+      fields: [{
+        key: 'memory.automaticOrganization.model',
+        type: 'pi-model',
+        label: '自动整理模型',
+      }, {
+        key: 'memory.automaticOrganization.thinkingLevel',
+        type: 'pi-thinking',
+        label: '自动整理思考',
+        modelKey: 'memory.automaticOrganization.model',
+      }, {
+        key: 'memory.dreaming.model',
+        type: 'pi-model',
+        label: '做梦模型',
+      }, {
+        key: 'memory.dreaming.thinkingLevel',
+        type: 'pi-thinking',
+        label: '做梦思考',
+        modelKey: 'memory.dreaming.model',
+      }],
     }],
   };
 }
@@ -431,7 +469,7 @@ function modelCatalogPayload() {
         provider: 'gpt',
         id: 'gpt-5.6-luna',
         name: 'GPT-5.6 Luna',
-        thinkingLevels: ['off', 'minimal', 'low', 'high'],
+        thinkingLevels: ['off', 'minimal', 'low', 'high', 'max'],
         supportsImages: true,
       }],
     }],

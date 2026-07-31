@@ -33,23 +33,65 @@ class ModelRuntimePlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="rag-ime-runtime-mlx-") as tmp:
             model = Path(tmp) / "model"
             model.mkdir()
-            deployment = ModelDeployment(
-                model_id="mini-q8",
-                path=str(model),
-                format="mlx",
-                fingerprint="sha256:test",
-                profile="minimind_ime_v2",
-                runtime="mlx",
-                prompt_mode="base-completion",
-            )
-            plan = plan_model_runtime(deployment)
+            for deployment_profile in (
+                "minimind_ime_60m_v8",
+                "minimind_ime_100m_v1",
+                "minimind_ime_v2",
+            ):
+                with self.subTest(deployment_profile=deployment_profile):
+                    deployment = ModelDeployment(
+                        model_id="mini-q8",
+                        path=str(model),
+                        format="mlx",
+                        fingerprint="sha256:test",
+                        profile=deployment_profile,
+                        runtime="mlx",
+                        prompt_mode="base-completion",
+                    )
+                    plan = plan_model_runtime(deployment)
 
-            self.assertTrue(plan.ready)
-            self.assertEqual(plan.managed_service, "com.rag-ime.mlx-predictor")
-            self.assertEqual(plan.provider_env["RAG_IME_PREDICTOR_PROVIDER"], "mlx")
-            self.assertEqual(plan.provider_env["RAG_IME_PREDICTOR_MODEL"], str(model))
-            self.assertTrue(plan.expected_capabilities["batchCandidates"])
-            self.assertEqual(plan.payload()["schemaVersion"], MODEL_RUNTIME_PLAN_SCHEMA_VERSION)
+                    self.assertTrue(plan.ready)
+                    self.assertEqual(plan.managed_service, "com.rag-ime.mlx-predictor")
+                    self.assertEqual(plan.provider_env["RAG_IME_PREDICTOR_PROVIDER"], "mlx")
+                    self.assertEqual(plan.provider_env["RAG_IME_PREDICTOR_MODEL"], str(model))
+                    self.assertEqual(
+                        plan.provider_env["RAG_IME_PREDICTOR_PROFILE"],
+                        "minimind_ime_v2",
+                    )
+                    self.assertEqual(
+                        plan.provider_env["RAG_IME_MLX_PROFILE"],
+                        "minimind_ime_v2",
+                    )
+                    self.assertEqual(plan.deployment.profile, deployment_profile)
+                    self.assertEqual(plan.provider_env["RAG_IME_PREDICTOR_MAX_TOKENS"], "8")
+                    self.assertEqual(plan.provider_env["RAG_IME_PREDICTOR_TEMPERATURE"], "0.15")
+                    self.assertEqual(plan.provider_env["RAG_IME_PREDICTOR_TOP_P"], "0.85")
+                    self.assertEqual(plan.provider_env["RAG_IME_MLX_MAX_TOKENS"], "8")
+                    self.assertTrue(plan.expected_capabilities["batchCandidates"])
+                    self.assertEqual(plan.payload()["schemaVersion"], MODEL_RUNTIME_PLAN_SCHEMA_VERSION)
+
+    def test_mlx_plan_exports_registered_generation_tuning(self) -> None:
+        deployment = ModelDeployment(
+            model_id="mini-custom",
+            path="/tmp/minimind-ime-v2",
+            format="mlx",
+            fingerprint="sha256:test",
+            profile="minimind_ime_v2",
+            runtime="mlx",
+            prompt_mode="base-completion",
+            max_tokens=12,
+            temperature=0.2,
+            top_p=0.9,
+        )
+
+        plan = plan_model_runtime(deployment)
+
+        self.assertEqual(plan.provider_env["RAG_IME_PREDICTOR_MAX_TOKENS"], "12")
+        self.assertEqual(plan.provider_env["RAG_IME_PREDICTOR_TEMPERATURE"], "0.2")
+        self.assertEqual(plan.provider_env["RAG_IME_PREDICTOR_TOP_P"], "0.9")
+        self.assertEqual(plan.provider_env["RAG_IME_MLX_MAX_TOKENS"], "12")
+        self.assertEqual(plan.provider_env["RAG_IME_MLX_TEMPERATURE"], "0.2")
+        self.assertEqual(plan.provider_env["RAG_IME_MLX_TOP_P"], "0.9")
 
     def test_ollama_plan_is_external_and_uses_model_name_not_artifact_path(self) -> None:
         deployment = ModelDeployment(
@@ -404,6 +446,17 @@ class ModelRuntimePlanTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("registry", result.stderr.lower())
 
+    def test_restart_rejects_relative_sidecar_python_before_runtime_resolution(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="rag-ime-runtime-relative-python-") as tmp:
+            home = Path(tmp) / "home"
+            env = _restart_env(home)
+            env["RAG_IME_PYTHON"] = "python3"
+
+            result = _run_restart(ROOT, env)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("RAG_IME_PYTHON must be an absolute executable file", result.stderr)
+
     def test_restart_keeps_mlx_launch_port_and_sidecar_route_consistent(self) -> None:
         with tempfile.TemporaryDirectory(prefix="rag-ime-runtime-mlx-endpoint-") as tmp:
             root = Path(tmp)
@@ -533,8 +586,10 @@ class ModelRuntimePlanTests(unittest.TestCase):
                     ),
                 )
                 env = _restart_env(home, explicit_python=False)
+                env["RAG_IME_LAUNCH_AGENT_DRY_RUN"] = "true"
                 env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
                 env["RAG_IME_MODEL_REGISTRY"] = str(registry_path)
+                env["RAG_IME_MLX_PYTHON"] = str(root / "missing-mlx-venv" / "bin" / "python")
 
                 result = _run_restart(runtime_root, env)
 

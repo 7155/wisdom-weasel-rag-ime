@@ -1756,39 +1756,10 @@ export interface SessionMemoryRecallV1 {
       | [string, string, string, string];
   };
   compactionRecovery?: {
-    schemaVersion: 'rag-ime.agent-compaction-recovery.v1';
-    originalRequirement: string;
-    currentTask: string;
-    /**
-     * @maxItems 8
-     */
-    acceptanceCriteria:
-      | []
-      | [string]
-      | [string, string]
-      | [string, string, string]
-      | [string, string, string, string]
-      | [string, string, string, string, string]
-      | [string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string];
-    acceptanceSource: 'structured_task' | 'original_requirement';
-    /**
-     * @maxItems 8
-     */
-    blockers:
-      | []
-      | [string]
-      | [string, string]
-      | [string, string, string]
-      | [string, string, string, string]
-      | [string, string, string, string, string]
-      | [string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string];
-    handoff: string;
-    latestProgress: string;
-    planStatus: string;
+    schemaVersion: 'rag-ime.agent-compaction-recovery.v2';
+    summaryPresent: boolean;
+    summarySha256: string;
+    summaryChars: number;
     /**
      * @maxItems 32
      */

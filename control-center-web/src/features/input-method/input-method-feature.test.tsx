@@ -37,6 +37,29 @@ const emptyReview = {
   confirmText: 'APPLY_REVIEWED_RIME_LEXICON',
   applySupported: true,
   reviewRequired: true,
+  organization: {
+    schemaVersion: 'rag-ime.lexicon-organization-status.v1',
+    owner: 'maintenance_poll',
+    decoderOwner: 'rime',
+    enabled: true,
+    runsPerDay: 2,
+    intervalMs: 43_200_000,
+    candidateLimit: 200,
+    lastRunAtMs: 1_783_000_000_000,
+    lastSucceededAtMs: 1_783_000_000_000,
+    nextRunAtMs: 1_783_043_200_000,
+    due: false,
+    lastRun: {
+      runId: 'lexorg-1',
+      status: 'succeeded',
+      startedAtMs: 1_783_000_000_000,
+      completedAtMs: 1_783_000_000_000,
+      candidateCount: 4,
+      filteredEntryCount: 2,
+      errorCode: '',
+      error: '',
+    },
+  },
 };
 
 const review = {
@@ -100,14 +123,14 @@ describe('InputMethodFeature', () => {
       routes: {
         'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
         'overview.get': { ok: true, profile: '标准模式' },
-        'configuration.settings': { ok: true, settings: { interaction: { postCommit: { numberKeys: 'provider_internal_v3' } } } },
+        'configuration.settings': { ok: true, settings: { interaction: { postCommit: { optionNumber: 'provider_internal_v3' } } } },
         'configuration.schema': {
           ok: true,
           sections: [{
             id: 'interaction',
             label: 'interaction',
             fields: [{
-              key: 'interaction.postCommit.numberKeys',
+              key: 'interaction.postCommit.optionNumber',
               type: 'enum',
               label: 'pathId profileVersion',
               description: '/api/internal/schema',
@@ -119,7 +142,7 @@ describe('InputMethodFeature', () => {
       },
     }));
 
-    expect(await screen.findByText('预测出现时的数字键')).toBeInTheDocument();
+    expect(await screen.findByText('Option+数字行为')).toBeInTheDocument();
     expect(screen.getAllByText('自定义设置').length).toBeGreaterThan(0);
     expect(document.body).not.toHaveTextContent('pathId');
     expect(document.body).not.toHaveTextContent('provider_internal_v3');
@@ -329,10 +352,10 @@ describe('InputMethodFeature', () => {
         {
           id: 'interaction',
           fields: [{
-            key: 'interaction.postCommit.numberKeys',
+            key: 'interaction.postCommit.optionNumber',
             type: 'enum',
-            label: 'Post-commit 数字键',
-            options: ['pass_through', 'select_prediction'],
+            label: 'Option+数字',
+            options: ['select_prediction_by_ordinal', 'disabled'],
             applyMode: 'live',
           }],
         },
@@ -363,7 +386,7 @@ describe('InputMethodFeature', () => {
           ok: true,
           runtimeRevision: 7,
           settings: {
-            interaction: { postCommit: { numberKeys: 'pass_through' } },
+            interaction: { postCommit: { optionNumber: 'select_prediction_by_ordinal' } },
             display: { maxPostCommitCandidates: 5 },
           },
         },
@@ -401,8 +424,8 @@ describe('InputMethodFeature', () => {
     });
     renderFeature(transport);
 
-    await user.click(await screen.findByRole('combobox', { name: '预测出现时的数字键' }));
-    await user.click(await screen.findByRole('option', { name: '选择对应的续写候选' }));
+    await user.click(await screen.findByRole('combobox', { name: 'Option+数字行为' }));
+    await user.click(await screen.findByRole('option', { name: '关闭' }));
     const candidateCount = screen.getByLabelText('续写候选数量');
     await user.clear(candidateCount);
     await user.type(candidateCount, '6');
@@ -412,7 +435,7 @@ describe('InputMethodFeature', () => {
     const previewRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.preview')?.request;
     expect(previewRequest?.body).toEqual({
       changes: {
-        'interaction.postCommit.numberKeys': 'select_prediction',
+        'interaction.postCommit.optionNumber': 'disabled',
         'display.maxPostCommitCandidates': 6,
       },
       expectedRuntimeRevision: 7,
@@ -428,7 +451,7 @@ describe('InputMethodFeature', () => {
     const applyRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.apply')?.request;
     expect(applyRequest?.body).toEqual({
       changes: {
-        'interaction.postCommit.numberKeys': 'select_prediction',
+        'interaction.postCommit.optionNumber': 'disabled',
         'display.maxPostCommitCandidates': 6,
       },
       expectedRuntimeRevision: 7,
@@ -445,6 +468,122 @@ describe('InputMethodFeature', () => {
       rollbackToken: 'rollback-input-settings',
       payloadSha256,
       confirmText: 'rollback',
+    });
+  });
+
+  it('renders model and interaction controls and previews only their validated changes', async () => {
+    const user = userEvent.setup();
+    const payloadSha256 = 'c'.repeat(64);
+    const transport = new MockControlTransport({
+      capabilities: {
+        features: {
+          managementWorkContract: true,
+          configurationSettingsWorkContract: true,
+        },
+      },
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'diagnostics.models': {
+          ok: true,
+          schemaVersion: 'rag-ime.models-status.v4',
+          configurationPending: false,
+          activeConfig: {
+            modelId: 'minimind-ime-v2',
+            profileId: 'minimind_ime_v2',
+            promptMode: 'base-completion',
+            maxTokens: 8,
+          },
+          availableModels: [{
+            id: 'minimind-ime-v2',
+            path: '/tmp/minimind-ime-v2',
+            profileId: 'minimind_ime_v2',
+            promptMode: 'base-completion',
+            maxTokens: 8,
+            temperature: 0.15,
+            topP: 0.85,
+            active: true,
+          }],
+          healthAgreement: { ok: true },
+        },
+        'configuration.settings': {
+          ok: true,
+          runtimeRevision: 9,
+          settings: {
+            interaction: { postCommit: { modelBudgetMs: 900, optionNumber: 'select_prediction_by_ordinal' } },
+            models: {
+              modelId: '',
+              hot: 'minimind_ime_v2',
+              path: '',
+              promptMode: 'base-completion',
+              maxTokens: 8,
+              temperature: 0.15,
+              topP: 0.85,
+            },
+          },
+        },
+        'configuration.schema': {
+          ok: true,
+          sections: [
+            {
+              id: 'interaction',
+              fields: [
+                { key: 'interaction.postCommit.modelBudgetMs', type: 'integer', min: 300, max: 12000, applyMode: 'live' },
+                { key: 'interaction.postCommit.optionNumber', type: 'enum', options: ['select_prediction_by_ordinal', 'disabled'], applyMode: 'live' },
+              ],
+            },
+            {
+              id: 'models',
+              fields: [
+                { key: 'models.modelId', type: 'string', maxLength: 128, applyMode: 'restart_predictor' },
+                { key: 'models.hot', type: 'enum', options: ['minimind_ime_v2', 'qwen3_06b_ime_hot'], applyMode: 'restart_predictor' },
+                { key: 'models.path', type: 'string', maxLength: 1024, applyMode: 'restart_predictor' },
+                { key: 'models.promptMode', type: 'enum', options: ['base-completion', 'chat-json'], applyMode: 'restart_predictor' },
+                { key: 'models.maxTokens', type: 'integer', min: 1, max: 64, applyMode: 'restart_predictor' },
+                { key: 'models.temperature', type: 'number', min: 0, max: 2, step: 0.05, applyMode: 'restart_predictor' },
+                { key: 'models.topP', type: 'number', min: 0.05, max: 1, step: 0.05, applyMode: 'restart_predictor' },
+              ],
+            },
+          ],
+        },
+        'configuration.settings.preview': {
+          ok: true,
+          pathId: 'configuration.settings.apply',
+          previewToken: 'preview-model-settings',
+          payloadSha256,
+          requiredConfirm: 'apply',
+          expiresAtMs: Date.now() + 60_000,
+          expectedRevision: { runtimeRevision: 9 },
+          summary: { title: '应用控制中心设置', items: ['更新本机模型设置'], risk: 'R2' },
+        },
+      },
+    });
+    renderFeature(transport);
+
+    expect(await screen.findByText('配置已生效')).toBeInTheDocument();
+    expect(screen.getAllByText('minimind-ime-v2').length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText('普通数字键')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: '注册模型 ID' }));
+    await user.click(screen.getByRole('option', { name: 'minimind-ime-v2' }));
+    expect(screen.getByLabelText('本机模型目录')).toHaveValue('/tmp/minimind-ime-v2');
+    const maxTokens = screen.getByLabelText('最大生成 Token');
+    await user.clear(maxTokens);
+    await user.type(maxTokens, '12');
+    const modelBudget = screen.getByLabelText('本机模型最长等待');
+    await user.clear(modelBudget);
+    await user.type(modelBudget, '1200');
+    await user.click(screen.getByRole('button', { name: '查看影响' }));
+
+    await screen.findByText('应用这些输入设置？');
+    const previewRequest = transport.requests.find(({ request }) => request.pathId === 'configuration.settings.preview')?.request;
+    expect(previewRequest?.body).toEqual({
+      changes: {
+        'interaction.postCommit.modelBudgetMs': 1200,
+        'models.modelId': 'minimind-ime-v2',
+        'models.path': '/tmp/minimind-ime-v2',
+        'models.maxTokens': 12,
+      },
+      expectedRuntimeRevision: 9,
     });
   });
 
@@ -470,23 +609,23 @@ describe('InputMethodFeature', () => {
         'configuration.settings': {
           ok: true,
           runtimeRevision: 4,
-          settings: { interaction: { postCommit: { numberKeys: 'pass_through' } } },
+          settings: { interaction: { postCommit: { optionNumber: 'select_prediction_by_ordinal' } } },
         },
         'configuration.schema': {
           ok: true,
           sections: [{
             id: 'interaction',
             fields: [{
-              key: 'interaction.postCommit.numberKeys',
+              key: 'interaction.postCommit.optionNumber',
               type: 'enum',
-              options: ['pass_through', 'select_prediction'],
+              options: ['select_prediction_by_ordinal', 'disabled'],
             }],
           }],
         },
       },
     }));
 
-    expect(await screen.findByLabelText('预测出现时的数字键')).toBeDisabled();
+    expect(await screen.findByLabelText('Option+数字行为')).toBeDisabled();
     expect(screen.getByRole('radio', { name: '安全' })).toBeDisabled();
     expect(screen.getAllByText(/没有提供完整的设置预览、应用与撤销能力/)).toHaveLength(2);
     expect(screen.queryByRole('button', { name: '尚不可预览' })).not.toBeInTheDocument();
@@ -568,6 +707,36 @@ describe('InputMethodFeature', () => {
     expect(await screen.findByText('无法确认词库能力')).toBeInTheDocument();
     expect(screen.getByText('能力接口不可用')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看已选词条' })).not.toBeInTheDocument();
+  });
+
+  it('projects the persisted cadence and a real failure receipt without changing Rime ownership', async () => {
+    renderFeature(new MockControlTransport({
+      routes: {
+        'input.source.get': { ok: true, typingReady: true, readinessState: 'ready' },
+        'overview.get': { ok: true, profile: '标准模式' },
+        'configuration.settings': settings,
+        'configuration.schema': schema,
+        'input.lexicon.review': {
+          ...emptyReview,
+          organization: {
+            ...emptyReview.organization,
+            lastRun: {
+              ...emptyReview.organization.lastRun,
+              status: 'failed',
+              candidateCount: 0,
+              errorCode: 'sqlite_error',
+              error: '本机数据库暂时不可写。',
+            },
+          },
+        },
+      },
+    }));
+
+    expect(await screen.findByText('已启用 · 每天约 2 次')).toBeInTheDocument();
+    expect(screen.getByText('运行失败')).toBeInTheDocument();
+    expect(screen.getByText('上次定期整理失败')).toBeInTheDocument();
+    expect(screen.getByText(/本机数据库暂时不可写。/)).toBeInTheDocument();
+    expect(screen.getByText(/Rime 仍负责基础输入和候选排序/)).toBeInTheDocument();
   });
 
   it('uses the live review token, renders an unapplied redeploy state, and rolls back by receipt', async () => {

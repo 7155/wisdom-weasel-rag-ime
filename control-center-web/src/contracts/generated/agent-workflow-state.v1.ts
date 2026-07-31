@@ -50,7 +50,186 @@ export interface Goal {
   goalId: string;
   revision: number;
   objective: string;
-  status: 'active' | 'paused' | 'completed' | 'cleared';
+  successCriteria: string;
+  /**
+   * @maxItems 20
+   */
+  evidenceExpectations:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+  status: 'active' | 'paused' | 'completed' | 'cancelled' | 'cleared';
   budget: {
     tokenLimit: number | null;
     timeLimitMs: number | null;
@@ -65,6 +244,7 @@ export interface Goal {
   };
   budgetExceeded: boolean;
   completionAudit: CompletionAudit | null;
+  cancellationAudit: CancellationAudit | null;
   updatedAtMs: number;
 }
 export interface CompletionAudit {
@@ -279,16 +459,26 @@ export interface Evidence {
   summary: string;
   reference: string;
 }
+export interface CancellationAudit {
+  auditId: string;
+  reason: string;
+  cancelledBy: string;
+  createdAtMs: number;
+}
 export interface ActGate {
   allowed: boolean;
   reason:
     | 'approved'
+    | 'user_execution_request'
     | 'plan_required'
     | 'plan_not_approved'
     | 'plan_completed'
     | 'plan_cancelled'
     | 'goal_paused'
     | 'goal_completed'
+    | 'goal_cancelled'
     | 'goal_budget_exhausted';
   message: string;
+  planRevision: number;
+  goalRevision: number;
 }

@@ -41,19 +41,59 @@ if [[ ! -f "$WRAPPER" || ! -d "$APP_CODE_DIR/rag_ime" ]]; then
   echo "installed app code is missing; run scripts/install_sidecar_launch_agent.sh first" >&2
   exit 1
 fi
-if ! python3 - "$INSTALL_MARKER" <<'PY'
+if ! python3 - \
+  "$INSTALL_MARKER" \
+  "$ROOT/rag_ime" \
+  "$APP_CODE_DIR/rag_ime" \
+  "$ROOT/scripts/sidecar_launch.py" \
+  "$WRAPPER" <<'PY'
+import hashlib
 import json
 import sys
+from pathlib import Path
+
+
+def tree_digest(root: Path) -> str:
+    if not root.is_dir() or root.is_symlink():
+        raise ValueError(f"invalid runtime tree: {root}")
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if "__pycache__" in relative.parts or path.suffix == ".pyc":
+            continue
+        if path.is_symlink():
+            raise ValueError(f"runtime tree contains a symlink: {relative}")
+        if not path.is_file():
+            continue
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
 
 try:
-    with open(sys.argv[1], encoding="utf-8") as source:
-        marker = json.load(source)
-except (OSError, json.JSONDecodeError):
+    marker_path, source_tree, installed_tree, source_wrapper, installed_wrapper = map(
+        Path,
+        sys.argv[1:],
+    )
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    provenance_valid = (
+        marker.get("component") == "sidecar-runtime"
+        and bool(marker.get("sourceCommit"))
+    )
+    runtime_matches = tree_digest(source_tree) == tree_digest(installed_tree)
+    wrapper_matches = (
+        source_wrapper.is_file()
+        and installed_wrapper.is_file()
+        and source_wrapper.read_bytes() == installed_wrapper.read_bytes()
+    )
+except (OSError, ValueError, json.JSONDecodeError):
     raise SystemExit(1)
-raise SystemExit(0 if marker.get("component") == "sidecar-runtime" and marker.get("sourceCommit") else 1)
+raise SystemExit(0 if provenance_valid and runtime_matches and wrapper_matches else 1)
 PY
 then
-  echo "installed sidecar provenance is missing or was overwritten; reinstall the sidecar first" >&2
+  echo "installed sidecar code does not match this source checkout; reinstall the sidecar first" >&2
   exit 1
 fi
 if [[ ! -f "$MANAGED_RUNTIME_POINTER" && "${RAG_IME_ALLOW_UNMANAGED_PI:-0}" != "1" ]]; then
