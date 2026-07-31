@@ -284,10 +284,11 @@ class RoomKernelServiceTests(unittest.TestCase):
                 self.room_id,
                 {
                     "message": (
-                        "制作一个隔离的网页小游戏；请让 Room 成员并行实现、"
-                        "复核，等各自完成后再综合。"
+                        "为当前产品实现 control-center-tui 薄客户端；复用 Pi TUI 和"
+                        "现有 Control API，请让 Room 成员并行实现、复核，"
+                        "等各自完成后再综合。"
                     ),
-                    "clientMessageId": "client:auto-managed-game",
+                    "clientMessageId": "client:auto-managed-tui-bootstrap",
                 },
             )
 
