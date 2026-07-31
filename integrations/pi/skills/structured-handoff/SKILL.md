@@ -19,6 +19,10 @@ responsibility that lets the receiver decide and act without reconstructing the
 sender's private Session. If the receiver cannot identify the remaining work,
 the evidence, and the first safe action, the handoff is incomplete.
 
+Reference existing plans, WorkDocuments, decisions, diffs, and evidence by
+stable ref instead of copying their contents. Redact credentials, tokens, PII,
+and private user context; preserve an explicit redaction marker when material.
+
 ## Private Receiver Packet
 
 Every handoff must preserve these fields for the receiving AI and Kernel:
@@ -95,11 +99,12 @@ Kernel receipt creates the next Dispatch.
 - Can the receiver begin with one concrete action?
 - Can a reviewer distinguish completed, failed, and merely unverified work?
 - Did every completion claim cite an inspectable successful receipt?
+- Did I reference existing artifacts and redact sensitive content?
 - Will both owners avoid editing the same responsibility after acceptance?
 
 ## Boundaries
 
 Do not dump the transcript, leak private Session reasoning, use handoff as a
 progress post or final closure, wake an Agent through free-text `@`, grant
-capability, transfer to an unknown participant, or keep changing accepted
-transferred work.
+capability, duplicate referenced artifacts, expose sensitive content, transfer
+to an unknown participant, or keep changing accepted transferred work.

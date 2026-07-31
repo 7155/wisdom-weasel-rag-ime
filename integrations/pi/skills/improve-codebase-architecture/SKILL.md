@@ -49,10 +49,10 @@ testable. File size, naming taste, and abstract "cleanliness" are not evidence.
      unnecessary afterward;
    - verification that would prove the change.
 6. Recommend an order, but do not implement until the user selects a candidate.
-   If the choice depends on a consequential product tradeoff, return it to
-   `alignment-and-decision`. That Skill asks one evidence-informed question and
-   persists an ADR, glossary, or decision record only when the user explicitly
-   requests durable documentation.
+7. After selection, send any unresolved module shape, seam, surviving-test, or
+   product tradeoff to `alignment-and-decision` in explicit Grill Mode. Carry
+   its Domain Language Delta into `implementation-planning`. If no material
+   choice remains, planning may consume the selected card directly.
 
 ## Candidate Card
 

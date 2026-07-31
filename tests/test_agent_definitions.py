@@ -30,42 +30,35 @@ class AgentDefinitionCompatibilityTests(unittest.TestCase):
         self,
     ) -> None:
         prompt = collaboration_role("implementer", "1").system_prompt
+        content = prompt.replace("\n", "")
 
-        self.assertIn("最终验收或收口", prompt)
-        self.assertIn("顺序责任转移", prompt)
-        self.assertIn("不要提前把该成员作为", prompt)
-        self.assertIn("并行子任务", prompt)
-        self.assertIn("每次成功响应必须带有权威 executionReceipt", prompt)
-        self.assertIn("room_commit.wait", prompt)
-        self.assertIn("必须从 room_state 逐字复制 waitingForParticipantRef", prompt)
-        self.assertIn("Kernel 会在该成员公开提交后有界恢复本责任", prompt)
-        self.assertIn("handoff 给最终验收、最终质量门", prompt)
-        self.assertIn("必须是 close", prompt)
-        self.assertIn("每个 AC 只提交直接支撑它的最小引用集合", prompt)
-        self.assertIn("不得重写、拼接、猜测", prompt)
-        self.assertIn("不要 sleep、轮询或重复催问", prompt)
-        self.assertIn("read、grep、find、ls", prompt)
-        self.assertIn("精确文本", prompt)
-        self.assertIn("修改使用 edit", prompt)
-        self.assertIn("bash 只用于必须由命令完成的构建", prompt)
-        self.assertIn("这些运行时原生工具", prompt)
-        self.assertIn("已经出现在本轮 tools 时直接调用", prompt)
-        self.assertIn("不做额外发现", prompt)
+        for expected in (
+            "每个人地位相同",
+            "平级切片",
+            "立即推进自己的部分",
+            "room_collaborate",
+            "每次邀请都必须得到成功回执",
+            "room_commit.handoff",
+            "最终检查属于顺序交接",
+            "waitingForParticipantRef",
+            "不要用 sleep 或轮询命令",
+            "read、grep、find、ls",
+            "精确文本修改使用 edit",
+            "bash 只用于必须由命令完成的构建",
+            "只有出现用户能感知的新进展时才用 room_post",
+            "完成主张不得强于实际观察",
+            "不要在公开内容里出现 Kernel、Root、Dispatch、Task、AC",
+            "room_commit.evidence",
+            "不得改写、拼接、猜测",
+        ):
+            self.assertIn(expected, content)
         for hidden_name in (
             "workspace_read",
             "workspace_patch",
             "workspace_shell",
         ):
-            self.assertNotIn(hidden_name, prompt)
-        self.assertEqual(prompt.count("## 公开报告"), 1)
-        for report_rule in (
-            "只有出现用户可感知的实质变化时才用 room_post",
-            "方法与原因",
-            "完成主张不得强于实际观察",
-            "准确接手指令只写结构化字段",
-            "Kernel、Dispatch、AC、evidenceRef",
-        ):
-            self.assertIn(report_rule, prompt)
+            self.assertNotIn(hidden_name, content)
+        self.assertEqual(prompt.count("## 让用户看得懂"), 1)
 
 
 class AgentDefinitionCompilerTests(unittest.TestCase):

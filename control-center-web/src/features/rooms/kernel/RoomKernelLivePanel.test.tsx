@@ -4,11 +4,16 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import type { RoomEventEnvelopeV2 } from '@/contracts/generated/room-event-envelope.v2';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
 import type { RoomRootExecutionV3 } from '@/contracts/generated/room-root-execution.v3';
+import { applyRoomKernelSnapshot, createRoomKernelProjection } from '@/contracts/room-kernel-reducer';
 import { MockControlTransport } from '@/test/mock-transport';
-import { RoomKernelLivePanel } from './RoomKernelLivePanel';
+import { useRoomLiveStore } from '../state/live-store';
+import { parseSnapshot, RoomKernelLivePanel } from './RoomKernelLivePanel';
 
 describe('RoomKernelLivePanel production adapter', () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    useRoomLiveStore.getState().reset();
+  });
 
   it('loads canonical snapshot, resumes SSE and sends authorized typed Stop', async () => {
     const command = vi.fn((request) => kernelReceipt({
@@ -45,7 +50,7 @@ describe('RoomKernelLivePanel production adapter', () => {
     renderPanel(transport);
     fireEvent.click(await screen.findByRole('button', { name: '停止此任务' }));
     expect(await screen.findByText(new RegExp(label))).toBeInTheDocument();
-    expect(screen.getByText('执行中')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '协作任务进展' })).toHaveTextContent('执行中');
   });
 
   it('reports reconnect and recovers a sequence gap from a fresh snapshot', async () => {
@@ -75,9 +80,9 @@ describe('RoomKernelLivePanel production adapter', () => {
     transport.emit('agent.room.kernel.events', rootEvent(3));
     await waitFor(() => expect(snapshot).toHaveBeenCalledTimes(2));
     expect(await screen.findByRole('alert')).toHaveTextContent('还有后台工作没有确认停止');
-    expect(screen.getByRole('button', { name: '停止此任务' })).toBeInTheDocument();
-    expect(screen.queryByText('终态已确认')).not.toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent('providerunknownprovider:turn-1');
+    expect(screen.getByRole('button', { name: '再次确认停止' })).toBeInTheDocument();
+    expect(screen.queryByText('任务已结束')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('模型服务等待确认1 个后台目标');
   });
 
   it('keeps the command disabled when authorization or route hash does not match', async () => {
@@ -91,6 +96,40 @@ describe('RoomKernelLivePanel production adapter', () => {
     expect(stop).toHaveAttribute('title', '停止任务的控制通道已发生变化，请刷新或更新应用');
   });
 
+  it('reads a valid Room-managed Kernel snapshot even when capability metadata is stale', async () => {
+    const capabilities = capabilityValue();
+    const raw = capabilities.raw as { routes: Array<Record<string, unknown>> };
+    raw.routes.find((route) => route.pathId === 'agent.room.kernel.events')!.query = [];
+    const transport = mockTransport({ capabilities });
+
+    renderPanel(transport);
+
+    expect(await screen.findByText('进度已同步')).toBeInTheDocument();
+    expect(screen.queryByText('进度同步异常')).not.toBeInTheDocument();
+    expect(screen.queryByText(/任务进度暂时不可用/)).not.toBeInTheDocument();
+    expect(screen.getByText(/更新于/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '停止此任务' })).toHaveAttribute(
+      'title',
+      '任务进度已连接，但任务控制能力清单尚未确认',
+    );
+  });
+
+  it('does not regress a confirmed projection when reconnect hydration returns an older snapshot', async () => {
+    const cached = applyRoomKernelSnapshot(
+      createRoomKernelProjection('room-a'),
+      parseSnapshot(kernelSnapshot(5), 'room-a'),
+    );
+    useRoomLiveStore.getState().setKernelProjection('room-a', cached);
+    const snapshot = vi.fn(() => kernelSnapshot(3));
+    const transport = mockTransport({ snapshot });
+
+    renderPanel(transport);
+
+    expect(await screen.findByText('进度已同步')).toBeInTheDocument();
+    expect(useRoomLiveStore.getState().kernelProjections['room-a']?.lastSequence).toBe(5);
+    expect(transport.subscriptionCalls.at(-1)?.request.lastEventId).toBe('room-a#5');
+  });
+
   it('rejects an old-generation Stop receipt and leaves the Root projection unchanged', async () => {
     const transport = mockTransport({
       command: (request) => kernelReceipt({
@@ -100,8 +139,18 @@ describe('RoomKernelLivePanel production adapter', () => {
     });
     renderPanel(transport);
     fireEvent.click(await screen.findByRole('button', { name: '停止此任务' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('generation does not match');
-    expect(screen.getByText('执行中')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('停止结果与当前任务状态不一致');
+    expect(screen.getByRole('region', { name: '协作任务进展' })).toHaveTextContent('执行中');
+  });
+
+  it('hydrates authoritative task progress while its visual panel is hidden', async () => {
+    const transport = mockTransport();
+    renderPanel(transport, false);
+
+    await waitFor(() => expect(transport.requests.some((request) => (
+      request.request.pathId === 'agent.room.kernel.snapshot'
+    ))).toBe(true));
+    expect(screen.queryByRole('region', { name: '协作任务状态' })).not.toBeInTheDocument();
   });
 
   it('offers an in-place retry when the task snapshot cannot be read', async () => {
@@ -119,6 +168,23 @@ describe('RoomKernelLivePanel production adapter', () => {
     expect(transport.subscriptionCalls.at(-1)?.request.lastEventId).toBe('room-a#2');
   });
 
+  it('keeps the last confirmed projection visible when reconnect recovery fails', async () => {
+    const snapshot = vi.fn()
+      .mockImplementationOnce(() => kernelSnapshot(1))
+      .mockImplementation(() => { throw new Error('recovery snapshot offline'); });
+    const transport = mockTransport({ snapshot });
+    renderPanel(transport);
+    await screen.findByText('进度已同步');
+
+    transport.emit('agent.room.kernel.events', rootEvent(3));
+
+    expect(await screen.findByText('实时更新暂时中断')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '协作任务进展' })).toHaveTextContent('执行中');
+    expect(screen.getByText(/继续显示上次确认的进度/)).toBeInTheDocument();
+    expect(screen.queryByText('进度同步异常')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重新读取' })).toBeEnabled();
+  });
+
   it('shows permission denial and never subscribes or renders mutation controls', async () => {
     const denied = Object.assign(new Error('agent.read scope required'), { status: 403 });
     const transport = mockTransport({ snapshot: () => { throw denied; } });
@@ -129,8 +195,8 @@ describe('RoomKernelLivePanel production adapter', () => {
   });
 });
 
-function renderPanel(transport: MockControlTransport) {
-  return render(<ControlTransportProvider transport={transport}><RoomKernelLivePanel roomId="room-a" /></ControlTransportProvider>);
+function renderPanel(transport: MockControlTransport, visible = true) {
+  return render(<ControlTransportProvider transport={transport}><RoomKernelLivePanel roomId="room-a" visible={visible} /></ControlTransportProvider>);
 }
 
 function mockTransport(options: {

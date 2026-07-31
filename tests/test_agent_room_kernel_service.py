@@ -62,8 +62,16 @@ class KernelRuntime:
             "capabilities": {"runtimePrimitives": {"roomTypes": True}},
         }
 
-    def dispatch_room(self, payload, *, message: str, lease_token: str):
+    def dispatch_room(
+        self,
+        payload,
+        *,
+        message: str,
+        lease_token: str,
+        record_intent,
+    ):
         del message, lease_token
+        record_intent()
         self.dispatched.append(str(payload["dispatchId"]))
         self.dispatch_attempts.append(int(payload.get("attempt") or 0))
         return {
@@ -259,6 +267,206 @@ class RoomKernelServiceTests(unittest.TestCase):
             },
         )["workItem"]
 
+    def test_parallel_room_gives_every_peer_a_visible_distinct_work_lane(
+        self,
+    ) -> None:
+        room = self.service.create_room(
+            {
+                "title": "平级并行验收",
+                "routingPolicy": "parallel",
+                "workspaceRoots": [str(self.root)],
+                "participants": [
+                    {
+                        "roleId": "companion-present-v1",
+                        "roleVersion": "1",
+                        "collaborationRole": "coordinator",
+                    },
+                    {
+                        "roleId": "companion-firstlight-v1",
+                        "roleVersion": "1",
+                        "collaborationRole": "implementer",
+                    },
+                    {
+                        "roleId": "companion-future-v1",
+                        "roleVersion": "1",
+                        "collaborationRole": "reviewer",
+                    },
+                ],
+            }
+        )["room"]
+
+        accepted = self.service.post_room_message(
+            str(room["id"]),
+            {
+                "message": (
+                    "三位伙伴平级并行完成页面修复，每个人做不同部分，"
+                    "全部结束后一起检查再回复。"
+                ),
+                "clientMessageId": "client:peer-parallel-room",
+            },
+        )
+
+        self.assertEqual(len(accepted["dispatches"]), 3)
+        self.assertEqual(len(accepted["participants"]), 3)
+        self.assertEqual(
+            {dispatch["participantId"] for dispatch in accepted["dispatches"]},
+            {participant["id"] for participant in room["participants"]},
+        )
+        self.assertTrue(
+            all(
+                decision["reason"] == "parallel"
+                for decision in accepted["routeDecisions"]
+            )
+        )
+        tasks = [
+            self.service.room_kernel.task(str(decision["taskId"]))
+            for decision in accepted["routeDecisions"]
+        ]
+        facilitator_id = str(accepted["participant"]["id"])
+        for task in tasks:
+            criterion_ids = list(task["acceptanceCriterionIds"])
+            if task["currentOwnerParticipantId"] == facilitator_id:
+                self.assertEqual(
+                    len(criterion_ids),
+                    len(accepted["workItem"]["acceptanceCriteria"]),
+                )
+            else:
+                self.assertEqual(len(criterion_ids), 1)
+        objectives = [str(task["objective"]) for task in tasks]
+        self.assertEqual(len(set(objectives)), 3)
+        self.assertTrue(all("平级切片" in objective for objective in objectives))
+        self.assertTrue(any("集成与共同验收" in value for value in objectives))
+        self.assertTrue(any("实现与验证" in value for value in objectives))
+        self.assertTrue(any("独立审查" in value for value in objectives))
+        self.assertTrue(
+            all(
+                "不得只安排别人、等待或用空泛状态代替自己的工作"
+                in str(task["expectedOutput"])
+                for task in tasks
+            )
+        )
+        acceptance_copy = " ".join(
+            str(value)
+            for value in accepted["workItem"]["acceptanceCriteria"]
+        )
+        self.assertIn("澄·今 完成自己负责的平级部分", acceptance_copy)
+        self.assertIn("澄·初 完成自己负责的平级部分", acceptance_copy)
+        self.assertIn("澄·远 完成自己负责的平级部分", acceptance_copy)
+        self.assertIn("邀请其余伙伴共同做最后检查", acceptance_copy)
+        self.assertNotIn("room_collaborate", acceptance_copy)
+        self.assertNotIn("Dispatch", acceptance_copy)
+        root = self.service.room_kernel.root(str(accepted["rootId"]))
+        task = self.service.room_kernel.task(str(accepted["taskId"]))
+        facilitator_dispatch = self.service.room_kernel.dispatch(
+            str(accepted["dispatches"][0]["dispatchId"])
+        )
+        with self.assertRaisesRegex(
+            RoomCommitProposalError,
+            "首轮结果尚未全部公开",
+        ):
+            self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
+                decision="deliver",
+                root=root,
+                task=task,
+                dispatch=facilitator_dispatch,
+            )
+        initial = self.service.room_kernel.initial_peer_dispatches(
+            str(accepted["rootId"])
+        )
+        public_initial = [
+            {
+                **item,
+                "resultPublic": (
+                    item["targetParticipantId"]
+                    != root["facilitatorParticipantId"]
+                ),
+            }
+            for item in initial
+        ]
+        with (
+            patch.object(
+                self.service.room_kernel,
+                "initial_peer_dispatches",
+                return_value=public_initial,
+            ),
+            self.assertRaisesRegex(
+                RoomCommitProposalError,
+                "共同检查尚未覆盖每位伙伴",
+            ),
+        ):
+            self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
+                decision="deliver",
+                root=root,
+                task=task,
+                dispatch=facilitator_dispatch,
+            )
+        active_review_results = [
+            {
+                "targetParticipantId": participant_id,
+                "resultPublic": False,
+                "state": "running",
+            }
+            for participant_id in {
+                item["targetParticipantId"]
+                for item in public_initial
+                if item["targetParticipantId"]
+                != root["facilitatorParticipantId"]
+            }
+        ]
+        with (
+            patch.object(
+                self.service.room_kernel,
+                "initial_peer_dispatches",
+                return_value=public_initial,
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "collaboration_children",
+                return_value=active_review_results,
+            ),
+            self.assertRaisesRegex(
+                RoomCommitProposalError,
+                "共同检查已经发起.*不要重复邀请.*room_commit wait",
+            ),
+        ):
+            self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
+                decision="deliver",
+                root=root,
+                task=task,
+                dispatch=facilitator_dispatch,
+            )
+
+        review_results = [
+            {
+                "targetParticipantId": participant_id,
+                "resultPublic": True,
+            }
+            for participant_id in {
+                item["targetParticipantId"]
+                for item in public_initial
+                if item["targetParticipantId"]
+                != root["facilitatorParticipantId"]
+            }
+        ]
+        with (
+            patch.object(
+                self.service.room_kernel,
+                "initial_peer_dispatches",
+                return_value=public_initial,
+            ),
+            patch.object(
+                self.service.room_kernel,
+                "collaboration_children",
+                return_value=review_results,
+            ),
+        ):
+            self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
+                decision="deliver",
+                root=root,
+                task=task,
+                dispatch=facilitator_dispatch,
+            )
+
     def test_unbound_collaboration_request_starts_one_managed_root_without_alignment_turn(
         self,
     ) -> None:
@@ -316,7 +524,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertTrue(
             any(
-                "room_collaborate" in criterion
+                "等大家公开结果后再一起综合" in criterion
                 for criterion in work_item["acceptanceCriteria"]
             )
         )
@@ -345,7 +553,11 @@ class RoomKernelServiceTests(unittest.TestCase):
             )["stableSystemPrompt"]
         )
         self.assertIn(
-            "<root-coordinator-duty>",
+            "<peer-parallel-work>",
+            coordinator_prompt,
+        )
+        self.assertIn(
+            "这不代表你是其他伙伴的上级",
             coordinator_prompt,
         )
         self.assertIn(
@@ -433,7 +645,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             RoomCommitProposalError,
-            "receipt-backed public child result",
+            "公开结果尚未到齐",
         ):
             self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
                 decision="deliver",
@@ -492,7 +704,7 @@ class RoomKernelServiceTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             RoomCommitProposalError,
-            "receipt-backed public child result",
+            "公开结果尚未到齐",
         ):
             self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
                 decision="deliver",
@@ -658,7 +870,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertFalse(private_projection[0]["resultPublic"])
         with self.assertRaisesRegex(
             RoomCommitProposalError,
-            "public receipt-backed partners: 0",
+            "已公开 0 位",
         ):
             self.service.room_settle_lifecycle._assert_managed_collaboration_ready(
                 decision="deliver",
@@ -1780,9 +1992,14 @@ class RoomKernelServiceTests(unittest.TestCase):
         for expected in (original, objective, criterion, blocker):
             self.assertIn(expected, room_context)
         self.assertNotIn('"continuation"', room_context)
-        initial_recovery = self.service._runtime_session_context(
+        initial_runtime_context = self.service._runtime_session_context(
             self.service.sessions.get(self.session_id)
-        )["roomRecoveryContext"]
+        )
+        resource_limits = initial_runtime_context["roomResourceLimits"]
+        self.assertNotIn("maxInputTokens", resource_limits)
+        self.assertNotIn("maxToolCalls", resource_limits)
+        self.assertEqual(resource_limits["maxOutputTokens"], 16_000)
+        initial_recovery = initial_runtime_context["roomRecoveryContext"]
         for expected in (criterion, blocker):
             self.assertEqual(initial_recovery.count(expected), 1)
         self.assertNotIn(original, initial_recovery)
@@ -2584,7 +2801,8 @@ class RoomKernelServiceTests(unittest.TestCase):
     def test_runtime_failure_and_user_correction_are_automatic_incidents(self) -> None:
         self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
 
-        def fail_dispatch(*_args, **_kwargs):
+        def fail_dispatch(*_args, **kwargs):
+            kwargs["record_intent"]()
             raise ConnectionError("Pi host exited")
 
         self.factory.runtime.dispatch_room = fail_dispatch
@@ -2908,11 +3126,11 @@ class RoomKernelServiceTests(unittest.TestCase):
                 },
                 caller_authorized=True,
             )
-            for attempt in range(1, 4)
+            for attempt in range(1, 6)
         ]
 
-        self.assertTrue(results[0]["retryRequired"])
-        self.assertTrue(results[2]["blocked"])
+        self.assertTrue(all(result["retryRequired"] for result in results[:4]))
+        self.assertTrue(results[4]["blocked"])
         self.assertEqual(self.service.room_kernel.root("root:service")["state"], "blocked")
         self.assertIsNone(self.service.room_capabilities.runtime_binding(self.session_id))
 
@@ -3262,6 +3480,7 @@ class RoomKernelServiceTests(unittest.TestCase):
             "acceptance": ["AC-1"],
         }
 
+
         with patch(
             "rag_ime.agent_room_kernel_application.time.time",
             return_value=0.006,
@@ -3280,6 +3499,18 @@ class RoomKernelServiceTests(unittest.TestCase):
                 tool_call_id="call:room-collaborate",
                 load_receipt_id=str(loaded["receiptId"]),
             )
+            active_duplicate = self.service.execute_room_capability_tool(
+                self.session_id,
+                "room_collaborate",
+                {
+                    **arguments,
+                    "objective": "再次检查同一边界并回报结论",
+                    "expectedOutput": "再次给出同一边界的复核结论",
+                },
+                tool_call_id="call:room-collaborate-active-duplicate",
+                load_receipt_id=str(loaded["receiptId"]),
+            )
+
 
         result = first["result"]
         self.assertTrue(result["accepted"])
@@ -3288,6 +3519,8 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertTrue(result["currentResponsibilityContinues"])
         self.assertEqual(result, replay["result"])
         self.assertEqual(first["executionReceipt"], replay["executionReceipt"])
+        self.assertFalse(active_duplicate["result"]["enqueued"])
+        self.assertTrue(active_duplicate["result"]["deduplicated"])
         parent = self.service.room_kernel.dispatch("dispatch:service")
         child_dispatch = next(
             item

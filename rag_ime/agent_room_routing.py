@@ -14,6 +14,7 @@ ROOM_ROUTING_POLICIES = frozenset(
         "moderator",
         "sequential",
         "natural",
+        "parallel",
         "invite_only",
     }
 )
@@ -68,10 +69,12 @@ def plan_room_routes(
     profiles: Mapping[str, Mapping[str, object]] | None = None,
     authoritative_participant_id: str = "",
 ) -> list[dict[str, object]]:
-    """Return one deterministic route per explicitly addressed participant.
+    """Return deterministic routes for one addressed set or a peer-parallel Room.
 
-    Unaddressed messages retain the existing single-responder policy. A bound
-    WorkItem also remains single-owner: fan-out cannot duplicate responsibility.
+    A ``parallel`` Room adapts Cat Cafe's D7 invariant: every active peer
+    receives an independent invocation in the same wave.  A bound WorkItem
+    keeps one accountable owner, ordered first, while sibling Dispatches own
+    distinct Kernel Tasks under the same Root.
     """
 
     participants = [
@@ -100,7 +103,7 @@ def plan_room_routes(
     authority = by_id.get(authority_id) if authority_id else None
     if authority_id and authority is None:
         raise ValueError("authoritative room participant is unavailable")
-    if authority is not None:
+    if authority is not None and policy != "parallel":
         if selected and (
             len(selected) != 1 or str(selected[0]["id"]) != str(authority["id"])
         ):
@@ -116,6 +119,26 @@ def plan_room_routes(
             (),
         )
         return [decision]
+
+    if policy == "parallel":
+        if selected and authority is not None and not any(
+            str(item["id"]) == str(authority["id"]) for item in selected
+        ):
+            raise ValueError(
+                "Room participant selection conflicts with the WorkItem current owner"
+            )
+        if not selected:
+            selected = list(participants)
+            reason = "parallel"
+        if authority is not None:
+            selected = [
+                authority,
+                *(
+                    item
+                    for item in selected
+                    if str(item["id"]) != str(authority["id"])
+                ),
+            ]
 
     if not selected:
         return [
@@ -215,6 +238,11 @@ def plan_room_route(
             "work_item_owner",
             participants,
             (),
+        )
+
+    if policy == "parallel":
+        raise ValueError(
+            "parallel room routing requires plan_room_routes"
         )
 
     if policy == "moderator":

@@ -14,7 +14,7 @@ describe('RoomRequirementsControlPlane', () => {
     const projection = fixture({ originalText: longText, originalHash: '0'.repeat(64), originalBytes: new TextEncoder().encode(longText).byteLength });
     render(<RoomRequirementsControlPlane projection={projection} />);
 
-    const original = screen.getByLabelText('anchor-root-a 原始需求只读文本');
+    const original = screen.getByLabelText('第 1 条原始需求只读文本');
     expect(original).toHaveTextContent('原始需求不可修改');
     expect(original).toHaveAttribute('tabindex', '0');
     original.focus();
@@ -26,10 +26,11 @@ describe('RoomRequirementsControlPlane', () => {
     expect(screen.getByText('原文校验失败')).toBeInTheDocument();
   });
 
-  it('cryptographically verifies the original text bytes without changing them', async () => {
+  it('reports verified original text without exposing its content hash', async () => {
     render(<RoomRequirementsControlPlane projection={fixture()} />);
     expect(screen.getByText('abc')).toBeInTheDocument();
-    expect(screen.getByText('原文哈希已核验')).toBeInTheDocument();
+    expect(screen.getAllByText('原文完整性已核验').length).toBeGreaterThan(0);
+    expect(screen.queryByText('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')).not.toBeInTheDocument();
   });
 
   it('distinguishes the enforced Kernel settlement gate from observe-only delivery checks', () => {
@@ -54,23 +55,26 @@ describe('RoomRequirementsControlPlane', () => {
     const tampered = fixture({ proofStatus: 'tampered', proofReasons: ['untrusted_verifier'] });
     render(<RoomRequirementsControlPlane projection={tampered} />);
     const proof = screen.getByRole('region', { name: '验证记录' });
-    expect(within(proof).getByText('回执不可信')).toHaveAttribute('data-status', 'tampered');
+    expect(within(proof).getByText('记录不可信')).toHaveAttribute('data-status', 'tampered');
     expect(within(proof).getByText('签发者不可信')).toBeInTheDocument();
 
     const stale = fixture({ proofStatus: 'stale', proofReasons: ['old_catalog_revision', 'wrong_commit'] });
     expect(stale.receiptAssessments[0]).toMatchObject({ status: 'stale', reasons: ['old_catalog_revision', 'wrong_commit'] });
   });
 
-  it('keeps concurrent Root projections isolated and renders supplied Conflict/Peer records verbatim', () => {
+  it('keeps concurrent task projections isolated without exposing protocol identifiers', () => {
     render(<>
       <RoomRequirementsControlPlane projection={fixture()} />
-      <RoomRequirementsControlPlane projection={fixture({ rootId: 'root-b', originalText: 'root-b 原文', originalHash: '0'.repeat(64), originalBytes: 13 })} />
+      <RoomRequirementsControlPlane projection={fixture({ rootId: 'root-b', originalText: '另一项原始需求', originalHash: '0'.repeat(64), originalBytes: 13 })} />
     </>);
-    expect(screen.getByRole('region', { name: 'root-a 需求、证明与审查' })).toHaveTextContent('anchor-root-a');
-    expect(screen.getByRole('region', { name: 'root-b 需求、证明与审查' })).toHaveTextContent('anchor-root-b');
-    expect(screen.getAllByText('item-a ↔ item-b')).toHaveLength(2);
-    expect(screen.getAllByText('peer-reviewer')).toHaveLength(2);
-    expect(screen.getAllByText(/peer-round-1 · 已通过 · pass · peer-receipt-1/)).toHaveLength(2);
+    expect(screen.getAllByRole('region', { name: '需求、证明与审查' })).toHaveLength(2);
+    expect(screen.getAllByText('第 1 项冲突')).toHaveLength(2);
+    expect(screen.getAllByText('第 1 轮同伴复核')).toHaveLength(2);
+    expect(screen.getAllByText(/1 位伙伴 · 已通过 · 通过 · 验证记录已保存/)).toHaveLength(2);
+    expect(screen.queryByText('anchor-root-a')).not.toBeInTheDocument();
+    expect(screen.queryByText('item-a ↔ item-b')).not.toBeInTheDocument();
+    expect(screen.queryByText('peer-reviewer')).not.toBeInTheDocument();
+    expect(screen.queryByText(/peer-receipt-1/)).not.toBeInTheDocument();
   });
 
   it('rejects malformed canonical input instead of turning Agent text into proof', () => {

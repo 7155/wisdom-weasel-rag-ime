@@ -25,7 +25,15 @@ class _AcceptedRuntime:
         self.active_dispatches: list[str] = []
         self.cancel_calls: list[tuple[str, str, int]] = []
 
-    def dispatch_room(self, payload, *, message: str, lease_token: str):
+    def dispatch_room(
+        self,
+        payload,
+        *,
+        message: str,
+        lease_token: str,
+        record_intent,
+    ):
+        record_intent()
         self.active_dispatches.append(str(payload["dispatchId"]))
         return {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",

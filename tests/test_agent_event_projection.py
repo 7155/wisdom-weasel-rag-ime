@@ -96,22 +96,24 @@ class AgentEventProjectionTests(unittest.TestCase):
 
         self.assertEqual(sessions.event_types, ["turn_completed"])
 
-    def test_scheduled_runtime_retry_stays_nonterminal_until_later_completion(
+    def test_runtime_retry_and_missing_commit_recovery_stay_nonterminal(
         self,
     ) -> None:
         class Kernel:
             mode = "kernel_only"
+            binding = {
+                "roomId": "room:1",
+                "rootId": "root:1",
+                "dispatchId": "dispatch:1",
+                "generation": 1,
+                "state": "running",
+                "runtimeTurnId": "turn:1",
+                "attempt": 1,
+            }
 
-            @staticmethod
-            def session_binding(_session_id: str) -> dict[str, object]:
-                return {
-                    "roomId": "room:1",
-                    "rootId": "root:1",
-                    "dispatchId": "dispatch:1",
-                    "generation": 1,
-                    "runtimeTurnId": "turn:1",
-                    "attempt": 1,
-                }
+            @classmethod
+            def session_binding(cls, _session_id: str) -> dict[str, object]:
+                return cls.binding
 
         class Rooms(_Rooms):
             @staticmethod
@@ -136,10 +138,11 @@ class AgentEventProjectionTests(unittest.TestCase):
                     raise AssertionError("runtime projection time was lost")
 
         timeline = Timeline()
-        failure_events: list[str] = []
+        failure_events: list[dict[str, object]] = []
 
         def record_runtime_failure(**values: object) -> dict[str, object]:
-            failure_events.append(str(values["source_event_id"]))
+            failure_events.append(dict(values))
+            Kernel.binding["state"] = "retry_wait"
             return {
                 "receiptKind": "runtime_retry_scheduled",
                 "details": {"attempt": 2},
@@ -188,8 +191,28 @@ class AgentEventProjectionTests(unittest.TestCase):
                 resume_token="event:completed",
             )
         )
+        Kernel.binding["state"] = "running"
+        service.mirror_to_room(
+            AgentEventEnvelope(
+                event_id="event:uncommitted",
+                session_id="session:1",
+                turn_id="turn:1",
+                sequence=3,
+                created_at_ms=3,
+                event_type="turn_completed",
+                payload={"status": "completed"},
+                resume_token="event:uncommitted",
+            )
+        )
 
-        self.assertEqual(failure_events, ["event:retry"])
+        self.assertEqual(
+            [str(item["source_event_id"]) for item in failure_events],
+            ["event:retry", "event:uncommitted"],
+        )
+        self.assertEqual(
+            failure_events[1]["reason_code"],
+            "room_commit_missing",
+        )
         self.assertEqual(timeline.events[0], (
             "participant_activity",
             {
@@ -200,6 +223,15 @@ class AgentEventProjectionTests(unittest.TestCase):
             },
         ))
         self.assertEqual(timeline.events[1][0], "turn_completed")
+        self.assertEqual(timeline.events[2], (
+            "participant_activity",
+            {
+                "status": "retry_wait",
+                "summary": "当前回合未形成权威提交，已进入有界恢复等待",
+                "requestId": "dispatch:1:provider",
+                "retryAttempt": 2,
+            },
+        ))
 
     def test_late_room_messages_do_not_contaminate_private_context(
         self,

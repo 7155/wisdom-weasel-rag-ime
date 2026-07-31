@@ -61,7 +61,6 @@ export function AgentWorkflowPanel({
     enabled: Boolean(sessionId),
     retry: false,
     staleTime: 1_000,
-    refetchInterval: 5_000,
   });
   const liveWorkflow = fallbackWorkflow(
     sessionId,
@@ -69,7 +68,7 @@ export function AgentWorkflowPanel({
     fallbackGoal,
     fallbackActGate,
   );
-  const hasCompleteLiveWorkflow = Boolean(fallbackPlan && fallbackGoal && fallbackActGate);
+  const hasLiveWorkflow = Boolean(fallbackPlan || fallbackGoal || fallbackActGate);
   const workflow = mergeWorkflowState(
     workflowQuery.data,
     liveWorkflow,
@@ -93,7 +92,7 @@ export function AgentWorkflowPanel({
     },
   });
 
-  if (workflowQuery.isPending && !workflowQuery.data && !hasCompleteLiveWorkflow) {
+  if (workflowQuery.isPending && !workflowQuery.data && !hasLiveWorkflow) {
     return (
       <div className="agent-workflow-panel" aria-label="任务与目标">
         <section className="agent-workflow-section">
@@ -103,7 +102,12 @@ export function AgentWorkflowPanel({
     );
   }
 
-  if (workflowQuery.error && !workflowQuery.data && !hasCompleteLiveWorkflow) {
+  if (
+    workflowQuery.error
+    && !workflowQuery.data
+    && !hasLiveWorkflow
+    && !isAbsentWorkflow(workflowQuery.error)
+  ) {
     return (
       <div className="agent-workflow-panel" aria-label="任务与目标">
         <section className="agent-workflow-section">
@@ -122,9 +126,26 @@ export function AgentWorkflowPanel({
     );
   }
 
+  if (
+    workflowQuery.error
+    && !workflowQuery.data
+    && !hasLiveWorkflow
+    && isAbsentWorkflow(workflowQuery.error)
+  ) {
+    return (
+      <div className="agent-workflow-panel" aria-label="任务与目标">
+        <section className="agent-workflow-section">
+          <div className="agent-workflow-recovery" data-state="room-managed" role="status">
+            <span>当前没有需要单独维护的计划。如果这段工作来自协作空间，分工、公开进度和最终回复会继续在那里显示。</span>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="agent-workflow-panel" aria-label="任务与目标">
-      {workflowQuery.error ? (
+      {workflowQuery.error && !isAbsentWorkflow(workflowQuery.error) ? (
         <div className="agent-workflow-recovery" role="alert">
           <span>
             {workflowQuery.data
@@ -761,6 +782,18 @@ function formatCompact(value: number): string {
 function formatDuration(value: number): string {
   const minutes = Math.round(value / 60_000);
   return minutes >= 60 ? `${Math.floor(minutes / 60)}时${minutes % 60}分` : `${minutes}分钟`;
+}
+
+function isAbsentWorkflow(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const status = 'status' in error && typeof error.status === 'number'
+    ? error.status
+    : 'statusCode' in error && typeof error.statusCode === 'number'
+      ? error.statusCode
+      : 0;
+  if (status === 404) return true;
+  const message = error instanceof Error ? error.message : '';
+  return /\b404\b|workflow (?:is )?not found|no workflow state|plan (?:does not exist|not found)/i.test(message);
 }
 
 function publicError(error: unknown): string {

@@ -335,43 +335,44 @@ class RoomSettleLifecycleService:
         )
         if follow_up_kind == "continue":
             lead = (
-                "当前受管任务还没有合法收工。一次模型回答结束不等于任务完成。"
-                "先读取当前 Task，找出尚未满足的验收项；若仍有合法下一步，"
-                "且该动作不同于已经失败的尝试、能够产生新证据，才继续使用"
-                "已授权工具推进并核验证据。若没有这种合法新动作，立即选择 "
-                "handoff、wait 或 blocked，而不是继续空转。"
+                "这部分工作还没有正确结束。一次回答结束不等于工作完成。"
+                "先用 room_state 查看当前工作卡片和尚未满足的验收项；如果还有"
+                "不同于已失败尝试、并且能产生新结果的下一步，就继续使用已给出的"
+                "工具推进和验证。若没有这种新动作，立即选择 handoff、wait 或 "
+                "blocked，不要原地重复。"
             )
         else:
             lead = (
-                "责任提交没有通过确定性校验："
-                f"{_bounded(reason, 300)}。若任务本身仍未完成，先继续干活；"
-                "若已经完成，只修正提交字段和证据，不要重做已通过的工作；"
-                "若当前模型无法完成且没有合法新动作，改为 handoff、wait 或 "
+                "本次结束请求没有通过检查："
+                f"{_bounded(reason, 300)}。如果工作仍未完成，先继续动手；"
+                "如果已经完成，只修正提交字段和证据，不要重做已验证的内容；"
+                "如果自己无法继续且没有新的合法动作，改为 handoff、wait 或 "
                 "blocked。"
             )
         return (
-            '<managed-task-follow-up origin="room-kernel" '
+            '<room-work-follow-up source="system" '
             f'kind="{follow_up_kind}">'
-            "这是 Kernel 生成的受管执行接续，不是用户提出了新需求。"
+            "这是系统要求补齐本轮工作，不是用户提出了新需求。"
             f"{lead}"
-            "handoff 必须说明建议接手的参与者或模型能力、已完成工作、失败证据"
-            "和准确接手点；wait 要写明等待对象、信号与恢复条件，只有 "
-            "waitingFor=user 时才向用户提出一个最小必要问题；blocked 必须写明"
-            "缺口、已尝试替代路径和恢复条件。"
-            "续作次数是硬预算，不得重复同一失败动作、提示或调用来消耗它。"
+            "handoff 要说明建议接手的伙伴或所需能力、已经完成什么、失败证据和"
+            "准确接手点；wait 要写清等待谁、等待什么信号、何时继续，只有 "
+            "waitingFor=user 时才向用户提出一个最小必要问题；blocked 要写清"
+            "卡点、已经试过的替代办法和恢复条件。"
+            "可继续次数有限，不得重复同一失败动作、提示或调用来消耗次数。"
             "不要复述进度，也不要为了结束本轮而虚构等待、阻塞或完成。"
-            "只有已经形成合法生命周期出口时，才调用 room_commit，明确选择 "
+            "只有已经形成清楚的结束方式时，才调用 room_commit，选择 "
             "deliver、handoff、wait 或 blocked，并填写 summary、evidence 与 "
-            f"residualRisks。公共形状是 {commit_shape}。"
-            f"当前验收别名只有 {allowed}；不要填写数据库 criterionId，"
-            "不要自报 pass 或 verdict。Kernel 会核对回执、计算覆盖与终态。"
-            "handoff 还要填写 targetParticipantRef、nextTask、expectedOutput "
-            "intent 与 acceptanceAliases；wait 要填写 waitingFor 和 resumeCondition，"
-            "等待 participant 时还要从 room_state 逐字复制 "
-            "waitingForParticipantRef；"
-            "blocked 要填写 blocker、attemptedAlternatives 和 unlockCondition。"
+            f"residualRisks。提交结构示例：{commit_shape}。"
+            f"当前可用的验收短名只有 {allowed}；AC-1 表示工作卡片中的第一项"
+            "验收。不要填写内部 criterionId，也不要自行填写 pass 或 verdict；"
+            "服务端会核对实际结果并判断是否可以结束。"
+            "handoff 还要填写 targetParticipantRef、nextTask、expectedOutput、"
+            "intent 与 acceptanceAliases；wait 要填写 waitingFor 和 "
+            "resumeCondition，等待伙伴时还要从 room_state 原样复制 "
+            "waitingForParticipantRef；blocked 要填写 blocker、"
+            "attemptedAlternatives 和 unlockCondition。"
             "不要只在自然语言里声称完成。"
-            "</managed-task-follow-up>"
+            "</room-work-follow-up>"
         )
 
     def _assert_decision_allowed(
@@ -442,21 +443,106 @@ class RoomSettleLifecycleService:
         managed_client_id = str(
             managed_work.get("clientMessageId") or ""
         )
-        parts = managed_client_id.split(":", 3)
+        parts = managed_client_id.split(":", 4)
+        routing_policy = ""
+        required_peer_count = -1
         try:
-            required_peer_count = (
-                int(parts[2])
-                if len(parts) == 4
+            if (
+                len(parts) == 5
+                and parts[:2] == ["managed-room-ingress", "v2"]
+            ):
+                routing_policy = parts[2]
+                required_peer_count = int(parts[3])
+            elif (
+                len(parts) == 4
                 and parts[:2] == ["managed-room-ingress", "v1"]
-                else -1
-            )
+            ):
+                required_peer_count = int(parts[2])
         except ValueError:
             required_peer_count = -1
         if required_peer_count < 0:
             raise RoomCommitProposalError(
-                "managed Room collaboration metadata is invalid"
+                "Room 协作信息不完整，当前工作无法安全结束"
             )
         if required_peer_count == 0:
+            return
+        facilitator_id = str(
+            root.get("facilitatorParticipantId") or ""
+        )
+        if routing_policy == "parallel":
+            initial = self.kernel.initial_peer_dispatches(
+                str(root["rootId"])
+            )
+            expected_peer_ids = {
+                str(item.get("targetParticipantId") or "")
+                for item in initial
+                if str(item.get("targetParticipantId") or "")
+                and str(item.get("targetParticipantId") or "")
+                != facilitator_id
+            }
+            if len(expected_peer_ids) != required_peer_count:
+                raise RoomCommitProposalError(
+                    "Room 的平行工作清单不完整，不能提前发布最终回复"
+                )
+            public_initial_ids = {
+                str(item.get("targetParticipantId") or "")
+                for item in initial
+                if item.get("resultPublic") is True
+            } & expected_peer_ids
+            if len(public_initial_ids) < required_peer_count:
+                raise RoomCommitProposalError(
+                    "其他伙伴的首轮结果尚未全部公开；先用 room_state 查看状态，"
+                    "对仍在工作的伙伴选择 room_commit wait，结果到齐后再继续。"
+                    f"需要 {required_peer_count} 位，已公开 "
+                    f"{len(public_initial_ids)} 位"
+                )
+            reviews = self.kernel.collaboration_children(
+                str(root["rootId"])
+            )
+            public_review_ids = {
+                str(child.get("targetParticipantId") or "")
+                for child in reviews
+                if child.get("resultPublic") is True
+            } & expected_peer_ids
+            if len(public_review_ids) < required_peer_count:
+                active_review_ids = {
+                    str(child.get("targetParticipantId") or "")
+                    for child in reviews
+                    if child.get("resultPublic") is not True
+                    and str(child.get("state") or "")
+                    in {"pending", "leased", "running", "waiting"}
+                } & expected_peer_ids
+                missing_review_ids = (
+                    expected_peer_ids
+                    - public_review_ids
+                    - active_review_ids
+                )
+                if active_review_ids and not missing_review_ids:
+                    raise RoomCommitProposalError(
+                        "共同检查已经发起，伙伴仍在复核；不要重复邀请。"
+                        "对正在复核的伙伴选择 room_commit wait，"
+                        "待其公开意见后再发布最终回复。"
+                        f"需要 {required_peer_count} 位，已完成 "
+                        f"{len(public_review_ids)} 位，复核中 "
+                        f"{len(active_review_ids)} 位"
+                    )
+                if active_review_ids:
+                    raise RoomCommitProposalError(
+                        "共同检查已有伙伴正在复核；不要重复邀请他们。"
+                        "仅用 room_collaborate 邀请尚未开始复核的伙伴，"
+                        "随后选择 room_commit wait。"
+                        f"需要 {required_peer_count} 位，已完成 "
+                        f"{len(public_review_ids)} 位，复核中 "
+                        f"{len(active_review_ids)} 位，未开始 "
+                        f"{len(missing_review_ids)} 位"
+                    )
+                raise RoomCommitProposalError(
+                    "首轮结果已齐，但共同检查尚未覆盖每位伙伴；"
+                    "用 room_collaborate 分别邀请尚未复核的伙伴检查全部结果，"
+                    "等待其公开意见后再发布最终回复。"
+                    f"需要 {required_peer_count} 位，已完成 "
+                    f"{len(public_review_ids)} 位"
+                )
             return
         children = self.kernel.collaboration_children(
             str(root["rootId"])
@@ -466,18 +552,14 @@ class RoomSettleLifecycleService:
             for child in children
             if child.get("resultPublic") is True
             and str(child.get("targetParticipantId") or "")
-            != str(root.get("facilitatorParticipantId") or "")
+            != facilitator_id
         }
         if len(public_participant_ids) < required_peer_count:
             raise RoomCommitProposalError(
-                "managed Room collaboration cannot settle before every "
-                "required partner has a receipt-backed public child result; "
-                "call room_collaborate for each missing participant, then "
-                "room_commit wait and resume, or report an honest blocked "
-                "outcome. "
-                f"Required distinct partners: {required_peer_count}; "
-                f"public receipt-backed partners: "
-                f"{len(public_participant_ids)}"
+                "其他伙伴的公开结果尚未到齐；先邀请缺少的伙伴继续工作，"
+                "再选择等待，结果到齐后才能发布最终回复。"
+                f"需要 {required_peer_count} 位，已公开 "
+                f"{len(public_participant_ids)} 位"
             )
 
     def _canonical_commit(

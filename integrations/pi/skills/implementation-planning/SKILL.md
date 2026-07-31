@@ -23,8 +23,8 @@ notFor:
   record. Project scope is automatic; do not invent a work ID between stages.
 - Plan from observable acceptance backward, not from a directory tree forward.
 - One state owner owns each shared contract; parallel lanes must not race on it.
-- A candidate delivers an independently verifiable vertical result that fits
-  one fresh Session; it is not a file list or an arbitrary Agent-sized chunk.
+- A candidate is a verifiable vertical result for one fresh Session, not a file
+  list or arbitrary Agent-sized chunk.
 
 ## Workflow
 
@@ -33,9 +33,9 @@ notFor:
    any material solution choice remain confirmed. If planning exposes a new
    user-owned choice, stop with `needs_alignment_decision` and return it to
    `alignment-and-decision`; do not ask or compare options here.
-2. Inspect the current implementation before decomposing work. Resolve
-   inspectable facts yourself. Identify state and contract owners, dependency
-   direction, existing test seams, migrations, permissions, and extension
+2. Inspect implementation, the confirmed Domain Language Delta, glossary, and
+   ADRs. Resolve facts yourself. Identify state and contract owners,
+   dependency direction, test seams, migrations, permissions, and extension
    points. Planning goes deeper than alignment only to locate executable seams.
 3. Map every acceptance check to implementation work and fresh verification.
    Prefer the highest stable behavior seam already present.
@@ -49,10 +49,9 @@ notFor:
    dependencies is on the frontier. Name shared-contract owners, integration
    order, permission needs, cancellation effects, and rollback points.
 7. Treat a wide mechanical migration as the exception to vertical slicing.
-   Use expand-migrate-contract: introduce the compatible form, migrate
-   blast-radius-sized batches, then remove the old form after every consumer
-   has moved. Add an integrate-and-verify candidate when no batch can stay
-   independently green.
+   Use expand-migrate-contract: add the compatible form, migrate batches sized
+   by blast radius, then remove the old form after all consumers move. Add an
+   integrate-and-verify candidate when no batch stays independently green.
 8. Allow parallel candidates only when they cannot compete for the same state
    or contract. Otherwise serialize or combine them under one owner.
 9. Keep the smallest plan that covers all acceptance without widening scope.
@@ -103,8 +102,8 @@ parallel/serial choice, evidence gates, non-goals, rollback, and one status:
 accepts it. Once bound to a Goal, Task, or Dispatch, route the accepted plan
 reference and exact acceptance aliases to `implementation-execution`.
 
-Keep the full contract for the caller. In a public reply, show the ordered
-candidate titles, blocking graph, material risks, and status. Do not repeat the
+Keep the full contract for the caller. Publicly show candidate titles, blocking
+graph, material risks, and status. Do not repeat the
 confirmed requirements or dump every field unless requested.
 
 ## Self-Check

@@ -45,6 +45,27 @@ export interface RoomActivityLaneIdentity {
   key: string;
 }
 
+export type RoomParticipantPublicProgressKind =
+  | 'reasoning'
+  | 'progress'
+  | 'tool'
+  | 'dispatch'
+  | 'status'
+  | 'post'
+  | 'activity';
+
+export interface RoomParticipantPublicProgressProjection {
+  participantId: string;
+  sourceSessionId: string;
+  rootId: string;
+  dispatchId: string;
+  kind: RoomParticipantPublicProgressKind;
+  status: RoomActivityProjection['status'];
+  summary: string;
+  /** Public event metadata used only to name tools and summarize visible work. */
+  data?: Record<string, unknown>;
+  updatedAtMs: number;
+}
 export interface RoomTurnProjection {
   id: string;
   rootId?: string;
@@ -368,6 +389,71 @@ export function roomActivityLaneIdentity(
     dispatchId,
     key: `${rootId}\u001f${participantId}\u001f${dispatchId}`,
   };
+}
+export function selectRoomParticipantPublicProgress(
+  state: RoomProjectionState,
+): RoomParticipantPublicProgressProjection[] {
+  const latestByIdentity = new Map<string, RoomParticipantPublicProgressProjection>();
+  const retainLatest = (candidate: RoomParticipantPublicProgressProjection) => {
+    const laneIdentity = candidate.participantId || candidate.sourceSessionId;
+    if (!laneIdentity) return;
+    const identity = [candidate.rootId, laneIdentity, candidate.kind].join('\u0000');
+    const previous = latestByIdentity.get(identity);
+    if (!previous || candidate.updatedAtMs >= previous.updatedAtMs) {
+      latestByIdentity.set(identity, candidate);
+    }
+  };
+
+  for (const activityId of state.activityOrder) {
+    const activity = state.activitiesById[activityId];
+    if (!activity) continue;
+    const sourceEventType = text(activity.payload.sourceEventType);
+    const activityKind = text(activity.payload.activityKind);
+    retainLatest({
+      participantId: activity.participantId ?? '',
+      sourceSessionId: activity.sourceSessionId,
+      rootId: text(activity.payload.rootId) || activity.turnId,
+      dispatchId: text(activity.payload.dispatchId),
+      kind: roomParticipantProgressKind(activity.kind, sourceEventType, activityKind),
+      status: activity.status,
+      summary: roomParticipantProgressSummary(activity.summary, sourceEventType, activity.kind),
+      data: activity.payload,
+      updatedAtMs: activity.updatedAtMs ?? activity.createdAtMs,
+    });
+  }
+
+  for (const messageId of state.messageOrder) {
+    const message = state.messagesById[messageId];
+    if (
+      !message
+      || message.role !== 'assistant'
+      || message.projectionKind !== 'post'
+      || (!message.participantId && !message.sourceSessionId)
+    ) continue;
+    const summary = message.text.trim();
+    if (!summary) continue;
+    retainLatest({
+      participantId: message.participantId ?? '',
+      sourceSessionId: message.sourceSessionId,
+      rootId: message.rootId || message.turnId,
+      dispatchId: message.dispatchId ?? '',
+      kind: 'post',
+      status: message.status === 'failed'
+        ? 'failed'
+        : ['queued', 'streaming'].includes(message.status)
+          ? 'running'
+          : 'completed',
+      summary,
+      updatedAtMs: message.completedAtMs ?? message.createdAtMs,
+    });
+  }
+
+  return [...latestByIdentity.values()].sort((left, right) => (
+    right.updatedAtMs - left.updatedAtMs
+    || (left.participantId || left.sourceSessionId).localeCompare(
+      right.participantId || right.sourceSessionId,
+    )
+  ));
 }
 
 export function applyRoomSnapshot(
@@ -979,7 +1065,7 @@ function upsertActivity(
     && unresolved;
   const pendingInteraction = (
     (Boolean(approvalId) && approvalNeedsHumanDecision(payload))
-    || ['memory_review', 'plan_review', 'user_input_required'].includes(requestKind)
+    || ['memory_review', 'plan_review', 'user_input_required', 'grouped_questions'].includes(requestKind)
     || sourceEventType === 'user_input_required'
     || (text(payload.method) === 'select' && Array.isArray(payload.options))
   ) && unresolved;
@@ -1308,19 +1394,38 @@ function completeTurn(
   failure = '',
 ): void {
   const turn = ensureTurn(state, turnId, nowMs);
+  const settledParticipants = new Set(turn.terminalParticipantIds ?? []);
+  const settledDispatches = new Set(turn.terminalDispatchIds ?? []);
+  const failedParticipants = new Set(turn.failedParticipantIds ?? []);
+  const abortedParticipants = new Set(turn.abortedParticipantIds ?? []);
+  const failedDispatches = new Set(turn.failedDispatchIds ?? []);
+  const abortedDispatches = new Set(turn.abortedDispatchIds ?? []);
+  const unresolvedParticipants = turn.participantIds.filter(
+    (participantId) => !settledParticipants.has(participantId),
+  );
+  const unresolvedDispatches = (turn.dispatchIds ?? []).filter(
+    (dispatchId) => !settledDispatches.has(dispatchId),
+  );
+  if (status === 'failed') {
+    unresolvedParticipants.forEach((participantId) => failedParticipants.add(participantId));
+    unresolvedDispatches.forEach((dispatchId) => failedDispatches.add(dispatchId));
+  } else if (status === 'aborted') {
+    unresolvedParticipants.forEach((participantId) => abortedParticipants.add(participantId));
+    unresolvedDispatches.forEach((dispatchId) => abortedDispatches.add(dispatchId));
+  }
   turn.status = status;
   turn.rootTerminalAtMs = nowMs;
   turn.updatedAtMs = nowMs;
   turn.terminalParticipantIds = [...turn.participantIds];
-  turn.failedParticipantIds = status === 'failed' ? [...turn.participantIds] : [];
-  turn.abortedParticipantIds = status === 'aborted' ? [...turn.participantIds] : [];
+  turn.failedParticipantIds = [...failedParticipants];
+  turn.abortedParticipantIds = [...abortedParticipants];
   turn.terminalDispatchIds = [...(turn.dispatchIds ?? [])];
-  turn.failedDispatchIds = status === 'failed' ? [...(turn.dispatchIds ?? [])] : [];
-  turn.abortedDispatchIds = status === 'aborted' ? [...(turn.dispatchIds ?? [])] : [];
+  turn.failedDispatchIds = [...failedDispatches];
+  turn.abortedDispatchIds = [...abortedDispatches];
   if (failure) turn.failure = failure;
   for (const messageId of turn.messageIds) {
     const message = state.messagesById[messageId];
-    if (!message) continue;
+    if (!message || message.role === 'user' || message.status === 'completed') continue;
     state.messagesById[messageId] = {
       ...message,
       status: status === 'completed' ? 'completed' : status,
@@ -1502,6 +1607,40 @@ function publicRoomPayload(value: unknown): Record<string, unknown> {
     };
   }
   return envelope;
+}
+
+function roomParticipantProgressKind(
+  eventKind: string,
+  sourceEventType: string,
+  activityKind: string,
+): RoomParticipantPublicProgressKind {
+  if (sourceEventType === 'reasoning_summary') return 'reasoning';
+  if (['current_progress', 'progress'].includes(sourceEventType)) return 'progress';
+  if (sourceEventType.startsWith('tool_')) return 'tool';
+  if (eventKind === 'route_decision') return 'dispatch';
+  if (eventKind === 'participant_status') return 'status';
+  if (activityKind === 'intercom') return 'dispatch';
+  return 'activity';
+}
+
+function roomParticipantProgressSummary(
+  value: string,
+  sourceEventType: string,
+  eventKind: string,
+): string {
+  const summary = value.trim();
+  if (
+    summary
+    && summary !== sourceEventType
+    && summary !== eventKind
+    && !/\b(?:participant|route|tool|turn)_[a-z_]+\b/iu.test(summary)
+  ) return summary;
+  if (sourceEventType === 'reasoning_summary') return '公开思路已更新';
+  if (['current_progress', 'progress'].includes(sourceEventType)) return '工作进度已更新';
+  if (sourceEventType.startsWith('tool_')) return '工具进度已更新';
+  if (eventKind === 'route_decision') return '已确认本轮分工';
+  if (eventKind === 'participant_status') return '伙伴状态已更新';
+  return '协作进度已更新';
 }
 
 function text(value: unknown): string {

@@ -30,7 +30,11 @@ from .pi_runtime_protocols import resolve_protocol_manager
 from .pi_runtime_public import (
     pi_message_payload,
     APPROVAL_TITLE_PREFIX,
+    GROUPED_QUESTIONS_SCHEMA_VERSION,
+    GROUPED_QUESTIONS_TITLE_PREFIX,
     REVIEW_TITLE_PREFIX,
+    canonical_grouped_answers,
+    grouped_questions_from_wire,
     last_assistant_error,
     last_assistant_preview,
     pi_message_id,
@@ -2037,6 +2041,38 @@ class PiRuntimeManager:
                     turn_id=turn_id,
                 )
                 return
+            if method == "editor" and title.startswith(GROUPED_QUESTIONS_TITLE_PREFIX):
+                try:
+                    questions = grouped_questions_from_wire(raw.get("prefill"))
+                except ValueError:
+                    client.respond_extension_ui(request_id, cancelled=True)
+                    return
+                safe = {
+                    "requestId": request_id,
+                    "requestKind": "grouped_questions",
+                    "schemaVersion": GROUPED_QUESTIONS_SCHEMA_VERSION,
+                    "groupId": request_id,
+                    "method": "editor",
+                    "title": "需要你做几个选择",
+                    "message": "请把相关问题全部选完后一次提交；如果不想继续，可以取消本次提问。",
+                    "questions": questions,
+                }
+                with self._lock:
+                    if self._client is not client or self._active_session_id != session_id:
+                        client.respond_extension_ui(request_id, cancelled=True)
+                        return
+                    self._pending_ui_requests[request_id] = {
+                        **safe,
+                        "_turnId": turn_id,
+                        "_createdAtMs": int(time.time() * 1000),
+                    }
+                self.events.publish(
+                    session_id,
+                    "user_input_required",
+                    safe,
+                    turn_id=turn_id,
+                )
+                return
             if method not in {"select", "confirm", "input", "editor"}:
                 return
             safe: dict[str, object] = {
@@ -2324,6 +2360,18 @@ class PiRuntimeManager:
                 request.pop("_resolving", None)
             raise ValueError("automatic UI resolution must be a cancellation")
         value = str(response.get("value") or "")
+        if request.get("requestKind") == "grouped_questions" and not cancelled:
+            try:
+                value = canonical_grouped_answers(
+                    value,
+                    request.get("questions"),
+                )
+            except ValueError as exc:
+                with self._lock:
+                    request.pop("_resolving", None)
+                raise PiRuntimeError(
+                    "提交答案与当前问题或可选项不一致"
+                ) from exc
         try:
             if method == "confirm" and not cancelled:
                 confirmed = response.get("confirmed")

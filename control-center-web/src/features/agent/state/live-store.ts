@@ -76,6 +76,7 @@ export const useAgentLiveStore = create<AgentLiveStore>((set, get) => ({
   },
   hydrateSnapshot(sessionId, snapshot) {
     const current = get().projections[sessionId] ?? createAgentProjection(sessionId);
+    if (snapshot.lastSequence < current.lastSequence) return;
     const projection = applyAgentSnapshot(current, normalizeLegacyHistoryTurns(snapshot));
     set((state) => ({
       projections: { ...state.projections, [sessionId]: projection },

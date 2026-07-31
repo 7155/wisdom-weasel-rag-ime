@@ -24,16 +24,23 @@ test setup is diagnostic evidence, not the red phase.
 
 ## Workflow
 
-1. Trace the real public behavior and state owner before writing a test.
+1. Trace the real public behavior and state owner before writing a test. Use
+   only the seam accepted by the plan; if it is absent or wrong, return
+   `needs_replan` instead of inventing a seam or interviewing here.
 2. Express the missing behavior as the narrowest meaningful failing check.
-   Confirm that it fails for the intended product gap, not bad setup, stale
-   state, provider instability, or an obsolete fixture.
+   Derive its expected value from an independent source of truth: the confirmed
+   requirement, a worked example, a known-good literal, or an external
+   contract—not the production algorithm. Confirm that it fails for the
+   intended product gap, not bad setup, stale state, provider instability, or
+   an obsolete fixture.
 3. Implement the smallest coherent production change at the owning boundary.
    Preserve unrelated user work and compatibility outside the confirmed scope.
 4. Run the focused check, then the relevant contract, integration, and
    regression checks proportional to risk.
-5. Refactor only after behavior is green, and only when it improves ownership,
-   dependency direction, or deletion of duplicated logic.
+5. Keep one seam, one test, and one minimal implementation in each cycle. Do
+   not prewrite horizontal batches, anticipate future tests, add speculative
+   behavior, or refactor inside the red-green loop. Return structural
+   refactoring candidates to execution or review after slice evidence is green.
 6. Report the behavior changed, evidence, contract impact, unrun checks, and
    residual risk to `implementation-execution`.
 
@@ -50,7 +57,7 @@ public behavior traced
 
 For a bug, preserve the original symptom in the regression. For a new
 contract, test both the accepted shape and at least one material rejection
-path. Refactoring belongs after green and must not create another runtime path.
+path.
 
 ## Output Contract
 
@@ -62,8 +69,10 @@ inspection or a test added after the fix is not completion evidence.
 
 - Does the test express an observable contract instead of an implementation
   detail?
+- Does the expected value come from a source independent of the implementation?
 - Did it fail before the production change for the correct reason?
 - Is the change located at the real state owner?
+- Did I avoid horizontal batches, speculative behavior, and refactoring?
 - Did I preserve unrelated behavior and user work?
 - Did I report every relevant check that was not run?
 
@@ -71,4 +80,5 @@ inspection or a test added after the fix is not completion evidence.
 
 This workflow grants no filesystem, shell, Provider, routing, or approval
 authority. Do not patch an unexplained flaky failure, loosen an assertion to
-make it green, create managed work, choose the next Agent, or claim acceptance.
+make it green, write a tautological expectation, create managed work, choose the
+next Agent, or claim acceptance.

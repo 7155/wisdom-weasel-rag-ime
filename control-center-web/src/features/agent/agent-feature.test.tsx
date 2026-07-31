@@ -1393,11 +1393,6 @@ describe('Agent experience', () => {
   });
 
   it('queues native steer and follow-up messages on the active turn', async () => {
-    const busySnapshot = {
-      ...previewAgentSnapshot('session-preview'),
-      status: 'working',
-      messageQueue: { steering: [], followUp: [] },
-    };
     const transport = featureTransport();
     const user = userEvent.setup();
     renderAgent(transport);
@@ -1406,7 +1401,11 @@ describe('Agent experience', () => {
     await waitFor(() => expect(
       useAgentLiveStore.getState().projections['session-preview']?.messageOrder.length,
     ).toBeGreaterThan(0));
-    act(() => useAgentLiveStore.getState().hydrateSnapshot('session-preview', busySnapshot));
+    act(() => useAgentLiveStore.getState().appendOptimistic('session-preview', {
+      clientMessageId: 'native-queue-active',
+      text: '正在处理当前任务',
+      nowMs: Date.now(),
+    }));
     await screen.findByRole('radiogroup', { name: '消息投递方式' });
     await user.type(composer, '先停止继续搜索，直接核对实现');
     await user.click(screen.getByRole('button', { name: '干预当前执行' }));
@@ -1549,9 +1548,10 @@ describe('Agent experience', () => {
     await waitFor(() => expect(
       useAgentLiveStore.getState().projections['session-preview']?.messageOrder.length,
     ).toBeGreaterThan(0));
-    act(() => useAgentLiveStore.getState().hydrateSnapshot('session-preview', {
-      ...previewAgentSnapshot('session-preview'),
-      status: 'working',
+    act(() => useAgentLiveStore.getState().appendOptimistic('session-preview', {
+      clientMessageId: 'stop-source-active',
+      text: 'A 正在处理',
+      nowMs: Date.now(),
     }));
 
     await user.click(await screen.findByRole('button', { name: '停止本轮' }));

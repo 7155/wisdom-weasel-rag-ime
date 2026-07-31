@@ -29,7 +29,7 @@ export function roomExecutionModeOptions(roomKind: RoomKind): Array<{
   return [
     ...base,
     { value: 'workspace_managed' as const, label: '工作区托管', description: '在选定目录内自主工作，越界时再问你' },
-    { value: 'full_trust' as const, label: '全自动', description: '所有待审批操作由独立审批 Agent（Luna Max）依据 Room 全局审批历史自动判定' },
+    { value: 'full_trust' as const, label: '全自动', description: '所有待审批操作由独立审批助手（Luna Max）依据整个协作空间的审批记录自动判定' },
   ];
 }
 

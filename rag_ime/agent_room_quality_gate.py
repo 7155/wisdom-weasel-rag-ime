@@ -42,22 +42,22 @@ def canonicalize_quality_gate(
 ) -> CanonicalQualityGate:
     if not isinstance(evidence_proposal, list) or len(evidence_proposal) > 64:
         raise RoomQualityGateError(
-            "room_commit.evidence must be an array with at most 64 items"
+            "room_commit.evidence 必须是数组，且最多包含 64 项"
         )
     if not isinstance(requirement_context, Mapping):
         raise RoomQualityGateError(
-            "current Dispatch has no frozen requirement observation"
+            "当前工作缺少已确认的原始需求，暂时无法检查是否完成"
         )
     originals = requirement_context.get("originalRequirements")
     if not isinstance(originals, list) or not originals:
         raise RoomQualityGateError(
-            "current Dispatch did not preserve the original request"
+            "当前工作没有保留用户的原始请求，暂时无法检查是否完成"
         )
 
     canonical_criteria = [str(item) for item in task_criteria if str(item)]
     if set(acceptance_aliases.values()) != set(canonical_criteria):
         raise RoomQualityGateError(
-            "acceptance alias map does not match the current Task"
+            "验收短名与当前工作卡片不一致，请重新读取 room_state"
         )
     catalog = requirement_context.get("catalog")
     raw_criteria = (
@@ -103,21 +103,22 @@ def canonicalize_quality_gate(
         refs.update(runtime_refs)
 
     submitted: dict[str, list[str]] = {}
-    aliases_with_unknown_refs: list[str] = []
+    aliases_with_misassigned_refs: list[str] = []
+    unknown_ref_positions_by_alias: dict[str, list[int]] = {}
     for index, raw_item in enumerate(evidence_proposal):
         if not isinstance(raw_item, Mapping):
             raise RoomQualityGateError(
-                f"room_commit.evidence[{index}] must be an object"
+                f"room_commit.evidence 的第 {index + 1} 项必须是对象"
             )
         alias = str(raw_item.get("acceptance") or "").strip().upper()
         criterion_id = acceptance_aliases.get(alias)
         if criterion_id is None:
             raise RoomQualityGateError(
-                "room_commit.evidence contains an AC alias outside the current Task"
+                "room_commit.evidence 包含当前工作卡片之外的验收短名"
             )
         if criterion_id in submitted:
             raise RoomQualityGateError(
-                "room_commit.evidence contains a duplicate AC alias"
+                "room_commit.evidence 重复填写了同一个验收短名"
             )
         item_evidence = _string_list(
             raw_item.get("refs"),
@@ -126,21 +127,87 @@ def canonicalize_quality_gate(
         )
         if not item_evidence:
             raise RoomQualityGateError(
-                "every submitted AC requires at least one evidence ref"
+                "每个提交的验收项都至少需要一个 evidenceRef"
             )
         unknown_refs = set(item_evidence) - authoritative_refs[criterion_id]
-        if unknown_refs:
-            aliases_with_unknown_refs.append(alias)
+        misassigned_refs = {
+            evidence_ref
+            for evidence_ref in unknown_refs
+            if any(
+                evidence_ref in other_refs
+                for other_criterion_id, other_refs in authoritative_refs.items()
+                if other_criterion_id != criterion_id
+            )
+        }
+        if misassigned_refs:
+            aliases_with_misassigned_refs.append(alias)
+        remaining_unknown_refs = unknown_refs - misassigned_refs
+        if remaining_unknown_refs:
+            unknown_ref_positions_by_alias[alias] = [
+                ref_index + 1
+                for ref_index, evidence_ref in enumerate(item_evidence)
+                if evidence_ref in remaining_unknown_refs
+            ]
         submitted[criterion_id] = item_evidence
-    if aliases_with_unknown_refs:
+    if aliases_with_misassigned_refs:
+        affected = ", ".join(aliases_with_misassigned_refs[:12])
+        remainder = len(aliases_with_misassigned_refs) - 12
+        if remainder > 0:
+            affected = f"{affected} (+{remainder} more)"
+        raise RoomQualityGateError(
+            f"{affected} 包含了只属于其他验收项的 evidenceRef；"
+            f"请从 {affected} 删除这些引用，只保留 room_state 中该验收项的 "
+            "evidenceRefs 或直接支持该项的本次成功工具结果；"
+            "不要把多个 AC 的 refs 合并到一项"
+        )
+    if unknown_ref_positions_by_alias:
+        aliases_with_unknown_refs = list(unknown_ref_positions_by_alias)
         affected = ", ".join(aliases_with_unknown_refs[:12])
         remainder = len(aliases_with_unknown_refs) - 12
         if remainder > 0:
             affected = f"{affected} (+{remainder} more)"
+        positions = "；".join(
+            f"{alias} 的 refs 第 "
+            f"{', '.join(str(index) for index in indexes)} 项"
+            for alias, indexes in list(
+                unknown_ref_positions_by_alias.items()
+            )[:12]
+        )
         raise RoomQualityGateError(
-            "room_commit.evidence has non-authoritative refs for "
-            f"{affected}; replace only those refs with byte-for-byte "
-            "evidenceRefs from the latest room_state or successful Tool results"
+            f"{affected} 使用了无法核实的 evidenceRef（{positions}）；"
+            "删除这些位置的旧引用，不要在新引用旁继续保留它们。"
+            "只保留当前 Dispatch 中直接支持该项的最小成功工具结果，"
+            "或最新 room_state 里该验收项已有的 evidenceRefs"
+        )
+
+    aliases_by_criterion = {
+        criterion_id: alias
+        for alias, criterion_id in acceptance_aliases.items()
+    }
+    runtime_ref_criteria: dict[str, set[str]] = {}
+    for criterion_id, refs in submitted.items():
+        for evidence_ref in refs:
+            if evidence_ref in runtime_refs:
+                runtime_ref_criteria.setdefault(evidence_ref, set()).add(
+                    criterion_id
+                )
+    reused_runtime_criteria = {
+        criterion_id
+        for criteria in runtime_ref_criteria.values()
+        if len(criteria) > 1
+        for criterion_id in criteria
+    }
+    if reused_runtime_criteria:
+        affected = ", ".join(
+            sorted(
+                aliases_by_criterion[criterion_id]
+                for criterion_id in reused_runtime_criteria
+            )
+        )
+        raise RoomQualityGateError(
+            f"{affected} 重复使用了同一个普通工具结果；"
+            "每次成功工具执行只能直接证明一个验收项。"
+            "请逐项运行对应验证，或使用已经与验收项绑定的正式验证回执"
         )
 
     items: list[dict[str, object]] = []
@@ -167,11 +234,11 @@ def canonicalize_quality_gate(
     verdict = "ready_to_deliver" if all_passed else "not_ready"
     if decision == "deliver" and not all_passed:
         raise RoomQualityGateError(
-            "deliver requires an authoritative successful receipt for every AC"
+            "deliver 要求当前工作卡片的每个验收项都有成功工具结果支持"
         )
     if decision in {"wait", "blocked"} and all_passed:
         raise RoomQualityGateError(
-            f"{decision} is invalid after every AC is verified; use deliver or handoff"
+            f"所有验收项都已验证，不能选择 {decision}；请使用 deliver 或 handoff"
         )
 
     receipt = {

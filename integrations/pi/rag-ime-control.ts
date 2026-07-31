@@ -19,6 +19,8 @@ const sessionId = process.env.RAG_IME_AGENT_SESSION_ID ?? "";
 const sessionMode = process.env.RAG_IME_AGENT_SESSION_MODE ?? "assistant";
 const toolProfileVersion = process.env.RAG_IME_AGENT_TOOL_PROFILE_VERSION ?? "control-center-v1";
 const reviewTitlePrefix = "RAG-IME-REVIEW:";
+const groupedQuestionsTitlePrefix = "RAG-IME-QUESTIONS:";
+const groupedQuestionsSchemaVersion = "rag-ime.grouped-questions.v1";
 const resolvedReviewRunIds = new Set<string>();
 const nonRetryableFailureTtlMs = 30_000;
 const maxInlineToolResultBytes = 24 * 1024;
@@ -90,6 +92,11 @@ function cachedNonRetryableFailure(
 type ToolParams = {
   op?: string;
   title?: string;
+  questions?: Array<{
+    id: string;
+    question: string;
+    options: string[];
+  }>;
   changes?: Array<{ key: string; value: boolean | number | string }>;
   selectedKeys?: string[];
   sourceApprovalId?: string;
@@ -580,6 +587,52 @@ const roleBookParameterSchema: Record<string, unknown> = {
 };
 
 const toolSpecs: ToolSpec[] = [
+  {
+    name: "user_input_required",
+    label: "向用户确认选择",
+    description: "只有缺失的用户选择会真正改变结果时，集中询问一个或一小组相关问题。",
+    fixedOperation: "ask",
+    operations: ["ask"],
+    progress: { ask: "正在等待用户选择" },
+    guidelines: [
+      "能从源码、配置或运行状态查明的事实不要问用户。",
+      "彼此独立且都已明确的问题应在一次调用中集中询问；只有前一个答案会改变后续问题时才分开问。",
+      "每个问题给出互斥、可直接选择且使用用户熟悉语言的选项；不要要求用户回复固定开工口令。",
+    ],
+    parameterSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["questions"],
+      properties: {
+        questions: {
+          type: "array",
+          minItems: 1,
+          maxItems: 4,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "question", "options"],
+            properties: {
+              id: {
+                type: "string",
+                minLength: 1,
+                maxLength: 80,
+                pattern: "^[A-Za-z][A-Za-z0-9_-]{0,79}$",
+              },
+              question: { type: "string", minLength: 1, maxLength: 160 },
+              options: {
+                type: "array",
+                minItems: 2,
+                maxItems: 5,
+                uniqueItems: true,
+                items: { type: "string", minLength: 1, maxLength: 240 },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
   {
     name: "overview",
     label: "控制中心概览",
@@ -1832,6 +1885,7 @@ function specsForToolProfile(specs: ToolSpec[]) {
     return specs;
   }
   const allowed: Record<string, string[]> = {
+    user_input_required: ["ask"],
     overview: ["status", "capabilities", "recent_activity"],
     memory: [
       "catalog", "read", "recent", "trace", "maintenance_status", "list", "search",
@@ -1913,6 +1967,145 @@ export default function (pi: any) {
         onUpdate?: (value: unknown) => void,
         ctx?: any,
       ) {
+        if (spec.name === "user_input_required") {
+          if (!ctx?.ui) {
+            throw new Error("当前运行环境无法向用户显示选择题");
+          }
+          const rawQuestions = Array.isArray(params.questions)
+            ? params.questions
+            : [];
+          if (rawQuestions.length < 1 || rawQuestions.length > 4) {
+            throw new Error("一次应询问一到四个相关问题");
+          }
+          const seenIds = new Set<string>();
+          const questions = rawQuestions.map((item) => {
+            const id = String(item.id ?? "").trim();
+            const question = String(item.question ?? "").trim();
+            const rawOptions = Array.isArray(item.options) ? item.options : [];
+            const options = rawOptions.map((option) => String(option).trim());
+            if (!/^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(id)) {
+              throw new Error("用户问题 id 必须是稳定的英文标识");
+            }
+            if (!question || question.length > 160) {
+              throw new Error("用户问题文本为空或过长");
+            }
+            if (
+              options.length < 2
+              || options.length > 5
+              || options.some((option) => !option || option.length > 240)
+              || new Set(options).size !== options.length
+            ) {
+              throw new Error("每个问题必须提供二到五个非空且互不重复的选项");
+            }
+            if (seenIds.has(id)) {
+              throw new Error(`用户问题 id 重复：${id}`);
+            }
+            seenIds.add(id);
+            return { id, question, options };
+          });
+          const answers: Record<string, string> = {};
+          onUpdate?.({
+            content: [{ type: "text", text: "正在等待用户选择" }],
+            details: { summary: "正在等待用户选择" },
+          });
+
+          if (ctx.mode === "rpc" && typeof ctx.ui.editor === "function") {
+            const wireRequest = JSON.stringify({
+              schemaVersion: groupedQuestionsSchemaVersion,
+              questions,
+            });
+            const value = await ctx.ui.editor(
+              `${groupedQuestionsTitlePrefix}${toolCallId}`,
+              wireRequest,
+            );
+            if (value === undefined) {
+              const result = {
+                answered: false,
+                cancelled: true,
+                answers,
+                summary: "用户结束了本次选择；不要代替用户猜测答案。",
+              };
+              return {
+                content: [{ type: "text", text: JSON.stringify(result) }],
+                details: result,
+              };
+            }
+            let decoded: unknown;
+            try {
+              decoded = JSON.parse(value);
+            } catch {
+              throw new Error("用户选择结果无法解析");
+            }
+            const decodedRecord = (
+              decoded !== null
+              && typeof decoded === "object"
+              && !Array.isArray(decoded)
+            )
+              ? decoded as Record<string, unknown>
+              : undefined;
+            const proposed = (
+              decodedRecord?.answers !== null
+              && typeof decodedRecord?.answers === "object"
+              && !Array.isArray(decodedRecord.answers)
+            )
+              ? decodedRecord.answers as Record<string, unknown>
+              : undefined;
+            const answerKeys = proposed ? Object.keys(proposed) : [];
+            if (
+              !proposed
+              || answerKeys.length !== questions.length
+              || answerKeys.some((id) => !seenIds.has(id))
+            ) {
+              throw new Error("用户选择结果未覆盖本次全部问题");
+            }
+            for (const item of questions) {
+              const selected = proposed[item.id];
+              if (
+                typeof selected !== "string"
+                || !item.options.includes(selected)
+              ) {
+                throw new Error(`用户选择结果不属于问题 ${item.id} 的可选项`);
+              }
+              answers[item.id] = selected;
+            }
+          } else {
+            if (typeof ctx.ui.select !== "function") {
+              throw new Error("当前运行环境无法向用户显示选择题");
+            }
+            for (const item of questions) {
+              const value = await ctx.ui.select(
+                item.question,
+                item.options,
+                { signal },
+              );
+              if (value === undefined) {
+                const result = {
+                  answered: false,
+                  cancelled: true,
+                  answers,
+                  unansweredQuestionId: item.id,
+                  summary: "用户结束了本次选择；不要代替用户猜测未回答项。",
+                };
+                return {
+                  content: [{ type: "text", text: JSON.stringify(result) }],
+                  details: result,
+                };
+              }
+              answers[item.id] = value;
+            }
+          }
+
+          const result = {
+            answered: true,
+            cancelled: false,
+            answers,
+            summary: "用户已完成本次选择。",
+          };
+          return {
+            content: [{ type: "text", text: JSON.stringify(result) }],
+            details: result,
+          };
+        }
         if (spec.name === "read" && String(params.path ?? "").startsWith(toolOutputPrefix)) {
           const restored = readStoredToolOutput(params);
           const visible = boundedToolResult(toolCallId, restored);

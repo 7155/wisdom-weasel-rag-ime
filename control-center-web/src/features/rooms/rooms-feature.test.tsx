@@ -7,6 +7,8 @@ import { createPreviewTransport } from '@/app/preview-control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import { MockControlTransport } from '@/test/mock-transport';
 import { createRoomProjection, reduceRoomEvent } from '@/contracts/room-reducer';
+import { createRoomKernelProjection, type RootProjection } from '@/contracts/room-kernel-reducer';
+import type { RoomTaskV3 } from '@/contracts/generated/room-task.v3';
 import { parseRoomEvent } from '@/contracts/validators';
 import { previewPersonas } from '@/features/agent/preview-data';
 import type { ControlRequest, PickedFile } from '@/platform/transport';
@@ -17,12 +19,18 @@ import { useRoomLiveStore } from './state/live-store';
 vi.mock('react-virtuoso', () => ({
   Virtuoso: ({
     data,
+    initialTopMostItemIndex,
     itemContent,
   }: {
     data: string[];
+    initialTopMostItemIndex?: { index: string | number; align?: string };
     itemContent: (index: number, item: string) => ReactNode;
   }) => (
-    <div data-testid="virtuoso-list">
+    <div
+      data-initial-align={initialTopMostItemIndex?.align}
+      data-initial-index={initialTopMostItemIndex?.index}
+      data-testid="virtuoso-list"
+    >
       {data.map((item, index) => <div key={`${index}:${item}`}>{itemContent(index, item)}</div>)}
     </div>
   ),
@@ -64,6 +72,8 @@ describe('Rooms experience', () => {
     expect(errorSlot).toBeEmptyDOMElement();
     expect(errorSlot?.nextElementSibling).toHaveClass('room-timeline');
     expect(errorSlot?.nextElementSibling?.nextElementSibling).toHaveClass('room-composer-dock');
+    expect(screen.getByTestId('virtuoso-list')).toHaveAttribute('data-initial-index', 'LAST');
+    expect(screen.getByTestId('virtuoso-list')).toHaveAttribute('data-initial-align', 'end');
     await user.type(composer, '并行核对边界');
     await user.click(screen.getByRole('button', { name: '发送消息' }));
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.message')).toBe(true));
@@ -175,6 +185,76 @@ describe('Rooms experience', () => {
     expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveFocus();
   });
 
+  it('answers grouped participant clarification in Room and waits for the durable resolution event', async () => {
+    const groupedRequest = roomEvent('room-a', 1, 'participant_activity', {
+      rootId: 'room-a:turn-1',
+      dispatchId: 'room-a:dispatch-1',
+      sourceEventId: 'room-a:s1:input:grouped-1',
+      sourceEventType: 'user_input_required',
+      requestId: 'input:grouped-1',
+      requestKind: 'grouped_questions',
+      method: 'editor',
+      title: '需要你做几个选择',
+      message: '请一起确认下面两件事，提交后伙伴会继续。',
+      questions: [
+        { id: 'scope', question: '先覆盖哪一部分？', options: ['核心流程', '完整流程'] },
+        { id: 'review', question: '如何复核？', options: ['伙伴互查', '直接交付'] },
+      ],
+    }, {
+      turnId: 'room-a:turn-1',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+    });
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [roomSummary('room-a', '协作确认')] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot('room-a', [groupedRequest]),
+      'agent.session.ui.resolve': { ok: true },
+    } });
+    const user = userEvent.setup();
+    render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
+
+    const dialog = within(await screen.findByRole('dialog', { name: '需要你做几个选择' }));
+    expect(dialog.getByRole('group', { name: '1. 先覆盖哪一部分？' })).toBeInTheDocument();
+    expect(dialog.getByRole('group', { name: '2. 如何复核？' })).toBeInTheDocument();
+    await user.click(dialog.getByRole('radio', { name: '核心流程' }));
+    await user.click(dialog.getByRole('radio', { name: '伙伴互查' }));
+    await user.click(dialog.getByRole('button', { name: '一起提交' }));
+
+    await waitFor(() => expect(
+      transport.requests.filter(({ request }) => request.pathId === 'agent.session.ui.resolve'),
+    ).toHaveLength(1));
+    expect(transport.requests.find(({ request }) => request.pathId === 'agent.session.ui.resolve')?.request).toMatchObject({
+      params: { sessionId: 'room-a:s1' },
+      body: {
+        requestId: 'input:grouped-1',
+        value: JSON.stringify({ answers: { scope: '核心流程', review: '伙伴互查' } }),
+        resolutionSource: 'direct_user',
+      },
+    });
+    expect(screen.getByRole('dialog', { name: '需要你做几个选择' })).toBeInTheDocument();
+    expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.message')).toHaveLength(0);
+
+    transport.emit('agent.room.events', roomEvent('room-a', 2, 'participant_activity', {
+      rootId: 'room-a:turn-1',
+      dispatchId: 'room-a:dispatch-1',
+      sourceEventId: 'room-a:s1:input:grouped-1:resolved',
+      sourceEventType: 'user_input_required',
+      requestId: 'input:grouped-1',
+      requestKind: 'grouped_questions',
+      method: 'editor',
+      resolutionState: 'resolved',
+      resolutionSource: 'direct_user',
+    }, {
+      turnId: 'room-a:turn-1',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+    }));
+    await waitFor(() => expect(
+      screen.queryByRole('dialog', { name: '需要你做几个选择' }),
+    ).not.toBeInTheDocument());
+  });
+
   it('allows Escape and Cancel without hiding the inline post, then reopens after a full reload', async () => {
     const question = roomQuestionEvent('room-a', 1, {
       content: '请选择发布方式，回答后我会继续。',
@@ -195,7 +275,7 @@ describe('Rooms experience', () => {
     await screen.findByRole('dialog', { name: '伙伴需要你确认下一步' });
     await user.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '伙伴需要你确认下一步' })).not.toBeInTheDocument());
-    expect(screen.getByText('请选择发布方式，回答后我会继续。')).toBeInTheDocument();
+    expect(within(screen.getByLabelText('协作对话时间线')).getByText('请选择发布方式，回答后我会继续。')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '协作消息' })).toHaveFocus();
     expect(transport.requests.filter(({ request }) => request.pathId === 'agent.room.message')).toHaveLength(0);
 
@@ -204,7 +284,7 @@ describe('Rooms experience', () => {
     const reloadedDialog = within(await screen.findByRole('dialog', { name: '伙伴需要你确认下一步' }));
     await user.click(reloadedDialog.getByRole('button', { name: '取消' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '伙伴需要你确认下一步' })).not.toBeInTheDocument());
-    expect(screen.getByText('请选择发布方式，回答后我会继续。')).toBeInTheDocument();
+    expect(within(screen.getByLabelText('协作对话时间线')).getByText('请选择发布方式，回答后我会继续。')).toBeInTheDocument();
   });
 
   it('does not reopen a resolved question or fabricate choices for a legacy wait post', async () => {
@@ -233,8 +313,9 @@ describe('Rooms experience', () => {
     } });
     render(<ControlTransportProvider transport={transport}><TooltipProvider><RoomsFeature /></TooltipProvider></ControlTransportProvider>);
 
-    expect(await screen.findByText('请直接在对话中说明希望怎样继续。')).toBeInTheDocument();
-    expect(screen.getByText('先选择一个发布方式。')).toBeInTheDocument();
+    const timeline = within(screen.getByLabelText('协作对话时间线'));
+    expect(await timeline.findByText('请直接在对话中说明希望怎样继续。')).toBeInTheDocument();
+    expect(timeline.getByText('先选择一个发布方式。')).toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: '伙伴需要你确认下一步' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('radio')).toHaveLength(3);
     expect(document.querySelectorAll('.room-question-option')).toHaveLength(0);
@@ -257,10 +338,10 @@ describe('Rooms experience', () => {
       </ControlTransportProvider>,
     );
 
-    expect(await screen.findByText('交付已经完成。')).toBeInTheDocument();
+    expect(await within(screen.getByLabelText('协作对话时间线')).findByText('交付已经完成。')).toBeInTheDocument();
     expect(Array.from(container.querySelectorAll('.room-agent-lane__post-kind')).map(
       (element) => element.textContent,
-    )).toEqual(['任务汇报', '进度更新', '进度更新', '遇到的问题']);
+    )).toEqual(['任务汇报', '交接说明', '等待说明', '遇到的问题']);
   });
 
   it('keeps progress plus only the latest terminal post in one lane report', () => {
@@ -318,6 +399,58 @@ describe('Rooms experience', () => {
     expect(Array.from(container.querySelectorAll('.room-agent-lane__post-kind')).map(
       (element) => element.textContent,
     )).toEqual(['进度更新', '任务汇报']);
+    expect(screen.getByText('这轮协作已完成')).toBeInTheDocument();
+    expect(screen.getByText('1 项分工已经收束。已保留 1 条伙伴公开汇报，可在上方查看。')).toBeInTheDocument();
+    expect(container.querySelector('.room-turn__terminal')).toHaveAttribute('data-state', 'completed');
+  });
+
+  it('turns a terminal blocked Post into a clear final response', () => {
+    const room = roomSummary('room-a', '阻塞结果 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-blocked');
+    projection.turnsById['turn-blocked'] = {
+      id: 'turn-blocked',
+      rootId: 'turn-blocked',
+      status: 'completed',
+      messageIds: ['blocked-post'],
+      activityIds: [],
+      participantIds: ['room-a:p1'],
+      dispatchIds: ['dispatch-blocked'],
+      terminalParticipantIds: ['room-a:p1'],
+      failedParticipantIds: [],
+      abortedParticipantIds: [],
+      terminalDispatchIds: ['dispatch-blocked'],
+      failedDispatchIds: [],
+      abortedDispatchIds: [],
+      dispatchParticipantIds: { 'dispatch-blocked': 'room-a:p1' },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    projection.messagesById['blocked-post'] = {
+      id: 'blocked-post',
+      roomId: room.id,
+      turnId: 'turn-blocked',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      role: 'assistant',
+      status: 'completed',
+      text: '缺少发布凭据，当前无法继续。',
+      projectionKind: 'post',
+      postKind: 'blocked',
+      rootId: 'turn-blocked',
+      dispatchId: 'dispatch-blocked',
+      createdAtMs: 1,
+      completedAtMs: 2,
+    };
+
+    const { container } = render(
+      <RoomTurn turnId="turn-blocked" room={room} projection={projection} personas={previewPersonas} />,
+    );
+
+    expect(screen.getByText('这轮协作受阻')).toBeInTheDocument();
+    expect(screen.getByText('1 项分工报告阻塞。已保留 1 条伙伴公开汇报，可在上方查看。')).toBeInTheDocument();
+    expect(container.querySelector('.room-turn__terminal')).toHaveAttribute('data-state', 'blocked');
+    expect(container.querySelector('.room-agent-lane')).toHaveAttribute('data-outcome', 'blocked');
   });
 
   it('summarizes a long terminal report before revealing the full text', async () => {
@@ -741,7 +874,7 @@ describe('Rooms experience', () => {
         naturalJitter: 0,
         fallbackParticipantId: '',
       },
-      routingPolicy: 'natural',
+      routingPolicy: 'parallel',
       workspaceRoots: ['/Volumes/work/learnA'],
       executionMode: 'workspace_managed',
       workspaceScopeConfirmation: 'APPROVE_WORKSPACE_SCOPE',
@@ -764,11 +897,11 @@ describe('Rooms experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '开始新的协作' }));
     expect(screen.getByRole('button', { name: '开始协作' })).toBeDisabled();
-    expect(screen.getByRole('checkbox', { name: /澄·远/ })).toHaveAccessibleName(/澄·远.*组织协作/);
+    expect(screen.getByRole('checkbox', { name: /澄·远/ })).toHaveAccessibleName(/澄·远.*帮大家对齐进度/);
     expect(screen.getByRole('checkbox', { name: /澄·远/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /澄·今/ })).toHaveAccessibleName(/澄·今.*动手实现/);
+    expect(screen.getByRole('checkbox', { name: /澄·今/ })).toHaveAccessibleName(/澄·今.*完成自己的部分/);
     expect(screen.getByRole('checkbox', { name: /澄·今/ })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: /澄·初/ })).toHaveAccessibleName(/澄·初.*独立验收/);
+    expect(screen.getByRole('checkbox', { name: /澄·初/ })).toHaveAccessibleName(/澄·初.*一起检查结果/);
     expect(screen.getByRole('checkbox', { name: /澄·初/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /澄·瞬/ })).toHaveAccessibleName(/澄·瞬.*可邀请/);
     expect(screen.queryByRole('combobox', { name: '主持伙伴' })).not.toBeInTheDocument();
@@ -1012,7 +1145,7 @@ describe('Rooms experience', () => {
     await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
     await user.click(screen.getByRole('combobox', { name: '工作权限' }));
     await user.click(await screen.findByRole('option', { name: '全自动' }));
-    expect(screen.getByText('所有待审批操作由独立审批 Agent（Luna Max）依据 Room 全局审批历史自动判定')).toBeInTheDocument();
+    expect(screen.getByText('所有待审批操作由独立审批助手（Luna Max）依据整个协作空间的审批记录自动判定')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '保存更改' }));
 
     await waitFor(() => expect(
@@ -1101,14 +1234,14 @@ describe('Rooms experience', () => {
 
     await user.click(await screen.findByRole('button', { name: '设置这个协作空间' }));
     await user.click(screen.getByRole('combobox', { name: `${target.displayName} 负责什么` }));
-    await user.click(screen.getByRole('option', { name: '独立验收' }));
+    await user.click(screen.getByRole('option', { name: '一起检查结果' }));
 
     await waitFor(() => expect(transport.requests.some((call) => call.request.pathId === 'agent.room.participant.update')).toBe(true));
     expect(transport.requests.find((call) => call.request.pathId === 'agent.room.participant.update')?.request).toMatchObject({
       params: { roomId: room.id },
       body: { participantId: target.id, collaborationRole: 'reviewer' },
     });
-    expect(screen.getByRole('combobox', { name: `${target.displayName} 负责什么` })).toHaveTextContent('独立验收');
+    expect(screen.getByRole('combobox', { name: `${target.displayName} 负责什么` })).toHaveTextContent('一起检查结果');
   });
 
   it('permanently deletes only an archived Room after exact-title confirmation', async () => {
@@ -1393,6 +1526,43 @@ describe('Rooms experience', () => {
     expect(screen.getByRole('complementary', { name: '协作进展' })).toHaveAttribute('data-open', 'true');
     expect(screen.getByText('伙伴状态')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '收起进展面板' })).toBeInTheDocument();
+  });
+
+  it('hydrates authoritative task progress while the public conversation view remains selected', async () => {
+    const room = roomSummary(
+      'room-status',
+      'Fresh installed-stack Room acceptance for automatic collaboration recovery and terminal settlement',
+    );
+    const transport = new MockControlTransport({ routes: {
+      'agent.rooms.list': { ok: true, items: [room] },
+      'agent.roles.list': { ok: true, items: previewPersonas },
+      'agent.room.snapshot': roomSnapshot(room.id, [], room.title),
+      'agent.room.kernel.snapshot': roomKernelSnapshot(room.id),
+    } });
+    const user = userEvent.setup();
+    const { container } = render(
+      <ControlTransportProvider transport={transport}>
+        <TooltipProvider><RoomsFeature /></TooltipProvider>
+      </ControlTransportProvider>,
+    );
+
+    await screen.findByText('还没有公开消息');
+    await waitFor(() => expect(transport.requests.some(({ request }) => (
+      request.pathId === 'agent.room.kernel.snapshot'
+    ))).toBe(true));
+    await user.click(screen.getByRole('button', { name: '看看协作进展' }));
+
+    const status = screen.getByRole('complementary', { name: '协作进展' });
+    expect(within(status).getByRole('status', { name: '任务进度连接' })).toHaveTextContent(
+      '实时进度已连接',
+    );
+    expect(within(status).getByText(/更新于/)).toBeInTheDocument();
+    expect(within(status).queryByText('进度同步异常')).not.toBeInTheDocument();
+    expect(within(status).queryByText(/任务进度暂时不可用/)).not.toBeInTheDocument();
+    expect(within(status).getByLabelText('整体任务与分工进度')).toHaveTextContent(
+      '整体任务工作进行中',
+    );
+    expect(container.querySelector('.room-execution-workspace')).toHaveAttribute('hidden');
   });
 
   it('keeps the real role catalog usable when the Room list request fails', async () => {
@@ -1689,6 +1859,35 @@ describe('Rooms experience', () => {
     expect(screen.getByRole('link', { name: /立即选择/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1');
   });
 
+  it('routes grouped clarification to the owning participant without merging answers into the Room timeline', () => {
+    const room = roomSummary('room-a', '协作确认');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-a');
+    projection.turnsById['turn-a'] = {
+      id: 'turn-a', status: 'running', messageIds: [], activityIds: ['grouped:1'],
+      participantIds: ['room-a:p1'], createdAtMs: 1, updatedAtMs: 1,
+    };
+    projection.activitiesById['grouped:1'] = {
+      id: 'grouped:1', turnId: 'turn-a', participantId: 'room-a:p1', sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity', status: 'waiting', summary: '一起确认交付方式',
+      payload: {
+        requestKind: 'grouped_questions',
+        requestId: 'grouped:1',
+        questions: [
+          { id: 'scope', question: '先覆盖哪一部分？', options: ['核心流程', '完整流程'] },
+          { id: 'review', question: '如何复核？', options: ['伙伴互查', '直接交付'] },
+        ],
+      },
+      createdAtMs: 1,
+    };
+
+    render(<RoomTurn turnId="turn-a" room={room} projection={projection} personas={previewPersonas} />);
+    expect(screen.getByText('等待回答')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /立即回答/ })).toHaveAttribute('href', '#/agent?session=room-a%3As1');
+    expect(screen.queryByText('核心流程')).not.toBeInTheDocument();
+    expect(screen.queryByText('伙伴互查')).not.toBeInTheDocument();
+  });
+
   it('keeps private activity rows out of the public Post timeline', () => {
     const room: RoomSummary = {
       id: 'room-a', title: '迁移作战室', status: 'active', routingPolicy: 'moderator',
@@ -1948,7 +2147,180 @@ describe('Rooms experience', () => {
     expect(cards[1]).toHaveTextContent('file-2.ts');
     expect(container.querySelector('.room-agent-activity--tool-group')).not.toBeInTheDocument();
     expect(container.querySelector('.room-agent-lane__activity > summary')).toHaveTextContent('读取文件');
-    expect(container.querySelector('.room-agent-lane__activity > summary')).toHaveTextContent('2 个步骤 · 全部完成');
+    expect(container.querySelector('.room-agent-lane__activity > summary')).toHaveTextContent('2 个步骤 · 所有步骤已返回');
+  });
+
+  it('separates returned steps from a stopped Root and exposes the concrete step list', () => {
+    const room = roomSummary('room-a', '停止后核对 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-stopped');
+    projection.turnsById['turn-stopped'] = {
+      id: 'turn-stopped',
+      rootId: 'turn-stopped',
+      status: 'aborted',
+      messageIds: [],
+      activityIds: ['read-finished', 'write-finished'],
+      participantIds: ['room-a:p1'],
+      dispatchIds: ['dispatch-stopped'],
+      terminalParticipantIds: ['room-a:p1'],
+      failedParticipantIds: [],
+      abortedParticipantIds: ['room-a:p1'],
+      terminalDispatchIds: ['dispatch-stopped'],
+      failedDispatchIds: [],
+      abortedDispatchIds: ['dispatch-stopped'],
+      dispatchParticipantIds: { 'dispatch-stopped': 'room-a:p1' },
+      createdAtMs: 1,
+      updatedAtMs: 5,
+    };
+    for (const [index, toolName] of ['read', 'write'].entries()) {
+      const id = `${toolName}-finished`;
+      projection.activitiesById[id] = {
+        id,
+        turnId: 'turn-stopped',
+        participantId: 'room-a:p1',
+        sourceSessionId: 'room-a:s1',
+        kind: 'participant_activity',
+        status: 'completed',
+        summary: `${toolName} 已返回`,
+        payload: {
+          rootId: 'turn-stopped',
+          dispatchId: 'dispatch-stopped',
+          sourceEventType: 'tool_finished',
+          toolName,
+          toolCallId: `call-${index + 1}`,
+          arguments: { path: `…/project/file-${index + 1}.ts` },
+          result: { outputPreview: `step ${index + 1}`, outputTruncated: false },
+        },
+        createdAtMs: index + 1,
+      };
+    }
+
+    const { container } = render(
+      <RoomTurn turnId="turn-stopped" room={room} projection={projection} personas={previewPersonas} />,
+    );
+    const activity = container.querySelector<HTMLDetailsElement>('.room-agent-lane__activity')!;
+
+    expect(activity).toHaveAttribute('open');
+    expect(activity.querySelector('summary')).toHaveTextContent('2 个步骤 · 所有步骤已返回');
+    expect(activity).toHaveTextContent('file-1.ts');
+    expect(activity).toHaveTextContent('file-2.ts');
+    expect(container.querySelector('.room-agent-lane')).toHaveAttribute('data-state', 'aborted');
+    expect(screen.getByText('这轮协作已停止')).toBeInTheDocument();
+    expect(screen.queryByText('全部完成')).not.toBeInTheDocument();
+  });
+
+  it('reconciles a transient resume lane after its Root completes', () => {
+    const room = roomSummary('room-a', '恢复分工终态 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-completed');
+    projection.turnsById['turn-completed'] = {
+      id: 'turn-completed',
+      rootId: 'turn-completed',
+      status: 'completed',
+      messageIds: [],
+      activityIds: ['resume-work'],
+      participantIds: ['room-a:p1'],
+      dispatchIds: ['dispatch-primary', 'dispatch-resume'],
+      terminalParticipantIds: ['room-a:p1'],
+      failedParticipantIds: [],
+      abortedParticipantIds: [],
+      terminalDispatchIds: ['dispatch-primary'],
+      failedDispatchIds: [],
+      abortedDispatchIds: [],
+      dispatchParticipantIds: {
+        'dispatch-primary': 'room-a:p1',
+        'dispatch-resume': 'room-a:p1',
+      },
+      createdAtMs: 1,
+      updatedAtMs: 5,
+    };
+    projection.activitiesById['resume-work'] = {
+      id: 'resume-work',
+      turnId: 'turn-completed',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity',
+      status: 'completed',
+      summary: '协作进度已经同步',
+      payload: {
+        rootId: 'turn-completed',
+        dispatchId: 'dispatch-resume',
+        activityKind: 'work',
+        phase: 'completed',
+      },
+      createdAtMs: 4,
+    };
+
+    const { container } = render(
+      <RoomTurn turnId="turn-completed" room={room} projection={projection} personas={previewPersonas} />,
+    );
+    const lane = container.querySelector('.room-agent-lane')!;
+
+    expect(lane).toHaveAttribute('data-state', 'completed');
+    expect(lane.querySelector('.room-agent-lane__identity')).toHaveTextContent('已完成');
+    expect(lane.querySelector('.room-agent-lane__identity')).not.toHaveTextContent('执行中');
+    expect(screen.getByText('这轮协作已完成')).toBeInTheDocument();
+  });
+
+  it('marks only a live Root terminal transition as an arriving collaboration result', () => {
+    const room = roomSummary('room-a', '实时终态 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-live');
+    projection.turnsById['turn-live'] = {
+      id: 'turn-live',
+      rootId: 'turn-live',
+      status: 'running',
+      messageIds: [],
+      activityIds: ['route-live'],
+      participantIds: ['room-a:p1'],
+      dispatchIds: ['dispatch-live'],
+      terminalParticipantIds: [],
+      failedParticipantIds: [],
+      abortedParticipantIds: [],
+      terminalDispatchIds: [],
+      failedDispatchIds: [],
+      abortedDispatchIds: [],
+      dispatchParticipantIds: { 'dispatch-live': 'room-a:p1' },
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    projection.activitiesById['route-live'] = {
+      id: 'route-live',
+      turnId: 'turn-live',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'route_decision',
+      status: 'completed',
+      summary: '澄·今已接手',
+      payload: {
+        rootId: 'turn-live',
+        dispatchId: 'dispatch-live',
+        targetParticipantId: 'room-a:p1',
+      },
+      createdAtMs: 1,
+    };
+    const roomTurn = () => (
+      <RoomTurn turnId="turn-live" room={room} projection={projection} personas={previewPersonas} />
+    );
+    const view = render(roomTurn());
+
+    expect(view.container.querySelector('.room-turn')).toHaveAttribute('data-turn-status', 'running');
+    expect(view.container.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
+    projection.turnsById['turn-live'] = {
+      ...projection.turnsById['turn-live'],
+      status: 'completed',
+      terminalParticipantIds: ['room-a:p1'],
+      terminalDispatchIds: ['dispatch-live'],
+      updatedAtMs: 3,
+    };
+    view.rerender(roomTurn());
+
+    expect(view.container.querySelector('.room-turn__terminal')).toHaveAttribute('data-arriving', 'true');
+    expect(view.container.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'done');
+    view.unmount();
+
+    const settled = render(roomTurn());
+    expect(settled.container.querySelector('.room-turn__terminal')).not.toHaveAttribute('data-arriving');
   });
 
   it('keeps a committed lane completed without showing a failed read as successful', () => {
@@ -2337,17 +2709,19 @@ describe('Rooms experience', () => {
     render(<TooltipProvider><RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} /></TooltipProvider>);
 
     expect(screen.getByText('任务分工')).toBeInTheDocument();
-    const workRow = screen.getByText('核对多端网关回放边界').closest<HTMLElement>('.room-status-work__item')!;
-    expect(within(workRow).getByText('待验收')).toBeInTheDocument();
+    const workRow = screen.getAllByText('核对多端网关回放边界')
+      .map((element) => element.closest<HTMLElement>('.room-status-work__item'))
+      .find(Boolean)!;
+    expect(within(workRow).getAllByText('一起检查')).not.toHaveLength(0);
     expect(within(workRow).getByText('澄·初')).toBeInTheDocument();
     expect(within(workRow).getByText('澄')).toBeInTheDocument();
     expect(within(workRow).getByText('第 1 次')).toBeInTheDocument();
     expect(within(workRow).getByText('测试与风险说明')).toBeInTheDocument();
     const rulesButton = screen.getByRole('button', { name: /协作规则/ });
     expect(rulesButton).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByText('最终验收人保持明确')).toBeInTheDocument();
+    expect(screen.getByText('一起检查的人始终明确')).toBeInTheDocument();
     expect(screen.getByText('不会无限循环')).toBeInTheDocument();
-    expect(screen.getByText('查资料与核对 · 已加入')).toBeInTheDocument();
+    expect(screen.getByText('查清资料 · 已加入')).toBeInTheDocument();
     expect(screen.queryByText(/只读调研/)).not.toBeInTheDocument();
   });
 
@@ -2427,6 +2801,270 @@ describe('Rooms experience', () => {
     expect(screen.queryByText('已完成')).not.toBeInTheDocument();
   });
 
+  it('keeps a running Room active after a recoverable tool failure', () => {
+    const room = roomSummary('room-a', '恢复中 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-a');
+    projection.turnsById['turn-a'] = {
+      id: 'turn-a',
+      status: 'running',
+      messageIds: [],
+      activityIds: ['tool-failed'],
+      participantIds: ['room-a:p1'],
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    projection.activitiesById['tool-failed'] = {
+      id: 'tool-failed',
+      turnId: 'turn-a',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'tool_call',
+      status: 'failed',
+      summary: '运行命令失败',
+      payload: { toolName: 'workspace_shell' },
+      createdAtMs: 2,
+    };
+
+    const { container } = render(
+      <TooltipProvider>
+        <RoomStatusPanel room={room} projection={projection} open onClose={() => undefined} />
+      </TooltipProvider>,
+    );
+
+    expect(container.querySelector('.agent-status-turn')).toHaveAttribute('data-state', 'running');
+    expect(screen.getAllByText('协作中')).not.toHaveLength(0);
+    expect(container.querySelector('.room-status-activity')).toHaveAttribute('data-state', 'failed');
+  });
+
+  it('shows each partner public summary in an independently scrollable status feed', () => {
+    const room = roomSummary('room-a', '公开进度 Room');
+    const projection = createRoomProjection(room.id);
+    projection.activityOrder.push('reasoning-a', 'tool-b');
+    projection.activitiesById['reasoning-a'] = {
+      id: 'reasoning-a',
+      turnId: 'root-a',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '正在核对恢复后的任务边界',
+      payload: { rootId: 'root-a', sourceEventType: 'reasoning_summary' },
+      createdAtMs: 2,
+      updatedAtMs: 2,
+    };
+    projection.activitiesById['tool-b'] = {
+      id: 'tool-b',
+      turnId: 'root-a',
+      participantId: 'room-a:p2',
+      sourceSessionId: 'room-a:s2',
+      kind: 'participant_activity',
+      status: 'running',
+      summary: '正在读取公开检查记录',
+      payload: { rootId: 'root-a', sourceEventType: 'tool_progress' },
+      createdAtMs: 3,
+      updatedAtMs: 3,
+    };
+
+    const { container } = render(
+      <TooltipProvider>
+        <RoomStatusPanel room={room} projection={projection} open onClose={() => undefined} />
+      </TooltipProvider>,
+    );
+
+    const feed = screen.getByLabelText('伙伴公开思路与工作进度');
+    const lanes = feed.querySelectorAll('.room-status-public-lane');
+    expect(lanes).toHaveLength(2);
+    expect([...lanes].every((lane) => lane.className === 'room-status-public-lane')).toBe(true);
+    expect(feed).toHaveAttribute('tabindex', '0');
+    expect(feed).toHaveAttribute('aria-live', 'polite');
+    expect(getComputedStyle(feed).overflowY).toBe('auto');
+    expect(container).toHaveTextContent('正在核对恢复后的任务边界');
+    expect(container).toHaveTextContent('正在读取公开检查记录');
+  });
+
+  it('selects the newest hydrated task when snapshot update timestamps are absent', () => {
+    const room = roomSummary('room-a', '任务顺序 Room');
+    const kernel = createRoomKernelProjection(room.id);
+    const older = {
+      ...roomKernelRoot(room.id, 'completed', true, 0),
+      rootId: 'root-old',
+      createdAtMs: 1,
+    };
+    const newer = {
+      ...roomKernelRoot(room.id, 'blocked', false, 0),
+      rootId: 'root-new',
+      createdAtMs: 2,
+    };
+    kernel.rootsById[older.rootId] = older;
+    kernel.rootsById[newer.rootId] = newer;
+    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
+
+    const { container } = render(
+      <TooltipProvider>
+        <RoomStatusPanel
+          room={room}
+          projection={createRoomProjection(room.id)}
+          open
+          onClose={() => undefined}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(container.querySelector('.room-status-panel > header')).toHaveTextContent(
+      '需要处理阻塞',
+    );
+  });
+
+  it('keeps confirmed progress visible and exposes recovery when the task stream is stale', () => {
+    const room = roomSummary('room-a', '恢复进度 Room');
+    const kernel = createRoomKernelProjection(room.id);
+    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'running', false, 4);
+    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
+    useRoomLiveStore.getState().setKernelSync(room.id, {
+      state: 'stale',
+      detail: '继续显示上次确认的进度',
+      updatedAtMs: 120,
+      failureAtMs: 140,
+    });
+    const onOpenProgress = vi.fn();
+
+    render(
+      <TooltipProvider>
+        <RoomStatusPanel
+          room={room}
+          projection={createRoomProjection(room.id)}
+          open
+          onClose={() => undefined}
+          onOpenProgress={onOpenProgress}
+        />
+      </TooltipProvider>,
+    );
+
+    const freshness = screen.getByRole('status', { name: '任务进度连接' });
+    expect(freshness).toHaveTextContent('显示上次确认的进度');
+    expect(screen.getByLabelText('整体任务与分工进度')).toHaveTextContent(
+      '整体任务工作进行中',
+    );
+    fireEvent.click(screen.getByRole('button', { name: '打开任务进度' }));
+    expect(onOpenProgress).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the plain-language phase sequence visible while peer review is running', () => {
+    const room = roomSummary('room-a', '共同检查 Room');
+    const kernel = createRoomKernelProjection(room.id);
+    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'running', false, 4);
+    kernel.tasksById['work-a'] = roomKernelTask('work-a', 'work', 'completed');
+    kernel.tasksById['review-a'] = {
+      ...roomKernelTask('review-a', 'review', 'active'),
+      reviewOfTaskIds: ['work-a'],
+      reviewAuthorParticipantIds: ['room-a:p2'],
+      reviewState: 'in_review',
+    };
+    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
+
+    render(
+      <TooltipProvider>
+        <RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} />
+      </TooltipProvider>,
+    );
+
+    const phase = screen.getByRole('region', { name: '当前协作阶段' });
+    expect(phase).toHaveTextContent('各自工作');
+    expect(phase).toHaveTextContent('一起检查');
+    expect(phase).toHaveTextContent('0 / 1 位伙伴完成检查');
+    const summary = within(phase).getByLabelText('整体任务与分工进度');
+    expect(summary).toHaveTextContent('整体任务工作进行中');
+    expect(summary).toHaveTextContent('分工完成1 / 2');
+    expect(summary).toHaveTextContent('伙伴执行等待开始');
+    expect(phase).not.toHaveTextContent('最终回复');
+  });
+
+  it('keeps the final public Room reply visible after peer checks complete', () => {
+    const room = roomSummary('room-a', '最终回复 Room');
+    const kernel = createRoomKernelProjection(room.id);
+    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'completed', true, 6);
+    kernel.tasksById['work-a'] = roomKernelTask('work-a', 'work', 'completed');
+    kernel.tasksById['review-a'] = {
+      ...roomKernelTask('review-a', 'review', 'completed'),
+      reviewOfTaskIds: ['work-a'],
+      reviewAuthorParticipantIds: ['room-a:p2'],
+      reviewState: 'accepted',
+    };
+    kernel.postOrder.push('final-post');
+    kernel.postsById['final-post'] = {
+      schemaVersion: 'wisdom-weasel.room-post.v2',
+      postId: 'final-post',
+      roomId: room.id,
+      rootId: 'root-a',
+      generation: 1,
+      authorActorRef: 'room-a:p1',
+      kind: 'result',
+      visibility: 'room',
+      content: '每位伙伴的结果都已互相检查，这是最终公开回复。',
+      idempotencyKey: 'final-post',
+      publicationSource: { kind: 'room_commit', ref: 'commit-final' },
+      createdAtMs: 6,
+    };
+    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
+
+    const { container } = render(
+      <TooltipProvider>
+        <RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} />
+      </TooltipProvider>,
+    );
+
+    const phase = screen.getByRole('region', { name: '当前协作阶段' });
+    const reply = container.querySelector<HTMLElement>('.room-status-final-reply')!;
+    expect(phase).toHaveTextContent('各自工作');
+    expect(phase).toHaveTextContent('一起检查');
+    expect(phase).toHaveTextContent('最终回复');
+    expect(reply).toHaveTextContent('每位伙伴的结果都已互相检查，这是最终公开回复。');
+    expect(phase.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('keeps only the latest public reply in the status rail when work ends without a success receipt', () => {
+    const room = roomSummary('room-a', '未完成回复 Room');
+    const kernel = createRoomKernelProjection(room.id);
+    kernel.rootsById['root-a'] = roomKernelRoot(room.id, 'failed', false, 8);
+    kernel.postOrder.push('earlier-post', 'failed-post');
+    kernel.postsById['earlier-post'] = {
+      schemaVersion: 'wisdom-weasel.room-post.v2',
+      postId: 'earlier-post',
+      roomId: room.id,
+      rootId: 'root-a',
+      generation: 1,
+      authorActorRef: 'room-a:p1',
+      kind: 'progress',
+      visibility: 'room',
+      content: '较早的公开进度',
+      idempotencyKey: 'earlier-post',
+      publicationSource: { kind: 'room_commit', ref: 'commit-earlier' },
+      createdAtMs: 7,
+    };
+    kernel.postsById['failed-post'] = {
+      ...kernel.postsById['earlier-post']!,
+      postId: 'failed-post',
+      kind: 'failure',
+      content: '本轮未完成，伙伴已经给出可复核的最后说明。',
+      idempotencyKey: 'failed-post',
+      publicationSource: { kind: 'room_commit', ref: 'commit-failed' },
+      createdAtMs: 8,
+    };
+    useRoomLiveStore.getState().setKernelProjection(room.id, kernel);
+
+    const { container } = render(
+      <TooltipProvider>
+        <RoomStatusPanel room={room} projection={createRoomProjection(room.id)} open onClose={() => undefined} />
+      </TooltipProvider>,
+    );
+
+    expect(container.querySelectorAll('.room-status-final-reply')).toHaveLength(1);
+    expect(container).toHaveTextContent('本轮未完成，伙伴已经给出可复核的最后说明。');
+    expect(container).not.toHaveTextContent('较早的公开进度');
+    expect(screen.getByRole('region', { name: '当前协作阶段' })).toHaveTextContent('最终回复');
+  });
+
   it('labels a completed Room turn without a Post as completed in the status panel', () => {
     const room = roomSummary('room-a', '终态 Room');
     const projection = createRoomProjection(room.id);
@@ -2451,6 +3089,80 @@ describe('Rooms experience', () => {
     expect(screen.queryByText('等待后续')).not.toBeInTheDocument();
   });
 });
+
+function roomKernelTask(
+  taskId: string,
+  taskKind: RoomTaskV3['taskKind'],
+  state: RoomTaskV3['state'],
+): RoomTaskV3 {
+  return {
+    schemaVersion: 'wisdom-weasel.room-task.v3',
+    taskId,
+    rootId: 'root-a',
+    parentTaskId: null,
+    taskKind,
+    currentOwnerParticipantId: taskKind === 'review' ? 'room-a:p2' : 'room-a:p1',
+    ownershipRevision: 1,
+    ownershipReceiptId: null,
+    objective: taskKind === 'review' ? '检查伙伴结果' : '完成自己的部分',
+    expectedOutput: '公开结果',
+    requirementItemIds: [],
+    acceptanceCriterionIds: [],
+    contextEvidenceRefs: [],
+    invitationId: null,
+    reviewOfTaskIds: [],
+    reviewAuthorParticipantIds: [],
+    reviewState: taskKind === 'review' ? 'required' : 'not_required',
+    revision: 1,
+    state,
+  };
+}
+
+function roomKernelRoot(
+  roomId: string,
+  state: RootProjection['state'],
+  isFinal: boolean,
+  updatedAtMs: number,
+): RootProjection {
+  return {
+    schemaVersion: 'wisdom-weasel.room-root-execution.v3',
+    rootId: 'root-a',
+    roomId,
+    generation: 1,
+    state,
+    facilitatorParticipantId: `${roomId}:p1`,
+    reporterParticipantId: isFinal ? `${roomId}:p1` : null,
+    reporterSelectionReceiptId: null,
+    requirementAnchorRef: 'requirement:root-a',
+    createdByActorRef: 'user:1',
+    terminalReceiptId: isFinal ? 'terminal:root-a' : null,
+    activeProfileRef: null,
+    budgetPolicyRef: 'budget:default',
+    createdAtMs: 1,
+    updatedAtMs,
+    isFinal,
+  };
+}
+
+function roomKernelSnapshot(roomId: string) {
+  const root: Record<string, unknown> = {
+    ...roomKernelRoot(roomId, 'running', false, 1),
+  };
+  delete root.isFinal;
+  delete root.updatedAtMs;
+  return {
+    roomId,
+    lastSequence: 1,
+    snapshotHash: `sha256:${'0'.repeat(64)}`,
+    roots: [root],
+    tasks: [],
+    dispatches: [],
+    posts: [],
+    sessions: [],
+    receipts: [],
+    cancellationSurfaces: [],
+  };
+}
 
 function pickedRoomImage(
   id: string,

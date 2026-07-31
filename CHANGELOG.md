@@ -36,6 +36,12 @@ source checkpoint is not a signed and notarized macOS binary release.
   fail-closed ratchet for deliberately special routes.
 - Room-turn bookkeeping has one mutation owner.
 - Pi v1 and v2 share explicit public projection/value contracts.
+- Managed Rooms now execute peer-owned slices in parallel, gate final delivery on
+  shared review and evidence, and recover bounded participant Sessions without
+  requiring manual control-plane repair.
+- The Control Center Room timeline now separates live reasoning, Tool activity,
+  public participant reports, shared review, and the final reply in equal,
+  responsive participant lanes with user-facing status language.
 
 ### Fixed
 
@@ -53,6 +59,9 @@ source checkpoint is not a signed and notarized macOS binary release.
   Tool-disclosure receipt timestamps as idempotent instead of blocking compaction.
 - Room WorkItems now mirror canonical Kernel lifecycle changes and startup
   reconciliation; blocked work is no longer presented as actively executing.
+- Room settlement now deduplicates review invitations, retries recoverable
+  commits without losing accepted work, and reconciles transient resume lanes
+  against the authoritative terminal Root.
 
 ### Open Validation Gates
 

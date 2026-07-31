@@ -121,12 +121,15 @@ class RoomNativeSkillTests(unittest.TestCase):
         self.assertIn("File size alone is not evidence", architecture)
         self.assertIn("**depth**", architecture)
         self.assertIn("**deletion test**", architecture)
-        self.assertIn("recommend one, and ask one question", alignment)
+        self.assertIn(
+            "recommend one, and ask one question",
+            " ".join(alignment.split()),
+        )
         self.assertIn("never rewrites or\nweakens the requirements", alignment)
         self.assertIn("Write a glossary, ADR, or decision record only", alignment)
         self.assertIn(
-            "Glossary terms need a confirmed meaning",
-            " ".join(alignment.split()),
+            "glossary terms need a confirmed meaning",
+            " ".join(alignment.casefold().split()),
         )
         self.assertIn("a direct user choice and approved write", alignment)
         self.assertIn("Use the user's language", alignment)
@@ -353,8 +356,14 @@ class RoomNativeSkillTests(unittest.TestCase):
 
         self.assertIn("Start an immutable `User Source` block", alignment)
         self.assertIn("Lock the requirements before comparing solutions", alignment)
-        self.assertIn("recommend one, and ask one question", alignment)
-        self.assertIn("at most\n   three genuinely different options", alignment)
+        self.assertIn(
+            "recommend one, and ask one question",
+            " ".join(alignment.split()),
+        )
+        self.assertIn(
+            "at most three genuinely different options",
+            " ".join(alignment.split()),
+        )
         self.assertIn("Write a glossary, ADR, or decision record only", alignment)
         self.assertIn("`ready_for_planning`", alignment)
         self.assertIn("byte-preserved", alignment)
@@ -435,7 +444,85 @@ class RoomNativeSkillTests(unittest.TestCase):
         )
         self.assertEqual(orphan_directories, [])
 
+    def test_workflow_skills_preserve_the_behavioral_essence(self) -> None:
+        text = {
+            name: " ".join(
+                (
+                    SKILLS_ROOT / name / "SKILL.md"
+                ).read_text(encoding="utf-8").casefold().split()
+            )
+            for name in (
+                "alignment-and-decision",
+                "implementation-planning",
+                "implementation-execution",
+                "test-driven-implementation",
+                "systematic-debugging",
+                "quality-gate",
+                "independent-review",
+                "structured-handoff",
+                "improve-codebase-architecture",
+                "review-feedback-resolution",
+            )
+        }
 
+        alignment = text["alignment-and-decision"]
+        self.assertIn("explicit grill mode", alignment)
+        self.assertIn("every material decision-tree branch", alignment)
+        self.assertIn("including nonblocking tradeoffs", alignment)
+        self.assertIn("ask one question at a time", alignment)
+        self.assertIn("stop only after the user confirms shared understanding", alignment)
+        self.assertIn("domain language delta", alignment)
+
+        planning = text["implementation-planning"]
+        self.assertIn("domain language delta, glossary, and adrs", planning)
+        self.assertIn("highest stable behavior seam", planning)
+        self.assertIn("tracer-bullet candidates", planning)
+        self.assertIn("blocking edge", planning)
+
+        execution = text["implementation-execution"]
+        self.assertIn("quality-gate -> independent-review", execution)
+        self.assertIn("only a clear review may reach settlement", execution)
+
+        tdd = text["test-driven-implementation"]
+        self.assertIn("independent source of truth", tdd)
+        self.assertIn("one seam, one test, and one minimal implementation", tdd)
+        self.assertIn("do not prewrite horizontal batches", tdd)
+        self.assertIn("add speculative behavior, or refactor inside", tdd)
+        self.assertIn("tautological expectation", tdd)
+
+        debugging = text["systematic-debugging"]
+        self.assertIn("feedback loop gate", debugging)
+        self.assertIn("agent-runnable command that goes red", debugging)
+        self.assertIn("every remaining input and step is load-bearing", debugging)
+        self.assertIn("three to five ranked, falsifiable hypotheses", debugging)
+        self.assertIn("do not theorize", debugging)
+        self.assertIn("remove temporary instrumentation", debugging)
+
+        quality = text["quality-gate"]
+        self.assertIn("matrix is evidence-ready", quality)
+        self.assertIn("`independent-review` still owns review clearance", quality)
+        self.assertIn("code changes advance to review", quality)
+
+        review = text["independent-review"]
+        self.assertIn("pin one review fixed point", review)
+        self.assertIn("requirement fidelity", review)
+        self.assertIn("code standards", review)
+        self.assertIn("do not merge or rerank findings across axes", review)
+        self.assertIn("speculative generality", review)
+        self.assertIn("refused bequest", review)
+
+        handoff = text["structured-handoff"]
+        self.assertIn("by stable ref instead of copying", handoff)
+        self.assertIn("redact credentials, tokens, pii", handoff)
+
+        architecture = text["improve-codebase-architecture"]
+        self.assertIn("explicit grill mode", architecture)
+        self.assertIn("domain language delta", architecture)
+
+        feedback = text["review-feedback-resolution"]
+        self.assertIn("needs_execution", feedback)
+        self.assertIn("do not change code here", feedback)
+        self.assertIn("bypass execution/tdd or continuity", feedback)
 
     def test_implementation_planning_gates_durable_state_with_bounded_disclosure(
         self,

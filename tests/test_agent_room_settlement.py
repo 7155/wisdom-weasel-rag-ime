@@ -50,8 +50,10 @@ class _Runtime:
         *,
         message: str,
         lease_token: str,
+        record_intent,
     ) -> dict[str, object]:
         del message, lease_token
+        record_intent()
         return {
             "schemaVersion": "wisdom-weasel.room-runtime-receipt.v1",
             "receiptKind": "dispatch_accepted",
@@ -787,7 +789,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         self.assertIn("must be rewritten for users", settled["reason"])
 
 
-    def test_repair_commit_allows_one_follow_up_then_blocks(self) -> None:
+    def test_repair_commit_allows_four_follow_ups_then_blocks(self) -> None:
         self._invoke_commit(
             "deliver",
             publicSummary=(
@@ -798,16 +800,23 @@ class RoomSettleLifecycleTests(unittest.TestCase):
 
         first = self._settle(1)
         replay = self._settle(1)
-        blocked = self._settle(2)
+        second = self._settle(2)
+        third = self._settle(3)
+        fourth = self._settle(4)
+        blocked = self._settle(5)
 
         self.assertEqual(first["state"], "repair_commit")
         self.assertTrue(first["followUpKey"])
         self.assertEqual(replay["guardReceipt"], first["guardReceipt"])
+        self.assertEqual(second["state"], "repair_commit")
+        self.assertEqual(third["state"], "repair_commit")
+        self.assertEqual(fourth["state"], "repair_commit")
+        self.assertEqual(fourth["guardReceipt"]["details"]["attempt"], 4)
         self.assertEqual(blocked["state"], "blocked")
-        self.assertEqual(blocked["guardReceipt"]["details"]["attempt"], 2)
+        self.assertEqual(blocked["guardReceipt"]["details"]["attempt"], 5)
         self.assertEqual(
             blocked["guardReceipt"]["details"]["maxAttempts"],
-            2,
+            5,
         )
         self.assertEqual(
             self.service.room_kernel.dispatch("dispatch:settle")["state"],
@@ -949,38 +958,42 @@ class RoomSettleLifecycleTests(unittest.TestCase):
             "blocked",
         )
 
-    def test_missing_commit_continues_twice_then_blocks_and_replays_exact_attempt(self) -> None:
+    def test_missing_commit_continues_four_times_then_blocks_and_replays_exact_attempt(self) -> None:
         first = self._settle(1)
         first_replay = self._settle(1)
         second = self._settle(2)
         third = self._settle(3)
-        third_replay = self._settle(3)
+        fourth = self._settle(4)
+        fifth = self._settle(5)
+        fifth_replay = self._settle(5)
 
         self.assertEqual(first["state"], "continue")
         self.assertIn(
-            '<managed-task-follow-up origin="room-kernel" kind="continue">',
+            '<room-work-follow-up source="system" kind="continue">',
             first["message"],
         )
         self.assertIn("不是用户提出了新需求", first["message"])
-        self.assertIn("一次模型回答结束不等于任务完成", first["message"])
-        self.assertIn("能够产生新证据", first["message"])
+        self.assertIn("一次回答结束不等于工作完成", first["message"])
+        self.assertIn("能产生新结果", first["message"])
         self.assertIn(
-            "若没有这种合法新动作，立即选择 handoff、wait 或 blocked",
+            "若没有这种新动作，立即选择 handoff、wait 或 blocked",
             first["message"],
         )
-        self.assertIn("建议接手的参与者或模型能力", first["message"])
+        self.assertIn("建议接手的伙伴或所需能力", first["message"])
         self.assertIn(
             "waitingFor=user 时才向用户提出一个最小必要问题",
             first["message"],
         )
-        self.assertIn("续作次数是硬预算", first["message"])
+        self.assertIn("可继续次数有限", first["message"])
         self.assertIn("不得重复同一失败动作", first["message"])
         self.assertTrue(first["followUpKey"])
         self.assertEqual(first_replay["guardReceipt"], first["guardReceipt"])
         self.assertEqual(second["guardReceipt"]["details"]["attempt"], 2)
-        self.assertEqual(third["state"], "blocked")
-        self.assertEqual(third_replay["guardReceipt"], third["guardReceipt"])
-        self.assertEqual(third["guardReceipt"]["details"]["attempt"], 3)
+        self.assertEqual(third["state"], "continue")
+        self.assertEqual(fourth["state"], "continue")
+        self.assertEqual(fifth["state"], "blocked")
+        self.assertEqual(fifth_replay["guardReceipt"], fifth["guardReceipt"])
+        self.assertEqual(fifth["guardReceipt"]["details"]["attempt"], 5)
         self.assertEqual(
             self.service.room_kernel.dispatch("dispatch:settle")["state"],
             "failed",
@@ -1009,13 +1022,13 @@ class RoomSettleLifecycleTests(unittest.TestCase):
 
         self.assertEqual(settled["state"], "repair_commit")
         self.assertTrue(settled["followUpKey"])
-        self.assertIn("outside the current Task", settled["reason"])
+        self.assertIn("当前工作卡片之外的验收短名", settled["reason"])
         self.assertIn('["AC-1"]', settled["message"])
         self.assertIn('kind="repair_commit"', settled["message"])
-        self.assertIn("不要填写数据库 criterionId", settled["message"])
-        self.assertIn("不要自报 pass 或 verdict", settled["message"])
+        self.assertIn("不要填写内部 criterionId", settled["message"])
+        self.assertIn("不要自行填写 pass 或 verdict", settled["message"])
         self.assertIn(
-            "若当前模型无法完成且没有合法新动作",
+            "如果自己无法继续且没有新的合法动作",
             settled["message"],
         )
         self.assertEqual(
@@ -1042,8 +1055,9 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         settled = self._settle()
 
         self.assertEqual(settled["state"], "repair_commit")
-        self.assertIn("non-authoritative refs for AC-1", settled["reason"])
-        self.assertIn("byte-for-byte evidenceRefs", settled["reason"])
+        self.assertIn("AC-1 使用了无法核实的 evidenceRef", settled["reason"])
+        self.assertIn("删除这些位置的旧引用", settled["reason"])
+        self.assertIn("最小成功工具结果", settled["reason"])
 
     def test_non_passing_quality_gate_cannot_deliver(self) -> None:
         self._invoke_commit(
@@ -1054,7 +1068,7 @@ class RoomSettleLifecycleTests(unittest.TestCase):
         settled = self._settle()
 
         self.assertEqual(settled["state"], "repair_commit")
-        self.assertIn("every AC", settled["reason"])
+        self.assertIn("每个验收项都有成功工具结果支持", settled["reason"])
 
 
 class RoomQualityGateDiagnosticTests(unittest.TestCase):
@@ -1115,8 +1129,148 @@ class RoomQualityGateDiagnosticTests(unittest.TestCase):
         message = str(raised.exception)
         self.assertNotIn("AC-1", message)
         self.assertIn("AC-2, AC-3", message)
-        self.assertIn("latest room_state", message)
+        self.assertIn("最新 room_state", message)
+        self.assertIn("AC-2 的 refs 第 1 项", message)
+        self.assertIn("AC-3 的 refs 第 1 项", message)
+        self.assertIn("不要在新引用旁继续保留它们", message)
         self.assertNotIn("evidence:mistyped", message)
+
+
+    def test_cross_criterion_refs_explain_how_to_unmerge_evidence(self) -> None:
+        criteria = ("criterion:one", "criterion:two")
+        with self.assertRaises(RoomQualityGateError) as raised:
+            canonicalize_quality_gate(
+                evidence_proposal=[
+                    {
+                        "acceptance": "AC-1",
+                        "refs": ["evidence:accepted:two"],
+                    }
+                ],
+                residual_risks=[],
+                decision="deliver",
+                root_id="root:misassigned",
+                task_id="task:misassigned",
+                dispatch_id="dispatch:misassigned",
+                generation=0,
+                task_criteria=criteria,
+                acceptance_aliases={
+                    "AC-1": criteria[0],
+                    "AC-2": criteria[1],
+                },
+                requirement_context={
+                    "originalRequirements": ["逐项验证两个验收条件"],
+                    "catalog": {
+                        "acceptanceCriteria": [
+                            {"criterionId": criteria[0], "proofs": []},
+                            {"criterionId": criteria[1], "proofs": []},
+                        ]
+                    },
+                },
+                accepted_evidence_by_criterion={
+                    criteria[1]: ["evidence:accepted:two"]
+                },
+                runtime_evidence_refs=[],
+                invocation_receipt_id="invoke:misassigned",
+                now_ms=100,
+            )
+
+        message = str(raised.exception)
+        self.assertIn("AC-1", message)
+        self.assertIn("只属于其他验收项", message)
+        self.assertIn("不要把多个 AC 的 refs 合并到一项", message)
+        self.assertNotIn("evidence:accepted:two", message)
+
+
+    def test_one_runtime_receipt_cannot_cover_multiple_acceptance_items(
+        self,
+    ) -> None:
+        criteria = ("criterion:one", "criterion:two")
+        with self.assertRaises(RoomQualityGateError) as raised:
+            canonicalize_quality_gate(
+                evidence_proposal=[
+                    {
+                        "acceptance": "AC-1",
+                        "refs": ["execution:shared"],
+                    },
+                    {
+                        "acceptance": "AC-2",
+                        "refs": ["execution:shared"],
+                    },
+                ],
+                residual_risks=[],
+                decision="deliver",
+                root_id="root:runtime-reuse",
+                task_id="task:runtime-reuse",
+                dispatch_id="dispatch:runtime-reuse",
+                generation=0,
+                task_criteria=criteria,
+                acceptance_aliases={
+                    "AC-1": criteria[0],
+                    "AC-2": criteria[1],
+                },
+                requirement_context={
+                    "originalRequirements": ["逐项验证两个验收条件"],
+                    "catalog": {
+                        "acceptanceCriteria": [
+                            {"criterionId": criteria[0], "proofs": []},
+                            {"criterionId": criteria[1], "proofs": []},
+                        ]
+                    },
+                },
+                accepted_evidence_by_criterion={},
+                runtime_evidence_refs=["execution:shared"],
+                invocation_receipt_id="invoke:runtime-reuse",
+                now_ms=100,
+            )
+
+        message = str(raised.exception)
+        self.assertIn("AC-1, AC-2", message)
+        self.assertIn("每次成功工具执行只能直接证明一个验收项", message)
+        self.assertNotIn("execution:shared", message)
+
+    def test_distinct_runtime_receipts_can_cover_distinct_acceptance_items(
+        self,
+    ) -> None:
+        criteria = ("criterion:one", "criterion:two")
+        gate = canonicalize_quality_gate(
+            evidence_proposal=[
+                {
+                    "acceptance": "AC-1",
+                    "refs": ["execution:one"],
+                },
+                {
+                    "acceptance": "AC-2",
+                    "refs": ["execution:two"],
+                },
+            ],
+            residual_risks=[],
+            decision="deliver",
+            root_id="root:runtime-distinct",
+            task_id="task:runtime-distinct",
+            dispatch_id="dispatch:runtime-distinct",
+            generation=0,
+            task_criteria=criteria,
+            acceptance_aliases={
+                "AC-1": criteria[0],
+                "AC-2": criteria[1],
+            },
+            requirement_context={
+                "originalRequirements": ["逐项验证两个验收条件"],
+                "catalog": {
+                    "acceptanceCriteria": [
+                        {"criterionId": criteria[0], "proofs": []},
+                        {"criterionId": criteria[1], "proofs": []},
+                    ]
+                },
+            },
+            accepted_evidence_by_criterion={},
+            runtime_evidence_refs=["execution:one", "execution:two"],
+            invocation_receipt_id="invoke:runtime-distinct",
+            now_ms=100,
+        )
+
+        self.assertEqual(gate.receipt["verdict"], "ready_to_deliver")
+        self.assertEqual(gate.requirement_coverage, criteria)
 
 
 class RoleCommitDecisionFenceTests(unittest.TestCase):

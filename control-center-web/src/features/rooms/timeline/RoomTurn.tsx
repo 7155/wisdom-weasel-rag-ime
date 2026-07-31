@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  CircleAlert,
   ChevronRight,
   CircleStop,
   Clock3,
@@ -10,7 +11,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/primitives';
 import {
@@ -22,6 +23,7 @@ import {
   type RoomActivityProjection,
   type RoomMessageProjection,
   type RoomProjectionState,
+  type RoomTurnProjection,
 } from '@/contracts/room-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { publicAgentErrorText } from '@/features/agent/public-error';
@@ -39,6 +41,7 @@ import { publicToolName } from '@/features/agent/tool-presentation';
 import {
   roomActivityNeedsSessionAction,
   selectRoomTurnExecution,
+  type RoomExecutionLane,
 } from '../runtime/room-execution-lanes';
 import { roomProjection, useRoomLiveStore } from '../state/live-store';
 import { roomPublicToolResultView } from './room-tool-presentation';
@@ -98,6 +101,8 @@ function roomVisibleLaneMessages(
 function roomPostReportLabel(message: RoomMessageProjection): string {
   if (message.projectionKind === 'execution') return '';
   if (message.postKind === 'result') return '任务汇报';
+  if (message.postKind === 'handoff') return '交接说明';
+  if (message.postKind === 'wait') return '等待说明';
   if (message.postKind === 'blocked') return '遇到的问题';
   return '进度更新';
 }
@@ -120,6 +125,7 @@ export function RoomTurn({
   ));
   const projection = providedProjection ?? roomProjection(roomId);
   const turn = projection.turnsById[turnId];
+  const previousTurnStatus = usePrevious(turn?.status);
   // Room/session lifecycle events may legitimately have no public Root. They
   // belong in the execution ledger, never as a synthetic Post in the chat.
   if (!turnId || turnId === 'unscoped' || !turn) return null;
@@ -127,7 +133,10 @@ export function RoomTurn({
     projection,
     turnId,
   );
-  const pendingAction = pendingRoomSessionAction(activities, projection, lanes, room);
+  const rootTerminal = ['completed', 'failed', 'aborted'].includes(turn.status);
+  const pendingAction = rootTerminal
+    ? undefined
+    : pendingRoomSessionAction(activities, projection, lanes, room);
   const rootId = turn.rootId || turnId;
   const rootHasActiveLane = lanes.length === 0
     ? ['queued', 'running'].includes(turn.status)
@@ -151,7 +160,11 @@ export function RoomTurn({
     turn.failure,
     '伙伴未能完成这轮任务，你可以调整原消息后再试。',
   );
-  const retrySource = terminalIssue
+  const outcome = roomTurnOutcome(projection, lanes, turn, publicFailure);
+  const outcomeArriving = Boolean(
+    outcome && ['queued', 'running'].includes(previousTurnStatus ?? ''),
+  );
+  const retrySource = outcome && outcome.state !== 'completed'
     ? userMessageIds
         .map((messageId) => projection.messagesById[messageId])
         .find((message) => (
@@ -160,7 +173,7 @@ export function RoomTurn({
         ))
     : undefined;
   const retryMessage = retrySource?.text ?? '';
-  return <article className="room-turn">
+  return <article className="room-turn" data-turn-status={turn.status}>
     {userMessageIds.map((id) => {
       const message = projection.messagesById[id];
       if (!message) return null;
@@ -189,23 +202,32 @@ export function RoomTurn({
         .filter(Boolean);
       const visibleMessages = roomVisibleLaneMessages(messages);
       const participantId = lane.participantId ?? '';
-      const laneFailed = lane.dispatchId
-        ? (turn.failedDispatchIds ?? []).includes(lane.dispatchId)
-        : participantId
-          ? (turn.failedParticipantIds ?? []).includes(participantId)
-          : turn.status === 'failed';
-      const laneAborted = lane.dispatchId
-        ? (turn.abortedDispatchIds ?? []).includes(lane.dispatchId)
-        : participantId
-          ? (turn.abortedParticipantIds ?? []).includes(participantId)
-          : turn.status === 'aborted';
-      const laneTerminal = lane.dispatchId
+      const explicitlyTerminal = lane.dispatchId
         ? (turn.terminalDispatchIds ?? []).includes(lane.dispatchId)
         : participantId
           ? (turn.terminalParticipantIds ?? []).includes(participantId)
-          : ['completed', 'failed', 'aborted'].includes(turn.status);
+          : false;
+      const laneFailed = (
+        lane.dispatchId
+          ? (turn.failedDispatchIds ?? []).includes(lane.dispatchId)
+          : participantId
+            ? (turn.failedParticipantIds ?? []).includes(participantId)
+            : false
+      ) || (!explicitlyTerminal && turn.status === 'failed');
+      const laneAborted = (
+        lane.dispatchId
+          ? (turn.abortedDispatchIds ?? []).includes(lane.dispatchId)
+          : participantId
+            ? (turn.abortedParticipantIds ?? []).includes(participantId)
+            : false
+      ) || (!explicitlyTerminal && turn.status === 'aborted');
+      // A terminal Root is authoritative even when a transient resume Dispatch
+      // never appeared in the terminal-id lists.
+      const laneTerminal = rootTerminal || explicitlyTerminal;
       const laneActive = !laneTerminal && !laneFailed && !laneAborted;
-      const laneAction = lane.activities.find(roomActivityNeedsSessionAction);
+      const laneAction = rootTerminal
+        ? undefined
+        : lane.activities.find(roomActivityNeedsSessionAction);
       const laneOutcome = visibleMessages.reduce((outcome, message) => (
         roomTerminalPostLabels[message.postKind ?? '']
           ? message.postKind ?? outcome
@@ -214,15 +236,17 @@ export function RoomTurn({
       const laneComplete = (laneTerminal || Boolean(laneOutcome)) && !laneFailed && !laneAborted;
       const statusLabel = laneAction
         ? roomInteractionStatusLabel(laneAction)
-        : laneFailed
+        : laneOutcome === 'blocked'
           ? '已阻塞'
-          : laneAborted
-            ? '已停止'
-            : laneComplete
-              ? roomTerminalPostLabels[laneOutcome] ?? '已完成'
-              : laneActive
-                ? '执行中'
-                : '等待后续';
+          : laneFailed
+            ? '未完成'
+            : laneAborted
+              ? '已停止'
+              : laneComplete
+                ? roomTerminalPostLabels[laneOutcome] ?? '已完成'
+                : laneActive
+                  ? '执行中'
+                  : '等待后续';
       const sessionId = lane.sourceSessionId || participant?.sessionId || '';
       const laneState = laneFailed
         ? 'failed'
@@ -239,10 +263,19 @@ export function RoomTurn({
                   : laneComplete
                     ? 'completed'
                     : 'waiting';
-      return <section className="room-agent-lane" data-state={laneState} key={lane.key}>
+      return <section className="room-agent-lane" data-outcome={laneOutcome || undefined} data-state={laneState} key={lane.key}>
         <header>
           {participant
-            ? <PersonaAvatar persona={persona} presence={laneActive && !laneAction ? 'thinking' : 'done'} />
+            ? <PersonaAvatar
+                persona={persona}
+                presence={laneState === 'running'
+                  ? 'thinking'
+                  : laneState === 'waiting'
+                    ? 'listening'
+                    : laneState === 'completed'
+                      ? 'done'
+                      : 'warning'}
+              />
             : <span className="room-agent-lane__route"><Route size={15} /></span>}
           <span className="room-agent-lane__identity">
             <strong>{participant?.displayName ?? '正在选择伙伴'}</strong>
@@ -257,6 +290,7 @@ export function RoomTurn({
           activities={lane.activities}
           active={laneActive && !laneAction}
           participantName={participant?.displayName}
+          attention={laneState === 'failed' || laneState === 'aborted'}
         /> : null}
         {!lane.activities.length && laneActive && !messages.length ? <div className="room-agent-lane__waiting"><LoaderCircle className="ui-spin" size={14} /><span>{participant ? `${participant.displayName} 已接手，正在准备` : '消息已经送达，正在请合适的伙伴回应'}</span></div> : null}
         {visibleMessages.map((message) => (
@@ -271,21 +305,25 @@ export function RoomTurn({
         ) : null}
       </section>;
     })}
-    {terminalIssue ? <section
+    {outcome ? <section
       className="room-turn__terminal"
-      data-state={terminalIssue}
+      data-arriving={outcomeArriving || undefined}
+      data-state={outcome.state}
       role="status"
     >
       <span className="room-turn__terminal-icon" aria-hidden="true">
-        {terminalIssue === 'failed' ? <X size={15} /> : <CircleStop size={15} />}
+        {outcome.state === 'completed'
+          ? <CheckCircle2 size={16} />
+          : outcome.state === 'blocked'
+            ? <CircleAlert size={16} />
+            : outcome.state === 'failed'
+              ? <X size={16} />
+              : <CircleStop size={16} />}
       </span>
       <span>
-        <strong>{terminalIssue === 'failed' ? '这轮协作没有完成' : '这轮协作已停止'}</strong>
-        <small>
-          {terminalIssue === 'failed'
-            ? publicFailure
-            : '未完成的伙伴、工具和后续任务不会继续。'}
-        </small>
+        <small className="room-turn__terminal-label">协作结果</small>
+        <strong>{outcome.title}</strong>
+        <small>{outcome.detail}</small>
       </span>
       {retryMessage && onRetryTurn ? <Button
         variant="secondary"
@@ -336,13 +374,15 @@ function SessionActionLink({ action }: { action: RoomSessionAction }) {
 function ActivityLog({
   activities,
   active,
+  attention,
   participantName,
 }: {
   activities: RoomActivityProjection[];
   active: boolean;
+  attention: boolean;
   participantName?: string;
 }) {
-  const [open, setOpen] = useState(active);
+  const [open, setOpen] = useState(active || attention);
   const digest = roomActivityDigest(activities);
   return <details
     className="room-agent-lane__activity"
@@ -447,6 +487,89 @@ function roomReportPreview(value: string): string {
   return `${normalized.slice(0, end).trimEnd()}…`;
 }
 
+type RoomTurnOutcomeState = 'completed' | 'blocked' | 'failed' | 'aborted';
+
+interface RoomTurnOutcome {
+  state: RoomTurnOutcomeState;
+  title: string;
+  detail: string;
+}
+
+function roomTurnOutcome(
+  projection: RoomProjectionState,
+  lanes: RoomExecutionLane[],
+  turn: RoomTurnProjection,
+  publicFailure: string,
+): RoomTurnOutcome | null {
+  if (
+    turn.status !== 'completed'
+    && turn.status !== 'failed'
+    && turn.status !== 'aborted'
+  ) return null;
+  let publicReportCount = 0;
+  let blockedLaneCount = 0;
+  for (const lane of lanes) {
+    const visibleMessages = roomVisibleLaneMessages(
+      lane.messageIds
+        .map((id) => projection.messagesById[id])
+        .filter(Boolean),
+    );
+    const terminalPosts = visibleMessages.filter((message) => (
+      message.projectionKind !== 'execution'
+      && Boolean(roomTerminalPostLabels[message.postKind ?? ''])
+    ));
+    publicReportCount += terminalPosts.length;
+    if (terminalPosts.some((message) => message.postKind === 'blocked')) {
+      blockedLaneCount += 1;
+    }
+  }
+  const state: RoomTurnOutcomeState = turn.status === 'aborted'
+    ? 'aborted'
+    : blockedLaneCount > 0
+      ? 'blocked'
+      : turn.status;
+  const reportDetail = publicReportCount > 0
+    ? `已保留 ${publicReportCount} 条伙伴公开汇报，可在上方查看。`
+    : state === 'completed'
+      ? '本轮没有产生伙伴公开汇报。'
+      : '';
+  if (state === 'completed') {
+    const workDetail = lanes.length > 0 ? `${lanes.length} 项分工已经收束。` : '';
+    return {
+      state,
+      title: '这轮协作已完成',
+      detail: `${workDetail}${reportDetail}`,
+    };
+  }
+  if (state === 'blocked') {
+    return {
+      state,
+      title: '这轮协作受阻',
+      detail: `${blockedLaneCount} 项分工报告阻塞。${reportDetail || '可调整原任务后再试。'}`,
+    };
+  }
+  if (state === 'failed') {
+    return {
+      state,
+      title: '这轮协作没有完成',
+      detail: `${publicFailure}${reportDetail ? ` ${reportDetail}` : ''}`,
+    };
+  }
+  return {
+    state,
+    title: '这轮协作已停止',
+    detail: `未完成的伙伴、工具和后续任务不会继续。${reportDetail}`,
+  };
+}
+
+function usePrevious<T>(value: T): T | undefined {
+  const current = useRef<T | undefined>(undefined);
+  useEffect(() => {
+    current.current = value;
+  }, [value]);
+  return current.current;
+}
+
 function roomActivityDigest(
   activities: RoomActivityProjection[],
 ): { title: string; detail: string } {
@@ -476,9 +599,9 @@ function roomActivityDigest(
     counts.waiting ? `${counts.waiting} 个等待处理` : '',
     counts.failed ? `${counts.failed} 个未完成` : '',
     !counts.running && !counts.waiting && !counts.failed
-      ? '全部完成'
+      ? '所有步骤已返回'
       : counts.completed
-        ? `${counts.completed} 个已完成`
+        ? `${counts.completed} 个步骤已返回`
         : '',
   ].filter(Boolean);
   return {
@@ -734,7 +857,7 @@ function describeRoomActivity(
   const approvalDecision = approvalDecisionView(payload);
   if (textValue(payload.approvalId) && approvalDecision.mode === 'model') {
     const model = roomApprovalModelLabel(approvalDecision.model);
-    const arbiter = `独立审批 Agent（${model}）`;
+    const arbiter = `独立审批助手（${model}）`;
     const title = approvalDecision.decision === 'approve'
       ? `${arbiter}已批准这次操作`
       : approvalDecision.decision === 'deny'
@@ -746,7 +869,7 @@ function describeRoomActivity(
         ? '已绑定的操作预览可以进入原有权限与沙箱复验。'
         : approvalDecision.decision === 'deny'
           ? '原操作不会执行；伙伴会尝试更安全的替代方案。'
-          : '它读取整个 Room 的用户请求、当前任务与结构化审批历史，但不读取任何伙伴 Agent 的输出或推理；无需人工操作。';
+          : '它读取整个协作空间的用户请求、当前任务与结构化审批记录，但不读取任何伙伴的输出或推理；无需人工操作。';
     const rationale = approvalDecision.rationaleSummary
       ? ` 裁决说明：${approvalDecision.rationaleSummary}`
       : '';
@@ -754,12 +877,9 @@ function describeRoomActivity(
       ? ` 判定依据：${approvalDecision.reasonCodes.map(approvalDecisionReasonLabel).join('、')}。`
       : '';
     const history = approvalDecision.historyEntryCount !== null
-      ? ` 已参考 ${approvalDecision.historyEntryCount} 条 Room 全局审批历史。`
+      ? ` 已参考 ${approvalDecision.historyEntryCount} 条整个协作空间的审批记录。`
       : '';
-    const receipt = approvalDecision.receiptId
-      ? ` 决策回执：${approvalDecision.receiptId}。`
-      : '';
-    return { title, detail: `${outcome}${rationale}${reasons}${history}${receipt}` };
+    return { title, detail: `${outcome}${rationale}${reasons}${history}` };
   }
   if (textValue(payload.approvalId) && approvalDecision.mode === 'policy') {
     return {

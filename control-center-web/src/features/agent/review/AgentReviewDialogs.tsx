@@ -25,6 +25,12 @@ type MemoryChange = {
   sourceCount: number;
 };
 
+type GroupedQuestion = {
+  id: string;
+  question: string;
+  options: string[];
+};
+
 type MemoryRun = {
   runId: string;
   status: string;
@@ -268,7 +274,7 @@ export function GenericUserInputDialog({
   sessionId,
   onError,
 }: {
-  activity?: AgentActivityProjection;
+  activity?: Pick<AgentActivityProjection, 'id' | 'payload'>;
   sessionId: string;
   onError: (message: string) => void;
 }) {
@@ -277,7 +283,12 @@ export function GenericUserInputDialog({
   const payload = activity?.payload ?? {};
   const requestId = text(payload.requestId);
   const method = text(payload.method);
-  const title = text(payload.title) || 'Agent 需要你的回答';
+  const requestKind = text(payload.requestKind);
+  const groupedQuestions = requestKind === 'grouped_questions'
+    ? parseGroupedQuestions(payload.questions)
+    : [];
+  const groupedRequest = requestKind === 'grouped_questions';
+  const title = text(payload.title) || (groupedRequest ? '伙伴需要你一起确认几件事' : 'Agent 需要你的回答');
   const message = text(payload.message);
   const placeholder = text(payload.placeholder);
   const prefill = text(payload.prefill);
@@ -287,26 +298,34 @@ export function GenericUserInputDialog({
     : [];
   const timeoutMs = integer(payload.timeout);
   const [value, setValue] = useState('');
+  const [groupedAnswers, setGroupedAnswers] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    setValue(method === 'input' || method === 'editor' ? prefill || defaultValue : '');
+    setValue(method === 'input' || (method === 'editor' && !groupedRequest) ? prefill || defaultValue : '');
+    setGroupedAnswers(new Map());
     setSubmitting(false);
     setError('');
-  }, [activity?.id, defaultValue, method, prefill]);
+  }, [activity?.id, defaultValue, groupedRequest, method, prefill]);
 
   if (
     !activity
     || !requestId
-    || !['select', 'confirm', 'input', 'editor'].includes(method)
-    || payload.requestKind === 'memory_review'
+    || (!groupedRequest && !['select', 'confirm', 'input', 'editor'].includes(method))
+    || requestKind === 'memory_review'
   ) {
     return null;
   }
 
   const requiresChoice = method === 'select' || method === 'confirm';
-  const canSubmit = !submitting && (!requiresChoice || Boolean(value));
+  const groupedRequestIsValid = groupedRequest && groupedQuestions.length > 0;
+  const allGroupedQuestionsAnswered = groupedRequestIsValid && groupedQuestions.every((question) => (
+    groupedAnswers.has(question.id)
+  ));
+  const canSubmit = !submitting && (
+    groupedRequest ? allGroupedQuestionsAnswered : !requiresChoice || Boolean(value)
+  );
   const timeoutLabel = timeoutMs > 0
     ? `${formatTimeout(timeoutMs)}后若仍未回答，本次请求会自动取消；建议值不会自动提交。`
     : '';
@@ -334,6 +353,17 @@ export function GenericUserInputDialog({
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     if (!canSubmit) return;
+    if (groupedRequest) {
+      if (!groupedRequestIsValid || !allGroupedQuestionsAnswered) return;
+      const answers = Object.fromEntries(groupedQuestions.map((question) => (
+        [question.id, groupedAnswers.get(question.id)!]
+      )));
+      void respond({
+        value: JSON.stringify({ answers }),
+        resolutionSource: 'direct_user',
+      });
+      return;
+    }
     if (method === 'confirm') {
       void respond({
         confirmed: value === 'yes',
@@ -353,13 +383,13 @@ export function GenericUserInputDialog({
         onInteractOutside={(event) => event.preventDefault()}
       >
         <DialogHeader>
-          <span className="agent-review-dialog__eyebrow"><MessageSquareText size={15} />等待你的回答</span>
+          <span className="agent-review-dialog__eyebrow"><MessageSquareText size={15} />{groupedRequest ? '伙伴在等你的回答' : '等待你的回答'}</span>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{message || 'Agent 已暂停，收到明确回答后会继续当前回合。'}</DialogDescription>
+          <DialogDescription>{message || (groupedRequest ? '请一起确认下面的问题，提交后伙伴会继续协作。' : 'Agent 已暂停，收到明确回答后会继续当前回合。')}</DialogDescription>
         </DialogHeader>
 
         <form className="agent-user-input-dialog__form" onSubmit={submit}>
-          {method === 'select' ? (
+          {!groupedRequest && method === 'select' ? (
             <fieldset className="agent-user-input-dialog__choices">
               <legend>选择一项</legend>
               {options.map((option, index) => (
@@ -379,7 +409,7 @@ export function GenericUserInputDialog({
             </fieldset>
           ) : null}
 
-          {method === 'confirm' ? (
+          {!groupedRequest && method === 'confirm' ? (
             <fieldset className="agent-user-input-dialog__choices">
               <legend>请明确确认</legend>
               <label>
@@ -393,7 +423,39 @@ export function GenericUserInputDialog({
             </fieldset>
           ) : null}
 
-          {method === 'input' ? (
+          {groupedRequest ? (
+            groupedRequestIsValid ? (
+              <div className="agent-user-input-dialog__grouped" aria-label="需要一起确认的问题">
+                {groupedQuestions.map((question, questionIndex) => (
+                  <fieldset className="agent-user-input-dialog__choices" key={question.id}>
+                    <legend>{questionIndex + 1}. {question.question}</legend>
+                    {question.options.map((option, optionIndex) => (
+                      <label key={`${question.id}:${option}`}>
+                        <input
+                          autoFocus={questionIndex === 0 && optionIndex === 0}
+                          checked={groupedAnswers.get(question.id) === option}
+                          disabled={submitting}
+                          name={`${fieldId}:${question.id}`}
+                          onChange={() => setGroupedAnswers((current) => {
+                            const next = new Map(current);
+                            next.set(question.id, option);
+                            return next;
+                          })}
+                          type="radio"
+                          value={option}
+                        />
+                        <span>{option}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                ))}
+              </div>
+            ) : (
+              <p className="agent-review-dialog__error" role="alert">这组问题暂时无法完整显示，请取消后让伙伴重新提问。</p>
+            )
+          ) : null}
+
+          {!groupedRequest && method === 'input' ? (
             <Field
               description={defaultValue ? `建议值：${defaultValue}（不会自动提交）` : undefined}
               htmlFor={fieldId}
@@ -410,7 +472,7 @@ export function GenericUserInputDialog({
             </Field>
           ) : null}
 
-          {method === 'editor' ? (
+          {method === 'editor' && !groupedRequest ? (
             <Field
               description={defaultValue ? '建议内容已填入；只有点击提交才会发送。' : '支持多行文本。'}
               htmlFor={fieldId}
@@ -440,13 +502,32 @@ export function GenericUserInputDialog({
               取消这次提问
             </Button>
             <Button disabled={!canSubmit} loading={submitting} type="submit" variant="primary">
-              {method === 'confirm' ? '提交确认' : '提交回答'}
+              {groupedRequest ? '一起提交' : method === 'confirm' ? '提交确认' : '提交回答'}
             </Button>
           </footer>
         </form>
       </DialogContent>
     </Dialog>
   );
+}
+
+function parseGroupedQuestions(value: unknown): GroupedQuestion[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 4) return [];
+  const questions: GroupedQuestion[] = [];
+  const questionIds = new Set<string>();
+  for (const item of value) {
+    const source = record(item);
+    const id = text(source.id);
+    const question = text(source.question);
+    if (!id || !question || questionIds.has(id) || !Array.isArray(source.options) || source.options.length < 1) {
+      return [];
+    }
+    const options = source.options.map(text);
+    if (options.some((option) => !option) || new Set(options).size !== options.length) return [];
+    questionIds.add(id);
+    questions.push({ id, question, options });
+  }
+  return questions;
 }
 
 function formatTimeout(timeoutMs: number): string {
@@ -490,6 +571,7 @@ export function ApprovalReviewDialog({
         {preview.changes.length ? (
           <dl className="agent-approval-dialog__changes" aria-label="操作预览">
             {preview.changes.map((change, index) => (
+
               <div key={`${change.label}:${index}`}>
                 <dt>{change.label}</dt>
                 {change.before ? <dd><span>原值</span><code>{change.before}</code></dd> : null}

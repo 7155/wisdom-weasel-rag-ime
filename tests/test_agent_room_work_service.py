@@ -606,7 +606,7 @@ class AgentRoomWorkServiceTests(unittest.TestCase):
         self.assertEqual(prompt_payload["message"], "开始")
         transient_context = str(prompt_payload["_transientContext"])
         self.assertIn(objective, transient_context)
-        self.assertIn("当前受管任务", transient_context)
+        self.assertIn("当前工作卡片", transient_context)
         self.assertNotIn(str(item["id"]), transient_context)
         self.assertNotIn("revision=", transient_context)
         session = self.service.sessions.get(str(owner["sessionId"]))

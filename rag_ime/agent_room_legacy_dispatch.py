@@ -187,34 +187,53 @@ class RoomLegacyDispatchService:
                 )
             except RoomSessionBusyError:
                 raise ValueError(
-                    f"{coordinator.get('displayName') or 'Room coordinator'} "
+                    f"{coordinator.get('displayName') or 'Room participant'} "
                     "is currently busy"
                 ) from None
             try:
                 peer_count = len(active) - 1
+                routing_policy = str(room.get("routingPolicy") or "")
                 managed_client_id = (
-                    f"managed-room-ingress:v1:{peer_count}:"
+                    f"managed-room-ingress:v2:{routing_policy}:{peer_count}:"
                     f"{client_message_id or uuid.uuid4()}"
                 )
                 acceptance = [
                     (
-                        "用户的明确请求已完成，且结论由成功工具回执或受管参与者"
-                        "公开结果直接支撑。"
+                        "用户的明确请求已完成，且结论由实际操作结果或伙伴公开"
+                        "提交的内容直接支撑。"
                     ),
                 ]
                 expected_output = (
                     "完成用户请求并提交可复核的结果、证据和剩余风险。"
                 )
-                if peer_count:
+                if peer_count and routing_policy == "parallel":
+                    acceptance.extend(
+                        (
+                            f"{str(value.get('displayName') or '一位伙伴')} 完成自己负责的"
+                            "平级部分，并公开具体操作、结果、验证和剩余风险。"
+                        )
+                        for value in active
+                    )
                     acceptance.append(
                         (
-                            f"协调者已通过 room_collaborate 向其余 {peer_count} 位"
-                            "可用成员分别创建受管子 Dispatch，等待公开结果后再综合。"
+                            "每个人的初步结果都公开后，最初发起的伙伴也完成自己的"
+                            "集成工作，再邀请其余伙伴共同做最后检查；等检查结果"
+                            "全部回来、分歧已处理，才发布正式回复。"
                         )
                     )
                     expected_output = (
-                        "协调者拆分独立子任务，通过受管参与者 Dispatch 收集结果，"
-                        "等待完成后综合并复核最终交付。"
+                        "所有伙伴并行完成各自平级部分；结果到齐后共同复核、"
+                        "综合并发布有证据的正式回复。"
+                    )
+                elif peer_count:
+                    acceptance.append(
+                        (
+                            f"当前伙伴已邀请其余 {peer_count} 位成员分别完成不同的"
+                            "工作，自己同时继续；等大家公开结果后再一起综合。"
+                        )
+                    )
+                    expected_output = (
+                        "各伙伴完成不同部分，结果到齐后共同检查并交付最终成果。"
                     )
                 work_item = self.host.room_work.create(
                     room_id=room_id,
@@ -231,7 +250,9 @@ class RoomLegacyDispatchService:
                     room_id,
                     message=message,
                     client_message_id=client_message_id,
-                    requested_participant_ids=[coordinator_id],
+                    requested_participant_ids=(
+                        [] if routing_policy == "parallel" else [coordinator_id]
+                    ),
                     work_item_id=str(work_item["id"]),
                     attachment_ids=attachment_ids,
                 )

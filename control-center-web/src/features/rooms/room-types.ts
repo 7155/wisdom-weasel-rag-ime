@@ -13,7 +13,7 @@ export interface RoomParticipant {
 
 export type RoomKind = 'collaboration' | 'roleplay';
 export type RoomExecutionMode = 'read_only' | 'per_action' | 'workspace_managed' | 'full_trust';
-export type RoomRoutingPolicy = 'moderator' | 'manual_mentions' | 'sequential' | 'natural' | 'invite_only';
+export type RoomRoutingPolicy = 'moderator' | 'manual_mentions' | 'sequential' | 'natural' | 'parallel' | 'invite_only';
 
 export interface RoomTopic {
   id: string;

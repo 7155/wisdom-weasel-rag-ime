@@ -5,8 +5,8 @@ test('Room control plane stays readable and target Stop remains reachable', asyn
 
   const plane = page.getByRole('region', { name: '协作任务进展' });
   await expect(plane).toBeVisible();
-  await expect(page.getByRole('region', { name: /公开交付/ }).first()).toContainText('显式提交');
-  await expect(page.getByRole('region', { name: /伙伴运行状态/ }).first()).toContainText('只公开状态，不公开私有对话正文');
+  await expect(page.getByRole('region', { name: '公开结果与回复' }).first()).toContainText('显式提交');
+  await expect(page.getByRole('region', { name: '伙伴运行状态' }).first()).toContainText('不公开私有思考或对话正文');
   const planeAlignment = await plane.evaluate((root) => {
     const postHeader = root.querySelector('.room-kernel-posts > header')?.getBoundingClientRect();
     const sessionHeader = root.querySelector('.room-kernel-sessions > header')?.getBoundingClientRect();
@@ -42,7 +42,7 @@ test('Room control plane stays readable and target Stop remains reachable', asyn
   await expect(requirements.getByText('任务收工检查')).toBeVisible();
   await expect(requirements.getByText('始终启用')).toBeVisible();
   await expect(requirements.getByRole('textbox')).toHaveCount(0);
-  const original = requirements.getByLabel('anchor-research 原始需求只读文本');
+  const original = requirements.getByLabel('第 1 条原始需求只读文本');
   await original.focus();
   await expect(original).toBeFocused();
 
@@ -61,10 +61,10 @@ test('Room control plane stays readable and target Stop remains reachable', asyn
     schemaVersion: 'wisdom-weasel.room-kernel-command.v1',
     commandKind: 'cancel_root',
     roomId: 'room-kernel-qa',
-    rootId: 'root-research-2026-07-19-with-a-deliberately-long-identifier',
+    rootId: 'root-implementation',
     targetKind: 'root',
-    targetId: 'root-research-2026-07-19-with-a-deliberately-long-identifier',
-    generation: 3,
+    targetId: 'root-implementation',
+    generation: 1,
   });
   await expect(plane).toContainText('停止请求已接受');
 

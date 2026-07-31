@@ -16,7 +16,7 @@ notFor:
 
 This is the code implementation stage of one continuous suite:
 `alignment-and-decision -> implementation-planning -> implementation-execution
--> quality-gate`.
+-> quality-gate -> independent-review`.
 
 - Project scope selects the shared recovery note automatically. Do not create a
   workflow or work ID. Existing Goal, Task, or Dispatch references only
@@ -65,8 +65,9 @@ This is the code implementation stage of one continuous suite:
 9. Continue while code acceptance remains unmet and a materially different
    legal action can advance it. Preserve failed branches so they are not
    repeated after compaction.
-10. When the planned code is implemented and slice checks pass, return
-   `ready_for_quality`; `quality-gate` owns the next group.
+10. When planned code and slice checks pass, return `ready_for_quality`.
+    Code-changing work then runs `quality-gate` and `independent-review`; only
+    a clear review may reach settlement.
 
 The existing WorkDocument lifecycle moves the complete file to archive only
 after its authority emits a canonical terminal receipt. Archived documents are

@@ -202,6 +202,7 @@ async function collectRouteEvidence(page: Page, routeId: string, title: string):
       'h1, h2, h3, h4, p, span, strong, small, label, dt, dd, button, a',
     )]
       .filter(isVisible)
+      .filter(centerInsideClippingAncestors)
       .filter((element) => {
         const style = getComputedStyle(element);
         return element.scrollWidth > element.clientWidth + 2 && style.overflowX === 'visible';

@@ -166,6 +166,29 @@ for line in sys.stdin:
                 "timeout": 60000,
             })
             continue
+        if str(command.get("message", "")) == "grouped-questions":
+            emit({
+                "type": "extension_ui_request",
+                "id": "ui-grouped-1",
+                "method": "editor",
+                "title": "RAG-IME-QUESTIONS:call-grouped-1",
+                "prefill": json.dumps({
+                    "schemaVersion": "rag-ime.grouped-questions.v1",
+                    "questions": [
+                        {
+                            "id": "deploy_target",
+                            "question": "这次部署到哪里？",
+                            "options": ["预发布环境", "生产环境"],
+                        },
+                        {
+                            "id": "release_window",
+                            "question": "什么时候发布？",
+                            "options": ["现在", "今晚"],
+                        },
+                    ],
+                }, ensure_ascii=False, separators=(",", ":")),
+            })
+            continue
         emit({"type": "message_update", "message": {"role": "assistant", "timestamp": 101},
               "assistantMessageEvent": {"type": "thinking_delta", "contentIndex": 0, "delta": "private chain of thought"}})
         emit({"type": "message_update", "message": {"role": "assistant", "timestamp": 101},
@@ -177,8 +200,13 @@ for line in sys.stdin:
         emit({"type": "message_end", "message": assistant})
         emit({"type": "agent_end", "messages": [assistant]})
     elif kind == "extension_ui_response":
+        reply_text = (
+            str(command.get("value") or "")
+            if command.get("id") == "ui-grouped-1"
+            else "审批结果已收到。"
+        )
         assistant = {"role": "assistant", "timestamp": 102, "content": [
-            {"type": "text", "text": "审批结果已收到。"}
+            {"type": "text", "text": reply_text}
         ]}
         emit({"type": "message_end", "message": assistant})
         emit({"type": "agent_end", "messages": [assistant]})
@@ -1611,6 +1639,96 @@ class PiRuntimeTests(unittest.TestCase):
         self.assertEqual(resolved.payload["state"], "external_pending")
         completed = next(event for event in events if event.event_type == "turn_completed")
         self.assertEqual({required.turn_id, resolved.turn_id, completed.turn_id}, {required.turn_id})
+
+    def test_grouped_questions_project_once_and_validate_one_answer_map(self) -> None:
+        session_id = str(self.session["id"])
+        self.runtime.prompt(session_id, "grouped-questions")
+        _wait_until(lambda: bool(self.runtime.pending_ui_requests(session_id)))
+
+        pending = self.runtime.pending_ui_requests(session_id)
+        self.assertEqual(len(pending), 1)
+        request = pending[0]
+        self.assertEqual(request["requestKind"], "grouped_questions")
+        self.assertEqual(request["method"], "editor")
+        self.assertEqual(
+            request["questions"],
+            [
+                {
+                    "id": "deploy_target",
+                    "question": "这次部署到哪里？",
+                    "options": ["预发布环境", "生产环境"],
+                },
+                {
+                    "id": "release_window",
+                    "question": "什么时候发布？",
+                    "options": ["现在", "今晚"],
+                },
+            ],
+        )
+        self.assertNotIn("prefill", request)
+        self.assertNotIn("RAG-IME-QUESTIONS", str(request["title"]))
+
+        with self.assertRaisesRegex(PiRuntimeError, "当前问题或可选项不一致"):
+            self.runtime.resolve_ui_request(
+                session_id,
+                str(request["requestId"]),
+                response={
+                    "value": json.dumps(
+                        {
+                            "answers": {
+                                "deploy_target": "不存在的环境",
+                                "release_window": "今晚",
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "resolutionSource": "direct_user",
+                },
+            )
+        self.assertEqual(len(self.runtime.pending_ui_requests(session_id)), 1)
+
+        self.runtime.resolve_ui_request(
+            session_id,
+            str(request["requestId"]),
+            response={
+                "value": json.dumps(
+                    {
+                        "answers": {
+                            "deploy_target": "预发布环境",
+                            "release_window": "今晚",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                "resolutionSource": "direct_user",
+            },
+        )
+        _wait_until(
+            lambda: any(
+                event.event_type == "turn_completed"
+                for event in self.events.replay(session_id)[0]
+            )
+        )
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+
+        events, _ = self.events.replay(session_id)
+        required = next(
+            event
+            for event in events
+            if event.event_type == "user_input_required"
+            and event.payload.get("requestKind") == "grouped_questions"
+        )
+        resolved = next(
+            event
+            for event in events
+            if event.event_type == "user_input_required"
+            and event.payload.get("resolutionState") == "resolved"
+        )
+        completed = next(event for event in events if event.event_type == "turn_completed")
+        self.assertEqual(
+            {required.turn_id, resolved.turn_id, completed.turn_id},
+            {required.turn_id},
+        )
 
     def test_memory_review_pauses_and_resumes_the_same_pi_turn(self) -> None:
         session_id = str(self.session["id"])

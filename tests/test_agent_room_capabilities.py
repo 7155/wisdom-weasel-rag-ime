@@ -267,11 +267,11 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         )
         self.assertIn("acceptance", schema["required"])
         self.assertIn(
-            "不得填写当前参与者自己",
+            "不得填写自己",
             schema["properties"]["targetParticipantRef"]["description"],
         )
         self.assertIn(
-            "当前 Task AC",
+            "当前工作卡片",
             schema["properties"]["acceptance"]["description"],
         )
         self.assertEqual(
@@ -319,7 +319,8 @@ class RoomCapabilityManifestTests(unittest.TestCase):
             schema["properties"]["acceptanceAliases"]["minItems"],
             1,
         )
-        self.assertIn("Kernel", tool["description"])
+        self.assertNotIn("Kernel", tool["description"])
+        self.assertIn("服务端会核对", tool["description"])
         self.assertIn("acceptanceAliases 只用于 handoff", tool["description"])
         acceptance_aliases = schema["properties"]["acceptanceAliases"]["description"]
         self.assertIn("仅 handoff", acceptance_aliases)
@@ -329,21 +330,21 @@ class RoomCapabilityManifestTests(unittest.TestCase):
         self.assertIn("最终验收", intent)
         self.assertIn("必须用 close", intent)
         self.assertIn("review", intent)
-        self.assertIn("不负责最终收口", intent)
+        self.assertIn("不负责最终回复", intent)
         self.assertIn(
-            "不要为同一终态摘要再单独 room_post",
+            "不要再用 room_post 重复发布",
             schema["properties"]["publicSummary"]["description"],
         )
         self.assertIn(
-            "不输出私有推理",
+            "不输出私下推理",
             schema["properties"]["publicSummary"]["description"],
         )
         self.assertIn(
-            "不作为公开消息",
+            "不会直接展示给用户",
             schema["properties"]["summary"]["description"],
         )
         self.assertIn(
-            "即将 room_commit",
+            "马上要调用 room_commit",
             " ".join(room_runtime_registry()["room_post"]["notFor"]),
         )
 

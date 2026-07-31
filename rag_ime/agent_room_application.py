@@ -6,6 +6,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 
+from .agent_definitions import canonical_collaboration_role_id
 from .agent_personas import AgentPersonaStore
 from .agent_role_book import AgentRoleBookStore
 from .agent_room_capabilities import RoomCapabilityManifestStore
@@ -216,7 +217,7 @@ class RoomApplicationService:
             "budgetPolicyRef": "room-budget:interactive-v1",
             "createdAtMs": timestamp,
         }
-        task = {
+        base_task = {
             "schemaVersion": ROOM_TASK_SCHEMA_VERSION,
             "taskId": task_id,
             "rootId": root_id,
@@ -237,6 +238,20 @@ class RoomApplicationService:
             "revision": 0,
             "state": "active",
         }
+        peer_parallel = (
+            str(room.get("routingPolicy") or "") == "parallel"
+            and len(targets) > 1
+        )
+        task = (
+            _peer_parallel_task(
+                base_task,
+                targets[0],
+                facilitator_participant_id=facilitator_participant_id,
+                acceptance_criteria=acceptance_criteria,
+            )
+            if peer_parallel
+            else base_task
+        )
         created = self.commands.create_root_task(
             root,
             task,
@@ -252,15 +267,20 @@ class RoomApplicationService:
                 f"{task_id}:branch:"
                 f"{_stable_digest(str(target['id']))}"
             )
-            self.commands.create_task(
-                {
-                    **task,
-                    "taskId": child_task_id,
-                    "parentTaskId": task_id,
-                    "currentOwnerParticipantId": str(target["id"]),
-                },
-                now_ms=timestamp,
-            )
+            child_task = {
+                **base_task,
+                "taskId": child_task_id,
+                "parentTaskId": task_id,
+                "currentOwnerParticipantId": str(target["id"]),
+            }
+            if peer_parallel:
+                child_task = _peer_parallel_task(
+                    child_task,
+                    target,
+                    facilitator_participant_id=facilitator_participant_id,
+                    acceptance_criteria=acceptance_criteria,
+                )
+            self.commands.create_task(child_task, now_ms=timestamp)
             target_task_ids.append(child_task_id)
 
         work_claimed = False
@@ -655,6 +675,84 @@ def _root_facilitator(
     if moderator_id in active_ids:
         return moderator_id
     return str(targets[0]["id"])
+
+
+_PEER_SLICE_BY_ROLE: dict[str, tuple[str, str]] = {
+    "implementer": (
+        "实现与验证",
+        "完成最小正确实现并运行直接验证；不代替独立审查或最终综合。",
+    ),
+    "reviewer": (
+        "独立审查",
+        "从正确性、用户体验和回归风险独立检查产物，给出明确发现与证据；"
+        "除复现所需的最小动作外不重复实现。",
+    ),
+    "researcher": (
+        "证据与机制核对",
+        "查清现有机制、真实调用链和可复核证据；不修改被调查对象，也不代替实现。",
+    ),
+    "specialist": (
+        "专项判断",
+        "只在已声明的专业边界内提交专项产物、取舍和证据；不冒充未配置的能力。",
+    ),
+}
+
+
+def _peer_parallel_task(
+    task: Mapping[str, object],
+    participant: Mapping[str, object],
+    *,
+    facilitator_participant_id: str,
+    acceptance_criteria: Sequence[tuple[str, str]],
+) -> dict[str, object]:
+    """Give every Cat-Cafe-style parallel peer one visible, bounded lane."""
+
+    participant_id = str(participant.get("id") or "")
+    display_name = (
+        " ".join(str(participant.get("displayName") or "").split())
+        or "当前伙伴"
+    )
+    if participant_id == facilitator_participant_id:
+        lane_name = "集成与共同验收"
+        instruction = (
+            "与其他伙伴平级推进集成、端到端运行和验收边界；不要只分派或等待。"
+            "各切片公开返回后，组织共同复核、处理冲突，再发布正式终局回复。"
+        )
+    else:
+        role_id = canonical_collaboration_role_id(
+            participant.get("collaborationRole")
+        )
+        lane_name, instruction = _PEER_SLICE_BY_ROLE.get(
+            role_id,
+            (
+                "独立工作",
+                "依据当前角色选择一个可独立验收、与已列席位职责不重叠的最小切片，"
+                "直接产出结果和证据。",
+            ),
+        )
+    common_objective = " ".join(str(task.get("objective") or "").split())
+    task_payload = dict(task)
+    if participant_id != facilitator_participant_id:
+        participant_clause = f"{display_name} 完成自己负责的"
+        slice_criterion_ids = [
+            criterion_id
+            for criterion_id, statement in acceptance_criteria
+            if " ".join(statement.split()).startswith(participant_clause)
+        ]
+        if slice_criterion_ids:
+            task_payload["acceptanceCriterionIds"] = slice_criterion_ids
+    return {
+        **task_payload,
+        "objective": (
+            f"{display_name} 的平级切片（{lane_name}）：{instruction}"
+            f" 首个公开摘要先说明具体边界与下一步，随后持续公开可验证进度。"
+            f" 共同目标：{common_objective}"
+        )[:4_000],
+        "expectedOutput": (
+            f"提交“{lane_name}”这部分的具体产物、验证与剩余风险；"
+            "不得只安排别人、等待或用空泛状态代替自己的工作。"
+        )[:2_000],
+    }
 
 
 def _texts(value: object) -> tuple[str, ...]:

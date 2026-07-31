@@ -123,15 +123,17 @@ export function useRoomLiveSession({
         });
         if (!active || requestGeneration !== generation) return;
         const snapshot = parseRoomEventSnapshot(value);
-        useRoomLiveStore.getState().replaySnapshot(roomId, snapshot);
+        const snapshotApplied = useRoomLiveStore.getState().replaySnapshot(roomId, snapshot);
+        const resumeToken = useRoomLiveStore.getState().projections[roomId]?.resumeToken
+          ?? snapshot.resumeToken;
         callbacksRef.current.onLoadingChange(false);
-        callbacksRef.current.onSnapshot(roomId, snapshot);
+        if (snapshotApplied) callbacksRef.current.onSnapshot(roomId, snapshot);
         const subscriptionGeneration = requestGeneration;
         unsubscribe = transport.subscribe<UiRoomEvent>(
           {
             pathId: 'agent.room.events',
             params: { roomId },
-            lastEventId: snapshot.resumeToken,
+            lastEventId: resumeToken,
           },
           {
             next: (event) => {

@@ -86,6 +86,55 @@ class AgentRoomTests(unittest.TestCase):
         self.assertEqual(stored["eventId"], event["eventId"])
         self.assertEqual(stat.S_IMODE(room_files[0].stat().st_mode), 0o600)
 
+    def test_parallel_routing_starts_every_peer_and_keeps_work_owner_first(
+        self,
+    ) -> None:
+        room = self.store.create(
+            title="平级并行",
+            routing_policy="parallel",
+            participants=[
+                self._participant("companion-present-v1", "澄·今"),
+                self._participant("companion-firstlight-v1", "澄·初"),
+                self._participant("companion-future-v1", "澄·远"),
+            ],
+        )
+        owner = room["participants"][2]
+
+        decisions = self.store.plan_routes(
+            str(room["id"]),
+            "三位伙伴各做不同部分，最后一起检查",
+            authoritative_participant_id=str(owner["id"]),
+        )
+
+        self.assertEqual(
+            [decision["targetParticipantId"] for decision in decisions],
+            [
+                owner["id"],
+                room["participants"][0]["id"],
+                room["participants"][1]["id"],
+            ],
+        )
+        self.assertTrue(
+            all(decision["reason"] == "parallel" for decision in decisions)
+        )
+        self.assertTrue(
+            all(decision["dispatchCount"] == 3 for decision in decisions)
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "parallel room routing requires plan_room_routes",
+        ):
+            self.store.plan_route(str(room["id"]), "不要退化成单人工作")
+        with self.assertRaisesRegex(ValueError, "conflicts with the WorkItem"):
+            self.store.plan_routes(
+                str(room["id"]),
+                "只叫另一位伙伴",
+                requested_participant_ids=[
+                    str(room["participants"][0]["id"])
+                ],
+                authoritative_participant_id=str(owner["id"]),
+            )
+
     def test_room_never_persists_or_projects_retired_builtin_role_ids(
         self,
     ) -> None:
@@ -1315,7 +1364,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         self.assertEqual(prompt_payload["message"], "@澄·初 请先诊断状态")
         room_context = prompt_payload["_transientContext"]
         self.assertIn("<room-context>", room_context)
-        self.assertIn("你本轮以 implementer 视角参与", room_context)
+        self.assertIn("你本轮从“实施者”的角度参与", room_context)
         self.assertNotIn(str(self.root.resolve()), room_context)
         self.assertNotIn("@澄·初 请先诊断状态", room_context)
         self.assertEqual(accepted["participant"]["id"], hermes["id"])
@@ -2131,7 +2180,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         prompt_payload = prompt.call_args.args[1]
         self.assertEqual(prompt_payload["message"], "请协调大家检查当前项目")
         moderator_context = prompt_payload["_transientContext"]
-        self.assertIn("你本轮以 coordinator 视角参与", moderator_context)
+        self.assertIn("你本轮从“整合伙伴”的角度参与", moderator_context)
         self.assertNotIn("agents.room_ask", moderator_context)
         self.assertNotIn("role=researcher", moderator_context)
         self.assertNotIn("role=implementer", moderator_context)
@@ -2186,7 +2235,7 @@ class AgentRoomServiceTests(unittest.TestCase):
         data = projected["payload"]["data"]
         serialized = json.dumps(projected, ensure_ascii=False)
         self.assertEqual(projected["eventType"], "participant_activity")
-        self.assertEqual(data["arguments"]["apiKey"], "[REDACTED_SECRET]")
+        self.assertNotIn("arguments", data)
         self.assertEqual(
             data["summary"],
             "查询到一份可公开摘要",

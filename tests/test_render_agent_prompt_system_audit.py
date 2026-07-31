@@ -111,7 +111,7 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
 
     def test_room_intercom_and_guard_branches_are_reviewable(self) -> None:
         self.assertIn(
-            "这是需要答复的问题",
+            "对方需要你的答复",
             self.records["room.dynamic.intercom-question"]["content"],
         )
         self.assertIn(
@@ -119,7 +119,7 @@ class RenderAgentPromptSystemAuditTests(unittest.TestCase):
             self.records["room.dynamic.intercom-reply"]["content"],
         )
         self.assertIn(
-            "消息本身不是验收 evidenceRef",
+            "这条消息本身不能证明验收已经通过",
             self.records["room.dynamic.intercom-reply"]["content"],
         )
         self.assertIn(
@@ -642,7 +642,9 @@ class SiblingRepositoryRootTests(unittest.TestCase):
                 (worktree / relative).resolve(),
                 "with no capture anywhere, the local path is still reported",
             )
-            (repository / relative).mkdir(parents=True)
+            capture = repository / relative / "provider-room-deterministic"
+            capture.mkdir(parents=True)
+            (capture / "audit.json").write_text("{}", encoding="utf-8")
             self.assertEqual(
                 AUDIT._deterministic_evidence_root(worktree).resolve(),
                 (repository / relative).resolve(),

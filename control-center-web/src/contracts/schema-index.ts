@@ -5271,6 +5271,7 @@ export const contractSchemas = {
               "moderator",
               "sequential",
               "natural",
+              "parallel",
               "invite_only"
             ]
           },
@@ -5662,6 +5663,7 @@ export const contractSchemas = {
           "moderator",
           "sequential",
           "natural",
+          "parallel",
           "invite_only"
         ]
       },

@@ -13,7 +13,8 @@ export interface AgentRoomV1 {
   avatar?: string;
   description?: string;
   scenarioPrompt?: string;
-  routingPolicy: 'manual_mentions' | 'moderator' | 'sequential' | 'natural' | 'invite_only';
+  routingPolicy:
+    'manual_mentions' | 'moderator' | 'sequential' | 'natural' | 'parallel' | 'invite_only';
   routingConfig?: {
     maxResponders: 1;
     naturalJitter: number;

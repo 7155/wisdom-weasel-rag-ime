@@ -2571,7 +2571,7 @@ class AgentServiceTests(unittest.TestCase):
         ) -> dict[str, object]:
             self.assertEqual(session_id, target_session_id)
             self.assertNotIn("调用 room_post", prompt_text)
-            self.assertIn("不要创建 Intercom 或 WorkItem", prompt_text)
+            self.assertIn("不要新建消息或任务", prompt_text)
             self.service.events.publish(
                 session_id,
                 "text_delta",

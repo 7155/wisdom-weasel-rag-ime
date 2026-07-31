@@ -6,8 +6,9 @@ test('Room capability and binding inspectors remain separated and responsive', a
   await expect(page.getByRole('region', { name: 'Root Task Dispatch 拓扑' })).toContainText('Root / Task / Dispatch');
   await expect(page.getByRole('region', { name: 'root-research Tasks' })).toContainText('task-verify-room-routing');
   await expect(page.getByRole('region', { name: 'root-research Dispatches' })).toContainText('dispatch-research-attempt-2');
-  await expect(page.getByRole('region', { name: 'root-research 公开交付' })).toContainText('显式提交');
-  await expect(page.getByRole('region', { name: 'root-research 伙伴运行状态' })).toContainText('只公开状态，不公开私有对话正文');
+  const researchRoot = page.locator('.room-kernel-root').first();
+  await expect(researchRoot.getByRole('region', { name: '公开结果与回复' })).toContainText('显式提交');
+  await expect(researchRoot.getByRole('region', { name: '伙伴运行状态' })).toContainText('不公开私有思考或对话正文');
 
   const capability = page.getByRole('button', { name: /知识检索/ });
   await capability.focus();

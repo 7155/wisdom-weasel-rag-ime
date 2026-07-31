@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import json
+import subprocess
 import sys
 import tempfile
 import time
@@ -14,6 +16,7 @@ from rag_ime.agent_workspace import (
     WorkspaceHarness,
     WorkspaceHarnessError,
     WorkspaceSnapshotError,
+    _workspace_command_path,
 )
 
 
@@ -44,6 +47,23 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+
+    def test_workspace_path_discovers_keg_only_node_versions(self) -> None:
+        opt_root = Path(self.temp.name) / "homebrew-opt"
+        node_20 = opt_root / "node@20" / "bin"
+        node_22 = opt_root / "node@22" / "bin"
+        node_20.mkdir(parents=True)
+        node_22.mkdir(parents=True)
+
+        command_path = _workspace_command_path(
+            opt_roots=(opt_root,),
+            base_directories=(Path("/usr/bin"),),
+        )
+
+        self.assertEqual(
+            command_path.split(os.pathsep),
+            [str(node_22), str(node_20), "/usr/bin"],
+        )
 
     def test_list_and_read_stay_inside_roots_and_hide_sensitive_files(self) -> None:
         harness = WorkspaceHarness(executor=lambda prepared: {})
@@ -312,6 +332,87 @@ class AgentWorkspaceHarnessTests(unittest.TestCase):
                 self.session,
                 {"path": str(target), "limit": 65_537},
             )
+
+    def test_linked_worktree_metadata_is_derived_from_validated_backlink(self) -> None:
+        common = Path(self.temp.name) / "repository" / ".git"
+        git_dir = common / "worktrees" / "project"
+        (common / "objects").mkdir(parents=True)
+        git_dir.mkdir(parents=True)
+        pointer = self.root / ".git"
+        pointer.write_text(f"gitdir: {git_dir}\n", encoding="utf-8")
+        (git_dir / "gitdir").write_text(f"{pointer}\n", encoding="utf-8")
+        (git_dir / "commondir").write_text("../..\n", encoding="utf-8")
+        (git_dir / "HEAD").write_text("ref: refs/heads/test\n", encoding="utf-8")
+        harness = WorkspaceHarness(executor=lambda prepared: {})
+
+        prepared = harness.prepare_command(self.session, {"command": "git status"})
+
+        self.assertEqual(prepared.repository_metadata_roots, (common.resolve(),))
+        self.assertEqual(prepared.sandbox_roots, (self.root.resolve(), common.resolve()))
+
+        (git_dir / "gitdir").write_text(f"{self.outside}\n", encoding="utf-8")
+        rejected = harness.prepare_command(self.session, {"command": "git status"})
+        self.assertEqual(rejected.repository_metadata_roots, ())
+
+    @unittest.skipUnless(
+        sys.platform == "darwin" and Path("/usr/bin/git").is_file(),
+        "requires Git and the macOS sandbox harness",
+    )
+    def test_real_harness_commits_inside_a_linked_git_worktree(self) -> None:
+        sandbox = Path("/usr/bin/sandbox-exec")
+        if not sandbox.is_file():
+            self.skipTest("sandbox-exec is unavailable")
+        git = "/usr/bin/git"
+        repository = Path(self.temp.name) / "linked-origin"
+        linked = Path(self.temp.name) / "linked-worktree"
+        repository.mkdir()
+        subprocess.run([git, "init", "-q"], cwd=repository, check=True)
+        subprocess.run(
+            [git, "config", "user.name", "Room Test"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(
+            [git, "config", "user.email", "room-test@example.invalid"],
+            cwd=repository,
+            check=True,
+        )
+        (repository / "tracked.txt").write_text("initial\n", encoding="utf-8")
+        subprocess.run([git, "add", "tracked.txt"], cwd=repository, check=True)
+        subprocess.run(
+            [git, "commit", "-q", "-m", "initial"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(
+            [git, "worktree", "add", "-q", "-b", "linked-test", str(linked)],
+            cwd=repository,
+            check=True,
+        )
+        (linked / "change.txt").write_text("committed in sandbox\n", encoding="utf-8")
+        session = {
+            **self.session,
+            "workspaceRoots": [str(linked.resolve())],
+        }
+        harness = WorkspaceHarness()
+        prepared = harness.prepare_command(
+            session,
+            {"command": "git add change.txt && git commit -m linked-test"},
+        )
+
+        receipt = harness.execute(prepared)
+
+        self.assertEqual(prepared.repository_metadata_roots, ((repository / ".git").resolve(),))
+        self.assertEqual(receipt["exitCode"], 0, receipt["output"])
+        self.assertTrue(receipt["mutationApplied"])
+        status = subprocess.run(
+            [git, "status", "--short"],
+            cwd=linked,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(status.stdout, "")
 
     def test_shell_requires_coordinator_and_rejects_privilege_destruction_and_secrets(self) -> None:
         harness = WorkspaceHarness(executor=lambda prepared: {})

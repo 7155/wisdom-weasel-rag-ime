@@ -118,6 +118,114 @@ _OUTPUT_REDACTIONS = (
     (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*"), "Bearer [REDACTED]"),
 )
 
+def _workspace_command_path(
+    *,
+    opt_roots: Sequence[Path] = (
+        Path("/opt/homebrew/opt"),
+        Path("/usr/local/opt"),
+    ),
+    base_directories: Sequence[Path] = (
+        Path("/opt/homebrew/bin"),
+        Path("/usr/local/bin"),
+        Path("/usr/bin"),
+        Path("/bin"),
+        Path("/usr/sbin"),
+        Path("/sbin"),
+    ),
+) -> str:
+    """Return a fixed, credential-free PATH including keg-only Node installs."""
+
+    candidates: list[Path] = []
+    for opt_root in opt_roots:
+        unversioned = opt_root / "node" / "bin"
+        if unversioned.is_dir():
+            candidates.append(unversioned)
+        versioned = [
+            path
+            for path in opt_root.glob("node@*/bin")
+            if path.is_dir()
+        ]
+        versioned.sort(
+            key=lambda path: int(
+                match.group(1)
+                if (
+                    match := re.fullmatch(
+                        r"node@(\d+)",
+                        path.parent.name,
+                    )
+                )
+                else 0
+            ),
+            reverse=True,
+        )
+        candidates.extend(versioned)
+    candidates.extend(base_directories)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        value = str(candidate)
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return os.pathsep.join(unique)
+
+
+def _linked_worktree_metadata_roots(roots: Sequence[Path]) -> tuple[Path, ...]:
+    """Return validated shared Git metadata required by linked worktrees."""
+
+    metadata_roots: list[Path] = []
+    for root in roots:
+        pointer = root / ".git"
+        if not pointer.is_file() or pointer.is_symlink():
+            continue
+        try:
+            pointer_text = pointer.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        lines = pointer_text.splitlines()
+        if (
+            len(pointer_text) > 4_096
+            or len(lines) != 1
+            or not lines[0].startswith("gitdir:")
+        ):
+            continue
+        raw_git_dir = lines[0].removeprefix("gitdir:").strip()
+        if not raw_git_dir or "\x00" in raw_git_dir:
+            continue
+        try:
+            git_dir_path = Path(raw_git_dir).expanduser()
+            if not git_dir_path.is_absolute():
+                git_dir_path = pointer.parent / git_dir_path
+            git_dir = git_dir_path.resolve(strict=True)
+            backlink_text = (git_dir / "gitdir").read_text(encoding="utf-8").strip()
+            common_text = (git_dir / "commondir").read_text(encoding="utf-8").strip()
+            if not backlink_text or not common_text:
+                continue
+            backlink_path = Path(backlink_text).expanduser()
+            if not backlink_path.is_absolute():
+                backlink_path = git_dir / backlink_path
+            common_path = Path(common_text).expanduser()
+            if not common_path.is_absolute():
+                common_path = git_dir / common_path
+            backlink = backlink_path.resolve(strict=True)
+            common = common_path.resolve(strict=True)
+            worktrees = (common / "worktrees").resolve(strict=True)
+        except (OSError, RuntimeError):
+            continue
+        if (
+            not git_dir.is_dir()
+            or git_dir.parent != worktrees
+            or backlink != pointer.resolve(strict=True)
+            or not (git_dir / "HEAD").is_file()
+            or not (common / "objects").is_dir()
+            or any(common == root or common.is_relative_to(root) for root in roots)
+        ):
+            continue
+        if common not in metadata_roots:
+            metadata_roots.append(common)
+    return tuple(metadata_roots)
+
 
 @dataclass(frozen=True)
 class PreparedWorkspaceCommand:
@@ -126,14 +234,23 @@ class PreparedWorkspaceCommand:
     roots: tuple[Path, ...]
     timeout_seconds: int
     allow_network: bool
+    repository_metadata_roots: tuple[Path, ...] = ()
 
     @property
     def roots_digest(self) -> str:
-        value = "\n".join(str(root) for root in self.roots).encode("utf-8")
-        return hashlib.sha256(value).hexdigest()
+        values = [str(root) for root in self.roots]
+        values.extend(
+            f"repository-metadata:{root}" for root in self.repository_metadata_roots
+        )
+        return hashlib.sha256("\n".join(values).encode("utf-8")).hexdigest()
+
+    @property
+    def sandbox_roots(self) -> tuple[Path, ...]:
+        return (*self.roots, *self.repository_metadata_roots)
 
 
 WorkspaceExecutor = Callable[[PreparedWorkspaceCommand], dict[str, object]]
+
 
 @dataclass
 class SpawnedWorkspaceCommand:
@@ -2793,6 +2910,7 @@ class WorkspaceHarness:
         if str(session.get("mode") or "") != "coordinator":
             raise WorkspaceHarnessError("workspace commands require a coordinator session")
         roots = self._session_roots(session)
+        repository_metadata_roots = _linked_worktree_metadata_roots(roots)
         model_arbitrated = (
             normalize_execution_mode(
                 session.get("executionMode"),
@@ -2857,6 +2975,7 @@ class WorkspaceHarness:
             command=command,
             cwd=cwd,
             roots=roots,
+            repository_metadata_roots=repository_metadata_roots,
             timeout_seconds=timeout,
             allow_network=allow_network,
         )
@@ -3189,14 +3308,14 @@ class WorkspaceHarness:
         try:
             temporary = Path(temporary_directory.name).resolve(strict=True)
             profile = _sandbox_profile(
-                roots=prepared.roots,
+                roots=prepared.sandbox_roots,
                 temporary=temporary,
                 allow_network=prepared.allow_network,
             )
             environment = {
                 "HOME": str(temporary),
                 "TMPDIR": str(temporary),
-                "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+                "PATH": _workspace_command_path(),
                 "LANG": "en_US.UTF-8",
                 "LC_ALL": "en_US.UTF-8",
                 "GIT_CONFIG_GLOBAL": "/dev/null",

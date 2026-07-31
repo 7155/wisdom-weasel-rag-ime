@@ -8,6 +8,7 @@ import {
   reduceRoomEvents,
   replayRoomEventSnapshot,
   roomActivityLaneIdentity,
+  selectRoomParticipantPublicProgress,
 } from './room-reducer';
 import { parseRoomEvent } from './validators';
 import { roomEventFixture as roomEvent } from '@/test/fixtures/events';
@@ -753,6 +754,75 @@ describe('RoomEventReducer', () => {
     ]);
   });
 
+  it('selects one latest public summary per participant across live events and snapshot hydration', () => {
+    const events = [
+      wireRoomEvent(1, 'participant_activity', {
+        rootId: 'root-public',
+        dispatchId: 'dispatch-research',
+        participantId: 'participant-research',
+        sourceSessionId: 'session-research',
+        sourceEventType: 'reasoning_summary',
+        state: 'running',
+        summary: '正在核对安装栈恢复边界',
+      }),
+      wireRoomEvent(2, 'participant_activity', {
+        rootId: 'root-public',
+        dispatchId: 'dispatch-review',
+        participantId: 'participant-review',
+        sourceSessionId: 'session-review',
+        sourceEventType: 'tool_progress',
+        toolCallId: 'review-call',
+        toolName: 'read',
+        summary: '正在检查公开回执',
+      }),
+      wireRoomEvent(3, 'participant_activity', {
+        rootId: 'root-public',
+        dispatchId: 'dispatch-research',
+        participantId: 'participant-research',
+        sourceSessionId: 'session-research',
+        sourceEventType: 'reasoning_summary',
+        state: 'completed',
+        summary: '恢复边界已经确认',
+      }),
+      wireRoomEvent(4, 'participant_activity', {
+        rootId: 'root-public',
+        dispatchId: 'dispatch-research',
+        participantId: 'participant-research',
+        sourceSessionId: 'session-research-next',
+        sourceEventType: 'reasoning_summary',
+        state: 'running',
+        summary: '正在准备共同复核',
+      }),
+    ];
+    const live = reduceRoomEvents(
+      createRoomProjection('room-1'),
+      events.map((event) => parseRoomEvent(event)),
+    );
+    const snapshot = parseRoomEventSnapshot(roomSnapshotFixture(events));
+    const hydrated = replayRoomEventSnapshot(createRoomProjection('room-1'), snapshot);
+    const rehydrated = replayRoomEventSnapshot(hydrated, snapshot);
+
+    expect(selectRoomParticipantPublicProgress(live)).toEqual(
+      selectRoomParticipantPublicProgress(hydrated),
+    );
+    expect(selectRoomParticipantPublicProgress(rehydrated)).toEqual([
+      expect.objectContaining({
+        participantId: 'participant-research',
+        sourceSessionId: 'session-research-next',
+        kind: 'reasoning',
+        status: 'running',
+        summary: '正在准备共同复核',
+      }),
+      expect.objectContaining({
+        participantId: 'participant-review',
+        sourceSessionId: 'session-review',
+        kind: 'tool',
+        summary: '正在检查公开回执',
+        data: expect.objectContaining({ toolName: 'read' }),
+      }),
+    ]);
+  });
+
   it('keeps one authoritative selectable request until its Session resolves it', () => {
     const waiting = reduceRoomEvent(
       createRoomProjection('room-1'),
@@ -802,6 +872,33 @@ describe('RoomEventReducer', () => {
         resolutionSource: 'user',
       },
     });
+  });
+
+  it('keeps grouped clarification waiting even when it does not use a single-input method', () => {
+    const pending = reduceRoomEvent(
+      createRoomProjection('room-1'),
+      roomEvent(1, 'participant_activity', {
+        rootId: 'room-turn-1',
+        dispatchId: 'dispatch-1',
+        sourceEventId: 'session:grouped:1',
+        requestId: 'grouped:1',
+        requestKind: 'grouped_questions',
+        questions: [
+          { id: 'scope', question: '先覆盖哪一部分？', options: ['核心流程', '完整流程'] },
+          { id: 'review', question: '如何复核？', options: ['伙伴互查', '直接交付'] },
+        ],
+      }),
+    ).state;
+
+    expect(Object.values(pending.activitiesById)).toEqual([
+      expect.objectContaining({
+        status: 'waiting',
+        payload: expect.objectContaining({
+          requestKind: 'grouped_questions',
+          questions: expect.any(Array),
+        }),
+      }),
+    ]);
   });
 
   it('prefers explicit public data identities over envelope fallbacks', () => {
@@ -935,6 +1032,16 @@ describe('RoomEventReducer', () => {
       status: 'failed',
       rootTerminalAtMs: 50,
     });
+    expect(rootFailed.turnsById['room-turn-1'].terminalDispatchIds).toEqual([
+      'dispatch-1',
+      'dispatch-2',
+    ]);
+    expect(rootFailed.turnsById['room-turn-1'].failedDispatchIds).toEqual([
+      'dispatch-2',
+    ]);
+    expect(rootFailed.turnsById['room-turn-1'].failedParticipantIds).toEqual([
+      'participant-2',
+    ]);
   });
 
   it('closes a root as aborted and never lets a late completed event resurrect it', () => {
@@ -993,6 +1100,48 @@ describe('RoomEventReducer', () => {
     expect(afterLate.turnsById['room-turn-1']).toMatchObject({
       status: 'aborted',
       abortedParticipantIds: ['participant-1', 'participant-2'],
+    });
+  });
+
+  it('preserves settled lane evidence when Root aborts only unfinished work', () => {
+    const routeOne = roomEvent(1, 'route_decision', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-1',
+      targetParticipantId: 'participant-1',
+    });
+    const routeTwo = roomEvent(2, 'route_decision', {
+      rootId: 'room-turn-1',
+      dispatchId: 'dispatch-2',
+      targetParticipantId: 'participant-2',
+    });
+    routeTwo.participantId = 'participant-2';
+    routeTwo.sourceSessionId = 'session-room-2';
+    const published = roomEvent(3, 'room_post', {
+      post: roomPost('post-settled', '第一项分工已交付', 'dispatch-1'),
+    });
+    const rootAborted = roomEvent(4, 'turn_completed', {
+      status: 'aborted',
+      aborted: true,
+      rootId: 'room-turn-1',
+    });
+    rootAborted.participantId = null;
+    rootAborted.sourceSessionId = '';
+
+    let state = createRoomProjection('room-1');
+    for (const event of [routeOne, routeTwo, published, rootAborted]) {
+      state = reduceRoomEvent(state, event).state;
+    }
+
+    expect(state.turnsById['room-turn-1']).toMatchObject({
+      status: 'aborted',
+      terminalDispatchIds: ['dispatch-1', 'dispatch-2'],
+      abortedDispatchIds: ['dispatch-2'],
+      terminalParticipantIds: ['participant-1', 'participant-2'],
+      abortedParticipantIds: ['participant-2'],
+    });
+    expect(state.messagesById['post-settled']).toMatchObject({
+      status: 'completed',
+      text: '第一项分工已交付',
     });
   });
 

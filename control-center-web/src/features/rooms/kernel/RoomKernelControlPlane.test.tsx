@@ -1,28 +1,195 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RoomKernelReceiptV1 } from '@/contracts/generated/room-kernel-receipt.v1';
 import { createRoomKernelProjection, type RoomKernelProjection, type RootProjection } from '@/contracts/room-kernel-reducer';
+import type { RoomParticipantPublicProgressProjection } from '@/contracts/room-reducer';
 import { RoomKernelControlPlane } from './RoomKernelControlPlane';
-import { createFixtureRoomKernelCommandTransport } from './room-kernel-command-transport';
+import {
+  createFixtureRoomKernelCommandTransport,
+  type RoomKernelCommandTransport,
+} from './room-kernel-command-transport';
 
 describe('RoomKernelControlPlane', () => {
   afterEach(cleanup);
 
-  it('renders generated projections and keeps Session transcript private', () => {
+  it('renders public results while keeping private participant details behind an optional disclosure', () => {
     renderPlane(projection());
-    expect(screen.getByRole('region', { name: 'root-a 公开交付' })).toHaveTextContent('经过明确提交的研究发现');
-    expect(screen.getByRole('region', { name: 'root-a 伙伴运行状态' })).toHaveTextContent('session-private-a');
-    expect(screen.queryByText('Session 私有正文')).not.toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'root-a 运行回执' })).toHaveTextContent('当前连接没有停止权限');
+    expect(screen.getAllByRole('region', { name: '公开结果与回复' })[0]).toHaveTextContent('经过明确提交的研究发现');
+    const sessions = screen.getAllByRole('region', { name: '伙伴运行状态' })[0]!;
+    expect(sessions).not.toHaveTextContent('Session 私有正文');
+    expect(screen.getAllByRole('region', { name: '运行确认' })[0]).toHaveTextContent('当前连接没有停止权限');
   });
 
-  it('shows each durable Task owner, state, and accepted handoff path', () => {
+  it('presents optional handoff details without exposing protocol identifiers', () => {
     renderPlane(projection());
-    const ownership = screen.getByRole('region', { name: 'root-a 任务归属' });
+    const summary = screen.getByText('查看分工与交接详情');
+    const ownership = summary.closest('details');
+    expect(ownership).not.toBeNull();
+    fireEvent.click(summary);
     expect(ownership).toHaveTextContent('核对索引证据');
-    expect(ownership).toHaveTextContent('当前负责人审查员');
+    expect(ownership).toHaveTextContent('当前伙伴审查员');
     expect(ownership).toHaveTextContent('研究员审查员第 1 版');
-    expect(within(ownership).getByTitle('task-a')).toHaveTextContent('task-a');
+    expect(ownership).toHaveTextContent('分工关系直接分配');
+    expect(ownership).not.toHaveTextContent('task-a');
+    expect(ownership).not.toHaveTextContent('receipt:ownership:1');
+  });
+
+  it('renders every participant as an equal work lane with its public reasoning or tool progress', () => {
+    const progress: RoomParticipantPublicProgressProjection[] = [
+      {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-review',
+        participantId: 'reviewer',
+        sourceSessionId: 'session-private-a',
+        kind: 'reasoning',
+        status: 'running',
+        summary: '正在核对恢复后的任务边界',
+        updatedAtMs: 12,
+      },
+      {
+        rootId: 'root-a',
+        dispatchId: 'dispatch-research',
+        participantId: 'researcher',
+        sourceSessionId: 'session-research',
+        kind: 'tool',
+        status: 'running',
+        summary: 'read',
+        data: { toolName: 'read' },
+        updatedAtMs: 13,
+      },
+    ];
+    renderPlane(projection(), undefined, false, progress);
+
+    const phase = screen.getAllByRole('region', { name: '伙伴并行进度' })[0]!;
+    const lanes = phase.querySelectorAll('.room-kernel-participant-lane');
+    expect(lanes).toHaveLength(2);
+    expect([...lanes].every((lane) => lane.className === 'room-kernel-participant-lane')).toBe(true);
+    expect(phase).toHaveTextContent('研究员同时帮大家对齐进度 · 完成自己的部分');
+    expect(phase).toHaveTextContent('审查员完成自己的部分');
+    expect(phase).toHaveTextContent('正在核对恢复后的任务边界');
+    expect(phase).toHaveTextContent('读取文件正在处理');
+    expect(phase).not.toHaveTextContent(/\bread\b/);
+    expect(phase).not.toHaveTextContent('Session 私有正文');
+  });
+
+  it('reveals shared final check only after every owned slice settles and keeps the final Room reply after it', () => {
+    const running = projection();
+    const first = renderPlane(running);
+    expect(screen.queryByRole('region', { name: '一起检查' })).not.toBeInTheDocument();
+    first.unmount();
+
+    const settled = projection();
+    settled.tasksById['task-a'] = { ...settled.tasksById['task-a']!, state: 'completed' };
+    settled.rootsById['root-a'] = {
+      ...settled.rootsById['root-a']!,
+      state: 'completed',
+      isFinal: true,
+      terminalReceiptId: 'terminal-a',
+    };
+    settled.terminalReceiptByRootId['root-a'] = receipt({
+      receiptId: 'terminal-a',
+      commandId: null,
+      receiptKind: 'terminal',
+      details: { qualityGateVerdict: 'ready_to_deliver' },
+    });
+    settled.postOrder.push('post-final');
+    settled.postsById['post-final'] = {
+      schemaVersion: 'wisdom-weasel.room-post.v2',
+      postId: 'post-final',
+      roomId: 'room-a',
+      rootId: 'root-a',
+      generation: 3,
+      authorActorRef: '研究员',
+      kind: 'result',
+      visibility: 'room',
+      content: '每位伙伴的部分都已核验，这是最终回复。',
+      idempotencyKey: 'post-final',
+      publicationSource: { kind: 'room_commit', ref: 'commit-final' },
+      createdAtMs: 20,
+    };
+    renderPlane(settled);
+
+    const sharedCheck = screen.getByRole('region', { name: '一起检查' });
+    const publicDelivery = screen.getAllByRole('region', { name: '公开结果与回复' })[0]!;
+    expect(sharedCheck).toHaveTextContent('每个人的部分都已完成检查');
+    expect(publicDelivery.firstElementChild?.nextElementSibling).toHaveAttribute('data-terminal', 'true');
+    expect(publicDelivery).toHaveTextContent('每位伙伴的部分都已核验，这是最终回复。');
+    expect(sharedCheck.compareDocumentPosition(publicDelivery) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it.each([
+    ['completed', true],
+    ['failed', false],
+    ['cancelled', false],
+    ['cancelled_with_unknowns', false],
+  ] as const)('keeps one latest authoritative reply when the task ends as %s', (state, isFinal) => {
+    const terminal = projection();
+    terminal.rootsById['root-a'] = {
+      ...terminal.rootsById['root-a']!,
+      state,
+      isFinal,
+      terminalReceiptId: isFinal ? 'terminal-a' : null,
+    };
+    terminal.postOrder.push('post-earlier', 'post-latest');
+    terminal.postsById['post-earlier'] = {
+      schemaVersion: 'wisdom-weasel.room-post.v2',
+      postId: 'post-earlier',
+      roomId: 'room-a',
+      rootId: 'root-a',
+      generation: 3,
+      authorActorRef: '研究员',
+      kind: 'progress',
+      visibility: 'room',
+      content: '较早的公开进度',
+      idempotencyKey: 'post-earlier',
+      publicationSource: { kind: 'room_commit', ref: 'commit-earlier' },
+      createdAtMs: 10,
+    };
+    terminal.postsById['post-latest'] = {
+      ...terminal.postsById['post-earlier']!,
+      postId: 'post-latest',
+      kind: 'result',
+      content: '本轮最后一份权威公开回复',
+      idempotencyKey: 'post-latest',
+      publicationSource: { kind: 'room_commit', ref: 'commit-latest' },
+      createdAtMs: 20,
+    };
+
+    renderPlane(terminal);
+
+    const publicDelivery = screen.getAllByRole('region', { name: '公开结果与回复' })[0]!;
+    expect(publicDelivery).toHaveTextContent('本轮最后一份权威公开回复');
+    expect(publicDelivery).not.toHaveTextContent('较早的公开进度');
+    expect(publicDelivery.querySelectorAll('[data-terminal="true"]')).toHaveLength(1);
+  });
+
+  it('keeps the shared-check phase visible while peer review tasks are still running', () => {
+    const state = projection();
+    state.tasksById['task-a'] = { ...state.tasksById['task-a']!, state: 'completed' };
+    state.tasksById['review-a'] = {
+      ...state.tasksById['task-a']!,
+      taskId: 'review-a',
+      taskKind: 'review',
+      currentOwnerParticipantId: 'researcher',
+      ownershipReceiptId: null,
+      objective: '检查伙伴公开结果',
+      reviewOfTaskIds: ['task-a'],
+      reviewAuthorParticipantIds: ['researcher'],
+      reviewState: 'in_review',
+      state: 'active',
+    };
+    state.rootsById['root-a'] = {
+      ...state.rootsById['root-a']!,
+      state: 'running',
+      isFinal: false,
+      terminalReceiptId: null,
+    };
+    renderPlane(state);
+
+    const sharedCheck = screen.getByRole('region', { name: '一起检查' });
+    expect(sharedCheck).toHaveTextContent('伙伴正在互相检查');
+    expect(sharedCheck).toHaveTextContent('0 / 1 位伙伴已经完成检查');
+    expect(sharedCheck).not.toHaveTextContent('最终回复');
   });
 
   it('does not expose a production Stop write without a command transport', () => {
@@ -77,8 +244,8 @@ describe('RoomKernelControlPlane', () => {
       },
     });
     renderPlane(state);
-    expect(screen.getByText('任务已结束')).toBeInTheDocument();
-    expect(screen.getByText('已结束，仍有检查提醒')).toBeInTheDocument();
+    expect(screen.getByText('任务已完成')).toBeInTheDocument();
+    expect(screen.getAllByText('已结束，仍有检查提醒')).not.toHaveLength(0);
     expect(screen.getByText('全部验收项已有有效证据')).toBeInTheDocument();
     expect(screen.getByText('发现阻塞或未知项')).toBeInTheDocument();
     expect(screen.queryByText('已完成并通过检查')).not.toBeInTheDocument();
@@ -104,9 +271,24 @@ describe('RoomKernelControlPlane', () => {
     });
     expect(await screen.findByText('停止请求已接受')).toBeInTheDocument();
   });
+
+  it('shows overall, owned-work, and collaboration execution progress without inspector jargon', () => {
+    renderPlane(projection());
+    const overview = screen.getByRole('region', { name: '整体任务、分工与协作执行总进度' });
+    expect(overview).toHaveTextContent('整体任务');
+    expect(overview).toHaveTextContent('分工');
+    expect(overview).toHaveTextContent('协作执行');
+    expect(overview).not.toHaveTextContent('Dispatch');
+  });
 });
 
-function renderPlane(state: RoomKernelProjection, commandTransport?: ReturnType<typeof createFixtureRoomKernelCommandTransport>, panicEnabled = false) {
+
+function renderPlane(
+  state: RoomKernelProjection,
+  commandTransport?: RoomKernelCommandTransport,
+  panicEnabled = false,
+  participantProgress: RoomParticipantPublicProgressProjection[] = [],
+) {
   return render(<RoomKernelControlPlane
     projection={state}
     budgetsByRootId={{
@@ -118,13 +300,14 @@ function renderPlane(state: RoomKernelProjection, commandTransport?: ReturnType<
     participantLabels={{ researcher: '研究员', reviewer: '审查员' }}
     commandTransport={commandTransport}
     panicEnabled={panicEnabled}
+    participantProgress={participantProgress}
   />);
 }
 
 function projection(): RoomKernelProjection {
   const state = createRoomKernelProjection('room-a');
   state.lastSequence = 12;
-  state.rootsById['root-a'] = root('root-a', 3, '研究员', 'completed', 12);
+  state.rootsById['root-a'] = root('root-a', 3, 'researcher', 'running', 12);
   state.rootsById['root-b'] = root('root-b', 1, '审查员', 'running', 11);
   state.tasksById['task-a'] = {
     schemaVersion: 'wisdom-weasel.room-task.v3', taskId: 'task-a', rootId: 'root-a', parentTaskId: null,

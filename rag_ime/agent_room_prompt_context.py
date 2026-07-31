@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from .agent_blocks import provider_block_projection
+from .agent_definitions import collaboration_role
 
 
 ROOM_CONTEXT_UNREAD_MESSAGE_LIMIT = 12
@@ -38,6 +39,10 @@ def room_participant_prompt(
         _bounded_text(target.get("collaborationRole"), maximum=40)
         or "implementer"
     )
+    try:
+        role_label = collaboration_role(role).display_name
+    except ValueError:
+        role_label = "协作伙伴"
     room_kind = (
         _bounded_text(room.get("roomKind"), maximum=40)
         or "collaboration"
@@ -115,7 +120,7 @@ def room_participant_prompt(
         "<room-context>",
         (
             f"Room：{_bounded_text(room.get('title'), maximum=120)}；"
-            f"话题：{topic_title}；你本轮以 {role} 视角参与"
+            f"话题：{topic_title}；你本轮从“{role_label}”的角度参与"
         ),
     ]
     if topic_summary:
@@ -133,23 +138,21 @@ def room_participant_prompt(
         if transcript_note:
             sections.append(transcript_note)
     if work_lines:
-        sections.extend(["", "与你有关的未结责任：", *work_lines])
+        sections.extend(["", "与你有关的未完成工作：", *work_lines])
     if work_item_lines:
-        sections.extend(["", "当前受管任务：", *work_item_lines])
+        sections.extend(["", "当前工作卡片：", *work_item_lines])
     elif room_kind == "collaboration":
         sections.extend(
             [
                 "",
-                "当前阶段：普通对话或尚未绑定受管任务。",
-                "普通闲聊直接回答。明确、可安全执行或只读核对的工作请求不需要用户"
-                "填写 Goal、确认表或回复固定确认语；受管 Room 入口会直接建立唯一"
-                "WorkItem。若缺少的选择会实质改变结果，使用现有结构化"
-                " user_input_required，一次提出一个真正需要用户决定的问题并提供"
-                "可选项；能从源码、配置或运行状态查明的事实自行核对。范围、验收、"
+                "当前阶段：普通对话，或还没有需要执行的工作。",
+                "普通闲聊直接回答。明确、可安全执行或只读核对的请求直接开始，"
+                "不要让用户先填写额外表格或回复固定开工口令。只有缺少的选择会真正"
+                "改变结果时，才用 user_input_required 一次提出一个必要问题，并给出"
+                "清楚选项；能从源码、配置或运行状态查明的事实自行核对。范围、验收、"
                 "权限或重大方案仍会改变结果时，使用 alignment-and-decision；只有"
-                "用户明确要求时，才由同一技能把确认决定写成术语表、ADR 或决策"
-                "文档。不要输出“回复确认”之类的人工开工口令，也不要创建"
-                "第二套 Goal、Plan 或子 Agent 任务来模拟 Room 执行。",
+                "用户明确要求时，才把已确认决定写成术语表、ADR 或决策文档。"
+                "不要另起一套重复的目标、计划或伙伴任务流程。",
             ]
         )
     if message:
@@ -176,27 +179,28 @@ def room_intercom_prompt(
         and not str(item.get("replyTo") or "").strip()
     )
     return (
-        f"你刚收到来自 {source.get('displayName')} 的 Room 协作消息。"
+        f"你刚收到伙伴 {source.get('displayName')} 发来的协作消息。"
         + (
-            f"它与当前任务“{_bounded_text(work.get('objective'), maximum=320)}”有关，"
-            f"协作动作是 {_work_action(action)}。"
+            f"这条消息与当前工作“{_bounded_text(work.get('objective'), maximum=320)}”"
+            f"有关，对方希望你{_work_action(action)}。"
             if work is not None
             else ""
         )
         + (
-            "这是只进入当前私有 Session 的通知。理解它并继续已有工作；"
-            "不要发布 Room Post，不要创建 Intercom 或 WorkItem，也不要向发送者"
-            "发送“收到、谢谢、辛苦了”等礼貌回声。若无需行动，直接结束私有回合。"
+            "这是一条只供你参考的内部消息。结合它继续手上的工作；不要把同样内容"
+            "公开重复，也不要新建消息或任务来回复“收到、谢谢、辛苦了”等礼貌回声。"
+            "如果不需要采取行动，直接结束这一轮。"
             if private_notice
             else (
-                "这是需要答复的问题；请在判断后调用 room_post "
-                "发布答复，不要只在私有 Session 中说已经回复。"
+                "对方需要你的答复。判断后用 room_post 把结论发到 Room，"
+                "不要只在私下说已经回复。"
                 if kind == "ask"
                 else (
-                    "这是对先前问题的答复；将它作为当前任务输入继续，但消息本身不是"
-                    "验收 evidenceRef，关键事实仍需用可核对来源或成功工具回执验证。"
+                    "这是对先前问题的答复。把它作为当前工作的输入继续，但这条消息"
+                    "本身不能证明验收已经通过；关键事实仍要用可核对来源或成功工具结果"
+                    "验证。"
                     if kind == "reply"
-                    else "仅在当前任务需要时使用，不必机械复述。"
+                    else "只在当前工作需要时使用，不必机械复述。"
                 )
             )
         )

@@ -11,15 +11,35 @@ import {
   type OptimisticRoomMessageInput,
   type RoomProjectionState,
 } from '@/contracts/room-reducer';
+import type { RoomKernelProjection } from '@/contracts/room-kernel-reducer';
 import type { UiRoomEvent } from '@/contracts/ui-events';
 import { mergeAcceptedRoomTimeline } from '../runtime/accepted-room-timeline';
+
+export type RoomKernelLiveState =
+  | 'idle'
+  | 'loading'
+  | 'synced'
+  | 'reconnecting'
+  | 'recovering'
+  | 'stale'
+  | 'denied'
+  | 'error';
+
+export interface RoomKernelSyncProjection {
+  state: RoomKernelLiveState;
+  detail: string;
+  updatedAtMs: number;
+  failureAtMs?: number;
+}
 
 interface RoomLiveStore {
   projections: Record<string, RoomProjectionState>;
   roomRevisions: Record<string, number>;
   turnRevisions: Record<string, Record<string, number>>;
+  kernelProjections: Record<string, RoomKernelProjection>;
+  kernelSyncByRoomId: Record<string, RoomKernelSyncProjection>;
   ensure(roomId: string): void;
-  replaySnapshot(roomId: string, snapshot: RoomEventSnapshot): void;
+  replaySnapshot(roomId: string, snapshot: RoomEventSnapshot): boolean;
   applyEvents(roomId: string, events: readonly UiRoomEvent[]): boolean;
   appendOptimistic(
     roomId: string,
@@ -34,6 +54,8 @@ interface RoomLiveStore {
     participantId: string,
     nowMs: number,
   ): void;
+  setKernelProjection(roomId: string, projection: RoomKernelProjection): void;
+  setKernelSync(roomId: string, sync: RoomKernelSyncProjection): void;
   remove(roomId: string): void;
   reset(): void;
 }
@@ -42,6 +64,8 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
   projections: {},
   roomRevisions: {},
   turnRevisions: {},
+  kernelProjections: {},
+  kernelSyncByRoomId: {},
   ensure(roomId) {
     if (!roomId || get().projections[roomId]) return;
     set((state) => ({
@@ -51,10 +75,41 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
       },
     }));
   },
+  setKernelProjection(roomId, projection) {
+    if (!roomId || projection.roomId !== roomId) {
+      throw new TypeError('Room Kernel projection does not belong to this Room');
+    }
+    const current = get().kernelProjections[roomId];
+    if (current === projection || (current && projection.lastSequence < current.lastSequence)) return;
+    set((state) => ({
+      kernelProjections: {
+        ...state.kernelProjections,
+        [roomId]: projection,
+      },
+    }));
+  },
+  setKernelSync(roomId, sync) {
+    if (!roomId) return;
+    const current = get().kernelSyncByRoomId[roomId];
+    if (
+      current?.state === sync.state
+      && current.detail === sync.detail
+      && current.updatedAtMs === sync.updatedAtMs
+      && current.failureAtMs === sync.failureAtMs
+    ) return;
+    set((state) => ({
+      kernelSyncByRoomId: {
+        ...state.kernelSyncByRoomId,
+        [roomId]: sync,
+      },
+    }));
+  },
   replaySnapshot(roomId, snapshot) {
     const current = roomProjection(roomId);
+    if (snapshot.lastSequence < current.lastSequence) return false;
     const next = replayRoomEventSnapshot(current, snapshot);
     replaceProjection(set, get, roomId, next, allTurnIds(current, next));
+    return true;
   },
   applyEvents(roomId, events) {
     const current = roomProjection(roomId);
@@ -107,14 +162,30 @@ export const useRoomLiveStore = create<RoomLiveStore>((set, get) => ({
       const projections = { ...state.projections };
       const roomRevisions = { ...state.roomRevisions };
       const turnRevisions = { ...state.turnRevisions };
+      const kernelProjections = { ...state.kernelProjections };
+      const kernelSyncByRoomId = { ...state.kernelSyncByRoomId };
       delete projections[roomId];
       delete roomRevisions[roomId];
       delete turnRevisions[roomId];
-      return { projections, roomRevisions, turnRevisions };
+      delete kernelProjections[roomId];
+      delete kernelSyncByRoomId[roomId];
+      return {
+        projections,
+        roomRevisions,
+        turnRevisions,
+        kernelProjections,
+        kernelSyncByRoomId,
+      };
     });
   },
   reset() {
-    set({ projections: {}, roomRevisions: {}, turnRevisions: {} });
+    set({
+      projections: {},
+      roomRevisions: {},
+      turnRevisions: {},
+      kernelProjections: {},
+      kernelSyncByRoomId: {},
+    });
   },
 }));
 

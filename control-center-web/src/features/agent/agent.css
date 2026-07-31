@@ -714,6 +714,8 @@ details.agent-activity--inline[open] > summary { background: var(--color-surface
 .agent-user-input-dialog .ui-dialog__title { font-size: var(--text-section-lead); line-height: var(--text-section-lead-lh); }
 .agent-user-input-dialog .ui-dialog__description { font-size: var(--text-ui); line-height: var(--text-ui-lh); }
 .agent-user-input-dialog__form { display: grid; gap: var(--space-4); }
+.agent-user-input-dialog__grouped { display: grid; max-block-size: min(360px, 44dvh); gap: var(--space-4); overflow-y: auto; overscroll-behavior: contain; padding-inline-end: var(--space-1); scrollbar-gutter: stable; }
+.agent-user-input-dialog__grouped > fieldset + fieldset { padding-top: var(--space-4); border-top: 1px solid var(--color-border-soft); }
 .agent-user-input-dialog__choices { display: grid; gap: var(--space-2); min-width: 0; margin: 0; padding: 0; border: 0; }
 .agent-user-input-dialog__choices legend { margin-bottom: var(--space-2); color: var(--color-text); font-size: var(--text-label); font-weight: var(--font-weight-semibold); }
 .agent-user-input-dialog__choices label { display: grid; min-height: var(--control-height); grid-template-columns: var(--space-5) minmax(0, 1fr); align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-2); background: var(--color-paper); color: var(--color-text); cursor: pointer; transition: border-color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }

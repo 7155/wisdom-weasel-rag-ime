@@ -173,8 +173,15 @@ class AgentEventProjectionService:
             room_id = str(binding["roomId"])
             room = self.rooms.get(room_id)
             runtime_failure_receipt: Mapping[str, object] | None = None
+            missing_commit = (
+                event.event_type == "turn_completed"
+                and str(binding.get("state") or "") == "running"
+            )
             if (
-                event.event_type == "turn_failed"
+                (
+                    event.event_type == "turn_failed"
+                    or missing_commit
+                )
                 and self.record_runtime_failure is not None
             ):
                 runtime_failure_receipt = self.record_runtime_failure(
@@ -185,12 +192,18 @@ class AgentEventProjectionService:
                     runtime_turn_id=event.turn_id,
                     dispatch_attempt=int(binding["attempt"]),
                     created_at_ms=event.created_at_ms,
-                    retryable=event.payload.get("retryable") is True,
+                    retryable=(
+                        True
+                        if missing_commit
+                        else event.payload.get("retryable") is True
+                    ),
                     had_tool_activity=(
                         event.payload.get("hadToolActivity") is not False
                     ),
-                    reason_code=str(
-                        event.payload.get("reasonCode") or ""
+                    reason_code=(
+                        "room_commit_missing"
+                        if missing_commit
+                        else str(event.payload.get("reasonCode") or "")
                     ),
                 )
                 if (
@@ -202,7 +215,9 @@ class AgentEventProjectionService:
                     public_data = {
                         "status": "retry_wait",
                         "summary": (
-                            "模型连接中断，已进入有界重试等待"
+                            "当前回合未形成权威提交，已进入有界恢复等待"
+                            if missing_commit
+                            else "模型连接中断，已进入有界重试等待"
                         ),
                         "requestId": (
                             f"{str(binding['dispatchId'])}:provider"
@@ -212,6 +227,16 @@ class AgentEventProjectionService:
                             if isinstance(details, Mapping)
                             else 0
                         ),
+                    }
+                elif missing_commit:
+                    mapped_type = "participant_activity"
+                    public_data = {
+                        "status": "blocked",
+                        "summary": "当前回合未形成权威提交，任务已安全阻塞",
+                        "requestId": (
+                            f"{str(binding['dispatchId'])}:provider"
+                        ),
+                        "isError": True,
                     }
             self.public_timeline.publish_runtime(
                 event=event,

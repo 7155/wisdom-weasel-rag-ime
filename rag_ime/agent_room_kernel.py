@@ -39,6 +39,7 @@ def kernel_owns_room_execution(mode: object) -> bool:
 
     return str(mode) in _AUTHORITATIVE_KERNEL_MODES
 _ACTIVE_DISPATCH_STATES = ("pending", "leased", "running", "retry_wait", "timer_wait")
+_SESSION_OCCUPYING_DISPATCH_STATES = ("leased", "running")
 _TERMINAL_TASK_STATES = ("completed", "failed", "cancelled")
 SYSTEM_MAX_HOPS = 12
 SYSTEM_MAX_DEPTH = 4
@@ -718,23 +719,6 @@ class RoomKernelStore:
             raise RoomKernelFenceError(
                 "dispatch target is not the current Task owner"
             )
-        active_target = conn.execute(
-            f"""SELECT dispatches.dispatch_id
-                FROM room_kernel_dispatches dispatches
-                JOIN room_kernel_roots roots
-                  ON roots.root_id = dispatches.root_id
-                WHERE dispatches.target_session_id = ?
-                  AND roots.state NOT IN ('cancelled','cancelled_with_unknowns','completed','failed')
-                  AND dispatches.state IN ({','.join('?' for _ in _ACTIVE_DISPATCH_STATES)})
-                ORDER BY dispatches.created_at_ms, dispatches.dispatch_id
-                LIMIT 1""",
-            (str(payload["targetSessionId"]), *_ACTIVE_DISPATCH_STATES),
-        ).fetchone()
-        if active_target is not None:
-            raise RoomKernelFenceError(
-                "target Session already has an active Dispatch: "
-                f"{active_target['dispatch_id']}"
-            )
         conn.execute(
             """INSERT INTO room_kernel_dispatches(
                dispatch_id, root_id, task_id, parent_dispatch_id, generation,
@@ -937,7 +921,7 @@ class RoomKernelStore:
         dispatch_id: str = "",
     ) -> sqlite3.Row | None:
         rows = conn.execute(
-            """SELECT o.*, d.state AS dispatch_state, d.target_session_id
+            f"""SELECT o.*, d.state AS dispatch_state, d.target_session_id
                FROM room_kernel_outbox o
                JOIN room_kernel_dispatches d USING(dispatch_id)
                WHERE o.state IN ('pending','retry_wait')
@@ -945,10 +929,34 @@ class RoomKernelStore:
                  AND o.available_at_ms <= ?
                  AND d.state IN ('pending','retry_wait')
                  AND (? = '' OR o.dispatch_id = ?)
+                 AND NOT EXISTS (
+                   SELECT 1
+                   FROM room_kernel_dispatches occupied
+                   JOIN room_kernel_roots occupied_root
+                     ON occupied_root.root_id = occupied.root_id
+                   WHERE occupied.target_session_id = d.target_session_id
+                     AND occupied.dispatch_id != d.dispatch_id
+                     AND occupied_root.state NOT IN (
+                       'cancelled','cancelled_with_unknowns','completed','failed'
+                     )
+                     AND occupied.state IN (
+                       {','.join('?' for _ in _SESSION_OCCUPYING_DISPATCH_STATES)}
+                     )
+                 )
                ORDER BY o.available_at_ms, o.outbox_id""",
-            (int(now_ms), dispatch_id, dispatch_id),
+            (
+                int(now_ms),
+                dispatch_id,
+                dispatch_id,
+                *_SESSION_OCCUPYING_DISPATCH_STATES,
+            ),
         ).fetchall()
+        seen_sessions: set[str] = set()
         for row in rows:
+            session_id = str(row["target_session_id"])
+            if session_id in seen_sessions:
+                continue
+            seen_sessions.add(session_id)
             if self._dispatch_dependencies_ready(
                 conn,
                 str(row["dispatch_id"]),
@@ -1474,6 +1482,193 @@ class RoomKernelStore:
                 now_ms=now_ms,
             )
 
+    def record_runtime_preflight_failure(
+        self,
+        *,
+        lease_token: str,
+        now_ms: int,
+        reason_code: str = "runtime_dispatch_preflight_failed",
+    ) -> dict[str, object]:
+        """Retry a failure proven to have happened before ``room.dispatch``.
+
+        The worker may call this only when its runtime intent callback was not
+        invoked. No Pi turn can therefore exist for this lease, so completing
+        the lease and retrying is safe; expiry reconciliation is reserved for
+        failures after the callback, where delivery is genuinely unknown.
+        """
+
+        normalized_reason = (
+            str(reason_code or "").strip()[:120]
+            or "runtime_dispatch_preflight_failed"
+        )
+        with self._connect(immediate=True) as conn:
+            lease = conn.execute(
+                "SELECT * FROM room_kernel_leases WHERE lease_token=?",
+                (_required(lease_token, "lease_token"),),
+            ).fetchone()
+            if lease is None:
+                raise RoomKernelFenceError("runtime preflight lease is unknown")
+            dispatch = self._dispatch_row(conn, str(lease["dispatch_id"]))
+            root = self._root_row(conn, str(lease["root_id"]))
+            if (
+                str(lease["state"]) != "active"
+                or str(dispatch["state"]) != "leased"
+                or int(lease["generation"]) != int(dispatch["generation"])
+                or int(dispatch["generation"]) != int(root["generation"])
+            ):
+                raise RoomKernelFenceError(
+                    "runtime preflight failure lost its active Dispatch fence"
+                )
+            retry_limits = conn.execute(
+                """SELECT retry_limit,retry_used,deadline_at_ms
+                   FROM room_kernel_root_limits WHERE root_id=?""",
+                (root["root_id"],),
+            ).fetchone()
+            can_retry = (
+                str(root["state"]) == "running"
+                and retry_limits is not None
+                and int(retry_limits["retry_used"])
+                < int(retry_limits["retry_limit"])
+            )
+            if can_retry:
+                retry_budget_used = int(retry_limits["retry_used"]) + 1
+                delay_ms = min(
+                    RUNTIME_RETRY_MAX_DELAY_MS,
+                    RUNTIME_RETRY_BASE_DELAY_MS
+                    * (2 ** min(retry_budget_used - 1, 5)),
+                )
+                available_at_ms = int(now_ms) + delay_ms
+                if available_at_ms < int(retry_limits["deadline_at_ms"]):
+                    retry_payload = json.loads(str(dispatch["payload_json"]))
+                    retry_payload["attempt"] = (
+                        int(retry_payload.get("attempt") or 0) + 1
+                    )
+                    validate_kernel_contract(
+                        "dispatchEnvelope",
+                        retry_payload,
+                    )
+                    receipt = self._receipt(
+                        conn,
+                        root_id=str(root["root_id"]),
+                        command_id=None,
+                        receipt_kind="runtime_retry_scheduled",
+                        status="applied",
+                        generation=int(dispatch["generation"]),
+                        details={
+                            "dispatchId": str(dispatch["dispatch_id"]),
+                            "leaseId": str(lease["lease_id"]),
+                            "reasonCode": normalized_reason,
+                            "attempt": int(retry_payload["attempt"]),
+                            "retryBudgetUsed": retry_budget_used,
+                            "availableAtMs": available_at_ms,
+                            "hadRuntimeIntent": False,
+                        },
+                        now_ms=now_ms,
+                    )
+                    conn.execute(
+                        """UPDATE room_kernel_root_limits
+                           SET retry_used=retry_used+1,updated_at_ms=?
+                           WHERE root_id=?""",
+                        (int(now_ms), root["root_id"]),
+                    )
+                    conn.execute(
+                        """UPDATE room_kernel_dispatches
+                           SET state='retry_wait',payload_json=?,updated_at_ms=?
+                           WHERE dispatch_id=?""",
+                        (
+                            _json(retry_payload),
+                            int(now_ms),
+                            dispatch["dispatch_id"],
+                        ),
+                    )
+                    conn.execute(
+                        """UPDATE room_kernel_outbox
+                           SET state='retry_wait',available_at_ms=?,
+                               payload_json=?,updated_at_ms=?
+                           WHERE dispatch_id=?""",
+                        (
+                            available_at_ms,
+                            _json(retry_payload),
+                            int(now_ms),
+                            dispatch["dispatch_id"],
+                        ),
+                    )
+                    conn.execute(
+                        """UPDATE room_kernel_leases
+                           SET state='completed',updated_at_ms=?
+                           WHERE lease_id=? AND state='active'""",
+                        (int(now_ms), lease["lease_id"]),
+                    )
+                    conn.execute(
+                        """UPDATE room_kernel_runtime_effects
+                           SET state='intent',runtime_receipt_json='{}',
+                               updated_at_ms=?
+                           WHERE dispatch_id=?""",
+                        (int(now_ms), dispatch["dispatch_id"]),
+                    )
+                    conn.execute(
+                        """UPDATE room_kernel_abort_scopes
+                           SET state='registered',cancel_receipt_json='{}',
+                               updated_at_ms=?
+                           WHERE dispatch_id=?""",
+                        (int(now_ms), dispatch["dispatch_id"]),
+                    )
+                    return receipt
+            receipt = self._receipt(
+                conn,
+                root_id=str(root["root_id"]),
+                command_id=None,
+                receipt_kind="runtime_failed",
+                status="applied",
+                generation=int(dispatch["generation"]),
+                details={
+                    "dispatchId": str(dispatch["dispatch_id"]),
+                    "leaseId": str(lease["lease_id"]),
+                    "reasonCode": normalized_reason,
+                    "hadRuntimeIntent": False,
+                },
+                now_ms=now_ms,
+            )
+            runtime_receipt = {
+                "schemaVersion": "wisdom-weasel.room-runtime-failure.v1",
+                "status": "failed",
+                "reasonCode": normalized_reason,
+                "hadRuntimeIntent": False,
+            }
+            self._block_failed_dispatch(
+                conn,
+                dispatch=dispatch,
+                root=root,
+                now_ms=now_ms,
+                resource_usage=None,
+                runtime_receipt=runtime_receipt,
+            )
+            dead_letter_id = _stable_id(
+                "room-dead-letter",
+                str(dispatch["dispatch_id"]),
+                normalized_reason,
+            )
+            conn.execute(
+                """INSERT INTO room_kernel_dead_letters(
+                   dead_letter_id,root_id,dispatch_id,reason_code,
+                   payload_json,created_at_ms)
+                   VALUES (?,?,?,?,?,?)""",
+                (
+                    dead_letter_id,
+                    root["root_id"],
+                    dispatch["dispatch_id"],
+                    normalized_reason,
+                    _json(
+                        {
+                            "leaseId": str(lease["lease_id"]),
+                            "kernelReceipt": receipt,
+                        }
+                    ),
+                    int(now_ms),
+                ),
+            )
+            return receipt
+
     def record_runtime_dispatch_intent(self, dispatch_id: str, *, now_ms: int) -> None:
         """Persist the cancellable target before crossing the Pi process boundary."""
         with self._connect(immediate=True) as conn:
@@ -1587,7 +1782,17 @@ class RoomKernelStore:
                    WHERE d.target_session_id = ?
                      AND r.state NOT IN ('cancelled','cancelled_with_unknowns','completed','failed')
                      AND d.state IN ('pending','leased','running','retry_wait','timer_wait')
-                   ORDER BY d.updated_at_ms DESC, d.dispatch_id DESC LIMIT 1""",
+                   ORDER BY
+                     CASE d.state
+                       WHEN 'running' THEN 0
+                       WHEN 'leased' THEN 1
+                       WHEN 'retry_wait' THEN 2
+                       WHEN 'timer_wait' THEN 3
+                       ELSE 4
+                     END,
+                     d.updated_at_ms DESC,
+                     d.dispatch_id DESC
+                   LIMIT 1""",
                 (session_id,),
             ).fetchone()
             if row is None:
@@ -1811,6 +2016,64 @@ class RoomKernelStore:
                 raise RoomKernelFenceError(
                     "Room collaboration child does not match parent fences"
                 )
+            if str(child_dispatch["intentKind"]) == "review":
+                desired_criteria = set(
+                    _criteria(child_task.get("acceptanceCriterionIds"))
+                )
+                desired_review_targets = {
+                    str(item)
+                    for item in child_task.get("reviewOfTaskIds", ())
+                    if str(item)
+                }
+                active_review_rows = conn.execute(
+                    """
+                    SELECT d.*, t.payload_json AS child_task_payload_json
+                    FROM room_kernel_dispatches AS d
+                    JOIN room_kernel_tasks AS t ON t.task_id=d.task_id
+                    WHERE d.parent_dispatch_id=?
+                      AND d.target_participant_id=?
+                      AND d.generation=?
+                      AND d.intent_kind='review'
+                      AND d.state IN ('pending','leased','running')
+                    ORDER BY d.created_at_ms,d.dispatch_id
+                    """,
+                    (
+                        parent_dispatch_id,
+                        str(child_dispatch["targetParticipantId"]),
+                        generation,
+                    ),
+                ).fetchall()
+                for active_review in active_review_rows:
+                    active_task = json.loads(
+                        str(active_review["child_task_payload_json"])
+                    )
+                    if set(
+                        _criteria(active_task.get("acceptanceCriterionIds"))
+                    ) != desired_criteria or {
+                        str(item)
+                        for item in active_task.get("reviewOfTaskIds", ())
+                        if str(item)
+                    } != desired_review_targets:
+                        continue
+                    return self._receipt(
+                        conn,
+                        root_id=str(root["root_id"]),
+                        command_id=None,
+                        receipt_kind="duplicate",
+                        status="noop",
+                        generation=generation,
+                        details={
+                            "parentTaskId": str(parent["task_id"]),
+                            "parentDispatchId": parent_dispatch_id,
+                            "childTaskId": str(active_review["task_id"]),
+                            "childDispatchId": str(
+                                active_review["dispatch_id"]
+                            ),
+                            "invocationReceiptId": invocation_receipt_id,
+                        },
+                        now_ms=now_ms,
+                    )
+
             self._insert_task(conn, child_task, now_ms=now_ms)
             dispatch, created = self._enqueue_dispatch(
                 conn,
@@ -3107,6 +3370,35 @@ class RoomKernelStore:
                     break
         return children
 
+    def initial_peer_dispatches(
+        self,
+        root_id: str,
+    ) -> list[dict[str, object]]:
+        """Project the first peer-parallel wave and its public-result state."""
+
+        normalized_root_id = str(root_id or "").strip()
+        if not normalized_root_id:
+            raise ValueError("root_id must not be empty")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM room_kernel_dispatches
+                   WHERE root_id=? AND parent_dispatch_id IS NULL
+                   ORDER BY created_at_ms,dispatch_id""",
+                (normalized_root_id,),
+            ).fetchall()
+            initial: list[dict[str, object]] = []
+            for row in rows[:32]:
+                dispatch = _dispatch_payload(row)
+                dispatch["resultPublic"] = (
+                    str(row["state"]) == "committed"
+                    and self._dispatch_result_is_public(
+                        conn,
+                        str(row["dispatch_id"]),
+                    )
+                )
+                initial.append(dispatch)
+        return initial
+
     def record_runtime_failure(
         self,
         dispatch_id: str,
@@ -3121,9 +3413,18 @@ class RoomKernelStore:
         had_tool_activity: bool = True,
         reason_code: str = "",
     ) -> dict[str, object]:
-        """Close one failed Pi turn without pretending it settled or was cancelled."""
+        """Close one failed or uncommitted Pi turn through a bounded outcome."""
 
         event_id = _required(source_event_id, "source_event_id")
+        normalized_reason = (
+            str(reason_code or "").strip()[:120]
+            or "provider_failure_unclassified"
+        )
+        terminal_reason = (
+            "room_commit_missing"
+            if normalized_reason == "room_commit_missing"
+            else "runtime_turn_failed"
+        )
         with self._connect(immediate=True) as conn:
             dispatch = self._dispatch_row(conn, dispatch_id)
             root = self._root_row(conn, str(dispatch["root_id"]))
@@ -3144,7 +3445,7 @@ class RoomKernelStore:
             if existing is not None:
                 payload = json.loads(str(existing["payload_json"]))
                 if (
-                    str(existing["reason_code"]) == "runtime_turn_failed"
+                    str(existing["reason_code"]) == terminal_reason
                     and payload.get("sourceEventId") == event_id
                     and isinstance(payload.get("kernelReceipt"), Mapping)
                 ):
@@ -3165,10 +3466,6 @@ class RoomKernelStore:
                 runtime_turn_id=runtime_turn_id,
                 dispatch_attempt=dispatch_attempt,
                 candidate_kind="runtime failure",
-            )
-            normalized_reason = (
-                str(reason_code or "").strip()[:120]
-                or "provider_failure_unclassified"
             )
             retry_limits = conn.execute(
                 """SELECT retry_limit,retry_used,deadline_at_ms
@@ -3206,7 +3503,10 @@ class RoomKernelStore:
                 )
             can_retry = (
                 bool(retryable)
-                and not bool(had_tool_activity)
+                and (
+                    not bool(had_tool_activity)
+                    or normalized_reason == "room_commit_missing"
+                )
                 and str(root["state"]) == "running"
                 and retry_limits is not None
                 and int(retry_limits["retry_used"])
@@ -3245,7 +3545,7 @@ class RoomKernelStore:
                             "attempt": int(retry_payload["attempt"]),
                             "retryBudgetUsed": attempt,
                             "availableAtMs": available_at_ms,
-                            "hadToolActivity": False,
+                            "hadToolActivity": bool(had_tool_activity),
                         },
                         now_ms=now_ms,
                     )
@@ -3311,7 +3611,7 @@ class RoomKernelStore:
                     details={
                         "dispatchId": dispatch_id,
                         "sourceEventId": event_id,
-                        "reasonCode": "runtime_turn_failed",
+                        "reasonCode": terminal_reason,
                         "previousState": str(dispatch["state"]),
                     },
                     now_ms=now_ms,
@@ -3326,7 +3626,7 @@ class RoomKernelStore:
                 details={
                     "dispatchId": dispatch_id,
                     "sourceEventId": event_id,
-                    "reasonCode": "runtime_turn_failed",
+                    "reasonCode": terminal_reason,
                 },
                 now_ms=now_ms,
             )
@@ -3341,24 +3641,25 @@ class RoomKernelStore:
                         "wisdom-weasel.room-runtime-failure.v1"
                     ),
                     "status": "failed",
-                    "reasonCode": "runtime_turn_failed",
+                    "reasonCode": terminal_reason,
                     "sourceEventId": event_id,
                 },
             )
             dead_letter_id = _stable_id(
                 "room-dead-letter",
                 dispatch_id,
-                "runtime_turn_failed",
+                terminal_reason,
             )
             conn.execute(
                 """INSERT INTO room_kernel_dead_letters(
                    dead_letter_id,root_id,dispatch_id,reason_code,
                    payload_json,created_at_ms)
-                   VALUES (?,?,?,'runtime_turn_failed',?,?)""",
+                   VALUES (?,?,?,?,?,?)""",
                 (
                     dead_letter_id,
                     root["root_id"],
                     dispatch_id,
+                    terminal_reason,
                     _json(
                         {
                             "sourceEventId": event_id,

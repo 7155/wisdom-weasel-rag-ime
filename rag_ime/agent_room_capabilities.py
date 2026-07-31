@@ -105,49 +105,50 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
     return {
         "room_state": {
             "description": (
-                "读取当前责任、AC 验收别名和有界参与者目录；同一状态修订重复"
-                "读取时返回 unchanged=true。成功回执返回 evidenceRef，可用于证明"
-                "本次读取到的 Room 状态。"
+                "查看自己当前负责的部分、验收清单和可用伙伴。同一版本重复查看时，"
+                "会返回 unchanged=true；成功结果中的 evidenceRef 可证明本次确实"
+                "读到了这些状态。"
             ),
             "when": (
-                "当前上下文或最近回执不足以确认责任、验收、可提交状态或协作目标",
+                "当前上下文不足以确认自己要做什么、怎样验收、是否可以结束，或该找谁协作",
             ),
-            "notFor": ("已有同一状态修订的最新回执，或只需发布公开消息",),
+            "notFor": ("已经拿到同一版本的最新结果，或只是要发布一条公开更新",),
             "input": "无参数",
             "output": (
-                "当前责任、AC 验收别名、已接受证据、可提交状态、短 "
-                "participantRef 和本次状态读取的 evidenceRef"
+                "当前工作、验收短名、已接受证据、可用结束方式、伙伴 participantRef "
+                "和本次读取的 evidenceRef"
             ),
-            "does": "读取当前 Room 任务真相，不创建任务或改变状态。",
+            "does": "只读取当前 Room 状态，不会创建工作或改变任何人的进度。",
             "risk": "R0",
             "operation": "room.state",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
         "room_collaborate": {
             "description": (
-                "在当前责任继续推进时，请一位可用 Room 成员承担同一受管 Root 下"
-                "的一项有界子任务。目标必须是另一位可用成员，不能是当前参与者；"
-                "acceptance 只能使用当前 Task 的 AC 别名。"
+                "自己继续手上工作的同时，请另一位平级伙伴完成一个明确、互不重叠的"
+                "小部分。目标必须是另一位可用伙伴，不能是自己；acceptance 只能使用"
+                "当前工作卡片给出的验收短名。"
             ),
             "when": (
-                "当前任务可继续，同时需要另一位成员独立查证、实现或复核",
-                "用户明确要求拆分给伙伴、等待各自结果后再综合",
-                "需要结构化点名协作，但不转移当前责任",
+                "自己仍能继续，同时需要另一位伙伴独立查证、实现或检查",
+                "用户明确要求分成不同部分，自己继续推进并等待各自结果，"
+                "结果到齐后一起复核",
+                "需要清楚点名一位伙伴一起做，但不是把自己的全部工作交出去",
             ),
             "notFor": (
-                "当前责任必须完整转交给对方",
-                "用户已指定该成员在你完成后接管最终验收、收口或下一阶段",
+                "自己的全部工作必须由对方接着完成",
+                "用户已经指定由该伙伴在你完成后做最终检查或下一阶段",
                 "只想公开说一句话或私下自言自语",
             ),
             "input": (
-                "目标 participantRef、意图、子任务、预期输出、"
-                "至少一个当前 AC 验收别名和可选的已公开证据"
+                "目标伙伴的 participantRef、邀请目的、具体工作、预期结果、"
+                "至少一个当前验收短名和可选的已公开证据"
             ),
             "output": (
-                "权威 child Dispatch 回执、是否去重和目标 participantRef；"
-                "当前责任继续。缺少回执时不得声称成员已经工作"
+                "是否邀请成功、是否已经邀请过，以及目标伙伴的 participantRef；"
+                "自己继续手上的工作。没有成功结果时，不得声称对方已经开始"
             ),
-            "does": "异步派生一个可取消、可去重、受深度和预算限制的协作任务。",
+            "does": "邀请一位伙伴并行完成一项范围明确、可取消且不会重复创建的工作。",
             "risk": "R1",
             "operation": "room.collaborate",
             "inputSchema": {
@@ -162,7 +163,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "properties": {
                     "targetParticipantRef": {
                         "description": (
-                            "另一位可用成员的 participantRef；不得填写当前参与者自己。"
+                            "从 room_state 选择另一位可用伙伴的 participantRef；"
+                            "不得填写自己。"
                         ),
                         "type": "string",
                         "minLength": 1,
@@ -172,8 +174,8 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     "intent": {"enum": ["execute", "review", "revise"]},
                     "acceptance": {
                         "description": (
-                            "本次子任务继承的当前 Task AC 别名；不得使用父任务、"
-                            "Root 或其他成员的别名。"
+                            "从当前工作卡片选择要由这位伙伴协助满足的验收短名；"
+                            "不得使用其他工作或其他伙伴的验收短名。"
                         ),
                         "type": "array",
                         "minItems": 1,
@@ -191,19 +193,19 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         },
         "room_post": {
             "description": (
-                "立即发布一条有实质新变化的公开 Room 中途消息；它不会收工、"
-                "完成或转移当前责任。"
+                "立即发布一条有实质新变化的公开 Room 中途消息；不会结束本轮工作，"
+                "也不会转移自己的责任。"
             ),
             "when": (
-                "仍要继续当前责任，并有新增的完成项、验证、问题、风险或下一步",
+                "仍要继续当前工作，并有新增的完成项、验证、问题、风险或下一步",
             ),
             "notFor": (
-                "私有推理、自言自语、创建任务、提交责任终态或重复既有状态",
-                "即将 room_commit 且同一内容应由 publicSummary 一次发布",
+                "私下思考、自言自语、创建新工作、声称已经完成或重复既有状态",
+                "马上要调用 room_commit，且同一内容会写在 publicSummary 中",
             ),
-            "input": "消息类型、公开内容、可选通知对象与结构化块",
-            "output": "published、postRef 与 deduplicated；postRef 不是验收 evidenceRef",
-            "does": "立即发布一条可重放、可去重的公共 Room 消息。",
+            "input": "消息类型、写给用户的内容、可选通知对象与结构化展示块",
+            "output": "published、postRef 与 deduplicated；postRef 不能作为验收证据",
+            "does": "立即发布一条用户可见、重试时不会重复出现的 Room 消息。",
             "risk": "R1",
             "operation": "room.post",
             "inputSchema": {
@@ -241,29 +243,32 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
         },
         "room_commit": {
             "description": (
-                "把当前责任提交为 deliver、handoff、wait 或 blocked，然后结束"
-                "模型轮次。所有决定都用 evidence 中的 acceptance 绑定当前 Task "
-                "AC；acceptanceAliases 只用于 handoff 定义下一项 Task 的验收，"
-                "deliver 不填写它。Kernel 校验回执并计算覆盖与裁决。"
+                "结束自己当前部分时，选择 deliver（完成）、handoff（交给下一位）、"
+                "wait（等待明确信号）或 blocked（确实无法继续），然后结束本轮。"
+                "完成声明必须把 evidence 中的 acceptance 绑定到当前工作卡片的验收"
+                "短名；同一次普通工具执行不能直接证明多个验收项，需逐项运行对应验证"
+                "或使用已绑定的正式验证回执。acceptanceAliases 只用于 handoff 定义"
+                "下一位伙伴的验收，deliver 不填写它。服务端会核对实际结果和验收覆盖。"
             ),
             "when": (
-                "完成实现或修复后，需要提交验收覆盖与证据",
-                "当前责任已形成交付、交接、等待或阻塞出口",
-                "用户指定另一成员在当前工作完成后负责最终验收、收口或下一阶段",
-                "处理复核意见后，需要重新提交可复核结果",
+                "已经完成实现或修复，并且要提交验收证据",
+                "所有伙伴结果已经到齐，要完成最终验收并发布正式回复",
+                "自己的部分已经完成、需要明确交接、正在等一个信号，或替代路径已经用尽",
+                "用户指定另一位伙伴在当前工作完成后负责最终检查或下一阶段",
+                "处理复核意见后，需要重新提交可检查的结果",
             ),
             "notFor": (
-                "普通公开发言、私有进度、仍可直接推进的下一步或没有证据的完成声明",
+                "普通公开发言、私下进度、仍有能直接推进的下一步，或没有证据的完成声明",
             ),
             "input": (
-                "decision、私有 summary、公开 publicSummary、按 AC 别名绑定的"
-                " evidence、residualRisks，以及 handoff/wait/blocked 专属字段"
-                "和可选公开 blocks"
+                "decision、私有 summary、用户可见 publicSummary、按验收短名绑定的 "
+                "evidence、residualRisks，以及 handoff/wait/blocked 所需字段"
+                "和可选展示块"
             ),
-            "output": "受管提议已暂存；Kernel 随后返回权威提交或可修复原因",
+            "output": "结束请求已暂存；服务端随后返回成功结果或说明需要修正什么",
             "does": (
-                "提交当前责任的唯一生命周期出口，触发 Kernel 收工门，并发布"
-                "唯一的 result、handoff、wait 或 blocked 终态 Post。"
+                "这是结束或转交当前工作的唯一方式；成功后发布一条用户可见的完成、"
+                "交接、等待或阻塞消息。"
             ),
             "risk": "R1",
             "operation": "room.commit",
@@ -279,15 +284,15 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "properties": {
                     "decision": {
                         "description": (
-                            "当前责任的唯一出口；deliver 完成当前 Task，handoff "
-                            "创建明确接手任务，wait 等待外部信号，blocked 报告有界"
-                            "替代路径已耗尽。"
+                            "当前工作的结束方式：deliver 表示完成；handoff 表示明确交给"
+                            "下一位伙伴；wait 表示等待外部信号；blocked 表示合理替代办法"
+                            "已经用尽。"
                         ),
                         "enum": ["deliver", "handoff", "wait", "blocked"],
                     },
                     "summary": {
                         "description": (
-                            "供受管层处理的私有结构化结果或出口摘要；不作为公开消息。"
+                            "供服务端处理的私有结果或交接摘要，不会直接展示给用户。"
                         ),
                         "type": "string",
                         "minLength": 1,
@@ -303,13 +308,12 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     "publicSummary": {
                         "description": (
-                            "必填的用户可见终态报告。用自然语言说明相关的结果或进度、"
-                            "已完成工作、方法与原因、行为验证、问题/风险/未验证边界和"
-                            "下一步；省略不适用项，不输出私有推理、Kernel/Dispatch/AC、"
-                            "引用 ID、裁决词或工具流水。主张不得强于实际观察。服务端会"
-                            "拒绝内部 Room 标识、原始回执、哈希和机器绝对路径。Kernel "
-                            "会把它发布为本次唯一的 result/handoff/wait/blocked Post；"
-                            "不要为同一终态摘要再单独 room_post。"
+                            "必填的用户可见正式回复。用自然语言说明结果或进度、已经做了"
+                            "什么、为什么这样做、怎样验证、问题或风险、尚未验证的边界和"
+                            "下一步；省略不适用项，不输出私下推理、内部协议字段、引用 ID "
+                            "或工具流水。主张不得强于实际观察。服务端会拒绝内部 Room "
+                            "标识、原始回执、哈希和机器绝对路径，并把它作为本轮唯一的"
+                            "完成、交接、等待或阻塞回复发布；不要再用 room_post 重复发布。"
                         ),
                         "type": "string",
                         "minLength": 1,
@@ -317,15 +321,16 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     "blocks": _RICH_BLOCK_INPUT_SCHEMA,
                     "targetParticipantRef": {
-                        "description": "仅 handoff：接手成员的 participantRef。",
+                        "description": (
+                            "仅 handoff：从 room_state 选择接手伙伴的 participantRef。"
+                        ),
                         "type": "string",
                         "minLength": 1,
                     },
                     "intent": {
                         "description": (
-                            "仅 handoff：下一项 Task 的协作意图。最终验收、"
-                            "最终质量门或负责关闭 Root 必须用 close；review "
-                            "只用于不负责最终收口的独立审查。"
+                            "仅 handoff：下一位伙伴要做什么。若对方负责最终验收或最终"
+                            "收口，必须用 close；review 只表示独立检查，不负责最终回复。"
                         ),
                         "enum": [
                             "execute",
@@ -339,20 +344,20 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     "nextTask": {
                         "description": (
-                            "仅 handoff：给接手者的私有明确任务，不会拼接进公开报告。"
+                            "仅 handoff：给接手伙伴的明确工作内容，不会直接显示给用户。"
                         ),
                         "type": "string",
                         "minLength": 1,
                     },
                     "expectedOutput": {
-                        "description": "仅 handoff：接手任务的可观察产物。",
+                        "description": "仅 handoff：接手伙伴应交付的可观察结果。",
                         "type": "string",
                         "minLength": 1,
                     },
                     "acceptanceAliases": {
                         "description": (
-                            "仅 handoff：从当前 Root 选择并交给下一项 Task 的 AC "
-                            "别名。deliver 的验收覆盖只写在 evidence，禁止填写本字段。"
+                            "仅 handoff：从当前工作卡片选择并交给下一位伙伴的验收短名。"
+                            "deliver 的验收覆盖只写在 evidence，禁止填写本字段。"
                         ),
                         "type": "array",
                         "minItems": 1,
@@ -361,23 +366,22 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                     },
                     "waitingFor": {
                         "description": (
-                            "仅 wait：等待 user、另一位 participant 或外部信号。"
-                            "等待 participant 时还必须填写 waitingForParticipantRef。"
+                            "仅 wait：说明是在等待用户、另一位伙伴或外部信号。"
+                            "等待伙伴时还必须填写 waitingForParticipantRef。"
                         ),
                         "enum": ["user", "participant", "external"]
                     },
                     "waitingForParticipantRef": {
                         "description": (
-                            "仅 waitingFor=participant：从 room_state 逐字复制需要"
-                            "等待的成员 participantRef；Kernel 会绑定其当前受管"
-                            " Dispatch，并在该结果提交后生成一次有界 resume。"
+                            "仅 waitingFor=participant：从 room_state 原样复制正在等待的"
+                            "伙伴 participantRef；该伙伴公开结果后，系统会恢复本轮一次。"
                         ),
                         "type": "string",
                         "minLength": 1,
                     },
                     "resumeCondition": {
                         "description": (
-                            "恢复当前责任所需的可观察信号；不得只写稍后再试。"
+                            "说明出现什么可观察信号后可以继续；不得只写稍后再试。"
                         ),
                         "type": "string",
                         "minLength": 1,

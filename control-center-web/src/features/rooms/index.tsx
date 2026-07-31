@@ -26,6 +26,7 @@ import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import type { PickedFile } from '@/platform/transport';
 import type { RoomAttachmentReceipt } from '@/contracts/room-reducer';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
+import { GenericUserInputDialog } from '@/features/agent/review/AgentReviewDialogs';
 import { roleItems } from '@/features/agent/types';
 import { useMediaQuery, useModalPanel } from '@/features/agent/overlay-dialog';
 import { publicErrorText } from '@/features/overview/management-ui';
@@ -53,7 +54,11 @@ import {
   roomWorkspaceViewOptions,
   roomWorkStateLabel,
 } from './room-presentation';
-import { latestUnresolvedRoomQuestion, type PendingRoomQuestion } from './room-question';
+import {
+  latestPendingGroupedRoomInput,
+  latestUnresolvedRoomQuestion,
+  type PendingRoomQuestion,
+} from './room-question';
 import type {
   RoomCollaborationRole,
   RoomExecutionMode,
@@ -187,6 +192,9 @@ export function RoomsFeature() {
     const projection = state.projections[selectedId];
     return projection ? selectPublicRoomTurnOrder(projection) : emptyRoomTurnIds;
   }));
+  const pendingGroupedInput = useRoomLiveStore((state) => (
+    latestPendingGroupedRoomInput(state.projections[selectedId])
+  ));
   const roomRailModal = roomRailOverlay && roomRailOpen;
   const roomStatusModal = roomStatusOverlay && statusOpen;
   const selectedRoomRecoveryState = roomRecoveryStates[selectedId];
@@ -714,7 +722,7 @@ export function RoomsFeature() {
           description: createDescription.trim(),
           scenarioPrompt: createScenarioPrompt.trim(),
           participants,
-          routingPolicy: 'natural',
+          routingPolicy: createRoomKind === 'collaboration' ? 'parallel' : 'natural',
           workspaceRoots: createRoomKind === 'collaboration' ? workspaceRoots : [],
           executionMode: createExecutionMode,
           ...(createExecutionMode === 'workspace_managed'
@@ -1024,6 +1032,7 @@ export function RoomsFeature() {
             components={roomTimelineComponents}
             data={visibleTurnOrder}
             followOutput={(isAtBottom) => isAtBottom ? 'auto' : false}
+            initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
             increaseViewportBy={300}
             itemContent={(_index, turnId) => <RoomTurn
               key={turnId}
@@ -1076,20 +1085,38 @@ export function RoomsFeature() {
           onPasteImages={() => undefined}
           onPasteFromClipboard={() => undefined}
           onPickAttachments={() => undefined}
-        /> : null}</div></div></> : workspaceView === 'execution' ? <section className="room-execution-workspace" aria-label="任务流转与验收">
-          {room ? <RoomKernelLivePanel participantLabels={participantLabels} roomId={room.id} /> : <p className="room-empty">请选择一个协作空间。</p>}
-        </section> : <section className="room-session-workspace" aria-label="伙伴与权限">
+        /> : null}</div></div></> : workspaceView === 'sessions' ? <section className="room-session-workspace" aria-label="伙伴与权限">
           <header><span><strong>伙伴与工作权限</strong><small>每位伙伴保留自己的工作上下文；分工负责引导协作，真正能做什么仍由工作目录、工具和你的授权决定。</small></span></header>
           <div>{activeParticipants.map((participant) => <article key={participant.id}><PersonaAvatar persona={personas.find((item) => item.roleId === participant.roleId)} /><span><strong>{participant.displayName}</strong><small>{roomCollaborationRoleLabel(participant.collaborationRole)} · {roomExecutionModeLabel(room?.executionMode)}</small></span><Button variant="quiet" size="small" leadingIcon={<ShieldCheck size={14} />} onClick={() => setBoundaryParticipant(participant)}>查看能做什么</Button></article>)}</div>
           {!activeParticipants.length ? <p className="room-empty">还没有伙伴加入这个协作空间。</p> : null}
-        </section>}
+        </section> : null}
+        <section className="room-execution-workspace" aria-label="任务流转与验收" hidden={workspaceView !== 'execution'}>
+          {room ? (
+            <RoomKernelLivePanel
+              participantLabels={participantLabels}
+              roomId={room.id}
+              visible={workspaceView === 'execution'}
+            />
+          ) : <p className="room-empty">请选择一个协作空间。</p>}
+        </section>
       </section>
       <button className="agent-status-backdrop room-status-backdrop" aria-hidden="true" disabled={!roomStatusModal} tabIndex={-1} onClick={() => setStatusOpen(false)} type="button" />
       <RoomPaneResizer side="status" />
-      <RoomStatusPanel ref={roomStatusRef} room={room} roomId={room?.id ?? ''} open={statusOpen} modal={roomStatusModal} onClose={() => setStatusOpen(false)} />
+      <RoomStatusPanel
+        ref={roomStatusRef}
+        room={room}
+        roomId={room?.id ?? ''}
+        open={statusOpen}
+        modal={roomStatusModal}
+        onClose={() => setStatusOpen(false)}
+        onOpenProgress={() => {
+          setWorkspaceView('execution');
+          setStatusOpen(false);
+        }}
+      />
     </main>
     <RoomQuestionDialog
-      open={questionOpen}
+      open={questionOpen && !pendingGroupedInput}
       question={pendingQuestion?.roomId === selectedId ? pendingQuestion : undefined}
       onCancel={() => {
         if (pendingQuestion) dismissedQuestionIdsRef.current.add(pendingQuestion.postId);
@@ -1109,6 +1136,11 @@ export function RoomsFeature() {
         }
         return accepted;
       }}
+    />
+    <GenericUserInputDialog
+      activity={pendingGroupedInput}
+      sessionId={pendingGroupedInput?.sourceSessionId ?? ''}
+      onError={(message) => setRoomError(selectedId, message)}
     />
     <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) { setCreateOpen(open); if (!open) setCreateError(''); } }}>
       <DialogContent className="room-create-dialog">

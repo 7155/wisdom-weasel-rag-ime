@@ -46,7 +46,11 @@ from .pi_runtime_values import (
 
 __all__ = [
     "APPROVAL_TITLE_PREFIX",
+    "GROUPED_QUESTIONS_SCHEMA_VERSION",
+    "GROUPED_QUESTIONS_TITLE_PREFIX",
     "REVIEW_TITLE_PREFIX",
+    "canonical_grouped_answers",
+    "grouped_questions_from_wire",
     "last_assistant_error",
     "last_assistant_preview",
     "managed_media_content_url",
@@ -73,6 +77,102 @@ APPROVAL_TITLE_PREFIX = "RAG-IME-APPROVAL:"
 
 
 REVIEW_TITLE_PREFIX = "RAG-IME-REVIEW:"
+
+GROUPED_QUESTIONS_TITLE_PREFIX = "RAG-IME-QUESTIONS:"
+
+
+GROUPED_QUESTIONS_SCHEMA_VERSION = "rag-ime.grouped-questions.v1"
+
+
+_GROUPED_QUESTION_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,79}$")
+
+
+def grouped_questions_from_wire(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, str) or len(value.encode("utf-8")) > 12_000:
+        raise ValueError("grouped question payload is missing or too large")
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("grouped question payload is not valid JSON") from exc
+    if not isinstance(decoded, Mapping):
+        raise ValueError("grouped question payload must be an object")
+    if decoded.get("schemaVersion") != GROUPED_QUESTIONS_SCHEMA_VERSION:
+        raise ValueError("unsupported grouped question schema")
+    raw_questions = decoded.get("questions")
+    if not isinstance(raw_questions, list) or not 1 <= len(raw_questions) <= 4:
+        raise ValueError("grouped question payload must contain one to four questions")
+    seen_ids: set[str] = set()
+    questions: list[dict[str, object]] = []
+    for raw_question in raw_questions:
+        if not isinstance(raw_question, Mapping):
+            raise ValueError("grouped question must be an object")
+        question_id = str(raw_question.get("id") or "").strip()
+        question = str(raw_question.get("question") or "").strip()
+        raw_options = raw_question.get("options")
+        if _GROUPED_QUESTION_ID_RE.fullmatch(question_id) is None:
+            raise ValueError("grouped question id is invalid")
+        if question_id in seen_ids:
+            raise ValueError("grouped question ids must be unique")
+        if not question or len(question) > 160:
+            raise ValueError("grouped question text is missing or too long")
+        if not isinstance(raw_options, list) or not 2 <= len(raw_options) <= 5:
+            raise ValueError("grouped question must contain two to five options")
+        options = [str(option).strip() for option in raw_options]
+        if (
+            any(not option or len(option) > 240 for option in options)
+            or len(set(options)) != len(options)
+        ):
+            raise ValueError("grouped question options must be non-empty and unique")
+        seen_ids.add(question_id)
+        questions.append(
+            {"id": question_id, "question": question, "options": options}
+        )
+    return questions
+
+
+def canonical_grouped_answers(
+    value: object,
+    questions: object,
+) -> str:
+    if not isinstance(value, str) or len(value.encode("utf-8")) > 12_000:
+        raise ValueError("grouped answer payload is missing or too large")
+    if not isinstance(questions, list):
+        raise ValueError("grouped question state is invalid")
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("grouped answer payload is not valid JSON") from exc
+    if not isinstance(decoded, Mapping) or set(decoded) != {"answers"}:
+        raise ValueError("grouped answer payload must contain only answers")
+    raw_answers = decoded.get("answers")
+    if not isinstance(raw_answers, Mapping):
+        raise ValueError("grouped answers must be an object")
+    expected_ids = {
+        str(question.get("id") or "")
+        for question in questions
+        if isinstance(question, Mapping)
+    }
+    if set(raw_answers) != expected_ids or len(expected_ids) != len(questions):
+        raise ValueError("grouped answers must cover every offered question")
+    answers: dict[str, str] = {}
+    for question in questions:
+        if not isinstance(question, Mapping):
+            raise ValueError("grouped question state is invalid")
+        question_id = str(question.get("id") or "")
+        options = question.get("options")
+        selected = raw_answers.get(question_id)
+        if (
+            not isinstance(options, list)
+            or not isinstance(selected, str)
+            or selected not in options
+        ):
+            raise ValueError("grouped answer is not one of the offered options")
+        answers[question_id] = selected
+    return json.dumps(
+        {"answers": answers},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def visible_message_text(role: str, text: str) -> str:

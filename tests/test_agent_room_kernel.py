@@ -187,42 +187,81 @@ class RoomKernelCoreTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.store.dispatch("dispatch:batch:rollback:a")
 
-    def test_target_session_can_have_only_one_active_dispatch(self) -> None:
-        self.seed(budget=2, criteria=())
+    def test_target_session_dispatches_queue_and_lease_serially(self) -> None:
+        self.seed(budget=3, criteria=())
+        for task_id in ("task:target-session:first", "task:target-session:second"):
+            self.store.create_task(
+                child_task(
+                    task_id,
+                    parent="task:1",
+                    target="participant:a",
+                ),
+                now_ms=9,
+            )
         first, created = self.store.enqueue_dispatch(
             dispatch(
                 "dispatch:target-session:first",
                 key="target-session:first",
                 target="participant:a",
+                task_id="task:target-session:first",
             ),
             now_ms=10,
         )
+        second, second_created = self.store.enqueue_dispatch(
+            dispatch(
+                "dispatch:target-session:second",
+                key="target-session:second",
+                target="participant:a",
+                task_id="task:target-session:second",
+            ),
+            now_ms=11,
+        )
 
-        with self.assertRaisesRegex(
-            RoomKernelFenceError,
-            "target Session already has an active Dispatch",
-        ):
-            self.store.enqueue_dispatch(
-                dispatch(
-                    "dispatch:target-session:second",
-                    key="target-session:second",
-                    target="participant:a",
-                ),
-                now_ms=11,
+        first_lease = self.store.lease_next(now_ms=12, ttl_ms=30_000)
+        self.assertIsNotNone(first_lease)
+        assert first_lease is not None
+        self.assertEqual(first_lease["dispatchId"], first["dispatchId"])
+        self.assertIsNone(
+            self.store.lease_next(
+                now_ms=13,
+                ttl_ms=30_000,
+                dispatch_id=second["dispatchId"],
             )
+        )
+
+        self.store.set_dispatch_wait_state(
+            first["dispatchId"],
+            "running",
+            now_ms=14,
+        )
+        self.store.apply_commit(
+            commit(
+                "commit:target-session:first",
+                first["dispatchId"],
+                task_id="task:target-session:first",
+            ),
+            generation=0,
+            now_ms=15,
+        )
+        second_lease = self.store.lease_next(now_ms=16, ttl_ms=30_000)
+        self.assertIsNotNone(second_lease)
+        assert second_lease is not None
+        self.assertEqual(second_lease["dispatchId"], second["dispatchId"])
 
         replay, replay_created = self.store.enqueue_dispatch(
             dispatch(
                 "dispatch:target-session:first",
                 key="target-session:first",
                 target="participant:a",
+                task_id="task:target-session:first",
             ),
-            now_ms=12,
+            now_ms=17,
         )
         self.assertTrue(created)
+        self.assertTrue(second_created)
         self.assertFalse(replay_created)
         self.assertEqual(replay["dispatchId"], first["dispatchId"])
-        self.assertEqual(self.store.counts("root:1")["dispatches"], 1)
+        self.assertEqual(self.store.counts("root:1")["dispatches"], 2)
 
     def test_multi_member_chain_is_bounded_by_hop_and_depth_fences(self) -> None:
         self.seed(max_hops=2, max_depth=1)
@@ -1055,6 +1094,71 @@ class RoomKernelCoreTests(unittest.TestCase):
         self.assertEqual(self.store.dispatch(dispatch_id)["state"], "failed")
         self.assertEqual(self.store.resource_limits("root:1")["retry_used"], 0)
         self.assertEqual(self.store.counts("root:1")["deadLetters"], 1)
+
+    def test_missing_commit_retries_despite_tool_activity_then_blocks(
+        self,
+    ) -> None:
+        self.seed(criteria=())
+        dispatch_id = "dispatch:missing-commit"
+        self.store.enqueue_dispatch(
+            dispatch(dispatch_id, key="missing-commit"),
+            now_ms=10,
+        )
+        self.accept_runtime_attempt(
+            dispatch_id,
+            turn_id="turn:missing-commit:1",
+            now_ms=11,
+        )
+
+        retry = self.store.record_runtime_failure(
+            dispatch_id,
+            generation=0,
+            source_event_id="event:missing-commit:1",
+            runtime_turn_id="turn:missing-commit:1",
+            dispatch_attempt=0,
+            now_ms=12,
+            retryable=True,
+            had_tool_activity=True,
+            reason_code="room_commit_missing",
+        )
+        self.assertEqual(retry["receiptKind"], "runtime_retry_scheduled")
+        self.assertEqual(retry["details"]["reasonCode"], "room_commit_missing")
+        self.assertTrue(retry["details"]["hadToolActivity"])
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.execute(
+                """UPDATE room_kernel_root_limits
+                   SET retry_limit=1 WHERE root_id='root:1'"""
+            )
+        self.accept_runtime_attempt(
+            dispatch_id,
+            turn_id="turn:missing-commit:2",
+            now_ms=1_012,
+        )
+        blocked = self.store.record_runtime_failure(
+            dispatch_id,
+            generation=0,
+            source_event_id="event:missing-commit:2",
+            runtime_turn_id="turn:missing-commit:2",
+            dispatch_attempt=1,
+            now_ms=1_013,
+            retryable=True,
+            had_tool_activity=True,
+            reason_code="room_commit_missing",
+        )
+
+        self.assertEqual(blocked["receiptKind"], "runtime_failed")
+        self.assertEqual(blocked["details"]["reasonCode"], "room_commit_missing")
+        self.assertEqual(self.store.root("root:1")["state"], "blocked")
+        self.assertEqual(self.store.dispatch(dispatch_id)["state"], "failed")
+        with sqlite3.connect(self.db_path) as connection:
+            reason = connection.execute(
+                """SELECT reason_code FROM room_kernel_dead_letters
+                   WHERE dispatch_id=?""",
+                (dispatch_id,),
+            ).fetchone()[0]
+        self.assertEqual(reason, "room_commit_missing")
+
 
     def test_budget_is_reserved_at_enqueue_and_released_by_cancel(self) -> None:
         self.seed(budget=10, criteria=())

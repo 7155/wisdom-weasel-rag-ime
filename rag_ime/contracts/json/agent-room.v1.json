@@ -28,7 +28,7 @@
     "scenarioPrompt": {"type": "string", "maxLength": 8000},
     "routingPolicy": {
       "type": "string",
-      "enum": ["manual_mentions", "moderator", "sequential", "natural", "invite_only"]
+      "enum": ["manual_mentions", "moderator", "sequential", "natural", "parallel", "invite_only"]
     },
     "routingConfig": {
       "type": "object",

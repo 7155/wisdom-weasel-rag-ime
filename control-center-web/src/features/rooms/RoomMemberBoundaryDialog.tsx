@@ -95,7 +95,7 @@ export function RoomMemberBoundaryDialog({
               <ShieldCheck size={18} />
               <span>
                 <strong>{executionModeLabel(executionMode)}</strong>
-                <small>{loading ? '正在确认可用工具；' : `${enabledTools.length} 项工具可用；`}{executionMode === 'full_trust' ? '独立审批 Agent（Luna Max）依据整个 Room 的结构化审批历史判定待审批操作；' : ''}停止任务、目录边界、删库、灾难性破坏和敏感数据外传禁区始终有效。</small>
+                <small>{loading ? '正在确认可用工具；' : `${enabledTools.length} 项工具可用；`}{executionMode === 'full_trust' ? '独立审批助手（Luna Max）依据整个协作空间的结构化审批记录判定待审批操作；' : ''}停止任务、目录边界、删库、灾难性破坏和敏感数据外传禁区始终有效。</small>
               </span>
             </div>
             <fieldset>

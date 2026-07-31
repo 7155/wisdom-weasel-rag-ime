@@ -14,17 +14,30 @@ class FakeRoomRuntime:
         self,
         *,
         fail_dispatch: bool = False,
+        preflight_failures: int = 0,
         fail_cancel: bool = False,
         surface_state: str = "terminated",
     ) -> None:
         self.fail_dispatch = fail_dispatch
+        self.preflight_failures = preflight_failures
         self.fail_cancel = fail_cancel
         self.surface_state = surface_state
         self.dispatches: list[tuple[dict[str, object], str, str]] = []
         self.cancellations: list[dict[str, object]] = []
 
-    def dispatch_room(self, payload, *, message: str, lease_token: str):
+    def dispatch_room(
+        self,
+        payload,
+        *,
+        message: str,
+        lease_token: str,
+        record_intent,
+    ):
         self.dispatches.append((dict(payload), message, lease_token))
+        if self.preflight_failures > 0:
+            self.preflight_failures -= 1
+            raise ConnectionError("runtime preflight unavailable")
+        record_intent()
         if self.fail_dispatch:
             raise ConnectionError("runtime host exited after lease")
         return {
@@ -101,17 +114,16 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertEqual(
             private_trigger,
             (
-                "执行当前受管 Room 任务；任务事实与责任以本轮 Room Context 为准。"
-                "需要确认当前责任、验收或成员时先调用 room_state。"
-                "AC 是 Acceptance Criterion（验收条件）的短别名；AC-1 就是 room_state "
-                "当前验收清单的第一项。收工只调用 room_commit：evidence.acceptance "
-                "只能填写 room_state 的 acceptanceAliases 返回的 AC-1、AC-2 等当前任务"
-                "验收别名；每个 AC 只提交直接支撑它的最小 refs 集合。refs 必须逐字复制"
-                "最新 room_state 或成功工具结果返回的完整 evidenceRef，不得重写、拼接或"
-                "猜测；不要填写数据库 criterionId，也不要自报 "
-                "已通过或最终裁决，真实状态由 Kernel 判定。"
-                "summary、evidence 和接手指令留在结构化私有字段；publicSummary 必须遵循"
-                "系统公开报告规则，用自然语言写给用户，不暴露协议字段或私有推理。"
+                "继续当前 Room 工作卡片；本轮要做什么、由谁负责，以 Room Context 为准。"
+                "需要核对自己的部分、验收条件或伙伴状态时，先调用 room_state。"
+                "AC-1 表示 room_state 验收清单中的第一项，AC-2 表示第二项，以此类推。"
+                "结束本轮只调用 room_commit：evidence.acceptance 只能填写 room_state "
+                "返回的 AC-1、AC-2 等验收短名；每项只放直接支持它的最小 refs 集合。"
+                "refs 必须原样复制最新 room_state 或成功工具结果返回的完整 evidenceRef，"
+                "不得改写、拼接或猜测；不要填写内部 criterionId，也不要自行宣布已通过"
+                "或最终裁决，服务端会根据实际结果判断。summary、evidence 和接手指令放在"
+                "结构化私有字段；publicSummary 用自然语言写给用户，不暴露这些内部字段或"
+                "私下推理。"
             ),
         )
         for internal_id in ("root:1", "dispatch:1", "task:1", "session:1"):
@@ -180,6 +192,68 @@ class RoomKernelWorkerTests(unittest.TestCase):
         self.assertEqual(self.store.root("root:1")["state"], "cancelled")
         self.assertIsNone(worker.run_once())
         self.assertEqual(len(runtime.dispatches), 1)
+
+    def test_preflight_failure_retries_without_unknown_delivery(self) -> None:
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:preflight", key="worker:preflight"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime(preflight_failures=1)
+        worker = RoomKernelWorker(self.store, runtime, clock_ms=self.clock)
+
+        retry = worker.run_once(lease_ttl_ms=5)
+
+        self.assertEqual(retry["receiptKind"], "runtime_retry_scheduled")
+        self.assertFalse(retry["details"]["hadRuntimeIntent"])
+        self.assertEqual(
+            self.store.dispatch("dispatch:preflight")["state"],
+            "retry_wait",
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "running")
+        self.now_ms = int(retry["details"]["availableAtMs"])
+
+        accepted = worker.run_once(lease_ttl_ms=5)
+
+        self.assertEqual(accepted["receiptKind"], "runtime_accepted")
+        self.assertEqual(
+            [int(item[0].get("attempt") or 0) for item in runtime.dispatches],
+            [0, 1],
+        )
+        self.assertEqual(
+            self.store.dispatch("dispatch:preflight")["state"],
+            "running",
+        )
+        self.assertEqual(runtime.cancellations, [])
+
+    def test_preflight_retry_exhaustion_blocks_without_unknown_delivery(
+        self,
+    ) -> None:
+        with self.store._connect(immediate=True) as conn:
+            conn.execute(
+                """UPDATE room_kernel_root_limits
+                   SET retry_limit=0 WHERE root_id='root:1'"""
+            )
+        self.store.enqueue_dispatch(
+            dispatch("dispatch:preflight-exhausted", key="worker:preflight-exhausted"),
+            now_ms=3,
+        )
+        runtime = FakeRoomRuntime(preflight_failures=1)
+        worker = RoomKernelWorker(self.store, runtime, clock_ms=self.clock)
+
+        failed = worker.run_once(lease_ttl_ms=5)
+
+        self.assertEqual(failed["receiptKind"], "runtime_failed")
+        self.assertFalse(failed["details"]["hadRuntimeIntent"])
+        self.assertEqual(
+            self.store.dispatch("dispatch:preflight-exhausted")["state"],
+            "failed",
+        )
+        self.assertEqual(
+            self.store.outbox("dispatch:preflight-exhausted")["state"],
+            "dead_letter",
+        )
+        self.assertEqual(self.store.root("root:1")["state"], "blocked")
+        self.assertEqual(runtime.cancellations, [])
 
     def test_post_ack_context_failure_cancels_root_without_unknown_lease(self) -> None:
         self.store.enqueue_dispatch(

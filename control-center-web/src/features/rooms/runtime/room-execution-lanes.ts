@@ -136,7 +136,7 @@ export function roomActivityNeedsSessionAction(
   ) return false;
   const requestKind = textValue(activity.payload.requestKind);
   return (Boolean(textValue(activity.payload.approvalId)) && approvalNeedsHumanDecision(activity.payload))
-    || ['memory_review', 'plan_review', 'user_input_required'].includes(
+    || ['memory_review', 'plan_review', 'user_input_required', 'grouped_questions'].includes(
       requestKind,
     )
     || textValue(activity.payload.sourceEventType) === 'user_input_required'
@@ -175,7 +175,7 @@ function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {
   const requestKind = textValue(activity.payload.requestKind);
   if (
     activity.status === 'waiting'
-    || ['memory_review', 'plan_review', 'user_input_required'].includes(requestKind)
+    || ['memory_review', 'plan_review', 'user_input_required', 'grouped_questions'].includes(requestKind)
     || sourceEventType === 'user_input_required'
     || (
       textValue(activity.payload.method) === 'select'

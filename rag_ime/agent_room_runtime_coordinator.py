@@ -331,20 +331,25 @@ class RoomKernelRuntimeCoordinator:
             guard_surfaces["prompt"] if guard_surfaces is not None else None,
         )
         if is_root_coordinator:
-            coordinator_duty = (
-                "<root-coordinator-duty>\n"
-                "你是本 Root 的确定性责任协调者，即使成员配置中的岗位名称不是"
-                " coordinator。若当前 AC 要求多人协作，先一次拆成互相独立的"
-                "子产物，再对每一位其他可用 Room 成员分别调用 room_collaborate；"
-                "本地重复调用 read、grep 或其他工具不算伙伴工作。保存每次权威"
-                " executionReceipt，等待 child Dispatch 的公开结果，全部到齐后"
-                "才能综合或复核。无法创建或恢复受管 child Dispatch 时，提交带"
-                "尝试和解锁条件的 blocked，不得虚构分工或继续。\n"
-                "</root-coordinator-duty>"
+            peer_work_duty = (
+                "<peer-parallel-work>\n"
+                "你既要亲自做事，也要在最后把大家的结果汇在一起；这不代表你是"
+                "其他伙伴的上级。系统可能已经给每个人安排了各自的工作，先用"
+                " room_state 看清现状，不要把同一件事重复分给别人。你必须立即"
+                "推进自己的集成、实际运行和用户体验检查，不能整轮只安排别人、"
+                "等待或转述进度。\n"
+                "如果这一轮确实需要多人一起做、系统却还没有安排，再把工作拆成"
+                "互不重叠且能分别检查的部分，并用 room_collaborate 分别邀请其他"
+                "可用伙伴；自己同时继续。每位伙伴的初步结果都公开后，先完成"
+                "整合，再请其余每位伙伴根据已经公开的产物和证据共同做最后检查。"
+                "等检查结果全部回来、分歧已处理，才可提交完成并发布正式回复。"
+                "如果协作无法启动或继续，要清楚说明试过什么、卡在哪里、怎样才能"
+                "继续；不得假装别人已经工作，也不得跳过共同检查。\n"
+                "</peer-parallel-work>"
             )
             profile_overlay = "\n\n".join(
                 value
-                for value in (profile_overlay, coordinator_duty)
+                for value in (profile_overlay, peer_work_duty)
                 if value
             )
         layers = _prompt_layers(

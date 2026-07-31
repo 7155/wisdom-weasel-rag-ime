@@ -20,8 +20,8 @@ compute the authoritative final status.
 No completion claim without fresh, claim-shaped evidence. Tests, diffs, UI
 inspection, Provider payloads, installed-runtime receipts, and external results
 prove different things; one green command cannot stand in for all of them.
-The Kernel binds human-readable aliases to authoritative criteria and decides
-whether the current responsibility may settle.
+The Kernel binds aliases and decides settlement. For code changes, a complete
+matrix is evidence-ready; `independent-review` still owns review clearance.
 
 ## Workflow
 
@@ -88,8 +88,8 @@ Use evidence that matches the claim:
 
 ## Gate Outcomes
 
-- **deliver recommendation**: every required alias has eligible fresh evidence
-  and no unresolved blocker contradicts it;
+- **deliver recommendation**: every required alias has fresh evidence and no
+  blocker; code changes advance to review and are not review-cleared;
 - **continue**: an authorized action can still produce missing evidence;
 - **handoff**: another participant or model capability is needed;
 - **wait**: one user, permission, credential, or external signal is required;

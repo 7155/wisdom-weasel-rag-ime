@@ -1,4 +1,5 @@
 import type { QuestionOption, RoomPostV2 } from '@/contracts/generated/room-post.v2';
+import type { RoomActivityProjection, RoomProjectionState } from '@/contracts/room-reducer';
 import type { UiRoomEvent } from '@/contracts/ui-events';
 import { parseContract } from '@/contracts/validators';
 
@@ -11,6 +12,23 @@ export interface PendingRoomQuestion {
   sequence: number;
   prompt: string;
   options: RoomQuestionOption[];
+}
+
+export function latestPendingGroupedRoomInput(
+  projection?: RoomProjectionState,
+): RoomActivityProjection | undefined {
+  if (!projection) return undefined;
+  for (let index = projection.activityOrder.length - 1; index >= 0; index -= 1) {
+    const activity = projection.activitiesById[projection.activityOrder[index]!];
+    if (
+      activity?.status === 'waiting'
+      && activity.payload.requestKind === 'grouped_questions'
+      && typeof activity.payload.requestId === 'string'
+      && activity.payload.requestId.trim()
+      && activity.sourceSessionId.trim()
+    ) return activity;
+  }
+  return undefined;
 }
 
 export function latestUnresolvedRoomQuestion(

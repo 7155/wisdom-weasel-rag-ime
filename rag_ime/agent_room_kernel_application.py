@@ -1006,10 +1006,12 @@ class RoomKernelApplicationService:
             guard_reason = str(
                 payload.get("guardReason") or "missing_room_commit"
             )
-            # A malformed RoomCommit needs one deterministic repair turn, not
-            # the longer missing-commit retry budget. The semantic reason
-            # selects the bounded policy and callers cannot raise this ceiling.
-            max_attempts = 3 if guard_reason == "missing_room_commit" else 2
+            # Settlement validation is staged: peer review, evidence shape,
+            # lifecycle state, and the public summary can each become
+            # actionable only after the preceding repair. Match the product's
+            # bounded Goal settlement budget so those independent repairs get
+            # a turn without allowing an unbounded continuation loop.
+            max_attempts = 5
             receipt = self.kernel.record_uncommitted_settle(
                 dispatch_id,
                 generation=int(settle["generation"]),

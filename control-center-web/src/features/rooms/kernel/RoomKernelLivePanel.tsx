@@ -10,51 +10,97 @@ import {
   type RoomKernelSnapshot,
   type CancellationSurfaceProjection,
 } from '@/contracts/room-kernel-reducer';
+import { selectRoomParticipantPublicProgress } from '@/contracts/room-reducer';
 import { parseContract } from '@/contracts/validators';
 import { useOptionalControlTransport } from '@/app/control-transport';
 import { RoomKernelControlPlane } from './RoomKernelControlPlane';
 import { parseRoomRequirementsReadProjection, type RoomRequirementsReadProjection } from '../requirements/room-requirements-read-model';
+import {
+  useRoomLiveStore,
+  type RoomKernelLiveState,
+  type RoomKernelSyncProjection,
+} from '../state/live-store';
 import { createControlRoomKernelCommandTransport } from './room-kernel-command-transport';
 import { evaluateRoomKernelControlGate, type RoomKernelControlGate } from './room-kernel-control-gate';
 
-type LiveState = 'loading' | 'synced' | 'reconnecting' | 'recovering' | 'denied' | 'error';
 
 export function RoomKernelLivePanel({
   participantLabels = {},
   roomId,
+  visible = true,
 }: {
   participantLabels?: Record<string, string>;
   roomId: string;
+  visible?: boolean;
 }) {
   const transport = useOptionalControlTransport();
-  const [projection, setProjection] = useState<RoomKernelProjection | null>(null);
+  const projection = useRoomLiveStore(
+    (state) => visible ? state.kernelProjections[roomId] ?? null : null,
+  );
+  const sync = useRoomLiveStore(
+    (state) => visible ? state.kernelSyncByRoomId[roomId] : undefined,
+  );
+  const publicProjection = useRoomLiveStore(
+    (state) => visible ? state.projections[roomId] : undefined,
+  );
+  const participantProgress = useMemo(
+    () => publicProjection
+      ? selectRoomParticipantPublicProgress(publicProjection)
+      : [],
+    [publicProjection],
+  );
   const [requirementsByRootId, setRequirementsByRootId] = useState<Record<string, RoomRequirementsReadProjection>>({});
-  const projectionRef = useRef<RoomKernelProjection | null>(null);
+  const projectionRef = useRef<RoomKernelProjection | null>(projection);
   const [controlGate, setControlGate] = useState<RoomKernelControlGate | null>(null);
-  const [liveState, setLiveState] = useState<LiveState>('loading');
   const [recoveryRequest, setRecoveryRequest] = useState(0);
-  const [detail, setDetail] = useState('正在验证任务状态');
   const commandTransport = useMemo(
     () => transport ? createControlRoomKernelCommandTransport(transport) : null,
     [transport],
   );
+  const liveState = sync?.state ?? 'loading';
+  const detail = sync?.detail ?? '正在验证任务状态';
 
   useEffect(() => {
+    const store = useRoomLiveStore.getState();
+    projectionRef.current = store.kernelProjections[roomId] ?? null;
     if (!transport) {
-      setProjection(null);
       setRequirementsByRootId({});
-      projectionRef.current = null;
       setControlGate(null);
-      setLiveState('denied');
-      setDetail('当前连接不能读取任务状态');
+      store.setKernelSync(roomId, {
+        state: 'denied',
+        detail: '当前连接不能读取任务状态',
+        updatedAtMs: store.kernelSyncByRoomId[roomId]?.updatedAtMs ?? 0,
+        failureAtMs: Date.now(),
+      });
       return;
     }
+    const roomTransport = transport;
+
     let active = true;
     let unsubscribe: (() => void) | undefined;
     let snapshotController: AbortController | undefined;
     let revision = 0;
     let recoveryQueued = false;
 
+    const publishSync = (
+      state: RoomKernelLiveState,
+      nextDetail: string,
+      options: { updated?: boolean; failed?: boolean } = {},
+    ) => {
+      if (!active) return;
+      const current = useRoomLiveStore.getState().kernelSyncByRoomId[roomId];
+      const now = Date.now();
+      useRoomLiveStore.getState().setKernelSync(roomId, {
+        state,
+        detail: nextDetail,
+        updatedAtMs: options.updated ? now : current?.updatedAtMs ?? 0,
+        ...(options.failed ? { failureAtMs: now } : {}),
+      });
+    };
+    const publishProjection = (next: RoomKernelProjection) => {
+      projectionRef.current = next;
+      useRoomLiveStore.getState().setKernelProjection(roomId, next);
+    };
     const recover = () => {
       if (!active || recoveryQueued) return;
       recoveryQueued = true;
@@ -64,29 +110,35 @@ export function RoomKernelLivePanel({
       });
     };
 
-    const loadSnapshot = async () => {
+    async function loadSnapshot(): Promise<void> {
       const currentRevision = ++revision;
       unsubscribe?.();
       unsubscribe = undefined;
       snapshotController?.abort();
       snapshotController = new AbortController();
-      setLiveState((current) => current === 'loading' ? 'loading' : 'recovering');
-      setDetail((current) => current === '正在验证任务状态' ? current : '正在恢复任务状态');
+      publishSync(
+        projectionRef.current ? 'recovering' : 'loading',
+        projectionRef.current ? '正在恢复任务状态' : '正在读取任务状态',
+      );
       try {
-        const raw = await transport.request({
+        const raw = await roomTransport.request({
           pathId: 'agent.room.kernel.snapshot',
           params: { roomId },
           signal: snapshotController.signal,
         });
         if (!active || currentRevision !== revision) return;
         const snapshot = parseSnapshot(raw, roomId);
-        setRequirementsByRootId(parseRequirementsByRootId(raw));
-        const next = applyRoomKernelSnapshot(createRoomKernelProjection(roomId), snapshot);
-        projectionRef.current = next;
-        setProjection(next);
-        setLiveState('synced');
-        setDetail('任务状态已更新');
-        unsubscribe = transport.subscribe<unknown>(
+        const current = projectionRef.current;
+        const snapshotIsCurrent = !current || snapshot.lastSequence >= current.lastSequence;
+        const next = snapshotIsCurrent
+          ? applyRoomKernelSnapshot(createRoomKernelProjection(roomId), snapshot)
+          : current;
+        if (snapshotIsCurrent) {
+          setRequirementsByRootId(parseRequirementsByRootId(raw));
+          publishProjection(next);
+        }
+        publishSync('synced', '任务状态已更新', { updated: true });
+        unsubscribe = roomTransport.subscribe<unknown>(
           {
             pathId: 'agent.room.kernel.events',
             params: { roomId },
@@ -95,42 +147,62 @@ export function RoomKernelLivePanel({
           {
             open: () => {
               if (!active) return;
-              setLiveState('synced');
-              setDetail('任务进度已连接');
+              publishSync('synced', '任务进度已连接');
             },
             next: (value) => {
-              if (!active || isSnapshotRequired(value)) return;
+              if (!active) return;
+              if (isSnapshotRequired(value)) {
+                publishSync('recovering', '任务进度存在缺口，正在恢复最新状态');
+                recover();
+                return;
+              }
               try {
                 const event = parseContract('room-event-envelope.v2', value) as RoomEventEnvelopeV2;
                 const current = projectionRef.current;
-                if (!current) return;
+                if (!current) {
+                  publishSync('recovering', '正在恢复任务状态');
+                  recover();
+                  return;
+                }
                 const reduced = reduceRoomKernelEvent(current, event);
-                projectionRef.current = reduced.state;
-                setProjection(reduced.state);
-                if (reduced.disposition === 'snapshot-required') recover();
+                if (reduced.disposition === 'snapshot-required') {
+                  publishProjection(reduced.state);
+                  publishSync('recovering', '任务进度存在缺口，正在恢复最新状态');
+                  recover();
+                  return;
+                }
                 if (reduced.disposition === 'applied') {
-                  setLiveState('synced');
-                  setDetail('任务状态已更新');
+                  publishProjection(reduced.state);
+                  publishSync('synced', '任务状态已更新', { updated: true });
                 }
               } catch (error) {
-                setLiveState('error');
-                setDetail(publicError(error, '任务进度格式无效'));
+                publishSync(
+                  'recovering',
+                  publicError(error, '任务进度格式无效，正在恢复最新状态'),
+                  { failed: true },
+                );
+                recover();
               }
             },
             error: (error) => {
               if (!active) return;
-              setLiveState('reconnecting');
-              setDetail(publicError(error, '任务进度连接中断'));
+              publishSync(
+                'reconnecting',
+                publicError(error, '任务进度连接中断'),
+                { failed: true },
+              );
             },
             reconnect: (notice) => {
               if (!active) return;
-              setLiveState('reconnecting');
-              setDetail(`第 ${notice.attempt} 次重连 · ${notice.delayMs}ms`);
+              publishSync(
+                'reconnecting',
+                `第 ${notice.attempt} 次重连 · ${notice.delayMs}ms`,
+                { failed: true },
+              );
             },
             snapshotRequired: () => {
               if (!active) return;
-              setLiveState('recovering');
-              setDetail('任务进度存在缺口，正在恢复最新状态');
+              publishSync('recovering', '任务进度存在缺口，正在恢复最新状态');
               recover();
             },
           },
@@ -138,34 +210,47 @@ export function RoomKernelLivePanel({
       } catch (error) {
         if (!active || currentRevision !== revision || isAbort(error)) return;
         const denied = errorStatus(error) === 401 || errorStatus(error) === 403;
-        setLiveState(denied ? 'denied' : 'error');
-        setDetail(denied
-          ? '当前连接没有查看任务进度的权限'
-          : '任务进度暂时不可用。已有对话和工作文件不会受影响。');
+        if (denied) {
+          publishSync(
+            'denied',
+            '当前连接没有查看任务进度的权限',
+            { failed: true },
+          );
+        } else if (projectionRef.current) {
+          publishSync(
+            'stale',
+            `继续显示上次确认的进度 · ${publicError(error, '实时连接暂时不可用')}`,
+            { failed: true },
+          );
+        } else {
+          publishSync(
+            'error',
+            '任务进度暂时不可用。已有对话和工作文件不会受影响。',
+            { failed: true },
+          );
+        }
       }
-    };
+    }
 
     const start = async () => {
-      setProjection(null);
-      projectionRef.current = null;
+      setRequirementsByRootId({});
       setControlGate(null);
-      setLiveState('loading');
-      setDetail('正在验证任务状态');
+      publishSync(
+        projectionRef.current ? 'recovering' : 'loading',
+        '正在验证任务状态',
+      );
       try {
-        const gate = await evaluateRoomKernelControlGate(await transport.capabilities());
+        const gate = await evaluateRoomKernelControlGate(await roomTransport.capabilities());
         if (!active) return;
         setControlGate(gate);
-        if (!gate.readEnabled) {
-          setLiveState('denied');
-          setDetail(gate.reason);
-          return;
-        }
-        await loadSnapshot();
-      } catch (error) {
+      } catch {
         if (!active) return;
-        setLiveState('error');
-        setDetail('任务进度暂时不可用。已有对话和工作文件不会受影响。');
+        // Route capabilities only authorize controls. The snapshot request is
+        // still the authoritative read check and must not be blocked by stale
+        // or temporarily unavailable capability metadata.
+        setControlGate(null);
       }
+      await loadSnapshot();
     };
 
     void start();
@@ -177,10 +262,32 @@ export function RoomKernelLivePanel({
     };
   }, [recoveryRequest, roomId, transport]);
 
+  if (!visible) return null;
+
   return <section className="room-kernel-live" aria-label="协作任务状态" data-live-state={liveState}>
-    <p className="room-kernel-live__status" role={liveState === 'error' || liveState === 'denied' ? 'alert' : 'status'}>
-      <strong>{liveStateLabel(liveState)}</strong><span>{detail}</span>
-      {liveState === 'error' ? <Button onClick={() => setRecoveryRequest((current) => current + 1)} size="small" variant="quiet">重新读取</Button> : null}
+    <p
+      aria-live="polite"
+      className="room-kernel-live__status"
+      role={liveState === 'error' || liveState === 'denied' ? 'alert' : 'status'}
+    >
+      <span className="room-kernel-live__status-copy">
+        <strong>{liveStateLabel(liveState)}</strong>
+        <span>{detail}</span>
+      </span>
+      {sync?.updatedAtMs ? (
+        <time dateTime={new Date(sync.updatedAtMs).toISOString()}>
+          更新于 {formatKernelUpdateTime(sync.updatedAtMs)}
+        </time>
+      ) : null}
+      {liveState === 'error' || liveState === 'stale' ? (
+        <Button
+          onClick={() => setRecoveryRequest((current) => current + 1)}
+          size="small"
+          variant="quiet"
+        >
+          重新读取
+        </Button>
+      ) : null}
     </p>
     {projection && Object.keys(projection.rootsById).length > 0 ? <RoomKernelControlPlane
       projection={projection}
@@ -188,14 +295,19 @@ export function RoomKernelLivePanel({
       contextReceiptsByRootId={{}}
       capabilityReceiptsByRootId={capabilityReceipts(projection)}
       commandTransport={controlGate?.commandEnabled && commandTransport ? commandTransport : undefined}
-      commandDisabledReason={controlGate?.reason}
+      commandDisabledReason={kernelCommandDisabledReason(controlGate)}
       panicEnabled={controlGate?.panicEnabled === true}
       participantLabels={participantLabels}
+      participantProgress={participantProgress}
       requirementsByRootId={requirementsByRootId}
     /> : liveState === 'error' ? <EmptyState
       description="检查点仍保留。修复连接或运行时问题后，可以从已确认状态继续。"
       icon={CircleAlert}
       title="任务进度暂时无法读取"
+    /> : liveState === 'denied' && !projection ? <EmptyState
+      description="当前连接没有读取这个协作空间任务进度的权限；已有对话和工作文件不会受影响。"
+      icon={CircleAlert}
+      title="当前不可查看任务进度"
     /> : projection ? <EmptyState
       description="发送任务后，每位伙伴的接手、工具执行、交接和验收会在这里持续更新。"
       icon={Workflow}
@@ -275,8 +387,35 @@ function isSnapshotRequired(value: unknown): boolean {
   return item.reason === 'event_replay_gap' || item.eventType === 'snapshot_required';
 }
 
-function liveStateLabel(value: LiveState): string {
-  return ({ loading: '正在同步', synced: '进度已同步', reconnecting: '正在重新连接', recovering: '正在恢复进度', denied: '当前不可查看', error: '进度同步异常' } as const)[value];
+const ROOM_KERNEL_LIVE_LABELS: Record<RoomKernelLiveState, string> = {
+  idle: '等待任务',
+  loading: '正在同步',
+  synced: '进度已同步',
+  reconnecting: '正在重新连接',
+  recovering: '正在恢复进度',
+  stale: '实时更新暂时中断',
+  denied: '当前不可查看',
+  error: '进度同步异常',
+};
+
+const kernelUpdateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+function liveStateLabel(value: RoomKernelLiveState): string {
+  return ROOM_KERNEL_LIVE_LABELS[value];
+}
+
+function formatKernelUpdateTime(value: number): string {
+  return kernelUpdateTimeFormatter.format(new Date(value));
+}
+
+function kernelCommandDisabledReason(gate: RoomKernelControlGate | null): string {
+  if (!gate) return '任务进度可查看，但任务控制能力尚未验证';
+  if (!gate.readEnabled) return '任务进度已连接，但任务控制能力清单尚未确认';
+  return gate.reason;
 }
 
 function errorStatus(error: unknown): number {
@@ -284,7 +423,8 @@ function errorStatus(error: unknown): number {
 }
 
 function publicError(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback;
+  const message = error instanceof Error && !(error instanceof TypeError) ? error.message.trim() : '';
+  return message && /[\u3400-\u9fff]/u.test(message) ? message : fallback;
 }
 
 function isAbort(error: unknown): boolean {

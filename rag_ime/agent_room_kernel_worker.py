@@ -20,6 +20,7 @@ class RoomRuntime(Protocol):
         message: str,
         images: list[Mapping[str, str]] | None = None,
         lease_token: str,
+        record_intent: Callable[[], None],
     ) -> dict[str, object]: ...
 
     def cancel_room(
@@ -99,7 +100,16 @@ class RoomKernelWorker:
         dispatch = self.store.outbox(str(lease["dispatchId"]))["payload"]
         if not isinstance(dispatch, Mapping):
             raise RoomKernelFenceError("outbox payload is not a Dispatch envelope")
-        self.store.record_runtime_dispatch_intent(str(dispatch["dispatchId"]), now_ms=self.clock_ms())
+        runtime_intent_recorded = False
+
+        def record_runtime_intent() -> None:
+            nonlocal runtime_intent_recorded
+            self.store.record_runtime_dispatch_intent(
+                str(dispatch["dispatchId"]),
+                now_ms=self.clock_ms(),
+            )
+            runtime_intent_recorded = True
+
         try:
             message = self.message_builder(dispatch)
             images = (
@@ -113,16 +123,34 @@ class RoomKernelWorker:
                     message=message,
                     images=images,
                     lease_token=str(lease["leaseToken"]),
+                    record_intent=record_runtime_intent,
                 )
             else:
                 runtime_receipt = self.runtime.dispatch_room(
                     dispatch,
                     message=message,
                     lease_token=str(lease["leaseToken"]),
+                    record_intent=record_runtime_intent,
                 )
+        except Exception as exc:
+            if not runtime_intent_recorded:
+                return self.store.record_runtime_preflight_failure(
+                    lease_token=str(lease["leaseToken"]),
+                    now_ms=self.clock_ms(),
+                )
+            if self.revoke_session is not None:
+                self.revoke_session(
+                    str(dispatch["targetSessionId"]),
+                    self.clock_ms(),
+                )
+            self._observe_failure(dispatch, "runtime_failed", exc)
+            raise
         except BaseException as exc:
             if self.revoke_session is not None:
-                self.revoke_session(str(dispatch["targetSessionId"]), self.clock_ms())
+                self.revoke_session(
+                    str(dispatch["targetSessionId"]),
+                    self.clock_ms(),
+                )
             self._observe_failure(dispatch, "runtime_failed", exc)
             raise
         accepted = self.store.accept_runtime_receipt(
@@ -345,22 +373,28 @@ class KernelCommandBus:
         )
 
 
-def _default_dispatch_message(_dispatch: Mapping[str, object]) -> str:
+def _default_dispatch_message(dispatch: Mapping[str, object]) -> str:
     # Dispatch identity, requirements and Room facts are already carried by
     # the fenced provider-only projection. The Session receives only a stable
     # private trigger, never the transport envelope or its internal IDs.
+    recovery = (
+        "这是恢复轮次：沿用上一轮已经完成的内容，只补齐缺少的结果或正式回复；"
+        "不要从头重做。"
+        if int(dispatch.get("attempt") or 0) > 0
+        else ""
+    )
     return (
-        "执行当前受管 Room 任务；任务事实与责任以本轮 Room Context 为准。"
-        "需要确认当前责任、验收或成员时先调用 room_state。"
-        "AC 是 Acceptance Criterion（验收条件）的短别名；AC-1 就是 room_state "
-        "当前验收清单的第一项。收工只调用 room_commit：evidence.acceptance "
-        "只能填写 room_state 的 acceptanceAliases 返回的 AC-1、AC-2 等当前任务"
-        "验收别名；每个 AC 只提交直接支撑它的最小 refs 集合。refs 必须逐字复制"
-        "最新 room_state 或成功工具结果返回的完整 evidenceRef，不得重写、拼接或"
-        "猜测；不要填写数据库 criterionId，也不要自报 "
-        "已通过或最终裁决，真实状态由 Kernel 判定。"
-        "summary、evidence 和接手指令留在结构化私有字段；publicSummary 必须遵循"
-        "系统公开报告规则，用自然语言写给用户，不暴露协议字段或私有推理。"
+        recovery
+        + "继续当前 Room 工作卡片；本轮要做什么、由谁负责，以 Room Context 为准。"
+        "需要核对自己的部分、验收条件或伙伴状态时，先调用 room_state。"
+        "AC-1 表示 room_state 验收清单中的第一项，AC-2 表示第二项，以此类推。"
+        "结束本轮只调用 room_commit：evidence.acceptance 只能填写 room_state "
+        "返回的 AC-1、AC-2 等验收短名；每项只放直接支持它的最小 refs 集合。"
+        "refs 必须原样复制最新 room_state 或成功工具结果返回的完整 evidenceRef，"
+        "不得改写、拼接或猜测；不要填写内部 criterionId，也不要自行宣布已通过"
+        "或最终裁决，服务端会根据实际结果判断。summary、evidence 和接手指令放在"
+        "结构化私有字段；publicSummary 用自然语言写给用户，不暴露这些内部字段或"
+        "私下推理。"
     )
 
 

@@ -61,8 +61,11 @@ class RoomContinuationFactory:
                 f"{kind} target must differ from the current participant"
             )
         session_id = str(target.get("sessionId") or "").strip()
-        if not session_id or self.kernel.session_binding(session_id) is not None:
-            raise RoomContinuationProposalError(f"{kind} target is currently busy")
+        if not session_id:
+            raise RoomContinuationProposalError(
+                f"{kind} target has no bound Session"
+            )
+        active_target = self.kernel.session_binding(session_id)
 
         parent_criteria = [
             str(item)
@@ -88,19 +91,21 @@ class RoomContinuationFactory:
             session_id,
             active_only=False,
         )
-        if previous is not None and previous.get("state") in {
-            "active",
-            "prepared",
-        }:
+        if (
+            previous is not None
+            and previous.get("state") in {"active", "prepared"}
+            and active_target is None
+        ):
             self.revoke_session(session_id, max(0, int(now_ms)))
             previous = self.capabilities.runtime_binding(
                 session_id,
                 active_only=False,
             )
-        if previous is not None and previous.get("state") in {
-            "active",
-            "prepared",
-        }:
+        if (
+            previous is not None
+            and previous.get("state") in {"active", "prepared"}
+            and active_target is None
+        ):
             raise RoomContinuationProposalError(
                 f"{kind} target capability is still active"
             )

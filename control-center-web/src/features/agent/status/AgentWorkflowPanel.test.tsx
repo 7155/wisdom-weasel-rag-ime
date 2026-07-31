@@ -37,6 +37,43 @@ describe('AgentWorkflowPanel', () => {
     expect(attempts).toBe(2);
   });
 
+  it('treats an absent participant workflow as Room-managed instead of a sync failure', async () => {
+    const absent = Object.assign(new Error('workflow not found'), { status: 404 });
+    const transport = new StubControlTransport('mock', {
+      'agent.session.workflow.get': () => {
+        throw absent;
+      },
+      'agent.session.plan.mutate': workflowState(),
+      'agent.session.goal.mutate': workflowState(),
+    });
+    renderWorkflow(transport);
+
+    expect(await screen.findByText(
+      '当前没有需要单独维护的计划。如果这段工作来自协作空间，分工、公开进度和最终回复会继续在那里显示。',
+    )).toBeVisible();
+    expect(screen.getByRole('status')).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '计划审阅与执行' })).not.toBeInTheDocument();
+  });
+
+  it('keeps a partial live plan visible when the persisted workflow is temporarily absent', async () => {
+    const fallback = workflowState();
+    const absent = Object.assign(new Error('workflow not found'), { status: 404 });
+    const transport = new StubControlTransport('mock', {
+      'agent.session.workflow.get': () => {
+        throw absent;
+      },
+      'agent.session.plan.mutate': fallback,
+      'agent.session.goal.mutate': fallback,
+    });
+    renderWorkflow(transport, { fallbackPlan: fallback.plan });
+
+    expect(await screen.findByText('完成 Agent 工作流')).toBeVisible();
+    expect(screen.getByRole('region', { name: '计划审阅与执行' })).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/当前没有需要单独维护的计划/)).not.toBeInTheDocument();
+  });
+
   it('keeps a complete Session event projection visible when the workflow read fails', async () => {
     const fallback = workflowState();
     const transport = new StubControlTransport('mock', {

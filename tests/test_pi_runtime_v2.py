@@ -156,6 +156,7 @@ for line in sys.stdin:
         turn_id = "turn-" + session_id
         sessions[session_id]["activeTurnId"] = turn_id
         client_message_id = params.get("clientMessageId", "")
+        sessions[session_id]["activeClientMessageId"] = client_message_id
         user_entry_id = "entry-user-" + str(len(sessions[session_id].get("forkItems", [])) + 1)
         assistant_entry_id = "entry-assistant-" + str(len(sessions[session_id].get("forkItems", [])) + 1)
         user_message = {"id": user_entry_id, "role": "user", "timestamp": 100,
@@ -208,6 +209,29 @@ for line in sys.stdin:
         transcript.write_text(json.dumps({"type": "session", "id": sessions[session_id]["piSessionId"]}) + "\n")
         result(request, {"accepted": True, "turnId": turn_id})
         event(session_id, turn_id, client_message_id, {"type": "agent_start"})
+        if params["message"] == "grouped-questions":
+            event(session_id, turn_id, client_message_id, {
+                "type": "extension_ui_request",
+                "id": "ui-grouped-1",
+                "method": "editor",
+                "title": "RAG-IME-QUESTIONS:call-grouped-1",
+                "prefill": json.dumps({
+                    "schemaVersion": "rag-ime.grouped-questions.v1",
+                    "questions": [
+                        {
+                            "id": "deploy_target",
+                            "question": "这次部署到哪里？",
+                            "options": ["预发布环境", "生产环境"],
+                        },
+                        {
+                            "id": "release_window",
+                            "question": "什么时候发布？",
+                            "options": ["现在", "今晚"],
+                        },
+                    ],
+                }, ensure_ascii=False, separators=(",", ":")),
+            })
+            continue
         if params["message"] == "hang-without-settled":
             continue
         event(session_id, turn_id, client_message_id, {"type": "message_end", "message": assistant})
@@ -216,6 +240,21 @@ for line in sys.stdin:
             continue
         time.sleep(0.15)
         event(session_id, turn_id, client_message_id, {"type": "agent_settled"})
+    elif method == "ui.resolve":
+        result(request, {"resolved": True, "requestId": params.get("requestId", "")})
+        if params.get("requestId") == "ui-grouped-1":
+            turn_id = sessions[session_id]["activeTurnId"]
+            client_message_id = sessions[session_id].get("activeClientMessageId", "")
+            assistant = {
+                "id": "entry-assistant-grouped",
+                "role": "assistant",
+                "timestamp": 102,
+                "content": [{"type": "text", "text": str((params.get("response") or {}).get("value") or "")}],
+            }
+            event(session_id, turn_id, client_message_id, {"type": "message_end", "message": assistant})
+            event(session_id, turn_id, client_message_id, {"type": "agent_end", "messages": [assistant]})
+            time.sleep(0.15)
+            event(session_id, turn_id, client_message_id, {"type": "agent_settled"})
     elif method in {"session.steer", "session.follow_up"}:
         turn_id = "turn-" + session_id
         queue = sessions[session_id]["messageQueue"]
@@ -396,6 +435,100 @@ class PiRuntimeV2Tests(unittest.TestCase):
             "stored": True,
             "status": "checkpointed",
         }
+
+    def test_grouped_questions_project_once_and_validate_one_answer_map(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.prompt(
+            session_id,
+            "grouped-questions",
+            client_message_id="client:grouped-questions",
+        )
+        _wait_until(lambda: bool(self.runtime.pending_ui_requests(session_id)))
+
+        pending = self.runtime.pending_ui_requests(session_id)
+        self.assertEqual(len(pending), 1)
+        request = pending[0]
+        self.assertEqual(request["requestKind"], "grouped_questions")
+        self.assertEqual(request["method"], "editor")
+        self.assertEqual(
+            request["questions"],
+            [
+                {
+                    "id": "deploy_target",
+                    "question": "这次部署到哪里？",
+                    "options": ["预发布环境", "生产环境"],
+                },
+                {
+                    "id": "release_window",
+                    "question": "什么时候发布？",
+                    "options": ["现在", "今晚"],
+                },
+            ],
+        )
+        self.assertNotIn("prefill", request)
+        self.assertNotIn("RAG-IME-QUESTIONS", str(request["title"]))
+
+        with self.assertRaisesRegex(PiRuntimeError, "当前问题或可选项不一致"):
+            self.runtime.resolve_ui_request(
+                session_id,
+                str(request["requestId"]),
+                response={
+                    "value": json.dumps(
+                        {
+                            "answers": {
+                                "deploy_target": "不存在的环境",
+                                "release_window": "今晚",
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "resolutionSource": "direct_user",
+                },
+            )
+        self.assertEqual(len(self.runtime.pending_ui_requests(session_id)), 1)
+
+        self.runtime.resolve_ui_request(
+            session_id,
+            str(request["requestId"]),
+            response={
+                "value": json.dumps(
+                    {
+                        "answers": {
+                            "deploy_target": "预发布环境",
+                            "release_window": "今晚",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                "resolutionSource": "direct_user",
+            },
+        )
+        _wait_until(
+            lambda: any(
+                event.event_type == "turn_completed"
+                for event in self.events.replay(session_id)[0]
+            )
+        )
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+
+        events, _ = self.events.replay(session_id)
+        required = next(
+            event
+            for event in events
+            if event.event_type == "user_input_required"
+            and event.payload.get("requestKind") == "grouped_questions"
+        )
+        resolved = next(
+            event
+            for event in events
+            if event.event_type == "user_input_required"
+            and event.payload.get("resolutionState") == "resolved"
+        )
+        completed = next(event for event in events if event.event_type == "turn_completed")
+        self.assertEqual(
+            {required.turn_id, resolved.turn_id, completed.turn_id},
+            {required.turn_id},
+        )
 
     def test_stateless_completion_does_not_open_or_persist_a_session(self) -> None:
         deltas: list[str] = []
@@ -873,7 +1006,7 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.runtime = PiRuntimeHostManager(
             config=replace(
                 self.runtime.config,
-                command_timeout_seconds=1.0,
+                command_timeout_seconds=5.0,
                 provider_environment={
                     "TEST_ROOM_TYPES": "1",
                     "TEST_SESSION_SNAPSHOT_HANG": "1",
@@ -918,6 +1051,110 @@ class PiRuntimeV2Tests(unittest.TestCase):
             methods.index("session.close"),
         )
 
+    def test_room_control_state_timeout_retires_host_before_retry(self) -> None:
+        self.runtime.stop()
+
+        def context_provider(_session):
+            return {
+                "roomCapability": {
+                    "manifestId": "manifest:control-timeout",
+                    "manifestHash": "a" * 64,
+                    "promptCompileReceiptId": "prompt:control-timeout",
+                    "promptPlanHash": "b" * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:control-timeout",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "capabilityEpoch": 2,
+                    "rootId": "root:control-timeout",
+                    "dispatchId": "dispatch:control-timeout",
+                    "generation": 0,
+                    "contextEpoch": 1,
+                    "contextEpochReason": "session_open",
+                    "runtimeBindingHash": "c" * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "providerContext": "bounded-room-context",
+                "roomRecoveryContext": "bounded-room-recovery",
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        first_client = self.runtime._host()
+        first_host_identity = first_client.host_identity
+        original_send = first_client.send
+        intent_calls: list[str] = []
+        payload = {
+            "targetSessionId": session_id,
+            "rootId": "root:control-timeout",
+            "dispatchId": "dispatch:control-timeout",
+            "generation": 0,
+            "capabilityEpoch": 2,
+            "attempt": 0,
+            "idempotencyKey": "control-timeout:1",
+        }
+
+        def timeout_control_state(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> dict[str, object]:
+            if method == "session.control_state":
+                raise PiRuntimeError(
+                    "Pi Runtime Host command timed out: session.control_state"
+                )
+            return original_send(method, params, timeout=timeout)
+
+        with patch.object(
+            first_client,
+            "send",
+            side_effect=timeout_control_state,
+        ):
+            with self.assertRaisesRegex(
+                PiRuntimeError,
+                "command timed out: session.control_state",
+            ):
+                self.runtime.dispatch_room(
+                    payload,
+                    message="Execute after a bounded control-state handoff.",
+                    lease_token="lease:control-timeout:0",
+                    record_intent=lambda: intent_calls.append("intent"),
+                )
+
+        timed_out_status = self.runtime.runtime_status()
+        receipt = timed_out_status["runtimeHostKillGate"]["lastKillReceipt"]
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertEqual(receipt["hostIdentity"], first_host_identity)
+        self.assertEqual(receipt["requestedBy"], "room:dispatch:control-timeout")
+        self.assertEqual(receipt["state"], "terminated")
+        self.assertEqual(timed_out_status["status"], "faulted")
+        self.assertFalse(first_client.running)
+        self.assertEqual(intent_calls, [])
+
+        payload["attempt"] = 1
+        retried = self.runtime.dispatch_room(
+            payload,
+            message="Execute after a bounded control-state handoff.",
+            lease_token="lease:control-timeout:1",
+            record_intent=lambda: intent_calls.append("intent"),
+        )
+
+        self.assertEqual(retried["receiptKind"], "dispatch_accepted")
+        self.assertEqual(intent_calls, ["intent"])
+
     def test_room_dispatch_reuses_session_for_delta_and_task_switch_epoch(self) -> None:
         self.runtime.stop()
         context_revision = {"value": 1}
@@ -945,7 +1182,9 @@ class PiRuntimeV2Tests(unittest.TestCase):
                     "contextEpochReason": (
                         "session_open" if revision < 3 else "task_switch"
                     ),
-                    "runtimeBindingHash": ("e" if revision < 3 else "9") * 64,
+                    "runtimeBindingHash": (
+                        "e" if revision == 1 else "8" if revision == 2 else "9"
+                    ) * 64,
                 },
                 "managedSystemPrompt": "stable-room-prefix",
                 "sessionContext": f"generic-agent-rag-{revision}",
@@ -1041,6 +1280,109 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(delivered[2]["params"]["roomContext"], "room-bootstrap-3")
         self.assertEqual(delivered[2]["params"]["roomCapability"]["contextEpoch"], 2)
         self.assertEqual(third["providerContextReceipt"]["journalId"], "journal:3")
+
+    def test_room_dispatch_reopens_session_when_required_skill_changes(self) -> None:
+        self.runtime.stop()
+        stage = {"value": "implementation"}
+
+        def context_provider(_session):
+            review = stage["value"] == "review"
+            marker = "b" if review else "a"
+            skill_id = "independent-review" if review else "implementation-execution"
+            return {
+                "roomCapability": {
+                    "manifestId": f"manifest:skill:{stage['value']}",
+                    "manifestHash": marker * 64,
+                    "promptCompileReceiptId": f"prompt:skill:{stage['value']}",
+                    "promptPlanHash": marker * 64,
+                    "compiledRuntimeProfileRef": {
+                        "profileId": "profile:skill-switch",
+                        "revision": "1",
+                        "contentHash": "sha256:abcdef",
+                    },
+                    "capabilityEpoch": 4,
+                    "rootId": "root:skill-switch",
+                    "dispatchId": f"dispatch:{stage['value']}",
+                    "generation": 0,
+                    "contextEpoch": 1,
+                    "contextEpochReason": "session_open",
+                    "runtimeBindingHash": marker * 64,
+                },
+                "managedSystemPrompt": "stable-room-prefix",
+                "providerContext": f"room-context-{stage['value']}",
+                "roomRecoveryContext": f"room-recovery-{stage['value']}",
+                "roomProviderContext": {
+                    "journalId": f"journal:{stage['value']}",
+                    "throughSequence": 1,
+                    "projectionHash": marker * 64,
+                },
+                "roomSkillPolicy": {
+                    "selection": "required",
+                    "skillId": skill_id,
+                    "skillHash": marker * 64,
+                },
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        first = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:skill-switch",
+                "dispatchId": "dispatch:implementation",
+                "generation": 0,
+                "capabilityEpoch": 4,
+                "attempt": 0,
+                "idempotencyKey": "skill-switch:implementation",
+            },
+            message="Implement the bounded change.",
+            lease_token="lease:skill-switch:implementation",
+        )
+        stage["value"] = "review"
+        second = self.runtime.dispatch_room(
+            {
+                "targetSessionId": session_id,
+                "rootId": "root:skill-switch",
+                "dispatchId": "dispatch:review",
+                "generation": 0,
+                "capabilityEpoch": 4,
+                "attempt": 0,
+                "idempotencyKey": "skill-switch:review",
+            },
+            message="Review the bounded change.",
+            lease_token="lease:skill-switch:review",
+        )
+
+        requests = [
+            json.loads(line)
+            for line in (self.root / "agent" / "host-requests.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        opened = [item for item in requests if item["method"] == "session.open"]
+        self.assertEqual(len(opened), 2)
+        self.assertEqual(
+            [item["params"]["roomSkillPolicy"]["skillId"] for item in opened],
+            ["implementation-execution", "independent-review"],
+        )
+        self.assertEqual(
+            sum(item["method"] == "session.close" for item in requests),
+            1,
+        )
+        self.assertEqual(
+            first["roomSkillLoad"]["name"],
+            "implementation-execution",
+        )
+        self.assertEqual(second["roomSkillLoad"]["name"], "independent-review")
 
     def test_room_dispatch_reopens_idle_session_with_stale_active_room(self) -> None:
         self.runtime.stop()
@@ -3110,6 +3452,143 @@ class PiRuntimeV2Tests(unittest.TestCase):
             client_message_id="after-lost-settled",
         )
         self.assertTrue(continued["accepted"])
+
+
+    def test_settled_extension_error_retires_stale_host_turn(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-settled-extension-error"
+        assistant = {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "review complete"}],
+        }
+        with self.runtime._lock:
+            self.runtime._states[session_id].turn_id = turn_id
+        self.store.set_status(session_id, "busy")
+        self.runtime._handle_host_event({
+            "protocolVersion": "2",
+            "event": "agent.event",
+            "sessionId": session_id,
+            "turnId": turn_id,
+            "payload": {
+                "type": "agent_end",
+                "messages": [assistant],
+            },
+        })
+        client = self.runtime._require_client()
+        original_send = client.send
+
+        def stale_control_state(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> dict[str, object]:
+            if method == "session.control_state":
+                return {
+                    "isIdle": True,
+                    "activeTurn": {"turnId": turn_id},
+                }
+            return original_send(method, params, timeout=timeout)
+
+        with patch.object(
+            client,
+            "send",
+            side_effect=stale_control_state,
+        ):
+            self.runtime._settle_fallback_probe(session_id, turn_id)
+            self.assertEqual(
+                self.runtime._states[session_id].turn_id,
+                turn_id,
+            )
+            self.runtime._handle_host_event({
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "payload": {
+                    "type": "extension_error",
+                    "event": "agent_settled",
+                    "error": "Room settlement guard rejected the final commit",
+                },
+            })
+            self.runtime._settle_fallback_probe(session_id, turn_id)
+
+        completed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_completed"
+            and item.turn_id == turn_id
+        ]
+        self.assertEqual(
+            completed[-1].payload["terminalEvent"],
+            "idle_control_reconciliation",
+        )
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        self.assertEqual(self.runtime._states[session_id].turn_id, "")
+
+    def test_agent_settle_failed_retires_stale_room_turn(self) -> None:
+        session_id = str(self.first["id"])
+        self.runtime.ensure(session_id)
+        turn_id = "turn-room-settle-failed"
+        with self.runtime._lock:
+            state = self.runtime._states[session_id]
+            state.turn_id = turn_id
+            state.last_agent_messages = [{
+                "role": "assistant",
+                "content": [{"type": "text", "text": "review complete"}],
+            }]
+        self.store.set_status(session_id, "busy")
+        client = self.runtime._require_client()
+        original_send = client.send
+
+        def stale_control_state(
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> dict[str, object]:
+            if method == "session.control_state":
+                return {
+                    "isIdle": True,
+                    "activeTurn": {"turnId": turn_id},
+                }
+            return original_send(method, params, timeout=timeout)
+
+        with patch.object(
+            client,
+            "send",
+            side_effect=stale_control_state,
+        ):
+            self.runtime._handle_host_event({
+                "protocolVersion": "2",
+                "event": "agent.event",
+                "sessionId": session_id,
+                "payload": {
+                    "type": "agent_settle_failed",
+                    "error": "Room settlement request returned HTTP 400",
+                },
+            })
+            self.runtime._settle_fallback_probe(session_id, turn_id)
+
+        completed = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "turn_completed"
+            and item.turn_id == turn_id
+        ]
+        self.assertEqual(
+            completed[-1].payload["terminalEvent"],
+            "idle_control_reconciliation",
+        )
+        warnings = [
+            item
+            for item in self.events.replay(session_id)[0]
+            if item.event_type == "status_changed"
+            and item.payload.get("phase") == "settlement_warning"
+        ]
+        self.assertIn("HTTP 400", warnings[-1].payload["warning"])
+        self.assertEqual(self.store.get(session_id)["status"], "idle")
+        self.assertEqual(self.runtime._states[session_id].turn_id, "")
 
     def test_abort_ack_without_agent_settled_escalates_to_durable_host_tree_kill(self) -> None:
         session_id = str(self.first["id"])

@@ -1312,9 +1312,7 @@ class AgentService:
             },
             "roomResourceLimits": {
                 "deadlineAtMs": root_limits["deadline_at_ms"],
-                "maxInputTokens": 64_000,
                 "maxOutputTokens": 16_000,
-                "maxToolCalls": 64,
                 "maxToolCost": 10_000,
                 "retryRemaining": max(0, int(root_limits["retry_limit"]) - int(root_limits["retry_used"])),
                 "repairRemaining": max(0, int(root_limits["repair_limit"]) - int(root_limits["repair_used"])),

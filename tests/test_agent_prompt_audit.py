@@ -93,10 +93,10 @@ class AgentPromptAuditTests(unittest.TestCase):
             self.assertIn("<work-lens", prompt)
             self.assertIn("<room-work>", prompt)
             self.assertIn("room_commit", prompt)
-            self.assertEqual(prompt.count("## 公开报告"), 1)
-            self.assertIn("方法与原因", prompt)
-            self.assertIn("不包含隐藏", prompt)
-            self.assertIn("准确接手指令只写结构化字段", prompt)
+            self.assertEqual(prompt.count("## 让用户看得懂"), 1)
+            self.assertIn("方法、可观察结果与风险", prompt)
+            self.assertIn("不得包含隐藏逐 token 推理", prompt)
+            self.assertIn("交接内容足以直接开始", prompt)
             self.assertNotIn("收工前", prompt)
             positive = sum(
                 prompt.count(token)
@@ -176,29 +176,30 @@ class AgentPromptAuditTests(unittest.TestCase):
         )
         self.assertIn("只提交计划不算完成", policy)
 
-    def test_room_lifecycle_keeps_root_requirements_as_boundary_not_child_work(self) -> None:
+    def test_room_lifecycle_uses_plain_language_for_peer_work(self) -> None:
         prompt = collaboration_role("implementer", "1").system_prompt
 
-        self.assertIn("根任务原始需求是不可变的上位边界", prompt)
-        self.assertIn("开始与收工都要核对", prompt)
-        self.assertIn("不会自动扩大", prompt)
-        self.assertIn("只执行当前 Task/Dispatch", prompt)
-        self.assertIn("只提交当前任务给出的验收别名", prompt)
-        self.assertIn("不执行父任务或其他成员的步骤", prompt)
-        self.assertIn("岗位只是工作视角，不形成主从层级", prompt)
-        self.assertIn("当前 Dispatch 的持有者对产物和证据负责", prompt)
-        self.assertIn("不清楚时调用 room_state", prompt)
-        self.assertIn("成功工具结果返回的 evidenceRef", prompt)
-        self.assertIn("postRef 只是公开消息引用，不是验收 evidenceRef", prompt)
-        self.assertIn("不提交数据库 criterionId、pass、verdict", prompt)
-        self.assertIn("暂存后立即结束本轮", prompt)
+        self.assertIn("用户最初说的目标是大家共同遵守的边界", prompt)
+        self.assertIn("开始和结束前都要重新核对", prompt)
+        self.assertIn("工作卡片就是自己这一轮要完成的部分", prompt)
+        self.assertIn("不要替别的伙伴做", prompt)
+        self.assertIn("每个人地位相同", prompt)
+        self.assertIn("用 room_state 查看", prompt)
+        self.assertIn("首个公开摘要先说清自己具体负责什么", prompt)
+        self.assertIn("不要在公开内容里出现 Kernel、Root、Dispatch", prompt)
+        self.assertIn("room_commit.evidence", prompt)
+        self.assertIn("不得改写、拼接、猜测", prompt)
+        self.assertIn("room_commit 暂存成功后立即结束本轮", prompt)
 
-    def test_coordinator_owns_its_dispatch_instead_of_delegating_everything(self) -> None:
-        prompt = collaboration_role("coordinator", "1").system_prompt
+    def test_integration_peer_works_instead_of_only_assigning_others(self) -> None:
+        role = collaboration_role("coordinator", "1")
+        prompt = role.system_prompt
 
-        self.assertIn("当前 Dispatch 要求直接产物时也完成自己的责任", prompt)
-        self.assertIn("只有专业能力或并行收益明确时", prompt)
-        self.assertIn("核对返回证据", prompt)
+        self.assertEqual(role.display_name, "整合伙伴")
+        self.assertIn("你不是其他成员的上级", prompt)
+        self.assertIn("持续完成自己的集成、验证和", prompt)
+        self.assertIn("不能只安排别人、等待或汇报别人", prompt)
+        self.assertIn("组织共同复核", prompt)
 
     def test_unpinned_role_book_is_zero_bytes_not_a_status_message(self) -> None:
         persona = agent_role("companion-present-v1", "1").persona_prompt
