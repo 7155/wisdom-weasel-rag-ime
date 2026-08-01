@@ -15,6 +15,7 @@ export interface RoomKernelReceiptV1 {
     | 'rejected'
     | 'target_cancelled'
     | 'root_cancelled'
+    | 'root_retried'
     | 'panic'
     | 'runtime_accepted'
     | 'runtime_failed'

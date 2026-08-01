@@ -25,6 +25,7 @@ import {
   type RoomProjectionState,
   type RoomTurnProjection,
 } from '@/contracts/room-reducer';
+import type { RoomKernelProjection } from '@/contracts/room-kernel-reducer';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
 import { publicAgentErrorText } from '@/features/agent/public-error';
 import { AgentBlocks, MarkdownBody } from '@/features/agent/timeline/BlockRenderer';
@@ -65,9 +66,12 @@ interface RoomTurnProps {
   projection?: RoomProjectionState;
   personas: AgentPersonaV1[];
   abortingTurnIds?: ReadonlySet<string>;
+  kernelRootsById?: RoomKernelProjection['rootsById'];
   onAbortTurn?: (rootId: string) => void;
+  retryingRootIds?: ReadonlySet<string>;
   retryingTurn?: boolean;
   onRetryTurn?: (message: string) => void;
+  onRetryRoot?: (rootId: string) => void;
 }
 
 const roomTerminalPostLabels: Readonly<Record<string, string>> = {
@@ -115,10 +119,13 @@ export function RoomTurn({
   room,
   projection: providedProjection,
   personas,
+  kernelRootsById,
   abortingTurnIds = new Set(),
+  retryingRootIds = new Set(),
   onAbortTurn,
   retryingTurn = false,
   onRetryTurn,
+  onRetryRoot,
 }: RoomTurnProps) {
   useRoomLiveStore((state) => (
     providedProjection ? 0 : state.turnRevisions[roomId]?.[turnId] ?? 0
@@ -149,10 +156,15 @@ export function RoomTurn({
             : ['completed', 'failed', 'aborted'].includes(turn.status);
         return !terminal && !lane.activities.some(roomActivityNeedsSessionAction);
       });
-  const rootActive = ['queued', 'running'].includes(turn.status)
-    && rootHasActiveLane
+  const kernelRootState = kernelRootsById?.[rootId]?.state;
+  const rootBlocked = kernelRootState === 'blocked';
+  const rootActive = !rootBlocked
+    && (kernelRootState
+      ? ['pending', 'running', 'waiting'].includes(kernelRootState)
+      : ['queued', 'running'].includes(turn.status) && rootHasActiveLane)
     && !pendingAction;
   const rootStopping = abortingTurnIds.has(rootId);
+  const rootRetrying = retryingRootIds.has(rootId);
   const terminalIssue = turn.status === 'failed' || turn.status === 'aborted'
     ? turn.status
     : '';
@@ -182,6 +194,25 @@ export function RoomTurn({
         {message.status === 'queued' ? <small>正在发送</small> : null}
       </div>;
     })}
+    {rootBlocked ? <div className="room-turn__root-control" data-state="blocked" role="alert">
+      <span><CircleAlert size={14} /><small>这轮协作因伙伴运行失败而暂停；继续会只重做失败的部分，并保留已完成的工作。</small></span>
+      <div className="room-turn__root-actions">
+        {onRetryRoot ? <Button
+          variant="secondary"
+          size="small"
+          leadingIcon={rootRetrying ? <LoaderCircle className="ui-spin" size={14} /> : <RotateCcw size={14} />}
+          disabled={rootRetrying || rootStopping}
+          onClick={() => onRetryRoot(rootId)}
+        >{rootRetrying ? '正在继续' : '继续任务'}</Button> : null}
+        {onAbortTurn ? <Button
+          variant="danger"
+          size="small"
+          leadingIcon={rootStopping ? <LoaderCircle className="ui-spin" size={14} /> : <CircleStop size={14} />}
+          disabled={rootRetrying || rootStopping}
+          onClick={() => onAbortTurn(rootId)}
+        >{rootStopping ? '正在停止' : '停止任务'}</Button> : null}
+      </div>
+    </div> : null}
     {rootActive && onAbortTurn ? <div className="room-turn__root-control" role="status">
       <span><CircleStop size={14} /><small>{rootStopping ? '正在停止本轮的伙伴、工具和后续任务' : '会一起停止本轮的所有伙伴、工具和后续任务'}</small></span>
       <Button
@@ -263,6 +294,11 @@ export function RoomTurn({
                   : laneComplete
                     ? 'completed'
                     : 'waiting';
+      const laneWork = roomLaneWorkSummary(
+        lane.activities,
+        participant?.displayName,
+        laneState,
+      );
       return <section className="room-agent-lane" data-outcome={laneOutcome || undefined} data-state={laneState} key={lane.key}>
         <header>
           {participant
@@ -277,9 +313,13 @@ export function RoomTurn({
                       : 'warning'}
               />
             : <span className="room-agent-lane__route"><Route size={15} /></span>}
-          <span className="room-agent-lane__identity">
-            <strong>{participant?.displayName ?? '正在选择伙伴'}</strong>
-            <small>{statusLabel}</small>
+          <span className="room-agent-lane__work">
+            <span className="room-agent-lane__identity">
+              <strong>{participant?.displayName ?? '正在选择伙伴'}</strong>
+              <small>{statusLabel}</small>
+            </span>
+            <strong className="room-agent-lane__task">{laneWork.title}</strong>
+            <small className="room-agent-lane__progress">{laneWork.detail}</small>
           </span>
           <RoomElapsed
             startedAtMs={turn.createdAtMs}
@@ -371,6 +411,40 @@ function SessionActionLink({ action }: { action: RoomSessionAction }) {
   </a>;
 }
 
+function roomLaneWorkSummary(
+  activities: RoomActivityProjection[],
+  participantName = '协作成员',
+  laneState: string,
+): { title: string; detail: string } {
+  const digest = roomActivityDigest(activities);
+  let focus = activities.at(-1);
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const candidate = activities[index];
+    if (candidate && ['running', 'waiting', 'failed'].includes(
+      roomActivityDisplayStatus(candidate),
+    )) {
+      focus = candidate;
+      break;
+    }
+  }
+  if (focus) {
+    return {
+      title: describeRoomActivity(focus, participantName).title,
+      detail: `${digest.detail} · ${digest.title}`,
+    };
+  }
+  const title = laneState === 'completed'
+    ? `${participantName} 已完成任务`
+    : laneState === 'failed'
+      ? `${participantName} 的任务未完成`
+      : laneState === 'aborted'
+        ? `${participantName} 的任务已停止`
+        : laneState === 'waiting'
+          ? `${participantName} 正在等待后续`
+          : `${participantName} 正在准备任务`;
+  return { title, detail: '尚未收到公开工作进度' };
+}
+
 function ActivityLog({
   activities,
   active,
@@ -383,9 +457,22 @@ function ActivityLog({
   participantName?: string;
 }) {
   const [open, setOpen] = useState(active || attention);
+  const previousActive = useRef(active);
+  useEffect(() => {
+    const wasActive = previousActive.current;
+    previousActive.current = active;
+    if (active && !wasActive) {
+      setOpen(true);
+    } else if (!active && wasActive) {
+      setOpen(attention);
+    } else if (attention) {
+      setOpen(true);
+    }
+  }, [active, attention]);
   const digest = roomActivityDigest(activities);
   return <details
     className="room-agent-lane__activity"
+    data-state={active ? 'running' : attention ? 'attention' : 'settled'}
     open={open}
   >
     <summary
@@ -579,6 +666,8 @@ function roomActivityDigest(
       const toolId = textValue(activity.payload.toolName);
       return [publicToolName(toolId, textValue(activity.payload.displayName))];
     }
+    if (sourceEventType === 'reasoning_summary') return ['思路更新'];
+    if (['current_progress', 'progress'].includes(sourceEventType)) return ['任务进度'];
     if (activity.kind === 'route_decision') return ['任务分派'];
     if (textValue(activity.payload.activityKind) === 'intercom') return ['伙伴沟通'];
     if (textValue(activity.payload.approvalId)) return ['安全审批'];
@@ -904,6 +993,20 @@ function describeRoomActivity(
       title: activity.status === 'failed' ? `${toolName} 执行失败` : `${toolName} 已返回`,
       detail: publicActivitySummary(activity.summary, activity.kind)
         || (activity.status === 'failed' ? '工具没有完成' : '工具结果已交给伙伴'),
+    };
+  }
+  if (sourceEventType === 'reasoning_summary') {
+    const summary = publicActivitySummary(activity.summary, activity.kind);
+    return {
+      title: summary || `${participantName} 正在梳理下一步`,
+      detail: activity.status === 'running' ? '公开思路仍在更新' : '公开思路已同步',
+    };
+  }
+  if (['current_progress', 'progress'].includes(sourceEventType)) {
+    const summary = publicActivitySummary(activity.summary, activity.kind);
+    return {
+      title: summary || `${participantName} 正在推进任务`,
+      detail: activity.status === 'running' ? '当前工作进度' : '工作进度已同步',
     };
   }
   if (activity.kind === 'route_decision') {

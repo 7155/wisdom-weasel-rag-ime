@@ -9,7 +9,7 @@
     "commandId": {"type": "string", "minLength": 1},
     "rootId": {"type": ["string", "null"]},
     "roomId": {"type": "string", "minLength": 1},
-    "commandKind": {"type": "string", "enum": ["dispatch", "commit", "settle", "cancel_target", "cancel_root", "panic", "reconcile"]},
+    "commandKind": {"type": "string", "enum": ["dispatch", "commit", "settle", "cancel_target", "cancel_root", "retry_root", "panic", "reconcile"]},
     "targetKind": {"type": ["string", "null"], "enum": ["root", "task", "dispatch", null]},
     "targetId": {"type": ["string", "null"]},
     "sourceKind": {"type": "string", "minLength": 1},

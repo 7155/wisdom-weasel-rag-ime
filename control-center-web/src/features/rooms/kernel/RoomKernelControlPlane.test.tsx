@@ -216,6 +216,42 @@ describe('RoomKernelControlPlane', () => {
     expect(await screen.findByText('停止请求已接受')).toBeInTheDocument();
   });
 
+  it('continues only failed work from a blocked Root through the typed command path', async () => {
+    const state = projection();
+    state.rootsById['root-a'] = {
+      ...state.rootsById['root-a']!,
+      state: 'blocked',
+      isFinal: false,
+      terminalReceiptId: null,
+    };
+    state.tasksById['task-a'] = { ...state.tasksById['task-a']!, state: 'blocked' };
+    state.dispatchesById['dispatch-a'] = {
+      ...state.dispatchesById['dispatch-a']!,
+      state: 'failed',
+    };
+    const handler = vi.fn((command) => receipt({
+      receiptId: 'retry-root-a',
+      commandId: command.commandId,
+      rootId: command.rootId,
+      generation: command.generation,
+      receiptKind: 'root_retried',
+    }));
+    renderPlane(state, createFixtureRoomKernelCommandTransport(handler));
+
+    fireEvent.click(screen.getByRole('button', { name: '继续此任务' }));
+
+    await waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    expect(handler.mock.calls[0]?.[0]).toMatchObject({
+      roomId: 'room-a',
+      rootId: 'root-a',
+      generation: 3,
+      commandKind: 'retry_root',
+      targetKind: 'root',
+      targetId: 'root-a',
+    });
+    expect(await screen.findByText('继续请求已接受')).toBeInTheDocument();
+  });
+
   it('targets the keyboard-selected concurrent Root only', async () => {
     const handler = vi.fn((command) => receipt({
       receiptId: `cancel-${command.rootId}`, commandId: command.commandId, rootId: command.rootId,

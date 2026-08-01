@@ -131,18 +131,55 @@ class RoomApplicationService:
     ) -> dict[str, object]:
         if not kernel_owns_room_execution(self.kernel.mode):
             raise RoomKernelFenceError("canonical Room ingress requires a managed Kernel")
-        if not work_item_id:
-            raise RoomKernelFenceError(
-                "managed Room execution requires a confirmed WorkItem"
-            )
 
         room = self.rooms.get(room_id)
         self.restore_participant_sessions(room)
         room = self.rooms.get(room_id)
-        work_item, authoritative_participant_id = self._work_item_owner(
-            room_id,
-            work_item_id,
-        )
+        auto_create_work_item = not work_item_id
+        if not auto_create_work_item:
+            work_item, authoritative_participant_id = self._work_item_owner(
+                room_id,
+                work_item_id,
+            )
+        else:
+            active_participants = [
+                value
+                for value in room.get("participants", [])
+                if isinstance(value, Mapping) and value.get("status") == "active"
+            ]
+            active_by_id = {
+                str(value.get("id") or ""): value
+                for value in active_participants
+            }
+            requested_ids = tuple(
+                str(participant_id).strip()
+                for participant_id in requested_participant_ids
+                if str(participant_id).strip()
+            )
+            if any(
+                participant_id not in active_by_id
+                for participant_id in requested_ids
+            ):
+                raise ValueError("selected Room participant is no longer active")
+            owner = next(
+                (
+                    active_by_id[participant_id]
+                    for participant_id in requested_ids
+                ),
+                None,
+            )
+            if owner is None:
+                moderator_id = str(room.get("moderatorParticipantId") or "")
+                owner = (
+                    active_by_id.get(moderator_id)
+                    or (active_participants[0] if active_participants else None)
+                )
+            if owner is None:
+                raise RoomKernelFenceError(
+                    "managed Room execution requires an active accountable participant"
+                )
+            authoritative_participant_id = str(owner["id"])
+            work_item = None
         decisions = self.rooms.plan_routes(
             room_id,
             message,
@@ -150,10 +187,6 @@ class RoomApplicationService:
             profiles=self._routing_profiles(room),
             authoritative_participant_id=authoritative_participant_id,
         )
-        if work_item is not None:
-            for decision in decisions:
-                decision["workItemId"] = work_item_id
-                decision["workItemState"] = str(work_item["state"])
 
         targets = [
             self.rooms.participant(str(decision["targetParticipantId"]))
@@ -165,6 +198,28 @@ class RoomApplicationService:
             [str(target["sessionId"]) for target in targets],
             attachment_ids,
         )
+        if auto_create_work_item:
+            work_item = self.work_items.create(
+                room_id=room_id,
+                objective=message[:8_000],
+                expected_output=(
+                    "面向用户的最终协作结果，包含完成内容、可核验的证据和剩余风险。"
+                ),
+                current_owner_participant_id=authoritative_participant_id,
+                created_by_participant_id=authoritative_participant_id,
+                client_message_id=client_message_id,
+                accountable_participant_id=authoritative_participant_id,
+                topic_id=str(room.get("activeTopicId") or ""),
+                acceptance_criteria=(
+                    "完成用户消息要求的交付，并在公开结果中直接回答请求。",
+                    "给出可核验的工具回执、文件路径或检查结果；如受阻，明确说明原因和下一步。",
+                ),
+            )
+            work_item_id = str(work_item["id"])
+        if work_item is not None:
+            for decision in decisions:
+                decision["workItemId"] = work_item_id
+                decision["workItemState"] = str(work_item["state"])
         timestamp = self.clock_ms()
         identity = _message_identity(room_id, client_message_id)
         root_id = f"room-root:{identity}"

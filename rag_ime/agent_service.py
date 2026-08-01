@@ -2524,6 +2524,12 @@ class AgentService:
             raise RoomKernelFenceError("control command path Room does not match payload")
         result = self.room_kernel_commands.control(payload)
         self.room_kernel_projection.sync_room(room_id)
+        root_id = str(payload.get("rootId") or "")
+        if root_id:
+            root = self.room_kernel.root(root_id)
+            self.room_public_timeline.sync_terminal_root(root)
+            self._project_room_work_from_kernel_root(root)
+        self.room_kernel_worker_loop.wake()
         return dict(result["kernelReceipt"])
 
     def create_room_kernel_root(

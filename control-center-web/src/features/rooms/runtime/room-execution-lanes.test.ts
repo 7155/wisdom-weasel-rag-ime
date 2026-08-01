@@ -258,5 +258,74 @@ describe('selectRoomTurnExecution', () => {
       },
     })).toBe(true);
   });
+  it('keeps governed progress interleaved with read and write tools while filtering noise', () => {
+    const projection = createRoomProjection('room-1');
+    const activityIds = ['reasoning-1', 'read-1', 'internal-1', 'write-1', 'progress-1'];
+    projection.turnOrder.push('root-1');
+    projection.activityOrder.push(...activityIds);
+    projection.turnsById['root-1'] = {
+      id: 'root-1',
+      rootId: 'root-1',
+      status: 'running',
+      messageIds: [],
+      activityIds,
+      participantIds: ['participant-1'],
+      dispatchIds: ['dispatch-1'],
+      dispatchParticipantIds: { 'dispatch-1': 'participant-1' },
+      createdAtMs: 1,
+      updatedAtMs: 5,
+    };
+    const base = {
+      turnId: 'root-1',
+      participantId: 'participant-1',
+      sourceSessionId: 'session-1',
+      kind: 'participant_activity' as const,
+      status: 'completed' as const,
+      createdAtMs: 1,
+    };
+    projection.activitiesById['reasoning-1'] = {
+      ...base,
+      id: 'reasoning-1',
+      status: 'running',
+      summary: '先确认现有调用链，再修改入口',
+      payload: { rootId: 'root-1', dispatchId: 'dispatch-1', sourceEventType: 'reasoning_summary' },
+    };
+    projection.activitiesById['read-1'] = {
+      ...base,
+      id: 'read-1',
+      summary: '读取 src/runtime.ts',
+      payload: { rootId: 'root-1', dispatchId: 'dispatch-1', sourceEventType: 'tool_finished', toolName: 'workspace_read' },
+    };
+    projection.activitiesById['internal-1'] = {
+      ...base,
+      id: 'internal-1',
+      summary: '内部状态同步',
+      payload: { rootId: 'root-1', dispatchId: 'dispatch-1', sourceEventType: 'message_completed' },
+    };
+    projection.activitiesById['write-1'] = {
+      ...base,
+      id: 'write-1',
+      summary: '写入 src/runtime.ts',
+      payload: { rootId: 'root-1', dispatchId: 'dispatch-1', sourceEventType: 'tool_finished', toolName: 'workspace_write' },
+    };
+    projection.activitiesById['progress-1'] = {
+      ...base,
+      id: 'progress-1',
+      status: 'running',
+      summary: '入口已修改，正在核对调用方',
+      payload: { rootId: 'root-1', dispatchId: 'dispatch-1', sourceEventType: 'current_progress' },
+    };
+
+    const selected = selectRoomTurnExecution(projection, 'root-1');
+
+    expect(selected.lanes).toHaveLength(1);
+    expect(selected.lanes[0].activities.map((item) => item.id)).toEqual([
+      'reasoning-1',
+      'read-1',
+      'write-1',
+      'progress-1',
+    ]);
+  });
+
 
 });

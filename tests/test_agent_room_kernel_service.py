@@ -1006,26 +1006,66 @@ class RoomKernelServiceTests(unittest.TestCase):
             dispatch=parent_dispatch,
         )
 
-    def test_kernel_execution_entry_rejects_an_unconfirmed_message(self) -> None:
+    def test_kernel_execution_entry_creates_durable_work_item_for_first_message(self) -> None:
         roots_before = self.service.room_kernel.root_ids(self.room_id)
+        message = "没有预建任务卡时，也要从第一条消息开始完成任务。"
+        moderator_id = str(
+            self.service.rooms.get(self.room_id)["moderatorParticipantId"]
+        )
 
-        with self.assertRaisesRegex(
-            RoomKernelFenceError,
-            "requires a confirmed WorkItem",
-        ):
-            self.service.room_application.post_message(
-                self.room_id,
-                message="没有确认任务时不得从内部入口偷偷开工。",
-                client_message_id="client:missing-work-item",
-                requested_participant_ids=[str(self.participant["id"])],
-                work_item_id="",
-            )
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": message,
+                "clientMessageId": "client:auto-work-item",
+            },
+        )
+
+        work_item = accepted["workItem"]
+        self.assertEqual(work_item["objective"], message)
+        self.assertEqual(work_item["state"], "active")
+        self.assertEqual(
+            work_item["currentOwnerParticipantId"],
+            moderator_id,
+        )
+        self.assertEqual(accepted["participant"]["id"], moderator_id)
+        self.assertEqual(len(work_item["acceptanceCriteria"]), 2)
+        self.assertEqual(
+            self.service.room_work.get(
+                str(work_item["id"]),
+                room_id=self.room_id,
+            )["acceptedTurnId"],
+            accepted["rootId"],
+        )
+        roots_after = self.service.room_kernel.root_ids(self.room_id)
+        self.assertEqual(
+            set(roots_after) - set(roots_before),
+            {accepted["rootId"]},
+        )
+        self.assertEqual(len(roots_after), len(roots_before) + 1)
+        self.assertEqual(self.factory.runtime.dispatched, [])
+
+    def test_kernel_execution_entry_assigns_mentioned_participant_without_a_precreated_work_item(self) -> None:
+        participant_id = str(self.participant["id"])
+
+        accepted = self.service.post_room_message(
+            self.room_id,
+            {
+                "message": "请指定伙伴直接核对恢复链路。",
+                "clientMessageId": "client:auto-work-item-mention",
+                "participantIds": [participant_id],
+            },
+        )
 
         self.assertEqual(
-            self.service.room_kernel.root_ids(self.room_id),
-            roots_before,
+            accepted["workItem"]["currentOwnerParticipantId"],
+            participant_id,
         )
-        self.assertEqual(self.factory.runtime.dispatched, [])
+        self.assertEqual(accepted["participant"]["id"], participant_id)
+        self.assertEqual(
+            accepted["workItem"]["acceptedTurnId"],
+            accepted["rootId"],
+        )
 
 
     def test_confirmed_work_item_uses_one_async_kernel_path(self) -> None:
@@ -1108,6 +1148,10 @@ class RoomKernelServiceTests(unittest.TestCase):
 
     def test_agent_and_room_entry_race_is_rejected_before_creating_a_root(self) -> None:
         roots_before = self.service.room_kernel.root_ids(self.room_id)
+        work_item_ids_before = {
+            str(item["id"])
+            for item in self.service.room_work.list(room_id=self.room_id)
+        }
         room = self.service.rooms.get(self.room_id)
         moderator = next(
             participant
@@ -1136,6 +1180,13 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertEqual(
             self.service.room_kernel.root_ids(self.room_id),
             roots_before,
+        )
+        self.assertEqual(
+            {
+                str(item["id"])
+                for item in self.service.room_work.list(room_id=self.room_id)
+            },
+            work_item_ids_before,
         )
 
     def test_terminal_root_never_retains_session_ownership(self) -> None:
@@ -1498,7 +1549,7 @@ class RoomKernelServiceTests(unittest.TestCase):
         )
         self.assertNotIn("room_post", [event["eventType"] for event in public])
 
-    def test_managed_runtime_failure_blocks_kernel_and_revokes_capability(self) -> None:
+    def test_managed_runtime_failure_blocks_then_operator_continues_failed_work(self) -> None:
         work_item = self._create_work_item(
             "runtime-failure",
             objective="触发一次可审计的 Provider 失败",
@@ -1585,6 +1636,63 @@ class RoomKernelServiceTests(unittest.TestCase):
         self.assertIn("任务已暂停等待恢复", encoded)
         self.assertNotIn("secret.example", encoded)
         self.assertNotIn("sk-never-publish", encoded)
+
+        retry_receipt = self.service.apply_room_kernel_command(
+            self.room_id,
+            {
+                "schemaVersion": KERNEL_COMMAND_SCHEMA_VERSION,
+                "commandId": "command:retry-runtime-failure",
+                "rootId": root_id,
+                "roomId": self.room_id,
+                "commandKind": "retry_root",
+                "targetKind": "root",
+                "targetId": root_id,
+                "sourceKind": "control_center",
+                "sourceId": "test",
+                "idempotencyKey": "retry-runtime-failure:v1",
+                "generation": int(root["generation"]),
+                "payload": {},
+                "createdAtMs": 40,
+            },
+            caller_authorized=True,
+        )
+        retried_dispatch_id = str(
+            retry_receipt["details"]["retriedDispatchIds"][0]
+        )
+        self.assertEqual(retry_receipt["receiptKind"], "root_retried")
+        self.assertEqual(retry_receipt["status"], "applied")
+        self.assertNotEqual(retried_dispatch_id, dispatch_id)
+        self.assertEqual(
+            self.service.room_kernel.root(root_id)["state"],
+            "running",
+        )
+        self.assertEqual(
+            self.service.room_kernel.task(task_id)["state"],
+            "active",
+        )
+        self.assertEqual(
+            self.service.room_kernel.dispatch(retried_dispatch_id)["state"],
+            "pending",
+        )
+        self.assertEqual(
+            self.service.room_kernel.outbox(retried_dispatch_id)["state"],
+            "pending",
+        )
+        self.assertEqual(
+            self.service.room_work.get(
+                str(work_item["id"]),
+                room_id=self.room_id,
+            )["state"],
+            "active",
+        )
+
+        resumed = self.service.room_kernel_worker.run_once()
+        self.assertEqual(
+            resumed["details"]["dispatchId"],
+            retried_dispatch_id,
+        )
+        self.assertEqual(self.factory.runtime.dispatched[-1], retried_dispatch_id)
+        self.assertEqual(self.factory.runtime.dispatch_attempts[-1], 1)
 
     def test_transient_provider_failure_without_tools_reuses_managed_dispatch(
         self,

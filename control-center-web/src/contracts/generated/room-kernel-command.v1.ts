@@ -10,7 +10,14 @@ export interface RoomKernelCommandV1 {
   rootId: string | null;
   roomId: string;
   commandKind:
-    'dispatch' | 'commit' | 'settle' | 'cancel_target' | 'cancel_root' | 'panic' | 'reconcile';
+    | 'dispatch'
+    | 'commit'
+    | 'settle'
+    | 'cancel_target'
+    | 'cancel_root'
+    | 'retry_root'
+    | 'panic'
+    | 'reconcile';
   targetKind: 'root' | 'task' | 'dispatch' | null;
   targetId: string | null;
   sourceKind: string;

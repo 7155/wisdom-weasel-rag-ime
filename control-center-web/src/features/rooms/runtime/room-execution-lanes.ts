@@ -171,6 +171,9 @@ function isUsefulRoomActivity(activity: RoomActivityProjection): boolean {
   if (['tool_started', 'tool_progress', 'tool_finished'].includes(sourceEventType)) {
     return true;
   }
+  if (['reasoning_summary', 'current_progress', 'progress'].includes(sourceEventType)) {
+    return true;
+  }
   if (['intercom', 'work'].includes(textValue(activity.payload.activityKind))) return true;
   const requestKind = textValue(activity.payload.requestKind);
   if (

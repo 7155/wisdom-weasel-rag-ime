@@ -44,6 +44,7 @@ export function RoomComposer({
   draft,
   attachments,
   sending,
+  taskBusyState,
   inputRef,
   onDraftChange,
   onSend,
@@ -57,6 +58,7 @@ export function RoomComposer({
   draft: string;
   attachments: RoomAttachmentReceipt[];
   sending: boolean;
+  taskBusyState?: 'running' | 'blocked';
   inputRef?: { current: HTMLTextAreaElement | null };
   onDraftChange: (value: string) => void;
   onAttachmentsChange: (value: RoomAttachmentReceipt[]) => void;
@@ -74,7 +76,8 @@ export function RoomComposer({
   const [composerDraft, setComposerDraft] = useState(draft);
   const [mention, setMention] = useState<RoomMentionDraft>();
   const [activeIndex, setActiveIndex] = useState(0);
-  const roomCanSend = room?.status === 'active';
+  const roomCanCompose = room?.status === 'active';
+  const roomCanSend = roomCanCompose && !taskBusyState;
   const participants = room?.participants.filter(
     (participant) => participant.status === 'active',
   ) ?? [];
@@ -227,13 +230,18 @@ export function RoomComposer({
           ><X size={12} /></button>
         </span>)}
       </div> : null}
+      {taskBusyState ? <p className="room-composer__task-lock" role="status">
+        {taskBusyState === 'blocked'
+          ? '当前任务已暂停。请在上方继续或停止任务；你可以先在这里准备下一条消息。'
+          : '当前任务仍在执行。完成或停止后才能发送下一项任务；你可以先在这里起草。'}
+      </p> : null}
       <div className="room-composer">
         <textarea
           ref={setTextareaRef}
           rows={1}
           maxLength={8_000}
           value={composerDraft}
-          disabled={!roomCanSend}
+          disabled={!roomCanCompose}
           autoCapitalize="none"
           autoComplete="off"
           autoCorrect="off"
@@ -286,7 +294,7 @@ export function RoomComposer({
               submit();
             }
           }}
-          placeholder={composerPlaceholder(room)}
+          placeholder={taskBusyState ? '可以先起草下一项任务…' : composerPlaceholder(room)}
           aria-label="协作消息"
           aria-autocomplete="list"
           aria-controls={mention && mentionCandidates.length ? 'room-mention-menu' : undefined}
@@ -300,11 +308,11 @@ export function RoomComposer({
               className="room-composer__attachment"
               label="添加图片"
               icon={<Paperclip size={16} />}
-              disabled={!roomCanSend || sending || attachments.length >= 8}
+              disabled={!roomCanCompose || sending || attachments.length >= 8}
               onClick={onPickAttachments}
               tooltip
             />
-            {roomCanSend && participants.length ? <IconButton
+            {roomCanCompose && participants.length ? <IconButton
               className="room-composer__mention"
               label="点名一位伙伴"
               icon={<AtSign size={16} />}
@@ -315,7 +323,7 @@ export function RoomComposer({
           </div>
           <IconButton
             className="room-composer__send"
-            label="发送消息"
+            label={taskBusyState === 'blocked' ? '先继续或停止当前任务' : taskBusyState ? '等待当前任务完成' : '发送消息'}
             icon={<Send size={17} />}
             disabled={!canSend}
             onClick={submit}

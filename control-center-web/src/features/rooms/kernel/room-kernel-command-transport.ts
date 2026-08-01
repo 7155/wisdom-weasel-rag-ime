@@ -58,6 +58,27 @@ export function buildCancelRootCommand(
   return parseContract('room-kernel-command.v1', command);
 }
 
+export function buildRetryRootCommand(
+  target: RootStopTarget,
+  identity: { commandId: string; sourceId: string; createdAtMs: number },
+): RoomKernelCommandV1 {
+  return parseContract('room-kernel-command.v1', {
+    schemaVersion: 'wisdom-weasel.room-kernel-command.v1',
+    commandId: identity.commandId,
+    rootId: target.rootId,
+    roomId: target.roomId,
+    commandKind: 'retry_root',
+    targetKind: 'root',
+    targetId: target.rootId,
+    sourceKind: 'control_center',
+    sourceId: identity.sourceId,
+    idempotencyKey: `retry-root:${target.roomId}:${target.rootId}:${target.generation}:${identity.commandId}`,
+    generation: target.generation,
+    payload: {},
+    createdAtMs: identity.createdAtMs,
+  });
+}
+
 export function buildPanicCommand(
   roomId: string,
   identity: { commandId: string; sourceId: string; createdAtMs: number },

@@ -10,6 +10,7 @@
 .room-kernel-control__header strong { font-size: 15px; }
 .room-kernel-control__header small, .room-kernel-root small { color: var(--color-text-tertiary); font-size: 12px; }
 .room-kernel-control__header > .room-kernel-control__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.room-kernel-root__actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
 .room-kernel-control__actions > b { border-radius: var(--radius-round); padding: 3px 7px; font-size: 12px; }
 .room-kernel-control__actions > b[data-state='healthy'] { background: var(--color-success-soft); color: var(--color-success); }
 .room-kernel-control__actions > b[data-state='warning'] { background: var(--color-warning-soft); color: var(--color-warning); }
@@ -25,6 +26,7 @@
 .room-kernel-root__header i { border-radius: var(--radius-round); padding: 2px 6px; background: var(--color-surface-subtle); color: var(--color-text-secondary); font-size: 12px; font-style: normal; white-space: nowrap; }
 .room-kernel-root__header i[data-state='running'] { background: var(--color-accent-soft); color: var(--color-accent); }
 .room-kernel-root__header i[data-state='failed'] { background: var(--color-danger-soft); color: var(--color-danger); }
+.room-kernel-root__header i[data-state='blocked'] { background: var(--color-warning-soft); color: var(--color-warning); }
 .room-kernel-root__header i[data-state='cancelled_with_unknowns'] { background: var(--color-danger-soft); color: var(--color-danger); }
 .room-kernel-root__terminal { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; color: var(--color-success); font-size: 12px; font-weight: 700; }
 .room-kernel-root__terminal[data-state='failed'] { color: var(--color-danger); }

@@ -23,6 +23,7 @@ import {
   Select,
 } from '@/components/primitives';
 import type { AgentPersonaV1 } from '@/contracts/generated/agent-persona.v1';
+import type { RootProjection } from '@/contracts/room-kernel-reducer';
 import type { PickedFile } from '@/platform/transport';
 import type { RoomAttachmentReceipt } from '@/contracts/room-reducer';
 import { PersonaAvatar } from '@/features/agent/timeline/PersonaAvatar';
@@ -36,6 +37,10 @@ import { RoomQuestionDialog } from './RoomQuestionDialog';
 import { RoomPaneResizer } from './RoomPaneResizer';
 import { RoomComposer, roomMentionedParticipants } from './composer/RoomComposer';
 import { RoomKernelLivePanel } from './kernel/RoomKernelLivePanel';
+import {
+  buildRetryRootCommand,
+  createControlRoomKernelCommandTransport,
+} from './kernel/room-kernel-command-transport';
 import {
   roomCollaborationRoleDescription,
   roomCollaborationRoleLabel,
@@ -65,6 +70,7 @@ import type {
   RoomKind,
   RoomParticipant,
   RoomSummary,
+  RoomWorkItem,
   RoomWorkState,
 } from './room-types';
 import { RoomTurn } from './timeline/RoomTurn';
@@ -88,6 +94,21 @@ export type {
 } from './room-types';
 
 const emptyRoomTurnIds: string[] = [];
+const emptyKernelRoots: Record<string, RootProjection> = {};
+const ROOM_ROOT_TERMINAL_STATES: Record<string, true> = {
+  completed: true,
+  failed: true,
+  cancelled: true,
+};
+const ROOM_WORK_ITEM_STATES: Record<string, true> = {
+  queued: true,
+  active: true,
+  review: true,
+  blocked: true,
+  done: true,
+  failed: true,
+  cancelled: true,
+};
 const ROOM_IMAGE_MIME_TYPES: Record<string, true> = {
   'image/png': true,
   'image/jpeg': true,
@@ -186,12 +207,16 @@ export function RoomsFeature() {
   const [boundaryParticipant, setBoundaryParticipant] = useState<RoomParticipant>();
   const [abortingTurnIds, setAbortingTurnIds] = useState<Set<string>>(() => new Set());
   const [sendingRoomIds, setSendingRoomIds] = useState<Set<string>>(() => new Set());
+  const [retryingRootIds, setRetryingRootIds] = useState<Set<string>>(() => new Set());
   const [pendingQuestion, setPendingQuestion] = useState<PendingRoomQuestion>();
   const [questionOpen, setQuestionOpen] = useState(false);
   const visibleTurnOrder = useRoomLiveStore(useShallow((state) => {
     const projection = state.projections[selectedId];
     return projection ? selectPublicRoomTurnOrder(projection) : emptyRoomTurnIds;
   }));
+  const kernelRootsById = useRoomLiveStore((state) => (
+    state.kernelProjections[selectedId]?.rootsById ?? emptyKernelRoots
+  ));
   const pendingGroupedInput = useRoomLiveStore((state) => (
     latestPendingGroupedRoomInput(state.projections[selectedId])
   ));
@@ -465,6 +490,16 @@ export function RoomsFeature() {
     [room?.participants],
   );
   const activeWork = room?.workItems?.find((work) => ['blocked', 'review', 'active', 'queued'].includes(work.state));
+  const openKernelRoots = Object.values(kernelRootsById).filter(
+    (root) => !ROOM_ROOT_TERMINAL_STATES[root.state],
+  );
+  const managedTaskBusyState = room?.roomKind === 'roleplay'
+    ? undefined
+    : openKernelRoots.some((root) => root.state === 'blocked') || activeWork?.state === 'blocked'
+      ? 'blocked'
+      : openKernelRoots.length || activeWork
+        ? 'running'
+        : undefined;
   const roomSettingsChanged = Boolean(room && (
     settingsTitle.trim() !== room.title
     || settingsAvatar !== (room.avatar ?? (room.roomKind === 'roleplay' ? 'sparkles' : 'briefcase'))
@@ -497,6 +532,15 @@ export function RoomsFeature() {
     options: { preserveMessage?: boolean; includeComposerState?: boolean } = {},
   ): Promise<boolean> {
     if (!room || room.status !== 'active') return false;
+    if (managedTaskBusyState) {
+      setRoomError(
+        room.id,
+        managedTaskBusyState === 'blocked'
+          ? '当前任务已暂停；请先继续或停止这项任务。'
+          : '当前任务仍在执行；完成或停止后才能发送下一项任务。',
+      );
+      return false;
+    }
     const includeComposerState = options.includeComposerState !== false;
     const selectedAttachments = includeComposerState
       ? roomAttachmentsRef.current.get(room.id) ?? []
@@ -539,6 +583,18 @@ export function RoomsFeature() {
         },
       });
       useRoomLiveStore.getState().acceptMessage(room.id, response);
+      const workItem = record(response).workItem;
+      if (isRoomWorkItem(workItem) && workItem.roomId === room.id) {
+        setRooms((current) => current.map((item) => item.id === room.id
+          ? {
+              ...item,
+              workItems: [
+                ...(item.workItems ?? []).filter((candidate) => candidate.id !== workItem.id),
+                workItem,
+              ],
+            }
+          : item));
+      }
       return true;
     } catch (requestError) {
       useRoomLiveStore.getState().discardOptimistic(room.id, clientMessageId);
@@ -597,6 +653,36 @@ export function RoomsFeature() {
       setAbortingTurnIds((current) => {
         const next = new Set(current);
         next.delete(turnId);
+        return next;
+      });
+    }
+  }
+  async function retryBlockedRoot(rootId: string): Promise<void> {
+    if (!room || retryingRootIds.has(rootId)) return;
+    const root = kernelRootsById[rootId];
+    if (!root || root.state !== 'blocked') {
+      setRoomError(room.id, '这项任务已经更新，请查看最新进度。');
+      return;
+    }
+    setRetryingRootIds((current) => new Set(current).add(rootId));
+    setRoomError(room.id, '');
+    const commandId = `ui-retry:${rootId}:${root.generation}:${crypto.randomUUID()}`;
+    try {
+      const receipt = await createControlRoomKernelCommandTransport(transport).execute(
+        buildRetryRootCommand(
+          { roomId: room.id, rootId, generation: root.generation },
+          { commandId, sourceId: 'room-timeline', createdAtMs: Date.now() },
+        ),
+      );
+      if (receipt.receiptKind !== 'root_retried' || receipt.status !== 'applied') {
+        throw new Error('继续请求没有进入执行队列');
+      }
+    } catch (requestError) {
+      setRoomError(room.id, publicErrorText(requestError, '暂时无法继续这项任务，请稍后重试。'));
+    } finally {
+      setRetryingRootIds((current) => {
+        const next = new Set(current);
+        next.delete(rootId);
         return next;
       });
     }
@@ -1041,7 +1127,10 @@ export function RoomsFeature() {
               room={room}
               personas={personas}
               abortingTurnIds={abortingTurnIds}
+              kernelRootsById={kernelRootsById}
               onAbortTurn={(rootId) => void abortRootTurn(rootId)}
+              retryingRootIds={retryingRootIds}
+              onRetryRoot={(rootId) => void retryBlockedRoot(rootId)}
               retryingTurn={sendingRoomIds.has(room.id)}
               onRetryTurn={room.status === 'active'
                 ? (message) => void send(message, {
@@ -1064,6 +1153,7 @@ export function RoomsFeature() {
           draft={draft}
           attachments={attachments}
           sending={sendingRoomIds.has(room.id)}
+          taskBusyState={managedTaskBusyState}
           onDraftChange={(value) => {
             persistRoomDraft(room.id, value);
             if (roomErrorsRef.current.get(room.id)?.source === 'operation') setRoomError(room.id, '');
@@ -1095,7 +1185,7 @@ export function RoomsFeature() {
             <RoomKernelLivePanel
               participantLabels={participantLabels}
               roomId={room.id}
-              visible={workspaceView === 'execution'}
+              visible
             />
           ) : <p className="room-empty">请选择一个协作空间。</p>}
         </section>
@@ -1295,6 +1385,17 @@ function validateRoomImageFiles(files: File[], remaining: number): void {
 
 function roomItems(value: unknown): RoomSummary[] { const source = record(value); return (Array.isArray(source.items) ? source.items : Array.isArray(source.rooms) ? source.rooms : []).filter(isRoom); }
 function isRoom(value: unknown): value is RoomSummary { const item = record(value); return typeof item.id === 'string' && typeof item.title === 'string' && Array.isArray(item.participants); }
+function isRoomWorkItem(value: unknown): value is RoomWorkItem {
+  const item = record(value);
+  return typeof item.id === 'string'
+    && typeof item.roomId === 'string'
+    && typeof item.objective === 'string'
+    && typeof item.expectedOutput === 'string'
+    && typeof item.currentOwnerParticipantId === 'string'
+    && typeof item.acceptedTurnId === 'string'
+    && Array.isArray(item.acceptanceCriteria)
+    && ROOM_WORK_ITEM_STATES[String(item.state)] === true;
+}
 function sessionWorkspaceRoots(value: unknown): string[] {
   const source = record(value);
   const items = Array.isArray(source.items)

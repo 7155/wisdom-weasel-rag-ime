@@ -136,6 +136,9 @@ describe('Rooms experience', () => {
     expect(await screen.findByText('learnA · 已阻塞')).toBeInTheDocument();
     expect(screen.queryByText(/正在完成任务/)).not.toBeInTheDocument();
     expect(screen.getByText(/已阻塞 · 澄·初 · 核对失败证据/)).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '协作消息' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '先继续或停止当前任务' })).toBeDisabled();
+    expect(screen.getByText(/当前任务已暂停/)).toBeInTheDocument();
   });
 
   it('opens the latest structured wait question and sends the selected contract value exactly once', async () => {
@@ -1964,6 +1967,59 @@ describe('Rooms experience', () => {
     expect(onAbortTurn).toHaveBeenCalledWith('room-turn:root-a');
   });
 
+  it('offers explicit continue and stop actions when the authoritative Root is blocked', async () => {
+    const room = roomSummary('room-a', '阻塞恢复 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-a');
+    projection.turnsById['turn-a'] = {
+      id: 'turn-a',
+      rootId: 'room-root:blocked',
+      status: 'running',
+      messageIds: [],
+      activityIds: [],
+      participantIds: ['room-a:p1'],
+      createdAtMs: 1,
+      updatedAtMs: 2,
+    };
+    const root: RootProjection = {
+      schemaVersion: 'wisdom-weasel.room-root-execution.v3',
+      rootId: 'room-root:blocked',
+      roomId: room.id,
+      generation: 0,
+      state: 'blocked',
+      facilitatorParticipantId: 'room-a:p1',
+      reporterParticipantId: null,
+      reporterSelectionReceiptId: null,
+      requirementAnchorRef: 'requirement:block',
+      createdByActorRef: 'user:local',
+      terminalReceiptId: null,
+      activeProfileRef: null,
+      budgetPolicyRef: 'room-budget:interactive-v1',
+      createdAtMs: 1,
+      isFinal: false,
+      updatedAtMs: 2,
+    };
+    const onRetryRoot = vi.fn();
+    const onAbortTurn = vi.fn();
+    const user = userEvent.setup();
+
+    render(<RoomTurn
+      turnId="turn-a"
+      room={room}
+      projection={projection}
+      personas={previewPersonas}
+      kernelRootsById={{ [root.rootId]: root }}
+      onRetryRoot={onRetryRoot}
+      onAbortTurn={onAbortTurn}
+    />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('只重做失败的部分');
+    await user.click(screen.getByRole('button', { name: '继续任务' }));
+    await user.click(screen.getByRole('button', { name: '停止任务' }));
+    expect(onRetryRoot).toHaveBeenCalledWith(root.rootId);
+    expect(onAbortTurn).toHaveBeenCalledWith(root.rootId);
+  });
+
   it('shows replayed read arguments and bounded result behind a copyable row disclosure', async () => {
     const room = roomSummary('room-a', '工具回执 Room');
     const projection = createRoomProjection(room.id);
@@ -2108,6 +2164,82 @@ describe('Rooms experience', () => {
     expect(returned).not.toHaveTextContent('executionPerformed');
     expect(returned).not.toHaveTextContent('stateRevision');
     expect(returned).not.toHaveTextContent('evidenceRef');
+  });
+
+  it('puts governed reasoning and current progress in the main work card and chronological feed', () => {
+    const room = roomSummary('room-a', '公开进度 Room');
+    const projection = createRoomProjection(room.id);
+    projection.turnOrder.push('turn-progress');
+    projection.turnsById['turn-progress'] = {
+      id: 'turn-progress',
+      rootId: 'turn-progress',
+      status: 'running',
+      messageIds: [],
+      activityIds: ['reasoning-a', 'read-a', 'progress-a'],
+      participantIds: ['room-a:p1'],
+      dispatchIds: ['dispatch-progress'],
+      dispatchParticipantIds: { 'dispatch-progress': 'room-a:p1' },
+      createdAtMs: 1,
+      updatedAtMs: 4,
+    };
+    const base = {
+      turnId: 'turn-progress',
+      participantId: 'room-a:p1',
+      sourceSessionId: 'room-a:s1',
+      kind: 'participant_activity' as const,
+      createdAtMs: 1,
+    };
+    projection.activitiesById['reasoning-a'] = {
+      ...base,
+      id: 'reasoning-a',
+      status: 'running',
+      summary: '先确认调用链，再修改入口',
+      payload: {
+        rootId: 'turn-progress',
+        dispatchId: 'dispatch-progress',
+        sourceEventType: 'reasoning_summary',
+      },
+    };
+    projection.activitiesById['read-a'] = {
+      ...base,
+      id: 'read-a',
+      status: 'completed',
+      summary: '读取 src/runtime.ts',
+      payload: {
+        rootId: 'turn-progress',
+        dispatchId: 'dispatch-progress',
+        sourceEventType: 'tool_finished',
+        toolName: 'read',
+        toolCallId: 'read-call',
+        arguments: { path: '…/project/src/runtime.ts' },
+      },
+      createdAtMs: 2,
+    };
+    projection.activitiesById['progress-a'] = {
+      ...base,
+      id: 'progress-a',
+      status: 'running',
+      summary: '入口已修改，正在核对调用方',
+      payload: {
+        rootId: 'turn-progress',
+        dispatchId: 'dispatch-progress',
+        sourceEventType: 'current_progress',
+      },
+      createdAtMs: 3,
+    };
+
+    const { container } = render(
+      <RoomTurn turnId="turn-progress" room={room} projection={projection} personas={previewPersonas} />,
+    );
+    const work = container.querySelector('.room-agent-lane__work')!;
+    const rows = [...container.querySelectorAll('.room-agent-activity')];
+
+    expect(work).toHaveTextContent('入口已修改，正在核对调用方');
+    expect(work).toHaveTextContent('3 个步骤');
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent('先确认调用链，再修改入口');
+    expect(rows[1]).toHaveTextContent('runtime.ts');
+    expect(rows[2]).toHaveTextContent('入口已修改，正在核对调用方');
   });
 
   it('renders two separate same-name tool calls as two cards', () => {
@@ -2306,6 +2438,8 @@ describe('Rooms experience', () => {
 
     expect(view.container.querySelector('.room-turn')).toHaveAttribute('data-turn-status', 'running');
     expect(view.container.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'thinking');
+    expect(view.container.querySelector('.room-agent-lane__activity')).toHaveAttribute('open');
+    expect(view.container.querySelector('.room-agent-lane__work')).toHaveTextContent('已接手');
     projection.turnsById['turn-live'] = {
       ...projection.turnsById['turn-live'],
       status: 'completed',
@@ -2317,6 +2451,7 @@ describe('Rooms experience', () => {
 
     expect(view.container.querySelector('.room-turn__terminal')).toHaveAttribute('data-arriving', 'true');
     expect(view.container.querySelector('.agent-persona-avatar')).toHaveAttribute('data-presence', 'done');
+    expect(view.container.querySelector('.room-agent-lane__activity')).not.toHaveAttribute('open');
     view.unmount();
 
     const settled = render(roomTurn());

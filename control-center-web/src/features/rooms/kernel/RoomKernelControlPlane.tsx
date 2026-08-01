@@ -8,6 +8,7 @@ import {
   LockKeyhole,
   ListChecks,
   ShieldCheck,
+  RotateCcw,
   Square,
   TriangleAlert,
   UserRound,
@@ -26,6 +27,7 @@ import { ROOM_PUBLIC_PROGRESS_KIND_LABELS as PUBLIC_PROGRESS_KIND_LABELS, roomPa
 import {
   buildCancelRootCommand,
   buildPanicCommand,
+  buildRetryRootCommand,
   type RoomKernelCommandTransport,
 } from './room-kernel-command-transport';
 import './room-kernel-control-plane.css';
@@ -107,7 +109,7 @@ export function RoomKernelControlPlane({
         { commandId, sourceId: 'room-kernel-control-plane', createdAtMs: Date.now() },
       )));
     } catch (error) {
-      setPanicError(roomCommandError(error));
+      setPanicError(roomCommandError(error, 'stop'));
     } finally {
       setPanicPending(false);
     }
@@ -157,7 +159,7 @@ export function RoomKernelControlPlane({
     </section>
     <div className="room-kernel-control__roots">
       {roots.map((root) => <RootControlSection
-        key={`${root.rootId}:${root.generation}`}
+        key={`${root.rootId}:${root.generation}:${root.state}`}
         root={root}
         projection={projection}
         budget={budgetsByRootId[root.rootId]}
@@ -250,7 +252,25 @@ function RootControlSection({
       ));
       setCommandReceipt(nextReceipt);
     } catch (error) {
-      setCommandError(roomCommandError(error));
+      setCommandError(roomCommandError(error, 'stop'));
+    } finally {
+      setPending(false);
+    }
+  };
+  const requestRetry = async () => {
+    if (!commandTransport || pending || root.state !== 'blocked') return;
+    setPending(true);
+    setCommandReceipt(null);
+    setCommandError('');
+    const commandId = `ui-retry:${root.rootId}:${root.generation}:${Date.now()}`;
+    try {
+      const nextReceipt = await commandTransport.execute(buildRetryRootCommand(
+        { roomId: projection.roomId, rootId: root.rootId, generation: root.generation },
+        { commandId, sourceId: 'room-kernel-control-plane', createdAtMs: Date.now() },
+      ));
+      setCommandReceipt(nextReceipt);
+    } catch (error) {
+      setCommandError(roomCommandError(error, 'retry'));
     } finally {
       setPending(false);
     }
@@ -259,7 +279,10 @@ function RootControlSection({
   return <article className="room-kernel-root" data-root-state={root.state}>
     <header className="room-kernel-root__header">
       <span><small>任务 · 第 {root.generation} 次尝试</small><strong>{taskTitle}</strong><i data-state={root.state}>{rootStateLabel(root, receipt)}</i></span>
-      {!terminal || root.state === 'cancelled_with_unknowns' ? <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? commandAwaitingProjection ? '正在等待停止结果' : '停止这个任务及其伙伴、工具和后续任务' : commandDisabledReason || '当前连接没有停止任务的权限'} onClick={() => void requestStop()}>{pending ? '正在停止' : commandAwaitingProjection ? '已请求停止' : root.state === 'cancelled_with_unknowns' ? '再次确认停止' : '停止此任务'}</Button> : <span className="room-kernel-root__terminal" data-state={root.state}>{root.state === 'completed' ? <CircleCheck size={15} /> : root.state === 'failed' ? <TriangleAlert size={15} /> : <Square size={15} />}{terminalRootLabel(root)}</span>}
+      {!terminal || root.state === 'cancelled_with_unknowns' ? <span className="room-kernel-root__actions">
+        {root.state === 'blocked' ? <Button variant="secondary" size="small" leadingIcon={<RotateCcw size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? '重新分派失败的部分，保留已经完成的工作' : commandDisabledReason || '当前连接没有继续任务的权限'} onClick={() => void requestRetry()}>{pending ? '正在继续' : commandAwaitingProjection ? '已请求继续' : '继续此任务'}</Button> : null}
+        <Button variant="quiet" size="small" leadingIcon={<Square size={13} />} disabled={!commandTransport || pending || commandAwaitingProjection} title={commandTransport ? commandAwaitingProjection ? '正在等待任务控制结果' : '停止这个任务及其伙伴、工具和后续任务' : commandDisabledReason || '当前连接没有停止任务的权限'} onClick={() => void requestStop()}>{pending ? '正在处理' : commandAwaitingProjection ? '已发送请求' : root.state === 'cancelled_with_unknowns' ? '再次确认停止' : '停止此任务'}</Button>
+      </span> : <span className="room-kernel-root__terminal" data-state={root.state}>{root.state === 'completed' ? <CircleCheck size={15} /> : root.state === 'failed' ? <TriangleAlert size={15} /> : <Square size={15} />}{terminalRootLabel(root)}</span>}
     </header>
     {unresolvedSurfaces.length ? <section className="room-kernel-root__unresolved" role="alert">
       <TriangleAlert size={16} />
@@ -313,7 +336,7 @@ function RootControlSection({
       <ReceiptSummary icon={<Wrench size={14} />} label="技能与工具" receipt={capabilityReceipt} />
       <span><CircleCheck size={14} /><small>任务验收</small><strong>{receipt ? qualityGateLabel(receipt) : '等待伙伴和工具结束'}</strong></span>
       <span><ShieldCheck size={14} /><small>额外交付检查</small><strong>{receipt ? deliveryGateLabel(receipt) : '等待任务结束'}</strong></span>
-      <span data-receipt-state={commandReceipt?.status ?? cancelReceipt?.status}><Square size={14} /><small>停止状态</small><strong>{commandReceipt ? receiptStatusLabel(commandReceipt) : cancelReceipt ? receiptStatusLabel(cancelReceipt) : commandTransport ? '尚未请求' : '当前连接没有停止权限'}</strong></span>
+      <span data-receipt-state={commandReceipt?.status ?? cancelReceipt?.status}><Square size={14} /><small>任务控制</small><strong>{commandReceipt ? receiptStatusLabel(commandReceipt) : cancelReceipt ? receiptStatusLabel(cancelReceipt) : commandTransport ? '尚未操作' : '当前连接没有停止权限'}</strong></span>
     </section>
     <TaskOwnershipFlow
       participantLabels={participantLabels}
@@ -777,16 +800,31 @@ function cancellationSurfaceStateLabel(value: string): string {
   } as Record<string, string>)[value] ?? '仍在核对';
 }
 
-function roomCommandError(error: unknown): string {
+function roomCommandError(error: unknown, action: 'retry' | 'stop'): string {
   const message = error instanceof Error ? error.message.trim() : '';
   if (/\b(?:kernel|root|receipt|generation|command)\b/iu.test(message)) {
-    return '停止结果与当前任务状态不一致，请刷新任务进度后重试';
+    return action === 'stop'
+      ? '停止结果与当前任务状态不一致，请刷新任务进度后重试'
+      : '继续结果与当前任务状态不一致，请刷新任务进度后重试';
   }
-  return message || '停止请求没有收到确认，请稍后重试';
+  return message || (
+    action === 'stop'
+      ? '停止请求没有收到确认，请稍后重试'
+      : '继续请求没有收到确认，请稍后重试'
+  );
 }
 
 
 function receiptStatusLabel(receipt: RoomKernelReceiptV1): string {
+  if (receipt.receiptKind === 'root_retried') {
+    return receipt.status === 'applied'
+      ? '继续请求已接受'
+      : receipt.status === 'noop'
+        ? '任务已经在继续'
+        : receipt.status === 'rejected'
+          ? '继续请求被拒绝'
+          : '仍在确认继续状态';
+  }
   return ({
     applied: '停止请求已接受',
     noop: '已经停止，无需重复操作',

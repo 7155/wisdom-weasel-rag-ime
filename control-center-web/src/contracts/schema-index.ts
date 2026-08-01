@@ -17020,6 +17020,7 @@ export const contractSchemas = {
           "settle",
           "cancel_target",
           "cancel_root",
+          "retry_root",
           "panic",
           "reconcile"
         ]
@@ -17111,6 +17112,7 @@ export const contractSchemas = {
           "rejected",
           "target_cancelled",
           "root_cancelled",
+          "root_retried",
           "panic",
           "runtime_accepted",
           "runtime_failed",

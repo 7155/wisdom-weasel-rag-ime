@@ -2698,12 +2698,14 @@ class RoomKernelStore:
             return self._panic(conn, room_id=room_id, command_id=None, now_ms=now_ms)
 
     def apply_control_command(self, command: Mapping[str, object]) -> dict[str, object]:
-        """Apply typed cancellation controls through the single Kernel command path."""
+        """Apply typed operator controls through the single Kernel command path."""
 
         validate_kernel_contract("kernelCommand", command)
         kind = str(command["commandKind"])
-        if kind not in {"cancel_target", "cancel_root", "panic"}:
-            raise ValueError("control command must be cancel_target, cancel_root, or panic")
+        if kind not in {"cancel_target", "cancel_root", "retry_root", "panic"}:
+            raise ValueError(
+                "control command must be cancel_target, cancel_root, retry_root, or panic"
+            )
         if self.mode == "off":
             raise RoomKernelFenceError("Room Kernel feature flag is off")
         with self._connect(immediate=True) as conn:
@@ -2727,10 +2729,10 @@ class RoomKernelStore:
                     raise RoomKernelFenceError("control command Room does not match Root")
                 if int(command["generation"]) != int(root["generation"]):
                     raise RoomKernelFenceError("control command generation is stale")
-                if kind == "cancel_root" and (
+                if kind in {"cancel_root", "retry_root"} and (
                     command.get("targetKind") != "root" or command.get("targetId") != root_id
                 ):
-                    raise RoomKernelFenceError("cancel_root target does not match Root")
+                    raise RoomKernelFenceError(f"{kind} target does not match Root")
                 if kind == "cancel_target" and command.get("targetKind") not in {"task", "dispatch"}:
                     raise RoomKernelFenceError("cancel_target requires a task or dispatch target")
             conn.execute(
@@ -2744,7 +2746,115 @@ class RoomKernelStore:
             root_id = _required(command.get("rootId"), "rootId")
             if kind == "cancel_root":
                 return self._cancel_root(conn, root_id, command_id=str(command["commandId"]), now_ms=int(command["createdAtMs"]), receipt_kind="root_cancelled")
+            if kind == "retry_root":
+                return self._retry_blocked_root(
+                    conn,
+                    root_id=root_id,
+                    command_id=str(command["commandId"]),
+                    now_ms=int(command["createdAtMs"]),
+                )
             return self._cancel_target(conn, root_id=root_id, target_kind=str(command["targetKind"]), target_id=_required(command.get("targetId"), "targetId"), command_id=str(command["commandId"]), now_ms=int(command["createdAtMs"]))
+
+    def _retry_blocked_root(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        root_id: str,
+        command_id: str,
+        now_ms: int,
+    ) -> dict[str, object]:
+        root = self._root_row(conn, root_id)
+        if str(root["state"]) != "blocked":
+            raise RoomKernelFenceError("only a blocked Root can be continued")
+        rows = conn.execute(
+            """SELECT dispatch.*
+               FROM room_kernel_dispatches dispatch
+               JOIN room_kernel_tasks task ON task.task_id=dispatch.task_id
+               WHERE dispatch.root_id=? AND dispatch.state='failed'
+                 AND task.state='blocked'
+               ORDER BY dispatch.updated_at_ms DESC,dispatch.created_at_ms DESC""",
+            (root_id,),
+        ).fetchall()
+        selected: list[sqlite3.Row] = []
+        task_ids: set[str] = set()
+        for row in rows:
+            task_id = str(row["task_id"])
+            if task_id in task_ids:
+                continue
+            task_ids.add(task_id)
+            selected.append(row)
+        if not selected:
+            raise RoomKernelFenceError(
+                "blocked Root has no failed Dispatch that can be continued"
+            )
+        limits = conn.execute(
+            """SELECT retry_limit,retry_used,deadline_at_ms
+               FROM room_kernel_root_limits WHERE root_id=?""",
+            (root_id,),
+        ).fetchone()
+        if limits is None:
+            raise RoomKernelFenceError("Root resource limits are missing")
+        if int(now_ms) >= int(limits["deadline_at_ms"]):
+            raise RoomKernelFenceError("Root wall-clock deadline exceeded")
+        if int(limits["retry_used"]) + len(selected) > int(limits["retry_limit"]):
+            raise RoomKernelFenceError("Root retry limit exhausted")
+
+        conn.execute(
+            "UPDATE room_kernel_roots SET state='running',updated_at_ms=? WHERE root_id=?",
+            (int(now_ms), root_id),
+        )
+        retried_dispatch_ids: list[str] = []
+        for failed in selected:
+            task_id = str(failed["task_id"])
+            conn.execute(
+                "UPDATE room_kernel_tasks SET state='active',updated_at_ms=? WHERE task_id=?",
+                (int(now_ms), task_id),
+            )
+            payload = json.loads(str(failed["payload_json"]))
+            dispatch_id = _stable_id(
+                "room-dispatch-retry",
+                command_id,
+                str(failed["dispatch_id"]),
+            )
+            payload.update(
+                {
+                    "dispatchId": dispatch_id,
+                    "idempotencyKey": _stable_id(
+                        "room-dispatch-retry-key",
+                        command_id,
+                        str(failed["dispatch_id"]),
+                    ),
+                    "triggerId": command_id,
+                    "attempt": int(payload.get("attempt") or 0) + 1,
+                    "capabilityEpoch": int(payload.get("capabilityEpoch") or 0) + 1,
+                }
+            )
+            validate_kernel_contract("dispatchEnvelope", payload)
+            self._enqueue_dispatch(
+                conn,
+                payload,
+                shadow_only=self.mode not in {"cohort", "test", "kernel_only"},
+                now_ms=now_ms,
+            )
+            retried_dispatch_ids.append(dispatch_id)
+        conn.execute(
+            """UPDATE room_kernel_root_limits
+               SET retry_used=retry_used+?,updated_at_ms=? WHERE root_id=?""",
+            (len(retried_dispatch_ids), int(now_ms), root_id),
+        )
+        return self._receipt(
+            conn,
+            root_id=root_id,
+            command_id=command_id,
+            receipt_kind="root_retried",
+            status="applied",
+            generation=int(root["generation"]),
+            details={
+                "retriedDispatchIds": retried_dispatch_ids,
+                "retriedTaskIds": sorted(task_ids),
+            },
+            now_ms=now_ms,
+        )
 
     def _cancel_target(self, conn: sqlite3.Connection, *, root_id: str, target_kind: str, target_id: str, command_id: str | None, now_ms: int) -> dict[str, object]:
         if target_kind not in {"task", "dispatch"}:
