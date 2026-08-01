@@ -1,7 +1,8 @@
-import { cleanup, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { roomEventFixture } from '@/test/fixtures/events';
 import { MockControlTransport } from '@/test/mock-transport';
+import type { ControlEventObserver, ControlSubscription } from '@/platform/transport';
 import { roomProjection, useRoomLiveStore } from '../state/live-store';
 import { useRoomLiveSession } from './use-room-live-session';
 
@@ -49,7 +50,64 @@ describe('useRoomLiveSession snapshot recovery', () => {
     expect(onSnapshot).not.toHaveBeenCalled();
     unmount();
   });
+
+  it('clears a transient stream error only after the reconnect opens', async () => {
+    const onConnectionRestored = vi.fn();
+    const onConnectionError = vi.fn();
+    const onRecoveryState = vi.fn();
+    const transport = new ReconnectableMockControlTransport({
+      routes: {
+        'agent.room.snapshot': roomSnapshot([]),
+      },
+    });
+
+    const { unmount } = renderHook(() => useRoomLiveSession({
+      roomId: 'room-1',
+      transport,
+      onLoadingChange: vi.fn(),
+      onSnapshot: vi.fn(),
+      onMetadata: vi.fn(),
+      onConnectionRestored,
+      onConnectionError,
+      onRecoveryState,
+      onEvents: vi.fn(),
+    }));
+
+    await waitFor(() => expect(onConnectionRestored).toHaveBeenCalledTimes(1));
+    expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'synced');
+
+    act(() => transport.disconnect(new Error('stream interrupted')));
+    expect(onConnectionError).toHaveBeenCalledTimes(1);
+    expect(onConnectionRestored).toHaveBeenCalledTimes(1);
+
+    act(() => transport.reopen('room-1:0'));
+    expect(onConnectionRestored).toHaveBeenCalledTimes(2);
+    expect(onRecoveryState).toHaveBeenLastCalledWith('room-1', 'synced');
+    unmount();
+  });
 });
+
+class ReconnectableMockControlTransport extends MockControlTransport {
+  private roomObserver: ControlEventObserver<unknown> | undefined;
+
+  override subscribe<Event = unknown>(
+    request: ControlSubscription,
+    observer: ControlEventObserver<Event>,
+  ): () => void {
+    this.roomObserver = observer as ControlEventObserver<unknown>;
+    return super.subscribe(request, observer);
+  }
+
+  disconnect(error: Error): void {
+    this.roomObserver?.error?.(error);
+  }
+
+  reopen(lastEventId: string): void {
+    this.roomObserver?.open?.(lastEventId);
+  }
+}
+
+
 
 function roomSnapshot(events: ReturnType<typeof roomEventFixture>[]) {
   const lastSequence = events.at(-1)?.sequence ?? 0;

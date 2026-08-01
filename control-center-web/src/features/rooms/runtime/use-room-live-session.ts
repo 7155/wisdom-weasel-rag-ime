@@ -136,6 +136,11 @@ export function useRoomLiveSession({
             lastEventId: resumeToken,
           },
           {
+            open: () => {
+              if (!active || subscriptionGeneration !== generation) return;
+              callbacksRef.current.onRecoveryState(roomId, 'synced');
+              callbacksRef.current.onConnectionRestored(roomId);
+            },
             next: (event) => {
               if (!active || subscriptionGeneration !== generation) return;
               batcher.push(event);
@@ -167,8 +172,8 @@ export function useRoomLiveSession({
             },
           },
         );
-        callbacksRef.current.onRecoveryState(roomId, 'synced');
-        callbacksRef.current.onConnectionRestored(roomId);
+        // Connection state is cleared by the stream's open callback, not merely
+        // because subscription setup returned.
       } catch (error) {
         if (
           active
