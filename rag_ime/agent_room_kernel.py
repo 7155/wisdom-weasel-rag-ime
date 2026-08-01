@@ -3484,7 +3484,7 @@ class RoomKernelStore:
         self,
         root_id: str,
     ) -> list[dict[str, object]]:
-        """Project the first peer-parallel wave and its public-result state."""
+        """Project the direct wave plus proven first-level peer work."""
 
         normalized_root_id = str(root_id or "").strip()
         if not normalized_root_id:
@@ -3497,16 +3497,33 @@ class RoomKernelStore:
                 (normalized_root_id,),
             ).fetchall()
             initial: list[dict[str, object]] = []
+            seen = set()
             for row in rows[:32]:
                 dispatch = _dispatch_payload(row)
+                dispatch_id = str(dispatch["dispatchId"])
                 dispatch["resultPublic"] = (
                     str(row["state"]) == "committed"
                     and self._dispatch_result_is_public(
                         conn,
-                        str(row["dispatch_id"]),
+                        dispatch_id,
                     )
                 )
                 initial.append(dispatch)
+                seen.add(dispatch_id)
+        if len(initial) >= 32:
+            return initial
+        for child in self.collaboration_children(normalized_root_id):
+            dispatch_id = str(child["dispatchId"])
+            if (
+                dispatch_id in seen
+                or child.get("intentKind") != "execute"
+                or int(child.get("depth") or 0) != 1
+            ):
+                continue
+            initial.append(child)
+            seen.add(dispatch_id)
+            if len(initial) >= 32:
+                break
         return initial
 
     def record_runtime_failure(

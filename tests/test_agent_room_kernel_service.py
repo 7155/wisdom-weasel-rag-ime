@@ -644,6 +644,25 @@ class RoomKernelServiceTests(unittest.TestCase):
                 for child in receipt_children
             )
         )
+        initial_peer_dispatches = (
+            self.service.room_kernel.initial_peer_dispatches(
+                str(accepted["rootId"])
+            )
+        )
+        self.assertEqual(
+            {
+                child["targetParticipantId"]
+                for child in initial_peer_dispatches
+                if child["targetParticipantId"] != moderator_id
+            },
+            {
+                participant["id"]
+                for participant in self.service.rooms.get(
+                    self.room_id
+                )["participants"]
+                if participant["id"] != moderator_id
+            },
+        )
         with self.assertRaisesRegex(
             RoomCommitProposalError,
             "公开结果尚未到齐",
