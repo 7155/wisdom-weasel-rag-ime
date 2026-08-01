@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useControlTransport } from '@/app/control-transport';
 import { Button, IconButton, Input, TextArea } from '@/components/primitives';
 import type { AgentPlanProjection } from '@/contracts/agent-reducer';
@@ -39,12 +39,14 @@ export function AgentWorkflowPanel({
   fallbackGoal,
   fallbackActGate,
   currentTurnStartedAtMs,
+  onWorkflowResolved,
 }: {
   sessionId: string;
   fallbackPlan?: AgentPlanProjection;
   fallbackGoal?: Goal;
   fallbackActGate?: ActGate;
   currentTurnStartedAtMs?: number;
+  onWorkflowResolved?: (workflow: AgentWorkflowStateV1) => void;
 }) {
   const transport = useControlTransport();
   const queryClient = useQueryClient();
@@ -62,20 +64,37 @@ export function AgentWorkflowPanel({
     retry: false,
     staleTime: 1_000,
   });
-  const liveWorkflow = fallbackWorkflow(
-    sessionId,
-    fallbackPlan,
-    fallbackGoal,
+  const hasLivePlan = Boolean(fallbackPlan);
+  const hasLiveGoal = Boolean(fallbackGoal);
+  const hasLiveActGate = Boolean(fallbackActGate);
+  const hasLiveWorkflow = hasLivePlan || hasLiveGoal || hasLiveActGate;
+  const workflow = useMemo(() => {
+    const liveWorkflow = fallbackWorkflow(
+      sessionId,
+      fallbackPlan,
+      fallbackGoal,
+      fallbackActGate,
+    );
+    return mergeWorkflowState(
+      workflowQuery.data,
+      liveWorkflow,
+      hasLivePlan,
+      hasLiveGoal,
+      hasLiveActGate,
+    );
+  }, [
     fallbackActGate,
-  );
-  const hasLiveWorkflow = Boolean(fallbackPlan || fallbackGoal || fallbackActGate);
-  const workflow = mergeWorkflowState(
+    fallbackGoal,
+    fallbackPlan,
+    hasLiveActGate,
+    hasLiveGoal,
+    hasLivePlan,
+    sessionId,
     workflowQuery.data,
-    liveWorkflow,
-    Boolean(fallbackPlan),
-    Boolean(fallbackGoal),
-    Boolean(fallbackActGate),
-  );
+  ]);
+  useEffect(() => {
+    onWorkflowResolved?.(workflow);
+  }, [onWorkflowResolved, workflow]);
   const mutation = useMutation({
     mutationFn: async ({ sessionId: ownerSessionId, target, body }: MutationInput) => {
       const next = await transport.request<AgentWorkflowStateV1>({
@@ -226,7 +245,7 @@ function PlanReview({
 
   const canSubmit = title.trim().length > 0 && items.length > 0
     && items.every((item) => item.title.trim().length > 0);
-  const canAcceptCompletion = ['approved', 'executing'].includes(plan.status)
+  const canAcceptCompletion = !['completed', 'cancelled'].includes(plan.status)
     && plan.items.length > 0
     && plan.items.every((item) => item.status === 'completed');
   const runMutation = (
@@ -362,13 +381,13 @@ function PlanReview({
             </div>
           ) : (
             <div className="agent-workflow-actions">
-              {plan.status === 'review' ? (
+              {plan.status === 'review' && !canAcceptCompletion ? (
                 <>
                   <Button size="small" variant="quiet" leadingIcon={<RotateCcw size={15} />} disabled={pending} onClick={() => setReturning(true)}>退回修改</Button>
                   <Button size="small" variant="primary" leadingIcon={<ShieldCheck size={15} />} loading={pending} onClick={() => runMutation({ action: 'approve', expectedRevision: plan.revision })}>批准计划</Button>
                 </>
               ) : null}
-              {plan.status === 'approved' ? (
+              {plan.status === 'approved' && !canAcceptCompletion ? (
                 <Button size="small" variant="quiet" leadingIcon={<RotateCcw size={15} />} disabled={pending} onClick={() => setReturning(true)}>退回修改</Button>
               ) : null}
               {plan.status === 'approved' && !canAcceptCompletion ? (

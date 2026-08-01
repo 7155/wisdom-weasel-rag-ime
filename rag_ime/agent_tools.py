@@ -352,6 +352,30 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
         "resultPresentation": "tool_result",
     },
     {
+        "id": "agent_goal",
+        "domain": "planning",
+        "displayName": "长期目标",
+        "description": "在用户明确确认后配置并维护当前 Session 的长期 Goal、验收标准、预算与完成证据",
+        "when": ("用户明确要求建立、更新、暂停、恢复、完成或取消当前 Session 的长期 Goal",),
+        "notFor": (
+            "用 Goal 代替普通执行清单",
+            "用户尚未确认目标内容时擅自配置，或删除既有 Goal 审计记录",
+        ),
+        "input": "Goal 生命周期动作、目标、验收标准、证据预期、可选预算及完成证据",
+        "output": "权威 Goal 状态、预算、完成或取消审计与工作流投影",
+        "does": "调用 Session Goal 的唯一状态所有者；配置前要求显式确认，完成时要求可核验的证据。",
+        "operations": (
+            "list",
+            "confirm_setup",
+            "update",
+            "pause",
+            "resume",
+            "complete",
+            "cancel",
+        ),
+        "resultPresentation": "tool_result",
+    },
+    {
         "id": "plugins",
         "domain": "agents",
         "displayName": "插件制作与安装",
@@ -426,7 +450,6 @@ _TOOL_SPECS: tuple[dict[str, object], ...] = (
     },
     {
         "id": "workspace_lsp",
-        "modelVisible": False,
         "domain": "workspace",
         "displayName": "工作区语言服务",
         "description": "在授权工作区内以受限语言服务器读取语义信息，并通过哈希绑定批准应用重命名或纯编辑代码操作",
@@ -754,6 +777,128 @@ _RUNTIME_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, object]] = {
                 }
                 for operation in ("submit_review", "complete", "cancel")
             ],
+        ],
+    },
+    "agent_goal": {
+        "type": "object",
+        "oneOf": [
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "properties": {"op": {"const": "list"}},
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "confirmed", "objective"],
+                "properties": {
+                    "op": {"const": "confirm_setup"},
+                    "confirmed": {"const": True},
+                    "objective": {"type": "string", "minLength": 1, "maxLength": 4_000},
+                    "successCriteria": {"type": "string", "maxLength": 2_000},
+                    "evidenceExpectations": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 600},
+                    },
+                    "tokenBudget": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "maximum": 100_000_000,
+                    },
+                    "timeBudgetMs": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "maximum": 31_536_000_000,
+                    },
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op"],
+                "anyOf": [
+                    {"required": ["objective"]},
+                    {"required": ["successCriteria"]},
+                    {"required": ["evidenceExpectations"]},
+                    {"required": ["tokenBudget"]},
+                    {"required": ["timeBudgetMs"]},
+                ],
+                "properties": {
+                    "op": {"const": "update"},
+                    "objective": {"type": "string", "minLength": 1, "maxLength": 4_000},
+                    "successCriteria": {"type": "string", "maxLength": 2_000},
+                    "evidenceExpectations": {
+                        "type": "array",
+                        "maxItems": 20,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 600},
+                    },
+                    "tokenBudget": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "maximum": 100_000_000,
+                    },
+                    "timeBudgetMs": {
+                        "type": ["integer", "null"],
+                        "minimum": 1,
+                        "maximum": 31_536_000_000,
+                    },
+                },
+            },
+            *[
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["op"],
+                    "properties": {"op": {"const": operation}},
+                }
+                for operation in ("pause", "resume")
+            ],
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "summary", "evidence"],
+                "properties": {
+                    "op": {"const": "complete"},
+                    "summary": {"type": "string", "minLength": 1, "maxLength": 2_000},
+                    "evidence": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["kind", "summary", "reference"],
+                            "properties": {
+                                "kind": {
+                                    "type": "string",
+                                    "enum": ["test", "artifact", "commit", "receipt", "note"],
+                                },
+                                "summary": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 600,
+                                },
+                                "reference": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 1_000,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["op", "reason"],
+                "properties": {
+                    "op": {"const": "cancel"},
+                    "reason": {"type": "string", "minLength": 1, "maxLength": 1_000},
+                },
+            },
         ],
     },
     "work_documents": {
@@ -1886,6 +2031,7 @@ class ControlToolGateway:
             "agents": self._agents,
             "browser": self._browser,
             "agent_plan": self._agent_plan,
+            "agent_goal": self._agent_goal,
             "plugins": self._plugins,
             "work_documents": self._work_documents,
         }
@@ -1955,6 +2101,7 @@ class ControlToolGateway:
                 room_invocation_receipt_id=(
                     _room_invocation_receipt_id(room_authorization)
                 ),
+                room_root_id=_room_invocation_root_id(room_authorization),
             )
             if strategy in {APPROVAL_AUTO, APPROVAL_MODEL}:
                 approval = result.get("approval") if isinstance(result.get("approval"), Mapping) else None
@@ -2206,9 +2353,15 @@ class ControlToolGateway:
         tool: str,
         operation: str,
         invocation_receipt_id: str,
+        root_id: str,
     ) -> dict[str, object]:
         if not invocation_receipt_id:
             return dict(prepared)
+        room_root_id = _bounded_text(root_id, maximum=240)
+        if not room_root_id:
+            raise ValueError(
+                "Room product Tool authorization has no root id"
+            )
         approval = prepared.get("approval")
         if not isinstance(approval, Mapping):
             raise ValueError(
@@ -2254,6 +2407,7 @@ class ControlToolGateway:
             ),
             payload_sha256=payload_sha256,
             preview=rebound_preview,
+            causal_turn_id=room_root_id,
         )
         return {
             **prepared,
@@ -2481,6 +2635,76 @@ class ControlToolGateway:
                 ),
             }
         raise ValueError("unsupported agent_plan operation")
+
+    def _agent_goal(self, operation: str, args: Mapping[str, object]) -> dict[str, object]:
+        session_id = _bounded_text(args.get("_sessionId"), maximum=240)
+        if not session_id:
+            raise ValueError("agent goal session is missing")
+        current = self.sessions.agent_goal(session_id)
+        if operation == "list":
+            configured = current.get("configured") is True
+            return {
+                "summary": (
+                    f"当前长期目标状态为 {current.get('status', '')}"
+                    if configured
+                    else "当前 Session 尚未配置长期目标"
+                ),
+                "presentationKind": "goal",
+                "goal": current,
+            }
+        if operation not in {
+            "confirm_setup",
+            "update",
+            "pause",
+            "resume",
+            "complete",
+            "cancel",
+        }:
+            raise ValueError("unsupported agent_goal operation")
+        payload: dict[str, object] = {
+            "action": operation,
+            "expectedRevision": _safe_int(current.get("revision")),
+        }
+        for field in (
+            "confirmed",
+            "objective",
+            "successCriteria",
+            "evidenceExpectations",
+            "tokenBudget",
+            "timeBudgetMs",
+            "summary",
+            "evidence",
+            "reason",
+        ):
+            if field in args:
+                payload[field] = args[field]
+        result = self.sessions.mutate_agent_goal(
+            session_id,
+            payload,
+            actor="agent-runtime",
+        )
+        workflow = (
+            result["workflow"]
+            if isinstance(result.get("workflow"), Mapping)
+            else {}
+        )
+        goal = workflow["goal"] if isinstance(workflow.get("goal"), Mapping) else {}
+        self._publish_workflow(session_id, f"goal:{operation}")
+        summary = {
+            "confirm_setup": "长期目标已确认并开始执行",
+            "update": "长期目标已更新",
+            "pause": "长期目标已暂停",
+            "resume": "长期目标已恢复",
+            "complete": "长期目标已完成并记录证据",
+            "cancel": "长期目标已取消并保留审计记录",
+        }[operation]
+        return {
+            "summary": summary,
+            "presentationKind": "goal",
+            "event": result.get("event"),
+            "goal": goal,
+            "workflow": workflow,
+        }
 
     def _work_documents(
         self,
@@ -2940,6 +3164,7 @@ class ControlToolGateway:
         args: Mapping[str, object],
         risk_level: str,
         room_invocation_receipt_id: str = "",
+        room_root_id: str = "",
     ) -> dict[str, object]:
         prepared = self._prepare_approval_operation(
             session_id=session_id,
@@ -2954,6 +3179,7 @@ class ControlToolGateway:
             tool=tool,
             operation=operation,
             invocation_receipt_id=room_invocation_receipt_id,
+            root_id=room_root_id,
         )
 
     def _prepare_approval_operation(
@@ -7531,6 +7757,20 @@ def _room_invocation_receipt_id(
     return _bounded_text(invocation.get("receiptId"), maximum=240)
 
 
+def _room_invocation_root_id(
+    authorization: Mapping[str, object] | None,
+) -> str:
+    if not isinstance(authorization, Mapping):
+        return ""
+    invocation = authorization.get("invocationReceipt")
+    if not isinstance(invocation, Mapping):
+        return ""
+    command = invocation.get("canonicalCommand")
+    if not isinstance(command, Mapping):
+        return ""
+    return _bounded_text(command.get("rootId"), maximum=240)
+
+
 def _auto_approved_room_execution_receipt(
     response: Mapping[str, object],
 ) -> dict[str, object] | None:
@@ -7751,6 +7991,7 @@ def _tool_profile_allows(
         ),
         "agent_schedule": frozenset({"list", "runs"}),
         "agent_plan": frozenset({"list"}),
+        "agent_goal": frozenset({"list"}),
         "work_documents": frozenset({"list", "history.search", "get"}),
         "workspace_list": frozenset({"list"}),
         "workspace_read": frozenset({"read"}),

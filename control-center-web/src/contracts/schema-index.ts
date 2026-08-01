@@ -7212,6 +7212,7 @@ export const contractSchemas = {
           "agents",
           "browser",
           "agent_plan",
+          "agent_goal",
           "plugins",
           "work_documents",
           "desktop_semantic",
@@ -7339,6 +7340,7 @@ export const contractSchemas = {
           "agents",
           "browser",
           "agent_plan",
+          "agent_goal",
           "desktop_semantic",
           "plugins",
           "work_documents",
@@ -7417,6 +7419,7 @@ export const contractSchemas = {
           "act",
           "update",
           "submit_review",
+          "confirm_setup",
           "complete",
           "create_draft",
           "validate",
@@ -20268,7 +20271,8 @@ export const contractSchemas = {
     "type": "object",
     "required": [
       "schemaVersion",
-      "document"
+      "document",
+      "reopen"
     ],
     "properties": {
       "schemaVersion": {
@@ -20277,6 +20281,39 @@ export const contractSchemas = {
       },
       "document": {
         "$ref": "#/$defs/document"
+      },
+      "reopen": {
+        "type": "object",
+        "required": [
+          "eligible",
+          "authorityRevision",
+          "transitionReceiptId",
+          "reasonCode"
+        ],
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "authorityRevision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "transitionReceiptId": {
+            "type": "string",
+            "maxLength": 240
+          },
+          "reasonCode": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "document_not_archived",
+              "authority_terminal",
+              "authority_not_advanced",
+              "authority_unavailable"
+            ]
+          }
+        },
+        "additionalProperties": false
       }
     },
     "additionalProperties": false,

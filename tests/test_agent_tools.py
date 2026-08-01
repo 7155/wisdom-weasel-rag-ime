@@ -1041,7 +1041,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 )
         self.assertIs(manifests["workspace_patch"]["modelVisible"], False)
         self.assertNotIn("runtimeProjections", manifests["workspace_patch"])
-        self.assertIs(manifests["workspace_lsp"]["modelVisible"], False)
+        self.assertNotIn("modelVisible", manifests["workspace_lsp"])
         self.assertNotIn("runtimeProjections", manifests["workspace_lsp"])
         for operation in (
             "status",
@@ -1113,6 +1113,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         manifests = self.gateway.runtime_manifests(self.session)
         knowledge = next(item for item in manifests if item["name"] == "knowledge")
         plan = next(item for item in manifests if item["name"] == "agent_plan")
+        goal = next(item for item in manifests if item["name"] == "agent_goal")
 
         knowledge_branches = {
             branch["properties"]["op"]["const"]: branch
@@ -1137,6 +1138,22 @@ class ControlToolGatewayTests(unittest.TestCase):
             [{"required": ["itemId"]}, {"required": ["title"]}],
         )
         self.assertFalse(plan_branches["update"]["additionalProperties"])
+        goal_branches = {
+            branch["properties"]["op"]["const"]: branch
+            for branch in goal["parameters"]["oneOf"]
+        }
+        self.assertEqual(
+            goal_branches["confirm_setup"]["required"],
+            ["op", "confirmed", "objective"],
+        )
+        self.assertEqual(
+            goal_branches["complete"]["required"],
+            ["op", "summary", "evidence"],
+        )
+        self.assertEqual(
+            goal_branches["complete"]["properties"]["evidence"]["minItems"],
+            1,
+        )
 
     def test_memory_list_exposes_app_as_provenance_not_a_semantic_tag(self) -> None:
         result = self.gateway.execute(self._call("list", kind="apps", limit=8))["result"]
@@ -1191,6 +1208,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 "agents",
                 "browser",
                 "agent_plan",
+                "agent_goal",
                 "plugins",
                 "work_documents",
                 "desktop_semantic",
@@ -1363,6 +1381,70 @@ class ControlToolGatewayTests(unittest.TestCase):
             self.assertIs(manifests["workspace_read"]["modelVisible"], False)
         finally:
             background_jobs.close()
+
+    def test_agent_goal_lifecycle_is_model_manageable_and_audited(self) -> None:
+        initial = self.gateway.execute(
+            self._tool_call("agent_goal", "list")
+        )["result"]
+        self.assertFalse(initial["goal"]["configured"])
+
+        configured = self.gateway.execute(
+            self._tool_call(
+                "agent_goal",
+                "confirm_setup",
+                confirmed=True,
+                objective="验证长期目标工具",
+                successCriteria="状态与完成证据写入同一权威工作流",
+                evidenceExpectations=["工具回执"],
+                tokenBudget=10_000,
+            )
+        )["result"]
+        self.assertEqual(configured["goal"]["status"], "active")
+        self.assertEqual(configured["goal"]["objective"], "验证长期目标工具")
+        self.assertEqual(configured["goal"]["budget"]["tokenLimit"], 10_000)
+
+        completed = self.gateway.execute(
+            self._tool_call(
+                "agent_goal",
+                "complete",
+                summary="Goal 工具端到端验证完成",
+                evidence=[
+                    {
+                        "kind": "receipt",
+                        "summary": "Gateway 返回持久化完成状态",
+                        "reference": "tool:agent-goal:test",
+                    }
+                ],
+            )
+        )["result"]
+        self.assertEqual(completed["goal"]["status"], "completed")
+        self.assertEqual(
+            completed["goal"]["completionAudit"]["evidence"][0]["reference"],
+            "tool:agent-goal:test",
+        )
+        self.assertEqual(
+            self.store.workflow_state(str(self.session["id"]))["goal"]["status"],
+            "completed",
+        )
+
+        self.session = self.store.set_runtime_policy(
+            str(self.session["id"]),
+            mode="assistant",
+            tool_profile_version="subagent-readonly-v1",
+            allowed_tools=["agent_goal"],
+        )
+        self.assertEqual(
+            self.gateway.execute(self._tool_call("agent_goal", "list"))["result"]["goal"]["status"],
+            "completed",
+        )
+        with self.assertRaisesRegex(ValueError, "not enabled"):
+            self.gateway.execute(
+                self._tool_call(
+                    "agent_goal",
+                    "cancel",
+                    reason="只读配置不得改写 Goal",
+                )
+            )
 
     def test_agent_plan_is_session_local_and_read_only_blocks_mutations(self) -> None:
         created = self.gateway.execute(
@@ -1997,6 +2079,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 return {
                     "invocationReceipt": {
                         "receiptId": f"invoke:{tool_call_id}",
+                        "canonicalCommand": {"rootId": "root:room-planning"},
                     }
                 }
 
@@ -2112,6 +2195,7 @@ class ControlToolGatewayTests(unittest.TestCase):
                 return {
                     "invocationReceipt": {
                         "receiptId": f"invoke:{tool_call_id}",
+                        "canonicalCommand": {"rootId": "root:room-managed"},
                     }
                 }
 
@@ -3374,6 +3458,7 @@ class ControlToolGatewayTests(unittest.TestCase):
             "configuration",
             "agents",
             "agent_plan",
+            "agent_goal",
             "ls",
             "read",
             "grep",
@@ -3428,6 +3513,7 @@ class ControlToolGatewayTests(unittest.TestCase):
         for stateful_tool in (
             "memory",
             "workspace_patch",
+            "agent_goal",
             "workspace_lsp",
             "edit",
             "write",
@@ -3443,7 +3529,8 @@ class ControlToolGatewayTests(unittest.TestCase):
         self.assertIn("class GatewayToolError extends Error", extension)
         self.assertIn("recentNonRetryableFailures", extension)
         self.assertIn("同一工具与参数刚刚已被判定为不可重试", extension)
-        self.assertIn('operations: ["list", "update", "submit_review"]', extension)
+        self.assertIn('operations: ["list", "update", "submit_review", "complete", "cancel"]', extension)
+        self.assertIn('operations: ["list", "confirm_setup", "update", "pause", "resume", "complete", "cancel"]', extension)
         self.assertIn('error.errorCode === "workflow_gate_closed"', extension)
         self.assertIn('requiredAction: "review_workflow_state"', extension)
         self.assertIn("Plan 用于进度与审阅，不是普通执行请求的第二道启动许可", extension)

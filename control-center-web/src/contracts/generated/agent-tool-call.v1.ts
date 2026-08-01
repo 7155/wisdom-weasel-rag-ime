@@ -22,6 +22,7 @@ export interface AgentToolCallV1 {
     | 'agents'
     | 'browser'
     | 'agent_plan'
+    | 'agent_goal'
     | 'plugins'
     | 'work_documents'
     | 'desktop_semantic'

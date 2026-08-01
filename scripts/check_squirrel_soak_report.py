@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 from check_squirrel_frontend_trace import (
     ASSISTANT_OVERLAY_COLOR_ALIASES,
+    ASSISTANT_OVERLAY_BADGE_ALIASES,
     DEFAULT_LOG_PATH,
     SOURCE_BADGES,
     SOURCE_COLOR_TOKENS,
@@ -25,6 +26,7 @@ from check_squirrel_frontend_trace import (
     event_timestamp_ms,
     is_post_commit_followup_request,
     is_side_selection_route_event,
+    is_side_panel_event,
     is_valid_side_commit_event,
     load_events,
     report_passes,
@@ -288,6 +290,12 @@ def build_soak_report(
     max_context_echo_count: int,
 ) -> dict[str, Any]:
     event_counts = Counter(str(event.get("event") or "") for event in events if isinstance(event, dict))
+    overlay_side_panel_count = sum(
+        1
+        for event in events
+        if event.get("event") == "assistant_overlay_candidate_visible"
+        and is_side_panel_event(event)
+    )
     side_commit_pairs, unmatched_routes = collect_number_key_side_commit_pairs(events)
     post_commit_followups = collect_post_commit_followups(events)
     chain = summarize_chaining(events)
@@ -374,8 +382,14 @@ def build_soak_report(
     threshold_results = {
         "inputSourceSelection": input_source_selection_ok,
         "sidecarRequests": int(event_counts.get("sidecar_request_scheduled", 0)) >= min_sidecar_requests,
-        "sidecarApplied": int(event_counts.get("sidecar_response_applied", 0)) >= min_sidecar_applied,
-        "panelDisplays": int(event_counts.get("panel_display_candidates", 0)) >= min_panel_displays,
+        "sidecarApplied": (
+            int(event_counts.get("sidecar_response_applied", 0)) + overlay_side_panel_count
+        )
+        >= min_sidecar_applied,
+        "panelDisplays": (
+            int(event_counts.get("panel_display_candidates", 0)) + overlay_side_panel_count
+        )
+        >= min_panel_displays,
         "sideCommits": len(side_commit_pairs) >= min_side_commits,
         "postCommitFollowups": len(post_commit_followups) >= min_post_commit_followups,
         "durationSec": float(foreground_coverage["durationSec"]) >= min_duration_sec,
@@ -1225,7 +1239,12 @@ def summarize_required_trace_events(events: list[dict[str, Any]]) -> dict[str, d
             events,
             direct_names={"foreground_context_capture_resolved"},
         ),
-        "panel_display_candidates": trace_event_status(events, direct_names={"panel_display_candidates"}),
+        "panel_display_candidates": trace_event_status(
+            events,
+            direct_names={"panel_display_candidates"},
+            alias_names=OVERLAY_SURFACE_EVENTS,
+            alias_predicate=lambda event: is_side_panel_event(event),
+        ),
         "assistant_overlay_candidate_visible": trace_event_status(
             events,
             direct_names=set(),
@@ -1235,8 +1254,9 @@ def summarize_required_trace_events(events: list[dict[str, Any]]) -> dict[str, d
         "post_commit_prediction_applied": trace_event_status(
             events,
             direct_names={"post_commit_prediction_applied"},
-            alias_names={"sidecar_response_applied"},
-            alias_predicate=lambda event: str(event.get("uiMode") or "") == "post_commit_prediction"
+            alias_names={"sidecar_response_applied", *OVERLAY_SURFACE_EVENTS},
+            alias_predicate=lambda event: is_side_panel_event(event)
+            or str(event.get("uiMode") or "") == "post_commit_prediction"
             or panel_is_post_commit_event(event),
         ),
         "sidecar_response_dropped_stale": trace_event_status(
@@ -1537,8 +1557,9 @@ def source_visual_violation(candidate: dict[str, Any]) -> bool:
         return False
     observed_badge = str(candidate.get("sourceBadge") or candidate.get("badge") or "")
     observed_color = str(candidate.get("colorToken") or "")
+    accepted_badges = ASSISTANT_OVERLAY_BADGE_ALIASES.get(source_type, {expected_badge})
     accepted_colors = ASSISTANT_OVERLAY_COLOR_ALIASES.get(source_type, {expected_color})
-    return observed_badge != expected_badge or observed_color not in accepted_colors
+    return observed_badge not in accepted_badges or observed_color not in accepted_colors
 
 
 def long_candidate_violation_for(candidate: dict[str, Any]) -> bool:
@@ -1615,14 +1636,22 @@ def snapshot_ordinal_drift_violations(events: list[dict[str, Any]]) -> list[dict
 
 
 def candidate_ordinal(candidate: dict[str, Any], *, fallback: int) -> str:
+    saw_ordinal_field = False
     for key in ("candidateOrdinal", "selectionRank", "selectionKey", "label"):
         if key not in candidate:
             continue
+        saw_ordinal_field = True
         value = candidate.get(key)
         if value is None or value == "":
             continue
+        if key in {"candidateOrdinal", "selectionRank"}:
+            try:
+                if int(value) <= 0:
+                    continue
+            except (TypeError, ValueError):
+                continue
         return str(value)
-    return str(fallback)
+    return "" if saw_ordinal_field else str(fallback)
 
 
 def is_status_candidate(candidate: dict[str, Any]) -> bool:

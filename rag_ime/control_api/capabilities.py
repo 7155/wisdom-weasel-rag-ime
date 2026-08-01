@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -25,6 +25,57 @@ class NativeCapabilityState:
     approved_external_actions: bool = False
 
 
+def capability_feature_flags(
+    route_manifest: Iterable[Mapping[str, object]],
+) -> dict[str, bool]:
+    routes = tuple(route_manifest)
+    route_ids = {str(item["pathId"]) for item in routes}
+    return {
+        "agentSessions": ControlPathId.AGENT_SESSIONS_LIST.value in route_ids,
+        "agentRooms": ControlPathId.AGENT_ROOMS_LIST.value in route_ids,
+        "agentRoles": ControlPathId.AGENT_ROLES_LIST.value in route_ids,
+        "agentPersonaCreate": ControlPathId.AGENT_ROLES_CREATE.value in route_ids,
+        "piProviderCredentials": ControlPathId.AGENT_PROVIDER_AUTH_PREVIEW.value in route_ids,
+        "agentApprovals": ControlPathId.AGENT_APPROVALS_LIST.value in route_ids,
+        "agentDelegation": ControlPathId.AGENT_SUBAGENTS_LIST.value in route_ids,
+        "managementReads": ControlPathId.OVERVIEW_GET.value in route_ids,
+        "managementWorkContract": ControlPathId.PLANNING_MUTATION_PREVIEW.value in route_ids,
+        "inputLexiconWorkContract": all(
+            path_id.value in route_ids
+            for path_id in (
+                ControlPathId.INPUT_LEXICON_REVIEW,
+                ControlPathId.INPUT_LEXICON_APPLY,
+                ControlPathId.INPUT_LEXICON_ROLLBACK,
+            )
+        ),
+        "planningWorkContract": ControlPathId.PLANNING_TASK_SAVE.value in route_ids,
+        "knowledgeDatabaseWorkContract": ControlPathId.KNOWLEDGE_DATABASE_APPLY_PREVIEW.value in route_ids,
+        "historyWorkContract": ControlPathId.HISTORY_TOMBSTONE_PREVIEW.value in route_ids,
+        "configurationSettingsWorkContract": ControlPathId.CONFIGURATION_SETTINGS_PREVIEW.value in route_ids,
+        "memoryGraphRead": ControlPathId.MEMORY_GRAPH_GET.value in route_ids,
+        "memoryEntityRead": ControlPathId.MEMORY_ENTITY_GET.value in route_ids,
+        "memoryEdit": ControlPathId.MEMORY_EDIT.value in route_ids,
+        "memoryBookArchiveWorkContract": all(
+            path_id.value in route_ids
+            for path_id in (
+                ControlPathId.MEMORY_BOOK_ARCHIVE_PREVIEW,
+                ControlPathId.MEMORY_BOOK_ARCHIVE_APPLY,
+                ControlPathId.MEMORY_BOOK_ARCHIVE_ROLLBACK,
+            )
+        ),
+        "subscriptions": any(item.get("subscription") is True for item in routes),
+        "sessionSnapshot": ControlPathId.AGENT_SESSION_SNAPSHOT.value in route_ids,
+        "roomSnapshot": ControlPathId.AGENT_ROOM_SNAPSHOT.value in route_ids,
+        "agentConfigurationWrite": ControlPathId.AGENT_CONFIGURATION_UPDATE.value in route_ids,
+        "sessionIntercom": ControlPathId.AGENT_SESSION_INTERCOM_SEND.value in route_ids,
+        "boundedArtifacts": ControlPathId.AGENT_ARTIFACT_GET.value in route_ids,
+        "agentMediaList": ControlPathId.AGENT_MEDIA_LIST.value in route_ids,
+        "agentDeepSearch": ControlPathId.AGENT_DEEP_SEARCH.value in route_ids,
+        "agentWakeScheduling": ControlPathId.AGENT_WAKE_SCHEDULES_CREATE.value in route_ids,
+        "globalControlEvents": ControlPathId.CONTROL_EVENTS.value in route_ids,
+    }
+
+
 def build_capabilities(
     *,
     policy: ControlRoutePolicy,
@@ -37,7 +88,6 @@ def build_capabilities(
     native_state = native or NativeCapabilityState()
     native_client = context.client_kind is ControlClientKind.NATIVE
     route_manifest = policy.manifest(context=context, include_targets=False)
-    route_ids = {str(item["pathId"]) for item in route_manifest}
     subscriptions = [
         str(item["pathId"])
         for item in route_manifest
@@ -63,50 +113,7 @@ def build_capabilities(
             "acceptsHost": False,
             "response": {"success": ["id", "ok", "result"], "failure": ["id", "ok", "error"]},
         },
-        "features": {
-            "agentSessions": ControlPathId.AGENT_SESSIONS_LIST.value in route_ids,
-            "agentRooms": ControlPathId.AGENT_ROOMS_LIST.value in route_ids,
-            "agentRoles": ControlPathId.AGENT_ROLES_LIST.value in route_ids,
-            "agentPersonaCreate": ControlPathId.AGENT_ROLES_CREATE.value in route_ids,
-            "piProviderCredentials": ControlPathId.AGENT_PROVIDER_AUTH_PREVIEW.value in route_ids,
-            "agentApprovals": ControlPathId.AGENT_APPROVALS_LIST.value in route_ids,
-            "agentDelegation": ControlPathId.AGENT_SUBAGENTS_LIST.value in route_ids,
-            "managementReads": ControlPathId.OVERVIEW_GET.value in route_ids,
-            "managementWorkContract": ControlPathId.PLANNING_MUTATION_PREVIEW.value in route_ids,
-            "inputLexiconWorkContract": all(
-                path_id.value in route_ids
-                for path_id in (
-                    ControlPathId.INPUT_LEXICON_REVIEW,
-                    ControlPathId.INPUT_LEXICON_APPLY,
-                    ControlPathId.INPUT_LEXICON_ROLLBACK,
-                )
-            ),
-            "planningWorkContract": ControlPathId.PLANNING_TASK_SAVE.value in route_ids,
-            "knowledgeDatabaseWorkContract": ControlPathId.KNOWLEDGE_DATABASE_APPLY_PREVIEW.value in route_ids,
-            "historyWorkContract": ControlPathId.HISTORY_TOMBSTONE_PREVIEW.value in route_ids,
-            "configurationSettingsWorkContract": ControlPathId.CONFIGURATION_SETTINGS_PREVIEW.value in route_ids,
-            "memoryGraphRead": ControlPathId.MEMORY_GRAPH_GET.value in route_ids,
-            "memoryEntityRead": ControlPathId.MEMORY_ENTITY_GET.value in route_ids,
-            "memoryEdit": ControlPathId.MEMORY_EDIT.value in route_ids,
-            "memoryBookArchiveWorkContract": all(
-                path_id.value in route_ids
-                for path_id in (
-                    ControlPathId.MEMORY_BOOK_ARCHIVE_PREVIEW,
-                    ControlPathId.MEMORY_BOOK_ARCHIVE_APPLY,
-                    ControlPathId.MEMORY_BOOK_ARCHIVE_ROLLBACK,
-                )
-            ),
-            "subscriptions": bool(subscriptions),
-            "sessionSnapshot": ControlPathId.AGENT_SESSION_SNAPSHOT.value in route_ids,
-            "roomSnapshot": ControlPathId.AGENT_ROOM_SNAPSHOT.value in route_ids,
-            "agentConfigurationWrite": ControlPathId.AGENT_CONFIGURATION_UPDATE.value in route_ids,
-            "sessionIntercom": ControlPathId.AGENT_SESSION_INTERCOM_SEND.value in route_ids,
-            "boundedArtifacts": ControlPathId.AGENT_ARTIFACT_GET.value in route_ids,
-            "agentMediaList": ControlPathId.AGENT_MEDIA_LIST.value in route_ids,
-            "agentDeepSearch": ControlPathId.AGENT_DEEP_SEARCH.value in route_ids,
-            "agentWakeScheduling": ControlPathId.AGENT_WAKE_SCHEDULES_CREATE.value in route_ids,
-            "globalControlEvents": ControlPathId.CONTROL_EVENTS.value in route_ids,
-        },
+        "features": capability_feature_flags(route_manifest),
         "native": {
             "filePicker": native_client and native_state.file_picker,
             "managedAgentImageImport": native_client and native_state.managed_agent_image_import,

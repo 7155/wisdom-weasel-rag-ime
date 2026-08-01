@@ -2111,7 +2111,7 @@ class PiRuntimeHostManager:
         room_context = str(context_value or "").strip()
         if session_context:
             dispatch_params["sessionContext"] = session_context
-        if not full_room_context:
+        if not full_room_context and not use_delta:
             raise PiRuntimeError(
                 "managed Room Dispatch has no provider-only task context"
             )

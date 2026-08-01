@@ -570,6 +570,41 @@ class AgentBackgroundJobService:
             for row in rows
         ]
 
+    def cancel_room_root_all_sessions(
+        self,
+        *,
+        room_turn_id: str,
+        reason: object = "room_root_cancelled",
+    ) -> list[dict[str, object]]:
+        root_id = _required_text(
+            room_turn_id,
+            field="roomTurnId",
+            maximum=240,
+        )
+        with sqlite_connection(self.db_path, foreign_keys=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT session_id, job_id
+                FROM agent_background_jobs
+                WHERE room_bound = 1
+                  AND causal_turn_id = ?
+                  AND status IN ('queued', 'running', 'cancelling')
+                ORDER BY created_at_ms, job_id
+                """,
+                (root_id,),
+            ).fetchall()
+        if rows:
+            self._require_execution_owner()
+        return [
+            self.cancel_room_owned(
+                str(row[0]),
+                str(row[1]),
+                room_turn_id=root_id,
+                reason=reason,
+            )
+            for row in rows
+        ]
+
     def _cancel_owned(
         self,
         session_id: str,

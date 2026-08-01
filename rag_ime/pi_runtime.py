@@ -100,6 +100,7 @@ _SUBAGENT_READ_ONLY_TOOLS = (
     "runtime",
     "agents",
     "agent_plan",
+    "agent_goal",
     "workspace_list",
     "workspace_lsp",
     "workspace_read",

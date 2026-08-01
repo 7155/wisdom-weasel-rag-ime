@@ -258,7 +258,7 @@ def room_runtime_registry() -> dict[str, dict[str, object]]:
                 "处理复核意见后，需要重新提交可检查的结果",
             ),
             "notFor": (
-                "普通公开发言、私下进度、仍有能直接推进的下一步，或没有证据的完成声明",
+                "发布一条公开 Room 消息、私下进度、仍有能直接推进的下一步，或没有证据的完成声明",
             ),
             "input": (
                 "decision、私有 summary、用户可见 publicSummary、按验收短名绑定的 "

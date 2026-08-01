@@ -16,6 +16,7 @@ ASSISTANT_CONTROL_TOOL_IDS = (
     "agents",
     "browser",
     "agent_plan",
+    "agent_goal",
     "plugins",
     "work_documents",
     "desktop_semantic",

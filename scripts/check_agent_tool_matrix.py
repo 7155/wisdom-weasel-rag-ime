@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rag_ime.agent_tool_ids import CONTROL_TOOL_IDS, DANGEROUS_MODE_CONFIRMATION
+from rag_ime.agent_execution_policy import WORKSPACE_SCOPE_CONFIRMATION
+from rag_ime.agent_tool_ids import CONTROL_TOOL_IDS
 from rag_ime.debug_server import DebugImeService, DebugServerConfig
 
 
@@ -33,6 +34,7 @@ TOOL_CALLS: dict[str, dict[str, object]] = {
     "agents": {"op": "catalog"},
     "browser": {"op": "status"},
     "agent_plan": {"op": "list"},
+    "agent_goal": {"op": "list"},
     "plugins": {"op": "list"},
     "work_documents": {"op": "list", "limit": 1},
     "desktop_semantic": {"op": "status"},
@@ -106,8 +108,8 @@ def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
                 "roleId": "companion-present-v1",
                 "roleVersion": "1",
                 "toolProfileVersion": "control-center-v1",
-                "executionMode": "full_trust",
-                "dangerousModeConfirmation": DANGEROUS_MODE_CONFIRMATION,
+                "executionMode": "workspace_managed",
+                "workspaceScopeConfirmation": WORKSPACE_SCOPE_CONFIRMATION,
                 "workspaceRoots": [str(workspace)],
             }
         )
@@ -187,10 +189,13 @@ def run_matrix(*, keep_workspace: bool = False) -> dict[str, object]:
                     }
                 )
 
+        sample_path = workspace / "sample.txt"
+        created_path = workspace / "created.txt"
         file_checks = {
-            "editChainApplied": (workspace / "sample.txt").read_text(encoding="utf-8")
-            == "edited matrix\n",
-            "writeApplied": (workspace / "created.txt").read_text(encoding="utf-8")
+            "editChainApplied": sample_path.is_file()
+            and sample_path.read_text(encoding="utf-8") == "edited matrix\n",
+            "writeApplied": created_path.is_file()
+            and created_path.read_text(encoding="utf-8")
             == "created by Agent Tool matrix\n",
         }
         passed = all(row["ok"] is True for row in rows) and all(file_checks.values())

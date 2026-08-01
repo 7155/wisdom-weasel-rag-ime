@@ -19,6 +19,7 @@ from tests.runtime_capabilities import (
     requires_process_identity,
 )
 
+from rag_ime.agent_background_jobs import AgentBackgroundJobError
 from rag_ime.agent_room_kernel import RoomKernelFenceError
 from rag_ime.agent_room_skills import RoomSkillEpochRevoked
 from rag_ime.agent_blocks import normalize_trusted_agent_blocks
@@ -4104,6 +4105,122 @@ class RoomKernelServiceTests(unittest.TestCase):
             receipt["roomExecutionReceipt"]["status"],
             "applied",
         )
+
+    def test_room_workspace_job_runs_in_background_and_root_cancel_owns_it(self) -> None:
+        self._use_per_action_execution()
+        gateway = ControlToolGateway(
+            sessions=self.service.sessions,
+            management=SimpleNamespace(),
+            core=SimpleNamespace(),
+            project="wisdom-weasel-rag-ime",
+            workspace_harness=self.service.background_jobs.workspace_harness,
+            background_jobs=self.service.background_jobs,
+            collaboration=self.service,
+        )
+        self.service.bind_tool_manifest_provider(gateway.runtime_manifests)
+        self.service.room_kernel.enqueue_dispatch(self._dispatch(), now_ms=3)
+        self.service.room_kernel_worker.run_once()
+        loaded = self.service.room_capability_tool_load(
+            {
+                "sessionId": self.session_id,
+                "receiptId": "load:room-workspace-job",
+                "toolName": "workspace_job",
+                "createdAtMs": 5,
+            }
+        )["result"]
+
+        prepared = gateway.execute(
+            {
+                "schemaVersion": "rag-ime.agent-tool-call.v1",
+                "sessionId": self.session_id,
+                "tool": "workspace_job",
+                "toolCallId": "tool:room-workspace-job",
+                "loadReceiptId": loaded["receiptId"],
+                "args": {
+                    "op": "start",
+                    "command": (
+                        "python3 -c \"import time; "
+                        "print('room-job-ready', flush=True); time.sleep(30)\""
+                    ),
+                    "cwd": str(self.root),
+                    "timeoutSeconds": 60,
+                    "label": "Room managed background job",
+                },
+            }
+        )
+        approval = prepared["result"]["approval"]
+        self.assertTrue(approval["causalMetadata"]["roomBound"])
+        self.assertEqual(
+            approval["causalMetadata"]["turnId"],
+            "root:service",
+        )
+        decided = self.service.sessions.decide_approval(
+            approval["approvalId"],
+            approved=True,
+            payload_sha256=approval["payloadSha256"],
+        )
+        started = gateway.apply_approval(decided)
+        job_id = str(started["job"]["jobId"])
+
+        deadline = time.monotonic() + 5
+        log_text = ""
+        while time.monotonic() < deadline:
+            log_text = str(
+                self.service.background_jobs.logs(
+                    self.session_id,
+                    job_id,
+                    cursor=0,
+                )["text"]
+            )
+            if "room-job-ready" in log_text:
+                break
+            time.sleep(0.02)
+        self.assertIn("room-job-ready", log_text)
+        with self.assertRaisesRegex(
+            AgentBackgroundJobError,
+            "Room/Root owner",
+        ):
+            self.service.background_jobs.cancel(
+                self.session_id,
+                job_id,
+            )
+
+        self.service.events.publish(
+            self.session_id,
+            "turn_failed",
+            {"error": "provider stopped after launching the background job"},
+            turn_id="turn:dispatch:service:1",
+            created_at_ms=6,
+        )
+        self.assertTrue(self.service.events.flush())
+        self.assertEqual(
+            self.service.room_kernel.dispatch("dispatch:service")["state"],
+            "failed",
+        )
+        self.assertEqual(
+            self.service.room_kernel.active_runtime_targets("root:service"),
+            [],
+        )
+
+        cancelled = self.service.abort_room_turn(
+            self.room_id,
+            {
+                "roomTurnId": "root:service",
+                "clientRequestId": "cancel:room-workspace-job",
+            },
+        )
+        job = self.service.background_jobs.status(
+            self.session_id,
+            job_id,
+        )["job"]
+
+        self.assertEqual(job["status"], "cancelled")
+        self.assertEqual(job["causalMetadata"]["turnId"], "root:service")
+        self.assertEqual(
+            [item["job"]["jobId"] for item in cancelled["backgroundJobReceipts"]],
+            [job_id],
+        )
+        self.assertEqual(cancelled["status"], "terminated")
 
     def test_workspace_managed_failure_keeps_the_original_error_and_one_receipt(
         self,

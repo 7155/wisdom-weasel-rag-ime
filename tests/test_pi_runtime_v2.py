@@ -1281,6 +1281,72 @@ class PiRuntimeV2Tests(unittest.TestCase):
         self.assertEqual(delivered[2]["params"]["roomCapability"]["contextEpoch"], 2)
         self.assertEqual(third["providerContextReceipt"]["journalId"], "journal:3")
 
+    def test_room_retry_reuses_sealed_context_when_no_delta_remains(
+        self,
+    ) -> None:
+        self.runtime.stop()
+        initial_delivery = {"value": True}
+
+        def context_provider(_session):
+            return {
+                "sessionContext": "generic-agent-rag",
+                "providerContext": (
+                    "governed-room-task"
+                    if initial_delivery["value"]
+                    else ""
+                ),
+                "providerContextDelta": "",
+            }
+
+        self.runtime = PiRuntimeHostManager(
+            config=replace(
+                self.runtime.config,
+                provider_environment={"TEST_ROOM_TYPES": "1"},
+            ),
+            sessions=self.store,
+            events=self.events,
+            session_context_provider=context_provider,
+            tool_manifest_provider=lambda _session: [],
+        )
+        session_id = str(self.first["id"])
+        payload = {
+            "targetSessionId": session_id,
+            "rootId": "root:sealed-retry",
+            "dispatchId": "dispatch:sealed-retry",
+            "generation": 0,
+            "capabilityEpoch": 1,
+            "attempt": 0,
+            "idempotencyKey": "sealed-retry",
+        }
+
+        self.runtime.dispatch_room(
+            payload,
+            message="First bounded delivery.",
+            lease_token="lease:sealed-retry:0",
+        )
+        initial_delivery["value"] = False
+        retried = self.runtime.dispatch_room(
+            {**payload, "attempt": 1},
+            message="Retry after the task context was sealed.",
+            lease_token="lease:sealed-retry:1",
+        )
+
+        requests = [
+            json.loads(line)
+            for line in (
+                self.root / "agent" / "host-requests.jsonl"
+            ).read_text(encoding="utf-8").splitlines()
+        ]
+        delivered = [
+            request["params"]
+            for request in requests
+            if request["method"] == "room.dispatch"
+        ]
+        self.assertEqual(retried["receiptKind"], "dispatch_accepted")
+        self.assertEqual(len(delivered), 2)
+        self.assertEqual(delivered[1]["dispatchAttempt"], 1)
+        self.assertEqual(delivered[1]["roomContext"], "")
+
     def test_room_dispatch_reopens_session_when_required_skill_changes(self) -> None:
         self.runtime.stop()
         stage = {"value": "implementation"}

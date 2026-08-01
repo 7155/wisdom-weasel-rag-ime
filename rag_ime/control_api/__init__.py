@@ -13,6 +13,7 @@ from .capabilities import (
     NativeCapabilityState,
     build_bootstrap,
     build_capabilities,
+    capability_feature_flags,
     public_capability_catalog,
 )
 from .errors import ControlApiError, ControlErrorCode
@@ -59,6 +60,7 @@ __all__ = [
     "RouteId",
     "build_bootstrap",
     "build_capabilities",
+    "capability_feature_flags",
     "control_route",
     "control_route_catalog",
     "default_route_policy",

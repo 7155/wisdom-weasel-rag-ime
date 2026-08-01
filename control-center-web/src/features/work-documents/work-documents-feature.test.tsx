@@ -7,6 +7,7 @@ import { ControlTransportProvider } from '@/app/control-transport';
 import { TooltipProvider } from '@/components/primitives';
 import type {
   WorkDocumentCommandV1,
+  WorkDocumentDetailV1,
   WorkDocumentErasePreviewV1,
   WorkDocumentListV1,
   WorkDocumentReceiptV1,
@@ -150,7 +151,7 @@ describe('WorkDocumentsFeature', () => {
     expect(receiptId.closest('.work-documents__receipt')).toHaveAttribute('data-tone', 'danger');
   });
 
-  it('reopens an archived document with authority revision and transition receipt', async () => {
+  it('reopens an archived document with the backend-projected authority transition', async () => {
     const user = userEvent.setup();
     const archived = workDocument({
       authorityRevision: 8,
@@ -159,13 +160,20 @@ describe('WorkDocumentsFeature', () => {
       terminalReceiptId: 'archive-transition-1',
       title: '已完成目标',
     });
+    const reopenContext: WorkDocumentDetailV1['reopen'] = {
+      eligible: true,
+      authorityRevision: 10,
+      transitionReceiptId: 'reopen-transition-2',
+      reasonCode: 'ready',
+    };
     const reopen = vi.fn((request: ControlRequest) => commandResponse(
       'reopen',
-      { ...archived, state: 'reopen_pending' },
+      { ...archived, authorityRevision: 10, state: 'reopen_pending' },
       RECEIPT_ID_REOPEN,
     ));
     const transport = workDocumentTransport({
       history: [archived],
+      reopenContext,
       extraRoutes: { 'workDocuments.reopen': reopen },
     });
     renderFeature(transport, '/work-documents?scope=history');
@@ -173,12 +181,33 @@ describe('WorkDocumentsFeature', () => {
     await user.click(await screen.findByRole('button', { name: '重新打开到活跃区' }));
     expect(await screen.findByText(RECEIPT_ID_REOPEN)).toBeInTheDocument();
     expect(reopen).toHaveBeenCalledWith(expect.objectContaining({
-      body: { authorityRevision: 8, transitionReceiptId: 'archive-transition-1' },
+      body: { authorityRevision: 10, transitionReceiptId: 'reopen-transition-2' },
     }));
     await waitFor(() => {
       expect(transport.requests.filter((call) => call.request.pathId === 'workDocuments.history.search').length).toBeGreaterThan(1);
       expect(transport.requests.filter((call) => call.request.pathId === 'workDocuments.get').length).toBeGreaterThan(1);
     });
+  });
+
+  it('keeps reopen disabled while the archived authority remains terminal', async () => {
+    const archived = workDocument({
+      documentId: DOCUMENT_ID_HISTORY,
+      state: 'archived',
+      terminalReceiptId: 'archive-transition-1',
+    });
+    const transport = workDocumentTransport({
+      history: [archived],
+      reopenContext: {
+        eligible: false,
+        authorityRevision: archived.authorityRevision,
+        transitionReceiptId: archived.terminalReceiptId,
+        reasonCode: 'authority_terminal',
+      },
+    });
+    renderFeature(transport, '/work-documents?scope=history');
+
+    expect(await screen.findByRole('button', { name: '重新打开到活跃区' })).toBeDisabled();
+    expect(screen.getByText('来源仍处于已完成或已取消状态。', { exact: false })).toBeInTheDocument();
   });
 
   it('keeps permanent erase behind a confirmation distinct from archive', async () => {
@@ -397,12 +426,14 @@ function workDocumentTransport({
   detailHandler,
   extraRoutes = {},
   history = [],
+  reopenContext,
 }: {
   active?: WorkDocumentV1[];
   activeHandler?: (request: ControlRequest) => unknown;
   detailHandler?: (request: ControlRequest) => unknown;
   extraRoutes?: MockControlTransportOptions['routes'];
   history?: WorkDocumentV1[];
+  reopenContext?: WorkDocumentDetailV1['reopen'];
 } = {}): MockControlTransport {
   const documents = [...active, ...history];
   return new MockControlTransport({
@@ -414,7 +445,7 @@ function workDocumentTransport({
         const documentId = String(request.params?.documentId ?? '');
         const document = documents.find((item) => item.documentId === documentId) ?? active[0] ?? history[0];
         if (!document) throw new Error('work document not found');
-        return detailResponse(document);
+        return detailResponse(document, reopenContext);
       }),
       'workDocuments.archive': () => commandResponse('archive', active[0], RECEIPT_ID_DEFAULT),
       'workDocuments.repair': () => commandResponse('repair', active[0], RECEIPT_ID_DEFAULT),
@@ -441,10 +472,21 @@ function listResponse(items: WorkDocumentV1[]) {
   };
 }
 
-function detailResponse(document: WorkDocumentV1) {
+function detailResponse(
+  document: WorkDocumentV1,
+  reopen: WorkDocumentDetailV1['reopen'] = {
+    eligible: false,
+    authorityRevision: document.authorityRevision,
+    transitionReceiptId: '',
+    reasonCode: document.state === 'archived'
+      ? 'authority_terminal'
+      : 'document_not_archived',
+  },
+): WorkDocumentDetailV1 {
   return {
-    schemaVersion: 'rag-ime.work-document-detail.v1' as const,
+    schemaVersion: 'rag-ime.work-document-detail.v1',
     document,
+    reopen,
   };
 }
 

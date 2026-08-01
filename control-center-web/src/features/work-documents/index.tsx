@@ -32,6 +32,7 @@ import {
   TabsTrigger,
 } from '@/components/primitives';
 import type {
+  WorkDocumentDetailV1,
   WorkDocumentCommandV1,
   WorkDocumentErasePreviewV1,
   WorkDocumentReceiptV1,
@@ -278,8 +279,9 @@ function WorkDocumentDetail({
   const queryClient = useQueryClient();
   const eraseTriggerRef = useRef<HTMLButtonElement>(null);
   const document = detail.data?.document;
+  const reopen = detail.data?.reopen;
   const fence = document
-    ? `${document.documentId}:${document.authorityRevision}:${document.documentRevision}`
+    ? `${document.documentId}:${document.authorityRevision}:${document.documentRevision}:${reopen?.authorityRevision ?? 0}:${reopen?.transitionReceiptId ?? ''}`
     : `selection:${selectedId}`;
   const activeFenceRef = useRef(fence);
   activeFenceRef.current = fence;
@@ -450,20 +452,23 @@ function WorkDocumentDetail({
               ) : null}
               {document.state === 'archived' ? (
                 <div className="work-documents__action-row work-documents__action-row--compact">
-                  <p>重新打开会创建受收据约束的回迁，不会抹掉历史证据。</p>
+                  <p>{reopenGuidance(reopen)}</p>
                   <Button
-                    disabled={!document.terminalReceiptId}
+                    disabled={!reopen?.eligible}
                     leadingIcon={<RotateCcw size={16} />}
                     loading={command.isPending && command.variables?.command.operation === 'reopen'}
-                    onClick={() => command.mutate({
-                      command: {
-                        operation: 'reopen',
-                        documentId: document.documentId,
-                        authorityRevision: document.authorityRevision,
-                        transitionReceiptId: document.terminalReceiptId,
-                      },
-                      fence,
-                    })}
+                    onClick={() => {
+                      if (!reopen?.eligible) return;
+                      command.mutate({
+                        command: {
+                          operation: 'reopen',
+                          documentId: document.documentId,
+                          authorityRevision: reopen.authorityRevision,
+                          transitionReceiptId: reopen.transitionReceiptId,
+                        },
+                        fence,
+                      });
+                    }}
                   >
                     重新打开到活跃区
                   </Button>
@@ -722,6 +727,26 @@ function residualRisk(document: WorkDocumentV1): string {
     error: '后端未提供失败原因；修复后仍需重新读取状态。',
   }[document.state] ?? '状态未知；未执行任何自动操作。';
 }
+
+function reopenGuidance(
+  reopen: WorkDocumentDetailV1['reopen'] | undefined,
+): string {
+  switch (reopen?.reasonCode) {
+    case 'ready':
+      return '来源已进入新的可继续版本；重新打开会按当前版本与过渡凭证回迁文档，并保留历史证据。';
+    case 'authority_terminal':
+      return '来源仍处于已完成或已取消状态。请先在对应任务中恢复或重置，再刷新此页。';
+    case 'authority_not_advanced':
+      return '来源尚未产生新的可继续版本。请先恢复来源并刷新此页。';
+    case 'authority_unavailable':
+      return '暂时无法核对来源状态。请刷新，或先修复来源记录。';
+    case 'document_not_archived':
+      return '只有已归档文档可以重新打开。';
+    default:
+      return '正在核对来源版本与过渡凭证；核对完成前不会重新打开。';
+  }
+}
+
 
 function isRepairableState(value: string): value is Extract<WorkDocumentState, 'archive_pending' | 'reopen_pending' | 'error'> {
   return value === 'archive_pending' || value === 'reopen_pending' || value === 'error';

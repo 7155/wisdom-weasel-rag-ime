@@ -39,6 +39,19 @@ class WorkDocumentPayload(TypedDict):
     updatedAtMs: int
 
 
+class WorkDocumentReopenContext(TypedDict):
+    eligible: bool
+    authorityRevision: int
+    transitionReceiptId: str
+    reasonCode: Literal[
+        "ready",
+        "document_not_archived",
+        "authority_terminal",
+        "authority_not_advanced",
+        "authority_unavailable",
+    ]
+
+
 class WorkDocumentReceipt(TypedDict):
     receiptId: str
     operation: str
@@ -56,6 +69,7 @@ class WorkDocumentListResponse(TypedDict):
 class WorkDocumentDetailResponse(TypedDict):
     schemaVersion: Literal["rag-ime.work-document-detail.v1"]
     document: WorkDocumentPayload
+    reopen: WorkDocumentReopenContext
 
 
 class WorkDocumentCommandResponse(TypedDict):
@@ -304,10 +318,19 @@ class WorkDocumentService:
     def detail(self, document_id: str) -> WorkDocumentDetailResponse:
         identifier = _identifier(document_id)
         self.reconcile(identifier)
+        with sqlite_connection(
+            self.db_path,
+            row_factory=sqlite3.Row,
+            foreign_keys=True,
+        ) as conn:
+            row = self._row(conn, identifier)
+            document = _payload(row)
+            reopen = self._reopen_context(conn, row)
         return _validated(
             {
                 "schemaVersion": "rag-ime.work-document-detail.v1",
-                "document": self._get(identifier),
+                "document": document,
+                "reopen": reopen,
             },
             "work-document-detail.v1.json",
         )
@@ -786,6 +809,56 @@ class WorkDocumentService:
         for name, archived in (("ACTIVE.json", False), ("ARCHIVE.json", True)):
             items = [_projection(row) for row in rows if (str(row["state"]) == "archived") == archived]
             _atomic_json(projection_root / name, {"schemaVersion": "rag-ime.work-document-index.v1", "scope": "archive" if archived else "active", "items": items})
+
+    def _reopen_context(
+        self,
+        conn: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> WorkDocumentReopenContext:
+        stored_revision = int(row["authority_revision"])
+        if str(row["state"]) != "archived":
+            return {
+                "eligible": False,
+                "authorityRevision": stored_revision,
+                "transitionReceiptId": "",
+                "reasonCode": "document_not_archived",
+            }
+        try:
+            authority = self._authority(
+                conn,
+                str(row["authority_kind"]),
+                str(row["authority_id"]),
+            )
+        except WorkDocumentError:
+            return {
+                "eligible": False,
+                "authorityRevision": stored_revision,
+                "transitionReceiptId": "",
+                "reasonCode": "authority_unavailable",
+            }
+        revision = int(authority["revision"])
+        transition_receipt_id = str(authority["receiptId"])
+        if bool(authority["terminal"]):
+            return {
+                "eligible": False,
+                "authorityRevision": revision,
+                "transitionReceiptId": transition_receipt_id,
+                "reasonCode": "authority_terminal",
+            }
+        if revision <= stored_revision:
+            return {
+                "eligible": False,
+                "authorityRevision": revision,
+                "transitionReceiptId": transition_receipt_id,
+                "reasonCode": "authority_not_advanced",
+            }
+        return {
+            "eligible": True,
+            "authorityRevision": revision,
+            "transitionReceiptId": transition_receipt_id,
+            "reasonCode": "ready",
+        }
+
 
     def _authority(self, conn: sqlite3.Connection, kind: str, authority_id: str) -> dict[str, object]:
         if kind == "session_plan":

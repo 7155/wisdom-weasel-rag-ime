@@ -388,7 +388,11 @@ class DebugImeServiceTests(unittest.TestCase):
 
             with patch.object(
                 debug_server_module,
-                "DeepSeekMemoryOrganizer",
+                "build_governed_memory_model_executor",
+                return_value=object(),
+            ), patch.object(
+                debug_server_module,
+                "ManagedPiMemoryOrganizer",
                 return_value=organizer,
             ):
                 result = service.agent_memory_maintenance_prepare(

@@ -66,6 +66,7 @@ from .contracts.json_schema import validate_contract
 from .control_api import (
     AgentKernelControlFacade,
     ControlAccessContext,
+    capability_feature_flags,
     ControlApiError,
     ControlErrorCode,
     default_route_policy,
@@ -889,16 +890,20 @@ class DebugImeService:
             else bootstrap["routes"]
         )
         room_kernel_mode = str(self.agent.room_kernel.mode)
-        return {
-            "schemaVersion": "rag-ime.control-capabilities.v1",
-            "apiVersion": bootstrap["apiVersion"],
-            "features": {
+        features: dict[str, object] = capability_feature_flags(routes)
+        features.update(
+            {
                 "roomKernel": {
                     "mode": room_kernel_mode,
                     "v2Active": kernel_owns_room_execution(room_kernel_mode),
                 },
                 "workDocuments": True,
-            },
+            }
+        )
+        return {
+            "schemaVersion": "rag-ime.control-capabilities.v1",
+            "apiVersion": bootstrap["apiVersion"],
+            "features": features,
             "platform": bootstrap["platform"],
             "routes": routes,
         }
@@ -908,14 +913,20 @@ class DebugImeService:
         access_context: ControlAccessContext | None = None,
     ) -> dict[str, object]:
         payload = self.control_api.bootstrap()
-        features = payload.setdefault("features", {})
-        if isinstance(features, dict):
-            features["workDocuments"] = True
-        if access_context is not None:
-            payload["routes"] = default_route_policy().manifest(
+        routes = (
+            default_route_policy().manifest(
                 context=access_context,
                 include_targets=False,
             )
+            if access_context is not None
+            else payload["routes"]
+        )
+        payload["routes"] = routes
+        existing = payload.get("features")
+        features: dict[str, object] = dict(existing) if isinstance(existing, Mapping) else {}
+        features.update(capability_feature_flags(routes))
+        features["workDocuments"] = True
+        payload["features"] = features
         return payload
 
     def frontend_suggest(self, payload: dict[str, Any]) -> dict[str, object]:

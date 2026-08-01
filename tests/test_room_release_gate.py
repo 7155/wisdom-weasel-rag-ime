@@ -64,7 +64,7 @@ class RoomReleaseGateTests(unittest.TestCase):
         self.assertTrue(reports[0]["checks"]["piBuildManifestValid"])
         self.assertTrue(reports[0]["checks"]["piBuildProductCommitMatches"])
         self.assertTrue(reports[0]["checks"]["piBuildSourceCommitMatches"])
-        self.assertNotIn("local_provenance_or_dry_run", reports[0]["remainingGates"])
+        self.assertIn("local_provenance_or_dry_run", reports[0]["remainingGates"])
         self.assertFalse(reports[0]["productionCanaryEligible"])
         self.assertIn("loopback_worker_control_e2e", reports[0]["remainingGates"])
         self.assertFalse(reports[0]["installedAppsModified"])

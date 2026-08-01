@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -11,6 +12,8 @@ from .agent_room_kernel import (
     kernel_owns_room_execution,
 )
 
+
+_LOG = logging.getLogger(__name__)
 
 class RoomRuntime(Protocol):
     def dispatch_room(
@@ -133,6 +136,13 @@ class RoomKernelWorker:
                     record_intent=record_runtime_intent,
                 )
         except Exception as exc:
+            _LOG.exception(
+                "Room Runtime dispatch failed before acknowledgement "
+                "(dispatch_id=%s, session_id=%s, runtime_intent=%s)",
+                dispatch.get("dispatchId"),
+                dispatch.get("targetSessionId"),
+                runtime_intent_recorded,
+            )
             if not runtime_intent_recorded:
                 return self.store.record_runtime_preflight_failure(
                     lease_token=str(lease["leaseToken"]),
@@ -452,7 +462,7 @@ class RoomKernelWorkerLoop:
             except Exception:
                 # A leased but unacknowledged effect is intentionally left for
                 # expiry reconciliation; it must never be replayed blindly.
-                pass
+                _LOG.exception("Room Kernel worker iteration failed")
             if changed:
                 self.on_change()
             self._wake.wait(self.poll_seconds)

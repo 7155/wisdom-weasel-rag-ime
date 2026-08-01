@@ -961,11 +961,13 @@ const toolSpecs: ToolSpec[] = [
     name: "agent_plan",
     label: "任务执行清单",
     description: "维护跨回合与压缩保留的当前 Session 执行清单，不修改用户的每日规划。",
-    operations: ["list", "update", "submit_review"],
+    operations: ["list", "update", "submit_review", "complete", "cancel"],
     progress: {
       list: "正在读取任务执行清单",
       update: "正在更新任务执行清单",
       submit_review: "正在提交执行计划审阅",
+      complete: "正在完成执行计划",
+      cancel: "正在取消执行计划",
     },
     guidelines: [
       "这是当前 Session 的执行清单，不是用户的长期记忆、每日计划，也不是只读 Plan 模式；不要把这里的更新描述成修改了用户规划。",
@@ -1008,6 +1010,127 @@ const toolSpecs: ToolSpec[] = [
           properties: {
             op: { const: "submit_review" },
             note: { type: "string", maxLength: 600 },
+          },
+        },
+        ...["complete", "cancel"].map((operation) => ({
+          type: "object",
+          additionalProperties: false,
+          required: ["op"],
+          properties: {
+            op: { const: operation },
+            note: { type: "string", maxLength: 600 },
+          },
+        })),
+      ],
+    },
+  },
+  {
+    name: "agent_goal",
+    label: "长期目标",
+    description: "在用户明确确认后配置并维护当前 Session 的长期 Goal、验收标准、预算与完成证据。",
+    operations: ["list", "confirm_setup", "update", "pause", "resume", "complete", "cancel"],
+    progress: {
+      list: "正在读取长期目标",
+      confirm_setup: "正在确认长期目标",
+      update: "正在更新长期目标",
+      pause: "正在暂停长期目标",
+      resume: "正在恢复长期目标",
+      complete: "正在记录目标完成证据",
+      cancel: "正在取消长期目标",
+    },
+    guidelines: [
+      "Goal 是当前 Session 的长期目标，不是 agent_plan 执行清单；只有用户已经明确确认目标、验收标准和禁区时才能 confirm_setup。",
+      "先 list 读取当前 revision 和状态；不要覆盖既有 Goal，也不要把 Plan 项伪装成 Goal。",
+      "complete 必须附带至少一条可核验 evidence；工具回执会写入权威完成审计，再由控制中心投影。",
+      "pause、resume 和 cancel 会改变后续执行状态；只有符合用户明确意图时才能调用。删除 Goal 及审计记录只能由用户在控制中心操作。",
+    ],
+    parameterSchema: {
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op"],
+          properties: { op: { const: "list" } },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op", "confirmed", "objective"],
+          properties: {
+            op: { const: "confirm_setup" },
+            confirmed: { const: true },
+            objective: { type: "string", minLength: 1, maxLength: 4_000 },
+            successCriteria: { type: "string", maxLength: 2_000 },
+            evidenceExpectations: {
+              type: "array",
+              maxItems: 20,
+              items: { type: "string", minLength: 1, maxLength: 600 },
+            },
+            tokenBudget: { type: ["integer", "null"], minimum: 1, maximum: 100_000_000 },
+            timeBudgetMs: { type: ["integer", "null"], minimum: 1, maximum: 31_536_000_000 },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op"],
+          anyOf: [
+            { required: ["objective"] },
+            { required: ["successCriteria"] },
+            { required: ["evidenceExpectations"] },
+            { required: ["tokenBudget"] },
+            { required: ["timeBudgetMs"] },
+          ],
+          properties: {
+            op: { const: "update" },
+            objective: { type: "string", minLength: 1, maxLength: 4_000 },
+            successCriteria: { type: "string", maxLength: 2_000 },
+            evidenceExpectations: {
+              type: "array",
+              maxItems: 20,
+              items: { type: "string", minLength: 1, maxLength: 600 },
+            },
+            tokenBudget: { type: ["integer", "null"], minimum: 1, maximum: 100_000_000 },
+            timeBudgetMs: { type: ["integer", "null"], minimum: 1, maximum: 31_536_000_000 },
+          },
+        },
+        ...["pause", "resume"].map((operation) => ({
+          type: "object",
+          additionalProperties: false,
+          required: ["op"],
+          properties: { op: { const: operation } },
+        })),
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op", "summary", "evidence"],
+          properties: {
+            op: { const: "complete" },
+            summary: { type: "string", minLength: 1, maxLength: 2_000 },
+            evidence: {
+              type: "array",
+              minItems: 1,
+              maxItems: 20,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["kind", "summary", "reference"],
+                properties: {
+                  kind: { type: "string", enum: ["test", "artifact", "commit", "receipt", "note"] },
+                  summary: { type: "string", minLength: 1, maxLength: 600 },
+                  reference: { type: "string", minLength: 1, maxLength: 1_000 },
+                },
+              },
+            },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["op", "reason"],
+          properties: {
+            op: { const: "cancel" },
+            reason: { type: "string", minLength: 1, maxLength: 1_000 },
           },
         },
       ],
@@ -1897,7 +2020,8 @@ function specsForToolProfile(specs: ToolSpec[]) {
     runtime: ["health", "components", "diagnose"],
     agents: ["catalog", "delegate", "status", "artifact", "abort"],
     agent_schedule: ["list", "runs"],
-    agent_plan: ["list", "update"],
+    agent_plan: ["list"],
+    agent_goal: ["list"],
     workspace_job: ["list", "status", "logs"],
     workspace_lsp: [
       "status", "symbols", "hover", "definition", "references", "diagnostics",

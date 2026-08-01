@@ -15,6 +15,7 @@ FOREGROUND_ENV_CHECK_SCRIPT="${RAG_IME_FOREGROUND_ENV_CHECK_SCRIPT:-$ROOT/script
 FOREGROUND_ENV_REPORT="${RAG_IME_FOREGROUND_ENV_REPORT:-/tmp/rag-ime-foreground-environment.json}"
 SOAK_REPORT_PATH="${RAG_IME_SQUIRREL_SOAK_REPORT_PATH:-/tmp/rag-ime-v1-soak-report.json}"
 PYTHON_EXECUTABLE="${RAG_IME_PYTHON:-$(command -v python3)}"
+ACTIVE_SQUIRREL_CONFIG="${RAG_IME_SQUIRREL_ACTIVE_CONFIG:-$HOME/Library/Rime/build/squirrel.yaml}"
 OPEN_COMMAND="${RAG_IME_OPEN_COMMAND:-open}"
 
 CLEAR_TRACE=1
@@ -49,7 +50,8 @@ USE_V1_SOAK_GATE=0
 DRY_RUN=0
 AUTO_TYPE=0
 AUTO_QUERY="${RAG_IME_FOREGROUND_TRACE_AUTO_QUERY:-er qi}"
-AUTO_KEY="${RAG_IME_FOREGROUND_TRACE_AUTO_KEY:-6}"
+AUTO_COMMIT_KEY="${RAG_IME_FOREGROUND_TRACE_AUTO_COMMIT_KEY:-6}"
+AUTO_KEY="${RAG_IME_FOREGROUND_TRACE_AUTO_KEY:-option-1}"
 AUTO_KEY_WAS_SET=0
 AUTO_TYPE_DELAY="${RAG_IME_FOREGROUND_TRACE_AUTO_DELAY_SECONDS:-2.5}"
 AUTO_CHAR_DELAY="${RAG_IME_FOREGROUND_TRACE_AUTO_CHAR_DELAY_SECONDS:-0.04}"
@@ -114,10 +116,11 @@ Options:
                        Maximum stale responses allowed to apply
   --max-context-echo-count N
                        Maximum context-echo candidates allowed
-  --auto-type           Try to type the test query and side-candidate key with AppleScript
+  --auto-type           Try to type, commit the Rime composition, and trigger the assistant action
   --auto-query TEXT     Text used by --auto-type (default: er qi)
-  --auto-key KEY        Number key used by --auto-type (default: 6)
-                       For Active RAG proof, use ctrl-period by default.
+  --auto-commit-key KEY Native Rime candidate key sent after the query (default: 6; none disables)
+  --auto-key KEY        Assistant action sent after candidates appear (default: option-1)
+                       For Active RAG proof, use ctrl-period.
   --auto-char-delay SEC Delay between simulated characters (default: 0.04)
   --active-rag-proof   Require the final DeepSeek action button -> thinking -> ready lifecycle
   --dry-run             Print resolved commands without changing local state
@@ -260,6 +263,14 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       AUTO_QUERY="$2"
+      shift
+      ;;
+    --auto-commit-key)
+      if [[ $# -lt 2 ]]; then
+        echo "--auto-commit-key requires a value" >&2
+        exit 2
+      fi
+      AUTO_COMMIT_KEY="$2"
       shift
       ;;
     --auto-key)
@@ -484,6 +495,7 @@ gate_mode=$gate_mode
 active_rag_proof=$ACTIVE_RAG_PROOF
 auto_type=$AUTO_TYPE
 auto_query=$AUTO_QUERY
+auto_commit_key=$AUTO_COMMIT_KEY
 auto_key=$AUTO_KEY
 auto_type_delay=$AUTO_TYPE_DELAY
 auto_char_delay=$AUTO_CHAR_DELAY
@@ -509,26 +521,51 @@ else
   "$CHECK_INPUT_SOURCE_SCRIPT" "$INPUT_SOURCE_ID"
 fi
 
+if [[ -f "$ACTIVE_SQUIRREL_CONFIG" ]] && ! "$PYTHON_EXECUTABLE" - "$ACTIVE_SQUIRREL_CONFIG" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+enabled = re.search(
+    r'(?m)^\s*(?:"rag_ime/frontend_trace"|frontend_trace)\s*:\s*true\s*(?:#.*)?$',
+    text,
+)
+raise SystemExit(0 if enabled else 1)
+PY
+then
+  cat >&2 <<EOF
+Foreground trace is disabled in the active Squirrel config:
+  $ACTIVE_SQUIRREL_CONFIG
+
+Enable rag_ime/frontend_trace, run Squirrel --build and --reload, then retry.
+The trace is intentionally disabled by default; restore that setting after acceptance.
+EOF
+  exit 75
+fi
+
 if [[ "$CLEAR_TRACE" == "1" ]]; then
   "$PYTHON_EXECUTABLE" "$TRACE_CHECK_SCRIPT" --log-path "$TRACE_LOG" --clear >/dev/null
 fi
 
 if [[ "$OPEN_TEST_FILE" == "1" ]]; then
   mkdir -p "$(dirname "$TEST_FILE")"
-  "$PYTHON_EXECUTABLE" - "$TEST_FILE" "$AUTO_QUERY" "$INPUT_SOURCE_ID" <<'PY'
+  "$PYTHON_EXECUTABLE" - "$TEST_FILE" "$AUTO_QUERY" "$INPUT_SOURCE_ID" "$AUTO_COMMIT_KEY" "$AUTO_KEY" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1]).expanduser()
 query = sys.argv[2]
 input_source = sys.argv[3]
+commit_key = sys.argv[4]
+action_key = sys.argv[5]
 path.write_text(
     "RAG-IME foreground trace test\n\n"
     f"1. Make sure the active input source is {input_source}.\n"
     f"2. Type: {query}.\n"
-    "3. Wait for LLM/model, RAG, and memory candidates in the panel.\n"
-    "4. Press a visible candidate number to accept a side candidate and wait for the next prediction.\n\n"
-    "5. Press Ctrl+. and wait for the animated thinking row, then one ready candidate.\n\n",
+    f"3. Commit the active Rime composition with: {commit_key}.\n"
+    "4. Wait for LLM/model, RAG, and memory candidates in the panel.\n"
+    f"5. Trigger the assistant action with: {action_key}.\n\n",
     encoding="utf-8",
 )
 PY
@@ -553,13 +590,14 @@ fi
 
 if [[ "$AUTO_TYPE" == "1" ]]; then
   set +e
-  osascript - "$OPEN_APP" "$AUTO_QUERY" "$AUTO_KEY" "$AUTO_TYPE_DELAY" "$AUTO_CHAR_DELAY" <<'APPLESCRIPT'
+  osascript - "$OPEN_APP" "$AUTO_QUERY" "$AUTO_COMMIT_KEY" "$AUTO_KEY" "$AUTO_TYPE_DELAY" "$AUTO_CHAR_DELAY" <<'APPLESCRIPT'
 on run argv
   set appName to item 1 of argv
   set queryText to item 2 of argv
-  set actionKey to item 3 of argv
-  set waitSeconds to (item 4 of argv) as number
-  set charDelaySeconds to (item 5 of argv) as number
+  set commitKey to item 3 of argv
+  set actionKey to item 4 of argv
+  set waitSeconds to (item 5 of argv) as number
+  set charDelaySeconds to (item 6 of argv) as number
   tell application appName to activate
   delay 0.8
   tell application "System Events"
@@ -569,14 +607,21 @@ on run argv
       keystroke (character charIndex of queryText)
       delay charDelaySeconds
     end repeat
-    -- Explicit knowledge generation is a post-commit action. Commit the Rime
-    -- composition first; otherwise Ctrl+. is correctly consumed by the active
-    -- composition and the verifier produces a false negative.
-    if actionKey is "ctrl-period" or actionKey is "control-period" or actionKey is "ctrl-." or actionKey is "control-." then
-      key code 36
+    if commitKey is not "" and commitKey is not "none" then
+      if commitKey is "return" then
+        key code 36
+      else if commitKey is "enter" then
+        key code 76
+      else if commitKey is "space" then
+        key code 49
+      else
+        keystroke commitKey
+      end if
     end if
     delay waitSeconds
-    if actionKey is "tab" then
+    if actionKey is "" or actionKey is "none" then
+      return
+    else if actionKey is "tab" then
       key code 48
     else if actionKey is "ctrl-period" or actionKey is "control-period" or actionKey is "ctrl-." or actionKey is "control-." then
       -- Use the physical ANSI period key. `keystroke "."` can be translated
@@ -609,7 +654,7 @@ APPLESCRIPT
   auto_type_status=$?
   set -e
   if [[ "$auto_type_status" != "0" ]]; then
-    cat >&2 <<'EOF'
+    cat >&2 <<EOF
 warning: automatic foreground typing failed.
 This is usually a macOS Accessibility permission issue, not an IME failure.
 
@@ -618,7 +663,8 @@ command, usually Codex and/or your terminal:
   System Settings -> Privacy & Security -> Accessibility
 
 Manual fallback:
-  click the opened editor, type "$AUTO_QUERY", then press a visible side-candidate number.
+  click the opened editor, type "$AUTO_QUERY", press "$AUTO_COMMIT_KEY",
+  wait for assistant candidates, then press "$AUTO_KEY".
 EOF
   fi
 fi
@@ -629,9 +675,9 @@ Foreground trace gate is waiting for real Squirrel AppKit events.
 Manual action now:
   1. Click the opened editor or any normal text field.
   2. Type: $AUTO_QUERY
-  3. Wait for LLM/model, RAG, and memory candidates in the panel.
-  4. Press a visible candidate number to commit a side candidate.
-  5. Press Ctrl+. and wait for thinking animation plus one ready candidate.
+  3. Commit the active Rime composition with: $AUTO_COMMIT_KEY
+  4. Wait for LLM/model, RAG, and memory candidates in the panel.
+  5. Trigger the assistant action with: $AUTO_KEY
 
 Trace log:
   $TRACE_LOG

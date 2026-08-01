@@ -4,10 +4,10 @@ import type { AgentPlanProjection } from '@/contracts/agent-reducer';
 export function AgentPlanCard({ plan }: { plan: AgentPlanProjection }) {
   if (plan.items.length === 0) return null;
   const activeIndex = plan.items.findIndex((item) => item.status === 'in_progress');
-  const allCompleted = plan.counts.completed === plan.counts.total;
+  const allStepsCompleted = plan.counts.completed === plan.counts.total;
   const state = plan.status === 'cancelled'
     ? 'cancelled'
-    : allCompleted || plan.status === 'completed'
+    : plan.status === 'completed'
       ? 'completed'
       : activeIndex >= 0 || plan.status === 'executing'
         ? 'running'
@@ -15,8 +15,10 @@ export function AgentPlanCard({ plan }: { plan: AgentPlanProjection }) {
   const progress = plan.counts.total > 0
     ? Math.round((plan.counts.completed / plan.counts.total) * 100)
     : 0;
-  const progressLabel = allCompleted
-    ? `${plan.counts.total} / ${plan.counts.total} 项已完成`
+  const progressLabel = allStepsCompleted
+    ? plan.status === 'completed'
+      ? `${plan.counts.total} / ${plan.counts.total} 项已完成`
+      : `${plan.counts.total} / ${plan.counts.total} 项完成 · 待验收`
     : activeIndex >= 0
       ? `第 ${activeIndex + 1} / ${plan.counts.total} 步 · ${plan.counts.completed} 项已完成`
       : `等待下一步 · ${plan.counts.completed} / ${plan.counts.total} 项已完成`;

@@ -116,7 +116,7 @@ class RoomContextJournalTests(unittest.TestCase):
             conn.execute(
                 """
                 INSERT INTO room_kernel_roots(
-                    root_id, room_id, generation, state, owner,
+                    root_id, room_id, generation, state, facilitator_participant_id,
                     requirement_anchor_ref, budget_remaining, budget_reserved,
                     max_hops, max_depth, acceptance_criteria_json,
                     covered_criteria_json, payload_json,

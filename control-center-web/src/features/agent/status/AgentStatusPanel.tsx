@@ -29,8 +29,9 @@ import {
   Button,
   IconButton,
 } from '@/components/primitives';
-import type { AgentActivityProjection, AgentProjectionState, AgentTurnStatus } from '@/contracts/agent-reducer';
+import type { AgentActivityProjection, AgentPlanProjection, AgentProjectionState, AgentTurnStatus } from '@/contracts/agent-reducer';
 import type { AgentSubagentRunV1 } from '@/contracts/generated/agent-subagent-run.v1';
+import type { AgentWorkflowStateV1 } from '@/contracts/generated/agent-workflow-state.v1';
 import type {
   CapabilityCatalog,
   CapabilityMutationOutcome,
@@ -92,7 +93,11 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
   const contentReady = useDeferredStatusContent(open);
   const projection = useAgentLiveStore((state) => state.projections[sessionId]);
   const view = useMemo(() => projectStatusPanel(projection), [projection]);
-  const panelStatus = statusPanelLabel(projection, view);
+  const [resolvedWorkflow, setResolvedWorkflow] = useState<AgentWorkflowStateV1>();
+  const resolvedPlan = resolvedWorkflow?.sessionId === sessionId
+    ? resolvedWorkflow.plan
+    : undefined;
+  const panelStatus = statusPanelLabel(projection, view, resolvedPlan);
   const backgroundJobs = useMemo(
     () => (projection?.backgroundJobOrder ?? [])
       .map((jobId) => projection?.backgroundJobsById[jobId])
@@ -144,6 +149,7 @@ export const AgentStatusPanel = forwardRef<HTMLElement, {
           fallbackGoal={projection?.goal}
           fallbackActGate={projection?.actGate}
           currentTurnStartedAtMs={view.turn?.createdAtMs}
+          onWorkflowResolved={setResolvedWorkflow}
         />
         {lifecycleCancellationAudits.length ? (
           <StatusSection icon={CircleDashed} title="取消与暂停回执" count={lifecycleCancellationAudits.length}>
@@ -705,6 +711,7 @@ function isSubagentRun(value: unknown): value is AgentSubagentRunV1 {
 function statusPanelLabel(
   projection: AgentProjectionState | undefined,
   view: StatusPanelProjection,
+  resolvedPlan?: AgentPlanProjection,
 ): string {
   if (
     view.turn
@@ -712,9 +719,10 @@ function statusPanelLabel(
   ) {
     return `当前回合 · ${turnStatusLabel(view.turn.status)}`;
   }
-  const plan = projection?.plan;
+  const plan = resolvedPlan ?? projection?.plan;
   if (plan?.items.length) {
-    if (plan.counts.completed === plan.counts.total) return '计划已完成';
+    if (plan.status === 'completed') return '计划已完成';
+    if (plan.counts.completed === plan.counts.total) return '步骤已完成 · 待验收';
     if (plan.counts.inProgress > 0) return `执行中 · ${plan.counts.completed}/${plan.counts.total}`;
     return `待执行 · ${plan.counts.completed}/${plan.counts.total}`;
   }

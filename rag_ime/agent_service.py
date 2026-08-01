@@ -2897,22 +2897,12 @@ class AgentService:
             kernel_owns_room_execution(self.room_kernel.mode)
             and room_turn_id in self.room_kernel.root_ids(room_id)
         ):
-            background_job_receipts: list[dict[str, object]] = []
-            runtime_targets = self.room_kernel.active_runtime_targets(
-                room_turn_id,
-            )
-            for session_id in dict.fromkeys(
-                str(target["sessionId"])
-                for target in runtime_targets
-                if str(target.get("sessionId") or "")
-            ):
-                background_job_receipts.extend(
-                    self.background_jobs.cancel_room_root(
-                        session_id,
-                        room_turn_id=room_turn_id,
-                        reason=f"Cancelled with Room root {room_turn_id}",
-                    )
+            background_job_receipts = (
+                self.background_jobs.cancel_room_root_all_sessions(
+                    room_turn_id=room_turn_id,
+                    reason=f"Cancelled with Room root {room_turn_id}",
                 )
+            )
             response = dict(
                 self.room_kernel_application.cancel_root(
                     room_id,

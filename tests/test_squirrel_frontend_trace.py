@@ -185,6 +185,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory(prefix="rag-ime-foreground-order-") as tmp:
             tmp_path = Path(tmp)
+            active_config = tmp_path / "squirrel.yaml"
             order_log = tmp_path / "order.log"
             check_script = tmp_path / "check.sh"
             environment_script = tmp_path / "foreground-environment.py"
@@ -202,6 +203,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                 encoding="utf-8",
             )
             trace_script.write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+            active_config.write_text("frontend_trace: true\n", encoding="utf-8")
             for script in (check_script, environment_script, select_script, open_script, trace_script):
                 script.chmod(0o755)
 
@@ -225,6 +227,7 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
                     "RAG_IME_TRACE_CHECK_SCRIPT": str(trace_script),
                     "RAG_IME_FOREGROUND_TRACE_TEST_FILE": str(tmp_path / "trace.txt"),
                     "RAG_IME_SQUIRREL_FRONTEND_TRACE_LOG": str(tmp_path / "frontend.jsonl"),
+                    "RAG_IME_SQUIRREL_ACTIVE_CONFIG": str(active_config),
                     "RAG_IME_FOREGROUND_APP_ACTIVATION_DELAY_SECONDS": "0",
                 },
                 check=True,
@@ -233,6 +236,53 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
             )
 
             self.assertEqual(order_log.read_text(encoding="utf-8").splitlines(), ["open", "select"])
+
+    def test_foreground_trace_fails_before_clearing_when_active_trace_is_disabled(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-foreground-trace-disabled-") as tmp:
+            tmp_path = Path(tmp)
+            check_script = tmp_path / "check.sh"
+            environment_script = tmp_path / "foreground-environment.py"
+            trace_script = tmp_path / "trace.py"
+            active_config = tmp_path / "squirrel.yaml"
+            trace_log = tmp_path / "frontend.jsonl"
+            check_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+            environment_script.write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+            trace_script.write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+            active_config.write_text("frontend_trace: false\n", encoding="utf-8")
+            trace_log.write_text('{"event":"must_survive"}\n', encoding="utf-8")
+            for script in (check_script, environment_script, trace_script):
+                script.chmod(0o755)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(root / "scripts" / "verify_squirrel_foreground_trace.sh"),
+                    "--no-open",
+                    "--no-select",
+                    "--mixed-only",
+                    "--no-modern-session",
+                    "--no-balanced-quota",
+                    "--wait",
+                    "0",
+                ],
+                cwd=root,
+                env={
+                    **os.environ,
+                    "RAG_IME_CHECK_INPUT_SOURCE_SCRIPT": str(check_script),
+                    "RAG_IME_FOREGROUND_ENV_CHECK_SCRIPT": str(environment_script),
+                    "RAG_IME_TRACE_CHECK_SCRIPT": str(trace_script),
+                    "RAG_IME_SQUIRREL_ACTIVE_CONFIG": str(active_config),
+                    "RAG_IME_SQUIRREL_FRONTEND_TRACE_LOG": str(trace_log),
+                },
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+            self.assertEqual(result.returncode, 75, msg=result.stdout + result.stderr)
+            self.assertIn("Foreground trace is disabled", result.stderr)
+            self.assertEqual(trace_log.read_text(encoding="utf-8"), '{"event":"must_survive"}\n')
 
     def test_soak_wrapper_dry_run_reports_gate(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -454,6 +504,8 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         )
 
         self.assertIn("require_mixed_panel=0", result.stdout)
+        self.assertIn("auto_commit_key=6", result.stdout)
+        self.assertIn("auto_key=option-1", result.stdout)
         self.assertIn("require_side_panel=1", result.stdout)
         self.assertIn("require_post_commit_followup=1", result.stdout)
         self.assertIn("require_commit_observed=1", result.stdout)
@@ -2752,6 +2804,120 @@ class SquirrelFrontendTraceScriptTests(unittest.TestCase):
         self.assertEqual(report["v1Foreground"]["sourceBadgeCoverage"]["coverageRate"], 1.0)
         self.assertTrue(report["thresholdResults"]["assistantOverlayPostCommit"])
         self.assertTrue(report["thresholdResults"]["assistantOverlayKeyPolicy"])
+
+    def test_soak_report_accepts_current_overlay_actions_and_direct_rime_trace(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(prefix="rag-ime-soak-overlay-actions-") as tmp:
+            log_path = Path(tmp) / "trace.jsonl"
+            report_path = Path(tmp) / "report.json"
+            events = [
+                {
+                    "event": "rime_composition_started",
+                    "timestampMs": 1,
+                    "candidateCount": 8,
+                    "rawInput": {"chars": 2, "hash": "sha256:rime-input"},
+                    "preedit": {"chars": 2, "hash": "sha256:rime-preedit"},
+                },
+                {
+                    "event": "sidecar_request_scheduled",
+                    "timestampMs": 2,
+                    "phase": "post_commit",
+                    "snapshotId": "snapshot-current",
+                },
+                {
+                    "event": "assistant_overlay_candidate_visible",
+                    "timestampMs": 3,
+                    "phase": "post_commit",
+                    "uiMode": "post_commit_prediction",
+                    "snapshotId": "snapshot-current",
+                    "panelSessionId": "panel-current",
+                    "keyPolicy": {
+                        "numberKeys": "pass_through",
+                        "tab": "accept_top_prediction",
+                        "optionNumber": "select_prediction_by_ordinal",
+                    },
+                    "candidates": [
+                        {
+                            "sourceType": "model",
+                            "sourceBadge": "模",
+                            "colorToken": "blue",
+                            "selectionAction": "commit_side_candidate",
+                            "selectionKey": "1",
+                            "candidateOrdinal": 1,
+                            "candidateStableId": "model:current",
+                            "snapshotId": "snapshot-current",
+                            "textHash": "sha256:model-current",
+                            "textChars": 4,
+                        },
+                        {
+                            "sourceType": "action",
+                            "sourceBadge": "快速生成",
+                            "badge": "快速生成",
+                            "colorToken": "blue",
+                            "selectionAction": "start_active_rag_from_context",
+                            "buttonRole": "quick_generate",
+                            "candidateOrdinal": 0,
+                            "selectionRank": 0,
+                            "candidateStableId": "action:quick-current",
+                            "snapshotId": "snapshot-current",
+                            "textHash": "sha256:quick-action",
+                            "textChars": 4,
+                        },
+                        {
+                            "sourceType": "action",
+                            "sourceBadge": "深度查找",
+                            "badge": "深度查找",
+                            "colorToken": "blue",
+                            "selectionAction": "start_agent_deep_search_from_context",
+                            "buttonRole": "deep_search",
+                            "candidateOrdinal": 0,
+                            "selectionRank": 0,
+                            "candidateStableId": "action:deep-current",
+                            "snapshotId": "snapshot-current",
+                            "textHash": "sha256:deep-action",
+                            "textChars": 4,
+                        },
+                    ],
+                },
+            ]
+            log_path.write_text(
+                "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(root / "scripts" / "check_squirrel_soak_report.py"),
+                    "--log-path",
+                    str(log_path),
+                    "--report-path",
+                    str(report_path),
+                    "--require-side-panel",
+                    "--require-modern-prediction-session",
+                    "--require-balanced-quota",
+                    "--require-rime-composition-ok",
+                    "--require-no-ai-during-composition",
+                    "--require-source-badges",
+                    "--min-side-commits",
+                    "0",
+                    "--min-post-commit-followups",
+                    "0",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=root,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, msg=result.stdout + result.stderr)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertTrue(report["passed"])
+            self.assertTrue(report["thresholdResults"]["sidecarApplied"])
+            self.assertTrue(report["thresholdResults"]["panelDisplays"])
+            self.assertTrue(report["requiredTraceEvents"]["panel_display_candidates"]["observed"])
+            self.assertTrue(report["requiredTraceEvents"]["post_commit_prediction_applied"]["observed"])
+            self.assertEqual(report["displayQuality"]["sourceBadgeMissingCount"], 0)
+            self.assertEqual(report["displayQuality"]["snapshotOrdinalDriftViolation"], 0)
 
     def test_soak_report_tracks_pending_feedback_separately_from_candidate_readiness(self) -> None:
         root = Path(__file__).resolve().parents[1]

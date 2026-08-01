@@ -475,6 +475,40 @@ class AgentSessionStoreTests(unittest.TestCase):
             ["completed", "in_progress"],
         )
 
+    def test_completed_plan_can_finish_without_a_late_approval_transition(self) -> None:
+        for submitted_for_review in (False, True):
+            with self.subTest(submitted_for_review=submitted_for_review):
+                session_id = str(
+                    self.store.create(
+                        title=f"complete plan {submitted_for_review}",
+                    )["id"]
+                )
+                plan = self.store.mutate_agent_plan(
+                    session_id,
+                    {
+                        "action": "save",
+                        "title": "已按用户请求执行",
+                        "items": [{"title": "完成并核验", "status": "completed"}],
+                    },
+                )["plan"]
+                if submitted_for_review:
+                    plan = self.store.mutate_agent_plan(
+                        session_id,
+                        {
+                            "action": "submit_review",
+                            "expectedRevision": plan["revision"],
+                        },
+                    )["plan"]
+                    self.assertEqual(plan["status"], "review")
+                completed = self.store.mutate_agent_plan(
+                    session_id,
+                    {
+                        "action": "complete",
+                        "expectedRevision": plan["revision"],
+                    },
+                )["plan"]
+                self.assertEqual(completed["status"], "completed")
+
     def test_plan_review_gate_preserves_approved_scope_and_tracks_execution(self) -> None:
         session = self.store.create(title="reviewed plan", created_at_ms=100)
         session_id = str(session["id"])
@@ -1213,11 +1247,17 @@ class AgentSessionStoreTests(unittest.TestCase):
                 "baseState": {"roomInvocationReceiptId": "invoke:room:1"},
             },
             now_ms=1_500,
+            causal_turn_id="root:room:1",
         )
         self.assertEqual(rebound["payloadSha256"], "f" * 64)
         self.assertEqual(
             rebound["preview"]["baseState"]["roomInvocationReceiptId"],
             "invoke:room:1",
+        )
+        self.assertTrue(rebound["causalMetadata"]["roomBound"])
+        self.assertEqual(
+            rebound["causalMetadata"]["turnId"],
+            "root:room:1",
         )
 
         decided = self.store.decide_approval(

@@ -1031,8 +1031,8 @@ class AgentSessionStore:
                 raise ValueError("only a plan in review can be approved")
             if action == "return_to_draft" and current_status not in {"review", "approved"}:
                 raise ValueError("only a reviewed or approved plan can return to draft")
-            if action == "complete" and current_status not in {"approved", "executing"}:
-                raise ValueError("only an approved or executing plan can be completed")
+            if action == "complete" and current_status in {"completed", "cancelled"}:
+                raise ValueError("terminal plans cannot be completed again")
             if action == "cancel" and current_status in {"completed", "cancelled"}:
                 raise ValueError("terminal plans cannot be cancelled again")
             if action == "reset" and current_status not in {"completed", "cancelled"}:
@@ -2297,6 +2297,7 @@ class AgentSessionStore:
         payload_sha256: str,
         preview: Mapping[str, object],
         now_ms: int | None = None,
+        causal_turn_id: str = "",
     ) -> dict[str, object]:
         """Atomically add execution context before an approval reaches the UI."""
 
@@ -2321,6 +2322,11 @@ class AgentSessionStore:
         room_bound = bool(
             str(base_state.get("roomInvocationReceiptId") or "").strip()
         )
+        room_root_id = str(causal_turn_id or "").strip()[:240]
+        if room_bound and not room_root_id:
+            raise ValueError(
+                "room-bound approval rebind requires the Room root id"
+            )
         terminal_error = ""
         with self._connect() as conn:
             row = conn.execute(
@@ -2345,7 +2351,11 @@ class AgentSessionStore:
                     """
                     UPDATE agent_approvals
                     SET payload_sha256 = ?, preview_json = ?,
-                        room_bound = CASE WHEN ? THEN 1 ELSE room_bound END
+                        room_bound = CASE WHEN ? THEN 1 ELSE room_bound END,
+                        causal_turn_id = CASE
+                            WHEN ? THEN ?
+                            ELSE causal_turn_id
+                        END
                     WHERE approval_id = ? AND state = 'pending'
                       AND payload_sha256 = ?
                     """,
@@ -2353,6 +2363,8 @@ class AgentSessionStore:
                         digest,
                         preview_json,
                         int(room_bound),
+                        int(room_bound),
+                        room_root_id,
                         approval_id,
                         expected_digest,
                     ),

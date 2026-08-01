@@ -7,6 +7,17 @@
 export interface WorkDocumentDetailV1 {
   schemaVersion: 'rag-ime.work-document-detail.v1';
   document: Document;
+  reopen: {
+    eligible: boolean;
+    authorityRevision: number;
+    transitionReceiptId: string;
+    reasonCode:
+      | 'ready'
+      | 'document_not_archived'
+      | 'authority_terminal'
+      | 'authority_not_advanced'
+      | 'authority_unavailable';
+  };
 }
 export interface Document {
   documentId: string;

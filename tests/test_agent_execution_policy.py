@@ -221,7 +221,7 @@ class AgentExecutionPolicyTests(unittest.TestCase):
         self.assertIn("全自动", trusted_without_scope)
         self.assertIn("工作区边界尚未确认", trusted_without_scope)
         self.assertIn("工作区变更会失败关闭", trusted_without_scope)
-        self.assertIn("所有原本需要审批的操作都由独立 Luna Max 审批历史判定", trusted)
+        self.assertIn("所有原本需要审批的操作都由独立的 Luna Max 模型判定", trusted)
         self.assertIn("不接收本 Agent 的输出或推理", trusted)
         self.assertIn("不要原样重试，也不要转为人工审批", trusted)
         self.assertIn("删库、灾难性破坏和敏感数据外传由代码硬阻止", trusted)

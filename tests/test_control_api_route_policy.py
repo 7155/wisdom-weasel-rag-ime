@@ -9,6 +9,7 @@ from rag_ime.control_api import (
     ControlPathId,
     ControlRequest,
     ControlScope,
+    capability_feature_flags,
     default_route_policy,
 )
 
@@ -1194,6 +1195,20 @@ class ControlRoutePolicyTests(unittest.TestCase):
         self.assertTrue(all(item["remoteSafe"] for item in manifest))
         self.assertTrue(all("target" not in item for item in manifest))
         self.assertNotIn(ControlPathId.AGENT_TOOLS_LIST.value, {item["pathId"] for item in manifest})
+
+    def test_remote_manifest_does_not_leak_local_only_feature_flags(self) -> None:
+        context = ControlAccessContext.remote(
+            device_id="phone-1",
+            scopes={ControlScope.CONTROL_READ.value},
+        )
+        feature_flags = capability_feature_flags(
+            self.policy.manifest(context=context, include_targets=False)
+        )
+
+        self.assertTrue(feature_flags["subscriptions"])
+        self.assertFalse(feature_flags["configurationSettingsWorkContract"])
+        self.assertFalse(feature_flags["managementWorkContract"])
+        self.assertFalse(feature_flags["planningWorkContract"])
 
     def test_no_generic_or_privileged_escape_route_is_registered(self) -> None:
         manifest = self.policy.manifest(include_targets=True)

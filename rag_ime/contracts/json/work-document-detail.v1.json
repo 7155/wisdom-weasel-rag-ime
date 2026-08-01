@@ -2,10 +2,24 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "rag-ime.contract.work-document-detail.v1",
   "type": "object",
-  "required": ["schemaVersion", "document"],
+  "required": ["schemaVersion", "document", "reopen"],
   "properties": {
     "schemaVersion": {"type": "string", "const": "rag-ime.work-document-detail.v1"},
-    "document": {"$ref": "#/$defs/document"}
+    "document": {"$ref": "#/$defs/document"},
+    "reopen": {
+      "type": "object",
+      "required": ["eligible", "authorityRevision", "transitionReceiptId", "reasonCode"],
+      "properties": {
+        "eligible": {"type": "boolean"},
+        "authorityRevision": {"type": "integer", "minimum": 0},
+        "transitionReceiptId": {"type": "string", "maxLength": 240},
+        "reasonCode": {
+          "type": "string",
+          "enum": ["ready", "document_not_archived", "authority_terminal", "authority_not_advanced", "authority_unavailable"]
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false,
   "$defs": {

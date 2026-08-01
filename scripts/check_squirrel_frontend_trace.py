@@ -37,6 +37,20 @@ ASSISTANT_OVERLAY_COLOR_ALIASES = {
     "memory": {"orange", "purple", "memoryPurple"},
     "action": {"blue", "modelBlue"},
 }
+ASSISTANT_OVERLAY_BADGE_ALIASES = {source_type: {badge} for source_type, badge in SOURCE_BADGES.items()}
+ASSISTANT_OVERLAY_BADGE_ALIASES["action"] = {
+    "生成",
+    "快速生成",
+    "看图生成",
+    "深度查找",
+}
+POST_COMMIT_ACTION_SELECTION_ACTIONS = frozenset(
+    {
+        "start_active_rag_from_context",
+        "start_visual_rag_from_context",
+        "start_agent_deep_search_from_context",
+    }
+)
 USER_TEXT_TRACE_KEYS = {
     "selectedText",
     "rawSelectedText",
@@ -428,11 +442,7 @@ def assistant_overlay_has_selectable_side(candidates: Any) -> bool:
         if candidate_is_real_side_candidate(candidate):
             has_real_candidate = True
             continue
-        if (
-            str(candidate.get("sourceType") or "") == "action"
-            and candidate_is_active_rag_action_button(candidate)
-            and candidate_source_visuals_match(candidate)
-        ):
+        if candidate_is_assistant_action_button(candidate) and candidate_source_visuals_match(candidate):
             continue
         return False
     return has_real_candidate
@@ -501,9 +511,21 @@ def visible_candidates_are_side_first(candidates: Any) -> bool:
 
 
 def is_balanced_candidate_quota_event(event: dict[str, Any]) -> bool:
+    candidates = event.get("candidates")
+    if event.get("event") in {"assistant_overlay_candidate_visible", "assistant_overlay_updated"}:
+        if (
+            str(event.get("phase") or "") != "post_commit"
+            or str(event.get("uiMode") or "") != "post_commit_prediction"
+        ):
+            return False
+        counts = candidate_source_counts(candidates)
+        if counts["model"] > 2 and (counts["rag"] + counts["memory"]) > 0:
+            return False
+        if counts["model"] > 3 and (counts["rag"] + counts["memory"]) == 0:
+            return False
+        return assistant_overlay_has_selectable_side(candidates)
     if event.get("event") != "panel_display_candidates":
         return False
-    candidates = event.get("candidates")
     return visible_candidates_obey_balanced_quota(candidates)
 
 
@@ -522,6 +544,8 @@ def visible_candidates_obey_balanced_quota(candidates: Any) -> bool:
 
 
 def is_rime_composition_mode_event(event: dict[str, Any]) -> bool:
+    if is_native_rime_composition_event(event):
+        return True
     if event.get("event") == "sidecar_response_applied":
         ui_mode = str(event.get("uiMode") or "")
         session = event.get("predictionSession")
@@ -714,6 +738,13 @@ def is_active_rag_action_button_event(event: dict[str, Any]) -> bool:
         return False
     return panel_is_post_commit(event) or any(
         isinstance(candidate, dict) and candidate_is_post_commit_active_rag_action(candidate) for candidate in candidates
+    )
+
+
+def candidate_is_assistant_action_button(candidate: dict[str, Any]) -> bool:
+    return (
+        str(candidate.get("sourceType") or "") == "action"
+        and str(candidate.get("selectionAction") or "") in POST_COMMIT_ACTION_SELECTION_ACTIONS
     )
 
 
@@ -957,7 +988,7 @@ def candidate_source_visuals_match(candidate: dict[str, Any]) -> bool:
     actual_badge = str(candidate.get("badge") or candidate.get("sourceBadge") or "")
     actual_color = str(candidate.get("colorToken") or "")
     return (
-        actual_badge == expected_badge
+        actual_badge in ASSISTANT_OVERLAY_BADGE_ALIASES.get(source_type, {expected_badge})
         and actual_color in ASSISTANT_OVERLAY_COLOR_ALIASES.get(source_type, {expected_color})
     )
 

@@ -172,6 +172,8 @@ describe('AgentWorkflowPanel', () => {
 
   it('offers Plan completion only after every item is complete', async () => {
     const state = workflowState();
+    state.plan.status = 'review';
+    state.plan.actApproved = false;
     state.plan.items[0] = { ...state.plan.items[0]!, status: 'completed' };
     state.plan.counts = { total: 1, pending: 0, inProgress: 0, completed: 1 };
     const transport = new StubControlTransport('mock', {
@@ -181,6 +183,8 @@ describe('AgentWorkflowPanel', () => {
     });
     const user = userEvent.setup();
     renderWorkflow(transport);
+    expect(await screen.findByText('1 / 1 项完成 · 待验收')).toBeVisible();
+    expect(screen.queryByRole('button', { name: '批准计划' })).not.toBeInTheDocument();
 
     await user.click(await screen.findByRole('button', { name: '验收并完成' }));
     await waitFor(() => expect(transport.requests.find((request) => request.pathId === 'agent.session.plan.mutate')?.body).toEqual({
@@ -449,6 +453,53 @@ describe('AgentWorkflowPanel', () => {
     );
     expect(screen.getByRole('button', { name: '暂停' })).toBeEnabled();
   });
+  it('reports the newest authoritative workflow instead of a stale event fallback', async () => {
+    const queried = workflowState();
+    queried.plan = {
+      ...queried.plan,
+      revision: 4,
+      status: 'completed',
+      editable: false,
+      actApproved: false,
+      updatedAtMs: 400,
+      items: [{ ...queried.plan.items[0]!, status: 'completed', updatedAtMs: 400 }],
+      counts: { total: 1, pending: 0, inProgress: 0, completed: 1 },
+    };
+    queried.actGate = {
+      ...queried.actGate,
+      planRevision: 4,
+      reason: 'user_execution_request',
+    };
+    const stale = workflowState();
+    stale.plan = {
+      ...stale.plan,
+      revision: 3,
+      status: 'review',
+      editable: false,
+      actApproved: false,
+      updatedAtMs: 300,
+      items: [{ ...stale.plan.items[0]!, status: 'completed', updatedAtMs: 300 }],
+      counts: { total: 1, pending: 0, inProgress: 0, completed: 1 },
+    };
+    const onWorkflowResolved = vi.fn();
+    const transport = new StubControlTransport('mock', {
+      'agent.session.workflow.get': queried,
+      'agent.session.plan.mutate': queried,
+      'agent.session.goal.mutate': queried,
+    });
+
+    renderWorkflow(transport, {
+      fallbackPlan: stale.plan,
+      onWorkflowResolved,
+    });
+
+    await waitFor(() => expect(onWorkflowResolved).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        plan: expect.objectContaining({ revision: 4, status: 'completed' }),
+      }),
+    ));
+  });
+
 });
 
 function renderWorkflow(

@@ -136,6 +136,15 @@ class ControlCenterPageActionsHttpTests(unittest.TestCase):
             capabilities["features"]["roomKernel"],
             {"mode": "off", "v2Active": False},
         )
+        for feature in (
+            "managementWorkContract",
+            "configurationSettingsWorkContract",
+            "planningWorkContract",
+            "piProviderCredentials",
+            "workDocuments",
+        ):
+            self.assertIs(capabilities["features"][feature], True)
+            self.assertIs(bootstrap["features"][feature], True)
         route_ids = {str(item["pathId"]) for item in capabilities["routes"]}
         self.assertIn("knowledgeBases.list", route_ids)
         self.assertIn("knowledgeBases.document.import", route_ids)

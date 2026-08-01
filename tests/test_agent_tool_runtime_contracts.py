@@ -164,7 +164,9 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         # targets. Only the compact cards enter the prompt, so keep their
         # tighter Provider-facing budget independent from this transport
         # envelope.
-        self.assertLess(len(encoded), 44_000)
+        # Goal lifecycle adds a full seven-operation internal schema; its compact
+        # public card remains covered by the independent Provider-facing limit.
+        self.assertLess(len(encoded), 48_000)
         self.assertLess(len(public_encoded), 12_000)
         self.assertTrue(all("profile" not in manifest for manifest in manifests))
         self.assertTrue(
@@ -175,6 +177,7 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
             )
         )
         self.assertIn("work_documents", {manifest["name"] for manifest in manifests})
+        self.assertIn("agent_goal", {manifest["name"] for manifest in manifests})
 
     def test_runtime_contracts_require_tool_specific_identifiers_and_payloads(self) -> None:
         _catalog, manifests = self._runtime_contracts(mode="coordinator")
@@ -254,6 +257,16 @@ class AgentToolRuntimeContractTest(unittest.TestCase):
         self.assertEqual(
             plan_update["anyOf"],
             [{"required": ["title"]}, {"required": ["itemId"]}],
+        )
+        goal_setup = self._branch(tools["agent_goal"], "confirm_setup")
+        self.assertEqual(
+            goal_setup["required"],
+            ["op", "confirmed", "objective"],
+        )
+        goal_complete = self._branch(tools["agent_goal"], "complete")
+        self.assertEqual(
+            goal_complete["properties"]["evidence"]["items"]["required"],
+            ["kind", "summary", "reference"],
         )
         model_apply = self._branch(tools["models"], "profile_apply")
         self.assertEqual(model_apply["required"], ["op", "slot"])

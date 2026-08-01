@@ -168,6 +168,51 @@ class WorkDocumentTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual((terminal_count, archive_count), (1, 1))
 
+    def test_detail_projects_only_the_current_legal_reopen_transition(self) -> None:
+        plan, document, _content = self._plan_document("reopen-context")
+        cancelled, terminal_receipt_id = self._cancel_plan(plan)
+        archived = self.service.request_archive(
+            str(document["documentId"]),
+            {"terminalReceiptId": terminal_receipt_id},
+        )
+        terminal_detail = self.service.detail(str(document["documentId"]))
+        self.assertEqual(archived["document"]["state"], "archived")
+        self.assertEqual(
+            terminal_detail["reopen"],
+            {
+                "eligible": False,
+                "authorityRevision": cancelled["revision"],
+                "transitionReceiptId": terminal_receipt_id,
+                "reasonCode": "authority_terminal",
+            },
+        )
+
+        reset = self.sessions.mutate_agent_plan(
+            self.session_id,
+            {"action": "reset", "expectedRevision": cancelled["revision"]},
+        )["plan"]
+        transition_receipt_id = self._latest_event_id(
+            "agent_plan_state_events",
+            "session_id",
+            self.session_id,
+        )
+        ready_detail = self.service.detail(str(document["documentId"]))
+        self.assertEqual(
+            ready_detail["reopen"],
+            {
+                "eligible": True,
+                "authorityRevision": reset["revision"],
+                "transitionReceiptId": transition_receipt_id,
+                "reasonCode": "ready",
+            },
+        )
+
+        reopened = self.service.reopen(
+            str(document["documentId"]),
+            ready_detail["reopen"],
+        )
+        self.assertEqual(reopened["document"]["state"], "active")
+
     def test_register_idempotency_is_bound_to_authority_content_and_title(self) -> None:
         plan, document, _content = self._plan_document("idempotency")
         payload = {

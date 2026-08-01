@@ -488,6 +488,12 @@ class DeepSeekMemoryOrganizer:
         if remaining:
             warnings.append(f"phrase_pinyin_missing:{remaining}")
 
+    def _call_chat_completions(
+        self,
+        *,
+        messages: list[dict[str, str]],
+        max_tokens: int | None = None,
+    ) -> dict[str, Any]:
         if self.completion_executor is not None:
             try:
                 return self.completion_executor.complete(

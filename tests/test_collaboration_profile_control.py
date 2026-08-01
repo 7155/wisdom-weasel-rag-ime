@@ -183,9 +183,28 @@ class CollaborationProfileControlTests(unittest.TestCase):
         return staged["result"]["contentHash"]
 
     def _active_binding(self, content_hash: str) -> None:
-        self.conn.execute("INSERT INTO room_kernel_roots VALUES ('root-1','room-1',1,'running','owner','req',10,0,4,4,'[]','[]',NULL,'{}',1,1)")
-        self.conn.execute("INSERT INTO room_kernel_tasks VALUES ('task-1','root-1',NULL,'running','{}',1)")
-        self.conn.execute("INSERT INTO room_kernel_dispatches VALUES ('dispatch-1','root-1','task-1',NULL,1,1,1,1,'session-1','participant-1','trigger','delegation','idem','running','{}',1,1)")
+        self.conn.execute(
+            "INSERT INTO room_kernel_roots("
+            "root_id,room_id,generation,state,facilitator_participant_id,"
+            "requirement_anchor_ref,budget_remaining,budget_reserved,max_hops,max_depth,"
+            "acceptance_criteria_json,covered_criteria_json,terminal_receipt_id,payload_json,"
+            "created_at_ms,updated_at_ms"
+            ") VALUES ('root-1','room-1',1,'running','owner','req',10,0,4,4,"
+            "'[]','[]',NULL,'{}',1,1)"
+        )
+        self.conn.execute(
+            "INSERT INTO room_kernel_tasks("
+            "task_id,root_id,parent_task_id,state,payload_json,updated_at_ms"
+            ") VALUES ('task-1','root-1',NULL,'running','{}',1)"
+        )
+        self.conn.execute(
+            "INSERT INTO room_kernel_dispatches("
+            "dispatch_id,root_id,task_id,parent_dispatch_id,generation,hop_count,depth,"
+            "budget_cost,target_session_id,target_participant_id,trigger_id,intent_kind,"
+            "idempotency_key,state,payload_json,created_at_ms,updated_at_ms"
+            ") VALUES ('dispatch-1','root-1','task-1',NULL,1,1,1,1,'session-1',"
+            "'participant-1','trigger','delegation','idem','running','{}',1,1)"
+        )
         participant = '{"collaborationProfileRef":"rag-ime-definition://collaboration-profile/evidence-review?version=1&contentHash=' + content_hash + '"}'
         self.conn.execute(
             """INSERT INTO room_v2_capability_runtime_bindings VALUES
